@@ -110,3 +110,32 @@ func TestAcceptRunsTheSweepOfAReceipt(t *testing.T) {
 		t.Fatalf("a non_pr acceptance = %v %+v", err, res.Sweep)
 	}
 }
+
+// A head that lands on a second target later owes a sweep for that landing too: the sweep rests on every observation of a landing, so the new one is a new trigger, and a repeat of the same call finds it done.
+func TestLandingOnASecondTargetIsSweptToo(t *testing.T) {
+	w := newSweepWorld(t)
+	k := w.k
+	k.sched.Checkout = k.repo.path
+	w.accept("D", "E")
+	k.mark(k.acceptNode("g", "I", acceptOpts{HeadSHA: w.head["I"], PR: 30, Forge: "owner/repo", Repository: k.repo.path}))
+	k.repo.git("branch", "side", w.base) // side does not hold the head yet
+	targets := []Target{{Repository: k.repo.path, BaseRef: "dev"}, {Repository: k.repo.path, BaseRef: "side"}}
+	first, err := k.observe(targets...)
+	if err != nil || first.Sweep == nil || first.Sweep.State != SweepRecorded || len(first.Sweep.Members) != 6 { // I has not landed on every target yet: it is still a live head
+		t.Fatalf("first = %v %+v", err, first.Sweep)
+	}
+	k.repo.git("checkout", "-q", "side")
+	k.repo.git("merge", "-q", "--no-ff", "-m", "land the head on side", "b-I")
+	k.repo.git("checkout", "-q", "dev")
+	second, err := k.observe(targets...)
+	if err != nil || second.Sweep == nil || second.Sweep.State != SweepRecorded || second.Sweep.TriggerRef == first.Sweep.TriggerRef || len(second.Sweep.Members) != 5 { // landed everywhere: I is no longer live; the pair D-E and D and E against both tips
+		t.Fatalf("second = %v %+v", err, second.Sweep)
+	}
+	if !second.Observations[0].Replayed || second.Observations[1].Replayed {
+		t.Fatalf("observations = %+v", second.Observations)
+	}
+	third, err := k.observe(targets...)
+	if err != nil || third.Sweep == nil || third.Sweep.State != SweepAlready || third.Sweep.Seq != second.Sweep.Seq || k.count("SELECT COUNT(*) FROM dag_conflict_sweeps WHERE trigger_kind = 'landing'") != 2 {
+		t.Fatalf("third = %v %+v", err, third.Sweep)
+	}
+}

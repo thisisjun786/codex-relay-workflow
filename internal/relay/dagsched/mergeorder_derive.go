@@ -33,14 +33,16 @@ func (p lanePos) before(o lanePos) bool {
 	return p.node < o.node
 }
 
-// lanePosition reads a holder's place from stored rows only. Turn: an open merge turn (waiting, holding, merging or unknown) for its accepted head, by requested_at and turn id. Accepted: an active acceptance
-// the reading calls accepted (not blocked, stale, paused or cancelled), by accepted_at. Working: the rest, by the creation time of the earliest relationship of its executions, which a correction or a handover
-// does not move, else by the decided_at of its release (a node that holds regions before it has a child).
-func (s *Scheduler) lanePosition(ctx context.Context, q store.Querier, plan string, h orderHolder) (lanePos, error) {
-	if h.HasAcc && h.Acc.HeadSHA != "" {
+// lanePosition reads a holder's place from stored rows only. A node can be in the lane only while its accepted result is the one it would merge (current: it stands on the node's current relationship,
+// generation and head event) and the plan does not hold it. Turn: an open merge turn (waiting, holding, merging or unknown) of its relationship for its accepted head, by requested_at and turn id. Accepted:
+// an active acceptance the reading calls accepted (not blocked, stale, paused or cancelled), by accepted_at. Working: the rest, by the creation time of the earliest relationship of its executions, which a
+// correction or a handover does not move, else by the decided_at of its release (a node that holds regions before it has a child).
+func (s *Scheduler) lanePosition(ctx context.Context, q store.Querier, plan string, h orderHolder, current bool) (lanePos, error) {
+	inLane := current && !h.Held && h.HasAcc && h.Acc.HeadSHA != ""
+	if inLane {
 		var requested, turn string
-		found, err := queryOne(ctx, q, "SELECT requested_at, turn_id FROM merge_turns WHERE candidate_head = ? AND state IN ('waiting','holding','merging','unknown') ORDER BY requested_at, turn_id LIMIT 1",
-			[]any{h.Acc.HeadSHA}, &requested, &turn)
+		found, err := queryOne(ctx, q, "SELECT requested_at, turn_id FROM merge_turns WHERE relationship_id = ? AND candidate_head = ? AND state IN ('waiting','holding','merging','unknown') ORDER BY requested_at, turn_id LIMIT 1",
+			[]any{h.Acc.RelationshipID, h.Acc.HeadSHA}, &requested, &turn)
 		if err != nil {
 			return lanePos{}, err
 		}
@@ -48,7 +50,7 @@ func (s *Scheduler) lanePosition(ctx context.Context, q store.Querier, plan stri
 			return lanePos{rank: 0, lane: LaneTurn, since: requested, tie: turn, node: h.NodeID}, nil
 		}
 	}
-	if h.HasAcc && h.State == StateAccepted && h.Disp == DispDone {
+	if inLane && h.State == StateAccepted && h.Disp == DispDone {
 		return lanePos{rank: 1, lane: LaneAccepted, since: h.Acc.AcceptedAt, node: h.NodeID}, nil
 	}
 	var since string
@@ -219,27 +221,24 @@ func (s *Scheduler) orderConstraints(ctx context.Context, q store.Querier, plan 
 	}
 	byNode := map[string]orderHolder{}
 	positions := map[string]lanePos{}
+	stored := map[string]string{} // the head of each node's current accepted result, "" when it has none
 	for _, h := range holders {
-		pos, err := s.lanePosition(ctx, q, plan, h)
+		rel, found, err := currentRelationshipOf(ctx, q, plan, h.NodeID)
+		if err != nil {
+			return nil, 0, err
+		}
+		head, err := s.currentAcceptanceHead(ctx, q, h.Acc, h.HasAcc, rel, found)
+		if err != nil {
+			return nil, 0, err
+		}
+		stored[h.NodeID] = head
+		pos, err := s.lanePosition(ctx, q, plan, h, head != "")
 		if err != nil {
 			return nil, 0, err
 		}
 		byNode[h.NodeID], positions[h.NodeID] = h, pos
 	}
-	stored := map[string]string{}
-	storedHead := func(node string) (string, error) {
-		if head, ok := stored[node]; ok {
-			return head, nil
-		}
-		h := byNode[node]
-		rel, found, err := currentRelationshipOf(ctx, q, plan, node)
-		if err != nil {
-			return "", err
-		}
-		head, err := s.currentAcceptanceHead(ctx, q, h.Acc, h.HasAcc, rel, found)
-		stored[node] = head
-		return head, err
-	}
+	storedHead := func(node string) (string, error) { return stored[node], nil }
 	pairs, err := latestPairs(ctx, q, plan)
 	if err != nil {
 		return nil, 0, err

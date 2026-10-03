@@ -379,6 +379,21 @@ func (s *Scheduler) recordMeasured(ctx context.Context, tx store.Querier, plan, 
 			return refuse(contract.RefusalDispositionConflict, "the measurement was recorded with %d conflicts and merges with %d now", count, m.Conflicts)
 		}
 		m.Status, m.ObservationID = MemberReplayed, existing
+		if m.Kind == MemberPair {
+			// an observation no sweep ever measured was recorded before drift was (dag-conflict-observe of an earlier build): its first replay marks the drift from this measurement and the declarations as
+			// they are now, in this transaction, so the mark is not lost for good
+			measured, err := queryOne(ctx, tx, "SELECT 1 FROM dag_conflict_sweep_members WHERE observation_id = ? LIMIT 1", []any{existing}, new(int))
+			if err != nil {
+				return err
+			}
+			if !measured {
+				for _, d := range driftOf(m.Files, nodes, declarations, names) {
+					if _, err := tx.ExecContext(ctx, "INSERT OR IGNORE INTO dag_conflict_drift (observation_id, node_id, path) VALUES (?,?,?)", existing, d.Node, d.Path); err != nil {
+						return err
+					}
+				}
+			}
+		}
 		m.Drift, err = loadDrift(ctx, tx, existing)
 		return err
 	}

@@ -82,7 +82,7 @@ drift. `dag-integration-observe` runs the sweep a landing owes and `dag-accept` 
 
 When the latest measurement of two live nodes shows a conflict that no rule both declared settles (a file settled by `union`, `renumber` or the same `regenerate` command on both sides is not one; a mechanical file with a local symbol inside it is), `dag-ready` puts them in an order: the node with the later place in the merge lane
 carries `merge_order.after` (the nodes that land before it) and the earlier one `merge_order.before`, each row with the observation, the conflicting files, the grade, the nodes that did not declare a file, `heads_current` and the lane of the other node. `merge_order.tip` is a node's own conflict with the tip. `pass.order_constraints` counts the pairs, and the
-recorded pass keeps each node's object. The order is the merge lane's: an open merge turn by `requested_at`, then an accepted result by when it was accepted, then every other node that holds regions by when its work began.
+recorded pass keeps each node's object. The order is the merge lane's: an open merge turn by `requested_at`, then an accepted result by when it was accepted, then every other node that holds regions by when its work began. A node the plan paused, and an accepted result that is no longer the node's current one (a correction is open), are in the last group: they cannot be merged as they are.
 
 It is a constraint on the merge and on the base refresh, not on the work. Nothing running is stopped: the children keep their state, disposition and reason, and the relay refuses nothing for it. You act on it when you order the merges:
 

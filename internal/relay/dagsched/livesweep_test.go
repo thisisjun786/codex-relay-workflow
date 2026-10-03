@@ -420,3 +420,25 @@ func TestSweepRefusals(t *testing.T) {
 		t.Fatalf("no checkout: %v %+v", err, res)
 	}
 }
+
+// An observation recorded before drift was (dag-conflict-observe of an earlier build: no drift, no ledger row) has its drift marked by its first replay, and stays marked.
+func TestAFirstReplayOfALegacyObservationMarksItsDrift(t *testing.T) {
+	w := newSweepWorld(t)
+	k := w.k
+	w.accept("D", "E")
+	first, err := w.sweep(TriggerManual, "", "", func(in *SweepInput) { in.Tips = nil })
+	if err != nil || len(memberOf(first, MemberPair, "D", "E").Drift) != 2 {
+		t.Fatalf("first = %v %+v", err, first)
+	}
+	for _, table := range []string{"dag_conflict_drift", "dag_conflict_sweep_members", "dag_conflict_sweeps"} {
+		k.exec("DELETE FROM " + table)
+	}
+	again, err := w.sweep(TriggerManual, "", "", func(in *SweepInput) { in.Tips = nil })
+	m := memberOf(again, MemberPair, "D", "E")
+	if err != nil || m.Status != MemberReplayed || !reflect.DeepEqual(m.Drift, []DriftMark{{Node: "D", Path: "c.txt"}, {Node: "E", Path: "c.txt"}}) || k.count("SELECT COUNT(*) FROM dag_conflict_drift") != 2 {
+		t.Fatalf("replay of a legacy observation = %v %+v", err, m)
+	}
+	if third, err := w.sweep(TriggerManual, "", "", func(in *SweepInput) { in.Tips = nil }); err != nil || len(memberOf(third, MemberPair, "D", "E").Drift) != 2 || k.count("SELECT COUNT(*) FROM dag_conflict_drift") != 2 {
+		t.Fatalf("third = %v %+v", err, memberOf(third, MemberPair, "D", "E"))
+	}
+}

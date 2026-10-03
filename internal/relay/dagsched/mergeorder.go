@@ -120,4 +120,6 @@ type orderHolder struct {
 	Disp   string
 	Acc    Acceptance
 	HasAcc bool
+	// Held is whether the plan holds the node (it, or the whole plan, is paused, cancelled or archived): its result cannot be merged, so it is not in the merge lane whatever it is accepted as.
+	Held bool
 }

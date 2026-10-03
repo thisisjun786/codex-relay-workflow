@@ -99,7 +99,7 @@ func (s *Scheduler) Ready(ctx context.Context, q store.Querier, plan string, opt
 			if state.Holds && n.Kind == dag.NodeImplementation {
 				regions, declared := declarations[n.NodeID]
 				holders = append(holders, holder{NodeID: n.NodeID, Regions: regions, Unknown: !declared})
-				live = append(live, orderHolder{NodeID: n.NodeID, Acc: state.Acc, HasAcc: state.HasAcc})
+				live = append(live, orderHolder{NodeID: n.NodeID, Acc: state.Acc, HasAcc: state.HasAcc, Held: !life.active()})
 			}
 			continue
 		}

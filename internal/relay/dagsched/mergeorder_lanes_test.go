@@ -76,10 +76,7 @@ func TestMergeOrderDropsOutWhenTheEarlierNodeLands(t *testing.T) {
 // Which node lands first is the merge lane's order: an open merge turn by requested_at and turn id, then an accepted result by the time it was accepted, then everything else that holds regions by when its work
 // began, or for a node with no child yet by the time its release was decided. A paused accepted node is not in the lane.
 func TestMergeOrderFollowsTheMergeLane(t *testing.T) {
-	turn := func(w *sweepWorld, id, node, requested string) {
-		w.k.exec("INSERT INTO merge_turns (turn_id, target_key, repository, base_ref, project_key, holder_task_id, holder_host_id, candidate_head, state, tenure, requested_at, updated_at) VALUES (?, 'tgt', 'owner/repo', 'dev', 'P-TEST', ?, 'host', ?, 'waiting', 1, ?, ?)",
-			id, "holder-"+id, w.head[node], requested, requested)
-	}
+	turn := func(w *sweepWorld, id, node, requested string) { turnOf(w, id, "rel-g-"+node, w.head[node], requested) }
 	first := func(w *sweepWorld, nodes ...string) []string { // the node every other is After, from the reading
 		w.measure(w.heads(nodes...))
 		r := w.k.read("g")
@@ -118,6 +115,47 @@ func TestMergeOrderFollowsTheMergeLane(t *testing.T) {
 			t.Fatalf("order = %v", got)
 		}
 		if row := w.k.read("g").node("D").MergeOrder.After[0]; row.Lane != LaneTurn || row.Since != "2026-10-02T01:00:00Z" {
+			t.Fatalf("D after = %+v", row)
+		}
+	})
+	t.Run("a turn of another relationship for the same commit does not order this plan's nodes", func(t *testing.T) {
+		w := orderWorld(t)
+		w.accept("D", "E")
+		turnOf(w, "turn-elsewhere", "rel-another-project", w.head["E"], "2026-10-01T00:00:00Z")
+		if got := first(w, "D", "E"); !reflect.DeepEqual(got, []string{"E<[D]"}) {
+			t.Fatalf("order = %v", got)
+		}
+		if row := w.k.read("g").node("E").MergeOrder.After[0]; row.Lane != LaneAccepted {
+			t.Fatalf("D is in the lane %q, want accepted", row.Lane)
+		}
+	})
+	t.Run("a node the plan paused is working whatever it is accepted as, and so is every node of a paused plan", func(t *testing.T) {
+		w := orderWorld(t)
+		w.accept("D", "E")
+		if got := first(w, "D", "E"); !reflect.DeepEqual(got, []string{"E<[D]"}) {
+			t.Fatalf("before the pause = %v", got)
+		}
+		w.k.putPlan("g", 2, "g-r3", lifeOp("pause_node", "D"))
+		after := w.k.read("g")
+		if d := after.node("D"); lifecycleOf(d) != "paused" || d.MergeOrder == nil || ids(d.MergeOrder.After) == nil || len(d.MergeOrder.After) != 1 || d.MergeOrder.After[0].NodeID != "E" || d.MergeOrder.After[0].Lane != LaneAccepted {
+			t.Fatalf("the paused D = %+v", d.MergeOrder)
+		}
+		if e := after.node("E"); e.MergeOrder == nil || len(e.MergeOrder.After) != 0 || e.MergeOrder.Before[0].Lane != LaneWorking {
+			t.Fatalf("E = %+v", e.MergeOrder)
+		}
+		w.k.putPlan("g", 3, "g-r4", planOp("pause_plan"))
+		if e := w.k.read("g").node("E"); e.MergeOrder == nil || len(e.MergeOrder.Before) != 1 && len(e.MergeOrder.After) != 1 || (len(e.MergeOrder.After) == 1 && e.MergeOrder.After[0].Lane != LaneWorking) {
+			t.Fatalf("a paused plan: E = %+v", e.MergeOrder)
+		}
+	})
+	t.Run("an accepted result that is no longer the node's current one is working", func(t *testing.T) {
+		w := orderWorld(t)
+		w.accept("D", "E")
+		w.k.supersedeReport("rel-g-D", "D", "g", "again") // a newer report of D's generation: its acceptance is history until the new one is accepted
+		if got := first(w, "D", "E"); !reflect.DeepEqual(got, []string{"D<[E]"}) {
+			t.Fatalf("order = %v", got)
+		}
+		if row := w.k.read("g").node("D").MergeOrder.After[0]; row.Lane != LaneAccepted || row.NodeID != "E" {
 			t.Fatalf("D after = %+v", row)
 		}
 	})
@@ -243,4 +281,11 @@ func TestReleaseWorksWhileAConstraintExists(t *testing.T) {
 	if res, err := k.release("g", "F"); err != nil || res.ManifestDigest == "" {
 		t.Fatalf("release F = %v %+v", err, res)
 	}
+}
+
+// turnOf is an open merge turn of a relationship for a commit.
+func turnOf(w *sweepWorld, id, relationship, head, requested string) {
+	w.k.t.Helper()
+	w.k.exec("INSERT INTO merge_turns (turn_id, target_key, repository, base_ref, project_key, holder_task_id, holder_host_id, relationship_id, candidate_head, state, tenure, requested_at, updated_at) VALUES (?, 'tgt', 'owner/repo', 'dev', 'P-TEST', ?, 'host', ?, ?, 'waiting', 1, ?, ?)",
+		id, "holder-"+id, relationship, head, requested, requested)
 }
