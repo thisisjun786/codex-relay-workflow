@@ -150,6 +150,26 @@
     },
     {
       "unit": "finiteNumber",
+      "input": "0x-1",
+      "error": "SyntaxError"
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "0x+1",
+      "error": "SyntaxError"
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "0o-1",
+      "error": "SyntaxError"
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "0b+1",
+      "error": "SyntaxError"
+    },
+    {
+      "unit": "finiteNumber",
       "input": "1e300",
       "answer": true
     },
@@ -780,6 +800,26 @@
     },
     {
       "unit": "validValue",
+      "input": "0x-1",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "0x+1",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "0o-1",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "0b+1",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
       "input": "1e300",
       "answer": true
     },
@@ -1150,6 +1190,31 @@
     },
     {
       "unit": "validValue",
+      "input": "\"\"\"a\rb\"\"\"",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "'''a\rb'''",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "'\f'",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "\"\"\"\f\"\"\"",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "'''\f'''",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
       "input": "\"\\b\\t\\n\\f\\r\\\"\\\\\"",
       "answer": true
     },
@@ -1256,6 +1321,16 @@
     {
       "unit": "validValue",
       "input": "'''x''''",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "\"\"\"x\"\"\"\"\"",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "'''x'''''",
       "answer": false
     },
     {

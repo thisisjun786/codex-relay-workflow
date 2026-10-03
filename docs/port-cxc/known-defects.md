@@ -355,3 +355,13 @@ This section supersedes the seeded `port: pending` statuses for native Write/Edi
 - `readNativeCatalog` catches every read/parse failure and returns null, so an unreadable or malformed catalog is indistinguishable from a missing one (source `catalog.ts:88-105`; native oracle cases `invalid-shape`/`malformed` and the missing/directory path tests); port: kept.
 - `nativeEntries` trusts an injected native list without deduplicating it, and `buildCatalog` rejects only empty provider ids rather than blank ids, so native duplicates and a whitespace-only provider id survive (source `catalog.ts:112-121,144-151`; oracle cases `native-duplicates`/`whitespace`); port: kept.
 - `buildCatalog` and `readNativeCatalog` give the same cache entry different labels and only the latter retains its effort ladder (source `catalog.ts:102,119-120`; oracle native/build rows); port: kept.
+
+## Found by the agent-thread TOML scanner port (CRW-343)
+
+- A space-separated date-time is rejected by the bare-token scan despite being in the scalar grammar (source `plugins/codexclaw/components/pabcd-state/src/agent-thread-permissions.ts:227,306-308`; recorded spaced date-time); port: kept.
+- Year 0000 uses Date.UTC's year-1900 calendar, rejecting its leap day (source `agent-thread-permissions.ts:79`; recorded `0000-02-29`); port: kept.
+- Second 60 is accepted at any minute and date, without checking whether a leap second occurred (source `agent-thread-permissions.ts:83`; recorded `12:00:60`); port: kept.
+- Raw form feed passes all four string scanners, and raw carriage return passes the multiline forms (source `agent-thread-permissions.ts:246-247`; recorded control-character strings); port: kept.
+- The first triple closing mark ends a string, so the TOML four/five-quote closing forms are rejected (source `agent-thread-permissions.ts:245`; recorded adjacent closing quotes); port: kept.
+- JavaScript whitespace such as vertical tab, form feed and non-ASCII spaces is accepted between value tokens although TOML whitespace is narrower (source `agent-thread-permissions.ts:230`; recorded whitespace arrays); port: kept.
+- A table implicitly created by a dotted assignment may later be explicitly declared, which TOML forbids (source `agent-thread-permissions.ts:182-188,212-216`; recorded dotted-assignment/table sequence); port: kept.
