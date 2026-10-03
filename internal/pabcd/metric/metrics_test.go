@@ -35,15 +35,18 @@ func metricsRecord(t *testing.T, cwd, session, name string, value float64, workP
 	return rec
 }
 
+func metricsMust(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func metricsWrite(t *testing.T, cwd, rel string, data []byte) {
 	t.Helper()
 	path := filepath.Join(cwd, crwdir.DirName, rel)
-	if err := os.MkdirAll(filepath.Dir(path), 0o777); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, data, 0o666); err != nil {
-		t.Fatal(err)
-	}
+	metricsMust(t, os.MkdirAll(filepath.Dir(path), 0o777))
+	metricsMust(t, os.WriteFile(path, data, 0o666))
 }
 
 func TestRecordObjectiveMetricAppendsRowsWithBaselineAndBest(t *testing.T) { // metrics.test.ts:23
@@ -75,15 +78,11 @@ func TestObjectiveKindDefaultsToSatisfyInfersMaximizeAndExplicitWins(t *testing.
 	if got := ReadObjectiveKind(cwd, "s2"); got != Satisfy {
 		t.Fatalf("default %q", got)
 	}
-	if err := os.WriteFile(filepath.Join(cwd, "evaluate.sh"), []byte("#!/bin/sh\n"), 0o666); err != nil {
-		t.Fatal(err)
-	}
+	metricsMust(t, os.WriteFile(filepath.Join(cwd, "evaluate.sh"), []byte("#!/bin/sh\n"), 0o666))
 	if got := ReadObjectiveKind(cwd, "s2"); got != Satisfy {
 		t.Errorf("a stale cwd-level harness flipped the session to %q", got)
 	}
-	if err := WriteObjectiveKind(cwd, "s2", Satisfy); err != nil {
-		t.Fatal(err)
-	}
+	metricsMust(t, WriteObjectiveKind(cwd, "s2", Satisfy))
 	if kind, ok := ReadExplicitObjectiveKind(cwd, "s2"); !ok || kind != Satisfy || ReadObjectiveKind(cwd, "s2") != Satisfy {
 		t.Errorf("explicit %q %v", kind, ok)
 	}
@@ -143,9 +142,7 @@ func TestDefaultClockWritesIsoTimestampsAndTheFirstRecordCreatesTheStateDirector
 	cwd := t.TempDir()
 	iso := regexp.MustCompile(`^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$`)
 	rec := metricsRecord(t, cwd, "s", "m", 1, nil)
-	if err := WriteObjectiveKind(cwd, "s", Maximize); err != nil {
-		t.Fatal(err)
-	}
+	metricsMust(t, WriteObjectiveKind(cwd, "s", Maximize))
 	raw, err := os.ReadFile(filepath.Join(cwd, crwdir.DirName, ObjectiveKindDir, "s.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -162,16 +159,12 @@ func TestDefaultClockWritesIsoTimestampsAndTheFirstRecordCreatesTheStateDirector
 func TestRecordStartsANewLineAfterALedgerItCanNotReadToCheck(t *testing.T) {
 	cwd, row := t.TempDir(), "{\"ts\":\"t\",\"sessionId\":\"s\",\"workPhaseId\":\"default\",\"metricName\":\"m\",\"value\":1,\"baseline\":1,\"best\":1,\"source\":\"evaluate.sh\"}"
 	metricsWrite(t, cwd, MetricsFile, []byte(row)) // a valid final row without its newline
-	if err := os.Chmod(metricsPath(cwd), 0o200); err != nil {
-		t.Fatal(err)
-	}
+	metricsMust(t, os.Chmod(metricsPath(cwd), 0o200))
 	if _, err := os.ReadFile(metricsPath(cwd)); err == nil {
 		t.Skip("the ledger is readable despite mode 0200 (running as root)")
 	}
 	_, recordErr := RecordObjectiveMetric(cwd, RecordInput{SessionID: "s", MetricName: "m", Value: 2, Source: EvaluateSh})
-	if err := os.Chmod(metricsPath(cwd), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	metricsMust(t, os.Chmod(metricsPath(cwd), 0o600))
 	if rows := ReadObjectiveMetrics(cwd, "s"); recordErr != nil || len(rows) != 2 {
 		t.Errorf("record error %v, %d rows read after the append, want 2", recordErr, len(rows))
 	}
@@ -179,9 +172,7 @@ func TestRecordStartsANewLineAfterALedgerItCanNotReadToCheck(t *testing.T) {
 
 func TestWriteObjectiveKindRemovesItsTempFileWhenTheRenameFails(t *testing.T) {
 	cwd := t.TempDir()
-	if err := WriteObjectiveKind(cwd, "s", Maximize); err != nil {
-		t.Fatal(err)
-	}
+	metricsMust(t, WriteObjectiveKind(cwd, "s", Maximize))
 	dir, boom := objectiveKindDir(cwd), errors.New("rename failed")
 	before, _ := os.ReadFile(filepath.Join(dir, "s.json"))
 	err := writeObjectiveKind(cwd, "s", Satisfy, time.Now(), func(string, string) error { return boom })
@@ -193,21 +184,15 @@ func TestWriteObjectiveKindRemovesItsTempFileWhenTheRenameFails(t *testing.T) {
 
 func TestWriteObjectiveKindDoesNotReplaceAFileItCanNotRead(t *testing.T) {
 	cwd := t.TempDir()
-	if err := WriteObjectiveKind(cwd, "s", Maximize); err != nil {
-		t.Fatal(err)
-	}
+	metricsMust(t, WriteObjectiveKind(cwd, "s", Maximize))
 	path := objectiveKindPath(cwd, "s")
 	before, _ := os.ReadFile(path)
-	if err := os.Chmod(path, 0o200); err != nil {
-		t.Fatal(err)
-	}
+	metricsMust(t, os.Chmod(path, 0o200))
 	if _, err := os.ReadFile(path); err == nil {
 		t.Skip("the file is readable despite mode 0200 (running as root)")
 	}
 	refused := WriteObjectiveKind(cwd, "s", Satisfy)
-	if err := os.Chmod(path, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	metricsMust(t, os.Chmod(path, 0o600))
 	if after, _ := os.ReadFile(path); refused == nil || string(after) != string(before) {
 		t.Errorf("write error %v, kind file now %q", refused, after)
 	}
@@ -215,12 +200,8 @@ func TestWriteObjectiveKindDoesNotReplaceAFileItCanNotRead(t *testing.T) {
 
 func TestWriteObjectiveKindLeavesANonRegularFileAloneInsteadOfBlockingOnIt(t *testing.T) {
 	cwd := t.TempDir()
-	if err := os.MkdirAll(objectiveKindDir(cwd), 0o777); err != nil {
-		t.Fatal(err)
-	}
-	if err := unix.Mkfifo(objectiveKindPath(cwd, "s"), 0o666); err != nil {
-		t.Fatal(err)
-	}
+	metricsMust(t, os.MkdirAll(objectiveKindDir(cwd), 0o777))
+	metricsMust(t, unix.Mkfifo(objectiveKindPath(cwd, "s"), 0o666))
 	done := make(chan error, 1)
 	go func() { done <- WriteObjectiveKind(cwd, "s", Maximize) }()
 	select {
@@ -402,9 +383,7 @@ func metricsStep(t *testing.T, cwd string, op metricsOp) any {
 		metricsWrite(t, cwd, op.Path, data)
 		return nil
 	case "dir":
-		if err := os.MkdirAll(filepath.Join(cwd, crwdir.DirName, op.Path), 0o777); err != nil {
-			t.Fatal(err)
-		}
+		metricsMust(t, os.MkdirAll(filepath.Join(cwd, crwdir.DirName, op.Path), 0o777))
 		return nil
 	}
 	t.Fatalf("unknown op %q", op.Op)

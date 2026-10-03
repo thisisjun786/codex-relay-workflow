@@ -9,23 +9,20 @@ const [oracleDist, scenarioFile, workRoot] = process.argv.slice(2);
 const oracle = await import(oracleDist + "/metrics.js");
 const tokens = { NaN, Infinity, "-Infinity": -Infinity, "-0": -0 };
 const arg = (v) => (typeof v === "string" && v in tokens ? tokens[v] : v);
-// -0, NaN and the infinities are answered as strings; JSON cannot hold them.
-const spell = (x) => (typeof x === "number" && (!Number.isFinite(x) || Object.is(x, -0)) ? (Object.is(x, -0) ? "-0" : String(x)) : x);
-const shown = (v) => JSON.parse(JSON.stringify(v, (_, x) => spell(x)));
+// -0, NaN and the infinities are answered as strings; JSON cannot hold them. Everything is written as ASCII, so no editor or JSON
+// reader is asked to carry U+2028, a BOM or a lone surrogate.
+const spell = (_, x) => (typeof x === "number" && (!Number.isFinite(x) || Object.is(x, -0)) ? (Object.is(x, -0) ? "-0" : String(x)) : x);
+const json = (v) => JSON.stringify(v, spell).replace(/[\u007f-\uffff]/g, (c) => "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0"));
 
 function step(cwd, o) {
-  const state = join(cwd, ".codexclaw");
-  const at = (path) => join(state, path);
-  const clock = () => {
-    if (!o.now) throw new Error("scenario op without now");
-    return { now: () => o.now };
-  };
-  const phase = o.workPhase === undefined ? {} : { workPhaseId: o.workPhase };
+  const at = (path) => join(cwd, ".codexclaw", path);
+  if ((o.op === "record" || o.op === "ingest") && !o.now) throw new Error("scenario op without now");
+  const opts = { sessionId: o.session, now: () => o.now, ...(o.workPhase === undefined ? {} : { workPhaseId: o.workPhase }) };
   switch (o.op) {
     case "record":
-      return oracle.recordObjectiveMetric(cwd, { sessionId: o.session, metricName: o.name, value: arg(o.value), source: o.source ?? "operator-entered", ...phase, ...clock() });
+      return oracle.recordObjectiveMetric(cwd, { ...opts, metricName: o.name, value: arg(o.value), source: o.source ?? "operator-entered" });
     case "ingest":
-      return { rows: oracle.recordMetricsFromText(cwd, { sessionId: o.session, text: o.text, source: o.source ?? "evaluate.sh", ...phase, ...clock() }) };
+      return { rows: oracle.recordMetricsFromText(cwd, { ...opts, text: o.text, source: o.source ?? "evaluate.sh" }) };
     case "read":
       return { rows: oracle.readObjectiveMetrics(cwd, o.session) };
     case "kind":
@@ -46,34 +43,26 @@ function step(cwd, o) {
   throw new Error("unknown op " + o.op);
 }
 
-// The files the oracle leaves under .codexclaw, by relative path; the temp file of a kind write must be gone, updatedAt is a placeholder.
-function files(dir, rel = "") {
-  const out = {};
-  for (const e of readdirSync(join(dir, rel), { withFileTypes: true })) {
+// The files left under .codexclaw, by relative path, with updatedAt a placeholder (the temp file of a kind write must be gone).
+const files = (dir, rel = "") =>
+  readdirSync(join(dir, rel), { withFileTypes: true }).reduce((out, e) => {
     const path = rel ? rel + "/" + e.name : e.name;
-    if (e.isDirectory()) Object.assign(out, files(dir, path));
-    else if (e.name !== ".gitignore") out[path] = readFileSync(join(dir, path), "utf8").replace(/("updatedAt": ")\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z"/, '$1<TS>"');
-  }
-  return out;
-}
+    if (e.isDirectory()) return { ...out, ...files(dir, path) };
+    if (e.name === ".gitignore") return out;
+    return { ...out, [path]: readFileSync(join(dir, path), "utf8").replace(/("updatedAt": ")\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z"/, '$1<TS>"') };
+  }, {});
 
-const out = {};
-for (const sc of JSON.parse(readFileSync(scenarioFile, "utf8"))) {
+const lines = JSON.parse(readFileSync(scenarioFile, "utf8")).map((sc) => {
   const cwd = mkdtempSync(join(workRoot, "s-"));
   const results = sc.ops.map((o) => {
     try {
-      return shown(step(cwd, o) ?? null);
+      return JSON.parse(json(step(cwd, o) ?? null));
     } catch (err) {
       return { error: true };
     }
   });
-  out[sc.id] = { results, ...(sc.capture ? { files: files(join(cwd, ".codexclaw")) } : {}) };
+  const answer = { results, ...(sc.capture ? { files: files(join(cwd, ".codexclaw")) } : {}) };
   rmSync(cwd, { recursive: true, force: true });
-}
-// One line per answer, written as ASCII so no editor or JSON reader is asked to carry U+2028, a BOM or a lone surrogate.
-const ascii = (s) => s.replace(/[\u007f-\uffff]/g, (c) => "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0"));
-const body = Object.entries(out).map(([id, { results, files }]) => {
-  const rows = results.map((r) => "   " + ascii(JSON.stringify(r))).join(",\n");
-  return " " + JSON.stringify(id) + ": {\n  \"results\": [\n" + rows + "\n  ]" + (files ? ",\n  \"files\": " + ascii(JSON.stringify(files)) : "") + "\n }";
+  return " " + JSON.stringify(sc.id) + ": " + json(answer);
 });
-process.stdout.write("{\n" + body.join(",\n") + "\n}\n");
+process.stdout.write("{\n" + lines.join(",\n") + "\n}\n");
