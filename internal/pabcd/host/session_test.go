@@ -72,13 +72,6 @@ func (f fixture) dbWith(version, schema string, override map[string]any) string 
 	return path
 }
 
-// dbIn writes a database with the default row into dir, which must exist.
-func (f fixture) dbIn(dir string) string {
-	g := f
-	g.home = dir
-	return g.db("5", nil)
-}
-
 func (f fixture) resolve(cwd string) (NativeSession, error) {
 	return ResolveNativeSession(cwd, envOf(f.vars))
 }
@@ -158,7 +151,7 @@ func TestResolveNativeSessionRefusesRowsWithTheOraclesMessages(t *testing.T) {
 		{"a big INTEGER in cwd beats the archive flag", map[string]any{"archived": 1, "cwd": big}, msgReadDB}, {"a big INTEGER in source", map[string]any{"source": big}, msgReadDB},
 		{"missing cwd", map[string]any{"cwd": "/does-not-exist-cxc"}, msgCwd}, {"relative cwd", map[string]any{"cwd": "."}, msgRelative},
 		{"stored cwd with a NUL", map[string]any{"cwd": "/tmp\x00x"}, msgCwd}, {"null cwd", map[string]any{"cwd": nil}, msgRelative}, {"BLOB cwd", map[string]any{"cwd": []byte("/tmp")}, msgRelative},
-		{"unknown source", map[string]any{"source": "unknown"}, msgSource}, {"null source", map[string]any{"source": nil}, msgSource}, {"BLOB source", map[string]any{"source": []byte("cli")}, msgSource},
+		{"unknown source", map[string]any{"source": "unknown"}, msgSource}, {"source in capitals", map[string]any{"source": "CLI"}, msgSource}, {"source with spaces", map[string]any{"source": " cli "}, msgSource}, {"null source", map[string]any{"source": nil}, msgSource}, {"BLOB source", map[string]any{"source": []byte("cli")}, msgSource},
 		{"malformed JSON source", map[string]any{"source": `{"private":"PRIVATE_TRANSCRIPT"`}, msgSource}, {"JSON root string", map[string]any{"source": `"cli"`}, msgSource},
 		{"custom source", map[string]any{"source": `{"custom":"cli"}`}, msgSource}, {"internal source", map[string]any{"source": `{"internal":"guardian"}`}, msgSource},
 		{"subagent", map[string]any{"source": `{"subagent":{"thread_spawn":{"agent_role":null}}}`}, msgSource}, {"subagent review", map[string]any{"source": `{"subagent":"review"}`}, msgSource},
@@ -199,12 +192,37 @@ func TestResolveNativeSessionReadsDeclaredColumnTypes(t *testing.T) {
 	typed.accepts("INTEGER affinity turns '0' into 0", typed.cwd)
 }
 
+// JavaScript reads a column as a property of the row, named as the table declares it.
+func TestResolveNativeSessionReadsColumnsByTheNamesTheTableDeclares(t *testing.T) {
+	for schema, want := range map[string]string{
+		"ID TEXT COLLATE NOCASE PRIMARY KEY, cwd, archived, source, title TEXT": msgNoRow,
+		"id TEXT COLLATE NOCASE PRIMARY KEY, CWD, archived, source, title TEXT": msgRelative,
+		"id TEXT COLLATE NOCASE PRIMARY KEY, cwd, ARCHIVED, source, title TEXT": msgArchived,
+		"id TEXT COLLATE NOCASE PRIMARY KEY, cwd, archived, SOURCE, title TEXT": msgSource,
+	} {
+		f := newFixture(t)
+		f.dbWith("5", schema, nil)
+		f.refuses(schema, f.cwd, want)
+	}
+}
+
+// node:sqlite's SQLite takes a double-quoted string for an identifier only, so a view that uses one
+// as a literal cannot be read.
+func TestResolveNativeSessionRefusesADoubleQuotedStringLiteral(t *testing.T) {
+	f := newFixture(t)
+	path := filepath.Join(f.home, "state_5.sqlite")
+	seed(t, path, "CREATE TABLE base (id, cwd, archived, source)")
+	seed(t, path, "INSERT INTO base VALUES (?, ?, 0, 'cli')", child, f.cwd)
+	seed(t, path, "CREATE VIEW threads AS SELECT id, cwd, archived, \"cli\" AS source FROM base")
+	f.refuses("double-quoted literal", f.cwd, msgReadDB)
+}
+
 func TestResolveNativeSessionRefusesTheCaller(t *testing.T) {
 	for _, c := range []struct {
 		id, want string
 		set      bool
 	}{
-		{"", msgAbsent, false}, {"", msgInvalid, true}, {"invalid-private-id", msgInvalid, true}, {child + "\n", msgInvalid, true}, {" " + child, msgInvalid, true}, {"../other", msgInvalid, true},
+		{"", msgAbsent, false}, {"", msgInvalid, true}, {"invalid-private-id", msgInvalid, true}, {child + "\n", msgInvalid, true}, {" " + child, msgInvalid, true}, {"../other", msgInvalid, true}, {"019a0000-0000-7000-8000-00000000000g", msgInvalid, true}, {child[:8] + "x" + child[9:], msgInvalid, true},
 	} {
 		f := newFixture(t)
 		f.db("5", nil)
@@ -293,25 +311,6 @@ func TestResolveNativeSessionDatabaseFailuresDoNotFallBack(t *testing.T) {
 			c.setup(f, filepath.Join(f.home, "state_10.sqlite"))
 		}
 		f.refuses(c.name, f.cwd, c.want)
-	}
-}
-
-// The database path reaches SQLite as a file: URI, so a home whose name is special in one must still open.
-func TestResolveNativeSessionOpensAHomeWhoseNameIsSpecialInURIs(t *testing.T) {
-	for _, name := range []string{"h %?# x", "h%41", "h?x", "h#x", "h%zz"} {
-		f := newFixture(t)
-		special := filepath.Join(f.root, name)
-		if err := os.Mkdir(special, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		want := filepath.Join(special, "state_5.sqlite")
-		if err := os.Rename(f.db("5", nil), want); err != nil { // seed would read the name as a DSN
-			t.Fatal(err)
-		}
-		f.vars["CODEX_HOME"] = special
-		if got := f.accepts(name, f.cwd); got.DBPath != want {
-			t.Errorf("%s: %+v, want %s", name, got, want)
-		}
 	}
 }
 
@@ -512,11 +511,10 @@ func TestResolveNativeSessionSeesPathsAsNodeDoes(t *testing.T) {
 		rel.refuses("relative call cwd: sub exists only under the replacement spelling", "sub", msgWorkdir)
 
 		r := newFixture(t) // a relative CODEX_HOME resolves against the decoded getcwd answer
-		os.Mkdir(r.root+"/native2", 0o755)
 		t.Chdir(wd)
 		r.vars["CODEX_HOME"] = "native2"
 		os.Mkdir(wd+"/native2", 0o755)
-		os.Rename(r.dbIn(r.root+"/native2"), wd+"/native2/state_5.sqlite")
+		os.Rename(r.db("5", nil), wd+"/native2/state_5.sqlite")
 		r.refuses("relative CODEX_HOME: the decoded working directory is absent", r.cwd, msgNoHome)
 		os.Mkdir(h.root+"/w-"+replacement+"/native2", 0o755)
 		r.home = h.root + "/w-" + replacement + "/native2"

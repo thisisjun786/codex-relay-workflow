@@ -1,8 +1,6 @@
 package host
 
 import (
-	"database/sql"
-	"errors"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -72,13 +70,30 @@ func ResolveNativeSession(cwd string, env LookupEnv) (NativeSession, error) {
 		return NativeSession{}, unreadable
 	}
 	defer db.Close()
-	var rowID, rowCwd, archived, source any
-	switch err := db.QueryRow(ThreadQuery, id).Scan(&rowID, &rowCwd, &archived, &source); {
-	case errors.Is(err, sql.ErrNoRows):
-		return NativeSession{}, noRow
-	case err != nil || !safe(rowID, rowCwd, archived, source): // a malformed file, a missing table or column: never an older database
+	rows, err := db.Query(ThreadQuery, id)
+	if err != nil {
 		return NativeSession{}, unreadable
 	}
+	defer rows.Close()
+	if !rows.Next() {
+		if rows.Err() != nil { // a lock, or a malformed file: never an older database
+			return NativeSession{}, unreadable
+		}
+		return NativeSession{}, noRow
+	}
+	names, err := rows.Columns()
+	var field [4]any
+	if err != nil || rows.Scan(&field[0], &field[1], &field[2], &field[3]) != nil || !safe(field[:]...) {
+		return NativeSession{}, unreadable
+	}
+	// JavaScript reads the columns as properties of the row, which keep the case the table declares,
+	// so a column declared ID, CWD, ARCHIVED or SOURCE leaves the field it names missing.
+	for i, want := range [...]string{"id", "cwd", "archived", "source"} {
+		if names[i] != want {
+			field[i] = nil
+		}
+	}
+	rowID, rowCwd, archived, source := field[0], field[1], field[2], field[3]
 	if got, _ := rowID.(string); got != id {
 		return NativeSession{}, noRow
 	}
