@@ -50,6 +50,7 @@ func newBacklogWorld(t *testing.T, perRecipient int) (*scaleWorld, map[string][]
 // use: the queue taken i-th (from 0) is reached only after i queues have spent an attempt each, and
 // can use no more than the attempts that are left, which makes attempts*(attempts+1)/2 rows.
 func TestCap_a_parents_turn_reads_no_more_rows_than_it_can_attempt(t *testing.T) {
+	t.Parallel()
 	for _, share := range []int{1, 2, 3} {
 		t.Run(fmt.Sprintf("%d attempts", share), func(t *testing.T) {
 			w, byRecipient := newBacklogWorld(t, 20)
@@ -145,6 +146,7 @@ func checkTurns(t *testing.T, got, want []string) {
 }
 
 func TestCap_parents_with_work_take_turns_in_id_order(t *testing.T) {
+	t.Parallel()
 	r := newRotation(t)
 	for _, name := range []string{"a", "b", "c"} {
 		r.join(name, 4)
@@ -155,6 +157,7 @@ func TestCap_parents_with_work_take_turns_in_id_order(t *testing.T) {
 // A parent that arrives is served in its place in the order, and neither the parent served before
 // it nor the one after it is served twice or skipped.
 func TestCap_a_parent_that_joins_between_ticks_costs_no_one_a_turn(t *testing.T) {
+	t.Parallel()
 	r := newRotation(t)
 	for _, name := range []string{"a", "b", "c"} {
 		r.join(name, 4)
@@ -168,6 +171,7 @@ func TestCap_a_parent_that_joins_between_ticks_costs_no_one_a_turn(t *testing.T)
 
 // A parent that has nothing due any more is passed over, and the one after it takes its turn.
 func TestCap_a_parent_that_leaves_between_ticks_costs_no_one_a_turn(t *testing.T) {
+	t.Parallel()
 	r := newRotation(t)
 	for _, name := range []string{"a", "b", "c"} {
 		r.join(name, 6)
@@ -184,6 +188,7 @@ func TestCap_a_parent_that_leaves_between_ticks_costs_no_one_a_turn(t *testing.T
 // time, every other parent that stayed in it too is served exactly once. A parent that left and came
 // back in between is not owed anything for the span it was away.
 func TestCap_between_two_turns_of_a_parent_every_parent_that_stayed_is_served_once(t *testing.T) {
+	t.Parallel()
 	const ticks = 24
 	names := []string{"0", "a", "b", "c", "d", "e"}
 	rng := rand.New(rand.NewSource(270))

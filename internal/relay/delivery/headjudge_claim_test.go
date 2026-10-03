@@ -40,6 +40,7 @@ func (w *headWorld) count(query string, args ...any) int64 {
 
 // The first three revisions of a chain are each replaced by a final successor.
 func TestClaimOfASupersededRevision(t *testing.T) {
+	t.Parallel()
 	w := newHeadWorld(t, shapeChain, 4)
 
 	t.Run("is recorded and refused", func(t *testing.T) {
@@ -107,6 +108,7 @@ func TestClaimOfASupersededRevision(t *testing.T) {
 }
 
 func TestClaimOfTheHeadOrOfAnEventWithNoHeadClaims(t *testing.T) {
+	t.Parallel()
 	for _, shape := range []headShape{shapeChain, shapeLoose} {
 		t.Run(string(shape), func(t *testing.T) {
 			w := newHeadWorld(t, shape, 5)
