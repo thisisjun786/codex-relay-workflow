@@ -20,7 +20,7 @@ const (
 	GoalUnreadable GoalStatus = "unreadable" // the database is there but cannot answer: a caller fails closed
 )
 
-// GoalsDBPath is resolveGoalsDbPath.
+// GoalsDBPath is resolveGoalsDbPath: Join cleans a ".." lexically, as path.join does (a known defect, kept).
 func GoalsDBPath(env LookupEnv) (string, error) {
 	dir, err := CodexSQLiteHome(env)
 	if err != nil {

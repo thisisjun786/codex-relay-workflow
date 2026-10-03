@@ -31,6 +31,10 @@ func TestGoalsDBPathHonorsSQLiteHomeOverCodexHome(t *testing.T) {
 	if got, _ := GoalsDBPath(envOf(map[string]string{"CODEX_SQLITE_HOME": "/sq", "CODEX_HOME": "/ch"})); got != "/sq/goals_1.sqlite" {
 		t.Errorf("both set: %q", got)
 	}
+	// path.join cleans a ".." lexically, so a symlink before it is not followed (a known defect, kept).
+	if got, _ := GoalsDBPath(envOf(map[string]string{"CODEX_SQLITE_HOME": "/a/alias/.."})); got != "/a/goals_1.sqlite" {
+		t.Errorf("a .. is cleaned like path.join: %q", got)
+	}
 }
 
 // "missing DB -> inactive (codex not using goals)" and "Active row -> active; Complete/absent -> inactive"
