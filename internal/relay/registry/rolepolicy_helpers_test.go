@@ -184,7 +184,11 @@ func (x *roleRun) step(step roleStep) any {
 			e := map[string]any{}
 			for _, role := range []string{"supervisor", "parent", "child"} {
 				if exp, ok := p.expectation(role); ok {
-					e[role] = map[string]any{"expectation": exp.Expectation, "model": nullText(exp.Model), "reasoningEffort": nullText(exp.Effort)}
+					var first execution.RolePair
+					if len(exp.Pairs) > 0 {
+						first = exp.Pairs[0]
+					}
+					e[role] = map[string]any{"expectation": exp.Expectation, "model": nullText(first.Model), "reasoningEffort": nullText(first.Effort)}
 				} else {
 					e[role] = nil
 				}
