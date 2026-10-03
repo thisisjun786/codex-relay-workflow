@@ -52,11 +52,11 @@ type Source struct {
 func (s Source) skills() string { return filepath.Join(s.Dir, "plugins/codexclaw/skills") }
 
 // DefaultOrigin is CXC v0.2.40. The listing digest is one line per regular file in byte order, the
-// sha256sum line with " x" after the name of an executable file, hashed:
+// sha256sum line with " x " as the separator of an executable file, hashed:
 // (cd <tree>/plugins/codexclaw/skills && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sh -c
-// 'for f; do m=; [ -x "$f" ] && m=" x"; printf "%s  %s%s\n" "$(sha256sum <"$f" | cut -d" " -f1)" "$f" "$m"; done' sh) | sha256sum
+// 'for f; do s="  "; [ -x "$f" ] && s=" x "; printf "%s%s%s\n" "$(sha256sum <"$f" | cut -d" " -f1)" "$s" "$f"; done' sh) | sha256sum
 func DefaultOrigin() Origin {
-	return Origin{"v0.2.40", "3c1459acadeb1906d97c00a598e1457327ae372d", "b5e89cd407db5eac39d3e111d438d2fff058a13c9bc7c01ca8d99dc078e7ecf4"}
+	return Origin{"v0.2.40", "3c1459acadeb1906d97c00a598e1457327ae372d", "79d9580f39ca27221cb9c24337080e3fe4a1e71f76338c7329fca63f76a32e89"}
 }
 
 // FileEntry is an original file after the substitution: its digest and executable bit.

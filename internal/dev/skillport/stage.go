@@ -38,6 +38,11 @@ func stage(root string, src Source, folders []string, rename func(string, string
 	return done, nil
 }
 
+func lstat(path string) os.FileInfo {
+	info, _ := os.Lstat(path)
+	return info
+}
+
 // stageOne writes the skill into a temp directory and its record into a temp file, publishes the
 // record by hard link (which refuses an existing one) and renames the directory into place; a
 // failure removes what this call made and nothing else.
@@ -70,10 +75,10 @@ func stageOne(root string, src Source, sub *substituter, folder string, rename f
 	defer func() {
 		if err != nil {
 			os.RemoveAll(tmp)
-			os.Remove(tmpRecord)
-			if linked {
+			if a, b := lstat(record), lstat(tmpRecord); linked && a != nil && os.SameFile(a, b) { // still our link, not another writer's file
 				os.Remove(record)
 			}
+			os.Remove(tmpRecord)
 		}
 	}()
 	if tmp, err = os.MkdirTemp(filepath.Join(root, StagingRoot), ".stage-"); err != nil {

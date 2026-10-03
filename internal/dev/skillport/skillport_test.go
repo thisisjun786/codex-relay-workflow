@@ -139,11 +139,6 @@ func TestStageCleanSkill(t *testing.T) {
 		t.Fatalf("Stage = %v, %v", names, err)
 	}
 	staged := slurp(t, f.path("SKILL.md"))
-	for _, want := range []string{"name: crw-kwrite", "$crw-pabcd", "crw pabcd orchestrate P", "$crw:crw-loop", "https://github.com/lidge-jun/codexclaw"} {
-		if !strings.Contains(staged, want) {
-			t.Errorf("staged SKILL.md lacks %q:\n%s", want, staged)
-		}
-	}
 	if got := sum([]byte(staged)); got != wantSkillSHA {
 		t.Errorf("the staged SKILL.md is not the expected text:\n%s", staged)
 	}
@@ -267,6 +262,17 @@ func TestStageRefusals(t *testing.T) {
 	}
 }
 
+// A file and its mode must not read like another file's name.
+func TestListingTellsAnExecutableFromAnOddName(t *testing.T) {
+	a, b := t.TempDir(), t.TempDir()
+	put(t, a+"/run.sh", "x\n", 0o755)
+	put(t, b+"/run.sh x", "x\n", 0o644)
+	la, _ := Listing(a)
+	if lb, _ := Listing(b); la == lb {
+		t.Error("an executable run.sh and a plain file named \"run.sh x\" list alike")
+	}
+}
+
 func TestUnsafeLayoutsAreRefused(t *testing.T) {
 	for _, row := range []struct {
 		name, rel string
@@ -370,5 +376,15 @@ func TestStageNeverOverwritesAndRollsBack(t *testing.T) {
 	}
 	if left := leftovers(t, g.root); len(left) != 0 {
 		t.Errorf("a failed stage left %v", left)
+	}
+	h := newFixture(t) // another writer replaces the record after the link and before the failed rename
+	_, err = stage(h.root, h.src, []string{"kwrite"}, func(string, string) error {
+		p := recordPath(h.root, "crw-kwrite")
+		must(t, os.Remove(p))
+		put(t, p, "theirs", 0o644)
+		return errors.New("injected")
+	})
+	if got := slurp(t, recordPath(h.root, "crw-kwrite")); err == nil || got != "theirs" {
+		t.Errorf("another writer's record was removed: %v %q", err, got)
 	}
 }
