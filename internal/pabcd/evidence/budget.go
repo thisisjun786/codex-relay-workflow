@@ -75,7 +75,7 @@ func ResolveTombstone(cwd, sessionID string, p Payload) bool {
 func resolveTombstone(cwd, sessionID string, p Payload, lock lockFunc) bool {
 	agentID, turnID, _ := tombstoneIdentity(p)
 	removed := false
-	err := lock(cwd, sessionID, func() error {
+	_ = lock(cwd, sessionID, func() error { // a lock that cannot be had never runs the function, so removed stays false
 		s := state.ReadState(cwd, sessionID)
 		next := slices.DeleteFunc(slices.Clone(s.UnverifiedSubagents), func(e state.UnverifiedSubagent) bool {
 			return sameAgent(e, agentID, turnID)
@@ -90,7 +90,7 @@ func resolveTombstone(cwd, sessionID string, p Payload, lock lockFunc) bool {
 		removed = true
 		return nil
 	})
-	return err == nil && removed
+	return removed
 }
 
 // storedVerdicts is the number of verdicts the session file holds, or -1 when that cannot be told.
