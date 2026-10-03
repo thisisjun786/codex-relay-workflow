@@ -36,8 +36,24 @@ const (
 )
 
 // RefreshResolved is a path git could not merge in one hop and the blob the head holds for it (empty when the resolution deleted the file): what a hand put there is the one thing the relay cannot prove,
-// so it is recorded for a reviewer to read.
-type RefreshResolved struct{ Path, Blob string }
+// Rule is the proved mechanical rule, or empty when the parent must name and review the file.
+type RefreshResolved struct{ Path, Blob, Rule string }
+
+// RefreshMechanicalChecker evaluates selected conflict paths in one already proved merge.
+// The skill package registers its existing checker at initialization to avoid an import cycle.
+// A missing checker leaves every path manual; a refusal never becomes a manual override.
+type RefreshMechanicalChecker func(context.Context, string, RefreshStep, []Region, []string) (*RefreshMechanicalRefusal, error)
+type RefreshMechanicalRefusal struct{ Detail string }
+
+var refreshMechanical RefreshMechanicalChecker
+
+// RegisterRefreshMechanical is initialization-only, like command registration.
+func RegisterRefreshMechanical(check RefreshMechanicalChecker) {
+	if check == nil || refreshMechanical != nil {
+		panic("base refresh mechanical checker registered twice or nil")
+	}
+	refreshMechanical = check
+}
 
 // RefreshStep is one merge of the chain: the previous head (first parent), the commit of the base that was merged (second parent), the commit and its tree, and the paths that needed a hand resolution.
 type RefreshStep struct {
@@ -51,12 +67,14 @@ type refreshRefusal struct{ Code, Detail string }
 // refreshProof is a passed proof: the merges from the accepted head to the refreshed head, oldest first.
 type refreshProof struct{ Steps []RefreshStep }
 
-// resolvedPaths is every path the chain needed a hand resolution for, sorted and without repeats.
+// resolvedPaths is every path requiring a manual name in any hop, sorted without repeats.
 func (p refreshProof) resolvedPaths() []string {
 	seen := map[string]bool{}
 	for _, s := range p.Steps {
 		for _, r := range s.Resolved {
-			seen[r.Path] = true
+			if r.Rule == "" {
+				seen[r.Path] = true
+			}
 		}
 	}
 	out := make([]string, 0, len(seen))
@@ -65,6 +83,38 @@ func (p refreshProof) resolvedPaths() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func (p *refreshProof) applyMechanical(ctx context.Context, checkout string, regions []Region) (*refreshRefusal, error) {
+	if refreshMechanical == nil {
+		return nil, nil
+	}
+	for i := range p.Steps {
+		st := &p.Steps[i]
+		var paths, descriptions []string
+		rules := map[string]string{}
+		for _, r := range st.Resolved {
+			if rule, ok := MechanicalRuleFor([][]Region{regions}, r.Path); ok {
+				paths = append(paths, r.Path)
+				descriptions = append(descriptions, fmt.Sprintf("%s (%s)", r.Path, rule))
+				rules[r.Path] = rule
+			}
+		}
+		if len(paths) == 0 {
+			continue
+		}
+		why, err := refreshMechanical(ctx, checkout, *st, regions, paths)
+		if err != nil {
+			return nil, fmt.Errorf("mechanical resolution of %s: %w", strings.Join(descriptions, ", "), err)
+		}
+		if why != nil {
+			return &refreshRefusal{Code: RefreshTreeDiffers, Detail: fmt.Sprintf("mechanical resolution of %s: %s", strings.Join(descriptions, ", "), why.Detail)}, nil
+		}
+		for j := range st.Resolved {
+			st.Resolved[j].Rule = rules[st.Resolved[j].Path]
+		}
+	}
+	return nil, nil
 }
 
 var refreshCommitPattern = regexp.MustCompile("^[0-9a-f]{40}([0-9a-f]{24})?$")

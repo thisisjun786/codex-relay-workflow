@@ -307,11 +307,19 @@ func runBaseRefresh(ctx context.Context, services dispatch.Services, args dispat
 	if err != nil {
 		return nil, hostFailure(err)
 	}
+	return baseRefreshObject(result), nil
+}
+
+func baseRefreshObject(result RefreshResult) contract.OrderedObject {
 	steps := make([]any, len(result.Steps))
 	for i, st := range result.Steps {
 		resolved := make([]any, len(st.Resolved))
 		for j, r := range st.Resolved {
-			resolved[j] = contract.OrderedObject{{Key: "path", Value: r.Path}, {Key: "blob", Value: optionalText(r.Blob)}}
+			entry := contract.OrderedObject{{Key: "path", Value: r.Path}, {Key: "blob", Value: optionalText(r.Blob)}}
+			if r.Rule != "" {
+				entry = append(entry, contract.Field{Key: "rule", Value: r.Rule})
+			}
+			resolved[j] = entry
 		}
 		steps[i] = contract.OrderedObject{{Key: "previous", Value: st.Previous}, {Key: "base_parent", Value: st.BaseParent}, {Key: "head", Value: st.Head}, {Key: "tree", Value: st.Tree}, {Key: "resolved", Value: resolved}}
 	}
@@ -322,7 +330,7 @@ func runBaseRefresh(ctx context.Context, services dispatch.Services, args dispat
 	return contract.OrderedObject{{Key: "ok", Value: true}, {Key: "schema", Value: SchemaBaseRefresh}, {Key: "plan_id", Value: result.PlanID}, {Key: "node_id", Value: result.NodeID},
 		{Key: "acceptance_id", Value: result.AcceptanceID}, {Key: "refresh_id", Value: result.RefreshID}, {Key: "refresh_seq", Value: result.Seq}, {Key: "relationship_id", Value: result.RelationshipID},
 		{Key: "execution_generation", Value: result.Generation}, {Key: "event_id", Value: result.EventID}, {Key: "head_sha", Value: result.HeadSHA}, {Key: "base_repository", Value: result.BaseRepository},
-		{Key: "base_ref", Value: result.BaseRef}, {Key: "base_tip_sha", Value: result.BaseTipSHA}, {Key: "steps", Value: steps}, {Key: "resolved_paths", Value: paths}, {Key: "replayed", Value: result.Replayed}}, nil
+		{Key: "base_ref", Value: result.BaseRef}, {Key: "base_tip_sha", Value: result.BaseTipSHA}, {Key: "steps", Value: steps}, {Key: "resolved_paths", Value: paths}, {Key: "replayed", Value: result.Replayed}}
 }
 
 func runDecision(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
