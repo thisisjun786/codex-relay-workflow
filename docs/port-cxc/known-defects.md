@@ -511,3 +511,7 @@ The pinned oracle already publishes through an exclusive 0600 temporary file and
 
 - The upstream RepoMapper assets contain 158 trailing-whitespace lines and two extra final blank lines across 11 files (`skills/repo-map/scripts/importance.py:44-52`, `repomap.py:21-232`, `repomap_class.py:45-615`, `scm.py:47-58`, `utils.py:23-29` and the vendored query files). The tool-staged copies retain them: full-range `git diff --check` reports 160 findings, while the recorded manual edits are clean; port: kept.
 - The visualizer's optional upstream freshness helper still selects its source with `CXC_VISUALIZE_ROOT` (`skills/dev-visualizer/upstream/sync-check.sh:7`); the settled name table does not rename that upstream-maintenance override, so the staged use-time helper retains it; port: kept.
+
+## CRW-358 — goalplan definition integrity
+
+- Repeated unknown `criteriaIds` produce repeated identical reasons, so a caller that displays only the first four reasons can hide later diagnoses (pabcd-state/src/goalplan.ts:1574-1578 at v0.2.40); port: kept.

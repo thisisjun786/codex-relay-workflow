@@ -1,0 +1,15 @@
+{
+  "issue": "CRW-358",
+  "pending": [
+    "cli__loop__refusals",
+    "cli__loop__work_phases_tasks_and_completion",
+    "cli__loop__init_show_validate_ready",
+    "cli__loop__criteria_questions_and_steer",
+    "cli__loop__nongit_bound_cycle_refused",
+    "hook__pre-tool-use-attaching-skills__final_gate_web_criterion_requires_qa",
+    "hook__pre-tool-use-attaching-skills__final_gate_prerequisites_present_allowed",
+    "hook__pre-tool-use-guarding-goal-complete__bound_plan_with_open_work_denied"
+  ],
+  "identical": [],
+  "intentionally-changed": []
+}
