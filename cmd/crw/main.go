@@ -17,6 +17,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/adapter"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/buildinfo"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install"
 	"github.com/thisisjun786/codex-relay-workflow/internal/skill"
@@ -106,7 +107,7 @@ func run(ctx context.Context, program string, args []string, stdout, stderr io.W
 }
 
 func runAt(ctx context.Context, program string, args []string, stdout, stderr io.Writer, started time.Time) int {
-	cli.Version = version
+	buildinfo.Version = version
 	switch filepath.Base(program) {
 	case "codex-session-relay":
 		return relay(ctx, program, args, stdout, stderr)
@@ -153,6 +154,9 @@ func modes() []mode {
 		{"relay", true, func(c invocation) int { return relay(c.ctx, "crw relay", c.args, c.stdout, c.stderr) }},
 		{"bridge", true, func(c invocation) int { return bridge(c.ctx, c.program, c.args) }},
 		{"hook", true, func(c invocation) int {
+			if claimed, code := runComponentHook(c, os.Stdin, componentHooks()); claimed {
+				return code
+			}
 			if harness.ClaimsHook(c.args) {
 				return harness.Hook(c.ctx, c.args, os.Stdin, c.stdout, c.stderr, os.LookupEnv, harness.Legs())
 			}

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -384,6 +385,11 @@ func stableTargets(t *testing.T, value any) any {
 	if err != nil {
 		t.Fatal(err)
 	}
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw = []byte(strings.ReplaceAll(string(raw), executable, "<runtime executable>"))
 	names := map[string]string{}
 	clean := derivedTargetPattern.ReplaceAllStringFunc(string(raw), func(key string) string {
 		if name, ok := names[key]; ok {
