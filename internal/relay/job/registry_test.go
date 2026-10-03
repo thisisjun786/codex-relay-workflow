@@ -274,6 +274,17 @@ func TestListRecordsReconcilesAndSkipsJunk(t *testing.T) { // oracle: only the r
 	if again, _ := ReadRecord(ws, "a"); again.Status != StatusComplete {
 		t.Error("the correction is persisted")
 	}
+	// The oracle's writes read its clock too: a ticks 3 times (stamp, temporary name, ledger row), so b is read at 00:10:00.003 and its
+	// 15,001 ms of age says failed; a record write that left the clock alone would read 14,999 and say running.
+	ws = workspace(t)
+	put(t, ExitPath(ws, "a"), "0")
+	save(t, ws, mk(ws, "a"))
+	late := mk(ws, "b")
+	late.StartedAt = "2026-09-09T00:09:45.003Z"
+	save(t, ws, late)
+	if recs, _ := ListRecords(ws, ticking()); len(recs) != 2 || recs[1].Status != StatusFailed {
+		t.Errorf("a ticking clock: %+v", recs)
+	}
 }
 
 func TestTheWakeSwitches(t *testing.T) {

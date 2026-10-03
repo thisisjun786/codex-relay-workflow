@@ -14,12 +14,17 @@ import (
 // A wait step is how a scenario outlasts a detached process: it returns when a file the glob names is there, and the next step sees it.
 func TestRunScenario_waits_for_a_file_a_detached_process_writes(t *testing.T) {
 	o := shOptions(t)
-	time.AfterFunc(300*time.Millisecond, func() {
-		dirs, _ := filepath.Glob(filepath.Join(o.Scratch, "cxc-rec-*", "ws"))
-		for _, dir := range dirs {
-			_ = os.WriteFile(filepath.Join(dir, "late.exit"), []byte("3"), 0o644)
+	go func() { // the file comes 300 ms after the case's workspace exists, however long the case takes to be made
+		for deadline := time.Now().Add(15 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+			if dirs, _ := filepath.Glob(filepath.Join(o.Scratch, "cxc-rec-*", "ws")); len(dirs) > 0 {
+				time.Sleep(300 * time.Millisecond)
+				if err := os.WriteFile(filepath.Join(dirs[0], "late.exit"), []byte("3"), 0o644); err != nil {
+					t.Error(err)
+				}
+				return
+			}
 		}
-	})
+	}()
 	got, err := RunScenario(shRuntime{}, o, Scenario{ID: "cli__sh__waits", Steps: []Step{{Wait: "ws/*.exit"}, {CLI: []string{"read code < late.exit; printf %s \"$code\""}}}})
 	if err != nil || len(got.Steps) != 2 || got.Steps[0].Action != "wait" || got.Steps[1].StdoutBytes() != "3" {
 		t.Fatalf("%+v %v", got.Steps, err)

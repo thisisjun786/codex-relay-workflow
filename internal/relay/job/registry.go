@@ -94,12 +94,15 @@ func encode(rec BgRecord) ([]byte, error) {
 }
 
 // WriteRecord publishes the record under its id in the workspace's store (writeRecord).
-func WriteRecord(ws string, rec BgRecord) error {
+func WriteRecord(ws string, rec BgRecord) error { return writeRecord(ws, rec, time.Now) }
+
+// writeRecord reads the clock once for the temporary name, as atomicWrite reads Date.now, so a driven clock ticks as the oracle's does.
+func writeRecord(ws string, rec BgRecord, clock func() time.Time) error {
 	b, err := encode(rec)
 	if err != nil {
 		return err
 	}
-	return AtomicWrite(ws, RecordPath(ws, rec.ID), string(b))
+	return atomicWrite(ws, RecordPath(ws, rec.ID), string(b), os.Getpid(), clock().UnixMilli())
 }
 
 // ReadRecord is the record of that id, or false when its file is missing, is not a JSON object or fails isRecord (readRecord).
@@ -218,7 +221,7 @@ func Reconcile(ws string, rec BgRecord, clock func() time.Time) (BgRecord, error
 		if next.EndedAt == nil {
 			next.EndedAt = &stamp
 		}
-		return settle(ws, rec, next, event)
+		return settle(ws, rec, next, event, clock)
 	case exit.State == "pending":
 		// The exit code is on the way, so stay running, but only for the grace window. A file whose mtime cannot be read is not stale,
 		// and the pid test here never looks at the start token.
@@ -243,15 +246,15 @@ func Reconcile(ws string, rec BgRecord, clock func() time.Time) (BgRecord, error
 	}
 	// Dead, or another process owns the pid: the shell went away without an exit file, so the outcome is unknown.
 	next.Status, next.ExitCode, next.EndedAt = StatusFailed, nil, &stamp
-	return settle(ws, rec, next, event)
+	return settle(ws, rec, next, event, clock)
 }
 
-// settle writes the corrected record and then its ledger row.
-func settle(ws string, rec, next BgRecord, event Event) (BgRecord, error) {
-	if err := WriteRecord(ws, next); err != nil {
+// settle writes the corrected record and then its ledger row, each reading the clock once.
+func settle(ws string, rec, next BgRecord, event Event, clock func() time.Time) (BgRecord, error) {
+	if err := writeRecord(ws, next, clock); err != nil {
 		return rec, err
 	}
-	AppendLedger(ws, event)
+	_ = appendLedger(ws, event, clock)
 	return next, nil
 }
 
@@ -343,10 +346,10 @@ func MarkDelivered(ws string, recs []BgRecord, clock func() time.Time) []BgRecor
 	for _, rec := range recs {
 		next := rec
 		next.DeliveredAt = &stamp
-		if WriteRecord(ws, next) != nil {
+		if writeRecord(ws, next, clock) != nil {
 			continue
 		}
-		AppendLedger(ws, Event{{"event", "delivered"}, {"id", rec.ID}, {"sessionId", opt(cmp.Or(rec.AdoptedBy, rec.SessionID))}})
+		_ = appendLedger(ws, Event{{"event", "delivered"}, {"id", rec.ID}, {"sessionId", opt(cmp.Or(rec.AdoptedBy, rec.SessionID))}}, clock)
 		stamped = append(stamped, rec)
 	}
 	return stamped
@@ -367,10 +370,10 @@ func AdoptOrphans(ws string, sessionID *string, clock func() time.Time) ([]BgRec
 		}
 		next := rec
 		next.AdoptedBy = sessionID
-		if err = WriteRecord(ws, next); err != nil {
+		if err = writeRecord(ws, next, clock); err != nil {
 			break
 		}
-		AppendLedger(ws, Event{{"event", "adopted"}, {"id", rec.ID}, {"sessionId", *sessionID}, {"at", at}})
+		_ = appendLedger(ws, Event{{"event", "adopted"}, {"id", rec.ID}, {"sessionId", *sessionID}, {"at", at}}, clock)
 		adopted = append(adopted, next)
 	}
 	return adopted, err
