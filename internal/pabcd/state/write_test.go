@@ -441,27 +441,35 @@ func TestEnsureStateFallbackKeepsAFileThatReplacedTheOneItCreated(t *testing.T) 
 	}
 }
 
-func TestWriteNewReportsAFileItCannotRemove(t *testing.T) {
+func TestWriteNewReportsAFileItCannotRemoveOrEvenLookAt(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("a read-only directory does not stop root")
 	}
-	cwd, id := t.TempDir(), "write-new"
-	if err := makeSessionsDir(cwd); err != nil {
-		t.Fatal(err)
-	}
-	final := StatePath(cwd, id)
-	t.Cleanup(func() { _ = os.Chmod(filepath.Dir(final), 0o755) })
-	err := writeNew(final, []byte("data"), func(s ensureStep, path string) error {
-		if s != stepWrite {
-			return nil
+	for _, c := range []struct {
+		name string
+		mode os.FileMode
+	}{{"a read-only directory: the file cannot be unlinked", 0o500}, {"a directory without search permission: the file cannot be looked at", 0o000}} {
+		cwd, id := t.TempDir(), "write-new"
+		if err := makeSessionsDir(cwd); err != nil {
+			t.Fatal(err)
 		}
-		if err := os.Chmod(filepath.Dir(final), 0o500); err != nil { // the file stays, because it cannot be unlinked
-			return err
+		dir := filepath.Dir(StatePath(cwd, id))
+		t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+		err := writeNew(StatePath(cwd, id), []byte("data"), func(s ensureStep, path string) error {
+			if s != stepWrite {
+				return nil
+			}
+			if err := os.Chmod(dir, c.mode); err != nil { // the file stays, and the failure has to say so
+				return err
+			}
+			return syscall.ENOSPC
+		})
+		if err := os.Chmod(dir, 0o755); err != nil {
+			t.Fatal(err)
 		}
-		return syscall.ENOSPC
-	})
-	if !errors.Is(err, syscall.ENOSPC) || !errors.Is(err, syscall.EACCES) || !slices.Equal(sessionFiles(cwd), []string{id + ".json"}) {
-		t.Fatalf("%v, files %v", err, sessionFiles(cwd))
+		if !errors.Is(err, syscall.ENOSPC) || !errors.Is(err, syscall.EACCES) || !slices.Equal(sessionFiles(cwd), []string{id + ".json"}) {
+			t.Errorf("%s: %v, files %v", c.name, err, sessionFiles(cwd))
+		}
 	}
 }
 

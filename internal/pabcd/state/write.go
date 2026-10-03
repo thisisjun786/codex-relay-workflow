@@ -220,10 +220,14 @@ func writeNew(path string, data []byte, fail func(ensureStep, string) error) err
 	if err = errors.Join(err, f.Close()); err == nil {
 		return nil
 	}
-	if now, statErr := os.Lstat(path); statErr == nil && os.SameFile(made, now) {
+	now, statErr := os.Lstat(path)
+	switch {
+	case statErr == nil && os.SameFile(made, now):
 		if rmErr := os.Remove(path); rmErr != nil && !errors.Is(rmErr, fs.ErrNotExist) {
 			err = errors.Join(err, rmErr)
 		}
+	case statErr != nil && !errors.Is(statErr, fs.ErrNotExist):
+		err = errors.Join(err, statErr) // the file cannot even be looked at, so it cannot be removed, and the failure says so
 	}
 	return err
 }
