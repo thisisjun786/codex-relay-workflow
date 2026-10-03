@@ -118,7 +118,11 @@ anything was installed or demonstrated afterwards. Use
 establish and [Implementation Done](../../crw-plan/references/integrations.md#implementation-done)
 for what a landing requires. The Devin and Codex reviews are references and not gates
 ([Devin and Codex reviews are references, not merge gates](../../crw-run/references/merge-readiness.md#devin-and-codex-reviews-are-references-not-merge-gates)): a skipped or
-missing review is recorded as such, never as a review that passed.
+missing review is recorded as such, never as a review that passed. Read each reviewer's one run as that
+section reads it (in progress, finished with N threads, skipped, or no signal by a time), and read the review
+threads on the head against the delivery record's `threadsSeen`: a thread the record does not list is a late
+thread, reported as its own row with its grade and whose move it is
+([Late review threads](../../crw-run/references/merge-readiness.md#late-review-threads), case M15).
 
 ## Surface the disagreements, not the inventory
 
@@ -408,3 +412,19 @@ lifecycle work to the task named by the parent's stable coordinator binding, or 
 is named. Do not create, activate or repair a goal from a status call. A checkpoint moves approved
 work; it does not change how a task is run.
 Preserved: the goal lifecycle's own owner, and an accurate reason for the stall.
+
+### M15 A review thread arrived after the receipt
+
+Observed: a delivery's record was handed over, and a review thread, from Devin or Codex or from any other reviewer,
+now sits on its head that the record's `threadsSeen` does not list. The relay's restatement would read it as `late_finding`, resolved or not.
+Action: report it as its own row: the thread, its grade as the reviewer wrote it, the stage of the delivery and
+whose move it is. A minor thread is the coordinator's: where the installed relay can record a disposition
+(`merge-evidence --late-dispositions`) it is recorded and nothing goes back to the child; where it cannot, the child
+only emits its receipt again, before the acceptance. A red, P0, P1 or security thread, or a P2 or P3 whose effect is
+blocking, is the child's ordinary correction before the acceptance. After the acceptance of a current result no
+correction can reach the child, so such a thread, and a minor one that cannot be recorded, leaves the candidate held
+and reported on the coordination record. After the merge it is new work. A status call reads the thread and
+triages, replies to and resolves nothing: the triage is the coordinator's
+([Late review threads](../../crw-run/references/merge-readiness.md#late-review-threads)).
+Preserved: the child's judged dispositions, the coordinator's own triage, and the difference between a review
+that finished and a record that saw it.
