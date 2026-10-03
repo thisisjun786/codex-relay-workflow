@@ -168,6 +168,12 @@ func classify(left, right string, declarations map[string][]Region, names, files
 			if len(b) == 0 {
 				driftSet[right] = true
 			}
+			// a path a delete, a rename or a hotspot names is exclusive at that place for the node that declared it, whether or not the other node declared it (CRW-431: that hold is on the place and no longer on the repository)
+			for _, r := range append(append([]Region(nil), a...), b...) {
+				if placeHold(r) {
+					fileGrade = GradeExclusive
+				}
+			}
 		} else {
 			fileGrade = ""
 			for _, x := range a {
