@@ -197,30 +197,46 @@ func TestIntegritySchemaAndQa(t *testing.T) {
 	if EffectiveSchemaVersion(p, false) != 1 || EffectiveSchemaVersion(p, true) != 2 {
 		t.Error("absent schema defaults/promotion differ")
 	}
-	for _, version := range []float64{math.NaN(), math.Inf(1), math.Inf(-1), math.Copysign(0, -1), 0, 1, 2, 2.5, 3} {
-		p.SchemaVersion = &version
-		for _, marker := range []bool{false, true} {
-			want := version
-			if marker {
-				want = math.Max(version, 2)
-			}
+	// These answers were observed independently in the Node oracle, including -0.
+	for _, c := range []struct{ declared, plain, promoted float64 }{
+		{math.NaN(), math.NaN(), math.NaN()}, {math.Inf(1), math.Inf(1), math.Inf(1)},
+		{math.Inf(-1), math.Inf(-1), 2}, {math.Copysign(0, -1), math.Copysign(0, -1), 2},
+		{0, 0, 2}, {1, 1, 2}, {2, 2, 2}, {2.5, 2.5, 2.5}, {3, 3, 3},
+	} {
+		p.SchemaVersion = &c.declared
+		for i, want := range []float64{c.plain, c.promoted} {
+			marker := i == 1
 			got := EffectiveSchemaVersion(p, marker)
 			if math.IsNaN(want) {
 				if !math.IsNaN(got) {
 					t.Errorf("NaN promoted to %v", got)
 				}
 			} else if got != want || math.Signbit(got) != math.Signbit(want) {
-				t.Errorf("schema %v marker %v = %v, want %v", version, marker, got, want)
+				t.Errorf("schema %v marker %v = %v, want %v", c.declared, marker, got, want)
 			}
 		}
 	}
-	for _, surface := range []CriterionSurface{"", SurfaceLogic, SurfaceWeb, SurfaceTUI, SurfaceDesktop, "unknown"} {
-		p.Criteria = []GoalplanCriterion{{Surface: SurfaceLogic, Status: CriterionMet}, {Surface: surface, Status: CriterionMet}}
-		want := surface == SurfaceWeb || surface == SurfaceTUI || surface == SurfaceDesktop
-		if ComputeQaRequired(p) != want {
-			t.Errorf("QA surface %q", surface)
+	for _, c := range []struct {
+		surface CriterionSurface
+		want    bool
+	}{
+		{"", false}, {SurfaceLogic, false}, {SurfaceWeb, true}, {SurfaceTUI, true}, {SurfaceDesktop, true}, {"unknown", false},
+	} {
+		p.Criteria = []GoalplanCriterion{{Surface: SurfaceLogic, Status: CriterionMet}, {Surface: c.surface, Status: CriterionMet}}
+		if ComputeQaRequired(p) != c.want {
+			t.Errorf("QA surface %q", c.surface)
 		}
 	}
+}
+
+func TestIntegrityCompletionUsesPhaseLocalOrder(t *testing.T) {
+	other, phase := integrityPhase("other"), integrityPhase("p", "ghost", "other", "ghost")
+	other.Tasks = []GoalplanTask{{ID: "a", Status: TaskDone}, {ID: "z", Status: TaskDone}}
+	phase.Status = WorkPhaseDone
+	phase.Tasks = []GoalplanTask{integrityTask("z"), integrityTask("a"), {ID: "leaf", Status: TaskDone, DependsOn: []string{"z", "a", "z", "missing"}}}
+	integrityReasonsEqual(t, GoalplanDependencyCompletionReasons(integrityPlan(other, phase)),
+		"work phase p is done while dependency work phase(s) are not done: ghost, other",
+		"task p/leaf is done while dependency task(s) are not done: z, a, missing")
 }
 
 func TestIntegritySupersededTargets(t *testing.T) {

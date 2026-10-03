@@ -421,3 +421,7 @@ No new oracle defect was identified in the directive text and assembly of `pabcd
 - `readPriorManifest` swallows a read failure and activation replaces the unreadable file, losing original managed-key restoration values (source `config-guard/src/activate.ts:154-162`, `:270`, `:282`, `:299`; intentionally-changed recorded case `unreadable_prior_manifest` in `testdata/activation-changes.json`, driven by `TestActivationIntentionallyChangedCases`); port: fixed (data loss: unreadable existing config, manifest and backup destinations are refused without overwriting them; readable malformed manifests remain absent as in the oracle).
 - A hard feature-enable failure leaves earlier enabled flags and the backup but publishes no new install manifest, so an initial failed activation has no manifest-based revert record (source `config-guard/src/activate.ts:233-246`, `:299`; `TestActivateFailurePaths/hard`); port: kept.
 - Repeated activation carries managed-key ownership and original values but recomputes flag prior state and ownership from live flags, so flags enabled by an earlier activation become recorded as pre-existing (source `config-guard/src/activate.ts:220-231`, `:279-286`; `TestActivateRerunKeepsManagedPriorAndOwnership`); port: kept.
+
+## CRW-358 — goalplan definition integrity
+
+- Repeated unknown `criteriaIds` produce repeated identical reasons, so a caller that displays only the first four reasons can hide later diagnoses (pabcd-state/src/goalplan.ts:1574-1578 at v0.2.40); port: kept.
