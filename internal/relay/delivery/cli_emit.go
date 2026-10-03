@@ -112,7 +112,7 @@ func cmdEmit(c *cliRun) (any, error) {
 	intake := store.ReceiptIntake{Store: d.Store, Now: c.clock.ISO, Minimum: store.BestEffortDetection}
 	stored, err := intake.AcceptChildReceiptWith(c.ctx, []byte(dumps(payload)), store.TurnReference{ThreadID: thread, TurnID: turn, Status: status}, options)
 	if err != nil {
-		return nil, withContinuationHint(err)
+		return nil, withTurnStatusHint(withContinuationHint(err), outcome, status, proof)
 	}
 	receipt := Obj{}
 	for _, f := range loadsObj(stored.Record) {
@@ -153,6 +153,27 @@ func withContinuationHint(err error) error {
 		return err
 	}
 	return store.RefusedBecause(refused.Reason, refused.Detail+"; to continue this generation from this turn, re-run this emit with --continues-anchor "+quote.Shell(need.Anchor)+" --continuation-actor <your own task id> --continuation-reason <why this turn continues it>", err)
+}
+
+// withTurnStatusHint adds to the refusal of an execution-only failed or interrupted receipt that
+// states a turn still in progress, which cannot carry either outcome, the status to pass instead
+// (CRW-505). --turn-status is "inProgress" when it is left out, and a child that read the refusal
+// as "receipt not emitted" ended its turn with nothing sent. The reason, the exit code, the rule
+// and the refusal's cause are the refusal's own; any other refusal is returned as it came.
+// Without --socket the status is the child's claim, so the instruction is the matching status;
+// with it the relay read the status from the host and ignored the flag, so the way out is the
+// same emit without --socket (the child packet gives that form). Dropping --socket also drops the
+// store the socket selected when the line names no --state, so the hint keeps the store named.
+func withTurnStatusHint(err error, outcome, status, proof string) error {
+	var refused *store.RefusedError
+	if !errors.As(err, &refused) || refused.Reason != store.ReasonContradictoryObservation || status != "inProgress" || (outcome != "failed" && outcome != "interrupted") {
+		return err
+	}
+	hint := "; to report " + strconv.Quote(outcome) + " from your own live turn, re-run this emit with --turn-status " + outcome + " and nothing else changed (--turn-status defaults to \"inProgress\" when it is left out)"
+	if proof == "host_observed" {
+		hint = "; with --socket the relay reads the turn status from the host and ignores --turn-status, and the host reports this turn \"inProgress\": to report " + strconv.Quote(outcome) + " from your own live turn, re-run this emit without --socket, with --state naming the store this emit used (the socket no longer selects it), and with --turn-status " + outcome
+	}
+	return store.RefusedBecause(refused.Reason, refused.Detail+hint, err)
 }
 
 // rowObj is dict(sqlite3.Row) of a deliveries row, in the table's column order.

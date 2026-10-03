@@ -607,6 +607,14 @@ host and uses what the host actually reports. **Offline, a readiness claim can o
 stored and visible, and it becomes deliverable only once an independent observation sees that turn
 end normally. A turn that ends failed or interrupted suppresses the claim instead of promoting it.
 
+A child that itself reports `failed` or `interrupted` from its own live turn states how the turn
+ended: `--turn-status failed` or `--turn-status interrupted`, which is a claim and makes the receipt
+final. `--turn-status` is `inProgress` when it is left out, a turn in progress cannot carry those two
+outcomes, and the emit is refused `contradictory_observation`; the refusal's detail names the status
+to pass. With `--socket` the relay reads the status from the host and ignores `--turn-status`, so a
+live turn reads `inProgress` there: such an emit is made without `--socket`, with `--state` naming the
+store this emit used. `blocked_needs_input` takes no `--turn-status` and stays staged.
+
 A loop spanning several turns completes on a turn that is not the anchor, and says so in the same
 call:
 
@@ -708,7 +716,7 @@ Two limits are part of the contract. The same verdict again is a replay even whe
 
 ## Replying to a blocked receipt
 
-A child that cannot go on records a `blocked_needs_input` receipt and ends its turn. The receipt carries no artifact, so it is never the head revision of its generation and a verdict on it is refused `superseded_revision`: the parent's answer has no verdict to travel in. `decision-reply` is the relationship-level route for it. The parent returns a decision, the relay records it, and the delivery engine carries it to the child (held while the child is busy, waking it when it is idle) as a `revision_request` delivery rendered as its own message, `[codex-session-relay] parent decision`. A decision is never a verdict: it writes no ruling, and no ruling writes a decision. A `verified` or `needs_changes` verdict on a blocked receipt is still refused `superseded_revision` once the parent acknowledged it (the receipt is not the head revision), while `aborted` and `unverified` are not refused by the currency check. So the two exclude each other explicitly, each writer checking the other inside its own transaction: a receipt that carries a decision takes no first verdict, and a receipt that already has a verdict takes no decision, each refused `disposition_conflict` (a verdict on an unacknowledged receipt is refused `not_acknowledged` first, as for any verdict).
+A child that cannot go on records a `blocked_needs_input` receipt and ends its turn. The receipt carries no artifact (a file attached to it is refused `manifest_forbidden`, and the refusal says to emit the outcome again without `--artifact`, keep the reason in the blocked file and the final message, and send a file that must travel with `ready_for_review`), so it is never the head revision of its generation and a verdict on it is refused `superseded_revision`: the parent's answer has no verdict to travel in. `decision-reply` is the relationship-level route for it. The parent returns a decision, the relay records it, and the delivery engine carries it to the child (held while the child is busy, waking it when it is idle) as a `revision_request` delivery rendered as its own message, `[codex-session-relay] parent decision`. A decision is never a verdict: it writes no ruling, and no ruling writes a decision. A `verified` or `needs_changes` verdict on a blocked receipt is still refused `superseded_revision` once the parent acknowledged it (the receipt is not the head revision), while `aborted` and `unverified` are not refused by the currency check. So the two exclude each other explicitly, each writer checking the other inside its own transaction: a receipt that carries a decision takes no first verdict, and a receipt that already has a verdict takes no decision, each refused `disposition_conflict` (a verdict on an unacknowledged receipt is refused `not_acknowledged` first, as for any verdict).
 
     codex-session-relay decision-reply --event <blocked receipt> --decision <kind> --decision-turn <your turn id> --note <text|@file> [--criteria-digest <digest>]
     codex-session-relay decision-show --relationship <id>

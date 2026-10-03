@@ -15,6 +15,20 @@
     "observedAt"
   ],
   "properties": {
+    "runtime": {
+      "description": "The runtime that allocated this attempt, preserved through settlement and reconciliation. Optional for old attempts whose executing runtime was not recorded; never inferred from the current installation.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["build", "executable"],
+      "properties": {
+        "build": {"type": "string", "minLength": 1},
+        "executable": {
+          "type": ["string", "null"],
+          "pattern": "^/",
+          "description": "os.Executable of the allocating process, or null if the process could not locate itself. It is evidence, never a command to execute."
+        }
+      }
+    },
     "requestId": {
       "type": "string",
       "pattern": "^del-[0-9a-f]{12}-a[0-9]+$",

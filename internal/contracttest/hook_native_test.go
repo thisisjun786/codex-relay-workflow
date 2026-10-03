@@ -85,6 +85,11 @@ func normalizeHookParity(v any, home, key string) any {
 			}
 			out[k] = normalizeHookParity(item, home, k)
 		}
+		if key == "runtime" {
+			if _, recorded := out["executable"].(string); recorded {
+				out["executable"] = "<runtime executable>"
+			}
+		}
 		return out
 	default:
 		return v

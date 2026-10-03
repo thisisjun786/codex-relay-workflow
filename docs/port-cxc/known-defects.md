@@ -355,3 +355,53 @@ This section supersedes the seeded `port: pending` statuses for native Write/Edi
 - `readNativeCatalog` catches every read/parse failure and returns null, so an unreadable or malformed catalog is indistinguishable from a missing one (source `catalog.ts:88-105`; native oracle cases `invalid-shape`/`malformed` and the missing/directory path tests); port: kept.
 - `nativeEntries` trusts an injected native list without deduplicating it, and `buildCatalog` rejects only empty provider ids rather than blank ids, so native duplicates and a whitespace-only provider id survive (source `catalog.ts:112-121,144-151`; oracle cases `native-duplicates`/`whitespace`); port: kept.
 - `buildCatalog` and `readNativeCatalog` give the same cache entry different labels and only the latter retains its effort ladder (source `catalog.ts:102,119-120`; oracle native/build rows); port: kept.
+
+## CRW-488 — Render observation and artifact ledger
+
+- Appending a row to an unterminated render-ledger tail joins both records and the reader drops the joined line (source `pabcd-state/src/render-observations.ts:71-77`); port: fixed by CRW-488 (one guarded append preserves the tail; intentionally-changed oracle case `tail`).
+- State-directory and ledger links can direct append or reset outside the workspace, where reset truncates an external record (source `pabcd-state/src/render-observations.ts:67-77,126-132`); port: fixed by CRW-488 (workspace-confined opens preserve the external target; intentionally-changed ledger-link cases).
+- A QA declaration can name an outside screenshot, including through a symlink, and establish native evidence from it (source `pabcd-state/src/render-observations.ts:191-217`); port: fixed by CRW-488 (workspace-confined reads; intentionally-changed oracle case `outside`, internal absolute and relative links retained).
+- Failed observation calls still record an ordinary row, and a failed computer-use response still records a structured app signal (source `pabcd-state/src/render-observations.ts:250-275`); port: kept (the ledger records invocation and declared metadata, not successful semantic inspection).
+- The row reader trims JavaScript whitespace before parsing, but the native malformed checker parses the untrimmed line, so a BOM-prefixed valid row is readable and also malformed (source `pabcd-state/src/render-observations.ts:89-115,168-175`); port: kept.
+
+## Found by the PABCD phase directive and assembly port
+
+No new oracle defect was identified in the directive text and assembly of `pabcd-state/src/hook.ts:212-235,324-575` (CXC v0.2.40, commit 3c1459ac). The prefix-only resolver's unterminated-backtick matching and whole-string fail-open behavior are preserved and recorded as edge cases, not changed into a Markdown parser. The goalplan reader and active-phase selector are outside this port.
+
+## Found by the CRW-490 bg hooks port
+
+- Stop, prompt delivery and drain stamp records before handing their output to the caller, so discarded output or a broken stdout loses the notification while the job record/output files remain intact (source `plugins/codexclaw/components/bg-wake/src/hook.ts:67-70,85-87,101-103`, `cli.ts:72-77`); port: kept.
+- A read error or input over the 1Mi UTF-16-unit limit becomes an empty payload, which can still wake completions through the process cwd and `CODEX_THREAD_ID` fallback (source `plugins/codexclaw/components/bg-wake/src/cli.ts:38-47,62-68`, `hook.ts:34-41`); port: kept.
+- SessionStart adopts every undelivered terminal record not owned by this session without checking whether a previous adopting session is still alive, so a second session can take the first session's adopted completion; adoption still runs while automatic wakes are off (source `plugins/codexclaw/components/bg-wake/src/hook.ts:114-119`, `registry.ts:235-250`); port: kept.
+- Selection, delivery stamping and adoption are separate unlocked operations, so concurrent hooks can select or adopt the same completion before either stamps it; a delivery write that fails is still described by the hook and can wake again later (source `plugins/codexclaw/components/bg-wake/src/hook.ts:63-70,99-103`, `registry.ts:217-250`); port: kept.
+
+## Found by the CRW-345 job verb port
+
+- `MAX_STDIN_BYTES` counts UTF-16 units, and `readStdin` reads the whole input before applying the bound (source `plugins/codexclaw/components/bg-wake/src/cli.ts:38-45`); port: kept.
+- `flagValue` takes the first occurrence and accepts another flag as its value (source `bg-wake/src/cli.ts:81-85`); port: kept in the argv facade; the approved relay parser validates options and uses its existing last-value rule.
+- A note equal to `--` becomes the command separator, and `--json` inside the command selects record output (source `bg-wake/src/cli.ts:101-107`); port: kept in the argv facade; the approved relay contract passes parsed metadata separately and selects JSON only from declared flags.
+- `get` counts the final empty line of a newline-terminated output toward its tail and trims whitespace from the displayed output (source `bg-wake/src/cli.ts:123-127`); port: kept.
+- Manual drain returns the selected completions even when a record cannot be stamped, and stamps before the caller emits the result (source `bg-wake/src/hook.ts:81-91`, `cli.ts:170-175`); port: kept.
+- A failed `on` can lose the persistent off flag: it removes `disabled` before the `enabled-at` write (source `bg-wake/src/cli.ts:145-154`; oracle reproduction makes `enabled-at` a directory); port: fixed by writing the gate before removing the flag, covered by `TestCLIOnRetainsTheOffFlagWhenGateWriteFails` and the intentionally-changed case `testdata/cli-on-gate-failure.json`.
+
+## Found by the recall storage primitives port
+
+- Version suffixes use JavaScript Number, so state_9007199254740993.sqlite ties state_9007199254740992.sqlite and the earlier sorted name wins (source plugins/codexclaw/components/recall/src/paths.ts:35-36; TestRecallVersionedDB); port: kept.
+- A matching directory or symbolic link is eligible as the newest database, because the resolver checks only its name (source recall/src/paths.ts:32-38; TestRecallVersionedDBKeepsNonFilesAndLexicalJoin); port: kept.
+- A home containing a symlink followed by .. lists the OS-resolved directory but path.join cleans the returned path lexically, potentially naming another directory's database (source recall/src/paths.ts:32,38; TestRecallVersionedDBKeepsNonFilesAndLexicalJoin); port: kept.
+- URI mode=memory overrides a read-only SQLite open and permits writes to the temporary database (source recall/src/sqlite.ts:29-31; Node-recorded case and TestRecallSQLiteOpens); port: kept. Ordinary file paths and the empty/:memory: paths remain read-only.
+- The legacy-column retry catches every query error, so an unsafe INTEGER in git_origin_url drops origin metadata silently when the shorter SELECT succeeds (source recall/src/threads-db.ts:41-49; TestRecallThreadMetaLegacyAndUnsafeFallback); port: kept.
+- SQLite resolves column names without case sensitivity, but row keys keep their declared spelling; an ID column rather than id makes every metadata row disappear without warning (source recall/src/threads-db.ts:52; TestRecallThreadMetaWarningsAndCase); port: kept.
+- node:sqlite accepts the minimum signed 64-bit INTEGER as a rounded JavaScript number, while neighboring unsafe integers throw, consistent with an absolute-value overflow in its range check (recorded Node case; recall/src/sqlite.ts:29-36 delegates to DatabaseSync; TestRecallSQLiteMinimumIntegerOracleOverflow); port: kept.
+- An ambiguous bare named-parameter map throws on its first construction but leaves a partial per-statement alias cache, so repeating Get/All/Run can bind the first alias while the other remains NULL (recorded Node case; recall/src/sqlite.ts delegates to DatabaseSync; TestRecallSQLiteNamedOrderAndCachedAmbiguity); port: kept.
+- Named SQLite binding keys containing NUL resolve by the prefix before NUL, while unknown-name diagnostics retain the original key (recorded Node case; recall/src/sqlite.ts delegates to DatabaseSync; TestRecallSQLiteNamedOrderAndCachedAmbiguity); port: kept.
+
+## Found by the agent-thread TOML scanner port (CRW-343)
+
+- A space-separated date-time is rejected by the bare-token scan despite being in the scalar grammar (source `plugins/codexclaw/components/pabcd-state/src/agent-thread-permissions.ts:227,306-308`; recorded spaced date-time); port: kept.
+- Year 0000 uses Date.UTC's year-1900 calendar, rejecting its leap day (source `agent-thread-permissions.ts:79`; recorded `0000-02-29`); port: kept.
+- Second 60 is accepted at any minute and date, without checking whether a leap second occurred (source `agent-thread-permissions.ts:83`; recorded `12:00:60`); port: kept.
+- Raw form feed passes all four string scanners, and raw carriage return passes the multiline forms (source `agent-thread-permissions.ts:246-247`; recorded control-character strings); port: kept.
+- The first triple closing mark ends a string, so the TOML four/five-quote closing forms are rejected (source `agent-thread-permissions.ts:245`; recorded adjacent closing quotes); port: kept.
+- JavaScript whitespace such as vertical tab, form feed and non-ASCII spaces is accepted between value tokens although TOML whitespace is narrower (source `agent-thread-permissions.ts:230`; recorded whitespace arrays); port: kept.
+- A table implicitly created by a dotted assignment may later be explicitly declared, which TOML forbids (source `agent-thread-permissions.ts:182-188,212-216`; recorded dotted-assignment/table sequence); port: kept.

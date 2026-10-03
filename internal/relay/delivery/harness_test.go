@@ -354,6 +354,11 @@ func (f *fixture) tables() map[string][]map[string]any {
 func normalizeJSON(t *testing.T, v any) any {
 	raw, err := json.Marshal(v)
 	mustDo(t, err)
+	// The new attribution key remains in every golden; only this process's
+	// temporary executable name varies between runs.
+	executable, err := os.Executable()
+	mustDo(t, err)
+	raw = []byte(strings.ReplaceAll(string(raw), executable, "<runtime executable>"))
 	var out any
 	mustDo(t, json.Unmarshal(raw, &out))
 	return out

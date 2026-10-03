@@ -138,10 +138,12 @@ func (in ReceiptIntake) accept(ctx context.Context, payload []byte, observation 
 
 // checkDeliverable branches on OUTCOME before producer: a reviewable receipt must verify its
 // manifest over real bytes; an execution-only one carries no manifest and the sentinel.
+// The refusal of a manifest on an execution-only receipt says how to correct the emit, because a
+// child that reads it as "not emitted" ends its turn and nothing reaches its parent (CRW-500).
 func (in ReceiptIntake) checkDeliverable(ctx context.Context, claim ReceiptClaim, relationship Relationship) (sql.NullString, error) {
 	if claim.Outcome != ReadyForReview {
 		if manifest, isList := claim.manifest.([]any); claim.manifest != nil && !(isList && len(manifest) == 0) {
-			return sql.NullString{}, refuse(ReasonManifestForbidden, "an execution-only receipt (%s) carries no manifest, for any producer", claim.Outcome)
+			return sql.NullString{}, refuse(ReasonManifestForbidden, "an execution-only receipt (%s) carries no manifest, for any producer; emit %s again without --artifact or any manifest, keep the reason in your report (your blocked file and final message), and use ready_for_review when a file must travel", claim.Outcome, claim.Outcome)
 		}
 		if claim.RevisionHash != NoDeliverable {
 			return sql.NullString{}, refuse(ReasonOutcomeInconsistent, "an execution-only receipt (%s) carries the no-deliverable sentinel", claim.Outcome)
