@@ -80,7 +80,7 @@ func TestRecallSQLiteOpens(t *testing.T) {
 	if err != nil || !bytes.Equal(before, after) {
 		t.Fatal("read-only changed database bytes", err)
 	}
-	for _, path := range []string{"", ":memory:", "file:recall-memory?mode=memory"} {
+	for _, path := range []string{"", ":memory:"} {
 		mem := recallDB(t, path)
 		recallSQL(t, mem, "CREATE TABLE m(x)")
 		r, err := openDbReadOnly(path)
@@ -92,6 +92,15 @@ func TestRecallSQLiteOpens(t *testing.T) {
 		}
 		_ = r.Close()
 	}
+	// The oracle also lets URI mode=memory override readOnly; keep that quirk.
+	uri, err := openDbReadOnly("file:recall-memory?mode=memory")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := uri.Exec("CREATE TABLE uri_memory(x)"); err != nil {
+		t.Fatal(err)
+	}
+	_ = uri.Close()
 	if _, err := openDbReadWrite(":memory:\x00ignored"); err == nil || !strings.Contains(err.Error(), "without null bytes") {
 		t.Fatal("NUL path accepted", err)
 	}
