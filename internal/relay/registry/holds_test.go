@@ -170,6 +170,7 @@ func readingsWhere(t *testing.T, pick func(readingRow) bool) []readingRow {
 // which began as Python's settings_hold_recovery and settings_hold_reading; the SHN properties
 // below read the same tables.
 func Test25_SHN_the_recovery_and_reading_tables_are_the_goldens(t *testing.T) {
+	t.Parallel()
 	cases := holdTable(t)
 	if len(cases) != 252 {
 		t.Fatalf("%d cases", len(cases))
@@ -189,6 +190,7 @@ func hold(r readingRow) map[string]any { return pyjson.Map(r.reading["hold"]) }
 // {kind: withheld, source: attempt, reason, field}; recovery operator + settings-show, then
 // names settings-record --source user_transition.
 func Test25_SHN1_a_withheld_attempt_hold_names_the_reason_and_the_operator(t *testing.T) {
+	t.Parallel()
 	rows := readingsWhere(t, func(r readingRow) bool {
 		h := hold(r)
 		return r.reading["kind"] == "withheld" && h != nil && h["source"] == "attempt" && h["reason"] == SettingsNotPreserved
@@ -203,6 +205,7 @@ func Test25_SHN1_a_withheld_attempt_hold_names_the_reason_and_the_operator(t *te
 
 // SHN-2: a code the daemon can still clear (setting_unobservable) stays the daemon's.
 func Test25_SHN2_an_answer_the_daemon_can_clear_stays_the_daemons(t *testing.T) {
+	t.Parallel()
 	for _, source := range []string{"attempt", "pre_send"} {
 		got := holdOf(t, "withheld", SettingUnobservable, source, false)
 		if got["actor"] != "daemon" || got["command"] != SettingsShow || got["then"] != HoldDaemonThen {
@@ -218,6 +221,7 @@ func Test25_SHN2_an_answer_the_daemon_can_clear_stays_the_daemons(t *testing.T) 
 // SHN-3: after the attempt cap a settings hold is kind capped; parent recovers via show-event
 // and laterDeliveries names settings-record; next action parent_recovers_settings_hold.
 func Test25_SHN3_after_the_cap_the_parent_reads_the_report(t *testing.T) {
+	t.Parallel()
 	rows := readingsWhere(t, func(r readingRow) bool {
 		return r.reading["kind"] == "capped" && hold(r) != nil && hold(r)["source"] == "attempt"
 	})
@@ -235,6 +239,7 @@ func Test25_SHN3_after_the_cap_the_parent_reads_the_report(t *testing.T) {
 // SHN-4: a correction held on the child's settings: withheld -> operator; capped -> parent with
 // show-event; closed channel -> the correction's own then (no acknowledgement, generation-open).
 func Test25_SHN4_a_correction_held_on_the_childs_settings_is_named(t *testing.T) {
+	t.Parallel()
 	closed := holdOf(t, "channel_closed", SettingsNotPreserved, "attempt", true)
 	if !strings.Contains(closed["then"].(string), "takes no acknowledgement") || !strings.Contains(closed["then"].(string), "generation-open") ||
 		!strings.Contains(closed["laterDeliveries"].(string), "never or on-request") {
@@ -248,6 +253,7 @@ func Test25_SHN4_a_correction_held_on_the_childs_settings_is_named(t *testing.T)
 // SHN-5: a closed channel on a completion: kind channel_closed, parent recovery with show-event
 // and "never or on-request"; next action parent_acknowledges.
 func Test25_SHN5_a_closed_channel_names_the_parent(t *testing.T) {
+	t.Parallel()
 	readingsWhere(t, func(r readingRow) bool { return r.reading["kind"] == "channel_closed" && hold(r) != nil })
 	got := holdOf(t, "channel_closed", UnsupportedApprovalPolicy, "attempt", false)
 	if got["actor"] != "parent" || got["then"] != HoldChannelThen || got["laterDeliveries"] != LaterByOwner {
@@ -261,6 +267,7 @@ func Test25_SHN5_a_closed_channel_names_the_parent(t *testing.T) {
 // SHN-6: a pre-send record refusal (settings_unavailable) is {source: pre_send, detail}, the
 // operator's, with then "record it again from the creation result".
 func Test25_SHN6_a_record_refusal_before_any_attempt_is_named(t *testing.T) {
+	t.Parallel()
 	rows := readingsWhere(t, func(r readingRow) bool {
 		return hold(r) != nil && hold(r)["reason"] == SettingsUnavailable && r.reading["kind"] == "withheld"
 	})
@@ -276,6 +283,7 @@ func Test25_SHN6_a_record_refusal_before_any_attempt_is_named(t *testing.T) {
 // SHN-7: role-gate refusals carry every repair and point at refusalDetail; the refusal text is
 // the chosen withhold's own (a non-text detail is dropped, never borrowed).
 func Test25_SHN7_a_role_gate_refusal_carries_the_repair_its_refusal_names(t *testing.T) {
+	t.Parallel()
 	for _, code := range []string{"role_policy_unconfigured", "role_binding_mismatch", "settings_record_stale_for_role"} {
 		then := holdOf(t, "withheld", code, "pre_send", false)["then"].(string)
 		for _, must := range []string{"refusalDetail", "declare the role", "restart", "fix the binding or the creation"} {
@@ -298,6 +306,7 @@ func Test25_SHN7_a_role_gate_refusal_carries_the_repair_its_refusal_names(t *tes
 // SHN-8: a refusal row whose withhold did not take effect (the state is not a hold) earns no
 // hold and no recovery.
 func Test25_SHN8_a_withhold_that_did_not_take_effect_earns_no_recovery(t *testing.T) {
+	t.Parallel()
 	rows := readingsWhere(t, func(r readingRow) bool {
 		return str(r.columns["sh_state"]) == "queued" || str(r.columns["sh_hold_reason"]) == "host_lost_turn"
 	})
@@ -311,6 +320,7 @@ func Test25_SHN8_a_withhold_that_did_not_take_effect_earns_no_recovery(t *testin
 // SHN-9: the current cause wins whatever the clock: the later of the pre-send withhold and the
 // settled attempt is chosen; a later lifecycle or pause pre-send withhold is no settings hold.
 func Test25_SHN9_the_current_cause_wins(t *testing.T) {
+	t.Parallel()
 	rows := readingsWhere(t, func(r readingRow) bool {
 		p := str(r.columns["sh_presend"])
 		return r.reading["kind"] == "withheld" && (strings.Contains(p, "lifecycle_read") || strings.Contains(p, "relationship_not_active"))
@@ -325,6 +335,7 @@ func Test25_SHN9_the_current_cause_wins(t *testing.T) {
 // SHN-10: an attempt settled only by reconciliation names its cause (requestId, field kept when
 // text); a refusal whose code is not text names no cause.
 func Test25_SHN10_reconciliation_names_the_cause_and_a_non_text_code_names_none(t *testing.T) {
+	t.Parallel()
 	readingsWhere(t, func(r readingRow) bool {
 		return strings.Contains(str(r.columns["sh_settled_reconciled"]), "setting_unobservable")
 	})
@@ -341,6 +352,7 @@ func Test25_SHN10_reconciliation_names_the_cause_and_a_non_text_code_names_none(
 // SHN-12 and SHN-13: rows written before causes were recorded are undetermined, never guessed;
 // a strictly later pause or lifecycle withhold clears them; a timestamp tie stays undetermined.
 func Test25_SHN12_an_unrecorded_cause_is_undetermined(t *testing.T) {
+	t.Parallel()
 	rows := readingsWhere(t, func(r readingRow) bool { return hold(r) != nil && hold(r)["source"] == "undetermined" })
 	for _, r := range rows {
 		want := map[string]string{"withheld": "daemon", "capped": "parent", "channel_closed": "parent"}[r.reading["kind"].(string)]
@@ -354,6 +366,7 @@ func Test25_SHN12_an_unrecorded_cause_is_undetermined(t *testing.T) {
 }
 
 func Test25_SHN13_a_strictly_later_pause_or_lifecycle_withhold_is_no_settings_hold(t *testing.T) {
+	t.Parallel()
 	rows := readingsWhere(t, func(r readingRow) bool {
 		return r.reading["kind"] == "withheld" && r.reading["definitive"] == false && str(r.columns["sh_settings_at"]) != "" &&
 			(str(r.columns["sh_lifecycle_at"]) > str(r.columns["sh_settings_at"]) || str(r.columns["sh_inactive_at"]) > str(r.columns["sh_settings_at"]))
@@ -420,6 +433,7 @@ func nextRows(t *testing.T) [][9]any {
 // SHN-14: next-action precedence over the whole projection table (15552 completion and
 // correction projections), compared with the golden one row per line as the row and its action.
 func Test25_SHN14_next_action_precedence(t *testing.T) {
+	t.Parallel()
 	rows := nextRows(t)
 	lines := make([]any, len(rows))
 	seen := map[string]int{}

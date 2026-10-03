@@ -12,6 +12,7 @@ import (
 // blob read at once instead of hashing the blob, so a daemon that is stopping is not kept waiting
 // by the frozen fallback of a manifest check.
 func TestVerifyFrozenEndsWithItsContext(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	artifact := filepath.Join(root, "deliverable.txt")
 	if err := os.WriteFile(artifact, []byte("the delivered bytes"), 0o600); err != nil {

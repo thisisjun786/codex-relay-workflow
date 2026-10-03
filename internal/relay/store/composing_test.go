@@ -9,7 +9,9 @@ import (
 )
 
 func TestComposing_python_properties(t *testing.T) {
+	t.Parallel()
 	t.Run("test_a_joined_scope_commits_nothing_of_its_own", func(t *testing.T) {
+		t.Parallel()
 		s := recordStore(t)
 		ctx := context.Background()
 		err := s.Compose(ctx, func(joined context.Context, _ *sql.Conn) error {
@@ -31,6 +33,7 @@ func TestComposing_python_properties(t *testing.T) {
 		}
 	})
 	t.Run("test_a_raise_inside_a_joined_scope_rolls_back_what_the_opener_wrote", func(t *testing.T) {
+		t.Parallel()
 		s := recordStore(t)
 		ctx := context.Background()
 		failure := errors.New("interrupted")
@@ -52,6 +55,7 @@ func TestComposing_python_properties(t *testing.T) {
 		}
 	})
 	t.Run("test_nesting_without_composing_is_still_the_error_it_always_was", func(t *testing.T) {
+		t.Parallel()
 		s := recordStore(t)
 		ctx := context.Background()
 		// When: a writer opens a transaction inside another one, outside any composing scope.
@@ -74,6 +78,7 @@ func TestComposing_python_properties(t *testing.T) {
 		}
 	})
 	t.Run("test_the_composing_counter_is_released_when_the_body_raises", func(t *testing.T) {
+		t.Parallel()
 		s := recordStore(t)
 		ctx := context.Background()
 		failure := errors.New("failed")
@@ -109,6 +114,7 @@ func durableCount(t *testing.T, path, query string) int {
 }
 
 func TestTransaction_waits_for_the_one_connection_when_another_goroutine_holds_it(t *testing.T) {
+	t.Parallel()
 	// Given: one goroutine inside a transaction, holding the store's only connection.
 	s := recordStore(t)
 	ctx := context.Background()
@@ -158,6 +164,7 @@ func TestTransaction_waits_for_the_one_connection_when_another_goroutine_holds_i
 }
 
 func TestTransaction_refuses_nesting_at_once_when_the_inner_call_runs_on_another_goroutine(t *testing.T) {
+	t.Parallel()
 	// Given: an open transaction holding the store's one connection.
 	s := recordStore(t)
 	ctx := context.Background()

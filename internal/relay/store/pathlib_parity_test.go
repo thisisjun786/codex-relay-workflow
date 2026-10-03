@@ -16,6 +16,7 @@ import (
 // collapse, ".." stays, exactly two leading slashes remain a root of their own (POSIX leaves "//"
 // implementation-defined) and three or more fold to one.
 func TestPathlibSpellingIsStrOfPath(t *testing.T) {
+	t.Parallel()
 	inputs := []string{"//var/x", "///var/x", "////x", "//", "/", "", ".", "./a", "a//b/./c", "//a/../b", "//./x", "x/", "//x/", "/a//b/"}
 	var got [][2]string
 	for _, input := range inputs {
@@ -27,6 +28,7 @@ func TestPathlibSpellingIsStrOfPath(t *testing.T) {
 // A state directory spelled with two leading slashes, by --state, the environment override or
 // XDG_STATE_HOME, is the directory Python's resolve_state_dir names, and says so in its detail.
 func TestAStateDirectoryKeepsTwoLeadingSlashesAsPythonDoes(t *testing.T) {
+	// Serial: sets process environment variables, which every other running test would see.
 	root := t.TempDir()
 	t.Setenv("HOME", filepath.Join(root, "home"))
 	t.Setenv("CODEX_SESSION_RELAY_STATE", "")
@@ -54,6 +56,7 @@ func TestAStateDirectoryKeepsTwoLeadingSlashesAsPythonDoes(t *testing.T) {
 // A relative --state, override or XDG_STATE_HOME is read against the working directory as the
 // kernel names it (os.getcwd), not as $PWD spells it through a symbolic link.
 func TestARelativeStateDirectoryIsReadAgainstThePhysicalWorkingDirectory(t *testing.T) {
+	// Serial: sets process environment variables and changes the working directory, which every other running test would see.
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -92,6 +95,7 @@ func TestARelativeStateDirectoryIsReadAgainstThePhysicalWorkingDirectory(t *test
 // trailing slashes dropped, and the passwd entry when HOME is unset. The default state directory
 // is under that home, never under the working directory.
 func TestHomeIsPathlibsHome(t *testing.T) {
+	// Serial: sets process environment variables and changes the working directory, which every other running test would see.
 	root := t.TempDir()
 	t.Chdir(root)
 	t.Setenv("CODEX_SESSION_RELAY_STATE", "")
@@ -146,6 +150,7 @@ func TestHomeIsPathlibsHome(t *testing.T) {
 
 // PathlibChild and PathlibParent are str(Path(parent) / name) and str(Path(path).parent).
 func TestPathlibChildAndParentAreJoinAndParentOfPath(t *testing.T) {
+	t.Parallel()
 	inputs := []string{"//var/x", "///var/x", "//", "/", ".", "", "a", "..", "a/b/", "//x", "/x", "/a/../b"}
 	var got [][3]string
 	for _, input := range inputs {
@@ -161,6 +166,7 @@ func TestPathlibChildAndParentAreJoinAndParentOfPath(t *testing.T) {
 // through the absolute directory the selection names, so a store recording this socket is adopted
 // and one recording none is named absolute, in both runtimes.
 func TestDiscoverySpellsEveryStoreItNamesAsPythonDoes(t *testing.T) {
+	// Serial: sets process environment variables and changes the working directory, which every other running test would see.
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -245,6 +251,7 @@ func TestDiscoverySpellsEveryStoreItNamesAsPythonDoes(t *testing.T) {
 // Path(p).expanduser().absolute(). A relative path is read against the working directory the
 // kernel names, not $PWD's spelling through a link, and under the root it gains no second slash.
 func TestAbsolutePathsAreThePathsPythonNames(t *testing.T) {
+	// Serial: changes the process working directory, which every other running test would see.
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -290,6 +297,7 @@ func TestAbsolutePathsAreThePathsPythonNames(t *testing.T) {
 // spelled and the walk goes on, a link loop is kept where it is met, a ".." after a link applies
 // to the link's target, and a relative path is read against the physical working directory.
 func TestRealpathIsPathResolve(t *testing.T) {
+	// Serial: changes the process working directory, which every other running test would see.
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
