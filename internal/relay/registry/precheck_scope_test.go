@@ -38,6 +38,7 @@ func countRows(t *testing.T, r *Registry, query string) int {
 // the literal reason and detail Register has always returned, the conflict row the refusal is
 // recorded in and the journal entry, so a change to either side shows here.
 func TestPrecheckScope_RefusalsAreRegistersRefusals(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name, project, reason, detail string
 		setup                         func(*testing.T, *Registry)
@@ -134,6 +135,7 @@ func TestPrecheckScope_RefusalsAreRegistersRefusals(t *testing.T) {
 
 // Register, asked for a child that does exist, refuses the same two cases with the same words.
 func TestPrecheckScope_AgreesWithRegister(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name  string
 		setup func(*testing.T, *Registry)
@@ -161,6 +163,7 @@ func TestPrecheckScope_AgreesWithRegister(t *testing.T) {
 // A request the registry would take is not refused, and asking writes nothing: not for a bound
 // project, not for a request naming no project, and not for the project that already holds the issue.
 func TestPrecheckScope_CleanAskWritesNothing(t *testing.T) {
+	t.Parallel()
 	r := newRegistry(t)
 	bindProject(t, r, "P1", parent)
 	tables := []string{"linkage_conflicts", "journal", "scope_bindings", "scope_links", "relationships", "relationship_scope"}

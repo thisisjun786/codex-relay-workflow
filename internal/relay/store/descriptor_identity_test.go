@@ -25,8 +25,6 @@ type descriptorFixture struct {
 func newDescriptorFixture(t *testing.T) *descriptorFixture {
 	t.Helper()
 	tmp := t.TempDir()
-	t.Setenv("HOME", tmp)
-	t.Setenv("XDG_STATE_HOME", filepath.Join(tmp, "xdg"))
 	f := &descriptorFixture{t: t, tmp: tmp, a: filepath.Join(tmp, "a")}
 	f.path = filepath.Join(f.a, "relay.sqlite3")
 	f.interloperPath = filepath.Join(tmp, "b", "relay.sqlite3")
@@ -191,7 +189,9 @@ func requireRefusedTheMove(t *testing.T, detail string) {
 }
 
 func TestDescriptorIdentity_python_properties(t *testing.T) {
+	// Serial: its test_the_descriptor_is_released_on_every_path case counts the process's open descriptors, so no other test may run beside it; the other cases run in parallel once that one is done.
 	t.Run("test_rows_read_through_a_swap_are_never_attributed_to_this_store", func(t *testing.T) {
+		t.Parallel()
 		f := newDescriptorFixture(t)
 		fired := false
 		answer := ReadChallengeRows(f.swapAroundTheConnect(&fired), f.selection())
@@ -208,6 +208,7 @@ func TestDescriptorIdentity_python_properties(t *testing.T) {
 		}
 	})
 	t.Run("test_a_nonce_read_through_a_swap_cannot_prove_the_measured_store", func(t *testing.T) {
+		t.Parallel()
 		f := newDescriptorFixture(t)
 		fired := false
 		answer := NonceLookup(f.swapAroundTheConnect(&fired), f.selection(), f.interloperOnce)
@@ -219,6 +220,7 @@ func TestDescriptorIdentity_python_properties(t *testing.T) {
 		}
 	})
 	t.Run("test_a_database_that_lost_its_name_while_held_is_refused", func(t *testing.T) {
+		t.Parallel()
 		f := newDescriptorFixture(t)
 		fired := false
 		answer := ReadChallengeRows(f.moveWhileHeld(&fired, func() { f.rename(f.interloperPath, f.path) }), f.selection())
@@ -227,6 +229,7 @@ func TestDescriptorIdentity_python_properties(t *testing.T) {
 		}
 	})
 	t.Run("test_a_relocated_database_is_refused_before_it_can_leave_a_log_behind", func(t *testing.T) {
+		t.Parallel()
 		f := newDescriptorFixture(t)
 		fired := false
 		moved := filepath.Join(f.tmp, "moved.sqlite3")
@@ -236,6 +239,7 @@ func TestDescriptorIdentity_python_properties(t *testing.T) {
 		}
 	})
 	t.Run("test_the_probe_re_asks_between_its_read_and_its_write", func(t *testing.T) {
+		t.Parallel()
 		f := newDescriptorFixture(t)
 		moved := filepath.Join(f.tmp, "moved.sqlite3")
 		fired := false
@@ -257,6 +261,7 @@ func TestDescriptorIdentity_python_properties(t *testing.T) {
 		}
 	})
 	t.Run("test_the_write_probe_asks_which_file_it_opened_before_it_can_write", func(t *testing.T) {
+		t.Parallel()
 		f := newDescriptorFixture(t)
 		ctx, state := f.moveBetweenTheCheckAndTheConnect(2)
 		report := Probe(ctx, f.selection())
@@ -266,6 +271,7 @@ func TestDescriptorIdentity_python_properties(t *testing.T) {
 		requireRefusedTheMove(t, report.Access.Detail)
 	})
 	t.Run("test_the_probe_read_leg_asks_before_its_first_select", func(t *testing.T) {
+		t.Parallel()
 		f := newDescriptorFixture(t)
 		ctx, state := f.moveBetweenTheCheckAndTheConnect(1)
 		report := Probe(ctx, f.selection())
@@ -275,6 +281,7 @@ func TestDescriptorIdentity_python_properties(t *testing.T) {
 		requireRefusedTheMove(t, report.Access.Detail)
 	})
 	t.Run("test_read_only_rows_asks_before_the_callers_statement", func(t *testing.T) {
+		t.Parallel()
 		f := newDescriptorFixture(t)
 		ctx, state := f.moveBetweenTheCheckAndTheConnect(1)
 		answer := ReadChallengeRows(ctx, f.selection())
@@ -284,6 +291,7 @@ func TestDescriptorIdentity_python_properties(t *testing.T) {
 		requireRefusedTheMove(t, answer.Detail)
 	})
 	t.Run("test_nonce_lookup_asks_before_it_looks", func(t *testing.T) {
+		t.Parallel()
 		f := newDescriptorFixture(t)
 		ctx, state := f.moveBetweenTheCheckAndTheConnect(1)
 		answer := NonceLookup(ctx, f.selection(), f.written)
@@ -293,6 +301,7 @@ func TestDescriptorIdentity_python_properties(t *testing.T) {
 		requireRefusedTheMove(t, answer.Detail)
 	})
 	t.Run("test_the_ordinary_probe_describes_the_file_it_held", func(t *testing.T) {
+		t.Parallel()
 		f := newDescriptorFixture(t)
 		report := Probe(context.Background(), f.selection())
 		store := report.Store
@@ -308,6 +317,7 @@ func TestDescriptorIdentity_python_properties(t *testing.T) {
 		}
 	})
 	t.Run("test_a_store_reached_through_a_symlinked_directory_still_reads", func(t *testing.T) {
+		t.Parallel()
 		f := newDescriptorFixture(t)
 		alias := filepath.Join(f.tmp, "alias")
 		if err := os.Symlink(f.a, alias); err != nil {
@@ -364,6 +374,7 @@ func TestDescriptorIdentity_python_properties(t *testing.T) {
 		}
 	})
 	t.Run("test_a_missing_store_is_answered_rather_than_raised", func(t *testing.T) {
+		t.Parallel()
 		f := newDescriptorFixture(t)
 		answer := ReadChallengeRows(context.Background(), StateSelection{Path: filepath.Join(f.tmp, "nothing-here")})
 		if answer.Readable || len(answer.Rows) != 0 || answer.Device != 0 || answer.Detail == "" {
@@ -371,6 +382,7 @@ func TestDescriptorIdentity_python_properties(t *testing.T) {
 		}
 	})
 	t.Run("test_a_held_database_that_cannot_be_identified_is_not_described", func(t *testing.T) {
+		t.Parallel()
 		f := newDescriptorFixture(t)
 		ctx := context.WithValue(context.Background(), diagnosticSeamsKey{}, diagnosticSeams{identity: func(int) (heldIdentity, bool) { return heldIdentity{}, false }})
 		report := Probe(ctx, f.selection())
@@ -380,6 +392,7 @@ func TestDescriptorIdentity_python_properties(t *testing.T) {
 		}
 	})
 	t.Run("test_a_refused_hold_states_no_identity_at_all", func(t *testing.T) {
+		t.Parallel()
 		f := newDescriptorFixture(t)
 		ctx := context.WithValue(context.Background(), diagnosticSeamsKey{}, diagnosticSeams{hold: func(string) (*os.File, string, string) { return nil, "", "refused for the test" }})
 		report := Probe(ctx, f.selection())
@@ -393,6 +406,7 @@ func TestDescriptorIdentity_python_properties(t *testing.T) {
 		}
 	})
 	t.Run("test_a_relocated_store_is_unproven_rather_than_a_different_store", func(t *testing.T) {
+		t.Parallel()
 		f := newDescriptorFixture(t)
 		moved := filepath.Join(f.tmp, "moved.sqlite3")
 		fired := false
@@ -405,6 +419,7 @@ func TestDescriptorIdentity_python_properties(t *testing.T) {
 		requireVerdict(t, CompareStore(s, CompareExpectations{Inode: f.mine.PhysicalIdentity()}), Unproven)
 	})
 	t.Run("a_move_and_return_inside_the_connect_is_named_by_sqlite", func(t *testing.T) {
+		t.Parallel()
 		// _opened_elsewhere's case: the readlinks on both sides of the connect see this store,
 		// and only SQLite's own account of the file it opened can refuse it.
 		f := newDescriptorFixture(t)
@@ -447,6 +462,7 @@ func TestDescriptorIdentity_python_properties(t *testing.T) {
 		}})
 	}
 	t.Run("test_a_store_that_moves_during_the_read_withdraws_the_answer", func(t *testing.T) {
+		t.Parallel()
 		f := newDescriptorFixture(t)
 		fired := false
 		answer := ReadChallengeRows(moveAfterConnect(f, &fired), f.selection())
@@ -456,6 +472,7 @@ func TestDescriptorIdentity_python_properties(t *testing.T) {
 		requireRefusedTheMove(t, answer.Detail)
 	})
 	t.Run("test_a_nonce_read_while_the_store_moves_is_not_proof", func(t *testing.T) {
+		t.Parallel()
 		f := newDescriptorFixture(t)
 		fired := false
 		answer := NonceLookup(moveAfterConnect(f, &fired), f.selection(), f.written)
@@ -469,6 +486,7 @@ func TestDescriptorIdentity_python_properties(t *testing.T) {
 }
 
 func TestReadChallengeRows_refuses_when_store_moves_after_the_statement(t *testing.T) {
+	t.Parallel()
 	// Given: a store that is renamed only after the read's connection closed, so the query and
 	// every earlier binding check succeed against the file still at this pathname.
 	f := newDescriptorFixture(t)

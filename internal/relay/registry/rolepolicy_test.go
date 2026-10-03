@@ -46,6 +46,7 @@ func okMap(v any) map[string]any {
 
 // ROL-1: the relay and the bridge spell the three roles identically.
 func Test25_ROL1_the_relay_and_the_bridge_spell_the_roles_alike(t *testing.T) {
+	t.Parallel()
 	sameRoleScenario(t, "__roles__")
 	for _, role := range []string{execution.Supervisor, execution.Parent, execution.Child} {
 		if _, ok := roleScope[role]; !ok {
@@ -60,6 +61,7 @@ func Test25_ROL1_the_relay_and_the_bridge_spell_the_roles_alike(t *testing.T) {
 // ROL-2: resolution: unset -> "not set", no roles -> "declares no roles", declared -> each
 // role's own pair (supervisor none) with a digest equal to Python's.
 func Test25_ROL2_policy_resolution(t *testing.T) {
+	t.Parallel()
 	unset := sameRoleScenario(t, "resolve_unset")[0].(map[string]any)
 	if unset["declared"] != false || !strings.Contains(unset["detail"].(string), "not set") {
 		t.Fatal(unset)
@@ -78,6 +80,7 @@ func Test25_ROL2_policy_resolution(t *testing.T) {
 // ROL-3: a bound task whose record is not its role's declared pair is withheld before any send
 // with settings_record_stale_for_role, naming the expected model and user_transition.
 func Test25_ROL3_a_stale_record_for_the_role_is_refused_before_any_send(t *testing.T) {
+	t.Parallel()
 	checks := sameRoleScenario(t, "check_record_pairs")
 	for i, stale := range []bool{true, false, true, true, false} {
 		finding, _ := checks[i+1].(map[string]any)
@@ -94,6 +97,7 @@ func Test25_ROL3_a_stale_record_for_the_role_is_refused_before_any_send(t *testi
 
 // ROL-4: re-recording the transition onto the declared pair lets the same task through.
 func Test25_ROL4_re_recording_the_transition_releases_the_withhold(t *testing.T) {
+	t.Parallel()
 	steps := sameRoleScenario(t, "gate_released_by_re_record")
 	if refusedReasonOf(steps[3]) == "" || okMap(steps[5]) == nil {
 		t.Fatal(steps[3], steps[5])
@@ -102,6 +106,7 @@ func Test25_ROL4_re_recording_the_transition_releases_the_withhold(t *testing.T)
 
 // ROL-5: no resolvable policy, or a policy lacking the bound role, is role_policy_unconfigured.
 func Test25_ROL5_an_unconfigured_policy_withholds(t *testing.T) {
+	t.Parallel()
 	if got := sameRoleScenario(t, "gate_unconfigured")[3]; refusedReasonOf(got) != "role_policy_unconfigured" {
 		t.Fatal(got)
 	}
@@ -113,6 +118,7 @@ func Test25_ROL5_an_unconfigured_policy_withholds(t *testing.T) {
 
 // ROL-6: a task bound to no scope is outside the policy: any pair passes, not settings-free.
 func Test25_ROL6_an_unbound_task_is_outside_the_policy(t *testing.T) {
+	t.Parallel()
 	steps := sameRoleScenario(t, "gate_unbound")
 	gate := okMap(steps[4])
 	if steps[3] != nil || gate == nil || gate["settingsFree"] != false || gate["settings"].(map[string]any)["model"] != "anthropic/claude-opus-5" {
@@ -122,6 +128,7 @@ func Test25_ROL6_an_unbound_task_is_outside_the_policy(t *testing.T) {
 
 // ROL-7: the created-as role and the bound role must agree, whichever arrives second.
 func Test25_ROL7_the_created_role_and_the_bound_role_must_agree(t *testing.T) {
+	t.Parallel()
 	after := sameRoleScenario(t, "settings_after_binding")
 	if refusedReasonOf(after[2]) != "role_binding_mismatch" || after[3] != nil {
 		t.Fatal(after)
@@ -142,6 +149,7 @@ func Test25_ROL7_the_created_role_and_the_bound_role_must_agree(t *testing.T) {
 // ROL-8: two live role bindings are Contested (child, parent) and withheld; a superseded binding
 // is not a held role.
 func Test25_ROL8_two_live_roles_are_contested(t *testing.T) {
+	t.Parallel()
 	steps := sameRoleScenario(t, "two_live_roles")
 	if !reflect.DeepEqual(steps[3], map[string]any{"contested": []any{"child", "parent"}}) || refusedReasonOf(steps[5]) != "role_binding_mismatch" {
 		t.Fatal(steps)
@@ -154,6 +162,7 @@ func Test25_ROL8_two_live_roles_are_contested(t *testing.T) {
 // ROL-9: a re-record naming no role keeps the creation's citedRole, so another role still
 // refuses.
 func Test25_ROL9_a_re_record_keeps_the_created_role(t *testing.T) {
+	t.Parallel()
 	steps := sameRoleScenario(t, "re_record_keeps_cited_role")
 	if steps[3].(map[string]any)["citedRole"] != "parent" || refusedReasonOf(steps[4]) != "role_binding_mismatch" {
 		t.Fatal(steps)
@@ -164,6 +173,7 @@ func Test25_ROL9_a_re_record_keeps_the_created_role(t *testing.T) {
 // get_capabilities. Its Python-vs-Go whole comparison is internal/relay/cli's doctor parity
 // (todo 20); here the Go summary is checked to carry the digest Python computes for the file.
 func Test25_ROL10_the_policy_reports_its_own_digest(t *testing.T) {
+	t.Parallel()
 	steps := sameRoleScenario(t, "resolve_declared")
 	summary := steps[1].(map[string]any)["summary"].(map[string]any)
 	if summary["state"] != "declared" || summary["digest"] != "${DIGEST}" {
@@ -175,6 +185,7 @@ func Test25_ROL10_the_policy_reports_its_own_digest(t *testing.T) {
 // declared pair is not; a settings-free resume that loads as something else is refused
 // settings_differ_after_load with the model finding.
 func Test25_ROL11_a_supervisor_is_resumed_settings_free(t *testing.T) {
+	t.Parallel()
 	steps := sameRoleScenario(t, "settings_free_supervisor")
 	if okMap(steps[3])["settingsFree"] != true || okMap(steps[6])["settingsFree"] != false {
 		t.Fatal(steps[3], steps[6])
@@ -188,6 +199,7 @@ func Test25_ROL11_a_supervisor_is_resumed_settings_free(t *testing.T) {
 // ROL-12: a pair differing from the role's in model only, or in effort only, was not derived
 // from it, so a send resumes the recipient settings-free.
 func Test25_ROL12_the_unloaded_guard_checks_both_halves_of_the_pair(t *testing.T) {
+	t.Parallel()
 	steps := sameRoleScenario(t, "unloaded_guard")
 	if settingsFree(steps[1]) != false || settingsFree(steps[2]) != true || settingsFree(steps[3]) != true {
 		t.Fatal(steps)
@@ -196,6 +208,7 @@ func Test25_ROL12_the_unloaded_guard_checks_both_halves_of_the_pair(t *testing.T
 
 // ROL-13: a legacy record citing an unauthorized exception is withheld naming the id.
 func Test25_ROL13_a_legacy_unauthorized_citation_is_withheld(t *testing.T) {
+	t.Parallel()
 	gate := sameRoleScenario(t, "legacy_unauthorized_citation")[3]
 	if refusedReasonOf(gate) != "role_binding_mismatch" || !strings.Contains(refusedDetailOf(gate), "not-written") {
 		t.Fatal(gate)
@@ -204,6 +217,7 @@ func Test25_ROL13_a_legacy_unauthorized_citation_is_withheld(t *testing.T) {
 
 // ROL-14: operator exceptions are verified against the policy file.
 func Test25_ROL14_operator_exceptions_are_verified(t *testing.T) {
+	t.Parallel()
 	steps := sameRoleScenario(t, "exceptions")
 	for i, refused := range map[int]bool{2: true, 3: true, 4: true, 5: false, 6: false} {
 		if (refusedReasonOf(steps[i]) == "role_binding_mismatch") != refused {
@@ -225,6 +239,7 @@ func Test25_ROL14_operator_exceptions_are_verified(t *testing.T) {
 // ROL-15: an exception equal to the role's pair is still an exception (resumed settings-free); a
 // user-transition re-record onto the declared pair drops it and the pair is then derived.
 func Test25_ROL15_an_exception_equal_to_the_pair_is_still_an_exception(t *testing.T) {
+	t.Parallel()
 	steps := sameRoleScenario(t, "exception_equal_to_the_role_pair")
 	if settingsFree(steps[1]) != true {
 		t.Fatal(steps[1])
@@ -237,6 +252,7 @@ func Test25_ROL15_an_exception_equal_to_the_pair_is_still_an_exception(t *testin
 // ROL-16: citation carry-forward, the supervisor's user transition, the explicit clear and an
 // exception literally named "__clear__".
 func Test25_ROL16_citation_carry_forward(t *testing.T) {
+	t.Parallel()
 	carried := sameRoleScenario(t, "citation_carry_forward")
 	if carried[4].(map[string]any)["citedException"] != "one-task" || carried[6].(map[string]any)["citedException"] != "one-task" {
 		t.Fatal(carried)
@@ -257,6 +273,7 @@ func Test25_ROL16_citation_carry_forward(t *testing.T) {
 // ROL-17: register --project that will bind the child refuses a parent citation first, leaving
 // no relationship, no binding and no settings.
 func Test25_ROL17_register_refuses_a_parent_citation_for_a_child_first(t *testing.T) {
+	t.Parallel()
 	steps := sameRoleScenario(t, "register_refuses_parent_citation_for_child")
 	if refusedReasonOf(steps[2]) != "role_binding_mismatch" || steps[3] != float64(0) || steps[4] != nil || steps[5] != nil {
 		t.Fatal(steps)
@@ -266,6 +283,7 @@ func Test25_ROL17_register_refuses_a_parent_citation_for_a_child_first(t *testin
 // ROL-18: replaying a live binding survives a policy edit (same bindingId); a new binding is
 // still refused under the policy in force.
 func Test25_ROL18_a_replayed_binding_survives_a_policy_edit(t *testing.T) {
+	t.Parallel()
 	steps := sameRoleScenario(t, "replay_survives_policy_edit")
 	if okMap(steps[2])["bindingId"] != okMap(steps[4])["bindingId"] || steps[5] != "parent" {
 		t.Fatal(steps)
@@ -278,6 +296,7 @@ func Test25_ROL18_a_replayed_binding_survives_a_policy_edit(t *testing.T) {
 
 // ROL-19: settings-show separates complete from deliverable.
 func Test25_ROL19_settings_show_separates_complete_from_deliverable(t *testing.T) {
+	t.Parallel()
 	steps := sameRoleScenario(t, "settings_show_deliverable")
 	clean, stale := okMap(steps[3]), okMap(steps[5])
 	if clean["usable"] != true || clean["deliverable"] != true || clean["roleFinding"] != nil {
@@ -296,6 +315,7 @@ func Test25_ROL19_settings_show_separates_complete_from_deliverable(t *testing.T
 // not adopted (digest unchanged) until the snapshot is dropped, and the relay CLI takes it
 // before its handler even for a command that asks no role question.
 func Test25_ROL20_the_policy_snapshot_is_this_process(t *testing.T) {
+	// Serial: resets the process-wide role-policy snapshot and sets the policy environment variable, which every other running test would see.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "execution-policy.json")
 	write := func(parentModel string) {
@@ -324,6 +344,7 @@ func Test25_ROL20_the_policy_snapshot_is_this_process(t *testing.T) {
 // ROL-21: register with an incomplete child settings file refuses before the relationship
 // commits.
 func Test25_ROL21_incomplete_settings_refuse_before_the_relationship_commits(t *testing.T) {
+	t.Parallel()
 	steps := sameRoleScenario(t, "register_refuses_incomplete_settings")
 	if refusedReasonOf(steps[1]) != SettingsIncomplete || steps[2] != float64(0) {
 		t.Fatal(steps)
@@ -332,6 +353,7 @@ func Test25_ROL21_incomplete_settings_refuse_before_the_relationship_commits(t *
 
 // ROL-22: archiving is never blocked by the role policy.
 func Test25_ROL22_archiving_is_never_blocked_by_the_policy(t *testing.T) {
+	t.Parallel()
 	steps := sameRoleScenario(t, "archive_never_blocked")
 	if okMap(steps[4])["status"] != "archived" {
 		t.Fatal(steps[4])

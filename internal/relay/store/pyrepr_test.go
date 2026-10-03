@@ -10,6 +10,7 @@ import (
 // character str.isprintable() refuses, and a lone surrogate (an argv byte that is not UTF-8, or
 // the WTF-8 form a JSON decoder keeps) as \udXXX. Each expectation is that interpreter's answer.
 func TestPyReprIsPythonsReprOfAStr(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct{ text, want string }{
 		{"plain", `'plain'`},
 		{"x\u00a0y", `'x\xa0y'`},

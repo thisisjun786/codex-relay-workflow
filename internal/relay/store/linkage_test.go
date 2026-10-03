@@ -21,6 +21,7 @@ func binding(id, task, key string, revision int64, status string) ScopeBindingsR
 }
 
 func TestScopeOwners_lists_every_live_owner_newest_first_and_owner_takes_the_newest(t *testing.T) {
+	t.Parallel()
 	// Given: a store without the owner guard holding two live owners, one archived and one superseded.
 	s := recordStore(t)
 	ctx := context.Background()
@@ -52,6 +53,7 @@ func link(id, kind, upperKey, lowerKey string, revision int64) ScopeLinksRow {
 }
 
 func TestExecutionLinks_read_only_live_execution_edges(t *testing.T) {
+	t.Parallel()
 	// Given: an execution edge and a reference edge out of one scope into two.
 	s := recordStore(t)
 	ctx := context.Background()
@@ -69,6 +71,7 @@ func TestExecutionLinks_read_only_live_execution_edges(t *testing.T) {
 }
 
 func TestConflicts_converge_on_one_row_per_contest(t *testing.T) {
+	t.Parallel()
 	// Given: the same contest recorded twice in each conflict table, then a different one.
 	s := recordStore(t)
 	ctx := context.Background()
@@ -92,6 +95,7 @@ func TestConflicts_converge_on_one_row_per_contest(t *testing.T) {
 }
 
 func TestRelationshipScope_keeps_the_first_project_recorded(t *testing.T) {
+	t.Parallel()
 	// Given: a relationship attached to P1, and relationships to order.
 	s := recordStore(t)
 	ctx := context.Background()
@@ -107,6 +111,7 @@ func TestRelationshipScope_keeps_the_first_project_recorded(t *testing.T) {
 }
 
 func TestScopedRelationships_lists_a_projects_relationships_oldest_first(t *testing.T) {
+	t.Parallel()
 	// Given: two relationships attached to P, created in the opposite order to their ids.
 	s := recordStore(t)
 	ctx := context.Background()
@@ -123,6 +128,7 @@ func TestScopedRelationships_lists_a_projects_relationships_oldest_first(t *test
 }
 
 func TestDomainWrites_join_the_open_transaction_and_roll_back_with_it(t *testing.T) {
+	t.Parallel()
 	// Given: a transaction that writes a binding and reads it back before failing.
 	s := recordStore(t)
 	ctx := context.Background()
