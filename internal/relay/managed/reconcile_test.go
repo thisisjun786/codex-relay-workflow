@@ -460,8 +460,8 @@ func hostRefusal(text, status string, extra map[string]any) map[string]any {
 	return receipt
 }
 
-// A thread the receipt names that cannot be read or resumed stops the start with its reason: nothing is created and nothing more is sent, however many times it is repeated.
-func TestReconcileStopsWhenANamedThreadCannotBeReadOrResumed(t *testing.T) {
+// An unreadable orphan is replaced; a missing rollout in a no-turn listing is first resumed.
+func TestReconcileRecoversWhenANamedThreadCannotBeReadOrResumed(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct{ method, text string }{
 		{"thread/read", "thread/read: thread not found"},
@@ -472,14 +472,19 @@ func TestReconcileStopsWhenANamedThreadCannotBeReadOrResumed(t *testing.T) {
 			t.Parallel()
 			k := newReconcileKit(t, "name-timeout", "accept")
 			k.host.failures[c.method+"|t-1"] = errors.New(c.text)
-			for range 2 {
-				got := k.run()
-				k.expect(got, "incomplete", "creation_unknown", "unobservable")
-				if !strings.Contains(pyjson.Text(recon(got)["detail"]), c.text) {
-					t.Fatalf("detail %q lacks %q", recon(got)["detail"], c.text)
-				}
+			got := k.run()
+			thread, why, created, sent := "t-2", "recreated", 2, 1
+			if c.method == "thread/turns/list" {
+				thread, why, created, sent = "t-1", "adopted", 1, 2
 			}
-			k.effects(1, 0)
+			k.expect(got, "admitted", "", why)
+			if got["childTaskId"] != thread {
+				t.Fatalf("child: %v", got)
+			}
+			if again := k.run(); again["childTaskId"] != thread || again["state"] != "admitted" {
+				t.Fatalf("replay: %v", again)
+			}
+			k.effects(created, sent)
 		})
 	}
 	for _, refusal := range []map[string]any{
@@ -490,10 +495,10 @@ func TestReconcileStopsWhenANamedThreadCannotBeReadOrResumed(t *testing.T) {
 			t.Parallel()
 			k := newReconcileKit(t, "name-timeout", "accept")
 			k.host.sendReceipts = []map[string]any{refusal}
-			for range 2 {
-				k.expect(k.run(), "incomplete", "creation_unknown", "adopted")
-			}
-			k.effects(1, 1)
+			k.expect(k.run(), "incomplete", "creation_unknown", "adopted")
+			k.expect(k.run(), "admitted", "", "recreated")
+			k.run()
+			k.effects(2, 2)
 		})
 	}
 }

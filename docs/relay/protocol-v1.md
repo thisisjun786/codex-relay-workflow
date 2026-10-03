@@ -33,6 +33,28 @@ assignment or a revision request. Every generation is retained with its own anch
 auto-binds: an unrelated turn that happens to appear next does not become the registered execution.
 Pending is a reportable state, not a problem to guess away.
 
+### Executed runtime attribution
+
+New Stop hook journal rows and delivery attempt records carry optional
+`runtime: {"build": "...", "executable": "..."}`. `build` is the executing
+runtime's stamped build, or its version when no build is stamped, the same
+value doctor reports as `ownership.runtime_build`. `executable` is
+`os.Executable` of that process, or null when it could not locate itself.
+The runtime does not reread an install pointer or execute this stored path.
+
+A delivery captures this object when allocating the attempt, before transport,
+inside the existing `attempts.record` JSON column. Settlement and reconciliation
+retain the allocating runtime, including when another build performs recovery.
+Old records without attribution, including old NULL in-flight records, stay
+without it; recovery cannot establish which runtime originally sent them.
+The SQLite schema, event/request IDs and their hash inputs do not change.
+
+Journal readers accept the new closed two-field object and old rows without it.
+The native failed-dial exemption accepts both shapes without relaxing its other
+checks; excluded-invocation reports keep their existing meaning. Attribution is
+recorded evidence, not authenticated proof of a binary's integrity. Doctor's
+existing output and status's raw attempt-record view remain compatible.
+
 ## 2. Completion receipts
 
 A host turn reaching "completed" is the trigger to look. It is never by itself a reviewable result.

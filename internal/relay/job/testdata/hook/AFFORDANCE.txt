@@ -1,0 +1,1 @@
+[crw bg] 백그라운드 작업은 `crw relay job list`로 보고 `crw relay job get <id> --tail 40`으로 출력을 읽습니다.

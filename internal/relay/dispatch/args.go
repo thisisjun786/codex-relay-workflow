@@ -22,7 +22,7 @@ type Services struct {
 // the options the line left out. Options are named by their long flag without the dashes.
 type Args struct {
 	Parsed argparse.Result
-	// Positionals are the subcommand words before the options (service's).
+	// Positionals hold the nested subcommand and the job family's id or command operands.
 	Positionals []string
 	Defaults    map[string]any
 }

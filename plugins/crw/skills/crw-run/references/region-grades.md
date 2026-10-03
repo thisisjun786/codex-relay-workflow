@@ -117,6 +117,14 @@ file) and leaves the head's files as they are. For `renumber` there is no check 
 only and lists the hunks (the `mechanical` kind in the [base refresh kinds](task-packet.md#what-a-handoff-discloses)). The parent passes the declarations of the candidate and of every node
 whose landing the conflict comes from, and the rule counts only where all of them name it; when it cannot name them all, the candidate goes to the child. A hunk no declared rule covers is `manual`.
 
+### Record an accepted node's base refresh
+
+`dag-base-refresh` applies the merge-time agreement rule automatically for each hop. It identifies path-changing first-parent base landings by an exact accepted or valid refresh head of another node in the same plan and repository (the second parent of a merge landing, or a single-parent landing tip). Every contributor and the refreshed node must declare the same file-wide mechanical rule. An unidentified landing, missing declaration or another grade/rule requires the file's exact `--resolved` name. The declaration and head snapshots are checked again before the record is written.
+
+Automatic regeneration is narrower here: the file must be entirely generated independently in the previous head, base parent and new head. In two fresh checkouts of each tree, remove all tracked paths covered by any candidate regeneration declaration, then replace Git metadata with a fresh input-only repository. The command must recreate the tested file's original bytes and mode in both runs. This excludes recovery from original HEAD/history and circular copies between declared outputs. A failed command, timeout, missing/unreadable output or mismatch makes the file manual; commands depending on original history or another generated intermediate also fall back. The proof trusts declared code and remaining inputs, rather than inferring generated ownership.
+
+A partly generated `plugin.json` whose updater needs the existing file always requires `--resolved` in this route. This chooses entirely-generated automatic eligibility to prevent a head-only regeneration check from hiding a lost handwritten parent change. The separate merge-lane version regeneration above keeps its existing procedure. Eligible files still pass the existing evaluator, and older valid records replay their stored classification.
+
 ### Send a candidate back to its child
 
 A candidate goes back for a conflict in a `local` or `exclusive` place, a mechanical hunk whose rule is `renumber` or that the check refuses, a conflict in a file outside

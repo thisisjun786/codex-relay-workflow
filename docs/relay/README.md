@@ -421,11 +421,17 @@ under the same request (the standby turn under a standby operation of its own, t
 asking the scope decision again, as a creation does. When no thread
 is shown, the retry waits 2 minutes from the receipt's last update (`pending`, with `repeatAfter`) and then
 creates again under the same request with a derived bridge operation id, at most three creations in all. A thread that has a turn,
-a creation whose `turn/start` may have been sent, several threads that fit, a thread or a listing the host cannot read, a standby
-recovery the host refused, or a creation with no recorded time stop with `creation_unknown` and a `creationReconciliation` object that says why (`state`,
+a creation whose `turn/start` may have been sent, several threads that fit, an unobservable listing or another host error,
+a non-abandonable standby refusal, or a creation with no recorded time stop with `creation_unknown` and a `creationReconciliation` object that says why (`state`,
 `detail`, `attempt`, `attemptRequestId`, `thread`, `repeatAfter`); no replacement request is ever the answer.
 dag-scheduler.md ([A creation whose outcome is unknown](dag-scheduler.md#a-creation-whose-outcome-is-unknown))
-gives the table and what it does not establish.
+gives the table and what it does not establish. A named thread the host no longer knows or cannot serve, or an unloaded thread whose
+resume was refused before a turn or verified resume, is abandoned and replaced under the same request. A transient resume error
+can leave one usable orphan with no turn or writer. Earlier creation and recovery receipt IDs are excluded from later scans; UUIDv7
+IDs outside the creation window (with one minute of clock slack) are not read.
+An already armed profile-free request uses the child role's declared default during this managed start without changing its frozen
+bytes or recorded settings. NEW and merely reserved requests still require an explicit profile. Unrelated later sends keep the
+legacy record's absence of a profile; a role without a default cannot recover this way.
 The original failed creation receipt is preserved. An unknown or attempted first turn does not
 qualify for this recovery; its effects still need reconciliation.
 
@@ -601,6 +607,14 @@ host and uses what the host actually reports. **Offline, a readiness claim can o
 stored and visible, and it becomes deliverable only once an independent observation sees that turn
 end normally. A turn that ends failed or interrupted suppresses the claim instead of promoting it.
 
+A child that itself reports `failed` or `interrupted` from its own live turn states how the turn
+ended: `--turn-status failed` or `--turn-status interrupted`, which is a claim and makes the receipt
+final. `--turn-status` is `inProgress` when it is left out, a turn in progress cannot carry those two
+outcomes, and the emit is refused `contradictory_observation`; the refusal's detail names the status
+to pass. With `--socket` the relay reads the status from the host and ignores `--turn-status`, so a
+live turn reads `inProgress` there: such an emit is made without `--socket`, with `--state` naming the
+store this emit used. `blocked_needs_input` takes no `--turn-status` and stays staged.
+
 A loop spanning several turns completes on a turn that is not the anchor, and says so in the same
 call:
 
@@ -702,7 +716,7 @@ Two limits are part of the contract. The same verdict again is a replay even whe
 
 ## Replying to a blocked receipt
 
-A child that cannot go on records a `blocked_needs_input` receipt and ends its turn. The receipt carries no artifact, so it is never the head revision of its generation and a verdict on it is refused `superseded_revision`: the parent's answer has no verdict to travel in. `decision-reply` is the relationship-level route for it. The parent returns a decision, the relay records it, and the delivery engine carries it to the child (held while the child is busy, waking it when it is idle) as a `revision_request` delivery rendered as its own message, `[codex-session-relay] parent decision`. A decision is never a verdict: it writes no ruling, and no ruling writes a decision. A `verified` or `needs_changes` verdict on a blocked receipt is still refused `superseded_revision` once the parent acknowledged it (the receipt is not the head revision), while `aborted` and `unverified` are not refused by the currency check. So the two exclude each other explicitly, each writer checking the other inside its own transaction: a receipt that carries a decision takes no first verdict, and a receipt that already has a verdict takes no decision, each refused `disposition_conflict` (a verdict on an unacknowledged receipt is refused `not_acknowledged` first, as for any verdict).
+A child that cannot go on records a `blocked_needs_input` receipt and ends its turn. The receipt carries no artifact (a file attached to it is refused `manifest_forbidden`, and the refusal says to emit the outcome again without `--artifact`, keep the reason in the blocked file and the final message, and send a file that must travel with `ready_for_review`), so it is never the head revision of its generation and a verdict on it is refused `superseded_revision`: the parent's answer has no verdict to travel in. `decision-reply` is the relationship-level route for it. The parent returns a decision, the relay records it, and the delivery engine carries it to the child (held while the child is busy, waking it when it is idle) as a `revision_request` delivery rendered as its own message, `[codex-session-relay] parent decision`. A decision is never a verdict: it writes no ruling, and no ruling writes a decision. A `verified` or `needs_changes` verdict on a blocked receipt is still refused `superseded_revision` once the parent acknowledged it (the receipt is not the head revision), while `aborted` and `unverified` are not refused by the currency check. So the two exclude each other explicitly, each writer checking the other inside its own transaction: a receipt that carries a decision takes no first verdict, and a receipt that already has a verdict takes no decision, each refused `disposition_conflict` (a verdict on an unacknowledged receipt is refused `not_acknowledged` first, as for any verdict).
 
     codex-session-relay decision-reply --event <blocked receipt> --decision <kind> --decision-turn <your turn id> --note <text|@file> [--criteria-digest <digest>]
     codex-session-relay decision-show --relationship <id>

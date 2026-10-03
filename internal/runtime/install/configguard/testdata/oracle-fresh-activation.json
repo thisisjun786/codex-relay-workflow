@@ -1,0 +1,21 @@
+{
+  "config": "# foreign\n[features]\nmulti_agent = true\ngoals = true\nhooks = true\ndefault_mode_request_user_input = true\n[model]\nname = \"keep\"\n\n[memories]\ndedicated_tools = true\n",
+  "backup": "# foreign\n[features]\nmulti_agent = true\ngoals = true\nhooks = false\n[model]\nname = \"keep\"\n",
+  "manifest": "{\n  \"version\": 2,\n  \"activatedAt\": \"2026-06-30T00:00:00.000Z\",\n  \"configPath\": \"<HOME>/config.toml\",\n  \"backupPath\": \"<HOME>/config.toml.crw-2026-06-30T00-00-00-000Z.bak\",\n  \"postActivateHash\": \"f19227f7b3f9e7aacbd7a2febd710a712fb789d821c21b9c88aced3af7ba5e43\",\n  \"flags\": {\n    \"multi_agent\": {\n      \"priorEnabled\": true,\n      \"enabledByCodexclaw\": false,\n      \"enableFailed\": false\n    },\n    \"goals\": {\n      \"priorEnabled\": true,\n      \"enabledByCodexclaw\": false,\n      \"enableFailed\": false\n    },\n    \"hooks\": {\n      \"priorEnabled\": false,\n      \"enabledByCodexclaw\": true,\n      \"enableFailed\": false\n    },\n    \"default_mode_request_user_input\": {\n      \"priorEnabled\": false,\n      \"enabledByCodexclaw\": true,\n      \"enableFailed\": false\n    }\n  },\n  \"tableKeys\": {\n    \"memories.dedicated_tools\": {\n      \"table\": \"memories\",\n      \"key\": \"dedicated_tools\",\n      \"priorValue\": null,\n      \"appliedValue\": \"true\",\n      \"setByCodexclaw\": true\n    }\n  }\n}\n",
+  "calls": [
+    [
+      "features",
+      "list"
+    ],
+    [
+      "features",
+      "enable",
+      "hooks"
+    ],
+    [
+      "features",
+      "enable",
+      "default_mode_request_user_input"
+    ]
+  ]
+}

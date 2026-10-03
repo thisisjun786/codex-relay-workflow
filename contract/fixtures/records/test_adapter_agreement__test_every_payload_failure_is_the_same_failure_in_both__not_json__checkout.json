@@ -52,6 +52,7 @@
      "identityScanMs",
      "processEnding",
      "recordVersion",
+     "runtime",
      "stdoutReading"
     ]
    },
@@ -207,6 +208,18 @@
      "stdoutReading"
     ],
     "value": null
+   },
+   {
+    "kind": "set_eq",
+    "path": [
+     "rows",
+     0,
+     "runtime"
+    ],
+    "value": [
+     "build",
+     "executable"
+    ]
    }
   ]
  }
