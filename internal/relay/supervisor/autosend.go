@@ -237,7 +237,7 @@ func (c *Channel) stageUnsentWithReadings(ctx context.Context, project, at strin
 		var state string
 		var hold, frozen sql.NullString
 		err := c.Store.Q(ctx).QueryRowContext(ctx, "SELECT state,hold_reason,reading FROM supervisor_messages WHERE obligation_id=? ORDER BY staged_at DESC LIMIT 1", o.ID).Scan(&state, &hold, &frozen)
-		if err == nil && !(store.SupervisorUnsent(state) && (!hold.Valid || hold.String == "superseded_by_report" || hold.String == "hierarchy_unresolved")) {
+		if err == nil && !(store.SupervisorUnsent(state) && (!hold.Valid || hold.String == store.SupervisorHoldSuperseded || hold.String == store.SupervisorHoldUnaddressed)) {
 			skipped++
 			continue
 		}

@@ -123,7 +123,6 @@ func seedRandomProjects(t *testing.T, projects int) (*Channel, context.Context, 
 	t.Helper()
 	ctx := context.Background()
 	root := t.TempDir()
-	t.Setenv("HOME", root)
 	s, err := store.Open(ctx, filepath.Join(root, "state", "relay.sqlite3"), "")
 	if err != nil {
 		t.Fatal(err)
@@ -236,6 +235,7 @@ func asMap(t *testing.T, v any) map[string]any {
 }
 
 func TestCRW299BatchedReadRaisesWhatTheEventByEventReadRaised(t *testing.T) {
+	t.Parallel()
 	raisedAtLeastOnce := 0
 	c, ctx, projects := seedRandomProjects(t, 24)
 	// FromEvent itself, which the refactor split into loading and judgment, still answers what it
@@ -310,6 +310,7 @@ func archivedCount(t *testing.T, c *Channel, ctx context.Context) int {
 // One statement reads a project's events, whatever the number of its relationships, those that can
 // report and those released alike, and the events they hold: the read does not go by relationship.
 func TestCRW299ProjectEventsAreReadInOneStatement(t *testing.T) {
+	t.Parallel()
 	for _, relationships := range []int{2, 20} {
 		w := newStandingWorld(t, relationships, 3)
 		for _, rid := range w.rels[:relationships/2] {
@@ -369,6 +370,7 @@ func dumpObligations(m map[string][]*Obligation) string {
 // first, then each one's events through events_relationship. Planned freely SQLite walks
 // events_stage, which is every final event of every project, and the visit would cost the store.
 func TestCRW299ProjectEventsReadIsPlannedFromTheProject(t *testing.T) {
+	t.Parallel()
 	c, ctx, projects := seedRandomProjects(t, 1)
 	for name, query := range map[string]string{"whole": projectEventsSQL + eventsOrder, "visit": visitEventsSQL + eventsOrder} {
 		rows, err := c.Store.All(ctx, "EXPLAIN QUERY PLAN "+query, projects[0])

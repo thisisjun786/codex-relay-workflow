@@ -59,6 +59,7 @@ func refused(t *testing.T, err error) (string, string) {
 }
 
 func Test24_DIR_1_DirectivePlacesStandTogether(t *testing.T) {
+	t.Parallel()
 	r, _, l := directivePropertyWorld(t)
 	ctx := context.Background()
 	for _, x := range []struct{ d, p, c string }{{"a", "project_assignment", ""}, {"b", "relayed_decision", "m"}, {"c", "scope_correction", ""}} {
@@ -72,6 +73,7 @@ func Test24_DIR_1_DirectivePlacesStandTogether(t *testing.T) {
 	}
 }
 func Test24_DIR_2_OneLiveAssignment(t *testing.T) {
+	t.Parallel()
 	r, _, l := directivePropertyWorld(t)
 	ctx := context.Background()
 	a, _ := r.RecordDirective(ctx, "project", "PRJ", "sup", "INI", l, "a", dref(t, "project_assignment", l, "a", ""))
@@ -82,6 +84,7 @@ func Test24_DIR_2_OneLiveAssignment(t *testing.T) {
 	}
 }
 func Test24_DIR_3_OneAnswerPerMessage(t *testing.T) {
+	t.Parallel()
 	r, _, l := directivePropertyWorld(t)
 	ctx := context.Background()
 	a, _ := r.RecordDirective(ctx, "project", "PRJ", "sup", "INI", l, "yes", dref(t, "relayed_decision", l, "yes", "m"))
@@ -92,6 +95,7 @@ func Test24_DIR_3_OneAnswerPerMessage(t *testing.T) {
 	}
 }
 func Test24_DIR_4_OneScopeCorrection(t *testing.T) {
+	t.Parallel()
 	r, _, l := directivePropertyWorld(t)
 	ctx := context.Background()
 	_, _ = r.RecordDirective(ctx, "project", "PRJ", "sup", "INI", l, "a", dref(t, "scope_correction", l, "a", "msg-blocked-7"))
@@ -102,6 +106,7 @@ func Test24_DIR_4_OneScopeCorrection(t *testing.T) {
 	}
 }
 func Test24_DIR_5_PurposelessContest(t *testing.T) {
+	t.Parallel()
 	r, _, l := directivePropertyWorld(t)
 	ctx := context.Background()
 	_, _ = r.RecordDirective(ctx, "project", "PRJ", "sup", "INI", l, "a", sql.NullString{})
@@ -112,6 +117,7 @@ func Test24_DIR_5_PurposelessContest(t *testing.T) {
 	}
 }
 func Test24_DIR_6_PlaceSurvivesHandover(t *testing.T) {
+	t.Parallel()
 	r, _, l := directivePropertyWorld(t)
 	ctx := context.Background()
 	a, _ := r.RecordDirective(ctx, "project", "PRJ", "sup", "INI", l, "a", dref(t, "project_assignment", l, "a", ""))
@@ -126,6 +132,7 @@ func Test24_DIR_6_PlaceSurvivesHandover(t *testing.T) {
 	}
 }
 func Test24_DIR_7_SameDigestOldWriterNoContest(t *testing.T) {
+	t.Parallel()
 	r, s, l := directivePropertyWorld(t)
 	ctx := context.Background()
 	a, _ := r.RecordDirective(ctx, "project", "PRJ", "sup", "INI", l, "a", dref(t, "project_assignment", l, "a", ""))
@@ -139,6 +146,7 @@ func Test24_DIR_7_SameDigestOldWriterNoContest(t *testing.T) {
 	}
 }
 func Test24_DIR_8_HeldReportNamed(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	standing, _ := f.c.Standing(f.ctx, "PRJ-1", nil)
 	holds, err := f.c.ReportHolds(f.ctx, standing)
@@ -147,6 +155,7 @@ func Test24_DIR_8_HeldReportNamed(t *testing.T) {
 	}
 }
 func Test24_DIR_9_OnlyOwedUnsentHeld(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	_, stage := f.staged(t)
 	if _, err := f.s.DB.Exec("DELETE FROM scope_bindings WHERE role='supervisor'"); err != nil {
@@ -161,6 +170,7 @@ func Test24_DIR_9_OnlyOwedUnsentHeld(t *testing.T) {
 }
 
 func Test24_AUT_1_ObligationStagesAndSendsOnce(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	f.c.Settings = &delivery.TaskSettings{}
 	h := &sendHost{status: "idle"}
@@ -174,6 +184,7 @@ func Test24_AUT_1_ObligationStagesAndSendsOnce(t *testing.T) {
 	}
 }
 func Test24_AUT_4_ArchivedWaits(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	f.c.Settings = &delivery.TaskSettings{}
 	h := &sendHost{status: "idle", archived: true}
@@ -183,6 +194,7 @@ func Test24_AUT_4_ArchivedWaits(t *testing.T) {
 	}
 }
 func Test24_AUT_5_ParentAndAutoConverge(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	f.c.Settings = &delivery.TaskSettings{}
 	_, stage := f.staged(t)
@@ -197,6 +209,7 @@ func Test24_AUT_5_ParentAndAutoConverge(t *testing.T) {
 	}
 }
 func Test24_AUT_7_UnaddressedHeadDoesNotBlock(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	f.c.Settings = &delivery.TaskSettings{}
 	_, stage := f.staged(t)

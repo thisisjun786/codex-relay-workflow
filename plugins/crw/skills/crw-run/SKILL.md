@@ -537,7 +537,9 @@ The parent orders the merges and settles the mechanical conflicts by their rule,
 In a DAG plan the scheduler applies this by grade: a region is declared `independent`, `mechanical` (with the rule that settles it: `union`, `renumber` or `regenerate:<command>`), `local` or `exclusive`,
 `dag-ready` releases mechanical and local overlaps and defers only exclusive ones, and the rule it released a node under, with the rows that rest on and the overlap count by grade, is in the reading and
 in the recorded pass. [Release by region grade](references/region-grades.md) says how to declare the grades, how to read the judgement, and what the parent does at merge time: deciding the merge order,
-settling a mechanical overlap, and when a candidate goes back to its child.
+settling a mechanical overlap, and when a candidate goes back to its child. A conflict only in mechanical places is settled by the
+parent and proved by `crw skill base-refresh mechanical` ([Resolve a mechanical conflict
+yourself](references/merge-readiness.md#resolve-a-mechanical-conflict-yourself)).
 
 ### Start policy and child cap
 
@@ -729,6 +731,16 @@ check the prerequisite ancestry, scoped diff, acceptance criteria,
 meaningful negative cases, and relevant user-visible behavior. Reuse valid proof
 for the same revision and criteria; run missing checks or checks invalidated by
 integration. A completed turn may contain a failure or interruption.
+
+The parent shares the host with every child, so what it starts to verify or integrate follows the
+`Processes you start:` line of the [Launch packet](references/task-packet.md#launch-packet) as a
+child's runs do: a local build or test run records its pid when it starts or runs under `timeout`,
+and is stopped only by that pid, its own process group or the handle the execution tool returned
+for it, never by pattern or name. The relay's delivery service is not such a run: it stays the
+scope's service, and the parent that started it does not end it early
+([OPS-4.1](references/operations.md#ops-41-ownership-is-the-operating-scope-not-a-parent)).
+A process of a child's that looks hung is that child's to stop; the parent raises it with that
+child and does not stop it.
 
 Where a relay holds the assignment, verify the revision it reports as current. If a
 newer revision arrived while the review was in progress, the older result is not a

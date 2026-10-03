@@ -121,6 +121,27 @@ func TestPlanGateMatchesTheRecordedOracle(t *testing.T) {
 	if len(fx.Plan) < 60 {
 		t.Fatalf("%d recorded plan-gate cases", len(fx.Plan))
 	}
+	// The five recorded cases below are where this repository departs from the oracle, by decision (CRW-425: a review finding of
+	// kind security): the entry resolves outside the working directory, and the gate now refuses it. They are tagged
+	// intentionally-changed. The fixture stays what the oracle answered; the replay expects the new answer, written in CRW's own
+	// names (it does not go through the substitution table, which rewrites the oracle's text), and a tag whose recorded answer
+	// already equals the new one fails. dir_named_like_doc (p30) is not tagged: a directory named 000_a.md inside the unit still
+	// counts as a numbered document, because confinement does not reach that test.
+	rootRef := "$" + "{ROOT}"
+	unitOutside := func(p string) PlanResult {
+		return PlanResult{Reason: "planUnit " + p + " resolves outside the working directory (symlinks followed). A plan unit must live inside the workspace: create it there with `crw pabcd plan init <slug>` and write the plan docs before P -> A."}
+	}
+	changed := map[string]struct {
+		want PlanResult
+		why  string
+	}{
+		"p38_absolute_outside_cwd":          {unitOutside(rootRef + "/other"), "an absolute planUnit outside the working directory"},
+		"p41_relative_dotdot_sibling":       {unitOutside("../other/dir"), "a planUnit that climbs out with .. to a sibling directory"},
+		"p52_planpaths_outside_unit":        {PlanResult{Reason: "planPaths entry " + rootRef + " resolves outside the working directory (symlinks followed)."}, "a planPaths entry outside the working directory, after an inside entry passed"},
+		"p60_unit_is_cwd_parent":            {unitOutside(".."), ".. as the planUnit: the working directory's parent"},
+		"p68_cwd_symlink_physical_has_unit": {unitOutside("../unit"), "a planUnit beside the real working directory of a symlinked working directory"},
+	}
+	replayed := map[string]bool{}
 	for _, c := range fx.Plan {
 		root := t.TempDir()
 		cwd := filepath.Join(root, "ws")
@@ -164,9 +185,20 @@ func TestPlanGateMatchesTheRecordedOracle(t *testing.T) {
 		}
 		got, want := ValidatePlanArtifacts(att, dir), c.Result
 		want.Reason = sub.Expected(want.Reason)
+		if ch, ok := changed[c.ID]; ok {
+			if want == ch.want {
+				t.Errorf("%s is tagged intentionally-changed (%s) but the recorded answer is the new one", c.ID, ch.why)
+			}
+			want, replayed[c.ID] = ch.want, true
+		}
 		got.Unit, got.Reason = unexpand(got.Unit), unexpand(got.Reason)
 		if got != want {
 			t.Errorf("%s: %s\n got %+v\nwant %+v", c.ID, c.Input, got, want)
+		}
+	}
+	for id := range changed {
+		if !replayed[id] {
+			t.Errorf("%s is tagged intentionally-changed but was not replayed", id)
 		}
 	}
 }

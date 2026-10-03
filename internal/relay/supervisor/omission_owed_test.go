@@ -101,6 +101,7 @@ func (w *omissionWorld) shape(i int, c gridCase) {
 }
 
 func TestCRW300OwedOmissionAnswersAsTheWholeDerivationDoes(t *testing.T) {
+	t.Parallel()
 	cases := gridCases()
 	w := seedOmissionWorld(t, len(cases), 0)
 	for i, c := range cases {

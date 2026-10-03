@@ -117,6 +117,7 @@ func Test24_SCH_43_Capture(t *testing.T) {
 	})
 }
 func Test24_SCH_44_Capture(t *testing.T) {
+	t.Parallel()
 	supervisorMirror(t, "WhatTheSixthReviewRoundFound.test_a_report_recorded_between_the_reading_and_the_write_is_not_staged", "event", func(c *Channel, s *store.Store) []any {
 		ctx := context.Background()
 		o := captureObligation4(t, c, s)
@@ -134,6 +135,7 @@ func Test24_SCH_44_Capture(t *testing.T) {
 	})
 }
 func Test24_SCH_45_Capture(t *testing.T) {
+	t.Parallel()
 	supervisorMirror(t, "WhatTheSixthReviewRoundFound.test_a_stage_from_the_former_hierarchy_landing_first_is_readdressed", "event", func(c *Channel, s *store.Store) []any {
 		ctx := context.Background()
 		one, id := stageSet3(t, c, s)
@@ -183,6 +185,7 @@ func Test24_SCH_45_Capture(t *testing.T) {
 	})
 }
 func Test24_SCH_46_Capture(t *testing.T) {
+	t.Parallel()
 	supervisorMirror(t, "WhatTheSixthReviewRoundFound.test_a_stale_reschedule_does_not_clear_a_hold_another_caller_set", "event", func(c *Channel, s *store.Store) []any {
 		ctx := context.Background()
 		_, id := stageSet3(t, c, s)
@@ -198,6 +201,7 @@ func Test24_SCH_46_Capture(t *testing.T) {
 	})
 }
 func Test24_SCH_46_FormerRecipientCapture(t *testing.T) {
+	t.Parallel()
 	supervisorMirror(t, "WhatTheSixthReviewRoundFound.test_a_stale_reschedule_does_not_put_the_former_recipients_delay_back", "event", func(c *Channel, s *store.Store) []any {
 		ctx := context.Background()
 		one, id := stageSet3(t, c, s)
@@ -239,6 +243,7 @@ func Test24_SCH_48_Capture(t *testing.T) {
 	})
 }
 func Test24_SCH_47_Capture(t *testing.T) {
+	t.Parallel()
 	supervisorMirror(t, "WhatTheSixthReviewRoundFound.test_a_send_dated_ahead_by_a_fast_clock_does_not_stall_the_recipient", "setup", func(c *Channel, s *store.Store) []any {
 		ctx := context.Background()
 		ahead := float64(1700086400)
@@ -537,6 +542,7 @@ func Test24_SCH_53_SentFrozenCapture(t *testing.T) {
 	})
 }
 func Test24_SCH_54_Capture(t *testing.T) {
+	t.Parallel()
 	supervisorMirror(t, "WhatTheEighthReviewRoundFound.test_a_correction_landing_before_the_staging_lock_refuses_the_stale_packet", "event", func(c *Channel, s *store.Store) []any {
 		ctx := context.Background()
 		one := captureObligation4(t, c, s)
@@ -590,6 +596,7 @@ func Test24_SCH_54_Capture(t *testing.T) {
 	})
 }
 func Test24_SCH_55_Capture(t *testing.T) {
+	t.Parallel()
 	supervisorMirror(t, "WhatTheEighthReviewRoundFound.test_an_omission_is_refused_with_a_reading_that_is_not_its_own", "setup", func(c *Channel, s *store.Store) []any {
 		ctx := context.Background()
 		base := map[string]any{"schema": "reporting-observation/1", "reportingState": "unreported", "relationshipId": captureRelationID(t, c), "reason": "the turn settled without a report", "selectors": map[string]any{"state": c.StoreDirectory(), "markerRoot": "/marker", "workspace": strings.TrimSuffix(c.StoreDirectory(), "/state") + "/work", "assignment": "asg-1", "session": "01child-session", "turn": "turn-unreported-1"}}

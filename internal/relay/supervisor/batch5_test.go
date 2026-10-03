@@ -12,6 +12,7 @@ import (
 )
 
 func Test24_SCH_42_UncertainSendSettledOnlyByToken(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	f.c.Settings = &delivery.TaskSettings{}
 	_, stage := f.staged(t)
@@ -45,6 +46,7 @@ func Test24_SCH_42_UncertainSendSettledOnlyByToken(t *testing.T) {
 	}
 }
 func Test24_SCH_43_LateReceiptNeverDemotesRead(t *testing.T) {
+	t.Parallel()
 	f, h, id, _ := delivered24(t)
 	if _, err := f.c.ReadBack(f.ctx, id, "turn-supervisor-1", Proof(id, "turn-supervisor-1"), "", h, 1_700_000_002); err != nil {
 		t.Fatal(err)
@@ -66,6 +68,7 @@ func Test24_SCH_43_LateReceiptNeverDemotesRead(t *testing.T) {
 	}
 }
 func Test24_SCH_44_StageChecksPriorReportUnderWrite(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	o := f.obligation(t)
 	_, err := f.s.DB.ExecContext(f.ctx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_report',?,'{}')", f.at, o.ID)
@@ -79,6 +82,7 @@ func Test24_SCH_44_StageChecksPriorReportUnderWrite(t *testing.T) {
 	}
 }
 func Test24_SCH_45_ReaddressConverges(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	o, stage := f.staged(t)
 	id := stage["messageId"].(string)
@@ -106,6 +110,7 @@ func Test24_SCH_45_ReaddressConverges(t *testing.T) {
 	}
 }
 func Test24_SCH_46_StaleRescheduleKeepsNewHold(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	_, stage := f.staged(t)
 	id := stage["messageId"].(string)
@@ -126,6 +131,7 @@ func Test24_SCH_46_StaleRescheduleKeepsNewHold(t *testing.T) {
 	}
 }
 func Test24_SCH_47_FutureRecipientRateDoesNotPaceNow(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	_, err := f.s.DB.ExecContext(f.ctx, "INSERT INTO recipient_rate(recipient_task_id,window_start,sends,last_send_at) VALUES ('supervisor',?,1,?)", float64(1_700_086_400), float64(1_700_086_400))
 	if err != nil {
@@ -138,6 +144,7 @@ func Test24_SCH_47_FutureRecipientRateDoesNotPaceNow(t *testing.T) {
 	}
 }
 func Test24_SCH_48_SendDatedAtTransportStart(t *testing.T) {
+	t.Parallel()
 	f, h, id, _ := delivered24(t)
 	attempts, err := f.s.SupervisorAttempts(f.ctx, id)
 	if err != nil || len(attempts) != 1 || !attempts[0].TransportStartedAt.Valid {
@@ -150,6 +157,7 @@ func Test24_SCH_48_SendDatedAtTransportStart(t *testing.T) {
 	}
 }
 func Test24_SCH_49_TokenInUnnamedTurnUnconfirmed(t *testing.T) {
+	t.Parallel()
 	f, h, id, _ := delivered24(t)
 	h.items = map[string]string{"": h.sends[0]}
 	answer, err := f.c.ReadBack(f.ctx, id, "turn-supervisor-1", Proof(id, "turn-supervisor-1"), "", h, 1_700_000_002)
@@ -158,6 +166,7 @@ func Test24_SCH_49_TokenInUnnamedTurnUnconfirmed(t *testing.T) {
 	}
 }
 func Test24_SCH_50_SettledAnswersHaveSameShape(t *testing.T) {
+	t.Parallel()
 	f, h, id, _ := delivered24(t)
 	first, err := f.c.ReadBack(f.ctx, id, "turn-supervisor-1", Proof(id, "turn-supervisor-1"), "", h, 1_700_000_002)
 	if err != nil {

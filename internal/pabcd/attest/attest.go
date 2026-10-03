@@ -3,7 +3,8 @@
 // narrative; for A>B the pasted verdict of an independent reviewer and the agent's judgment of it; for C>D pasted command output
 // with a passing exit code; and for P>A a plan that exists as numbered files. The package validates and writes nothing.
 //
-// Behaviour is ported as-is, oracle defects included (docs/port-cxc/known-defects.md), but a thrown error becomes a refusal.
+// Behaviour is ported as-is, oracle defects included (docs/port-cxc/known-defects.md), but a thrown error becomes a refusal and the
+// plan gate is confined to the working directory (CRW-425, fixed by decision: a review finding of kind security).
 // validateAttest is Validate, coerceAttest is Coerce; the sets are functions (IsGated, GatedTransitions, IsAuditVerdict). Reasons
 // carry CRW names where the oracle names its command (name-substitution R9, R33): crw pabcd plan init, crw pabcd receipt test.
 //
