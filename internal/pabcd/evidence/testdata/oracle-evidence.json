@@ -1,0 +1,2673 @@
+{
+ "gated": {
+  "types": [
+   "executor",
+   "worker"
+  ],
+  "max": 3
+ },
+ "extract": {
+  "basic": "a/b.md",
+  "no_marker": null,
+  "null_message": null,
+  "empty_message": null,
+  "no_space": "x.md",
+  "tab": "x.md",
+  "many_spaces": "x.md",
+  "newline_after_colon": "x.md",
+  "crlf_line": "a.md",
+  "ws_nbsp": "x.md",
+  "ws_feff": "x.md",
+  "ws_u2028": "x.md",
+  "ws_vtab": "x.md",
+  "ws_ideographic_space": "x.md",
+  "ws_u1680": "x.md",
+  "ws_u202f": "x.md",
+  "not_ws_nel_u0085": "x.md",
+  "not_ws_zwsp_u200b": "​x.md",
+  "not_ws_mongolian_u180e": "᠎x.md",
+  "only_whitespace_then_end": null,
+  "marker_at_end": null,
+  "empty_first_then_valid": "EVIDENCE_RECORDED:",
+  "first_marker_wins": "<path>",
+  "trailing_punctuation": "a.md.",
+  "lowercase_marker": null,
+  "prefixed_marker": "a.md",
+  "double_colon": ":",
+  "korean_path": "증거/영수증.md",
+  "astral_path": "😀.md",
+  "long_path": "pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+  "inline_in_prose": "r.md"
+ },
+ "names": {
+  "plain": {
+   "files": [
+    "rec-s1-rec-a1-rec-t1-aa4873d5ee32c85eed08eafe4ad2059e.json"
+   ],
+   "content": [
+    "{\"attempts\":2}\n"
+   ]
+  },
+  "no_turn": {
+   "files": [
+    "s1-a1-5ee358e50d4a788fca099502a1b0cf1c.json"
+   ],
+   "content": [
+    "{\"attempts\":2}\n"
+   ]
+  },
+  "slash_agent": {
+   "files": [
+    "s1-a-b-ff54bc4aa093ca337217a492e025ec6c.json"
+   ],
+   "content": [
+    "{\"attempts\":2}\n"
+   ]
+  },
+  "dash_agent": {
+   "files": [
+    "s1-a-b-44b301e5e9a0abf54efde33a92b16a61.json"
+   ],
+   "content": [
+    "{\"attempts\":2}\n"
+   ]
+  },
+  "dash_agent_turn": {
+   "files": [
+    "s1-a-b-c-29dc5100cf67b0e353fcc3a0d3ae8c0b.json"
+   ],
+   "content": [
+    "{\"attempts\":2}\n"
+   ]
+  },
+  "split_agent_turn": {
+   "files": [
+    "s1-a-b-c-30577429b8af52b67078af2c985f3caa.json"
+   ],
+   "content": [
+    "{\"attempts\":2}\n"
+   ]
+  },
+  "slash_turn": {
+   "files": [
+    "s1-a-b-c-1a341e27e6a371bf8f3571486ca64569.json"
+   ],
+   "content": [
+    "{\"attempts\":2}\n"
+   ]
+  },
+  "dash_turn": {
+   "files": [
+    "s1-a-b-c-2-9d74b9c9ae33e1f6e30ec86d3f7f473e.json"
+   ],
+   "content": [
+    "{\"attempts\":2}\n"
+   ]
+  },
+  "korean": {
+   "files": [
+    "missing-missing-missing-43b6a0148dc3c8671fd17be915d68355.json"
+   ],
+   "content": [
+    "{\"attempts\":2}\n"
+   ]
+  },
+  "empty_agent": {
+   "files": [
+    "s1-missing-622d874cba1314bcd8fcf2256c531497.json"
+   ],
+   "content": [
+    "{\"attempts\":2}\n"
+   ]
+  },
+  "empty_session": {
+   "files": [
+    "missing-a1-5ee358e50d4a788fca099502a1b0cf1c.json"
+   ],
+   "content": [
+    "{\"attempts\":2}\n"
+   ]
+  },
+  "astral": {
+   "files": [
+    "s1-a-t-d65b1238f3fe6e6050ec5ecf5853758f.json"
+   ],
+   "content": [
+    "{\"attempts\":2}\n"
+   ]
+  },
+  "dots_agent": {
+   "files": [
+    "s1-..-1bf391eb34c5a498af63f35628d34ac8.json"
+   ],
+   "content": [
+    "{\"attempts\":2}\n"
+   ]
+  },
+  "traversal_agent": {
+   "files": [
+    "s1-..-..-x-t-6d185d58f6cf222e9628caa5e4e49789.json"
+   ],
+   "content": [
+    "{\"attempts\":2}\n"
+   ]
+  },
+  "long_ids": {
+   "files": [],
+   "content": []
+  },
+  "spaces": {
+   "files": [
+    "s-1-a-b-t-873e2c5c7e32392279fa9bf2cd89d9dd.json"
+   ],
+   "content": [
+    "{\"attempts\":2}\n"
+   ]
+  },
+  "leading_dashes": {
+   "files": [
+    "s1-a-missing-a2602a1c26c5c7e24c67f35ca2189c8b.json"
+   ],
+   "content": [
+    "{\"attempts\":2}\n"
+   ]
+  },
+  "uuid": {
+   "files": [
+    "01a03c05-2d04-7b62-8c1f-42b155abfc89-019f0000-0000-7000-8000-000000000001-019f0000-0000-7000-8000-000000000002-4f590021c9900c2cced4ca24e4434be5.json"
+   ],
+   "content": [
+    "{\"attempts\":2}\n"
+   ]
+  },
+  "session_slash": {
+   "files": [
+    "a-b-x-t-02dc76376012d4d3fbf428ea2cc52bdf.json"
+   ],
+   "content": [
+    "{\"attempts\":2}\n"
+   ]
+  },
+  "session_dash": {
+   "files": [
+    "a-b-x-t-02dc76376012d4d3fbf428ea2cc52bdf.json"
+   ],
+   "content": [
+    "{\"attempts\":2}\n"
+   ]
+  },
+  "bmp_nonascii": {
+   "files": [
+    "s1-missing-missing-febcaf3d3b244d1836e93f97a4997a6b.json"
+   ],
+   "content": [
+    "{\"attempts\":2}\n"
+   ]
+  },
+  "replacement_char": {
+   "files": [
+    "s1-a-155a594a7bafc46ebc366b6133d12310.json"
+   ],
+   "content": [
+    "{\"attempts\":2}\n"
+   ]
+  }
+ },
+ "counter": {
+  "zero": 0,
+  "one": 1,
+  "two": 2,
+  "three": 3,
+  "four": 3,
+  "minus_one": 3,
+  "min_safe": 3,
+  "fraction": 3,
+  "three_point_zero": 3,
+  "two_exp": 2,
+  "huge_exp": 3,
+  "minus_zero": 0,
+  "unsafe_int": 3,
+  "max_safe": 3,
+  "string_number": 3,
+  "null_attempts": 3,
+  "bool_attempts": 3,
+  "no_attempts_key": 3,
+  "empty_array": 3,
+  "array_of_object": 3,
+  "nested": 3,
+  "json_null": 0,
+  "json_zero": 0,
+  "json_five": 0,
+  "json_empty_string": 0,
+  "json_string": 0,
+  "json_true": 0,
+  "json_false": 0,
+  "counter_garbage": 0,
+  "counter_empty": 0,
+  "bom": 0,
+  "trailing_garbage": 0,
+  "duplicate_keys": 2,
+  "duplicate_bad_last": 3,
+  "padded": 2,
+  "extra_keys": 1,
+  "depth_5000": 3,
+  "depth_20000": 3,
+  "depth_20000_truncated": 0,
+  "depth_20000_trailing_text": 0,
+  "absent_file": 0,
+  "path_is_directory": 0,
+  "other_tuple_untouched": 0
+ },
+ "pressure": {
+  "marker_context_compacted": true,
+  "upper_context_compacted": true,
+  "marker_context_length_exceeded": true,
+  "upper_context_length_exceeded": true,
+  "marker_skill_descriptions_were_shortened": true,
+  "upper_skill_descriptions_were_shortened": true,
+  "marker_context_too_large": true,
+  "upper_context_too_large": true,
+  "marker_codex_ran_out_of_room_in_the_model_s_context_window": true,
+  "upper_codex_ran_out_of_room_in_the_model_s_context_window": true,
+  "marker_your_input_exceeds_the_context_window": true,
+  "upper_your_input_exceeds_the_context_window": true,
+  "marker_long_threads_and_multiple_compactions": true,
+  "upper_long_threads_and_multiple_compactions": true,
+  "mixed_case": true,
+  "no_marker": false,
+  "empty_file": false,
+  "missing_file": false,
+  "path_is_directory": false,
+  "dotted_capital_i": false,
+  "dotted_capital_i_other": true,
+  "kelvin_sign": true,
+  "invalid_bytes_around": true,
+  "invalid_byte_inside": false,
+  "bom_prefix": true,
+  "large_marker_at_end": true,
+  "nul_in_text": true
+ },
+ "receipt": {
+  "valid_relative": true,
+  "valid_absolute": true,
+  "valid_nested": true,
+  "valid_dot_segments": true,
+  "valid_trailing_slash": true,
+  "valid_whitespace_only_file": true,
+  "valid_name_with_spaces": true,
+  "valid_unicode_name": true,
+  "valid_mode_000": true,
+  "valid_long_name_250": true,
+  "long_name_300": false,
+  "empty_file": false,
+  "missing_file": false,
+  "evidence_root_itself": false,
+  "directory_receipt": false,
+  "fifo_receipt": false,
+  "empty_claim": false,
+  "nul_claim": false,
+  "outside_workspace_file": false,
+  "outside_absolute": false,
+  "parent_escape": false,
+  "parent_escape_inside_name": false,
+  "prefix_confusion_attempts_dir": false,
+  "prefix_confusion_evidence2": false,
+  "state_dir_file": false,
+  "receipt_name_starts_with_dotdot": false,
+  "dotdot_directory_name": false,
+  "backslash_is_a_name": false,
+  "tilde_is_a_name": false,
+  "leaf_symlink_to_outside_file": false,
+  "leaf_symlink_to_inside_file": false,
+  "dangling_symlink": false,
+  "linked_dir_to_outside": false,
+  "linked_dir_to_inside": true,
+  "linked_dir_to_workspace_sibling": false,
+  "symlinked_evidence_root": true,
+  "symlinked_state_dir": true,
+  "symlinked_evidence_root_dangling": false,
+  "hard_link_to_outside_file": true
+ },
+ "writes": {
+  "write_one": {
+   "returns": [
+    true
+   ],
+   "files": [
+    "s1-a1-5ee358e50d4a788fca099502a1b0cf1c.json"
+   ],
+   "content": [
+    "{\"attempts\":1}\n"
+   ]
+  },
+  "write_twice_overwrites": {
+   "returns": [
+    true,
+    true
+   ],
+   "files": [
+    "s1-a1-5ee358e50d4a788fca099502a1b0cf1c.json"
+   ],
+   "content": [
+    "{\"attempts\":2}\n"
+   ]
+  },
+  "write_three_with_turn": {
+   "returns": [
+    true
+   ],
+   "files": [
+    "s1-a1-t1-b5512daf0f4e05392d0309a1e79d507f.json"
+   ],
+   "content": [
+    "{\"attempts\":3}\n"
+   ]
+  },
+  "write_negative_and_big": {
+   "returns": [
+    true,
+    true
+   ],
+   "files": [
+    "s1-a1-5ee358e50d4a788fca099502a1b0cf1c.json"
+   ],
+   "content": [
+    "{\"attempts\":123456789}\n"
+   ]
+  },
+  "clear_removes": {
+   "returns": [
+    true,
+    null
+   ],
+   "files": [],
+   "content": []
+  },
+  "clear_absent": {
+   "returns": [
+    null
+   ],
+   "files": null,
+   "content": null
+  },
+  "clear_other_tuple_kept": {
+   "returns": [
+    true,
+    true,
+    null
+   ],
+   "files": [
+    "s1-a1-t1-b5512daf0f4e05392d0309a1e79d507f.json"
+   ],
+   "content": [
+    "{\"attempts\":1}\n"
+   ]
+  },
+  "clear_directory_kept": {
+   "returns": [
+    null
+   ],
+   "files": [
+    "s1-a1-5ee358e50d4a788fca099502a1b0cf1c.json"
+   ],
+   "content": [
+    "<dir>"
+   ]
+  },
+  "write_state_dir_is_file": {
+   "returns": [
+    false
+   ],
+   "files": null,
+   "content": null
+  },
+  "write_attempts_dir_is_file": {
+   "returns": [
+    false
+   ],
+   "files": null,
+   "content": null
+  },
+  "write_counter_is_directory": {
+   "returns": [
+    false
+   ],
+   "files": [
+    "s1-a1-5ee358e50d4a788fca099502a1b0cf1c.json",
+    "s1-a1-5ee358e50d4a788fca099502a1b0cf1c.json.<PID>.<MS>.tmp"
+   ],
+   "content": [
+    "<dir>",
+    "{\"attempts\":1}\n"
+   ]
+  }
+ },
+ "tombstone": {
+  "record_fresh": {
+   "returns": [
+    true,
+    true
+   ],
+   "seed": null,
+   "state": {
+    "phase": "IDLE",
+    "sessionId": "s1",
+    "slug": "",
+    "flags": {
+     "interview": false,
+     "auditPassed": false,
+     "checkPassed": false
+    },
+    "supersededBy": null,
+    "injectedTurns": [],
+    "lastInjectedPhase": null,
+    "orchestrationActive": false,
+    "interview": null,
+    "stopBlockPhase": null,
+    "stopBlockCount": 0,
+    "stopBlockWorkPhaseId": null,
+    "stopMetricCursor": 0,
+    "stopBlockTotal": 0,
+    "stopBlockTurnId": null,
+    "stopBlockCapNotified": false,
+    "loopArmSeen": false,
+    "idleEditNudges": 0,
+    "memoryWriteRequested": false,
+    "memoryWriteTurn": null,
+    "memoryWriteGrant": false,
+    "unverifiedSubagents": [
+     {
+      "agentId": "a1",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     }
+    ],
+    "unverifiedCorrupt": false,
+    "phaseEntrySource": null,
+    "planUnit": null,
+    "planEpoch": null,
+    "checkEpoch": null,
+    "dcloseRecovery": null
+   },
+   "markers": []
+  },
+  "record_replaces_same_identity": {
+   "returns": [
+    true,
+    true,
+    true
+   ],
+   "seed": null,
+   "state": {
+    "phase": "IDLE",
+    "sessionId": "s1",
+    "slug": "",
+    "flags": {
+     "interview": false,
+     "auditPassed": false,
+     "checkPassed": false
+    },
+    "supersededBy": null,
+    "injectedTurns": [],
+    "lastInjectedPhase": null,
+    "orchestrationActive": false,
+    "interview": null,
+    "stopBlockPhase": null,
+    "stopBlockCount": 0,
+    "stopBlockWorkPhaseId": null,
+    "stopMetricCursor": 0,
+    "stopBlockTotal": 0,
+    "stopBlockTurnId": null,
+    "stopBlockCapNotified": false,
+    "loopArmSeen": false,
+    "idleEditNudges": 0,
+    "memoryWriteRequested": false,
+    "memoryWriteTurn": null,
+    "memoryWriteGrant": false,
+    "unverifiedSubagents": [
+     {
+      "agentId": "a1",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 4,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     }
+    ],
+    "unverifiedCorrupt": false,
+    "phaseEntrySource": null,
+    "planUnit": null,
+    "planEpoch": null,
+    "checkEpoch": null,
+    "dcloseRecovery": null
+   },
+   "markers": []
+  },
+  "record_two_agents": {
+   "returns": [
+    true,
+    true
+   ],
+   "seed": null,
+   "state": {
+    "phase": "IDLE",
+    "sessionId": "s1",
+    "slug": "",
+    "flags": {
+     "interview": false,
+     "auditPassed": false,
+     "checkPassed": false
+    },
+    "supersededBy": null,
+    "injectedTurns": [],
+    "lastInjectedPhase": null,
+    "orchestrationActive": false,
+    "interview": null,
+    "stopBlockPhase": null,
+    "stopBlockCount": 0,
+    "stopBlockWorkPhaseId": null,
+    "stopMetricCursor": 0,
+    "stopBlockTotal": 0,
+    "stopBlockTurnId": null,
+    "stopBlockCapNotified": false,
+    "loopArmSeen": false,
+    "idleEditNudges": 0,
+    "memoryWriteRequested": false,
+    "memoryWriteTurn": null,
+    "memoryWriteGrant": false,
+    "unverifiedSubagents": [
+     {
+      "agentId": "ra",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "rb",
+      "turnId": "t1",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     }
+    ],
+    "unverifiedCorrupt": false,
+    "phaseEntrySource": null,
+    "planUnit": null,
+    "planEpoch": null,
+    "checkEpoch": null,
+    "dcloseRecovery": null
+   },
+   "markers": []
+  },
+  "record_same_agent_two_turns": {
+   "returns": [
+    true,
+    true,
+    false
+   ],
+   "seed": null,
+   "state": {
+    "phase": "IDLE",
+    "sessionId": "s1",
+    "slug": "",
+    "flags": {
+     "interview": false,
+     "auditPassed": false,
+     "checkPassed": false
+    },
+    "supersededBy": null,
+    "injectedTurns": [],
+    "lastInjectedPhase": null,
+    "orchestrationActive": false,
+    "interview": null,
+    "stopBlockPhase": null,
+    "stopBlockCount": 0,
+    "stopBlockWorkPhaseId": null,
+    "stopMetricCursor": 0,
+    "stopBlockTotal": 0,
+    "stopBlockTurnId": null,
+    "stopBlockCapNotified": false,
+    "loopArmSeen": false,
+    "idleEditNudges": 0,
+    "memoryWriteRequested": false,
+    "memoryWriteTurn": null,
+    "memoryWriteGrant": false,
+    "unverifiedSubagents": [
+     {
+      "agentId": "a1",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a1",
+      "turnId": "t2",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     }
+    ],
+    "unverifiedCorrupt": false,
+    "phaseEntrySource": null,
+    "planUnit": null,
+    "planEpoch": null,
+    "checkEpoch": null,
+    "dcloseRecovery": null
+   },
+   "markers": []
+  },
+  "record_replace_moves_to_end": {
+   "returns": [
+    true,
+    true,
+    true
+   ],
+   "seed": null,
+   "state": {
+    "phase": "IDLE",
+    "sessionId": "s1",
+    "slug": "",
+    "flags": {
+     "interview": false,
+     "auditPassed": false,
+     "checkPassed": false
+    },
+    "supersededBy": null,
+    "injectedTurns": [],
+    "lastInjectedPhase": null,
+    "orchestrationActive": false,
+    "interview": null,
+    "stopBlockPhase": null,
+    "stopBlockCount": 0,
+    "stopBlockWorkPhaseId": null,
+    "stopMetricCursor": 0,
+    "stopBlockTotal": 0,
+    "stopBlockTurnId": null,
+    "stopBlockCapNotified": false,
+    "loopArmSeen": false,
+    "idleEditNudges": 0,
+    "memoryWriteRequested": false,
+    "memoryWriteTurn": null,
+    "memoryWriteGrant": false,
+    "unverifiedSubagents": [
+     {
+      "agentId": "b1",
+      "turnId": "",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a1",
+      "turnId": "",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     }
+    ],
+    "unverifiedCorrupt": false,
+    "phaseEntrySource": null,
+    "planUnit": null,
+    "planEpoch": null,
+    "checkEpoch": null,
+    "dcloseRecovery": null
+   },
+   "markers": []
+  },
+  "record_no_agent_id": {
+   "returns": [
+    true,
+    true
+   ],
+   "seed": null,
+   "state": {
+    "phase": "IDLE",
+    "sessionId": "s1",
+    "slug": "",
+    "flags": {
+     "interview": false,
+     "auditPassed": false,
+     "checkPassed": false
+    },
+    "supersededBy": null,
+    "injectedTurns": [],
+    "lastInjectedPhase": null,
+    "orchestrationActive": false,
+    "interview": null,
+    "stopBlockPhase": null,
+    "stopBlockCount": 0,
+    "stopBlockWorkPhaseId": null,
+    "stopMetricCursor": 0,
+    "stopBlockTotal": 0,
+    "stopBlockTurnId": null,
+    "stopBlockCapNotified": false,
+    "loopArmSeen": false,
+    "idleEditNudges": 0,
+    "memoryWriteRequested": false,
+    "memoryWriteTurn": null,
+    "memoryWriteGrant": false,
+    "unverifiedSubagents": [
+     {
+      "agentId": "",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": false
+     }
+    ],
+    "unverifiedCorrupt": false,
+    "phaseEntrySource": null,
+    "planUnit": null,
+    "planEpoch": null,
+    "checkEpoch": null,
+    "dcloseRecovery": null
+   },
+   "markers": []
+  },
+  "record_no_turn_id": {
+   "returns": [
+    true
+   ],
+   "seed": null,
+   "state": {
+    "phase": "IDLE",
+    "sessionId": "s1",
+    "slug": "",
+    "flags": {
+     "interview": false,
+     "auditPassed": false,
+     "checkPassed": false
+    },
+    "supersededBy": null,
+    "injectedTurns": [],
+    "lastInjectedPhase": null,
+    "orchestrationActive": false,
+    "interview": null,
+    "stopBlockPhase": null,
+    "stopBlockCount": 0,
+    "stopBlockWorkPhaseId": null,
+    "stopMetricCursor": 0,
+    "stopBlockTotal": 0,
+    "stopBlockTurnId": null,
+    "stopBlockCapNotified": false,
+    "loopArmSeen": false,
+    "idleEditNudges": 0,
+    "memoryWriteRequested": false,
+    "memoryWriteTurn": null,
+    "memoryWriteGrant": false,
+    "unverifiedSubagents": [
+     {
+      "agentId": "a1",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     }
+    ],
+    "unverifiedCorrupt": false,
+    "phaseEntrySource": null,
+    "planUnit": null,
+    "planEpoch": null,
+    "checkEpoch": null,
+    "dcloseRecovery": null
+   },
+   "markers": []
+  },
+  "record_receipt_claimed": {
+   "returns": [
+    true
+   ],
+   "seed": null,
+   "state": {
+    "phase": "IDLE",
+    "sessionId": "s1",
+    "slug": "",
+    "flags": {
+     "interview": false,
+     "auditPassed": false,
+     "checkPassed": false
+    },
+    "supersededBy": null,
+    "injectedTurns": [],
+    "lastInjectedPhase": null,
+    "orchestrationActive": false,
+    "interview": null,
+    "stopBlockPhase": null,
+    "stopBlockCount": 0,
+    "stopBlockWorkPhaseId": null,
+    "stopMetricCursor": 0,
+    "stopBlockTotal": 0,
+    "stopBlockTurnId": null,
+    "stopBlockCapNotified": false,
+    "loopArmSeen": false,
+    "idleEditNudges": 0,
+    "memoryWriteRequested": false,
+    "memoryWriteTurn": null,
+    "memoryWriteGrant": false,
+    "unverifiedSubagents": [
+     {
+      "agentId": "a1",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": ".codexclaw/evidence/nope.md",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     }
+    ],
+    "unverifiedCorrupt": false,
+    "phaseEntrySource": null,
+    "planUnit": null,
+    "planEpoch": null,
+    "checkEpoch": null,
+    "dcloseRecovery": null
+   },
+   "markers": []
+  },
+  "record_receipt_claim_cut_ascii": {
+   "returns": [
+    true
+   ],
+   "seed": null,
+   "state": {
+    "phase": "IDLE",
+    "sessionId": "s1",
+    "slug": "",
+    "flags": {
+     "interview": false,
+     "auditPassed": false,
+     "checkPassed": false
+    },
+    "supersededBy": null,
+    "injectedTurns": [],
+    "lastInjectedPhase": null,
+    "orchestrationActive": false,
+    "interview": null,
+    "stopBlockPhase": null,
+    "stopBlockCount": 0,
+    "stopBlockWorkPhaseId": null,
+    "stopMetricCursor": 0,
+    "stopBlockTotal": 0,
+    "stopBlockTurnId": null,
+    "stopBlockCapNotified": false,
+    "loopArmSeen": false,
+    "idleEditNudges": 0,
+    "memoryWriteRequested": false,
+    "memoryWriteTurn": null,
+    "memoryWriteGrant": false,
+    "unverifiedSubagents": [
+     {
+      "agentId": "a1",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     }
+    ],
+    "unverifiedCorrupt": false,
+    "phaseEntrySource": null,
+    "planUnit": null,
+    "planEpoch": null,
+    "checkEpoch": null,
+    "dcloseRecovery": null
+   },
+   "markers": []
+  },
+  "record_receipt_claim_exact_256": {
+   "returns": [
+    true
+   ],
+   "seed": null,
+   "state": {
+    "phase": "IDLE",
+    "sessionId": "s1",
+    "slug": "",
+    "flags": {
+     "interview": false,
+     "auditPassed": false,
+     "checkPassed": false
+    },
+    "supersededBy": null,
+    "injectedTurns": [],
+    "lastInjectedPhase": null,
+    "orchestrationActive": false,
+    "interview": null,
+    "stopBlockPhase": null,
+    "stopBlockCount": 0,
+    "stopBlockWorkPhaseId": null,
+    "stopMetricCursor": 0,
+    "stopBlockTotal": 0,
+    "stopBlockTurnId": null,
+    "stopBlockCapNotified": false,
+    "loopArmSeen": false,
+    "idleEditNudges": 0,
+    "memoryWriteRequested": false,
+    "memoryWriteTurn": null,
+    "memoryWriteGrant": false,
+    "unverifiedSubagents": [
+     {
+      "agentId": "a1",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     }
+    ],
+    "unverifiedCorrupt": false,
+    "phaseEntrySource": null,
+    "planUnit": null,
+    "planEpoch": null,
+    "checkEpoch": null,
+    "dcloseRecovery": null
+   },
+   "markers": []
+  },
+  "record_secret_prose_not_kept": {
+   "returns": [
+    true
+   ],
+   "seed": null,
+   "state": {
+    "phase": "IDLE",
+    "sessionId": "s1",
+    "slug": "",
+    "flags": {
+     "interview": false,
+     "auditPassed": false,
+     "checkPassed": false
+    },
+    "supersededBy": null,
+    "injectedTurns": [],
+    "lastInjectedPhase": null,
+    "orchestrationActive": false,
+    "interview": null,
+    "stopBlockPhase": null,
+    "stopBlockCount": 0,
+    "stopBlockWorkPhaseId": null,
+    "stopMetricCursor": 0,
+    "stopBlockTotal": 0,
+    "stopBlockTurnId": null,
+    "stopBlockCapNotified": false,
+    "loopArmSeen": false,
+    "idleEditNudges": 0,
+    "memoryWriteRequested": false,
+    "memoryWriteTurn": null,
+    "memoryWriteGrant": false,
+    "unverifiedSubagents": [
+     {
+      "agentId": "a1",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     }
+    ],
+    "unverifiedCorrupt": false,
+    "phaseEntrySource": null,
+    "planUnit": null,
+    "planEpoch": null,
+    "checkEpoch": null,
+    "dcloseRecovery": null
+   },
+   "markers": []
+  },
+  "record_preserves_other_fields": {
+   "returns": [
+    true
+   ],
+   "seed": "{\n  \"phase\": \"B\",\n  \"sessionId\": \"s1\",\n  \"slug\": \"keep-me\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": true,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": null,\n  \"planEpoch\": null,\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+   "state": {
+    "phase": "B",
+    "sessionId": "s1",
+    "slug": "keep-me",
+    "flags": {
+     "interview": false,
+     "auditPassed": false,
+     "checkPassed": false
+    },
+    "supersededBy": null,
+    "injectedTurns": [],
+    "lastInjectedPhase": null,
+    "orchestrationActive": true,
+    "interview": null,
+    "stopBlockPhase": null,
+    "stopBlockCount": 0,
+    "stopBlockWorkPhaseId": null,
+    "stopMetricCursor": 0,
+    "stopBlockTotal": 0,
+    "stopBlockTurnId": null,
+    "stopBlockCapNotified": false,
+    "loopArmSeen": false,
+    "idleEditNudges": 0,
+    "memoryWriteRequested": false,
+    "memoryWriteTurn": null,
+    "memoryWriteGrant": false,
+    "unverifiedSubagents": [
+     {
+      "agentId": "a1",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     }
+    ],
+    "unverifiedCorrupt": false,
+    "phaseEntrySource": null,
+    "planUnit": null,
+    "planEpoch": null,
+    "checkEpoch": null,
+    "dcloseRecovery": null
+   },
+   "markers": []
+  },
+  "record_keeps_existing_entries": {
+   "returns": [
+    true
+   ],
+   "seed": "{\n  \"phase\": \"IDLE\",\n  \"sessionId\": \"s1\",\n  \"slug\": \"\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [\n    {\n      \"agentId\": \"old\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    }\n  ],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": null,\n  \"planEpoch\": null,\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+   "state": {
+    "phase": "IDLE",
+    "sessionId": "s1",
+    "slug": "",
+    "flags": {
+     "interview": false,
+     "auditPassed": false,
+     "checkPassed": false
+    },
+    "supersededBy": null,
+    "injectedTurns": [],
+    "lastInjectedPhase": null,
+    "orchestrationActive": false,
+    "interview": null,
+    "stopBlockPhase": null,
+    "stopBlockCount": 0,
+    "stopBlockWorkPhaseId": null,
+    "stopMetricCursor": 0,
+    "stopBlockTotal": 0,
+    "stopBlockTurnId": null,
+    "stopBlockCapNotified": false,
+    "loopArmSeen": false,
+    "idleEditNudges": 0,
+    "memoryWriteRequested": false,
+    "memoryWriteTurn": null,
+    "memoryWriteGrant": false,
+    "unverifiedSubagents": [
+     {
+      "agentId": "old",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a1",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     }
+    ],
+    "unverifiedCorrupt": false,
+    "phaseEntrySource": null,
+    "planUnit": null,
+    "planEpoch": null,
+    "checkEpoch": null,
+    "dcloseRecovery": null
+   },
+   "markers": []
+  },
+  "has_other_agent_false": {
+   "returns": [
+    false,
+    true,
+    false
+   ],
+   "seed": "{\n  \"phase\": \"IDLE\",\n  \"sessionId\": \"s1\",\n  \"slug\": \"\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [\n    {\n      \"agentId\": \"old\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    }\n  ],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": null,\n  \"planEpoch\": null,\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+   "state": {
+    "phase": "IDLE",
+    "sessionId": "s1",
+    "slug": "",
+    "flags": {
+     "interview": false,
+     "auditPassed": false,
+     "checkPassed": false
+    },
+    "supersededBy": null,
+    "injectedTurns": [],
+    "lastInjectedPhase": null,
+    "orchestrationActive": false,
+    "interview": null,
+    "stopBlockPhase": null,
+    "stopBlockCount": 0,
+    "stopBlockWorkPhaseId": null,
+    "stopMetricCursor": 0,
+    "stopBlockTotal": 0,
+    "stopBlockTurnId": null,
+    "stopBlockCapNotified": false,
+    "loopArmSeen": false,
+    "idleEditNudges": 0,
+    "memoryWriteRequested": false,
+    "memoryWriteTurn": null,
+    "memoryWriteGrant": false,
+    "unverifiedSubagents": [
+     {
+      "agentId": "old",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     }
+    ],
+    "unverifiedCorrupt": false,
+    "phaseEntrySource": null,
+    "planUnit": null,
+    "planEpoch": null,
+    "checkEpoch": null,
+    "dcloseRecovery": null
+   },
+   "markers": []
+  },
+  "has_empty_agent_matches_empty_entry": {
+   "returns": [
+    true
+   ],
+   "seed": "{\n  \"phase\": \"IDLE\",\n  \"sessionId\": \"s1\",\n  \"slug\": \"\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [\n    {\n      \"agentId\": \"\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": false\n    }\n  ],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": null,\n  \"planEpoch\": null,\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+   "state": {
+    "phase": "IDLE",
+    "sessionId": "s1",
+    "slug": "",
+    "flags": {
+     "interview": false,
+     "auditPassed": false,
+     "checkPassed": false
+    },
+    "supersededBy": null,
+    "injectedTurns": [],
+    "lastInjectedPhase": null,
+    "orchestrationActive": false,
+    "interview": null,
+    "stopBlockPhase": null,
+    "stopBlockCount": 0,
+    "stopBlockWorkPhaseId": null,
+    "stopMetricCursor": 0,
+    "stopBlockTotal": 0,
+    "stopBlockTurnId": null,
+    "stopBlockCapNotified": false,
+    "loopArmSeen": false,
+    "idleEditNudges": 0,
+    "memoryWriteRequested": false,
+    "memoryWriteTurn": null,
+    "memoryWriteGrant": false,
+    "unverifiedSubagents": [
+     {
+      "agentId": "",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": false
+     }
+    ],
+    "unverifiedCorrupt": false,
+    "phaseEntrySource": null,
+    "planUnit": null,
+    "planEpoch": null,
+    "checkEpoch": null,
+    "dcloseRecovery": null
+   },
+   "markers": []
+  },
+  "record_65th_when_64_exist": {
+   "returns": [
+    true,
+    false
+   ],
+   "seed": "{\n  \"phase\": \"IDLE\",\n  \"sessionId\": \"s1\",\n  \"slug\": \"\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [\n    {\n      \"agentId\": \"g01\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g02\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g03\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g04\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g05\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g06\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g07\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g08\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g09\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g10\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g11\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g12\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g13\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g14\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g15\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g16\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g17\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g18\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g19\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g20\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g21\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g22\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g23\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g24\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g25\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g26\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g27\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g28\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g29\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g30\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g31\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g32\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g33\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g34\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g35\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g36\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g37\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g38\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g39\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g40\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g41\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g42\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g43\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g44\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g45\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g46\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g47\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g48\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g49\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g50\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g51\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g52\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g53\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g54\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g55\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g56\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g57\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g58\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g59\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g60\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g61\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g62\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g63\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g64\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    }\n  ],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": null,\n  \"planEpoch\": null,\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+   "state": {
+    "phase": "IDLE",
+    "sessionId": "s1",
+    "slug": "",
+    "flags": {
+     "interview": false,
+     "auditPassed": false,
+     "checkPassed": false
+    },
+    "supersededBy": null,
+    "injectedTurns": [],
+    "lastInjectedPhase": null,
+    "orchestrationActive": false,
+    "interview": null,
+    "stopBlockPhase": null,
+    "stopBlockCount": 0,
+    "stopBlockWorkPhaseId": null,
+    "stopMetricCursor": 0,
+    "stopBlockTotal": 0,
+    "stopBlockTurnId": null,
+    "stopBlockCapNotified": false,
+    "loopArmSeen": false,
+    "idleEditNudges": 0,
+    "memoryWriteRequested": false,
+    "memoryWriteTurn": null,
+    "memoryWriteGrant": false,
+    "unverifiedSubagents": [
+     {
+      "agentId": "g01",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g02",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g03",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g04",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g05",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g06",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g07",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g08",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g09",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g10",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g11",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g12",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g13",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g14",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g15",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g16",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g17",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g18",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g19",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g20",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g21",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g22",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g23",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g24",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g25",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g26",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g27",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g28",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g29",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g30",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g31",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g32",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g33",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g34",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g35",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g36",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g37",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g38",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g39",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g40",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g41",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g42",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g43",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g44",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g45",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g46",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g47",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g48",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g49",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g50",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g51",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g52",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g53",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g54",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g55",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g56",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g57",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g58",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g59",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g60",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g61",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g62",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g63",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g64",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a1",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     }
+    ],
+    "unverifiedCorrupt": false,
+    "phaseEntrySource": null,
+    "planUnit": null,
+    "planEpoch": null,
+    "checkEpoch": null,
+    "dcloseRecovery": null
+   },
+   "markers": []
+  },
+  "record_replaces_when_64_exist": {
+   "returns": [
+    true,
+    true
+   ],
+   "seed": "{\n  \"phase\": \"IDLE\",\n  \"sessionId\": \"s1\",\n  \"slug\": \"\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [\n    {\n      \"agentId\": \"g01\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g02\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g03\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g04\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g05\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g06\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g07\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g08\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g09\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g10\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g11\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g12\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g13\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g14\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g15\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g16\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g17\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g18\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g19\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g20\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g21\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g22\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g23\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g24\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g25\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g26\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g27\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g28\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g29\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g30\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g31\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g32\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g33\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g34\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g35\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g36\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g37\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g38\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g39\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g40\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g41\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g42\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g43\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g44\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g45\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g46\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g47\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g48\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g49\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g50\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g51\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g52\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g53\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g54\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g55\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g56\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g57\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g58\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g59\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g60\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g61\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g62\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g63\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"g64\",\n      \"turnId\": \"\",\n      \"agentType\": \"worker\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"resolvable\": true\n    }\n  ],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": null,\n  \"planEpoch\": null,\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+   "state": {
+    "phase": "IDLE",
+    "sessionId": "s1",
+    "slug": "",
+    "flags": {
+     "interview": false,
+     "auditPassed": false,
+     "checkPassed": false
+    },
+    "supersededBy": null,
+    "injectedTurns": [],
+    "lastInjectedPhase": null,
+    "orchestrationActive": false,
+    "interview": null,
+    "stopBlockPhase": null,
+    "stopBlockCount": 0,
+    "stopBlockWorkPhaseId": null,
+    "stopMetricCursor": 0,
+    "stopBlockTotal": 0,
+    "stopBlockTurnId": null,
+    "stopBlockCapNotified": false,
+    "loopArmSeen": false,
+    "idleEditNudges": 0,
+    "memoryWriteRequested": false,
+    "memoryWriteTurn": null,
+    "memoryWriteGrant": false,
+    "unverifiedSubagents": [
+     {
+      "agentId": "g01",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g02",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g03",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g04",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g05",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g06",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g07",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g08",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g09",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g10",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g11",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g12",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g13",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g14",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g15",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g16",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g17",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g18",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g19",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g20",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g21",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g22",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g23",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g24",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g25",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g26",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g27",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g28",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g29",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g30",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g31",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g32",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g33",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g34",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g35",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g36",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g37",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g38",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g39",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g40",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g41",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g42",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g43",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g44",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g45",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g46",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g47",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g48",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g49",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g50",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g51",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g52",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g53",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g54",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g55",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g56",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g57",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g58",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g59",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g60",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g61",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g62",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g63",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2025-12-31T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "g64",
+      "turnId": "",
+      "agentType": "worker",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     }
+    ],
+    "unverifiedCorrupt": false,
+    "phaseEntrySource": null,
+    "planUnit": null,
+    "planEpoch": null,
+    "checkEpoch": null,
+    "dcloseRecovery": null
+   },
+   "markers": []
+  },
+  "has_unreadable_state_false": {
+   "returns": [
+    false
+   ],
+   "seed": null,
+   "state": {
+    "raw": "{ corrupt"
+   },
+   "markers": []
+  },
+  "tombstone_unreadable_state": {
+   "returns": [
+    false
+   ],
+   "seed": null,
+   "state": {
+    "phase": "IDLE",
+    "sessionId": "s1",
+    "slug": "",
+    "flags": {
+     "interview": false,
+     "auditPassed": false,
+     "checkPassed": false
+    },
+    "supersededBy": null,
+    "injectedTurns": [],
+    "lastInjectedPhase": null,
+    "orchestrationActive": false,
+    "interview": null,
+    "stopBlockPhase": null,
+    "stopBlockCount": 0,
+    "stopBlockWorkPhaseId": null,
+    "stopMetricCursor": 0,
+    "stopBlockTotal": 0,
+    "stopBlockTurnId": null,
+    "stopBlockCapNotified": false,
+    "loopArmSeen": false,
+    "idleEditNudges": 0,
+    "memoryWriteRequested": false,
+    "memoryWriteTurn": null,
+    "memoryWriteGrant": false,
+    "unverifiedSubagents": [],
+    "unverifiedCorrupt": true,
+    "phaseEntrySource": null,
+    "planUnit": null,
+    "planEpoch": null,
+    "checkEpoch": null,
+    "dcloseRecovery": null
+   },
+   "markers": []
+  },
+  "tombstone_state_without_phase": {
+   "returns": [
+    false
+   ],
+   "seed": null,
+   "state": {
+    "phase": "IDLE",
+    "sessionId": "s1",
+    "slug": "",
+    "flags": {
+     "interview": false,
+     "auditPassed": false,
+     "checkPassed": false
+    },
+    "supersededBy": null,
+    "injectedTurns": [],
+    "lastInjectedPhase": null,
+    "orchestrationActive": false,
+    "interview": null,
+    "stopBlockPhase": null,
+    "stopBlockCount": 0,
+    "stopBlockWorkPhaseId": null,
+    "stopMetricCursor": 0,
+    "stopBlockTotal": 0,
+    "stopBlockTurnId": null,
+    "stopBlockCapNotified": false,
+    "loopArmSeen": false,
+    "idleEditNudges": 0,
+    "memoryWriteRequested": false,
+    "memoryWriteTurn": null,
+    "memoryWriteGrant": false,
+    "unverifiedSubagents": [],
+    "unverifiedCorrupt": true,
+    "phaseEntrySource": null,
+    "planUnit": null,
+    "planEpoch": null,
+    "checkEpoch": null,
+    "dcloseRecovery": null
+   },
+   "markers": []
+  },
+  "tier2_sentinel_on_readable_state": {
+   "returns": [
+    false
+   ],
+   "seed": "{\n  \"phase\": \"C\",\n  \"sessionId\": \"s1\",\n  \"slug\": \"\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": true,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": null,\n  \"planEpoch\": null,\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+   "state": {
+    "phase": "C",
+    "sessionId": "s1",
+    "slug": "",
+    "flags": {
+     "interview": false,
+     "auditPassed": false,
+     "checkPassed": false
+    },
+    "supersededBy": null,
+    "injectedTurns": [],
+    "lastInjectedPhase": null,
+    "orchestrationActive": true,
+    "interview": null,
+    "stopBlockPhase": null,
+    "stopBlockCount": 0,
+    "stopBlockWorkPhaseId": null,
+    "stopMetricCursor": 0,
+    "stopBlockTotal": 0,
+    "stopBlockTurnId": null,
+    "stopBlockCapNotified": false,
+    "loopArmSeen": false,
+    "idleEditNudges": 0,
+    "memoryWriteRequested": false,
+    "memoryWriteTurn": null,
+    "memoryWriteGrant": false,
+    "unverifiedSubagents": [],
+    "unverifiedCorrupt": true,
+    "phaseEntrySource": null,
+    "planUnit": null,
+    "planEpoch": null,
+    "checkEpoch": null,
+    "dcloseRecovery": null
+   },
+   "markers": []
+  },
+  "tier3_lock_held": {
+   "returns": [
+    false
+   ],
+   "seed": null,
+   "state": null,
+   "markers": [
+    {
+     "sessionId": "s1",
+     "agentId": "a1"
+    }
+   ]
+  },
+  "tier3_sessions_path_is_file": {
+   "returns": [
+    false
+   ],
+   "seed": null,
+   "state": null,
+   "markers": [
+    {
+     "sessionId": "s1",
+     "agentId": "a1"
+    }
+   ]
+  },
+  "tier3_state_dir_is_file": {
+   "returns": [
+    false
+   ],
+   "seed": null,
+   "state": null,
+   "markers": []
+  }
+ }
+}
