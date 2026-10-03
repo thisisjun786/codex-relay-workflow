@@ -43,12 +43,16 @@ func (d *Daemon) monotonic() time.Time {
 
 // pass is one tick's observation: the reads it has made against its budget, and when it began.
 type pass struct {
-	d         *Daemon
-	report    *Report
-	start     time.Time
-	floor     int // reads made whatever the clock says
-	reads     int
-	stopped   bool
+	d       *Daemon
+	report  *Report
+	start   time.Time
+	floor   int // reads made whatever the clock says
+	reads   int
+	stopped bool
+	// until is the instant the time bound of the pass ends the host read about to be made, as the last spent
+	// reading put it, and the zero time when that read is not bounded by it: one of the first reads, or no
+	// bound at all. An instant already past is a bound that has run out, never an unbounded read.
+	until     time.Time
 	relations map[string]delivery.Relationship
 	used      [2]map[string]int // reads this tick, by class and relationship
 	// deferred are the turns this pass read that ended failed or interrupted, in the order they were read. Settling
@@ -79,11 +83,20 @@ func (o *pass) settleDeferred(ctx context.Context) {
 // spent reports whether the pass has used the time Policy.MaxObserveSeconds allows it, and says so once. The
 // first reads, one for each class that waits, are made whatever the clock says, so a slow class cannot keep the
 // other out of the tick.
+//
+// A read that goes ahead is bounded by the time that is left: spent records the instant the pass runs out (until),
+// and the host call of that read ends then, as the clock check would end the pass before its next read. The instant
+// is the real clock's now plus the time left on the monotonic clock, from the one reading spent made, so a test that
+// moves the monotonic clock by hand gets a bound of the time it says is left. A read that is cut off is the last of
+// the pass; a pass with no turn left to read ends without asking the clock again, and does not say why it stopped.
 func (o *pass) spent() bool {
+	o.until = time.Time{}
 	if limit := o.d.Policy.MaxObserveSeconds; !o.stopped && limit > 0 && o.reads >= o.floor {
 		if took := o.d.monotonic().Sub(o.start).Seconds(); took >= limit {
 			o.stopped = true
 			o.report.Notes = append(o.report.Notes, fmt.Sprintf("observation stopped after %.1f s, the limit for one pass; the other turns wait for the next tick", took))
+		} else {
+			o.until = time.Now().Add(time.Duration((limit - took) * float64(time.Second)))
 		}
 	}
 	return o.stopped
@@ -145,7 +158,7 @@ func (d *Daemon) observe(ctx context.Context, report *Report) error {
 		o.reads++
 		o.used[next.class][next.p.id]++
 		var turn *store.TurnReference
-		if turn, err = d.read(ctx, r, next.t.id, report); err != nil {
+		if turn, err = d.read(ctx, o.until, r, next.t.id, report); err != nil {
 			return err
 		}
 		switch {
@@ -159,10 +172,21 @@ func (d *Daemon) observe(ctx context.Context, report *Report) error {
 	return nil
 }
 
-// read asks the host about one turn of r and records the attempt. It returns the turn when it ended and there is
-// something to settle for it, and nil otherwise.
-func (d *Daemon) read(ctx context.Context, r delivery.Relationship, turnID string, report *Report) (_ *store.TurnReference, err error) {
-	turn, e := d.Host.ReadTurn(r.Child.TaskID, turnID)
+// readHost asks the host about one turn under the instant the pass's time bound ends the read, when it has one. Only
+// the host call runs under it: what the pass records afterwards belongs to the tick.
+func (d *Daemon) readHost(ctx context.Context, until time.Time, thread, turn string) (*delivery.TurnInfo, error) {
+	if !until.IsZero() {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(ctx, until)
+		defer cancel()
+	}
+	return d.Host.ReadTurn(ctx, thread, turn)
+}
+
+// read asks the host about one turn of r, before until when that is set, and records the attempt. It returns the turn
+// when it ended and there is something to settle for it, and nil otherwise.
+func (d *Daemon) read(ctx context.Context, until time.Time, r delivery.Relationship, turnID string, report *Report) (_ *store.TurnReference, err error) {
+	turn, e := d.readHost(ctx, until, r.Child.TaskID, turnID)
 	var status, pollErr any
 	if e != nil {
 		report.Notes = append(report.Notes, "turn read failed for "+turnID+": "+e.Error())

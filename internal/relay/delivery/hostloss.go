@@ -61,7 +61,7 @@ func newReading(turnID any) Reading {
 func allowance() float64 { return TurnStartPrecisionSeconds + DispatchTurnSkewSeconds }
 
 // ReadRecipientTurn is hostloss.read_recipient_turn. Reads only.
-func ReadRecipientTurn(adapter Adapter, clock Clock, attempt, delivery Row, turnID any) Reading {
+func ReadRecipientTurn(ctx context.Context, adapter Adapter, clock Clock, attempt, delivery Row, turnID any) Reading {
 	r := newReading(turnID)
 	thread := delivery.S("recipient_thread_id")
 	turn, _ := turnID.(string)
@@ -73,7 +73,7 @@ func ReadRecipientTurn(adapter Adapter, clock Clock, attempt, delivery Row, turn
 		return r.Set("detail", "the attempt has no send time, so absence cannot be bounded").Set("undecided", NoSendTime)
 	}
 	allow := allowance()
-	presence, err := adapter.FindDispatchedTurn(thread, turn, sentAt)
+	presence, err := adapter.FindDispatchedTurn(ctx, thread, turn, sentAt)
 	var bounded *ListingBounded
 	var empty *ListingEmpty
 	switch {
@@ -94,7 +94,7 @@ func ReadRecipientTurn(adapter Adapter, clock Clock, attempt, delivery Row, turn
 		if !slices.Contains(terminalTurn, status) {
 			return r.Set("finding", Present).Set("status", status).Set("detail", fmt.Sprintf("the recipient lists this turn (%s)", status))
 		}
-		own, err := adapter.FindTokenInTurn(thread, attempt.S("request_id"), turn, InTurnItemsMax)
+		own, err := adapter.FindTokenInTurn(ctx, thread, attempt.S("request_id"), turn, InTurnItemsMax)
 		if err != nil {
 			return r.Set("detail", fmt.Sprintf("unreadable: the recipient lists this turn (%s), but its items could not be read for this attempt's message: %s", status, errorLabel(err)))
 		}
@@ -109,7 +109,7 @@ func ReadRecipientTurn(adapter Adapter, clock Clock, attempt, delivery Row, turn
 		}
 		return r.Set("detail", fmt.Sprintf("the recipient does not list this turn yet (%s), but the send is less than %.0f s old, too recent to call the turn lost", presence.Stop, allow))
 	}
-	scan, err := adapter.FindTokenSince(thread, attempt.S("request_id"), presence.Older, tokenScanLimit)
+	scan, err := adapter.FindTokenSince(ctx, thread, attempt.S("request_id"), presence.Older, tokenScanLimit)
 	if err != nil {
 		return r.Set("detail", fmt.Sprintf("the recipient %s, and its items could not be read for this attempt's token: %s", where, errorLabel(err)))
 	}
@@ -241,7 +241,7 @@ func foldCandidates(p TurnPresence, sentAt float64) []TurnInfo {
 }
 
 // ReadUnknownSend is hostloss.read_unknown_send. Reads only; never allows a second send.
-func ReadUnknownSend(adapter Adapter, clock Clock, attempt, delivery Row, receipt string) Reading {
+func ReadUnknownSend(ctx context.Context, adapter Adapter, clock Clock, attempt, delivery Row, receipt string) Reading {
 	r := Obj{{Key: "turnId", Value: nil}, {Key: "finding", Value: Unknown}, {Key: "detail", Value: nil}, {Key: "undecided", Value: nil}, {Key: "pending", Value: false}}
 	thread := delivery.S("recipient_thread_id")
 	request := attempt.S("request_id")
@@ -255,7 +255,7 @@ func ReadUnknownSend(adapter Adapter, clock Clock, attempt, delivery Row, receip
 	if clock.Now() < sentAt+allow {
 		return pending(fmt.Sprintf("the send is less than %.0f s old, too recent to call it lost; read again", allow))
 	}
-	presence, err := adapter.FindDispatchedTurn(thread, "", sentAt)
+	presence, err := adapter.FindDispatchedTurn(ctx, thread, "", sentAt)
 	var bounded *ListingBounded
 	var empty *ListingEmpty
 	switch {
@@ -279,7 +279,7 @@ func ReadUnknownSend(adapter Adapter, clock Clock, attempt, delivery Row, receip
 	if len(running) > 0 {
 		return pending(fmt.Sprintf("a turn begun since the send is still running (%s); read again once it ends", running[0]))
 	}
-	scan, err := adapter.FindTokenSince(thread, request, presence.Older, tokenScanLimit)
+	scan, err := adapter.FindTokenSince(ctx, thread, request, presence.Older, tokenScanLimit)
 	if err != nil {
 		return pending("unreadable: the recipient's items could not be read for this attempt's token: " + errorLabel(err))
 	}
@@ -292,7 +292,7 @@ func ReadUnknownSend(adapter Adapter, clock Clock, attempt, delivery Row, receip
 	}
 	var owns []owned
 	for _, turn := range folded {
-		own, err := adapter.FindTokenInTurn(thread, request, turn.TurnID, InTurnItemsMax)
+		own, err := adapter.FindTokenInTurn(ctx, thread, request, turn.TurnID, InTurnItemsMax)
 		if err != nil {
 			return pending(fmt.Sprintf("unreadable: the items of turn %s, one the send could have been folded into, could not be read: %s", turn.TurnID, errorLabel(err)))
 		}

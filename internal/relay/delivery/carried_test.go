@@ -221,7 +221,7 @@ func Test25_RCT04_two_concurrent_binds_leave_one_winner_and_one_recorded_conflic
 	// The race itself, in Go.
 	root, work := filepath.Join(t.TempDir(), "markers"), t.TempDir()
 	t.Setenv(MarkerEnv, "")
-	_, err := DeclareIntent(root, IntentDeclaration{Workspace: work, DispatchRequestID: "dispatch-request-1", IssueKey: "REL-1", DeclaredAt: "2026-01-01T00:00:00+00:00"})
+	_, err := DeclareIntent(context.Background(), root, IntentDeclaration{Workspace: work, DispatchRequestID: "dispatch-request-1", IssueKey: "REL-1", DeclaredAt: "2026-01-01T00:00:00+00:00"})
 	mustDo(t, err)
 	assignment := AssignmentID("dispatch-request-1")
 	const at = "2026-01-01T00:00:00+00:00"
@@ -236,7 +236,7 @@ func Test25_RCT04_two_concurrent_binds_leave_one_winner_and_one_recorded_conflic
 			defer done.Done()
 			ready.Done()
 			<-start
-			outcomes[i], errs[i] = BindIdentity(root, work, assignment, who[0], who[1], at)
+			outcomes[i], errs[i] = BindIdentity(context.Background(), root, work, assignment, who[0], who[1], at)
 		}()
 	}
 	ready.Wait()
@@ -251,7 +251,7 @@ func Test25_RCT04_two_concurrent_binds_leave_one_winner_and_one_recorded_conflic
 	}
 	directory, err := AssignmentDir(root, work, assignment)
 	mustDo(t, err)
-	facts, _ := ReadAssignment(directory)
+	facts, _ := ReadAssignment(context.Background(), directory)
 	bound := sub(facts, "bound")
 	conflicts, _ := field(facts, "conflicts").([]any)
 	if len(conflicts) != 1 || pyjson.Text(conflicts[0].(Obj).Get("attemptedSessionId")) == pyjson.Text(bound.Get("sessionId")) {
@@ -268,10 +268,10 @@ func Test25_RCT04_two_concurrent_binds_leave_one_winner_and_one_recorded_conflic
 		t.Fatalf("state %s contested %v", DeriveAssignmentState(facts, at), IdentityContested(facts))
 	}
 	fact := conflicts[0].(Obj)
-	_, err = PublishResolution(root, work, assignment, pyjson.Text(bound.Get("taskId")), pyjson.Text(bound.Get("sessionId")), "the winning link() is the identity", at,
+	_, err = PublishResolution(context.Background(), root, work, assignment, pyjson.Text(bound.Get("taskId")), pyjson.Text(bound.Get("sessionId")), "the winning link() is the identity", at,
 		[]Obj{{{Key: "factId", Value: field(fact, "factId")}, {Key: "digest", Value: FactDigest(fact)}}})
 	mustDo(t, err)
-	resolved, _ := ReadAssignment(directory)
+	resolved, _ := ReadAssignment(context.Background(), directory)
 	if IdentityContested(resolved) {
 		t.Fatal("a resolution naming the bound identity did not settle the contest")
 	}

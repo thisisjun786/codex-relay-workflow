@@ -2,6 +2,7 @@ package delivery
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -91,7 +92,7 @@ func TestCLI_every_delivery_command_answers_byte_for_byte_like_python(t *testing
 	rid := strings.Trim(goSQLiteDump(t, filepath.Join(side.state, "relay.sqlite3"), "select relationship_id from relationships"), "[]\"\n ")
 	side.expect("relationship id", rid)
 	mustDo(t, os.WriteFile(filepath.Join(work, "self.txt"), []byte("declares itself"), 0o644))
-	entries, err := store.BuildManifest([]string{filepath.Join(work, "self.txt")}, []string{work})
+	entries, err := store.BuildManifest(context.Background(), []string{filepath.Join(work, "self.txt")}, []string{work})
 	mustDo(t, err)
 	selfHash, err := store.ManifestRevision(entries)
 	mustDo(t, err)

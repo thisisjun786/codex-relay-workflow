@@ -212,7 +212,7 @@ func TestOutgoingIsTheRuntimeThePointerLeaves(t *testing.T) {
 	old, updated := runtimeDir(h, "0.9.0", first, t), runtimeDir(h, "0.9.1", second, t)
 	h.mustInstall(t, "install", first)
 	h.mustInstall(t, "update", second)
-	if _, err := record.Update(h.record, 1, record.Delta{Select: []contract.Field{{Key: "codex-thread-bridge", Value: filepath.Join(old, "bin")}}}); err != nil {
+	if _, err := record.Update(context.Background(), h.record, 1, record.Delta{Select: []contract.Field{{Key: "codex-thread-bridge", Value: filepath.Join(old, "bin")}}}); err != nil {
 		t.Fatal(err)
 	}
 	if result, code := install.Rollback(context.Background(), h.options(), updated); code != install.OK || at(h.hostRecord(t), "outgoing", "codex-thread-bridge", "selected") != filepath.Join(old, "bin") || at(h.hostRecord(t), "outgoing", "codex-session-relay", "selected") != filepath.Join(old, "bin") {
@@ -227,7 +227,7 @@ func TestOutgoingIsTheRuntimeThePointerLeaves(t *testing.T) {
 	for _, name := range []string{"codex-session-relay", "codex-thread-bridge"} {
 		both = append(both, contract.Field{Key: name, Value: filepath.Join(updated, "bin")})
 	}
-	if _, err := record.Update(h.record, 1, record.Delta{Select: both}); err != nil {
+	if _, err := record.Update(context.Background(), h.record, 1, record.Delta{Select: both}); err != nil {
 		t.Fatal(err)
 	}
 	if err := pointer.Place(pointer.Path(h.dest), updated); err != nil {
@@ -237,7 +237,7 @@ func TestOutgoingIsTheRuntimeThePointerLeaves(t *testing.T) {
 	for _, name := range []string{"codex-session-relay", "codex-thread-bridge"} {
 		back = append(back, contract.Field{Key: name, Value: filepath.Join(old, "bin")})
 	}
-	if _, err := record.Update(h.record, 1, record.Delta{Select: back}); err != nil {
+	if _, err := record.Update(context.Background(), h.record, 1, record.Delta{Select: back}); err != nil {
 		t.Fatal(err)
 	}
 	if refused, code := install.Rollback(context.Background(), h.options(), ""); code != install.Refused || !strings.Contains(text(at(refused, "refused")), "interrupted") || h.pointerTarget(t) != updated {
@@ -265,7 +265,7 @@ func TestARollbackHoldsItsTargetsDirectoryLock(t *testing.T) {
 	saved := record.LockTimeout
 	record.LockTimeout = 200 * time.Millisecond
 	defer func() { record.LockTimeout = saved }()
-	held, err := record.Lock(old, 0)
+	held, err := record.Lock(context.Background(), old, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,12 +276,12 @@ func TestARollbackHoldsItsTargetsDirectoryLock(t *testing.T) {
 	held.Release()
 	excluded := false
 	restore := install.ReplaceSelectionCommit(func(path string, version int, delta record.Delta) (reading.Reading, error) {
-		if other, err := record.Lock(old, 0); err == nil {
+		if other, err := record.Lock(context.Background(), old, 0); err == nil {
 			other.Release()
 		} else {
 			excluded = true
 		}
-		return record.Update(path, version, delta)
+		return record.Update(context.Background(), path, version, delta)
 	})
 	result, code := install.Rollback(context.Background(), h.options(), "")
 	restore()

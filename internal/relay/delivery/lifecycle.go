@@ -42,21 +42,21 @@ func (l Lifecycle) MaySend() bool { return l.Deliverable == "yes" }
 func (l Lifecycle) IsBusy() bool  { return l.Deliverable == "busy" }
 
 // Observe is lifecycle.observe: read the host, decide, and never guess.
-func Observe(adapter Adapter, task string, cwd any, requireEvidence bool) Lifecycle {
+func Observe(ctx context.Context, adapter Adapter, task string, cwd any, requireEvidence bool) Lifecycle {
 	var runtime, goal, accepts any
 	var archived *bool
 	var problems []string
-	if facts, err := adapter.ReadThread(task); err != nil {
+	if facts, err := adapter.ReadThread(ctx, task); err != nil {
 		problems = append(problems, "thread read failed: "+errorLabel(err))
 	} else {
 		runtime, accepts = facts.RuntimeStatus, facts.CanAcceptInput
 	}
-	if value, err := adapter.IsArchived(task, cwd); err != nil {
+	if value, err := adapter.IsArchived(ctx, task, cwd); err != nil {
 		problems = append(problems, "archived check failed: "+errorLabel(err))
 	} else {
 		archived = value
 	}
-	if value, err := adapter.ReadGoalStatus(task); err != nil {
+	if value, err := adapter.ReadGoalStatus(ctx, task); err != nil {
 		problems = append(problems, "goal read failed: "+errorLabel(err))
 	} else {
 		goal = value

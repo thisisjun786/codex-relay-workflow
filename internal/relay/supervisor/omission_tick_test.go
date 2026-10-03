@@ -71,7 +71,7 @@ func seedOmissionWorld(tb testing.TB, relationships, owed int) *omissionWorld {
 		if err := os.WriteFile(artifact, []byte(strings.Repeat("the delivered bytes of "+rid+"\n", 200)), 0o600); err != nil {
 			tb.Fatal(err)
 		}
-		entries, err := store.BuildManifest([]string{artifact}, []string{work})
+		entries, err := store.BuildManifest(context.Background(), []string{artifact}, []string{work})
 		if err != nil {
 			tb.Fatal(err)
 		}
@@ -245,7 +245,7 @@ func TestCRW300DatabaseOpensAreSeen(t *testing.T) {
 func TestCRW300ArtifactReadsAreCounted(t *testing.T) {
 	w := newOmissionWorld(t, 1, 0)
 	ctx, reads := store.WithArtifactReads(w.ctx)
-	if _, _, _, err := store.HashArtifactContext(ctx, w.artifacts[0], []string{filepath.Dir(w.artifacts[0])}, false); err != nil {
+	if _, _, _, err := store.HashArtifact(ctx, w.artifacts[0], []string{filepath.Dir(w.artifacts[0])}, false); err != nil {
 		t.Fatal(err)
 	}
 	if reads.Count() != 1 {
