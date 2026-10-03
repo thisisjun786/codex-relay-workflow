@@ -648,6 +648,13 @@ is not its holder, or when the owning binding is paused. A granted turn that has
 acknowledged cannot begin a merge. A claim made before grants were recorded has none, needs
 none, and is not held to this.
 
+A restated candidate is `merge-turn-ready --head <a head the turn does not hold>`. It resets
+readiness, so a `--ready` given with it is accepted and not recorded, and on a holding turn it
+issues the grant above. Its answer carries `readinessReset` (`previousHead`, `candidateHead`,
+`readyRequested`, `grantId` and a `detail` naming the next steps); a call that leaves the head as it
+is carries none. The grant wakes nobody: `merge-turn-show` reads it again. The order after a
+refresh is in [merge readiness](merge-readiness.md#refresh-the-base-yourself-when-only-the-base-moved).
+
 `capacity-show` reports the held slots, their total, the count per parent, and any whose recorded
 parent no longer owns the project. `--project`, `--parent-task` and `--initiative` narrow that
 list. `headroom` is added only when `--scope` is given, and it carries a dimension only where a
