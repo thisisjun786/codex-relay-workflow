@@ -1,4 +1,3 @@
-// CXC v0.2.40 recall/src/paths.ts ignores CODEX_SQLITE_HOME.
 package recall
 
 import (
