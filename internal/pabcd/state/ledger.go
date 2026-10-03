@@ -18,8 +18,9 @@ import (
 // The transition ledger and the interview scan events: appendLedger, appendInterviewEvent and readInterviewEvents of CXC v0.2.40
 // pabcd-state/src/state.ts (216-242, 696-795). A row is one line appended with no lock and no temp file, as the oracle does it;
 // the callers that need one hold their own lock. One departure, for both appenders (CRW-474): a row starts on a new line when the
-// file's last line has no line feed or its last byte cannot be read, where the oracle joins it to that line. A scan ledger reader then
-// skips the joined line and both rows are lost; the oracle's readers of the transition ledger parse every line unguarded and throw.
+// file's last line has no line feed, where the oracle joins the row to that line (a last byte that cannot be read is taken the same
+// way, as the conservative answer). A scan ledger reader then skips the joined line and both rows are lost; the oracle's readers of
+// the transition ledger parse every non-empty line unguarded and throw.
 
 // LedgerFile is the transition ledger under the state directory; InterviewsSubdir holds one scan ledger per session.
 const (
