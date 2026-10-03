@@ -30,7 +30,7 @@
 //	             not_started             the agy binary was not found or did not start
 //	             lock_wait_expired       the host-wide lock was not free within Config.LockWait; agy was not started
 //
-// The checks run in this order: not started, time limit, read error, output cap, signal, non-zero exit, output that is not exactly one JSON envelope (nothing
+// The checks run in this order: not started, processes left after the kill, time limit, output cap, read error, signal, non-zero exit, output that is not exactly one JSON envelope (nothing
 // before or after it but whitespace), status, prompt length, print timeout, denied actions, empty response, missing structured output. A non-zero exit is matched only against the envelope's error and stderr, never against the
 // response text or agy's log (which says "not logged into Antigravity" on every call); a signal is a crash whatever stderr says. The prompt length comes first
 // among the checks of a finished call because the answer to a mangled prompt (the "-" case) is typically empty or denied, and the length names the cause.

@@ -100,6 +100,21 @@ func TestScrubEnvAllowlist(t *testing.T) {
 	}
 }
 
+// TestRelativePaths: a relative agy path and a relative working root still work, although agy starts in another directory.
+func TestRelativePaths(t *testing.T) {
+	cfg, rec := fakeCfg(t, fakeSpec{Stdout: testdata(t, "success_schema.json")})
+	t.Chdir(filepath.Dir(cfg.LockPath))
+	cfg.Binary, cfg.WorkRoot = "./agy", "rel-work"
+	schema := []byte(`{"type":"object"}`)
+	res := run(t, cfg, Request{Prompt: []byte("hi"), Schema: schema})
+	if res.Class != ClassNormal || rec().Schema != string(schema) {
+		t.Errorf("%s/%s: %s (the schema file the fake read: %q)", res.Class, res.Reason, res.Detail, rec().Schema)
+	}
+	if left, err := os.ReadDir("rel-work"); err != nil || len(left) != 0 {
+		t.Errorf("left under the relative working root: %v (%v)", left, err)
+	}
+}
+
 func TestNotStartedAndEmptyPrompt(t *testing.T) {
 	cfg, _ := fakeCfg(t, fakeSpec{})
 	cfg.Binary = filepath.Join(t.TempDir(), "no-such-agy")

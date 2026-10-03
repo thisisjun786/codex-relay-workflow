@@ -10,6 +10,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"time"
 )
 
@@ -124,6 +125,9 @@ func Run(ctx context.Context, cfg Config, req Request) (res Result, err error) {
 	limit := timeLimit(cfg.TimeLimitFloor, cfg.TimeLimitCeiling, len(req.Prompt))
 	res = Result{ExitCode: -1, Limit: limit}
 	bin, lookErr := exec.LookPath(cfg.Binary)
+	if lookErr == nil {
+		bin, lookErr = filepath.Abs(bin) // agy starts in another directory, so a relative path would no longer lead to it
+	}
 	if lookErr != nil {
 		return res.with(ClassUnavailable, ReasonNotStarted, "%v", lookErr), nil
 	}

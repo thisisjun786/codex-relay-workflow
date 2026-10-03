@@ -10,6 +10,10 @@ type callDir struct{ root, work, schema, log string }
 
 // newCallDir makes the directory under parent, with the schema file when there is a schema; it leaves nothing behind when it fails.
 func newCallDir(parent string, schema []byte) (callDir, error) {
+	parent, err := filepath.Abs(parent) // agy is given the schema and log paths and starts in another directory, so they must not be relative
+	if err != nil {
+		return callDir{}, err
+	}
 	if err := os.MkdirAll(parent, 0o700); err != nil {
 		return callDir{}, err
 	}
