@@ -35,6 +35,7 @@ func identityScenario(t *testing.T) []map[string]any {
 }
 
 func Test25_REG1_routing_key_is_the_pair_of_actual_task_ids_and_carries_no_title(t *testing.T) {
+	t.Parallel()
 	steps := identityScenario(t)
 	sameAsGolden(t, "identity", steps)
 	record := steps[1]["ok"].(map[string]any)
@@ -52,6 +53,7 @@ func Test25_REG1_routing_key_is_the_pair_of_actual_task_ids_and_carries_no_title
 }
 
 func Test25_REG2_reregistration_is_idempotent_and_a_different_scope_conflicts(t *testing.T) {
+	t.Parallel()
 	steps := identityScenario(t)
 	sameAsGolden(t, "identity", steps)
 	again := steps[2]["ok"].(map[string]any)
@@ -64,6 +66,7 @@ func Test25_REG2_reregistration_is_idempotent_and_a_different_scope_conflicts(t 
 }
 
 func Test25_REG3_cxc_bindings_are_kept_and_never_in_the_contract_record(t *testing.T) {
+	t.Parallel()
 	steps := identityScenario(t)
 	sameAsGolden(t, "identity", steps)
 	bindings := steps[0]["ok"].(map[string]any)["_bindings"].(map[string]any)
@@ -76,6 +79,7 @@ func Test25_REG3_cxc_bindings_are_kept_and_never_in_the_contract_record(t *testi
 }
 
 func Test25_REG4_an_unregistered_relationship_is_refused(t *testing.T) {
+	t.Parallel()
 	steps := identityScenario(t)
 	sameAsGolden(t, "identity", steps)
 	if steps[4]["refused"].(map[string]any)["reason"] != string(contract.RefusalUnregisteredRelationship) {
@@ -84,6 +88,7 @@ func Test25_REG4_an_unregistered_relationship_is_refused(t *testing.T) {
 }
 
 func Test25_REG5_a_replayed_dispatch_opens_no_generation_and_every_generation_is_retained(t *testing.T) {
+	t.Parallel()
 	r := newRegistry(t)
 	x, err := r.Register(ctx(), fixture())
 	if err != nil {
@@ -110,6 +115,7 @@ func Test25_REG5_a_replayed_dispatch_opens_no_generation_and_every_generation_is
 }
 
 func Test25_REG6_an_anchor_binds_only_from_a_dispatch_receipt_to_one_exact_turn(t *testing.T) {
+	t.Parallel()
 	r := newRegistry(t)
 	in := fixture()
 	in.DispatchTurnID = sql.NullString{}
@@ -159,6 +165,7 @@ func lifecycleSteps(t *testing.T) []map[string]any {
 }
 
 func Test25_REG7_inactive_is_never_active_opens_nothing_and_status_only_deactivates(t *testing.T) {
+	t.Parallel()
 	steps := lifecycleSteps(t)
 	sameAsGolden(t, "lifecycle", steps)
 	for i := 0; i < 3; i++ {
@@ -179,6 +186,7 @@ func Test25_REG7_inactive_is_never_active_opens_nothing_and_status_only_deactiva
 }
 
 func Test25_REG8_resume_restates_the_generation_and_the_whole_scope(t *testing.T) {
+	t.Parallel()
 	r := newRegistry(t)
 	in := fixture()
 	in.AllowedRecipients = []string{parent, child}
@@ -206,6 +214,7 @@ func Test25_REG8_resume_restates_the_generation_and_the_whole_scope(t *testing.T
 }
 
 func Test25_REG9_a_replacement_supersedes_and_preserves_the_original(t *testing.T) {
+	t.Parallel()
 	r := newRegistry(t)
 	original, err := r.Register(ctx(), fixture())
 	if err != nil {
@@ -243,6 +252,7 @@ func replacementOf(childTask string) Registration {
 }
 
 func Test25_REG10_resume_after_reassignment_is_refused_and_leaves_one_owner(t *testing.T) {
+	t.Parallel()
 	r := newRegistry(t)
 	x, err := r.Register(ctx(), fixture())
 	if err != nil {
@@ -296,6 +306,7 @@ func Test25_REG10_resume_after_reassignment_is_refused_and_leaves_one_owner(t *t
 // REG-11: two independent stores race a stale generation-1 resume against resume + advance +
 // pause. Whatever the interleaving, generation 2 is never left active.
 func Test25_REG11_a_stale_resume_never_leaves_the_newer_generation_active(t *testing.T) {
+	t.Parallel()
 	for round := 0; round < 10; round++ {
 		r := newRegistry(t)
 		x, err := r.Register(ctx(), fixture())
@@ -356,6 +367,7 @@ func Test25_REG11_a_stale_resume_never_leaves_the_newer_generation_active(t *tes
 // Test27_MRS_3_RealAttachFailureRollsBackRegistration exercises the actual attach update.
 // The request passes the pre-insert guard, but SQLite ignores the attach update itself.
 func Test27_MRS_3_RealAttachFailureRollsBackRegistration(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	r := newRegistry(t)
 	s := r.Store
@@ -404,6 +416,7 @@ func Test27_MRS_3_RealAttachFailureRollsBackRegistration(t *testing.T) {
 
 // Test27_MRS_3_AttachFailureRollsBackRegistration pins the attach to the write transaction.
 func Test27_MRS_3_AttachFailureRollsBackRegistration(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s, err := store.Open(ctx, filepath.Join(t.TempDir(), "relay.sqlite3"), "")
 	if err != nil {

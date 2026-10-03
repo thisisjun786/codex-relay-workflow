@@ -110,6 +110,7 @@ func usableOf(answer any) map[string]any {
 }
 
 func Test25_SPR2_completeness_environments_empty_is_a_decision_and_absence_is_decided_first(t *testing.T) {
+	t.Parallel()
 	got := sameSettingsAsGolden(t, "environments_", "absent_before_mistyped", "approval_null", "sandbox_null", "sandbox_omitted", "complete")
 	if usableOf(got["environments_empty"]) != nil || usableOf(got["absent_before_mistyped"])["detail"] != "missing cwd" {
 		t.Fatal("the table changed")
@@ -117,6 +118,7 @@ func Test25_SPR2_completeness_environments_empty_is_a_decision_and_absence_is_de
 }
 
 func Test25_SPR3_every_mistyped_string_field_is_named_in_one_refusal(t *testing.T) {
+	t.Parallel()
 	got := sameSettingsAsGolden(t, "mistyped_", "roots_string", "env_bad")
 	if usableOf(got["mistyped_all"])["detail"] != "cwd is int, not str; model is bool, not str; reasoningEffort is list, not str" {
 		t.Fatal(got["mistyped_all"])
@@ -124,6 +126,7 @@ func Test25_SPR3_every_mistyped_string_field_is_named_in_one_refusal(t *testing.
 }
 
 func Test25_SPR6_only_never_and_on_request_are_carriable_approval_policies(t *testing.T) {
+	t.Parallel()
 	got := sameSettingsAsGolden(t, "approval_")
 	for _, name := range []string{"approval_0", "approval_1", "approval_2", "approval_3", "approval_4"} {
 		if usableOf(got[name])["reason"] != UnsupportedApprovalPolicy {
@@ -133,6 +136,7 @@ func Test25_SPR6_only_never_and_on_request_are_carriable_approval_policies(t *te
 }
 
 func Test25_SPR7_the_gates_decide_in_one_order(t *testing.T) {
+	t.Parallel()
 	got := sameSettingsAsGolden(t, "ladder_")
 	for i, reason := range []string{SettingsIncomplete, SettingsMistyped, UnsupportedApprovalPolicy, UnsupportedSandboxType} {
 		if usableOf(got["ladder_"+string(rune('0'+i))])["reason"] != reason {
@@ -142,6 +146,7 @@ func Test25_SPR7_the_gates_decide_in_one_order(t *testing.T) {
 }
 
 func Test25_SPR11_approval_policy_in_the_response_is_decided_first_and_alone(t *testing.T) {
+	t.Parallel()
 	got := sameSettingsAsGolden(t, "resp_approval_", "resp_not_object")
 	for name, code := range map[string]string{"resp_approval_absent": SettingUnobservable, "resp_approval_untrusted": UnsupportedApprovalPolicy} {
 		found := got[name].(map[string]any)["mismatches"].([]any)
@@ -152,6 +157,7 @@ func Test25_SPR11_approval_policy_in_the_response_is_decided_first_and_alone(t *
 }
 
 func Test25_SPR14_two_unreadable_sandbox_policies_never_agree(t *testing.T) {
+	t.Parallel()
 	got := sameSettingsAsGolden(t, "sandbox_malformed")
 	found := got["sandbox_malformed"].(map[string]any)["mismatches"].([]any)
 	if first := found[0].(map[string]any); first["field"] != "sandbox" || first["code"] != SettingsNotPreserved {
@@ -160,6 +166,7 @@ func Test25_SPR14_two_unreadable_sandbox_policies_never_agree(t *testing.T) {
 }
 
 func Test25_SPR15_a_sandbox_that_is_not_a_readable_policy_is_unsupported_with_its_exact_detail(t *testing.T) {
+	t.Parallel()
 	got := sameSettingsAsGolden(t, "sandbox_kind_", "sandbox_type_")
 	if usableOf(got["sandbox_kind_0"])["detail"] != "the recorded sandbox is str, not the policy object a creation result reports, so it does not record the full policy a resume would have to restore" {
 		t.Fatal(got["sandbox_kind_0"])
@@ -167,6 +174,7 @@ func Test25_SPR15_a_sandbox_that_is_not_a_readable_policy_is_unsupported_with_it
 }
 
 func Test25_SPR16_a_readable_policy_is_unchanged_and_external_sandbox_is_named_exactly(t *testing.T) {
+	t.Parallel()
 	got := sameSettingsAsGolden(t, "complete", "sandbox_external", "sandbox_readonly")
 	if usableOf(got["sandbox_external"])["detail"] != "'externalSandbox' has no ThreadResumeParams.sandbox mode, so it cannot be restored on a resume" {
 		t.Fatal(got["sandbox_external"])
@@ -181,6 +189,7 @@ func Test25_SPR16_a_readable_policy_is_unchanged_and_external_sandbox_is_named_e
 // in Python's order, which the golden keeps; narrower roots pass only after a load that
 // transmitted nothing or a loaded recipient.
 func Test25_QA_widened_writable_roots_are_settings_not_preserved_in_pythons_order(t *testing.T) {
+	t.Parallel()
 	got := sameSettingsAsGolden(t, "resp_")
 	found := got["resp_widened_roots"].(map[string]any)["mismatches"].([]any)
 	if len(found) == 0 || found[0].(map[string]any)["code"] != SettingsNotPreserved {
@@ -194,6 +203,7 @@ func Test25_QA_widened_writable_roots_are_settings_not_preserved_in_pythons_orde
 // SHN-11: an accepted narrowing is noted once per place where the reported SET is a strict
 // subset of the record (a reordering is no narrowing), with the recipient's prior status.
 func Test25_SHN11_an_accepted_narrowing_is_noted_where_the_set_shrank(t *testing.T) {
+	t.Parallel()
 	got := sameSettingsAsGolden(t, "narrow_")
 	notes := got["narrow_all"].(map[string]any)["narrowing"].([]any)
 	if len(notes) != 3 || notes[0].(map[string]any)["code"] != RuntimeRootsNarrower {

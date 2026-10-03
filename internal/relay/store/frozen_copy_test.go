@@ -37,6 +37,7 @@ func requireNoManifest(t *testing.T, destination string) {
 // the source's timestamps move here, so its bytes still hash to the digest and the re-hash after
 // the copy would accept them: the refusal is the stability check's alone.
 func TestFreezeRefusesASourceThatChangesDuringTheCopy(t *testing.T) {
+	// Serial: assigns the package-level afterFrozenCopy seam, which every other running test would reach.
 	source, entries := frozenSource(t, "the delivered bytes")
 	destination := filepath.Join(t.TempDir(), "frozen")
 	afterFrozenCopy = func(path string) {
@@ -57,6 +58,7 @@ func TestFreezeRefusesASourceThatChangesDuringTheCopy(t *testing.T) {
 // stored under the digest's name are not trusted for having the name: the re-hash refuses them,
 // and no MANIFEST.json claims them.
 func TestFreezeRehashesABlobItFindsUnderTheDigestName(t *testing.T) {
+	t.Parallel()
 	_, entries := frozenSource(t, "the delivered bytes")
 	destination := filepath.Join(t.TempDir(), "frozen")
 	files := filepath.Join(destination, "files")
@@ -78,6 +80,7 @@ func TestFreezeRehashesABlobItFindsUnderTheDigestName(t *testing.T) {
 // reached through a symlinked directory, or named relative to the working directory, is the
 // place Path.resolve() names, and the pinned walk runs from there.
 func TestFreezeAndVerifyResolveTheDestinationAsTheFenceDoes(t *testing.T) {
+	// Serial: changes the process working directory, which every other running test would see.
 	_, entries := frozenSource(t, "the delivered bytes")
 	t.Run("symlinked", func(t *testing.T) {
 		base := t.TempDir()
