@@ -13,8 +13,8 @@ import (
 	"time"
 )
 
-// groupGrace is the longest a call waits, after killing its process group, for the members to be gone.
-const groupGrace = 2 * time.Second
+// groupGrace is the longest a call waits, after killing its process group, for the members to be gone. A variable so a test can shorten it.
+var groupGrace = 2 * time.Second
 
 // processGroup is the process group of one call. Its leader is a sentinel, a shell that waits on a pipe this runner holds and that nobody reaps until close,
 // so the group id cannot be taken by another process while any signal may still be sent to it, whatever agy and its descendants do. agy joins the group
@@ -27,6 +27,7 @@ type processGroup struct {
 
 func startProcessGroup() (*processGroup, error) {
 	s := exec.Command("/bin/sh", "-c", "read _")
+	s.Env = []string{} // it only runs the read builtin; it has no use for the caller's environment
 	s.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	hold, err := s.StdinPipe()
 	if err != nil {
@@ -53,7 +54,9 @@ func (g *processGroup) kill() error {
 }
 
 // close kills the group, reaps the sentinel, and reports whether the group has no member left within groupGrace. A killed member nobody has reaped yet still
-// counts as one; init reaps it in moments. After close the group id is free.
+// counts as one (its parent, or init when its parent is gone, reaps it), so a host where nobody reaps makes the call a crash, which is the safe direction. A
+// live member cannot survive the SIGKILL except in an uninterruptible kernel wait; the lock is released nonetheless, because holding it would turn one stuck
+// process into a permanent stop of every call. After close the group id is free.
 func (g *processGroup) close() bool {
 	_ = g.kill()
 	_ = g.hold.Close()

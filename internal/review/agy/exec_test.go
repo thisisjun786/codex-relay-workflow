@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math"
 	"os"
+	"os/exec"
 	"syscall"
 	"testing"
 	"time"
@@ -71,6 +72,35 @@ func TestAgyExitsFirst(t *testing.T) {
 		if child := rec().Child; syscall.Kill(child, 0) == nil && !zombie(child) {
 			t.Errorf("child %d (pipes %v) was still running when Run returned", child, c.pipes)
 		}
+	}
+}
+
+// TestProcessGroupClose: close reports a group that is empty, and one that still has a member, here a child that died and has not been reaped, which counts.
+func TestProcessGroupClose(t *testing.T) {
+	defer func(old time.Duration) { groupGrace = old }(groupGrace)
+	groupGrace = 200 * time.Millisecond
+	g, err := startProcessGroup()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !g.close() {
+		t.Error("a group with only its sentinel is empty once it has been closed")
+	}
+	if g, err = startProcessGroup(); err != nil {
+		t.Fatal(err)
+	}
+	member := exec.Command("/bin/sh", "-c", "exit 0")
+	g.join(member)
+	if err := member.Start(); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(200 * time.Millisecond) // it has exited and stays a zombie: nobody waits for it yet
+	if g.close() {
+		t.Error("a member nobody has reaped yet must count as present")
+	}
+	_ = member.Wait()
+	if err := syscall.Kill(-g.pgid, 0); !errors.Is(err, syscall.ESRCH) {
+		t.Errorf("once reaped the group is empty: %v", err)
 	}
 }
 
