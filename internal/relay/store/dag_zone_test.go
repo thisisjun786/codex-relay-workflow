@@ -60,6 +60,8 @@ var zoneInventory = map[string][]string{
 	// CRW-431 (appended statement): whether the declarer stated a whole-repository hold on a declared region.
 	"dag_node_region_holds": {"plan_id", "node_id", "declaration_seq", "repository", "path", "region_kind", "region_key", "stated"},
 	"dag_base_refreshes":    {"refresh_id", "acceptance_id", "refresh_seq", "relationship_id", "execution_generation", "event_id", "revision_hash", "head_sha", "base_repository", "base_ref", "base_tip_sha", "proof_json", "resolved_paths_json", "recorded_by_task_id", "coordinator_epoch", "recorded_at"},
+	// CRW-446 (appended statement): the withdrawal of a generation that was opened by hand and never bound or sent.
+	"dag_generation_withdrawals": {"relationship_id", "execution_generation", "plan_id", "node_id", "dispatch_request_id", "opened_reason", "restored_generation", "reason", "withdrawn_by_task_id", "coordinator_epoch", "withdrawn_at"},
 	// CRW-411 (appended statements): the release policy of a plan, the results a parent records after a landing, and the policy state a recorded pass saw.
 	"dag_release_policy":      {"plan_id", "policy_seq", "window_size", "handling_seconds", "red_merges", "clean_run", "recorded_by", "coordinator_epoch", "recorded_at"},
 	"dag_landing_results":     {"result_id", "plan_id", "node_id", "kind", "commit_sha", "evidence", "recorded_by", "coordinator_epoch", "recorded_at"},

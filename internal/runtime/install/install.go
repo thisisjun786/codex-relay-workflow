@@ -72,8 +72,8 @@ type Options struct {
 	// started with that set reads and claims its scope there alone, and so do they
 	// (doctor.RecordedDaemons).
 	ScopeRegistry string
-	// StateBackup is the operator's acknowledgement that the additive DAG zone arrives (--backup-state-to): the
-	// directory the whole relay state directory is copied to before the swap that brings it (zone.go). "" is
+	// StateBackup is the operator's acknowledgement that the additive DAG zone, or ordinary indexes, arrive (--backup-state-to):
+	// the directory the whole relay state directory is copied to before the swap that brings them (zone.go). "" is
 	// no acknowledgement, and that arrival then refuses naming this route.
 	StateBackup string
 	// CandidateSchema is a seam: nil asks the candidate binary for its declared schema.
