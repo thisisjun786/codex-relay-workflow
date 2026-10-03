@@ -29,14 +29,15 @@
 //	             not_started             the agy binary was not found or did not start
 //	             lock_wait_expired       the host-wide lock was not free within Config.LockWait; agy was not started
 //
-// The checks run in this order: not started, time limit, output cap, non-zero exit (matched against the envelope's error and stderr), unparseable
-// envelope, status, prompt length, print timeout, denied actions, empty response, missing structured output. The prompt length comes first among the checks of
-// a finished call because the answer to a mangled prompt (the "-" case) is typically empty or denied, and the length names the cause.
+// The checks run in this order: not started, time limit, read error, output cap, signal, non-zero exit, unparseable envelope, status, prompt length, print
+// timeout, denied actions, empty response, missing structured output. A non-zero exit is matched only against the envelope's error and stderr, never against the
+// response text or agy's log (which says "not logged into Antigravity" on every call); a signal is a crash whatever stderr says. The prompt length comes first
+// among the checks of a finished call because the answer to a mangled prompt (the "-" case) is typically empty or denied, and the length names the cause.
 //
 // # Prompt length
 //
 // agy logs "Print mode: starting (promptLength=N, ...)" in the file given with --log-file. N is the number of bytes of the prompt: in R0's recordings
-// of 78 calls, the 6 whose prompt held non-ASCII text matched the byte length and not the rune count or the UTF-16 length. The runner compares N with
+// of 128 prompts, the 21 that held non-ASCII text all matched the byte length and none the rune count or the UTF-16 length. The runner compares N with
 // len(Request.Prompt), so the prompt is sent exactly as given, with nothing added.
 //
 // # Where things live
@@ -47,10 +48,12 @@
 // # Limits and isolation
 //
 // The call time limit is Config.TimeLimitFloor for a prompt up to 100 KiB and grows in proportion beyond that, up to Config.TimeLimitCeiling. agy runs in
-// its own process group and only that group is signalled. At most one call runs on the host: Run holds an exclusive flock on Config.LockPath for the whole
+// its own process group and only that group is signalled: when the limit passes and again once agy has exited, so a descendant never outlives the call. At
+// most one call runs on the host: Run holds an exclusive flock on Config.LockPath for the whole
 // call and waits for it for at most Config.LockWait; the file is never removed, because replacing it would let two holders in. agy gets an allowlisted
-// environment (PATH, HOME, USER, LOGNAME, LANG, LANGUAGE, LC_*, TZ, TERM, TMPDIR, XDG_*, SSL_CERT_*, the proxy variables) plus Config.Env, so GH_TOKEN,
-// GITHUB_TOKEN, SSH_AUTH_SOCK and every other credential stay behind while agy still finds its own login under HOME and XDG_*.
+// environment, by exact name (PATH, HOME, USER, LOGNAME, TZ, TERM, TMPDIR, the XDG_ directories, LANG, LANGUAGE, the LC_ categories, SSL_CERT_*, the proxy
+// variables) and the caller cannot add to it, so GH_TOKEN, GITHUB_TOKEN, SSH_AUTH_SOCK and every other credential stay behind while agy still finds its own
+// login under HOME and XDG_CONFIG_HOME.
 //
 // Run returns an error only for a caller that cancelled, an empty prompt or a failure of the host (lock file, working directory); every outcome of agy
 // itself, including a lock that stayed busy, is a Result. Text agy wrote is data: nothing here executes, evaluates or follows it.

@@ -16,8 +16,6 @@ var failureTexts = []struct {
 	{"quota reached", ReasonQuota},
 	{"authentication required", ReasonAuthentication},
 	{"unauthenticated", ReasonAuthentication},
-	{"not logged in", ReasonAuthentication},
-	{"login required", ReasonAuthentication},
 	{"invalid model selection", ReasonUnknownModel},
 	{"blocked by content safety filters", ReasonContentFilter},
 }
