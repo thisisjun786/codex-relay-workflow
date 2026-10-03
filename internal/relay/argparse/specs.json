@@ -526,7 +526,8 @@
   {"flag":"--expect-inode","help":"the device:inode another participant reported"},
   {"flag":"--expect-log","help":"the device:inode:name another participant reported for its write-ahead log"},
   {"flag":"--expect-nonce","help":"a nonce another participant wrote here"},
-  {"flag":"--issue","help":"also answer whether this store holds an assignment for this issue identity"}]},
+  {"flag":"--issue","help":"also answer whether this store holds an assignment for this issue identity"},
+  {"flag":"--probe-write","kind":"true","help":"measure writability by writing: create and remove a temporary file in the state directory and begin and roll back a write transaction under the write gate; without it writability is judged from permissions and the ownership stamp and nothing is written"}]},
 {"name":"store-identity"},
 {"name":"store-challenge","options":[
   {"flag":"--write","kind":"true"},
