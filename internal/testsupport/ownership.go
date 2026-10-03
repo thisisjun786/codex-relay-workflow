@@ -41,15 +41,27 @@ import (
 // of either runtime holds shared.
 
 // Create makes an absent store at dbPath owned by owner ("python" or "go") without running
-// either runtime: the frozen Python-produced empty store (contract/fixtures/sqlite-ddl) with a
+// either runtime: the frozen Python-produced empty store (contract/fixtures/sqlite-ddl) plus the
+// indexes CRW-301 added to the v1 schema (HistoryIndexes), which an absent-store initializer of
+// this version creates and the frozen store of the previous version lacks, with a
 // freshly minted store_id and store_created_at, schema_meta.socket_path set to the canonical
-// socket when one is given, then stamped as Fence does. Nothing may exist at dbPath but an
+// socket when one is given, then stamped as Fence does. A test of the upgrade itself starts from
+// the frozen store (FrozenStore), not from Create. Nothing may exist at dbPath but an
 // empty file, which SQLite and the Python initializer both read as no database and which keeps
 // its inode, and the directory may hold no mirror or write gate.
 func Create(t testing.TB, dbPath, socket, owner string) {
 	t.Helper()
 	if err := create(context.Background(), dbPath, socket, owner); err != nil {
 		t.Fatalf("testsupport.Create(%s, %q, %s): %v", dbPath, socket, owner, err)
+	}
+}
+
+// CreatePreviousVersion is Create for the store of the version before CRW-301: the frozen store as it is, without
+// the history indexes. Opening it with this version upgrades it, which is what a test of the upgrade starts from.
+func CreatePreviousVersion(t testing.TB, dbPath, socket, owner string) {
+	t.Helper()
+	if err := createWith(context.Background(), dbPath, socket, owner, false); err != nil {
+		t.Fatalf("testsupport.CreatePreviousVersion(%s, %q, %s): %v", dbPath, socket, owner, err)
 	}
 }
 
@@ -557,7 +569,11 @@ func canonicalSocket(socket string) (string, error) {
 	return resolve(absolute), nil
 }
 
-func create(ctx context.Context, dbPath, socket, owner string) (err error) {
+func create(ctx context.Context, dbPath, socket, owner string) error {
+	return createWith(ctx, dbPath, socket, owner, true)
+}
+
+func createWith(ctx context.Context, dbPath, socket, owner string, history bool) (err error) {
 	if !validOwner(owner) {
 		return fmt.Errorf("owner %q is neither python nor go", owner)
 	}
@@ -607,6 +623,18 @@ func create(ctx context.Context, dbPath, socket, owner string) (err error) {
 		{"UPDATE schema_meta SET value = ? WHERE key = 'store_id'", []any{hex.EncodeToString(id[:])}},
 		{"UPDATE schema_meta SET value = ? WHERE key = 'store_created_at'", []any{time.Now().UTC().Format("2006-01-02T15:04:05Z")}},
 		{"DELETE FROM schema_meta WHERE key = 'socket_path'", nil},
+	}
+	if history {
+		indexes, e := HistoryIndexes()
+		if e != nil {
+			return errors.Join(e, db.Close())
+		}
+		for _, index := range indexes {
+			statements = append(statements, struct {
+				query string
+				args  []any
+			}{index.SQL, nil})
+		}
 	}
 	if socket != "" {
 		canonical, e := canonicalSocket(socket)

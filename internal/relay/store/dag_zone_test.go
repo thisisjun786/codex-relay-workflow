@@ -83,7 +83,10 @@ func zoneRawDB(t *testing.T, path string) *sql.DB {
 }
 
 // preDAGStore is a go-owned store built from the frozen v1 fixture (no dag_ object) and seeded with
-// rows in several v1 tables, closed and checkpointed so the file alone holds it.
+// rows in several v1 tables, closed and checkpointed so the file alone holds it. It is a store of this
+// version without the zone, so it holds the history indexes (testsupport.Create adds them): these tests
+// are about the zone. The upgrade of a store that lacks the indexes is tested from
+// testsupport.CreatePreviousVersion (history_index_test.go).
 func zonePreDAGStore(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "relay.sqlite3")
