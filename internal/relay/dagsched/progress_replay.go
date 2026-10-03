@@ -219,8 +219,7 @@ func printedDigest(o contract.OrderedObject) (string, error) {
 	if err != nil {
 		return "", invariant("a progress record cannot be printed: %v", err)
 	}
-	sum := sha256.Sum256(printed)
-	return hex.EncodeToString(sum[:]), nil
+	return shaOf(printed), nil
 }
 
 // recordObject is what a record's digest covers: every printed field of the node entry except its stage, which is a function of the rest.

@@ -1,8 +1,6 @@
 package dagsched
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"sort"
 
@@ -47,12 +45,7 @@ func AcceptanceDigest(a Acceptance) string {
 	if a.PRNumber > 0 {
 		m["pr_number"] = a.PRNumber
 	}
-	return digestOf(m)
-}
-
-func digestOf(v any) string {
-	h := sha256.Sum256([]byte(dag.Canonical(v)))
-	return hex.EncodeToString(h[:])
+	return dag.Digest(m)
 }
 
 // CheckRow is one check of an EvidenceBody.
@@ -123,7 +116,7 @@ func (b EvidenceBody) object() map[string]any {
 func (b EvidenceBody) JSON() string { return dag.Canonical(b.object()) }
 
 // EvidenceDigest is the sha256 of the canonical body.
-func EvidenceDigest(b EvidenceBody) string { return digestOf(b.object()) }
+func EvidenceDigest(b EvidenceBody) string { return dag.Digest(b.object()) }
 
 // RecomputeEvidenceDigest parses a stored evidence_json and digests it again, so a row whose digest or body was altered is found.
 func RecomputeEvidenceDigest(evidenceJSON string) (string, error) {
@@ -178,6 +171,8 @@ func parseEvidenceChecks(evidenceJSON string) ([]CheckRow, error) {
 // that release a node of the same name over the same inputs are two releases), within the engine's 128 characters. It carries no
 // attempt counter: a replay is the same request.
 func ReleaseRequestID(planID, nodeID, manifestDigest string) string {
-	h := sha256.Sum256([]byte(dag.Canonical([]any{planID, nodeID, manifestDigest})))
-	return "dag-" + hex.EncodeToString(h[:])[:40]
+	return requestID(planID, nodeID, manifestDigest)
 }
+
+// requestID is a managed-start request id: "dag-" and the first 40 hex digits of the digest of the canonical array of the parts that identify the request, within the engine's 128 characters.
+func requestID(parts ...any) string { return "dag-" + dag.Digest(parts)[:40] }

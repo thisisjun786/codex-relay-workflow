@@ -3,9 +3,7 @@ package dagsched
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
@@ -46,8 +44,7 @@ var testFreezeWrite func(file *os.File, canonical []byte) error
 // RecoveryRequestID is the managed request id of the release that follows a closed intent of the same manifest: a pure function of the closed request, so a replay is the same request (no
 // attempt counter). It has the shape of ReleaseRequestID and stays within the engine's 128 characters.
 func RecoveryRequestID(planID, nodeID, manifestDigest, closedRequestID string) string {
-	h := sha256.Sum256([]byte(dag.Canonical([]any{"recover", planID, nodeID, manifestDigest, closedRequestID})))
-	return "dag-" + hex.EncodeToString(h[:])[:40]
+	return requestID("recover", planID, nodeID, manifestDigest, closedRequestID)
 }
 
 // latestRelease is the node's open intent: the release (a dag_releases row, or a rereleased row of dag_release_recoveries) whose managed request has no closed row. There is at most one: a release

@@ -64,7 +64,7 @@ func (s *Scheduler) RecordLandingResult(ctx context.Context, plan, node, actor s
 		return ResultRecord{}, err
 	}
 	out := ResultRecord{PlanID: plan, NodeID: node, Kind: in.Kind, Commit: in.Commit, Evidence: in.Evidence}
-	out.ResultID = digestOf(map[string]any{"plan_id": plan, "node_id": node, "kind": in.Kind, "commit": in.Commit, "evidence": in.Evidence})
+	out.ResultID = dag.Digest(map[string]any{"plan_id": plan, "node_id": node, "kind": in.Kind, "commit": in.Commit, "evidence": in.Evidence})
 	err := s.Store.Compose(ctx, func(txCtx context.Context, _ *sql.Conn) error {
 		q := s.Store.Q(txCtx)
 		if err := s.fence(txCtx, q, plan, actor); err != nil {

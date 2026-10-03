@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 )
 
@@ -131,7 +132,7 @@ func reviewDigest(findings any) (digest string) {
 			digest = ""
 		}
 	}()
-	return digestOf(findings)
+	return dag.Digest(findings)
 }
 
 // ClassifyPullRequest is the fail-closed rule every consumer of a snapshot applies (010): a verdict of unknown means the evidence was unreadable, truncated or unstable and is
