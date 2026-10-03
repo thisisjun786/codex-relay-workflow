@@ -860,7 +860,7 @@
   {"flag":"--authority-kind","required":true},
   {"flag":"--authority-ref","required":true},
   {"flag":"--expect-epoch","type":"int","help":"the coordinator epoch this session holds (dag-coordinator-claim answers it); a write from another epoch is refused stale_coordinator_epoch. 0 names none, which only a plan nobody claimed takes"}]},
-{"name":"dag-correct","summary":"takes a correction back to the same child: with --prepare it rebuilds and stores the node's input manifest and prints the instruction line the correction ruling must carry as its restoration block; after the needs_changes ruling it binds the generation the ruling opened to the manifest that block names (or the previous one)","options":[
+{"name":"dag-correct","summary":"takes a correction back to the same child: with --prepare it rebuilds and stores the node's input manifest and prints the instruction line the correction ruling must carry as its restoration block; after the needs_changes ruling it binds the generation the ruling opened to the manifest that block names (or the previous one); for a generation a decision reply opened (split_approval, scope_change) it binds it, once the decision was dispatched, to the manifest the child was dispatched with, brought up to date with the plan's criteria","options":[
   {"flag":"--plan","required":true},
   {"flag":"--node","required":true},
   {"flag":"--actor","required":true},
