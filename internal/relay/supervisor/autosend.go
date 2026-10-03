@@ -185,7 +185,12 @@ func (c *Channel) OmissionReadingsExcept(ctx context.Context, project, at string
 	}
 	readings := make([]map[string]any, 0, len(ids))
 	for _, id := range ids {
-		reading := delivery.DeriveOmission(ctx, c.Store, store.PathlibParent(c.Store.Path), id, "", at, grace)
+		// Only an owed omission is kept, so a relationship the state alone settles as not owed is
+		// not judged against its receipt (which hashes its artifacts).
+		reading, judged := delivery.DeriveOwedOmission(ctx, c.Store, store.PathlibParent(c.Store.Path), id, "", at, grace)
+		if !judged {
+			continue
+		}
 		if objText(reading, "reportingState") == "unreported" && objBool(reading, "owed") {
 			plain := orderedMap(reading)
 			if o := ObservationObligation(plain); o != nil && !covered[o.ID] {
