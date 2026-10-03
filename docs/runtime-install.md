@@ -22,6 +22,7 @@ follows is about what is read before anything moves and what is put back when it
 | `crw install remove <dir>` | Delete one runtime directory nothing selects, points at or runs out of | OPS-2.4 |
 | `crw install register-mcp [--owner plugin]` | Write the bridge record the plugin's declared server reads | OPS-2.2 |
 | `crw install hook [--owner plugin]` | Write the Stop settings the plugin's declared hook reads | OPS-6.3 |
+| `crw install register-service [--remove]` | Write and enable the one systemd user unit that starts the relay service when the user manager starts; with `--remove`, disable and delete it | OPS-4.1, OPS-6.1 |
 | `crw install status`, `crw doctor` | Read the installation, classify it and report the six check results; write nothing | OPS-2.1, OPS-2.2, OPS-6.1 |
 | `crw-dev skills link --check` or `--apply` | Skill links into Codex, from a checkout | OPS-2.3 |
 
@@ -114,9 +115,9 @@ release instead of `--from`. Either way the archive has to be named for this hos
 and architecture, be listed exactly once in `SHA256SUMS` and hash to the listed digest, and nothing
 under the destination or in the host record is created before all three hold.
 
-`--backup-state-to <dir>` (on `install`, `update` and `rollback`) is the acknowledgement that the swap brings the additive DAG zone to a store
-that predates it: the command copies the whole relay state directory to `<dir>` before promoting, and without it that swap refuses and names the
-flag ([the route](#why-the-schema-reading-compares-statements-and-not-versions)).
+`--backup-state-to <dir>` (on `install`, `update` and `rollback`) is the acknowledgement that the swap brings the additive DAG zone, or ordinary
+indexes on tables the store already holds, to a store that lacks them: the command copies the whole relay state directory to `<dir>` before
+promoting, and without it that swap refuses and names the flag ([the route](#why-the-schema-reading-compares-statements-and-not-versions)).
 
 What follows is one run, in this order, and the result lists the steps it took:
 
@@ -338,6 +339,8 @@ outside quoted text are normalised away and nothing else is.
 | `NARROWS` | the store holds objects the candidate does not declare | refused |
 | `EXTENDS_ZONE` | the only difference is the additive DAG zone arriving: every added object is the zone's | refused, unless the command takes the OPS-4.5 backup (below) |
 | `NARROWS_ZONE` | the only difference is the additive DAG zone leaving: every object the candidate does not declare is the zone's | allowed |
+| `EXTENDS_INDEX` | the only difference is ordinary indexes arriving on tables both sides declare (a few may leave beside them) | refused, unless the command takes the OPS-4.5 backup (below) |
+| `NARROWS_INDEX` | the only difference is ordinary indexes leaving: every object the candidate does not declare is one, on a table both sides declare | allowed |
 
 The relay applies its whole schema on every write-open, so a candidate whose schema is not the
 store's applies the difference the moment its daemon first starts. OPS-4.5 reserves that for its own
@@ -348,7 +351,21 @@ through. The Go and Python runtimes execute the same schema statements
 
 The one release that changes the schema is the one that adds the DAG zone ([DAG plans](relay/dag-plans.md#the-store), decision 74): its
 `dag_*` tables are created by the first write-open and are declared by that build. That decision is made (D-01), so the gate has an answer of
-its own for the zone and for nothing else, and the supported install command has a route through it.
+its own for the zone and, below, for ordinary indexes, and for nothing else, and the supported install command has a route through both.
+
+**The history indexes (CRW-301).** A second change reaches the frozen v1 schema script itself: six `CREATE INDEX IF NOT EXISTS` statements
+for the tables that only grow (`attempts`, `supervisor_attempts`, `acks`, `sync_outbox`, `supervisor_messages`,
+`managed_start_requests`; the list and the reason for each are in `contract/schema/relay-sqlite-history-indexes.json`). They are not zone
+objects. Each is an ordinary index, non-unique and without a SQL function (the partial index on `acks` compares a column with a literal), on a table
+both sides declare, so the gate gives them the answers of the paragraph on ordinary indexes below (pull request #397). A candidate that declares
+them over a store that lacks them reads `EXTENDS_INDEX`, which refuses without `--backup-state-to` and passes with it; a store that holds them
+against a candidate that does not declare them reads `NARROWS_INDEX`, which is allowed. The ratchet test
+`TestEveryNonUniqueIndexOfTheShippedSchemaIsOrdinaryButOne` keeps the six ordinary. A store that lacks the zone as well, meeting a build that
+brings the zone and these indexes together, is the case that paragraph leaves out: the zone beside an index is a plain `EXTENDS`, and
+`--backup-state-to` does not release it. The build itself creates the indexes: the schema script runs on every write-open, so the first command to
+open a store of the previous version builds them, one index in a transaction of its own, and a command that declares itself read-only builds them
+too, since it tries the writable open first (a read that opens nothing for writing builds nothing). The swap gate tests
+`TestTheHistoryIndexesArriveAsAnIndexExtendsAndLeaveAsAnIndexNarrows` and `TestTheHistoryIndexesAgainstRealStores` pin this reading.
 
 **The zone arrives (`EXTENDS_ZONE`).** Installing a build that declares the zone onto a store that has none (every store there is) refuses,
 and the refusal names the route: `crw install update --from ... --backup-state-to DIR` (the same flag is on `install` and `rollback`). The flag is the
@@ -378,6 +395,46 @@ The acknowledgement where nothing arrives is not a refusal and takes no backup. 
 **The zone leaves (`NARROWS_ZONE`).** Returning to a runtime that does not declare the zone, on an update, on a promotion an interrupted run left to
 finish, or on a rollback that moves the pointer, is not refused for that reason: the zone is additive, so an older runtime opens a store that has
 it (it validates only the frozen tables) and never reads or writes the zone, which stays in the store for a newer runtime to read again.
+
+**Ordinary indexes arrive (`EXTENDS_INDEX`) or leave (`NARROWS_INDEX`).** A release may add an index to a table the schema already declares, and then
+the store lacks an object the candidate declares, which is a plain `EXTENDS`. The gate gives a difference made only of ordinary indexes on tables
+both sides declare an answer of its own. An index is ordinary when it is not unique and calls no SQL function, in its key or in the `WHERE` of a
+partial index. SQLite decides that and the gate does not match text: it builds every table both readings declare in memory from the store's own
+statement for it, executes the one `CREATE INDEX` statement (a statement with a semicolon, even inside a literal, is not classified), and asks
+SQLite for the table the index is on, whether it is unique and, from SQLite's own compiled program for the statement, whether it calls a function.
+A unique index can fail to build over existing rows and then fails the writes of a runtime that never heard of it, and so can a function:
+`json_extract` over text that is not JSON raises, which an older runtime's ordinary write would meet. Neither is ordinary, however few rows are
+involved. An index on a table that is new, that differs between the two readings, or that the statement does not name correctly is not ordinary
+either, and neither is a trigger, a view, a new table or a column change: each keeps the answer it had (`EXTENDS`, `DIFFERS` or `NARROWS`),
+alone or beside an ordinary index, and the backup route does not carry it. The zone beside an index is neither class (a store without the zone
+meeting a build that brings the zone and an index together is a plain `EXTENDS`, as is the zone and an index leaving together a plain
+`NARROWS`), so the route is taken for the zone first, with a build that carries it alone ([refactor backlog](port/refactor-backlog.md)).
+
+An arrival refuses without `--backup-state-to` and passes with it, by the same route as the zone: the backup is taken after the daemon-stopped and
+no-open-attempt cells have answered and before anything is promoted, and the candidate builds each index on its first write-open. The schema
+script runs as separate statements, each in its own transaction, so the write lock is held for the build of one index at a time, never for the
+script. Measured on a synthetic store built by this build (the zone present, the six history indexes of pull request #384 absent, filled with the
+generator of that change's benchmark; page cache warm, on a host that was running other jobs; WAL mode, so readers were never held), with a second
+connection updating one row every 2 ms to see the lock:
+
+| Store | Events / attempts | The first write-open (six indexes) | The largest index (`attempts_sent_at`) | Each of the other five | Longest write stall | Growth of the file |
+| --- | --- | --- | --- | --- | --- | --- |
+| 89.8 MB (larger than the operating store's about 65 MB) | 80,000 / 160,000 | 0.12 to 0.13 s | 0.10 s | 3 to 22 ms | 0.08 to 0.105 s | 8 MB |
+| 447.8 MB | 400,000 / 800,000 | 0.50 to 0.56 s | 0.48 to 0.54 s | 2 to 45 ms | 0.33 to 0.43 s | 40 MB |
+
+The build is a small fraction of a second at the operating store's size and scales about linearly with the attempts table, which holds the one large
+index. A writer that meets the lock waits for it: the probe's longest wait can exceed the build by up to one busy-handler retry step, and no probe
+write failed. Three runs of each size are in the figures, and the readers' longest wait was 3 ms.
+
+An index the candidate does not declare leaves with no acknowledgement and no backup, on an update, on a promotion an interrupted run left to finish,
+and on a rollback. An ordinary index is derived from its table's rows and is never needed for correctness, and SQLite maintains every index of a
+table on every write whichever runtime made it, with no function that could fail, so an older runtime opens such a store and keeps it up to date
+without reading it; the index stays for a newer runtime to find. The one effect is on speed and on the order of a query that has no `ORDER BY`,
+which may now follow a leftover index. A unique index, or one that calls a function, that the candidate does not declare is not that: an older
+runtime's write can fail on it, and the store reads a plain `NARROWS`. A new index meant for this route is therefore non-unique and function-free;
+the ratchet test names the one index of the shipped schema that is not (`journal_managed_creation`, whose `WHERE` guards `json_extract` with
+`json_valid`), and a new exception fails it. The test of what calls a function reads SQLite's compiled program, whose opcodes SQLite does not promise
+to keep, so the tests keep `json_extract` as a control that fails when a driver upgrade changes them.
 
 The warning against write commands stays: opening a store for writing with this build creates the zone, and that happens outside this route (a
 relay command run by hand against a live state directory takes no backup), so the route makes the warning unnecessary only inside the install
@@ -860,7 +917,7 @@ behind it reports `unknown`; no time is ever invented or copied from another fie
 | `connected` | The relay's `doctor` reporting `actorReachability.socketConnect` as `ok` | A socket file on disk |
 | `deliveryAccepted` | An attempt that recorded a returned turn id | A dispatch or an absent error |
 | `verificationComplete` | Every OPS-6.4 condition at once | A completed turn or a green check |
-| `alwaysActive` | A supervised runtime surviving a host restart | Any of the five above |
+| `alwaysActive` | A supervised runtime surviving a host restart, observed after one | Any of the five above, or a registered unit no restart has tested |
 
 A live session is the only thing that can list the tools a Codex session exposes, and the
 diagnosis's own session with the bridge is not Codex's, so `mcpExposed` stays `not_verified` from
@@ -878,6 +935,59 @@ the service by calling the relay's own `doctor` rather than by rediscovering any
 other stores beside the resolved one without adopting any of them. Equality of path strings is not
 proof under OPS-3.4; proof is `doctor` from each participating process reporting the same state
 directory together with `assignment-find --issue` returning the expected relationship.
+
+## The relay service unit
+
+A relay service started by hand does not come back after a host restart: `service start` leaves a record that reads
+"recorded before a different boot", and nothing starts it again. `crw install register-service --socket <app-server-socket>
+[--state <dir>]` registers the one systemd user unit that does. It is a command of its own, like `hook` and `register-mcp`,
+because an install or an update never starts a daemon and gains no side effect here. Starting at boot, before anyone logs in,
+needs the user manager to start at boot, which a host with lingering off does only at login.
+
+The unit is written to `${XDG_CONFIG_HOME:-~/.config}/systemd/user/crw-relay.service` (`--unit-dir` and `--unit-name` change
+either) and enabled with `systemctl --user enable`. It is `Type=oneshot` with `RemainAfterExit=yes`, wanted by
+`default.target`; its `ExecStart` is the relay's own `service start` and its `ExecStop` is `service stop`. Both name
+`<destination>/current/bin/codex-session-relay` with the state directory and socket resolved at registration, so a pointer
+move never rewrites the unit, and the relay's own checks (intent, launch policy, scope) apply to the start unchanged. The unit
+has no restart policy: after the one start it acts only when an operator acts on it, and a refused start (`service_disabled`,
+`already_running`) is a failed unit with the relay's answer in the journal, never a retry that could start the relay in the
+middle of an update. It unsets `CODEX_THREAD_BRIDGE_EXECUTION_POLICY` and `CODEX_SESSION_RELAY_SCOPE_DIR`, which the user manager
+would otherwise pass in. `--scope-dir <dir>` registers an isolated target instead (a temporary state directory and socket):
+the unit sets that scope variable and the start carries `--allow-isolated-scope`.
+
+One owner registers this surface, and the command asks the manager as well as the file. It refuses, writing nothing:
+
+| Outcome | When |
+| --- | --- |
+| `unit_foreign` | something at the path is not the installer's unit (it lacks `X-CRW-Owner=crw-install`), or is not a regular file |
+| `unit_differs` | the installer's unit says something else; run `--remove`, then register again |
+| `unit_name_taken` | the manager loads the name from another file, or it is masked |
+| `unit_modified` | a `<name>.d` directory, drop-ins (also read once the unit is enabled and loaded, when the unit stays enabled and the exit status is 3), or a manager definition older than the disk (`NeedDaemonReload`), which `disable` would re-read |
+| `unit_second_owner` | another unit in the directory runs the relay's `service start` or `run` |
+| `unit_dir_in_runtime` | the unit directory lies inside the installer's destination, where removing a runtime would delete it |
+| `unit_unreadable` | no runtime is installed, systemd could not be asked, or the relay cannot read its launch declaration |
+
+It also reads what the boot start will find, through the pointer's relay in the unit's environment (`service status`), and
+reports `serviceEnabled`, `launchPolicySource` and `scopeAuthority`. A disabled service intent, an undeclared execution policy
+and an `XDG_STATE_HOME` the unit does not carry are `warnings`: the boot start would refuse `service_disabled`, withhold
+role-bound deliveries, or write its host record elsewhere. It never changes the intent. Exit status 3 means a change may have
+landed and a later step did not or could not be confirmed (written and not enabled: run it again; an `enable` or `disable` that
+failed, possibly after changing some links: read `systemctl --user is-enabled`; deleted and `daemon-reload` failed: run that); 1 is a
+refusal with nothing changed, 2 a usage error. `--remove` disables and deletes only a unit it wrote, only when the file is exactly
+what the command writes (`disable` follows `Also=` into other units), the manager resolves the name to that file and it is not
+running; it never stops the relay.
+
+The maintenance order is the relay's own: `service stop` (`systemctl --user stop crw-relay.service` runs the same stop while the
+unit is active, but a unit that never started has none to run), `crw install update`, which refuses while a daemon runs, then
+`systemctl --user restart crw-relay.service` or `service start`. After a hand `service stop` the unit still reads
+`active (exited)`, so `systemctl --user start` does nothing and `restart` is the command. Measured with the unit's own commands: a
+start with no App Server socket present succeeds and its worker stays up, so a start before the App Server is listening is not
+refused; a start not ready within the relay's 20 seconds on a heavily loaded host is ended by the relay and leaves a partial store
+(`write-gate.lock` without a database) that the next start refuses as `store_owned_by_other`, which is the relay's behaviour
+and is in the [refactor backlog](port/refactor-backlog.md).
+
+`crw doctor` keeps `alwaysActive` at `not_verified` and names the default unit file it found or did not (a unit under another
+name or directory is not read). A unit file is a registration; surviving a host restart is a measurement of one.
 
 ## The completion hook
 

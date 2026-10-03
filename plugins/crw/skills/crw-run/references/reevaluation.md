@@ -37,6 +37,7 @@ three and `merge-turn-show` are documented under
 [the four readers a candidate pass also uses](relay.md#the-four-readers-a-candidate-pass-also-uses);
 read what each answers there rather than inferring it from its output. Nothing in a pass calls a
 mutating command to observe something.
+Under a DAG plan `dag-ready` also samples the host's memory itself (`pass.host_memory`) as one more input of the pass.
 
 ## What the pass may not conclude
 
@@ -61,6 +62,7 @@ Closed set. A hold names the condition a later pass re-reads, and the row it res
 | `dispatch` | — | the reads that let it through |
 | `defer:blocked_prerequisite` | the named symbol, schema or region arrives | the landed revision or merged mark of its carrier |
 | `defer:no_capacity` | a slot is released, or the bound that decided it changes | the bound recorded under [Start policy](start-policy.md#what-bounds-the-number-actually-dispatched) |
+| `defer:host_memory` | a later pass reads the host back within its thresholds: `dag-ready` samples MemAvailable, the swap in use and the memory pressure again at every pass, so no slot has to be released | `pass.host_memory`: the sample, the thresholds and which one was crossed, kept by `dag-ready --record` (relay `dag-scheduler.md`, Host memory) |
 | `defer:capacity_unmeasured` | an observation is actually taken | the recorded `unmeasured` and what prevented measuring |
 | `defer:edit_overlap` | the peer agreement settles, or the region is released | the agreement and its follow-up |
 | `defer:merge_window` | the window's holder releases it, or this candidate is promoted | the merge turn; integration into a shared target stays serial |

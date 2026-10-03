@@ -1,0 +1,35 @@
+{
+  "about": "The objects CRW-301 added to the frozen v1 schema script (relay-sqlite.sql): what a store of the previous version lacks and a store of this version holds. Each entry is the CREATE text SQLite keeps in sqlite_master (without IF NOT EXISTS), the table it is on and the reason it exists, with the timings of BenchmarkHistoryIndexes on a synthetic store of 80,000 events. Once shipped, a text here never changes: the swap gate compares a store's objects with a candidate's by that text.",
+  "indexes": {
+    "acks_unverified": {
+      "table": "acks",
+      "sql": "CREATE INDEX acks_unverified ON acks (event_id) WHERE verified = 'unverified_turn'",
+      "reason": "verify-pending-acks, read on every daemon tick, scanned every acknowledgement to find the few still unverified: 3.9 ms a read at 68,571 acknowledgements, 0.09 ms through this index."
+    },
+    "attempts_sent_at": {
+      "table": "attempts",
+      "sql": "CREATE INDEX attempts_sent_at ON attempts (sent_at)",
+      "reason": "the hourly send-budget count (RelationshipSpentSQL) scanned every attempt: 14.5 ms a read at 160,000 attempts, 1.4 ms with this index alone and 0.2 ms with the supervisor one beside it; the eligibility read of a tick with work queued went from 12.7 ms to 0.34 ms."
+    },
+    "managed_start_requests_dispatch": {
+      "table": "managed_start_requests",
+      "sql": "CREATE INDEX managed_start_requests_dispatch ON managed_start_requests (dispatch_request_id)",
+      "reason": "a generation's managed start was found by scanning the table, and the omission context does it for each generation: 124 us a lookup at 2,000 requests, 13 us through this index."
+    },
+    "supervisor_attempts_transport_started": {
+      "table": "supervisor_attempts",
+      "sql": "CREATE INDEX supervisor_attempts_transport_started ON supervisor_attempts (transport_started_at)",
+      "reason": "the other arm of the hourly send-budget count scanned every supervisor attempt: with the attempts index built it takes the read from 1.4 ms to 0.2 ms at 15,000 supervisor attempts."
+    },
+    "supervisor_messages_obligation": {
+      "table": "supervisor_messages",
+      "sql": "CREATE INDEX supervisor_messages_obligation ON supervisor_messages (obligation_id, staged_at)",
+      "reason": "the newest message of an obligation was found by a scan and a sort: 0.63 ms a lookup at 10,000 messages, 12 us through this index."
+    },
+    "sync_outbox_relationship_event": {
+      "table": "sync_outbox",
+      "sql": "CREATE INDEX sync_outbox_relationship_event ON sync_outbox (relationship_id, event_id)",
+      "reason": "a verdict's Linear write was found by a scan: 0.54 ms a lookup at 10,000 rows, 18 us through this index."
+    }
+  }
+}

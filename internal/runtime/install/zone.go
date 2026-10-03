@@ -22,7 +22,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/swapgate"
 )
 
-// The OPS-4.5 route for the additive DAG zone (D-01).
+// The OPS-4.5 route for the additive DAG zone (D-01) and for ordinary indexes on tables the store already holds (CRW-472).
 //
 // A candidate that declares the zone installs onto a store that predates it (every store there is) without
 // changing a byte of it: the zone arrives with the candidate's first write-open. The swap gate still refuses
@@ -30,6 +30,8 @@ import (
 // first, and this file is the one route through: --backup-state-to DIR is the operator's acknowledgement, and
 // the backup is taken by the command, inside the promotion lock, after the daemon and in-flight cells have
 // answered and before anything is promoted, so the backup is guaranteed by the route and not by memory.
+// Ordinary indexes arrive the same way (swapgate.ExtendsIndex): the candidate builds them on its first write-open,
+// and the same acknowledgement and the same backup carry them.
 // Copy only: the source is opened read-only, and nothing is moved, recreated or deleted, here or on a failure.
 
 // stateBackupStep is a seam: tests make the backup fail, or change the state directory, between the copy and
@@ -61,15 +63,15 @@ type backedUp struct {
 
 // swapGate is OPS-4.4 asked of the relay the record selects now (the candidate's own on a
 // first install) and of the candidate binary's declared schema, with the OPS-4.5 route for the additive zone:
-// when that arrival is the only thing refusing and the operator acknowledged it, the state directory is copied
-// and the verdict is asked again with the copy recorded.
+// when that arrival (or ordinary indexes arriving) is the only thing refusing and the operator acknowledged it,
+// the state directory is copied and the verdict is asked again with the copy recorded.
 func swapGate(ctx context.Context, o Options, rec Object, candidate string, candidateSchema Object) Object {
 	cells := gateCells(ctx, o, rec, candidate, candidateSchema)
 	gate := swapgate.DecideWithRelease(cells, nil)
-	if o.StateBackup == "" || !swapgate.ZoneArrivalOnly(cells) {
+	if o.StateBackup == "" || !swapgate.AdditiveArrivalOnly(cells) {
 		if o.StateBackup != "" {
 			gate = record.Set(gate, "stateBackup", Object{field("requested", true), field("made", false),
-				field("reason", "the only schema difference is not the additive zone arriving (or the daemon, the open attempts or a schema reading refuses first), so no backup route applies and none was taken")})
+				field("reason", "the only schema difference is not the additive zone or ordinary indexes arriving (or the daemon, the open attempts or a schema reading refuses first), so no backup route applies and none was taken")})
 		}
 		return gate
 	}
@@ -253,7 +255,7 @@ func backupState(ctx context.Context, o Options, dest string) (Object, error) {
 	manifest := map[string]any{
 		"schema": "crw-state-backup/1", "source": source, "destination": dest, "issue": o.Issue, "at": o.stamp(),
 		"files": files, "bytes": bytes, "aggregateDigest": aggregate, "skipped": skipped, "entries": copied,
-		"meaning": "a copy of the relay state directory taken by crw install before the swap that brings the additive DAG zone (D-01, OPS-4.5); copy only, byte for byte",
+		"meaning": "a copy of the relay state directory taken by crw install before the swap that brings the additive DAG zone or ordinary indexes (D-01, CRW-472, OPS-4.5); copy only, byte for byte",
 	}
 	encoded, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {

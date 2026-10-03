@@ -19,6 +19,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -56,6 +57,13 @@ const (
 	// runtime ignores the zone's tables, so returning to it loses nothing and is not refused.
 	ExtendsZone = "EXTENDS_ZONE"
 	NarrowsZone = "NARROWS_ZONE"
+	// ExtendsIndex is a difference made only of ordinary indexes, arriving on tables both readings declare (CRW-472): the
+	// same OPS-4.5 decision as the zone, released by the same backup (DecideWithRelease). An ordinary index is non-unique and
+	// calls no SQL function; indexClass derives that with SQLite. NarrowsIndex is the opposite, a store that holds only such
+	// indexes the candidate does not declare: SQLite maintains an index on every write whichever runtime made it and it is
+	// never required for correctness, so returning to a runtime that does not declare it loses nothing and is not refused.
+	ExtendsIndex = "EXTENDS_INDEX"
+	NarrowsIndex = "NARROWS_INDEX"
 )
 
 // SchemaObjectsQuery is the one question both schema readings ask the catalog: every object
@@ -94,7 +102,7 @@ func Blocking(name string, cell Object) *bool {
 	case "inFlight":
 		refuses = !isZero(answer)
 	case "storeSchema":
-		refuses = answer == Narrows || answer == Extends || answer == Differs || answer == ExtendsZone
+		refuses = answer == Narrows || answer == Extends || answer == Differs || answer == ExtendsZone || answer == ExtendsIndex
 	}
 	return &refuses
 }
@@ -250,6 +258,22 @@ func SchemaCell(storeAnswer, candidate Object) Object {
 			return Cell(ExtendsZone, true, "the candidate declares objects of the additive DAG zone that the store does not hold: "+strings.Join(added, ", ")+". Nothing in the store is lost or rewritten, and the candidate creates them on its first write-open (D-01). OPS-4.5 still requires a copied backup of the whole state directory first, so this refuses unless the command is run with --backup-state-to DIR: it copies the state directory (copy only, byte for byte) after the daemon and in-flight cells pass and before the swap, records the copy, and then allows the swap.", command, zoneEvidence)
 		}
 	}
+	// Ordinary indexes on tables both sides declare are the other difference with an answer of its own (CRW-472). The zone is
+	// asked first, so a difference that is only zone objects keeps its answer; a changed object, or anything that is not such an
+	// index, never reaches this and keeps the answers below.
+	if len(changed) == 0 {
+		if answer, ok := indexClass(held, declared, lost, added); ok {
+			indexEvidence := append(evidenceValue, record.Object{{Key: "indexOnly", Value: true}}...)
+			if answer == ExtendsIndex {
+				detail := "the candidate declares ordinary (non-unique, function-free) indexes on tables the store already holds: " + strings.Join(added, ", ") + ". Nothing in the store is lost or rewritten, and the candidate builds each one on its first write-open. OPS-4.5 still requires a copied backup of the whole state directory first, so this refuses unless the command is run with --backup-state-to DIR: it copies the state directory (copy only, byte for byte) after the daemon and in-flight cells pass and before the swap, records the copy, and then allows the swap."
+				if len(lost) > 0 {
+					detail += " The store also holds ordinary indexes this candidate does not declare (" + strings.Join(lost, ", ") + "); they stay, and the candidate's writes maintain them."
+				}
+				return Cell(ExtendsIndex, true, detail, command, indexEvidence)
+			}
+			return Cell(NarrowsIndex, true, "the store holds ordinary (non-unique, function-free) indexes on tables this candidate also declares that it does not declare itself: "+strings.Join(lost, ", ")+". An index is derived from its table's rows and calls no SQL function, so an older runtime opens such a store, SQLite maintains the index on every write that runtime makes, and nothing is lost or made unwritable; it is never required for correctness, so returning to such a runtime is not refused. The indexes stay in the store and a newer runtime finds them there.", command, indexEvidence)
+		}
+	}
 	switch {
 	case len(lost) > 0:
 		return Cell(Narrows, true, "the store holds schema objects this candidate does not declare, so installing it would leave data no runtime can read: "+strings.Join(lost, ", "), command, evidenceValue)
@@ -371,7 +395,8 @@ func Decide(cells map[string]Object) Object {
 }
 
 // Release is the one thing that lets a refusing storeSchema cell stand: the record of the OPS-4.5
-// backup of the state directory, taken because the only difference is the additive zone arriving.
+// backup of the state directory, taken because the only difference is the additive zone, or ordinary
+// indexes, arriving.
 type Release struct{ Backup Object }
 
 // ZoneArrivalOnly is whether the swap refuses for one reason only: the candidate brings the additive
@@ -379,8 +404,22 @@ type Release struct{ Backup Object }
 // Anything else (a running daemon, an open attempt, a cell that could not be read, another schema
 // difference) is not the arrival alone, and no backup is taken for it.
 func ZoneArrivalOnly(cells map[string]Object) bool {
+	return arrivalOnly(cells, ExtendsZone)
+}
+
+// AdditiveArrivalOnly is ZoneArrivalOnly for either arrival the OPS-4.5 backup releases: the additive DAG zone
+// (ExtendsZone) or ordinary indexes (ExtendsIndex, CRW-472). Both are additive and both are carried by the same
+// acknowledgement; the departures (NarrowsZone, NarrowsIndex) are not arrivals and are not refused at all.
+func AdditiveArrivalOnly(cells map[string]Object) bool {
+	return arrivalOnly(cells, ExtendsZone, ExtendsIndex)
+}
+
+// arrivalOnly is whether the swap refuses for one reason only, the storeSchema answer being one of answers, with
+// the daemon stopped and no attempt open both established.
+func arrivalOnly(cells map[string]Object, answers ...string) bool {
 	schema := cells["storeSchema"]
-	if schema == nil || !pyvalue.Truthy(record.Get(schema, "readable")) || record.Get(schema, "answer") != ExtendsZone {
+	answer, _ := record.Get(schema, "answer").(string)
+	if schema == nil || !pyvalue.Truthy(record.Get(schema, "readable")) || !slices.Contains(answers, answer) {
 		return false
 	}
 	for _, name := range []string{"daemon", "inFlight"} {
@@ -395,13 +434,13 @@ func ZoneArrivalOnly(cells map[string]Object) bool {
 	return true
 }
 
-// DecideWithRelease is Decide with a release: when the only difference is the zone arriving
-// (ZoneArrivalOnly) the storeSchema cell does not refuse, and the verdict carries the backup. A nil
+// DecideWithRelease is Decide with a release: when the only difference is the zone or ordinary indexes
+// arriving (AdditiveArrivalOnly) the storeSchema cell does not refuse, and the verdict carries the backup. A nil
 // release is Decide, and every other cell still refuses as it does.
 func DecideWithRelease(cells map[string]Object, release *Release) Object {
 	var blockers, unread []any
 	reported := Object{}
-	released := release != nil && ZoneArrivalOnly(cells)
+	released := release != nil && AdditiveArrivalOnly(cells)
 	for _, name := range Cells {
 		given, present := cells[name]
 		cell := given

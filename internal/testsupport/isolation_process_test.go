@@ -17,6 +17,7 @@ const killedHelperEnv = "CRW_TEST_ISOLATION_KILLED_HELPER"
 // that carry the isolation between processes; every test restores them (as livestate_test.go does).
 var isolationEnvKeys = []string{"HOME", "XDG_STATE_HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "CODEX_HOME",
 	"CODEX_SESSION_RELAY_STATE", "CODEX_SESSION_RELAY_SCOPE_DIR", "CODEX_SESSION_RELAY_MARKER_ROOT",
+	"CODEX_THREAD_BRIDGE_EXECUTION_POLICY", "CODEX_THREAD_BRIDGE_EXECUTION_POLICY_DIGEST",
 	"GOPATH", "GOMODCACHE", "GOCACHE", RefuseLiveStateEnv, "TMPDIR", "CRW_TEST_ISOLATION_ROOT", "CRW_TEST_KEEP_ROOT"}
 
 // restoreIsolationEnv has t put every isolationEnvKeys variable back as it is now when the test ends.

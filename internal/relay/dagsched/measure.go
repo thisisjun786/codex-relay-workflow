@@ -134,7 +134,15 @@ func (s *Scheduler) Measurements(ctx context.Context, plan string) (Measurements
 
 // measureParallelism reads the passes the parent recorded: the slots held and free at each, and the limit that decided each. It measures recorded passes, not the children running between them.
 func measureParallelism(ctx context.Context, q store.Querier, plan string) (contract.OrderedObject, error) {
-	rows, err := q.QueryContext(ctx, "SELECT held, free_slots, ceiling, deciding_limit FROM dag_passes WHERE plan_id = ? ORDER BY pass_seq", plan)
+	// a pass the host memory bound cut is stored as no_capacity; the side table keeps the limit the reading decided by (a store that predates it has none)
+	query := "SELECT held, free_slots, ceiling, deciding_limit FROM dag_passes WHERE plan_id = ? ORDER BY pass_seq"
+	if ok, err := tableExists(ctx, q, "dag_pass_host_memory"); err != nil {
+		return nil, err
+	} else if ok {
+		query = "SELECT p.held, p.free_slots, p.ceiling, CASE WHEN h.reading_limit = 'host_memory' THEN 'host_memory' ELSE p.deciding_limit END" +
+			" FROM dag_passes p LEFT JOIN dag_pass_host_memory h ON h.plan_id = p.plan_id AND h.pass_seq = p.pass_seq WHERE p.plan_id = ? ORDER BY p.pass_seq"
+	}
+	rows, err := q.QueryContext(ctx, query, plan)
 	if err != nil {
 		return nil, err
 	}
@@ -159,6 +167,10 @@ func measureParallelism(ctx context.Context, q store.Querier, plan string) (cont
 	}
 	limitedBy := contract.OrderedObject{{Key: LimitNone, Value: limits[LimitNone]}, {Key: LimitNoCapacity, Value: limits[LimitNoCapacity]}, {Key: LimitEditOverlap, Value: limits[LimitEditOverlap]},
 		{Key: LimitCapacityUnmeasured, Value: limits[LimitCapacityUnmeasured]}}
+	if limits[LimitHostMemory] > 0 {
+		// printed only when a pass was cut by the host, so the measurements of a plan the bound never held read as they always did
+		limitedBy = append(limitedBy, contract.Field{Key: LimitHostMemory, Value: limits[LimitHostMemory]})
+	}
 	return presentMetric(len(held),
 		contract.Field{Key: "held_slots", Value: contract.OrderedObject{{Key: "latest", Value: held[len(held)-1]}, {Key: "max", Value: maxOf(held)}, {Key: "mean", Value: meanOf(held)}}},
 		contract.Field{Key: "free_slots", Value: contract.OrderedObject{{Key: "latest", Value: free[len(free)-1]}, {Key: "min", Value: minOf(free)}, {Key: "mean", Value: meanOf(free)}}},

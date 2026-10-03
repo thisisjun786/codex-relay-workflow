@@ -299,7 +299,32 @@ func (s TaskSettings) ResumeParams(threadID string) contract.OrderedObject {
 			config = config.Set(key[1], sectionObject.Set(key[2], value))
 		}
 	}
+	config = s.mcpOverrides(config)
 	return append(params, contract.Field{Key: "config", Value: config})
+}
+
+// mcpOverrides adds the switch-offs of the row's MCP expectation (key mcpServers, set by the sender
+// from the profile it resolved for this send) to a resume's config: the servers the host is to leave
+// stopped and the plugins it is to leave out, as nested objects the host reads.
+func (s TaskSettings) mcpOverrides(config contract.OrderedObject) contract.OrderedObject {
+	expected, ok := s.get("mcpServers").(contract.OrderedObject)
+	if !ok {
+		return config
+	}
+	for _, section := range [][2]string{{"disabled", "mcp_servers"}, {"pluginsAbsent", "plugins"}} {
+		listed, _ := expected.Lookup(section[0])
+		names, _ := listed.([]any)
+		if len(names) == 0 {
+			continue
+		}
+		off := contract.OrderedObject{}
+		for _, name := range names {
+			text, _ := name.(string)
+			off = off.Set(text, contract.OrderedObject{{Key: "enabled", Value: false}})
+		}
+		config = config.Set(section[1], off)
+	}
+	return config
 }
 
 func finding(code, field string, expected, returned any, extra ...contract.Field) contract.OrderedObject {
@@ -415,6 +440,15 @@ func (s TaskSettings) Mismatches(response any, transmitted, exactApprovalPolicy,
 		found = append(found, finding(SettingUnobservable, "activePermissionProfile", expectedProfile, nil))
 	} else if profile != nil && canonical(profile) != canonical(expectedProfile) && (expectedProfile != nil || !s.isRecordedSandboxProfile(profile)) {
 		found = append(found, finding(UnverifiablePermissionProfile, "activePermissionProfile", expectedProfile, profile))
+	}
+	if want := s.get("mcpServers"); want != nil {
+		got, _ := object.Lookup("mcpServers")
+		switch {
+		case got == nil:
+			found = append(found, finding(SettingUnobservable, "mcpServers", want, nil))
+		case canonical(want) != canonical(got):
+			found = append(found, finding(SettingsNotPreserved, "mcpServers", want, got))
+		}
 	}
 	return found
 }

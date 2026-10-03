@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -258,4 +259,38 @@ func landingRef(observations []string) string {
 	sorted := append([]string(nil), observations...)
 	sort.Strings(sorted)
 	return "dio-set-" + shaOf([]byte(strings.Join(sorted, "|")))[:32]
+}
+
+// ExecutionIntegrated says, for the relationship whose merged mark is (event, generation, revision), whether it executed a plan node and whether every node it executed has landed (CRW-429: the cleanup
+// of a finished child waits for this). applicable is false for a relationship that executed no node. For a node, integrated needs its active acceptance to stand on exactly that mark (its own head, or
+// after a recorded base refresh the later generation) and every target to contain the head with the merged mark on that revision (nodeIntegrated); another relationship's acceptance, none, and another
+// event, generation or revision all answer not integrated. It opens no transaction: call it inside one for one snapshot.
+func (s *Scheduler) ExecutionIntegrated(ctx context.Context, relationship, event string, generation int64, revision string) (applicable, integrated bool, err error) {
+	q := s.Store.Q(ctx)
+	if present, err := tableExists(ctx, q, "dag_node_executions"); err != nil || !present {
+		return false, false, err
+	}
+	nodes, err := s.Store.All(ctx, "SELECT DISTINCT plan_id, node_id FROM dag_node_executions WHERE relationship_id = ? ORDER BY plan_id, node_id", relationship)
+	if err != nil || len(nodes) == 0 {
+		return false, false, err
+	}
+	for _, row := range nodes {
+		plan, node := fmt.Sprint(row.Get("plan_id")), fmt.Sprint(row.Get("node_id"))
+		snap, _, err := dag.SnapshotAt(ctx, q, plan, 0)
+		if err != nil {
+			return true, false, err
+		}
+		acc, found, err := loadActiveAcceptance(ctx, q, plan, node)
+		if err != nil || !found {
+			return true, false, err
+		}
+		stand, err := s.standOf(ctx, q, acc)
+		if err != nil || stand.RelationshipID != relationship || stand.Generation != generation || stand.EventID != event || stand.RevisionHash != revision {
+			return true, false, err
+		}
+		if landed, _, err := s.nodeIntegrated(ctx, q, plan, snap, acc); err != nil || !landed {
+			return true, false, err
+		}
+	}
+	return true, true, nil
 }

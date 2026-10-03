@@ -383,6 +383,13 @@ git metadata say so explicitly and assign the fallback, since those are the part
 contract cannot know. A packet carrying neither clause sends a child the previous
 workflow.
 
+Write the first packet in the form of the pair recorded for the issue: the
+[Launch packet](references/task-packet.md#launch-packet) for a Sonnet child and the short
+[SOL packet](references/task-packet.md#sol-packet) for a SOL child; an issue with no recorded pair keeps the
+Launch packet. The rule that picks the pair is "Child pair by issue type" in
+[crw-plan's integrations.md](../crw-plan/references/integrations.md), and both forms carry the restoration block and
+restate the workflow on every send.
+
 Apply [Child task titles](references/task-packet.md#child-task-titles):
 `ISSUE-ID · descriptive task title` (title text up to 20 characters, including
 spaces; exclude the issue code and separator). Supply the title through the supported
@@ -392,6 +399,14 @@ That title names the Codex task, not the pull request, which the child titles in
 `Language:` ([Child task titles](references/task-packet.md#child-task-titles)). A temporary
 directory the packet names is short, and every make target, CI check and script it names for
 verification was confirmed to exist when the packet was written ([First full assignment required fields](references/task-packet.md#first-full-assignment-required-fields)).
+
+Choose the child's MCP profile at release, from the issue and its packet, and state it in the packet and in the
+release request's `child.settings.mcpProfile`: `ui-qa` for UI or browser QA, `second-opinion` when an
+external-model review is named, otherwise `minimal`. A host whose policy declares profiles for the child role
+refuses a child whose request states none or one it does not declare. A child that needs a server its profile
+lacks raises a decision request; the profile is not widened under it. Selection rule and what the host does
+with it: [MCP profiles](references/mcp-profiles.md).
+
 
 Apply [Independent implementation tasks](#independent-implementation-tasks) even
 when no new branch or worktree is needed. Non-PR work uses its permitted working
@@ -793,7 +808,8 @@ the counts against the record. That is a mechanical check, not a review. Where t
 return the candidate to the same child fail-closed rather than fixing it here. A late review
 thread on the record's head that the coordinator has itself dispositioned with
 `merge-evidence --restate <record> --late-dispositions <file>` is not a disagreement
-([how](references/merge-readiness.md#a-late-thread-the-parent-dispositions-itself)).
+([how](references/merge-readiness.md#a-late-thread-the-parent-dispositions-itself)). Where the installed relay
+lacks that option, [Late review threads](references/merge-readiness.md#late-review-threads) has the temporary procedure.
 
 Report **verified**, **needs changes**, or **unverified**, with concrete evidence,
 and distinguish implementation, merge, and deployment. Start a successor

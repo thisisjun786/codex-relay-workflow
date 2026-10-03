@@ -187,26 +187,88 @@ func skillsRoot(manifestPath string) (string, error) {
 	return root, nil
 }
 
-// pythonFileErrors names the files that make the repository carry Python: a name ending in .py,
-// and a regular file whose first line is a python shebang. Nothing is exempt. The Python
-// implementation left in todo 44 and the last developer tools in todo 48, and nothing in the
-// product or in CI runs Python; a sample that has to stay can be kept under another name.
+// The one allow-list for Python. The runtime, the installer, the wiring and CI run no Python and no
+// skill asset (POLICY.md), so a .py file or a script a python shebang runs may sit only in the
+// asset directories of a skill, whose helper scripts are original assets an agent runs when it
+// needs them. Allowing another place is one edit here.
+var (
+	// skillAssetRoots are the directories that hold skills, relative to the repository root: the
+	// plugin's declared skills directory (the metadata check reads it from the manifest) and the
+	// staging root of ported skills.
+	skillAssetRoots = []string{"plugins/crw/skills", skillport.StagingRoot}
+	// skillAssetDirs are the directories of a skill that hold its assets.
+	skillAssetDirs = []string{"scripts", "examples"}
+)
+
+// skillAssetHint names the allowed places as a refusal reports them.
+func skillAssetHint() string {
+	var places []string
+	for _, base := range skillAssetRoots {
+		places = append(places, base+"/*/{"+strings.Join(skillAssetDirs, ",")+"}/")
+	}
+	return strings.Join(places, ", ")
+}
+
+// skillAssetPath reports whether name, a path relative to root (the resolved checkout), is a
+// regular file below <skills root>/<skill>/<asset directory>/, at any depth. A path is judged by
+// where the file really is: a name that is not written plainly (a "..", a "./", a "//"), a link at
+// the end of it or on the way, and a name that only looks like an asset path are not assets.
+func skillAssetPath(root, name string) bool {
+	if filepath.Clean(name) != name {
+		return false
+	}
+	inside := false
+	for _, base := range skillAssetRoots {
+		if rest, ok := strings.CutPrefix(name, base+"/"); ok {
+			parts := strings.Split(rest, "/") // <skill>/<asset directory>/<file...>
+			inside = len(parts) >= 3 && slices.Contains(skillAssetDirs, parts[1])
+			break
+		}
+	}
+	if !inside {
+		return false
+	}
+	full := filepath.Join(root, name)
+	info, err := os.Lstat(full)
+	return err == nil && info.Mode().IsRegular() && resolve(full) == full
+}
+
+// pythonKind says what makes name carry Python, or "" when nothing does: a name ending in .py, or
+// a regular file whose first line is a python shebang. A symbolic link is judged by its own name
+// and by the file it leads to, so a link cannot carry a script into another place; a link to a
+// directory carries no Python, and the files below it are judged where they are.
+func pythonKind(root, name string) string {
+	full := filepath.Join(root, name)
+	target := full
+	if info, err := os.Lstat(full); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		target = resolve(full)
+	}
+	switch {
+	case filepath.Ext(name) == ".py" || filepath.Ext(target) == ".py":
+		return "a Python file"
+	case pythonShebang(target):
+		return "a script with a python shebang"
+	}
+	return ""
+}
+
+// pythonFileErrors names the files that carry Python outside the skill assets: everything else, the
+// product paths included, stays Python-free. The Python implementation left in todo 44 and the last
+// developer tools in todo 48.
 func pythonFileErrors(root string, names []string) []string {
+	root = resolve(root)
 	var errs []string
 	for _, name := range names {
-		switch {
-		case filepath.Ext(name) == ".py":
-			errs = append(errs, name+": a Python file; the repository tracks no Python")
-		case pythonShebang(filepath.Join(root, name)):
-			errs = append(errs, name+": a script with a python shebang; the repository tracks no Python")
+		if kind := pythonKind(root, name); kind != "" && !skillAssetPath(root, name) {
+			errs = append(errs, name+": "+kind+"; Python is allowed only in skill assets ("+skillAssetHint()+")")
 		}
 	}
 	return errs
 }
 
 // pythonShebang reports whether path is a regular file whose first line starts with #! and names
-// python. A symbolic link is judged as what it is, never followed; only the first 512 bytes are
-// read, so a binary without a newline is not read whole.
+// python. A symbolic link is not followed here (pythonKind hands it the file a link leads to); only
+// the first 512 bytes are read, so a binary without a newline is not read whole.
 func pythonShebang(path string) bool {
 	info, err := os.Lstat(path)
 	if err != nil || !info.Mode().IsRegular() {
@@ -232,9 +294,9 @@ func repositoryRoot() (string, error) {
 	return resolve(strings.TrimSpace(string(out))), nil
 }
 
-// Validate is `crw-dev ci validate`: skill metadata, local link paths and the absence of Python.
+// Validate is `crw-dev ci validate`: skill metadata, local link paths and no Python outside skill assets.
 func Validate(args []string, stdout, stderr io.Writer) int {
-	if code := parseFlags(newFlags("validate"), "Validate this repository's supported metadata format and link paths, and that it holds no Python.",
+	if code := parseFlags(newFlags("validate"), "Validate this repository's supported metadata format and link paths, and that Python sits only in skill assets.",
 		args, stdout, stderr); code >= 0 {
 		return code
 	}
@@ -281,6 +343,6 @@ func Validate(args []string, stdout, stderr io.Writer) int {
 	if len(errs) > 0 {
 		return failf(stderr, "%s", strings.Join(errs, "\n"))
 	}
-	fmt.Fprintf(stdout, "Validated %d skills, local link paths and no Python files.\n", count)
+	fmt.Fprintf(stdout, "Validated %d skills, local link paths and no Python outside skill assets.\n", count)
 	return 0
 }

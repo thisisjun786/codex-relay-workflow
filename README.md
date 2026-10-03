@@ -209,7 +209,7 @@ git diff --check
 The runtime itself is checked with `make lint test` ([CI operation](docs/CI.md) lists the
 parts CI splits that into). The Python packages the runtime was ported from left the
 repository in todo 44, the CI checks' Python twins in refactor R3 and the port checkers in
-todo 48; the repository tracks no Python, and `crw-dev ci validate` refuses a `.py` file.
+todo 48. The runtime, installer and CI do not depend on Python, and `crw-dev ci validate` refuses a `.py` file outside a skill's `scripts/` and `examples/` directories.
 
 When the bundled Codex skill validator is available:
 
