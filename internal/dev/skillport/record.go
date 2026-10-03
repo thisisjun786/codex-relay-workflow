@@ -22,6 +22,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -52,10 +54,12 @@ type Source struct {
 
 func (s Source) skills() string { return filepath.Join(s.Dir, "plugins/codexclaw/skills") }
 
-// DefaultOrigin is CXC v0.2.40. The listing digest is
-// (cd <tree>/plugins/codexclaw/skills && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum) | sha256sum.
+// DefaultOrigin is CXC v0.2.40. The listing digest is one line per regular file in byte order, the
+// sha256sum line with " x" after the name of an executable file, hashed:
+// (cd <tree>/plugins/codexclaw/skills && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sh -c
+// 'for f; do m=; [ -x "$f" ] && m=" x"; printf "%s  %s%s\n" "$(sha256sum <"$f" | cut -d" " -f1)" "$f" "$m"; done' sh) | sha256sum
 func DefaultOrigin() Origin {
-	return Origin{"v0.2.40", "3c1459acadeb1906d97c00a598e1457327ae372d", "a77cbd208b5c2bdb0e29e1dfab3480abb47af7b05d47d546b33af5c7c768809a"}
+	return Origin{"v0.2.40", "3c1459acadeb1906d97c00a598e1457327ae372d", "b5e89cd407db5eac39d3e111d438d2fff058a13c9bc7c01ca8d99dc078e7ecf4"}
 }
 
 // FileEntry is an original file after the substitution: its digest and executable bit.
@@ -87,7 +91,29 @@ func localPath(p string) bool {
 	return filepath.IsLocal(p) && path.Clean(p) == p && !strings.Contains(p, "\\")
 }
 
+// layout refuses a staging root or records root that is, or lies below, anything but a plain
+// directory (a symlink would carry reads and writes out of the checkout); a missing one is fine.
+func layout(root string) error {
+	for _, rel := range []string{StagingRoot, RecordDir} {
+		p := root
+		for _, part := range strings.Split(rel, "/") {
+			p = filepath.Join(p, part)
+			info, err := os.Lstat(p)
+			if errors.Is(err, fs.ErrNotExist) {
+				break
+			}
+			if err != nil || !info.IsDir() {
+				return fmt.Errorf("%s is not a plain directory (%v)", p, err)
+			}
+		}
+	}
+	return nil
+}
+
 func load(root, name string) (*Skill, error) {
+	if info, err := os.Lstat(recordPath(root, name)); err != nil || !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("the record is not a regular file (%v)", err)
+	}
 	raw, err := os.ReadFile(recordPath(root, name))
 	if err != nil {
 		return nil, err
@@ -98,7 +124,7 @@ func load(root, name string) (*Skill, error) {
 	if err := dec.Decode(&s); err != nil {
 		return nil, err
 	}
-	if dec.More() {
+	if _, err := dec.Token(); err != io.EOF {
 		return nil, errors.New("trailing data after the JSON value")
 	}
 	return &s, nil

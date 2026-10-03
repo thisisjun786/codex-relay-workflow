@@ -18,6 +18,9 @@ func Stage(root string, src Source, folders []string) ([]string, error) {
 
 func stage(root string, src Source, folders []string, rename func(string, string) error) ([]string, error) {
 	sub, err := newSubstituter(root)
+	if err == nil {
+		err = layout(root)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -35,8 +38,9 @@ func stage(root string, src Source, folders []string, rename func(string, string
 	return done, nil
 }
 
-// stageOne writes the skill into a temp directory and its record into a temp file, then renames the
-// directory and the record into place; a failure removes what this call made and nothing else.
+// stageOne writes the skill into a temp directory and its record into a temp file, publishes the
+// record by hard link (which refuses an existing one) and renames the directory into place; a
+// failure removes what this call made and nothing else.
 func stageOne(root string, src Source, sub *substituter, folder string, rename func(string, string) error) (name string, err error) {
 	if !validFolder(folder) {
 		return "", errors.New("not a skill folder name")
@@ -61,17 +65,20 @@ func stageOne(root string, src Source, sub *substituter, folder string, rename f
 	if err = os.MkdirAll(filepath.Join(root, StagingRoot), 0o755); err != nil {
 		return "", err
 	}
-	tmp, err := os.MkdirTemp(filepath.Join(root, StagingRoot), ".stage-")
-	if err != nil {
-		return "", err
-	}
-	tmpRecord := ""
+	var tmp, tmpRecord string
+	linked := false
 	defer func() {
 		if err != nil {
 			os.RemoveAll(tmp)
 			os.Remove(tmpRecord)
+			if linked {
+				os.Remove(record)
+			}
 		}
 	}()
+	if tmp, err = os.MkdirTemp(filepath.Join(root, StagingRoot), ".stage-"); err != nil {
+		return "", err
+	}
 	skill := &Skill{Origin: src.Origin, Table: sub.digest, From: folder, Files: map[string]FileEntry{}}
 	for p, f := range files {
 		skill.Files[p] = FileEntry{sum(f.data), f.exec}
@@ -96,12 +103,14 @@ func stageOne(root string, src Source, sub *substituter, folder string, rename f
 	if tmpRecord, err = writeTemp(record, data); err != nil {
 		return "", err
 	}
+	// Link publishes the record whole and refuses an existing one: of two runs for one skill, one gets it.
+	if err = os.Link(tmpRecord, record); err != nil {
+		return "", fmt.Errorf("%s exists: stage never overwrites (%w)", record, err)
+	}
+	linked = true
 	if err = rename(tmp, target); err != nil {
 		return "", err
 	}
-	if err = rename(tmpRecord, record); err != nil {
-		os.RemoveAll(target)
-		return "", err
-	}
+	os.Remove(tmpRecord)
 	return name, nil
 }

@@ -49,7 +49,8 @@ func readTree(dir string) (map[string]file, error) {
 	return files, err
 }
 
-// Listing is the digest of the sha256sum listing of the regular files below dir, in byte order.
+// Listing is the digest of the sha256sum listing of the regular files below dir, in byte order, with
+// " x" after an executable file (see DefaultOrigin).
 func Listing(dir string) (string, error) {
 	files, err := readTree(dir)
 	if err != nil {
@@ -57,7 +58,11 @@ func Listing(dir string) (string, error) {
 	}
 	h := sha256.New()
 	for _, name := range slices.Sorted(maps.Keys(files)) {
-		fmt.Fprintf(h, "%s  ./%s\n", sum(files[name].data), name)
+		mark := ""
+		if files[name].exec {
+			mark = " x"
+		}
+		fmt.Fprintf(h, "%s  ./%s%s\n", sum(files[name].data), name, mark)
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }

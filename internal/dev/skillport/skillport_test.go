@@ -45,6 +45,7 @@ description: "Demo skill for $cxc-pabcd"
 
 Run cxc orchestrate P after $codexclaw:cxc-loop.
 Upstream: https://github.com/lidge-jun/codexclaw
+Install record: .codexclaw-install.json
 See [reference](references/a.md).
 Last line
 `
@@ -54,6 +55,9 @@ Last line
   default_prompt: "Use $cxc-kwrite to demo."
 `
 	blob = "\x00cxc\xff"
+	// the staged SKILL.md as decided by hand: the names, the verb and the plugin form change, the upstream
+	// address and the text of a rewrite rule keep their spelling
+	wantSkillSHA = "238d45dde7c838743387edf23ea8adaaffe2b4fd1e4759e921d4795133fde7e9"
 )
 
 type fixture struct {
@@ -138,8 +142,8 @@ func TestStageCleanSkill(t *testing.T) {
 			t.Errorf("staged SKILL.md lacks %q:\n%s", want, staged)
 		}
 	}
-	if strings.Contains(staged, "cxc") {
-		t.Errorf("a CXC name is left:\n%s", staged)
+	if got := sum([]byte(staged)); got != wantSkillSHA {
+		t.Errorf("the staged SKILL.md is not the expected text:\n%s", staged)
 	}
 	if got := slurp(t, f.path("assets/blob.bin")); got != blob {
 		t.Errorf("the binary file was changed: %q", got)
@@ -168,6 +172,14 @@ func TestCheckNamesUnrecordedDifferences(t *testing.T) {
 			func(t *testing.T, f fixture) { must(t, os.Symlink("SKILL.md", f.path("link.md"))) }},
 		{"record of another folder", "crw-kwrite.json: record name",
 			func(t *testing.T, f fixture) { f.rewrite(t, func(s *Skill) { s.From = "other" }) }},
+		{"trailing data in the record", "crw-kwrite.json: trailing data", func(t *testing.T, f fixture) {
+			p := recordPath(f.root, "crw-kwrite")
+			put(t, p, slurp(t, p)+"]", 0o644)
+		}},
+		{"skill the table no longer ports", "the name table no longer ports kwrite", func(t *testing.T, f fixture) {
+			p := filepath.Join(f.root, "contract/schema/cxc/name-substitution.json")
+			put(t, p, strings.Replace(slurp(t, p), `"crw": "crw-kwrite",`, "", 1), 0o644)
+		}},
 		{"tampered record", "crw-kwrite/SKILL.md: differs from the substituted original",
 			func(t *testing.T, f fixture) {
 				f.rewrite(t, func(s *Skill) { s.Files["SKILL.md"] = FileEntry{Original: "00"} })
@@ -244,8 +256,63 @@ func TestStageRefusals(t *testing.T) {
 			t.Errorf("Stage(%q) error = %v, want %q", row.folder, err, row.expect)
 		}
 	}
+	must(t, os.Chmod(skills+"/kwrite/scripts/run.sh", 0o644)) // after src was measured: same bytes, another mode
+	if _, err := Stage(f.root, src, []string{"kwrite"}); err == nil || !strings.Contains(err.Error(), "does not match the pinned origin") {
+		t.Errorf("a source with another mode was staged: %v", err)
+	}
 	if left := leftovers(t, f.root); len(left) != 0 {
 		t.Errorf("refusals left %v", left)
+	}
+}
+
+func TestUnsafeLayoutsAreRefused(t *testing.T) {
+	for _, row := range []struct {
+		name, rel string
+		link      bool
+	}{{"linked port", "port", true}, {"linked staging root", StagingRoot, true}, {"linked records root", RecordDir, true}, {"records root is a file", RecordDir, false}} {
+		t.Run(row.name, func(t *testing.T) {
+			f, outside := newFixture(t), t.TempDir()
+			path := filepath.Join(f.root, row.rel)
+			must(t, os.MkdirAll(filepath.Dir(path), 0o755))
+			if row.link {
+				must(t, os.Symlink(outside, path))
+			} else {
+				put(t, path, "x", 0o644)
+			}
+			if _, err := Stage(f.root, f.src, []string{"kwrite"}); err == nil || !strings.Contains(err.Error(), "not a plain directory") {
+				t.Errorf("Stage: %v", err)
+			}
+			expectProblem(t, "Check", f.problems(nil), "not a plain directory")
+			if left, _ := os.ReadDir(outside); len(left) != 0 {
+				t.Errorf("wrote through the link: %v", left)
+			}
+		})
+	}
+	f := newFixture(t)
+	f.stage(t)
+	record := recordPath(f.root, "crw-kwrite")
+	outside := filepath.Join(t.TempDir(), "record.json")
+	put(t, outside, slurp(t, record), 0o644)
+	must(t, os.Remove(record))
+	must(t, os.Symlink(outside, record))
+	expectProblem(t, "linked record", f.problems(nil), "not a regular file")
+}
+
+// Two runs that race for one skill: exactly one gets it (an empty skill would let both rename).
+func TestConcurrentStagesPublishOnce(t *testing.T) {
+	for i := 0; i < 20; i++ {
+		f := newFixture(t)
+		must(t, os.MkdirAll(filepath.Join(f.src.Dir, "plugins/codexclaw/skills/empty"), 0o755))
+		errs := make(chan error, 2)
+		for range 2 {
+			go func() {
+				_, err := Stage(f.root, f.src, []string{"empty"})
+				errs <- err
+			}()
+		}
+		if a, b := <-errs, <-errs; (a == nil) == (b == nil) {
+			t.Fatalf("run %d: both or neither staged: %v, %v", i, a, b)
+		}
 	}
 }
 
@@ -270,20 +337,13 @@ func TestStageNeverOverwritesAndRollsBack(t *testing.T) {
 	if got := slurp(t, f.path("SKILL.md")); got != "hand work\n" {
 		t.Errorf("hand work was changed: %q", got)
 	}
-	for failing, name := range []string{"directory rename", "record rename"} {
-		g, calls := newFixture(t), 0
-		_, err := stage(g.root, g.src, []string{"kwrite"}, func(from, to string) error {
-			if calls++; calls == failing+1 {
-				return errors.New("injected")
-			}
-			return os.Rename(from, to)
-		})
-		if err == nil || !strings.Contains(err.Error(), "injected") {
-			t.Errorf("%s: error %v", name, err)
-		}
-		if left := leftovers(t, g.root); len(left) != 0 {
-			t.Errorf("%s left %v", name, left)
-		}
+	g := newFixture(t) // the directory rename fails after the record was published
+	_, err := stage(g.root, g.src, []string{"kwrite"}, func(string, string) error { return errors.New("injected") })
+	if err == nil || !strings.Contains(err.Error(), "injected") {
+		t.Errorf("error %v", err)
+	}
+	if left := leftovers(t, g.root); len(left) != 0 {
+		t.Errorf("a failed stage left %v", left)
 	}
 }
 

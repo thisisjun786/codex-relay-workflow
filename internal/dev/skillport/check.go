@@ -3,7 +3,9 @@
 package skillport
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
@@ -11,16 +13,20 @@ import (
 	"strings"
 )
 
-// entries is the names in root/dir (without suffix), ignoring hidden temp items.
-func entries(root, dir, suffix string) map[string]bool {
+// entries is the names in root/dir (without suffix), ignoring hidden temp items; a missing
+// directory has none.
+func entries(root, dir, suffix string) (map[string]bool, error) {
 	found := map[string]bool{}
-	list, _ := os.ReadDir(filepath.Join(root, dir))
+	list, err := os.ReadDir(filepath.Join(root, dir))
 	for _, e := range list {
 		if name, ok := strings.CutSuffix(e.Name(), suffix); ok && !strings.HasPrefix(e.Name(), ".") {
 			found[name] = true
 		}
 	}
-	return found
+	if errors.Is(err, fs.ErrNotExist) {
+		err = nil
+	}
+	return found, err
 }
 
 // Check verifies every staged skill against its record and returns how many it looked at and the
@@ -29,7 +35,14 @@ func entries(root, dir, suffix string) map[string]bool {
 func Check(root string, src *Source) (int, []string) {
 	var problems []string
 	report := func(format string, a ...any) { problems = append(problems, fmt.Sprintf(format, a...)) }
-	recorded, staged := entries(root, RecordDir, ".json"), entries(root, StagingRoot, "")
+	if err := layout(root); err != nil {
+		return 0, []string{err.Error()}
+	}
+	recorded, err1 := entries(root, RecordDir, ".json")
+	staged, err2 := entries(root, StagingRoot, "")
+	if err := errors.Join(err1, err2); err != nil {
+		return 0, []string{err.Error()}
+	}
 	set := map[string]bool{}
 	maps.Copy(set, recorded)
 	maps.Copy(set, staged)
@@ -67,6 +80,9 @@ func Check(root string, src *Source) (int, []string) {
 			origin = &skill.Origin
 		} else if *origin != skill.Origin {
 			report("%s: origin differs from the other records", rec)
+		}
+		if sub.isStub(skill.From) {
+			report("%s: the name table no longer ports %s", rec, skill.From)
 		}
 		if skill.Table != sub.digest {
 			report("%s: name-substitution table changed since this skill was staged; skillport check --source shows which skills it changes, the package comment says how to refresh", rec)
