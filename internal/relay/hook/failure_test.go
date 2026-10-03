@@ -42,7 +42,7 @@ func Test33CancelledEvaluationCannotSpendHold(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	v, err := Evaluate(ctx, stop, GuardOptions{Root: root, Mode: Hold})
-	if err != context.Canceled && get(v, "decision") != "release" {
+	if err != context.Canceled && v.Get("decision") != "release" {
 		t.Fatal(v, err)
 	}
 	if _, err = os.Stat(filepath.Join(directory, "hook/s/t/hold.json")); !os.IsNotExist(err) {
@@ -53,7 +53,7 @@ func Test33UnmanagedDoesNotCreateDatabase(t *testing.T) {
 	root := t.TempDir()
 	db := filepath.Join(root, "missing/relay.sqlite3")
 	v, err := Evaluate(context.Background(), Object{}, GuardOptions{Root: root, DBPath: db, Mode: Hold})
-	if err != nil || get(v, "state") != "unmanaged" {
+	if err != nil || v.Get("state") != "unmanaged" {
 		t.Fatal(v, err)
 	}
 	if _, err = os.Stat(db); !os.IsNotExist(err) {
@@ -91,16 +91,16 @@ func Test33HoldCountersCorruptionAndWindow(t *testing.T) {
 	foreign := filepath.Join(root, "b/hook/foreign/x/hold.json")
 	writeTest(t, foreign, []byte("{"))
 	counts, bad, unreadable := HoldCounters(context.Background(), directory, "s", "three", options.Now, root)
-	if bad != "" || unreadable != "" || get(counts, "holdsThisSessionWindow") != int64(2) {
+	if bad != "" || unreadable != "" || counts.Get("holdsThisSessionWindow") != int64(2) {
 		t.Fatal(counts, bad, unreadable)
 	}
 	writeTest(t, filepath.Join(root, "c/hook/s/y/hold.json"), []byte(`{"at":null}`))
 	counts, bad, unreadable = HoldCounters(context.Background(), directory, "s", "three", options.Now, root)
-	if bad != "" || unreadable != "" || get(counts, "holdsThisSessionWindow") != int64(3) {
+	if bad != "" || unreadable != "" || counts.Get("holdsThisSessionWindow") != int64(3) {
 		t.Fatal(counts, bad, unreadable)
 	}
 	counts, bad, unreadable = HoldCounters(context.Background(), directory, "s", "three", "2026-01-01T02:00:00Z", root)
-	if bad != "" || unreadable != "" || get(counts, "holdsThisSessionWindow") != int64(1) {
+	if bad != "" || unreadable != "" || counts.Get("holdsThisSessionWindow") != int64(1) {
 		t.Fatal(counts, bad, unreadable)
 	}
 	writeTest(t, filepath.Join(directory, "hook/s/one/hold.json"), []byte("{"))
@@ -120,7 +120,7 @@ func Test33MarkerFIFODeadline(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	v, err := Evaluate(ctx, stop, GuardOptions{Root: root, Mode: Hold})
-	if err != nil || get(v, "state") != "state_unreadable" || get(v, "decision") != "release" {
+	if err != nil || v.Get("state") != "state_unreadable" || v.Get("decision") != "release" {
 		t.Fatal(v, err)
 	}
 }

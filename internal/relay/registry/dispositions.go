@@ -335,9 +335,9 @@ func deriveDispositions(rows []dispRow, selector contract.OrderedObject) contrac
 	for _, k := range keys {
 		c := children[k]
 		c.disposition = turnDisposition(c.events)
-		reviewableCount, _ := getField(c.record, "reviewableCount")
-		earlier, _ := getField(c.record, "earlierGenerationEvents")
-		rid, _ := getField(c.record, "relationshipId")
+		reviewableCount, _ := c.record.Lookup("reviewableCount")
+		earlier, _ := c.record.Lookup("earlierGenerationEvents")
+		rid, _ := c.record.Lookup("relationshipId")
 		base := c.record[:7]
 		ids := c.eventIDs
 		if ids == nil {
@@ -519,7 +519,7 @@ func acknowledgement(row dispRow) contract.OrderedObject {
 		{Key: "rejectionReason", Value: when(row["ack_rejection"])}, {Key: "settlement", Value: when(row["ack_verified"])}, {Key: "evidenceTier", Value: tier}}
 }
 
-func eventField(e contract.OrderedObject, key string) any { v, _ := getField(e, key); return v }
+func eventField(e contract.OrderedObject, key string) any { v, _ := e.Lookup(key); return v }
 
 // turnDisposition is dispositions._turn_disposition.
 func turnDisposition(events []contract.OrderedObject) contract.OrderedObject {
@@ -574,7 +574,7 @@ func turnDisposition(events []contract.OrderedObject) contract.OrderedObject {
 func dispositionCounts(children []contract.OrderedObject) contract.OrderedObject {
 	var withDisposition, blocked, contested, sendUnmeasured, recipientUnmeasured, missing, notSent, withheld int64
 	for _, c := range children {
-		disposition, _ := getField(c, "turnDisposition")
+		disposition, _ := c.Lookup("turnDisposition")
 		d := disposition.(contract.OrderedObject)
 		if eventField(d, "basis") != "none" {
 			withDisposition++
@@ -585,7 +585,7 @@ func dispositionCounts(children []contract.OrderedObject) contract.OrderedObject
 		if eventField(d, "basis") == "contested" {
 			contested++
 		}
-		events, _ := getField(c, "events")
+		events, _ := c.Lookup("events")
 		for _, raw := range events.([]any) {
 			e := raw.(contract.OrderedObject)
 			delivery := eventField(e, "delivery").(contract.OrderedObject)
@@ -600,7 +600,7 @@ func dispositionCounts(children []contract.OrderedObject) contract.OrderedObject
 				missing++
 			}
 		}
-		correction, _ := getField(c, "correction")
+		correction, _ := c.Lookup("correction")
 		if co, ok := correction.(contract.OrderedObject); ok {
 			if delivery, ok := eventField(co, "delivery").(contract.OrderedObject); ok {
 				if eventField(delivery, "observation") == obsNotSent {

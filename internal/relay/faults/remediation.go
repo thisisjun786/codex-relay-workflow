@@ -21,8 +21,8 @@ func (l *Ledger) Remediate(ctx context.Context, identifier, kind, ref, method, o
 		if err != nil {
 			return err
 		}
-		identifier = text(fault, "fault_id")
-		state := text(fault, "state")
+		identifier = fault.Text("fault_id")
+		state := fault.Text("state")
 		if kind == "fix" && state != Observed && state != Open && state != FixPending || kind == "reverification" && state != FixPending {
 			return fmt.Errorf("fault_state_conflict: remediation on %s", state)
 		}
@@ -34,8 +34,8 @@ func (l *Ledger) Remediate(ctx context.Context, identifier, kind, ref, method, o
 				return err
 			}
 			if latest != nil {
-				if text(latest, "kind") == kind && text(latest, "ref") == ref && text(latest, "method") == method && text(latest, "outcome") == outcome {
-					id = text(latest, "ref_id")
+				if latest.Text("kind") == kind && latest.Text("ref") == ref && latest.Text("method") == method && latest.Text("outcome") == outcome {
+					id = latest.Text("ref_id")
 					return nil
 				}
 				after = integer(latest, "seq")

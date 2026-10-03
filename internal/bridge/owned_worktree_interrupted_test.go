@@ -7,6 +7,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 func Test_test_interrupted_dispatch_is_retained_and_never_repeated(t *testing.T) {
@@ -56,7 +57,7 @@ func Test_test_interrupted_dispatch_is_retained_and_never_repeated(t *testing.T)
 					t.Fatal("interrupted launch hung")
 				}
 				stored, err := b.GetOperation(context.Background(), input.RequestID)
-				if err != nil || stored["status"] != "outcome_unknown" || object(stored["worktree"])["state"] != "created" {
+				if err != nil || stored["status"] != "outcome_unknown" || pyjson.Map(stored["worktree"])["state"] != "created" {
 					t.Fatalf("stored=%v err=%v", stored, err)
 				}
 				before := len(host.Requests())

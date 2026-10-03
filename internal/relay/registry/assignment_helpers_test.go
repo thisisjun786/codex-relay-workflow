@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
@@ -119,7 +120,7 @@ func replay(t *testing.T, point checkpoint) (map[string]any, string) {
 // every run's store has anew, written as placeholders after asserting it is present.
 func withoutStoreIdentity(t *testing.T, answer map[string]any) map[string]any {
 	t.Helper()
-	relay := obj(obj(answer["ok"])["relay"])
+	relay := pyjson.Map(pyjson.Map(answer["ok"])["relay"])
 	if relay == nil {
 		return answer
 	}
@@ -131,7 +132,7 @@ func withoutStoreIdentity(t *testing.T, answer map[string]any) map[string]any {
 	if err := json.Unmarshal(raw, &out); err != nil {
 		t.Fatal(err)
 	}
-	identity := obj(obj(obj(out["ok"])["relay"])["store"])
+	identity := pyjson.Map(pyjson.Map(pyjson.Map(out["ok"])["relay"])["store"])
 	if identity["inode"] == nil || identity["device"] == nil {
 		t.Fatalf("store identity missing: %v", identity)
 	}

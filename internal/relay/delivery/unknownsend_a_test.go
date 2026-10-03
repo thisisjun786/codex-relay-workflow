@@ -3,6 +3,7 @@ package delivery
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"math"
 	"strings"
 	"testing"
@@ -30,7 +31,7 @@ func (h *hl) unknownSend(history, restarted bool) (string, string) {
 	if restarted {
 		h.host.threads[parent].status = "notLoaded"
 	}
-	return event, str(record, "requestId")
+	return event, pyjson.Text(record.Get("requestId"))
 }
 
 func (h *hl) ticks(count int, seconds float64) {
@@ -172,7 +173,7 @@ func Test21_USL03_a_hold_that_loses_its_race_to_a_confirmation_reports_the_confi
 			return reading
 		}, func() { outcome = h.reconcile(first, h.host) })
 		h.eq([]any{field(outcome, "deliveryState"), field(outcome, "evidence")})
-		_, has := get(outcome, "nextExpectedAction")
+		_, has := outcome.Lookup("nextExpectedAction")
 		h.eq(has)
 		row := h.row(event)
 		h.eq([]any{row.S("state"), row.Opt("hold_reason")})
@@ -237,7 +238,7 @@ func (h *hl) foldedUnknownSend(later int, running bool, kind string) (string, st
 	h.host.startTurn(parent, "folded", "inProgress", "")
 	h.clock.Advance(120)
 	h.host.script = []string{"transport_unknown"}
-	first := str(h.attemptOn(event, h.host, nil), "requestId")
+	first := pyjson.Text(h.attemptOn(event, h.host, nil).Get("requestId"))
 	if kind == "" {
 		h.item(parent, "folded", uslMessage(first), "")
 	} else {
@@ -264,7 +265,7 @@ func Test21_USL05_a_message_that_turns_up_later_confirms_the_send_and_clears_the
 			h.eq([]any{row.S("state"), row.Opt("hold_reason")})
 			h.eq(h.evidenceOf(event))
 			h.eq(h.nextAction())
-			_, has := get(h.assignment(), "recovery")
+			_, has := h.assignment().Lookup("recovery")
 			h.eq(has)
 			h.eq(h.sendsTo(parent))
 		})
@@ -379,7 +380,7 @@ func Test21_USL07_a_send_folded_into_an_older_turn_is_found_there(t *testing.T) 
 			h.host.startTurn(parent, "just-before", "inProgress", "")
 			h.clock.Advance(10)
 			h.host.script = []string{"transport_unknown"}
-			first := str(h.attemptOn(event, h.host, nil), "requestId")
+			first := pyjson.Text(h.attemptOn(event, h.host, nil).Get("requestId"))
 			h.item(parent, "just-before", uslMessage(first), "")
 			for n := 0; n < 205; n++ {
 				h.item(parent, "just-before", fmt.Sprintf("later work %d", n), "commandExecution")
@@ -531,7 +532,7 @@ func Test21_USL10_a_send_the_transport_has_not_answered_is_held_by_name(t *testi
 		h.parentHistory()
 		event := h.queuedEvent(regOpts{})
 		h.host.script = []string{"in_progress"}
-		request := str(h.attemptOn(event, h.host, nil), "requestId")
+		request := pyjson.Text(h.attemptOn(event, h.host, nil).Get("requestId"))
 		h.host.threads[parent].status = "notLoaded"
 		return event, request
 	}
@@ -552,8 +553,8 @@ func Test21_USL10_a_send_the_transport_has_not_answered_is_held_by_name(t *testi
 			h.ticks(1, 120)
 			h.eq(h.row(event).Opt("hold_reason"))
 			receipt := append(Obj(nil), h.host.ledger[first]...)
-			receipt = set(receipt, "status", "outcome_unknown")
-			receipt = set(receipt, "error", "TransportError: turn/start: no answer")
+			receipt = receipt.Set("status", "outcome_unknown")
+			receipt = receipt.Set("error", "TransportError: turn/start: no answer")
 			h.host.ledger[first] = receipt
 			h.ticks(1, 120)
 			h.assertHeld(event, first)
@@ -579,7 +580,7 @@ func Test21_USL10_a_send_the_transport_has_not_answered_is_held_by_name(t *testi
 			h.clock.Advance(120)
 			h.host.readFailures["get_operation"] = true
 			outcome := h.reconcile(first, h.host)
-			_, has := get(outcome, "recipientTrace")
+			_, has := outcome.Lookup("recipientTrace")
 			h.eq(has)
 			h.eq(field(outcome, "nextExpectedAction"))
 			h.eq(h.row(event).Opt("hold_reason"))
@@ -613,7 +614,7 @@ func Test21_USL11_a_deciding_reading_replaces_an_undecided_hold_and_nothing_else
 			h.assertHeld(event, first)
 			h.host.readFailures["find_token"] = true
 			unread := h.reconcile(first, h.host)
-			_, has := get(unread, "recipientTrace")
+			_, has := unread.Lookup("recipientTrace")
 			h.eq(has)
 			h.eq([]any{field(unread, "nextExpectedAction"), field(unread, "reason")})
 			h.assertHeld(event, first)

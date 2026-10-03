@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
@@ -27,18 +28,18 @@ type Observation struct {
 }
 
 func ReceiptMatches(receipt, stop, marker Object) bool {
-	return pyvalue.Truthy(get(receipt, "atCurrentHead")) && delivery.SameIdentity(get(receipt, "sessionId"), get(stop, "session_id")) && delivery.SameIdentity(get(receipt, "turnId"), get(stop, "turn_id")) && delivery.SameIdentity(get(receipt, "relationshipId"), get(object(get(marker, "relationship")), "relationshipId"))
+	return pyvalue.Truthy(receipt.Get("atCurrentHead")) && delivery.SameIdentity(receipt.Get("sessionId"), stop.Get("session_id")) && delivery.SameIdentity(receipt.Get("turnId"), stop.Get("turn_id")) && delivery.SameIdentity(receipt.Get("relationshipId"), object(marker.Get("relationship")).Get("relationshipId"))
 }
 func ClassifyDeclaration(o Observation) string {
 	d, ok := evidence.Object(o.Disposition)
 	var outcome any
-	if ok && delivery.SameIdentity(get(d, "turnId"), get(o.Stop, "turn_id")) && delivery.SameIdentity(get(d, "sessionId"), get(o.Stop, "session_id")) {
-		outcome = get(d, "outcome")
+	if ok && delivery.SameIdentity(d.Get("turnId"), o.Stop.Get("turn_id")) && delivery.SameIdentity(d.Get("sessionId"), o.Stop.Get("session_id")) {
+		outcome = d.Get("outcome")
 	}
 	switch outcome {
 	case "in_progress", "blocked_needs_input", "interrupted", "failed":
 		delivery.MarkReturn(o.Reached, "classify_declaration", 1)
-		return "declared_" + text(outcome)
+		return "declared_" + pyjson.Text(outcome)
 	case "ready_for_review":
 		if ReceiptMatches(o.Receipt, o.Stop, o.Marker) {
 			delivery.MarkReturn(o.Reached, "classify_declaration", 2)
@@ -72,8 +73,8 @@ func ObserveState(o Observation) (string, string) {
 		delivery.MarkReturn(o.Reached, "observe_state", 3)
 		return "unmanaged", "No assignment directory for this workspace."
 	}
-	session := get(o.Stop, "session_id")
-	bound := object(get(o.Marker, "bound"))
+	session := o.Stop.Get("session_id")
+	bound := object(o.Marker.Get("bound"))
 	if len(bound) == 0 {
 		if !delivery.CorrelatedTrace(o.Marker, session, o.Assignment, o.Reached) {
 			delivery.MarkReturn(o.Reached, "observe_state", 4)
@@ -82,11 +83,11 @@ func ObserveState(o Observation) (string, string) {
 		delivery.MarkReturn(o.Reached, "observe_state", 5)
 		return "correlated_unbound", "Correlated to the intent but not yet bound by the coordinator. Released; the turn's observation is recorded for the coordinator to fold once the bind lands."
 	}
-	if !delivery.Named(get(bound, "sessionId")) {
+	if !delivery.Named(bound.Get("sessionId")) {
 		delivery.MarkReturn(o.Reached, "observe_state", 6)
 		return "bound_identity_unnamed", "The bind record names no session, so nothing can be shown to be the bound child. Repair the marker; a turn is never held against an identity nobody published."
 	}
-	if !delivery.SameIdentity(get(bound, "sessionId"), session) {
+	if !delivery.SameIdentity(bound.Get("sessionId"), session) {
 		delivery.MarkReturn(o.Reached, "observe_state", 7)
 		return "marker_claimed_by_other_session", "This session is not the bound child."
 	}
@@ -104,13 +105,13 @@ func ObserveState(o Observation) (string, string) {
 		delivery.MarkReturn(o.Reached, "observe_state", 10)
 		return "claim_uncorrelated", "This session is bound but its claim does not correlate with this assignment (" + problem + "). Released and recorded; every fact this reads is create-once, so it does not clear itself and no resolution consumed here will: correlation reads the claim and the intent, never the adjudications. Recovery is a new assignment, declared for a fresh dispatch request id."
 	}
-	if !delivery.Named(get(object(get(o.Marker, "relationship")), "relationshipId")) {
+	if !delivery.Named(object(o.Marker.Get("relationship")).Get("relationshipId")) {
 		delivery.MarkReturn(o.Reached, "observe_state", 11)
 		return "managed_unregistered", "This workspace is managed but its relationship is not registered. Register it, or record a disposition explaining why it cannot be."
 	}
-	ev := text(get(o.Receipt, "evidence"))
+	ev := pyjson.Text(o.Receipt.Get("evidence"))
 	if declaration == "receipt_missing" && slices.Contains(generationEvidence, ev) {
-		detail := pyvalue.Str(get(o.Receipt, "detail"))
+		detail := pyvalue.Str(o.Receipt.Get("detail"))
 		if ev == "generation_absent" {
 			delivery.MarkReturn(o.Reached, "observe_state", 12)
 			return "receipt_missing", "The relay's store holds no record of the generation it reports as current for this relationship: " + detail + ". Nothing can be attributed to this assignment while the store cannot say which dispatch opened the generation it is on, and no receipt this session emits changes that. The relay's store is what needs repair."
@@ -139,7 +140,7 @@ func Decide(o Observation, counters Object, mode string) Object {
 		}
 	}
 	decision, finalState, finalReason := "release", state, reason
-	count := func(k string) int64 { n, _ := evidence.IntOf(get(counters, k)); return n }
+	count := func(k string) int64 { n, _ := evidence.IntOf(counters.Get(k)); return n }
 	if slices.Contains(omissions, state) {
 		switch {
 		case count("holdsThisGeneration") >= 2 || count("holdsThisSessionWindow") >= 3:
@@ -150,7 +151,7 @@ func Decide(o Observation, counters Object, mode string) Object {
 			delivery.MarkReturn(o.Reached, "decide", 3)
 			finalState = "hold_in_flight"
 			finalReason = "This turn already took its one hold."
-		case pyvalue.Truthy(get(o.Stop, "stop_hook_active")):
+		case pyvalue.Truthy(o.Stop.Get("stop_hook_active")):
 			delivery.MarkReturn(o.Reached, "decide", 4)
 			finalState = "hold_in_flight"
 			finalReason = "A continuation is already running for this turn; the omission is recorded."
@@ -163,37 +164,37 @@ func Decide(o Observation, counters Object, mode string) Object {
 		decision = "release"
 		finalReason += " Observe-only: recorded without holding, because per-session write isolation was not asserted for this run."
 	}
-	record := Object{{Key: "observation", Value: state}, {Key: "turnId", Value: get(o.Stop, "turn_id")}, {Key: "sessionId", Value: get(o.Stop, "session_id")}, {Key: "decisionState", Value: finalState}, {Key: "held", Value: decision == "block"}, {Key: "mode", Value: mode}, {Key: "at", Value: o.Now}}
+	record := Object{{Key: "observation", Value: state}, {Key: "turnId", Value: o.Stop.Get("turn_id")}, {Key: "sessionId", Value: o.Stop.Get("session_id")}, {Key: "decisionState", Value: finalState}, {Key: "held", Value: decision == "block"}, {Key: "mode", Value: mode}, {Key: "at", Value: o.Now}}
 	result := Object{{Key: "decision", Value: decision}, {Key: "state", Value: finalState}, {Key: "observation", Value: state}, {Key: "reason", Value: finalReason}, {Key: "record", Value: record}}
 	marker := o.Marker
 	if len(o.Unreadable) > 0 || o.Malformed != "" || (len(marker) > 0 && delivery.Malformed(marker) != "") {
 		marker = nil
 	}
 	if state == "correlated_unbound" {
-		record = set(record, "pendingObservation", ClassifyDeclaration(o))
+		record = record.Set("pendingObservation", ClassifyDeclaration(o))
 	}
 	if state == "claim_uncorrelated" && len(marker) > 0 {
-		ev := delivery.CorrelationProblem(marker, get(o.Stop, "session_id"), o.Assignment)
-		record = set(record, "claimEvidence", ev)
-		result = set(result, "claimEvidence", ev)
-		record = set(record, "pendingObservation", ClassifyDeclaration(o))
+		ev := delivery.CorrelationProblem(marker, o.Stop.Get("session_id"), o.Assignment)
+		record = record.Set("claimEvidence", ev)
+		result = result.Set("claimEvidence", ev)
+		record = record.Set("pendingObservation", ClassifyDeclaration(o))
 	}
 	if len(marker) > 0 {
-		record = set(record, "assignmentState", delivery.DeriveAssignmentStateTrace(marker, o.Now, o.Reached))
-		record = set(record, "identityContested", delivery.IdentityContestedTrace(marker, o.Reached))
+		record = record.Set("assignmentState", delivery.DeriveAssignmentStateTrace(marker, o.Now, o.Reached))
+		record = record.Set("identityContested", delivery.IdentityContestedTrace(marker, o.Reached))
 	}
-	if pyvalue.Truthy(get(o.Receipt, "evidence")) {
-		record = set(record, "receiptEvidence", get(o.Receipt, "evidence"))
-		result = set(result, "receiptEvidence", get(o.Receipt, "evidence"))
-		if pyvalue.Truthy(get(o.Receipt, "detail")) {
-			record = set(record, "receiptDetail", get(o.Receipt, "detail"))
-			result = set(result, "receiptDetail", get(o.Receipt, "detail"))
+	if pyvalue.Truthy(o.Receipt.Get("evidence")) {
+		record = record.Set("receiptEvidence", o.Receipt.Get("evidence"))
+		result = result.Set("receiptEvidence", o.Receipt.Get("evidence"))
+		if pyvalue.Truthy(o.Receipt.Get("detail")) {
+			record = record.Set("receiptDetail", o.Receipt.Get("detail"))
+			result = result.Set("receiptDetail", o.Receipt.Get("detail"))
 		}
 	}
 	answer := Object{}
 	if decision == "block" {
 		answer = Object{{Key: "decision", Value: "block"}, {Key: "reason", Value: finalReason}, {Key: "continue", Value: true}}
 	}
-	result = set(result, "record", record)
-	return set(result, "hook_output", answer)
+	result = result.Set("record", record)
+	return result.Set("hook_output", answer)
 }

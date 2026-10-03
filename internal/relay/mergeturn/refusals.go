@@ -80,8 +80,8 @@ func (s *Service) parents(ctx context.Context, project string) ([]string, error)
 	}
 	var held []string
 	for _, o := range owners {
-		if field(o, "role") == "parent" {
-			held = append(held, fmt.Sprint(field(o, "taskId")))
+		if o.Get("role") == "parent" {
+			held = append(held, fmt.Sprint(o.Get("taskId")))
 		}
 	}
 	return held, nil
@@ -95,8 +95,8 @@ func (s *Service) ownerStatus(ctx context.Context, project string) (string, erro
 	}
 	var held []string
 	for _, o := range owners {
-		if field(o, "role") == "parent" {
-			status, _ := field(o, "status").(string)
+		if o.Get("role") == "parent" {
+			status, _ := o.Get("status").(string)
 			held = append(held, status)
 		}
 	}

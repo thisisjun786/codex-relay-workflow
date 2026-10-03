@@ -7,6 +7,7 @@ import (
 	"context"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/service"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -18,10 +19,10 @@ type WorkerObservation struct{ State, Socket, Scope, Authority, Installation str
 // not.
 func (o WorkerObservation) Read(ctx context.Context) (map[string]any, string) {
 	observation := service.ObserveWorkerPolicy(ctx, store.StateSelection{Path: o.State}, o.Socket, o.Installation, &service.ScopeRegistry{Root: o.Scope, Authority: o.Authority})
-	if reason, _ := field(observation, "reason").(string); reason != "" {
+	if reason, _ := observation.Get("reason").(string); reason != "" {
 		return nil, reason
 	}
-	policy, _ := plain(field(observation, "policy")).(map[string]any)
+	policy, _ := plain(observation.Get("policy")).(map[string]any)
 	return policy, ""
 }
 func (o WorkerObservation) Ready(ctx context.Context, request map[string]any, policy registry.RolePolicy) (string, error) {
@@ -54,7 +55,7 @@ func (o WorkerObservation) Ready(ctx context.Context, request map[string]any, po
 		}
 		finding := registry.CheckRecord(ordered(settings).(contract.OrderedObject), role, policy)
 		if finding != nil {
-			return text(field(finding, "code")), nil
+			return pyjson.Text(finding.Get("code")), nil
 		}
 	}
 	return "", nil

@@ -1,23 +1,15 @@
 package delivery
 
 import (
-	"path"
 	"slices"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
-func pyNormpath(p string) string {
-	cleaned := path.Clean(p)
-	if strings.HasPrefix(p, "//") && !strings.HasPrefix(p, "///") {
-		return "/" + cleaned
-	}
-	return cleaned
-}
-
 func within(root, candidate string) bool {
-	root, candidate = pyNormpath(root), pyNormpath(candidate)
+	root, candidate = store.Normpath(root), store.Normpath(candidate)
 	if root == "/" {
 		return strings.HasPrefix(candidate, "/")
 	}

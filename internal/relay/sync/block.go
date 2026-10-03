@@ -21,14 +21,6 @@ func obj(pairs ...any) Obj {
 	}
 	return out
 }
-func get(o Obj, key string) any {
-	for _, f := range o {
-		if f.Key == key {
-			return f.Value
-		}
-	}
-	return nil
-}
 func text(v any) string {
 	if v == nil {
 		return ""
@@ -163,7 +155,7 @@ func ParseDocument(source string) Document {
 				b.Format = "fenced-legacy"
 			}
 		}
-		if declared := get(b.Fields, "blockFormat"); declared != nil {
+		if declared := b.Fields.Get("blockFormat"); declared != nil {
 			if declared != "v2" {
 				b.Format = "unsupported"
 				b.Problems = append(b.Problems, "unsupported block format "+pyvalue.StrRepr(text(declared)))
@@ -225,8 +217,8 @@ func PayloadMismatch(row store.Row, b Block) []string {
 	}
 	expected := headers(row)
 	for _, k := range fields {
-		actual := get(b.Fields, k)
-		want := text(get(expected, k))
+		actual := b.Fields.Get(k)
+		want := text(expected.Get(k))
 		if actual == nil {
 			problems = append(problems, k+" is missing")
 		} else if actual != want {

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
@@ -35,7 +36,7 @@ func (v *vcu) acknowledged(text string) string {
 	payload := v.readyPayload(rid, 1, []string{v.artifact("out.txt", text)}, 1, assigned("completed"))
 	_, err := v.accept(payload, store.AcceptOptions{})
 	mustDo(v.t, err)
-	event := str(payload, "eventId")
+	event := pyjson.Text(payload.Get("eventId"))
 	_, err = v.delivery.Enqueue(v.ctx, event, "", "")
 	mustDo(v.t, err)
 	v.mustAttempt(event, nil)
@@ -188,7 +189,7 @@ func TestVCU04_a_replay_returns_the_historical_verdict(t *testing.T) {
 	expected.same("first", first)
 	expected.same("r", again)
 	rec := again["ok"].(Obj)
-	if v, _ := get(rec, "_replay"); v != true || str(rec, "verdict") != "needs_changes" || str(rec, "verdictTurnId") != "v1" {
+	if v, _ := rec.Lookup("_replay"); v != true || pyjson.Text(rec.Get("verdict")) != "needs_changes" || pyjson.Text(rec.Get("verdictTurnId")) != "v1" {
 		t.Fatalf("replay %v", rec)
 	}
 	expected.tables(v.fixture)
@@ -217,7 +218,7 @@ func TestVCU06_head_revision_lineage_evidence(t *testing.T) {
 			e := v.acknowledged("")
 			h := v.revisionHash(e)
 			s := v.accepted("second revision", &h)
-			_, err := execSQL(v.ctx, v.store, "UPDATE revision_lineage SET supersedes_hash = ? WHERE event_id = ?", str(s, "revisionHash"), e)
+			_, err := execSQL(v.ctx, v.store, "UPDATE revision_lineage SET supersedes_hash = ? WHERE event_id = ?", pyjson.Text(s.Get("revisionHash")), e)
 			mustDo(v.t, err)
 		}},
 		{"reversed", Fork, func(v *vcu) { v.acknowledged("a different revision"); v.accepted("the deliverable", nil) }},
@@ -226,7 +227,7 @@ func TestVCU06_head_revision_lineage_evidence(t *testing.T) {
 			runVCU(t, tc.mode, func(v *vcu) any {
 				tc.build(v)
 				h := v.head()
-				if str(h, "evidence") != tc.evidence {
+				if pyjson.Text(h.Get("evidence")) != tc.evidence {
 					t.Fatalf("head %v", h)
 				}
 				return h
@@ -239,7 +240,7 @@ func TestVCU07_a_revision_cannot_declare_itself(t *testing.T) {
 	runVCU(t, "self", func(v *vcu) any {
 		rid := v.register(regOpts{})
 		payload := v.readyPayload(rid, 1, []string{v.artifact("out.txt", "self referential")}, 1, assigned("completed"))
-		h := str(payload, "revisionHash")
+		h := pyjson.Text(payload.Get("revisionHash"))
 		_, err := v.accept(payload, store.AcceptOptions{SupersedesRevision: &h})
 		return refusalOf(err)
 	}, store.ReasonRevisionLineageInvalid)
@@ -318,7 +319,7 @@ func TestVCU09_criteria_currency_binds_the_review(t *testing.T) {
 			e := v.acknowledged("")
 			reg, err := v.criteria.Register(v.ctx, v.rid, criteriaSet, "https://linear.app/doc/1")
 			mustDo(v.t, err)
-			return v.verdict(e, "verified", "v1", both, nil, str(reg, "setDigest"))
+			return v.verdict(e, "verified", "v1", both, nil, pyjson.Text(reg.Get("setDigest")))
 		}},
 	} {
 		t.Run(tc.mode, func(t *testing.T) { runVCU(t, tc.mode, tc.run, tc.reason) })

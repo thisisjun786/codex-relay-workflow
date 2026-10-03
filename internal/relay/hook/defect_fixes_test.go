@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
@@ -57,7 +56,7 @@ func Test33D1SurrogateBinaryPython(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			if got, want := pyjson.Dumps(get(object(get(frame, "params")), "stopInput"), pyjson.Options{SortKeys: true}), canonicalJSON(t, []byte(payload)); got != want {
+			if got, want := pyjson.Dumps(object(frame.Get("params")).Get("stopInput"), pyjson.Options{SortKeys: true}), canonicalJSON(t, []byte(payload)); got != want {
 				return fmt.Errorf("stopInput %s, want %s", got, want)
 			}
 			_, err = io.WriteString(conn, release+"\n")
@@ -87,9 +86,9 @@ func Test33D1SurrogateBinaryPython(t *testing.T) {
 			t.Fatal(err)
 		}
 		row = withoutKeys(row, "at", "elapsedMs", "guardElapsedMs", "identityScanMs")
-		row = set(row, "configuration", strings.ReplaceAll(text(get(row, "configuration")), home, "<HOME>"))
-		identity := object(get(row, "eventIdentity"))
-		row = set(row, "eventIdentity", set(append(Object{}, identity...), "transcriptPath", strings.ReplaceAll(text(get(identity, "transcriptPath")), home, "<HOME>")))
+		row = row.Set("configuration", strings.ReplaceAll(pyjson.Text(row.Get("configuration")), home, "<HOME>"))
+		identity := object(row.Get("eventIdentity"))
+		row = row.Set("eventIdentity", append(Object{}, identity...).Set("transcriptPath", strings.ReplaceAll(pyjson.Text(identity.Get("transcriptPath")), home, "<HOME>")))
 		claims := []any{}
 		names, _ := filepath.Glob(filepath.Join(home, "crw-completion-hook", "stop-events", "*.json"))
 		for _, name := range names {
@@ -167,10 +166,10 @@ func Test33D3DialErrnosPython(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if get(row, "errno") != kind {
-				t.Fatalf("errno %v, want %s", get(row, "errno"), kind)
+			if row.Get("errno") != kind {
+				t.Fatalf("errno %v, want %s", row.Get("errno"), kind)
 			}
-			golden.CheckJSON(t, "row", map[string]any{"errno": get(row, "errno"), "detail": get(row, "detail")}, golden.Substitute(home, "<HOME>"))
+			golden.CheckJSON(t, "row", map[string]any{"errno": row.Get("errno"), "detail": row.Get("detail")}, golden.Substitute(home, "<HOME>"))
 			if !NativePrescanUnreachable(row) {
 				t.Fatalf("Go reader rejected %s", pyjson.Dumps(row, pyjson.Options{SortKeys: true}))
 			}
@@ -262,18 +261,18 @@ func Test33D2FaultRowPython(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if get(row, "fault") != "RuntimeError: injected guard fault" || get(row, "processEnding") != nil || get(row, "stdoutReading") != nil {
+			if row.Get("fault") != "RuntimeError: injected guard fault" || row.Get("processEnding") != nil || row.Get("stdoutReading") != nil {
 				t.Fatal(row)
 			}
 			for _, key := range []string{"guardElapsedMs", "guardStderr", "exitCode", "errno", "signal", "detail"} {
-				if _, ok := evidence.Lookup(row, key); ok {
+				if _, ok := row.Lookup(key); ok {
 					t.Fatalf("fault row contains %s", key)
 				}
 			}
 			// The row's record bytes, less its times and with the settings path spelled
 			// <SETTINGS>, are the golden, which began as Python's row for the same guard fault
 			// (defect_fault.py, its BaseException path); every remaining byte is compared.
-			aligned := set(withoutKeys(row, "at", "elapsedMs", "identityScanMs"), "configuration", "<SETTINGS>")
+			aligned := withoutKeys(row, "at", "elapsedMs", "identityScanMs").Set("configuration", "<SETTINGS>")
 			golden.Check(t, "row", RecordBytes(aligned), golden.Substitute(home, "<HOME>"))
 		})
 	}

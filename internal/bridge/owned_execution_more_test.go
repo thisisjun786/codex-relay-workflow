@@ -7,6 +7,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 func Test_test_naming_no_role_leaves_the_request_identical_to_one_made_before_roles_existed(t *testing.T) {
@@ -33,8 +34,8 @@ func Test_test_an_authorized_pair_is_the_one_transmitted_and_the_one_compared(t 
 	pairStart(host, cwd, pyUnapproved, "high")
 	receipt, err := b.CreateThread(context.Background(), input)
 	start := hostParams(t, host, "thread/start")
-	policy, requested := object(receipt["executionPolicy"]), object(object(receipt["settings"])["requested"])
-	if err != nil || receipt["status"] != "accepted" || start["model"] != pyUnapproved || object(start["config"])["model_reasoning_effort"] != "high" || policy["mode"] != "allowlist" || policy["exception"] != "one-task" || policy["model"] != pyUnapproved || policy["reasoningEffort"] != "high" || requested["model"] != pyUnapproved || requested["reasoningEffort"] != "high" || object(receipt["settings"])["verification"] != "observed_at_creation" || host.Count("turn/start") != 1 {
+	policy, requested := pyjson.Map(receipt["executionPolicy"]), pyjson.Map(pyjson.Map(receipt["settings"])["requested"])
+	if err != nil || receipt["status"] != "accepted" || start["model"] != pyUnapproved || pyjson.Map(start["config"])["model_reasoning_effort"] != "high" || policy["mode"] != "allowlist" || policy["exception"] != "one-task" || policy["model"] != pyUnapproved || policy["reasoningEffort"] != "high" || requested["model"] != pyUnapproved || requested["reasoningEffort"] != "high" || pyjson.Map(receipt["settings"])["verification"] != "observed_at_creation" || host.Count("turn/start") != 1 {
 		t.Fatalf("receipt=%v err=%v", receipt, err)
 	}
 }
@@ -47,8 +48,8 @@ func Test_test_an_approved_pair_records_the_mode_it_was_approved_under(t *testin
 	pairStart(host, cwd, pyModel, pyEffort)
 	receipt, err := b.CreateThread(context.Background(), input)
 	start := hostParams(t, host, "thread/start")
-	policy := object(receipt["executionPolicy"])
-	if err != nil || receipt["status"] != "accepted" || start["model"] != pyModel || object(start["config"])["model_reasoning_effort"] != pyEffort || len(policy) != 7 || policy["mode"] != "allowlist" || policy["digest"] == nil || policy["exception"] != nil || policy["role"] != nil || policy["model"] != pyModel || policy["reasoningEffort"] != pyEffort || policy["limits"] != execution.Limits || host.Count("turn/start") != 1 {
+	policy := pyjson.Map(receipt["executionPolicy"])
+	if err != nil || receipt["status"] != "accepted" || start["model"] != pyModel || pyjson.Map(start["config"])["model_reasoning_effort"] != pyEffort || len(policy) != 7 || policy["mode"] != "allowlist" || policy["digest"] == nil || policy["exception"] != nil || policy["role"] != nil || policy["model"] != pyModel || policy["reasoningEffort"] != pyEffort || policy["limits"] != execution.Limits || host.Count("turn/start") != 1 {
 		t.Fatalf("receipt=%v err=%v", receipt, err)
 	}
 }
@@ -64,8 +65,8 @@ func Test_test_a_resume_carries_the_authorized_pair_and_is_checked_against_it(t 
 	input := SendMessage{RequestID: "m", ThreadID: "thread-1", Message: "hello", Expected: map[string]any{"model": pyModel, "reasoning_effort": pyEffort}}
 	receipt, err := b.SendMessageToThread(context.Background(), input)
 	params := hostParams(t, host, "thread/resume")
-	policy := object(receipt["executionPolicy"])
-	if err != nil || receipt["status"] != "accepted" || params["model"] != pyModel || object(params["config"])["model_reasoning_effort"] != pyEffort || policy["model"] != pyModel || policy["reasoningEffort"] != pyEffort || object(receipt["settings"])["verification"] != "observed_at_resume" || host.Count("turn/start") != 1 {
+	policy := pyjson.Map(receipt["executionPolicy"])
+	if err != nil || receipt["status"] != "accepted" || params["model"] != pyModel || pyjson.Map(params["config"])["model_reasoning_effort"] != pyEffort || policy["model"] != pyModel || policy["reasoningEffort"] != pyEffort || pyjson.Map(receipt["settings"])["verification"] != "observed_at_resume" || host.Count("turn/start") != 1 {
 		t.Fatalf("receipt=%v err=%v", receipt, err)
 	}
 }

@@ -36,8 +36,8 @@ func LookupReceipt(ctx context.Context, path string, fallback func() (string, er
 func DeliverableState(ctx context.Context, payload any, reference string, rootsValue any) (string, string, string, error) {
 	if o, ok := evidence.Object(payload); ok {
 		normalized := append(Object(nil), o...)
-		if manifest, ok := evidence.List(get(o, "manifest")); ok {
-			normalized = set(normalized, "manifest", any(orderedRecords(manifest)))
+		if manifest, ok := evidence.List(o.Get("manifest")); ok {
+			normalized = normalized.Set("manifest", any(orderedRecords(manifest)))
 		}
 		payload = normalized
 	}

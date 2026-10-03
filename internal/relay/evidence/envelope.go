@@ -16,7 +16,7 @@ func IsAbsent(value any) bool {
 	if !ok {
 		return false
 	}
-	r := Get(o, "absent")
+	r := o.Get("absent")
 	return pyvalue.ItemEqual(r, Inherited) || pyvalue.ItemEqual(r, Unknown) || pyvalue.ItemEqual(r, NotApplicable)
 }
 func Shown(value any) string {

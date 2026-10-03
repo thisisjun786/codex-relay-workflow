@@ -18,7 +18,7 @@ func Test22_FLT_11_WritesFollowCurrentTarget(t *testing.T) {
 		t.Fatalf("target not backfilled: %+v %v", answer, e)
 	}
 	r, e = l.Store.One(c, "SELECT tracker_ref FROM fault_publications WHERE fault_id = ?", id)
-	if e != nil || text(r, "tracker_ref") != "team-new" {
+	if e != nil || r.Text("tracker_ref") != "team-new" {
 		t.Fatalf("not repointed: %+v %v", r, e)
 	}
 }

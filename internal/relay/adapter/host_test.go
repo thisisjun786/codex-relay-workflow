@@ -74,7 +74,7 @@ func Test28_BuiltBinaryHostRoundTrips(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if field(receipt, "status") != "accepted" || field(receipt, "turnId") != "socket-turn" {
+	if receipt.Get("status") != "accepted" || receipt.Get("turnId") != "socket-turn" {
 		t.Fatalf("%s", dumps(receipt, false))
 	}
 	methods := []string{}

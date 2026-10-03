@@ -9,6 +9,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -124,7 +125,7 @@ func TestMPI02_two_parents_acknowledging_at_once_do_not_cross(t *testing.T) {
 		t.Fatalf("errors %v", errs)
 	}
 	for name, rid := range map[string]string{"a": a, "b": b} {
-		if v, _ := get(results[name], "accepted"); v != true {
+		if v, _ := results[name].Lookup("accepted"); v != true {
 			t.Fatalf("%s not accepted", name)
 		}
 		row := f.one("SELECT * FROM acks WHERE event_id = ?", events[name])
@@ -160,7 +161,7 @@ func TestMPI03_two_parents_ruling_needs_changes_at_once_open_one_generation_each
 	}
 	next := map[string]any{}
 	for name, rid := range map[string]string{"a": a, "b": b} {
-		n, _ := get(results[name], "nextExecutionGeneration")
+		n, _ := results[name].Lookup("nextExecutionGeneration")
 		next[name] = n
 		r, _ := LoadRelationship(f.ctx, f.store, rid)
 		revisions, err := all(f.ctx, f.store, "SELECT * FROM deliveries WHERE kind = ? AND relationship_id = ?", Revision, rid)
@@ -195,7 +196,7 @@ func TestMPI04_each_outbox_job_names_its_document_and_one_claim_cannot_complete_
 	mustDo(t, err)
 	_, err = SyncClaim(f.ctx, f.store, f.clock, jobs["b"].(string), "worker-1", f.clock.Now())
 	mustDo(t, err)
-	_, err = SyncFenced(f.ctx, f.store, jobs["b"].(string), str(alpha, "claimToken"))
+	_, err = SyncFenced(f.ctx, f.store, jobs["b"].(string), pyjson.Text(alpha.Get("claimToken")))
 	requireReason(t, err, SyncNotClaimable)
 	expected.same("complete", refusalOf(err))
 }

@@ -6,6 +6,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 var hostVersionToken = regexp.MustCompile(`/([0-9]+(?:\.[0-9]+)+[^\s()/;,]*)`)
@@ -48,7 +49,7 @@ func (b *Bridge) GetCapabilities(ctx context.Context) (map[string]any, error) {
 		return nil, err
 	}
 	server := client.Info()
-	agent := text(server["userAgent"])
+	agent := pyjson.Text(server["userAgent"])
 	observed := func(version, statement string) map[string]any {
 		return map[string]any{"observedOn": "codex-cli " + version, "observedServer": agent, "sameVersionConnected": connectedVersion(agent, version), "observation": statement, "note": "A reading taken on the named host version, not a probe of the server connected now. sameVersionConnected is the only measured value here."}
 	}

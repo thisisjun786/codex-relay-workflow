@@ -37,7 +37,7 @@ func Anchored(ctx context.Context, d *Service, eventID any, generation int64) (O
 	if row == nil {
 		return append(record, F{Key: "detail", Value: "the store holds no such event"}), nil
 	}
-	record = set(record, "event", Obj{{Key: "stage", Value: row.S("stage")}})
+	record = record.Set("event", Obj{{Key: "stage", Value: row.S("stage")}})
 	state := row.S("delivery_state")
 	delivered := !row.N("delivered")
 	if delivered {
@@ -59,12 +59,13 @@ func Anchored(ctx context.Context, d *Service, eventID any, generation int64) (O
 				last = &v
 			}
 			p := d.Policy.Pacing(now, row.I("rate_sends"), last)
-			if reopens, _ := get(p, "reopensAt"); p != nil && (reopens == nil || row.N("next_eligible_at") || row.F("next_eligible_at") <= reopens.(float64)) {
+			if reopens, _ := p.Lookup("reopensAt"); p != nil && (reopens == nil || row.N("next_eligible_at") || row.F("next_eligible_at") <= reopens.(float64)) {
 				pacing = p
 			}
 		}
-		record = set(record, "delivery", Obj{{Key: "state", Value: state}, {Key: "requestId", Value: row.Opt("request_id")}, {Key: "attemptNo", Value: row.Opt("attempt_no")}, {Key: "attemptState", Value: row.Opt("attempt_state")},
+		record = record.Set("delivery", Obj{{Key: "state", Value: state}, {Key: "requestId", Value: row.Opt("request_id")}, {Key: "attemptNo", Value: row.Opt("attempt_no")}, {Key: "attemptState", Value: row.Opt("attempt_state")},
 			{Key: "dispatchEvidence", Value: row.Opt("dispatch_evidence")}, {Key: "holdReason", Value: row.Opt("hold_reason")}, {Key: "hostLostAttempts", Value: row.I("host_lost_attempts")}, {Key: "turnCheck", Value: turnCheck}, {Key: "pacing", Value: pacing}, {Key: "settingsHold", Value: nil}})
+
 	}
 	acked := !row.N("acked")
 	pick := func(v any) any {
@@ -77,7 +78,7 @@ func Anchored(ctx context.Context, d *Service, eventID any, generation int64) (O
 	if !row.N("ack_tier") {
 		tier = row.S("ack_tier")
 	}
-	record = set(record, "ack", Obj{{Key: "accepted", Value: pick(row.I("ack_accepted") != 0)}, {Key: "rejectionReason", Value: pick(row.Opt("ack_rejection"))}, {Key: "settlement", Value: pick(row.Opt("ack_verified"))}, {Key: "lastReason", Value: pick(row.Opt("ack_last_reason"))}, {Key: "evidenceTier", Value: tier}})
+	record = record.Set("ack", Obj{{Key: "accepted", Value: pick(row.I("ack_accepted") != 0)}, {Key: "rejectionReason", Value: pick(row.Opt("ack_rejection"))}, {Key: "settlement", Value: pick(row.Opt("ack_verified"))}, {Key: "lastReason", Value: pick(row.Opt("ack_last_reason"))}, {Key: "evidenceTier", Value: tier}})
 	var undelivered any
 	switch {
 	case delivered && row.S("hold_reason") != "":
@@ -87,9 +88,9 @@ func Anchored(ctx context.Context, d *Service, eventID any, generation int64) (O
 	case !delivered && !row.N("refusal_reason"):
 		undelivered = Obj{{Key: "source", Value: "refusals.reason"}, {Key: "value", Value: row.S("refusal_reason")}}
 	}
-	record = set(record, "undeliveredReason", undelivered)
+	record = record.Set("undeliveredReason", undelivered)
 	if !row.N("supersession_reason") {
-		record = set(record, "supersession", Obj{{Key: "reason", Value: row.S("supersession_reason")}, {Key: "applied", Value: row.I("supersession_applied") != 0}})
+		record = record.Set("supersession", Obj{{Key: "reason", Value: row.S("supersession_reason")}, {Key: "applied", Value: row.I("supersession_applied") != 0}})
 	}
 	return record, nil
 }
@@ -104,7 +105,7 @@ func Projection(ctx context.Context, d *Service, rid string) (Obj, error) {
 	if err != nil {
 		return nil, err
 	}
-	headID, _ := get(head, "eventId")
+	headID, _ := head.Lookup("eventId")
 	completion, err := Anchored(ctx, d, headID, r.Generation)
 	if err != nil {
 		return nil, err

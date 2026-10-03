@@ -5,13 +5,14 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 )
 
 // ResolveProduct never files a defect under the observer's product by default.
 func ResolveProduct(registries map[string]Object, incident Object) (any, string) {
-	declared, repository := text(incident["product"]), text(incident["repository"])
+	declared, repository := pyjson.Text(incident["product"]), pyjson.Text(incident["repository"])
 	owners := []string{}
 	for key, r := range registries {
 		if repository != "" && contains(r["repositories"], repository) {
@@ -42,7 +43,7 @@ func ResolveProduct(registries map[string]Object, incident Object) (any, string)
 
 // WorkspaceFor keeps pending records in their declared tenant, never another product's.
 func WorkspaceFor(incident, registry Object) (string, error) {
-	declared := text(incident["workspace"])
+	declared := pyjson.Text(incident["workspace"])
 	if registry == nil {
 		if declared != "" {
 			return declared, nil
@@ -52,7 +53,7 @@ func WorkspaceFor(incident, registry Object) (string, error) {
 	if declared != "" && declared != registry["workspace"] {
 		return "", malformed(fmt.Sprintf("%s files in workspace %s; the incident declares %s", registry["product"], quote.Value(registry["workspace"]), quote.Value(declared)))
 	}
-	return text(registry["workspace"]), nil
+	return pyjson.Text(registry["workspace"]), nil
 }
 
 func DefectSignature(incident Object, attached any) Object {
@@ -96,7 +97,7 @@ func owned(disposition string, binding, registry, incident Object, reason string
 		project = registry["triageProject"]
 	}
 	if incident["origin"] == "simulated" {
-		project = object(registry["testTarget"])["project"]
+		project = pyjson.Map(registry["testTarget"])["project"]
 	}
 	if project == nil {
 		return decision("held", nil, binding["ref"], "owner_project_missing", nil, false, fmt.Sprintf("%s owns this but belongs to no project and %s has no triage project", binding["ref"], registry["product"]))
@@ -122,7 +123,7 @@ func Decide(incident, registry Object, bindings []Object, runIssue any) Object {
 		if b["test"] == simulated {
 			usable = append(usable, b)
 			if b["kind"] == "issue" {
-				issues[text(b["ref"])] = b
+				issues[pyjson.Text(b["ref"])] = b
 			}
 		}
 	}
@@ -180,7 +181,7 @@ func Decide(incident, registry Object, bindings []Object, runIssue any) Object {
 	}
 	relate := []any{}
 	disposition := "new_issue"
-	regression := object(incident["context"])["regressionOf"]
+	regression := pyjson.Map(incident["context"])["regressionOf"]
 	if regression != nil {
 		fixed := []Object{}
 		for _, ref := range keys {
@@ -205,13 +206,13 @@ func Decide(incident, registry Object, bindings []Object, runIssue any) Object {
 	return decision(disposition, project, nil, nil, relate, false, reason)
 }
 func currentIssue(incident Object, issues map[string]Object, runIssue any, notes *[]string) Object {
-	current := object(incident["context"])["currentIssue"]
+	current := pyjson.Map(incident["context"])["currentIssue"]
 	if current == nil {
 		return nil
 	}
 	surface := incident["surface"]
 	note := ""
-	b := issues[text(current)]
+	b := issues[pyjson.Text(current)]
 	switch {
 	case surface != "dev_run" && surface != "verification":
 		note = fmt.Sprintf("a %s incident is never attached to a current issue", surface)
@@ -233,7 +234,7 @@ func currentIssue(incident Object, issues map[string]Object, runIssue any, notes
 }
 func projectFor(incident, registry Object, bindings []Object) (any, any, string) {
 	if incident["origin"] == "simulated" {
-		return object(registry["testTarget"])["project"], nil, "simulated: the test target project"
+		return pyjson.Map(registry["testTarget"])["project"], nil, "simulated: the test target project"
 	}
 	component := incident["component"]
 	covering := []Object{}
@@ -242,11 +243,11 @@ func projectFor(incident, registry Object, bindings []Object) (any, any, string)
 			covering = append(covering, b)
 		}
 	}
-	slices.SortFunc(covering, func(a, b Object) int { return strings.Compare(text(a["ref"]), text(b["ref"])) })
+	slices.SortFunc(covering, func(a, b Object) int { return strings.Compare(pyjson.Text(a["ref"]), pyjson.Text(b["ref"])) })
 	if len(covering) == 1 {
 		return covering[0]["ref"], nil, fmt.Sprintf("%s covers %s", covering[0]["ref"], component)
 	}
-	goal := object(incident["goal"])["key"]
+	goal := pyjson.Map(incident["goal"])["key"]
 	if len(covering) > 1 {
 		chosen := []Object{}
 		for _, b := range covering {
@@ -272,10 +273,10 @@ func IssueLabels(incident Object) []any {
 }
 func DetailText(incident Object) string {
 	lines := []string{fmt.Sprintf("surface: %s  phase: %s  origin: %s", incident["surface"], incident["phase"], incident["origin"])}
-	d := object(incident["detail"])
+	d := pyjson.Map(incident["detail"])
 	for _, pair := range [][2]string{{"impact", "impact"}, {"expected", "expected"}, {"actual", "actual"}, {"reproduction", "reproduce with"}, {"owner", "current owner"}, {"nextAction", "next action"}} {
 		if d[pair[0]] != nil {
-			lines = append(lines, pair[1]+": "+text(d[pair[0]]))
+			lines = append(lines, pair[1]+": "+pyjson.Text(d[pair[0]]))
 		}
 	}
 	lines = append(lines, "execution: not approved. Filing this starts no work; approval, assignment, the fix and reverification are separate steps.")

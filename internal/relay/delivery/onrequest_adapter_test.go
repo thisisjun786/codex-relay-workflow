@@ -5,6 +5,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
@@ -49,25 +50,25 @@ func guarded(t *testing.T, input map[string]any) (Obj, []any) {
 		params = Obj{{Key: "threadId", Value: "thread-1"}, {Key: "excludeTurns", Value: true}}
 	}
 	golden.CheckJSON(t, "resumes", normalizeJSON(t, jsonable([]any{params})))
-	if _, present := get(params, "approvalPolicy"); present {
+	if _, present := params.Lookup("approvalPolicy"); present {
 		t.Fatal("the relay sent an approval policy")
 	}
 	rpcError, findings, notes := verifyResume(settings, resumed, "idle")
 	receipt := Obj{{Key: "status", Value: Accepted}, {Key: "rpcError", Value: nil}, {Key: "settingsNotes", Value: nil}, {Key: "settingsFindings", Value: nil}, {Key: "error", Value: nil}, {Key: "statusBeforeResume", Value: "idle"}}
 	methods := []any{"thread/read", "thread/resume"}
 	if rpcError != nil {
-		receipt = set(set(set(set(receipt, "status", FailedStatus), "rpcError", rpcError), "settingsFindings", findings), "error", "thread/resume: "+str(rpcError, "message"))
+		receipt = receipt.Set("status", FailedStatus).Set("rpcError", rpcError).Set("settingsFindings", findings).Set("error", "thread/resume: "+pyjson.Text(rpcError.Get("message")))
 	} else {
 		methods = append(methods, "turn/start")
 		if len(notes) > 0 {
-			receipt = set(receipt, "settingsNotes", notes)
+			receipt = receipt.Set("settingsNotes", notes)
 		}
-		receipt = set(receipt, "turnId", "fake-turn-1")
+		receipt = receipt.Set("turnId", "fake-turn-1")
 	}
 	golden.CheckJSON(t, "receipt", normalizeJSON(t, jsonable(without(receipt, "turnId"))))
 	golden.CheckJSON(t, "methods", methods)
 	full := append(Obj(nil), receipt...)
-	full = set(full, "resumed", resumed)
+	full = full.Set("resumed", resumed)
 	return full, methods
 }
 
@@ -148,15 +149,15 @@ func verifyResume(settings TaskSettings, resumed any, statusBefore string) (Obj,
 	}
 	if len(findings) > 0 {
 		first := findings[0].(Obj)
-		code := str(first, "code")
-		expected, _ := get(first, "expected")
-		returned, _ := get(first, "returned")
-		message := code + ": " + str(first, "field") + " returned " + pyvalue.Repr(returned) + "; message withheld"
+		code := pyjson.Text(first.Get("code"))
+		expected, _ := first.Lookup("expected")
+		returned, _ := first.Lookup("returned")
+		message := code + ": " + pyjson.Text(first.Get("field")) + " returned " + pyvalue.Repr(returned) + "; message withheld"
 		if !transmitted {
 			if code == registry.SettingsNotPreserved {
 				code = registry.SettingsDifferAfterLoad
 			}
-			message = code + ": " + str(first, "field") + " is " + pyvalue.Repr(returned) + " on the loaded thread and " + pyvalue.Repr(expected) + " in the record; nothing was transmitted and no turn was started"
+			message = code + ": " + pyjson.Text(first.Get("field")) + " is " + pyvalue.Repr(returned) + " on the loaded thread and " + pyvalue.Repr(expected) + " in the record; nothing was transmitted and no turn was started"
 		}
 		return Obj{{Key: "code", Value: code}, {Key: "message", Value: message}}, findings, nil
 	}

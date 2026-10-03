@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
@@ -140,7 +141,7 @@ func readingTable(t *testing.T) []readingRow {
 	for i, c := range columns {
 		row := readingRow{columns: c}
 		row.reading = plain(t, SettingsHoldReading(row.holdColumns())).(map[string]any)
-		if hold := obj(row.reading["hold"]); hold != nil {
+		if hold := pyjson.Map(row.reading["hold"]); hold != nil {
 			reason, _ := hold["reason"].(string)
 			row.recovery = holdOf(t, row.reading["kind"].(string), reason, hold["source"].(string), false)
 		}
@@ -182,7 +183,7 @@ func Test25_SHN_the_recovery_and_reading_tables_are_the_goldens(t *testing.T) {
 	golden.Check(t, "readings", jsonLines(t, lines))
 }
 
-func hold(r readingRow) map[string]any { return obj(r.reading["hold"]) }
+func hold(r readingRow) map[string]any { return pyjson.Map(r.reading["hold"]) }
 
 // SHN-1: a withheld attempt hold on settings_not_preserved (runtimeWorkspaceRoots) is
 // {kind: withheld, source: attempt, reason, field}; recovery operator + settings-show, then

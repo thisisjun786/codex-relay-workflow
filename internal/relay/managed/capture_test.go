@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
@@ -182,9 +183,9 @@ func compareExecutionCLI(t *testing.T) {
 	_, err := os.Stat(filepath.Join(state, "relay.sqlite3"))
 	got = append(got, map[string]any{"storeExists": !os.IsNotExist(err)})
 	declared := command("intent-declare", "--dispatch-request-id", "dispatch-1", "--issue", "REL-EXECUTION", "--marker-root", marker, "--workspace", workspace)
-	assignment := str(declared["assignmentId"])
+	assignment := pyjson.Text(declared["assignmentId"])
 	relation := command("register", "--parent-task", "parent", "--parent-host", "host", "--child-task", "child", "--child-host", "host", "--issue", "REL-EXECUTION", "--artifact-root", workspace, "--allowed-recipient", "parent", "--dispatch-request-id", "dispatch-1", "--dispatch-turn-id", "standby")
-	rid := str(relation["relationshipId"])
+	rid := pyjson.Text(relation["relationshipId"])
 	command("intent-register", "--assignment", assignment, "--relationship", rid, "--dispatch-request-id", "dispatch-1", "--db-path", filepath.Join(state, "relay.sqlite3"), "--marker-root", marker, "--workspace", workspace)
 	command("criteria-register", "--relationship", rid, "--criterion", "c1=the deliverable behaves")
 	command("doctor", "--issue", "REL-EXECUTION")
@@ -195,7 +196,7 @@ func compareExecutionCLI(t *testing.T) {
 	// doctor's ownership.runtime_build names the answering runtime (decisions.md 31): Go's own
 	// build, never the fence build. normalizedExecution then compares it as answeringBuild.
 	for _, i := range []int{0, 6} {
-		goBuild := obj(obj(obj(got[i])["stdout"])["ownership"])["runtime_build"]
+		goBuild := pyjson.Map(pyjson.Map(pyjson.Map(got[i])["stdout"])["ownership"])["runtime_build"]
 		if goBuild != goRuntimeBuild() || goBuild == ownership.CompatibilityBuild {
 			t.Errorf("step %d doctor runtime_build: %v (want %q)", i, goBuild, goRuntimeBuild())
 		}
@@ -213,23 +214,23 @@ func compareExecutionCLI(t *testing.T) {
 		t.Fatal(err)
 	}
 	golden.CheckJSON(t, "steps", maskRootDevice(steps, device), golden.Substitute(key, "<execution workspace key>"), golden.Substitute(root, "<root>"))
-	goBefore := obj(obj(got[0])["stdout"])
-	goIssue := obj(goBefore["issue"])
-	if goIssue["readable"] != false || goIssue["holds"] != nil || obj(got[1])["storeExists"] != false {
+	goBefore := pyjson.Map(pyjson.Map(got[0])["stdout"])
+	goIssue := pyjson.Map(goBefore["issue"])
+	if goIssue["readable"] != false || goIssue["holds"] != nil || pyjson.Map(got[1])["storeExists"] != false {
 		t.Fatal("pre-registration diagnosis created a store", goBefore)
 	}
-	goAfter := obj(obj(got[6])["stdout"])
-	goOwner := obj(goAfter["issue"])
-	goFound := obj(obj(got[7])["stdout"])
-	if goOwner["holds"] != true || goOwner["responsibleChild"] != "child" || goOwner["storeAgreement"] != "same" || goOwner["storeId"] != obj(goAfter["store"])["storeId"] || goFound["responsibleRelationship"] != goOwner["responsibleRelationship"] || len(goFound["assignments"].([]any)) != 1 {
+	goAfter := pyjson.Map(pyjson.Map(got[6])["stdout"])
+	goOwner := pyjson.Map(goAfter["issue"])
+	goFound := pyjson.Map(pyjson.Map(got[7])["stdout"])
+	if goOwner["holds"] != true || goOwner["responsibleChild"] != "child" || goOwner["storeAgreement"] != "same" || goOwner["storeId"] != pyjson.Map(goAfter["store"])["storeId"] || goFound["responsibleRelationship"] != goOwner["responsibleRelationship"] || len(goFound["assignments"].([]any)) != 1 {
 		t.Fatalf("assignment mismatch: %v %v", goOwner, goFound)
 	}
-	goMarkerBody := obj(obj(got[8])["stdout"])
-	if !strings.Contains(fmt.Sprint(goMarkerBody), str(goOwner["responsibleRelationship"])) || !strings.Contains(fmt.Sprint(goMarkerBody), filepath.Join(root, "goexecution", "relay.sqlite3")) {
+	goMarkerBody := pyjson.Map(pyjson.Map(got[8])["stdout"])
+	if !strings.Contains(fmt.Sprint(goMarkerBody), pyjson.Text(goOwner["responsibleRelationship"])) || !strings.Contains(fmt.Sprint(goMarkerBody), filepath.Join(root, "goexecution", "relay.sqlite3")) {
 		t.Fatalf("marker restart: %v", goMarkerBody)
 	}
-	goDuplicate := obj(obj(got[9])["stdout"])
-	if obj(got[9])["exit"] != float64(2) || goDuplicate["reason"] != "duplicate_assignment" || len(obj(obj(got[10])["stdout"])["assignments"].([]any)) != 1 {
+	goDuplicate := pyjson.Map(pyjson.Map(got[9])["stdout"])
+	if pyjson.Map(got[9])["exit"] != float64(2) || goDuplicate["reason"] != "duplicate_assignment" || len(pyjson.Map(pyjson.Map(got[10])["stdout"])["assignments"].([]any)) != 1 {
 		t.Fatalf("duplicate assignment: %v", goDuplicate)
 	}
 }
@@ -384,17 +385,17 @@ func Test27_MRS_2_PythonTwoConnectionsWholeOutputAndRows(t *testing.T) {
 	for outcome := range outcomes {
 		got = append(got, outcome)
 	}
-	sort.Slice(got, func(i, j int) bool { return obj(got[i])["ok"] != nil })
+	sort.Slice(got, func(i, j int) bool { return pyjson.Map(got[i])["ok"] != nil })
 	if len(got) != 2 {
 		t.Fatalf("two racers, outcomes %v", got)
 	}
-	winner := str(obj(obj(got[0])["ok"])["request_id"])
+	winner := pyjson.Text(pyjson.Map(pyjson.Map(got[0])["ok"])["request_id"])
 	if winner != "req-a" && winner != "req-b" {
 		t.Fatalf("no winner: %v", got)
 	}
 	golden.CheckJSON(t, "outcomes", raceWinnerFirst(t, got, winner))
-	goLoser := obj(got[1])
-	goDetail := str(goLoser["detail"])
+	goLoser := pyjson.Map(got[1])
+	goDetail := pyjson.Text(goLoser["detail"])
 	if goLoser["error"] != "RegistrationError" || !strings.HasPrefix(goDetail, `duplicate_assignment: issue "REL-1" is already held by request`) {
 		t.Fatalf("unexpected Go refusal: %v", goLoser)
 	}
@@ -505,7 +506,7 @@ func Test27_MRS_4_PythonArmReleaseRaceWholeOutputAndRows(t *testing.T) {
 	if winner.action == "arm" && row.State != "create_armed" || winner.action == "release" && (row.State != "released" || row.ReleaseReason.String != "operator") {
 		t.Fatalf("winner=%v row=%v", winner.action, row)
 	}
-	gotRow := obj(orderedValue(t, reservationRecord(row)))
+	gotRow := pyjson.Map(orderedValue(t, reservationRecord(row)))
 	if gotRow["state"] != "create_armed" && gotRow["state"] != "released" {
 		t.Fatalf("Go retained invalid race row: %v", gotRow)
 	}
@@ -539,7 +540,7 @@ func Test27_MRS_5_PythonEnsureSettingsWholeOutputAndRows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	settings := obj(obj(req["parent"])["settings"])
+	settings := pyjson.Map(pyjson.Map(req["parent"])["settings"])
 	clock := delivery.NewFakeClock()
 	got := []any{}
 	for _, action := range []struct{ task, source string }{{"parent", "creation_result"}, {"parent", "recovery"}} {
@@ -974,7 +975,7 @@ func Test27_MST_8_PythonHostReadyRefusalsWholeOutput(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			worker := &managedFake{operations: map[string]map[string]any{}, settings: obj(obj(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(root, "ledger"), "device": 1, "inode": 2}, standby: "completed", hostScenario: code}
+			worker := &managedFake{operations: map[string]map[string]any{}, settings: pyjson.Map(pyjson.Map(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(root, "ledger"), "device": 1, "inode": 2}, standby: "completed", hostScenario: code}
 			start := &Start{Store: s, Adapter: worker, Socket: filepath.Join(root, "socket"), MarkerRoot: filepath.Join(root, "markers"), StateSelector: root, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
 			receipt, err := start.Run(ctx, raw)
 			if err != nil {
@@ -1002,7 +1003,7 @@ func Test27_MST_8_PythonGuardCaptureAndGoScopeGuard(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				host := &managedFake{operations: map[string]map[string]any{}, settings: obj(obj(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(state, "ledger"), "device": 1, "inode": 2}, standby: "completed"}
+				host := &managedFake{operations: map[string]map[string]any{}, settings: pyjson.Map(pyjson.Map(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(state, "ledger"), "device": 1, "inode": 2}, standby: "completed"}
 				start := &Start{Store: s, Adapter: host, Socket: filepath.Join(state, "socket"), MarkerRoot: filepath.Join(state, "markers"), StateSelector: state, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
 				if _, err := start.Run(ctx, raw); err != nil {
 					t.Fatal(err)
@@ -1023,7 +1024,7 @@ func Test27_MST_8_PythonGuardCaptureAndGoScopeGuard(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				host := &managedFake{operations: map[string]map[string]any{}, settings: obj(obj(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(state, "ledger"), "device": 1, "inode": 2}, standby: "completed", beforeStartWorker: true}
+				host := &managedFake{operations: map[string]map[string]any{}, settings: pyjson.Map(pyjson.Map(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(state, "ledger"), "device": 1, "inode": 2}, standby: "completed", beforeStartWorker: true}
 				ready := true
 				host.beforeSend = func(SendRequest) { ready = false }
 				start := &Start{Store: s, Adapter: host, Socket: filepath.Join(state, "socket"), MarkerRoot: filepath.Join(state, "markers"), StateSelector: state, Readiness: func(context.Context, map[string]any) (string, error) {
@@ -1071,7 +1072,7 @@ func compareManaged(t *testing.T, scenario string, steps int) {
 		if err := json.Unmarshal(raw, &request); err != nil {
 			t.Fatal(err)
 		}
-		obj(obj(request["child"])["settings"])["sandbox"] = map[string]any{"type": "readOnly", "networkAccess": true}
+		pyjson.Map(pyjson.Map(request["child"])["settings"])["sandbox"] = map[string]any{"type": "readOnly", "networkAccess": true}
 		raw, _ = json.Marshal(request)
 	}
 	if scenario == "recipient-predeclared" {
@@ -1097,7 +1098,7 @@ func compareManaged(t *testing.T, scenario string, steps int) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	host := &managedFake{operations: map[string]map[string]any{}, settings: obj(obj(req["child"])["settings"]), ledger: ledgerIdentity(root, ledgerInode), standby: "completed"}
+	host := &managedFake{operations: map[string]map[string]any{}, settings: pyjson.Map(pyjson.Map(req["child"])["settings"]), ledger: ledgerIdentity(root, ledgerInode), standby: "completed"}
 	if strings.HasPrefix(scenario, "host-ready-") {
 		host.hostScenario = strings.TrimPrefix(scenario, "host-ready-")
 	}
@@ -1153,7 +1154,7 @@ func compareManaged(t *testing.T, scenario string, steps int) {
 	}
 	if scenario == "approval-drift" || scenario == "approval-drift-partial" {
 		host.settings = map[string]any{}
-		for k, v := range obj(obj(req["child"])["settings"]) {
+		for k, v := range pyjson.Map(pyjson.Map(req["child"])["settings"]) {
 			host.settings[k] = v
 		}
 		host.settings["approvalPolicy"] = "on-request"
@@ -1364,7 +1365,7 @@ func compareManaged(t *testing.T, scenario string, steps int) {
 			if e := json.Unmarshal([]byte(raw), &value); e != nil {
 				t.Fatal(e)
 			}
-			raw = strings.ReplaceAll(raw, str(obj(value)["requestFingerprint"]), "<fingerprint>")
+			raw = strings.ReplaceAll(raw, pyjson.Text(pyjson.Map(value)["requestFingerprint"]), "<fingerprint>")
 			ordered[i] = strings.ReplaceAll(strings.ReplaceAll(raw, "gomarkers", "markers"), "gostate", "state")
 		}
 		checkManaged(t, "ordered receipts", ordered, root)
@@ -1392,7 +1393,7 @@ func compareManaged(t *testing.T, scenario string, steps int) {
 				answer["result"] = "allowed"
 			} else {
 				answer["error"] = "ScopeError"
-				relationship := obj(got[0])["relationshipId"]
+				relationship := pyjson.Map(got[0])["relationshipId"]
 				answer["detail"] = fmt.Sprintf("recipient_not_authorized: a revision_request for '%s' goes to its own child '%s', not to '%s'", relationship, child, step.recipient)
 			}
 			outcomes = append(outcomes, answer)

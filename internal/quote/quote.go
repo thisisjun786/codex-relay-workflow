@@ -1,7 +1,8 @@
 // Package quote is how a relay message names a value it shows a person: a string as Go quotes
-// it, any other value as its compact JSON. It stands where the Python relay's messages used
-// repr(). Nothing stored or hashed is spelled with it: a message whose text a store, a journal
-// or a hash keeps quotes with pyvalue.Repr, the stored spelling.
+// it, any other value as its compact JSON (Value), and a word of a command line as a shell reads
+// it back (Shell). It stands where the Python relay's messages used repr() and shlex.quote.
+// Nothing stored or hashed is spelled with Value: a message whose text a store, a journal or a
+// hash keeps quotes with pyvalue.Repr, the stored spelling.
 package quote
 
 import (
