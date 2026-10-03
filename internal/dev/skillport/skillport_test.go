@@ -276,13 +276,14 @@ func TestStageNeverOverwritesAndRollsBack(t *testing.T) {
 	}
 }
 
+// The pinned listing digest is the real one when CRW_CXC_V0240_TREE names an extracted CXC v0.2.40 tree.
 func TestDefaultOriginMatchesTheOracle(t *testing.T) {
-	const oracle = "/var/tmp/cxc-v0.2.40/plugins/codexclaw/skills"
-	if _, err := os.Stat(oracle); err != nil {
-		t.Skip("the extracted CXC v0.2.40 tree is not on this host")
+	tree := os.Getenv("CRW_CXC_V0240_TREE")
+	if tree == "" {
+		t.Skip("CRW_CXC_V0240_TREE is not set")
 	}
-	if got, err := Listing(oracle); err != nil || got != DefaultOrigin().SkillsListing {
-		t.Errorf("Listing(oracle) = %q, %v; DefaultOrigin has %q", got, err, DefaultOrigin().SkillsListing)
+	if got, err := Listing(Source{Dir: tree}.skills()); err != nil || got != DefaultOrigin().SkillsListing {
+		t.Errorf("Listing = %q, %v; DefaultOrigin has %q", got, err, DefaultOrigin().SkillsListing)
 	}
 }
 
