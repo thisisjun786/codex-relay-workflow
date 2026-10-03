@@ -195,7 +195,7 @@ func (s *Scheduler) RecordCorrection(ctx context.Context, plan, node, actor, sup
 			return refuse(contract.RefusalUnregisteredRelationship, "node %s has no execution to correct", node)
 		}
 		if rel.Status != "active" || rel.Superseded {
-			return refuse(contract.RefusalRelationshipNotActive, "the relationship %s of %s is %s: a correction goes to a child whose relationship is active", rel.ID, node, map[bool]string{true: "superseded", false: rel.Status}[rel.Superseded])
+			return refuse(contract.RefusalRelationshipNotActive, "the relationship %s of %s is %s: a correction goes to a child whose relationship is active", rel.ID, node, relationshipState(rel))
 		}
 		if rel.ParentTaskID != actor {
 			return notParentOf(actor, rel)

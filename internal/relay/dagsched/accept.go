@@ -262,10 +262,10 @@ func (s *Scheduler) accept(ctx context.Context, plan, node, actor string, in Acc
 			return refuse(contract.RefusalUnregisteredRelationship, "node %s has no execution to accept", node)
 		}
 		if rel.Status != "active" || rel.Superseded {
-			return refuse(contract.RefusalRelationshipNotActive, "the relationship %s of %s is %s: a result is accepted while its child's relationship is active", rel.ID, node, map[bool]string{true: "superseded", false: rel.Status}[rel.Superseded])
+			return refuse(contract.RefusalRelationshipNotActive, "the relationship %s of %s is %s: a result is accepted while its child's relationship is active", rel.ID, node, relationshipState(rel))
 		}
 		if rel.ParentTaskID != actor {
-			return refuse(contract.RefusalScopeRoleMismatch, "task %s is not the parent of relationship %s, which is held by %s", actor, rel.ID, rel.ParentTaskID)
+			return notParentHeldBy(actor, rel)
 		}
 		var manifest string
 		bound, err := queryOne(txCtx, tx, "SELECT manifest_digest FROM dag_node_executions WHERE plan_id = ? AND node_id = ? AND relationship_id = ? AND execution_generation = ?", []any{plan, node, rel.ID, rel.Generation}, &manifest)

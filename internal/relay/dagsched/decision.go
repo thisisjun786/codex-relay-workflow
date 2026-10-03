@@ -46,12 +46,8 @@ func (s *Scheduler) RecordDecision(ctx context.Context, plan, actor string, in D
 		if err != nil {
 			return err
 		}
-		parents, err := projectParents(txCtx, tx, snap.ProjectKey)
-		if err != nil {
+		if err := requireProjectParent(txCtx, tx, snap.ProjectKey, actor); err != nil {
 			return err
-		}
-		if len(parents) != 1 || parents[0] != actor {
-			return refuse(contract.RefusalScopeRoleMismatch, "task %s is not the registered parent of project %s", actor, snap.ProjectKey)
 		}
 		var activeID, digest, disposition, kind, ref string
 		var revision int64

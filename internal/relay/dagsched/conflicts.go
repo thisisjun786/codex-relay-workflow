@@ -68,7 +68,7 @@ func (s *Scheduler) ObserveConflicts(ctx context.Context, plan, actor string, in
 			return out, refuse(contract.RefusalDispositionConflict, "node %s is a %s node: it has no branch to merge", id, n.Kind)
 		}
 	}
-	if err := s.requireParent(ctx, q, snap, actor); err != nil {
+	if err := requireProjectParent(ctx, q, snap.ProjectKey, actor); err != nil {
 		return out, err
 	}
 	iso, err := isolate(ctx, in.Repository)

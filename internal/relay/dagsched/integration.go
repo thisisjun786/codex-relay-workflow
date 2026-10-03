@@ -231,7 +231,7 @@ func (s *Scheduler) observableRelationship(ctx context.Context, q store.Querier,
 		return refuse(contract.RefusalRelationshipNotActive, "the relationship %s is %s: no integration is recorded for it", rel.ID, rel.Status)
 	}
 	if rel.ParentTaskID != actor {
-		return refuse(contract.RefusalScopeRoleMismatch, "task %s is not the parent of relationship %s, which is held by %s", actor, rel.ID, rel.ParentTaskID)
+		return notParentHeldBy(actor, rel)
 	}
 	return nil
 }

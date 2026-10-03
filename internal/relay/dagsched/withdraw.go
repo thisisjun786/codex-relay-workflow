@@ -98,7 +98,7 @@ func (s *Scheduler) WithdrawGeneration(ctx context.Context, plan, node, actor st
 			return nil
 		}
 		if rel.Status != "active" || rel.Superseded {
-			return refuse(contract.RefusalRelationshipNotActive, "the relationship %s of %s is %s: a generation is withdrawn while its relationship is active", rel.ID, node, map[bool]string{true: "superseded", false: rel.Status}[rel.Superseded])
+			return refuse(contract.RefusalRelationshipNotActive, "the relationship %s of %s is %s: a generation is withdrawn while its relationship is active", rel.ID, node, relationshipState(rel))
 		}
 		if rel.Generation != in.Generation {
 			return refuse(contract.RefusalStaleGeneration, "generation %d is not the generation %s stands on (%d): only the newest generation, the one opened by hand and never sent, is withdrawn", in.Generation, rel.ID, rel.Generation)

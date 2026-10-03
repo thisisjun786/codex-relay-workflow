@@ -96,7 +96,7 @@ func (s *Scheduler) RecordReleasePolicy(ctx context.Context, plan, actor string,
 		if err != nil {
 			return err
 		}
-		if err := s.requireParent(txCtx, q, snap, actor); err != nil {
+		if err := requireProjectParent(txCtx, q, snap.ProjectKey, actor); err != nil {
 			return err
 		}
 		latest, found, err := loadSettings(txCtx, q, plan)

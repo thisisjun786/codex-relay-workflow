@@ -129,18 +129,6 @@ func (r SweepResult) Object() contract.OrderedObject {
 		{Key: "repository", Value: optionalText(r.Repository)}, {Key: "observed", Value: observed}, {Key: "replayed", Value: replayed}, {Key: "unmeasured", Value: unmeasured}, {Key: "members", Value: members}}
 }
 
-// requireParent refuses a task that is not the registered parent of the plan's project: a measurement is the parent's.
-func (s *Scheduler) requireParent(ctx context.Context, q store.Querier, snap dag.Snapshot, actor string) error {
-	parents, err := projectParents(ctx, q, snap.ProjectKey)
-	if err != nil {
-		return err
-	}
-	if len(parents) != 1 || parents[0] != actor {
-		return refuse(contract.RefusalScopeRoleMismatch, "task %s is not the registered parent of project %s", actor, snap.ProjectKey)
-	}
-	return nil
-}
-
 // ObserveLive measures every pair of the live heads of a plan and every live head against each tip it is given, and records the measurements and a ledger row in one transaction (CRW-410). Git runs
 // first and writes nothing; if recording fails nothing was written and the same call can be made again. A live node is an implementation node that holds its edit regions (running, or accepted and not
 // landed); its head is the one the parent named, else the head of its current accepted result, else the HEAD of the checkout its child works in. A head or tip that cannot be measured is a member that
@@ -167,7 +155,7 @@ func (s *Scheduler) ObserveLive(ctx context.Context, plan, actor string, in Swee
 	if err != nil {
 		return res, err
 	}
-	if err := s.requireParent(ctx, q, snap, actor); err != nil {
+	if err := requireProjectParent(ctx, q, snap.ProjectKey, actor); err != nil {
 		return res, err
 	}
 	if in.TriggerNode != "" {

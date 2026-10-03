@@ -99,18 +99,6 @@ func newestSeq(ctx context.Context, q store.Querier, plan, document string) (int
 	return seq.Int64, err
 }
 
-// summaryActor refuses a task that is not the one registered parent of the entry's project: only that parent writes a plan's summary, and a replaced parent is refused at once.
-func summaryActor(ctx context.Context, q store.Querier, project, actor string) error {
-	parents, err := projectParents(ctx, q, project)
-	if err != nil {
-		return err
-	}
-	if len(parents) != 1 || parents[0] != actor {
-		return refuse(contract.RefusalScopeRoleMismatch, "task %s is not the registered parent of project %s", actor, project)
-	}
-	return nil
-}
-
 func validDocument(document string) error {
 	switch {
 	case document == "" || strings.TrimSpace(document) != document:
@@ -148,7 +136,7 @@ func (s *Scheduler) EnqueueSummary(ctx context.Context, plan, actor, document st
 		if err != nil {
 			return err
 		}
-		if err := summaryActor(txCtx, q, snap.ProjectKey, actor); err != nil {
+		if err := requireProjectParent(txCtx, q, snap.ProjectKey, actor); err != nil {
 			return err
 		}
 		progress, err := s.Progress(txCtx, q, plan)
@@ -340,7 +328,7 @@ func (s *Scheduler) ClaimSummary(ctx context.Context, id, actor string) (Summary
 		if err != nil {
 			return err
 		}
-		if err := summaryActor(txCtx, q, e.ProjectKey, actor); err != nil {
+		if err := requireProjectParent(txCtx, q, e.ProjectKey, actor); err != nil {
 			return err
 		}
 		newest, err := newestSeq(txCtx, q, e.PlanID, e.Document)
@@ -482,7 +470,7 @@ func (s *Scheduler) CompleteSummary(ctx context.Context, id, actor, token, docum
 		if err != nil {
 			return err
 		}
-		if err := summaryActor(txCtx, q, e.ProjectKey, actor); err != nil {
+		if err := requireProjectParent(txCtx, q, e.ProjectKey, actor); err != nil {
 			return err
 		}
 		if e.State == SummaryConfirmed {
@@ -547,7 +535,7 @@ func (s *Scheduler) FailSummary(ctx context.Context, id, actor, token, message s
 		if err != nil {
 			return err
 		}
-		if err := summaryActor(txCtx, q, e.ProjectKey, actor); err != nil {
+		if err := requireProjectParent(txCtx, q, e.ProjectKey, actor); err != nil {
 			return err
 		}
 		if e.State == SummaryConfirmed {
@@ -587,7 +575,7 @@ func (s *Scheduler) RetrySummary(ctx context.Context, id, actor string) (Summary
 		if err != nil {
 			return err
 		}
-		if err := summaryActor(txCtx, q, e.ProjectKey, actor); err != nil {
+		if err := requireProjectParent(txCtx, q, e.ProjectKey, actor); err != nil {
 			return err
 		}
 		switch e.State {

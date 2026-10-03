@@ -49,10 +49,10 @@ func mergeable(ctx context.Context, q store.Querier, acc Acceptance, actor strin
 		return refuse(contract.RefusalUnregisteredRelationship, "relationship %s of the accepted result is not in the store", acc.RelationshipID)
 	}
 	if rel.Status == "paused" || rel.Status == "cancelled" || rel.Superseded {
-		return refuse(contract.RefusalRelationshipNotActive, "the relationship %s is %s: nothing is judged for merge while it is", rel.ID, map[bool]string{true: "superseded", false: rel.Status}[rel.Superseded])
+		return refuse(contract.RefusalRelationshipNotActive, "the relationship %s is %s: nothing is judged for merge while it is", rel.ID, relationshipState(rel))
 	}
 	if rel.ParentTaskID != actor {
-		return refuse(contract.RefusalScopeRoleMismatch, "task %s is not the parent of relationship %s, which is held by %s", actor, rel.ID, rel.ParentTaskID)
+		return notParentHeldBy(actor, rel)
 	}
 	return nil
 }

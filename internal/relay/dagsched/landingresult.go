@@ -74,7 +74,7 @@ func (s *Scheduler) RecordLandingResult(ctx context.Context, plan, node, actor s
 		if err != nil {
 			return err
 		}
-		if err := s.requireParent(txCtx, q, snap, actor); err != nil {
+		if err := requireProjectParent(txCtx, q, snap.ProjectKey, actor); err != nil {
 			return err
 		}
 		n, live := nodeOf(snap, node)
