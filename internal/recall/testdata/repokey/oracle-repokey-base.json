@@ -1,0 +1,126 @@
+[
+  {
+    "raw": null,
+    "key": null
+  },
+  {
+    "raw": "",
+    "key": null
+  },
+  {
+    "raw": "  ",
+    "key": null
+  },
+  {
+    "raw": "https://github.com/owner/repo.git",
+    "key": "github.com/owner/repo"
+  },
+  {
+    "raw": "git@GitHub.COM:Owner/Repo.GIT/",
+    "key": "github.com/Owner/Repo"
+  },
+  {
+    "raw": "ssh://git@github.com:22/owner/repo.git",
+    "key": "github.com/owner/repo"
+  },
+  {
+    "raw": "git://host/owner/repo.git",
+    "key": "host/owner/repo"
+  },
+  {
+    "raw": "https://x/a%2Fb.git",
+    "key": "x/a/b"
+  },
+  {
+    "raw": "https://x/a%FF.git",
+    "key": null
+  },
+  {
+    "raw": "https://x/a%ZZ.git",
+    "key": null
+  },
+  {
+    "raw": "https://x/a/../b.git",
+    "key": "x/b"
+  },
+  {
+    "raw": "https://x/a/%2e%2e/b.git",
+    "key": "x/b"
+  },
+  {
+    "raw": "https://x/a\\b.git",
+    "key": "x/a/b"
+  },
+  {
+    "raw": "ftp://HOST/A.git",
+    "key": "host/A"
+  },
+  {
+    "raw": "thing://HOST/A.git",
+    "key": "host/A"
+  },
+  {
+    "raw": "file://HOST/a.git",
+    "key": "host/a"
+  },
+  {
+    "raw": "https://[::1]/a.git",
+    "key": "[::1]/a"
+  },
+  {
+    "raw": "https://foo_bar/a.git",
+    "key": "foo_bar/a"
+  },
+  {
+    "raw": "https://127.1/a.git",
+    "key": "127.0.0.1/a"
+  },
+  {
+    "raw": "https://bücher.de/a.git",
+    "key": "xn--bcher-kva.de/a"
+  },
+  {
+    "raw": "https://x:99999/a.git",
+    "key": null
+  },
+  {
+    "raw": "ssh://x:99999/a.git",
+    "key": null
+  },
+  {
+    "raw": "https://host/.git",
+    "key": null
+  },
+  {
+    "raw": "not a url",
+    "key": null
+  },
+  {
+    "raw": "a:b",
+    "key": "a/b"
+  },
+  {
+    "raw": "C:\\repo",
+    "key": "c/repo"
+  },
+  {
+    "raw": "https://x/a.git/?query=1#frag",
+    "key": "x/a"
+  },
+  {
+    "raw": "git@x: a\\b.GIT//",
+    "key": "x/a/b"
+  },
+  {
+    "raw": "https://x/a%20b.git",
+    "key": "x/a b"
+  },
+  {
+    "raw": "https://x/a\nb.git",
+    "key": "x/ab"
+  },
+  {
+    "raw": "https://x/a/%00.git",
+    "key": "x/a/\u0000"
+  }
+]

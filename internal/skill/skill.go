@@ -4,6 +4,8 @@ package skill
 import (
 	"fmt"
 	"io"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/skill/search"
 )
 
 const skillUsage = "usage: crw skill {hook-probe,issue-size,parent-title,start-policy,base-refresh} ..."
@@ -16,6 +18,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return usageExit
 	}
 	switch args[0] {
+	case "search", "show":
+		return search.Run(args, nil, stdout, stderr)
 	case "hook-probe":
 		return runHookProbe(args[1:], stdout, stderr)
 	case "issue-size":
@@ -28,6 +32,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runBaseRefresh(args[1:], stdout, stderr)
 	case "-h", "--help":
 		fmt.Fprintln(stdout, skillUsage)
+		fmt.Fprintln(stdout, search.Usage)
 		return 0
 	default:
 		fmt.Fprintln(stderr, skillUsage)

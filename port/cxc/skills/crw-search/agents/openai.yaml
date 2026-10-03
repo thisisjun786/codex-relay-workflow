@@ -1,0 +1,6 @@
+interface:
+  display_name: "crw-search"
+  short_description: "Codex-native search ladder (discover, prove, deep research with Aside lane) and Korean intent guard."
+  default_prompt: "Use $crw-search to discover candidate sources and verify the requested claim in the original source."
+policy:
+  allow_implicit_invocation: true
