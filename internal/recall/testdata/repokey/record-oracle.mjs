@@ -8,6 +8,7 @@ const grids = {
   punycode: ["bücher.de", "BÜCHER.de", "mañana.com", "例え.テスト", "İ.de", "ΣΣ.de", "ẞ.de", "😀.com", "xn--bcher-kva.de", "a..b", "host.", "a_b.c", "a*b", "a%41", "a%2Fb", "%FF", "%ZZ"],
 };
 const rows = [];
+grids.ipv4.push("0xffffffffffffffffffff", "00077777777777777777777777777", "a.0xffffffffffffffffffff");
 for (const [group, hosts] of Object.entries(grids)) for (const host of hosts) {
   const raw = `https://${host}/a.git`; rows.push({ group, raw, key: normalizeRepoKey(raw) });
 }
@@ -29,6 +30,7 @@ for (const [group, host] of [["nfc", "e\u0301.de"], ["compatibility", "ſ.de"], 
   const raw = `https://${host}/a`, port = toASCII(host.toLowerCase()) + "/a";
   rows.push({ group, raw, key: normalizeRepoKey(raw), port, classification: "platform-difference" });
 }
-const raw = "https://xn--0/a";
-rows.push({ group: "ace-validation", raw, key: normalizeRepoKey(raw), port: "xn--0/a", classification: "platform-difference" });
+const raw = "https://xn--/a";
+// This Node build passes malformed ACE labels through too; the declared re-validation gap is latent here.
+rows.push({ group: "ace-validation", raw, key: normalizeRepoKey(raw) });
 process.stdout.write(JSON.stringify(rows, null, 2) + "\n");

@@ -395,3 +395,14 @@ No new oracle defect was identified in the directive text and assembly of `pabcd
 - node:sqlite accepts the minimum signed 64-bit INTEGER as a rounded JavaScript number, while neighboring unsafe integers throw, consistent with an absolute-value overflow in its range check (recorded Node case; recall/src/sqlite.ts:29-36 delegates to DatabaseSync; TestRecallSQLiteMinimumIntegerOracleOverflow); port: kept.
 - An ambiguous bare named-parameter map throws on its first construction but leaves a partial per-statement alias cache, so repeating Get/All/Run can bind the first alias while the other remains NULL (recorded Node case; recall/src/sqlite.ts delegates to DatabaseSync; TestRecallSQLiteNamedOrderAndCachedAmbiguity); port: kept.
 - Named SQLite binding keys containing NUL resolve by the prefix before NUL, while unknown-name diagnostics retain the original key (recorded Node case; recall/src/sqlite.ts delegates to DatabaseSync; TestRecallSQLiteNamedOrderAndCachedAmbiguity); port: kept.
+
+## Found by the CRW-502 recall repository-key port
+
+- Local-looking colon paths such as `C:\repo` are accepted as scp remotes and identify `c/repo`, rather than falling back to cwd scope (source `recall/src/repo-key.ts:38-41`; recorded base oracle); port: kept.
+- Decoding `%2F` before packing collapses an encoded path separator with a literal separator, so `a%2Fb` and `a/b` share a key (source `recall/src/repo-key.ts:46,56`; recorded base oracle); port: kept.
+- Platform difference: the bounded URL host parser does not NFC-normalize decomposed Unicode labels before RFC3492 encoding (source `recall/src/repo-key.ts:44` delegates to Node WHATWG URL; recorded NFC grid); port: kept.
+- Platform difference: UTS46 compatibility mappings, including long s and fullwidth letters, are not reproduced by lowercase plus RFC3492 (source `recall/src/repo-key.ts:44`; recorded compatibility grid); port: kept.
+- Platform difference: UTS46 disallowed-code-point checks beyond the URL forbidden-domain set and strict UTF-8 decoding are not reproduced (source `recall/src/repo-key.ts:44`; recorded disallowed grid); port: kept.
+- Platform difference: UTS46 Bidi checks are not reproduced (source `recall/src/repo-key.ts:44`; recorded Bidi grid); port: kept.
+- Platform difference: UTS46 ContextJ joiner checks are not reproduced (source `recall/src/repo-key.ts:44`; recorded ContextJ grid); port: kept.
+- Platform difference: existing `xn--` labels are passed through rather than decoded and re-validated; the recorded malformed ACE label is also passed through by this Node build, so this declared limit is latent in that row (source `recall/src/repo-key.ts:44`; recorded ACE grid); port: kept.

@@ -110,6 +110,21 @@
     "key": "127.0.0.1../a"
   },
   {
+    "group": "ipv4",
+    "raw": "https://0xffffffffffffffffffff/a.git",
+    "key": null
+  },
+  {
+    "group": "ipv4",
+    "raw": "https://00077777777777777777777777777/a.git",
+    "key": null
+  },
+  {
+    "group": "ipv4",
+    "raw": "https://a.0xffffffffffffffffffff/a.git",
+    "key": null
+  },
+  {
     "group": "ipv6",
     "raw": "https://[::]/a.git",
     "key": "[::]/a"
@@ -703,9 +718,7 @@
   },
   {
     "group": "ace-validation",
-    "raw": "https://xn--0/a",
-    "key": "xn--0/a",
-    "port": "xn--0/a",
-    "classification": "platform-difference"
+    "raw": "https://xn--/a",
+    "key": "xn--/a"
   }
 ]

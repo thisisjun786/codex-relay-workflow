@@ -5,8 +5,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // These seven concerns port recall/test/repo-key.test.ts:13-80. Go's string domain maps null to empty.
@@ -112,9 +115,91 @@ func TestRepoKeyOriginInTemporaryGit(t *testing.T) {
 	if got := repoKeyForCwd(root, nil); got != "host/Owner/Repo" {
 		t.Fatal(got)
 	}
-	// Multiple config values are output on separate lines and cannot parse as an scp remote.
+	// --get (unlike --get-all) selects the last configured value.
 	git("config", "--add", "remote.origin.url", "git@host:Other/Repo")
-	if got := readOriginUrl(root); !strings.Contains(got, "\n") {
+	if got := readOriginUrl(root); got != "git@host:Other/Repo" {
 		t.Fatal(got)
+	}
+}
+
+// Re-exec the test binary directly as git: no shell or child tree outlives the owned PID.
+func TestMain(m *testing.M) {
+	if mode := os.Getenv("RECALL_ORIGIN_HELPER"); mode != "" {
+		if err := os.WriteFile(os.Getenv("RECALL_ORIGIN_PID"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+			os.Exit(2)
+		}
+		if len(os.Args) != 6 || os.Args[1] != "-C" || os.Args[3] != "config" || os.Args[4] != "--get" || os.Args[5] != "remote.origin.url" {
+			os.Exit(3)
+		}
+		switch mode {
+		case "timeout":
+			time.Sleep(10 * time.Second)
+		case "fail":
+			os.Exit(1)
+		case "signal":
+			_ = syscall.Kill(os.Getpid(), syscall.SIGTERM)
+		case "utf8":
+			_, _ = os.Stdout.Write([]byte{' ', 0xff, ' ', '\n'})
+		case "empty":
+		default:
+			n, err := strconv.Atoi(mode)
+			if err != nil {
+				os.Exit(4)
+			}
+			_, _ = os.Stdout.WriteString(strings.Repeat("x", n))
+		}
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
+
+func TestRepoKeyOriginProcessBoundaries(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("CODEX_HOME", root)
+	t.Setenv("PATH", root)
+	if got := readOriginUrl(root); got != "" {
+		t.Fatal("missing git", got)
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(exe, filepath.Join(root, "git")); err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range []struct {
+		mode string
+		size int
+		want string
+	}{
+		{"empty", 0, ""}, {"fail", 0, ""}, {"signal", 0, ""}, {"utf8", 0, "\ufffd"}, {"timeout", 0, ""},
+		{strconv.Itoa(originOutputLimit - 1), originOutputLimit - 1, ""}, {strconv.Itoa(originOutputLimit), originOutputLimit, ""}, {strconv.Itoa(originOutputLimit + 1), 0, ""},
+	} {
+		t.Run(row.mode, func(t *testing.T) {
+			t.Setenv("RECALL_ORIGIN_HELPER", row.mode)
+			pidFile := filepath.Join(t.TempDir(), "pid")
+			t.Setenv("RECALL_ORIGIN_PID", pidFile)
+			start := time.Now()
+			got := readOriginUrl(root)
+			want := row.want
+			if row.size != 0 {
+				want = strings.Repeat("x", row.size)
+			}
+			if got != want {
+				t.Fatalf("stdout size %d, want %d (%q)", len(got), len(want), row.want)
+			}
+			data, err := os.ReadFile(pidFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pid, err := strconv.Atoi(string(data))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := syscall.Kill(pid, 0); err == nil {
+				t.Fatalf("owned git pid %d still running", pid)
+			}
+			t.Logf("mode %s: owned pid %d stopped, elapsed %s", row.mode, pid, time.Since(start))
+		})
 	}
 }
