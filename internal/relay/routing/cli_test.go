@@ -108,6 +108,7 @@ type cliScenario struct {
 // TestRun_every_relay_command_line_has_the_usage_contract, internal/relay/argparse). The cases
 // are the plain --help lines of the former argparse sweep's fixture, under their index in it.
 func Test23_EachRoutingCommandPrintsItsHelp(t *testing.T) {
+	t.Parallel()
 	binary := builtBinary(t)
 	state := filepath.Join(t.TempDir(), "state")
 	var cases []struct {
@@ -147,6 +148,7 @@ func Test23_PRD_2_PolicyCLI(t *testing.T)          { cliReplay(t, "PRD-2") }
 func Test23_PRD_10_RegistryCLI(t *testing.T)       { cliReplay(t, "PRD-10") }
 func Test23_PRD_16_UnreadableJSON(t *testing.T)    { cliReplay(t, "PRD-16") }
 func cliReplay(t *testing.T, mode string) {
+	t.Parallel()
 	state := filepath.Join(t.TempDir(), "state")
 	var scenario cliScenario
 	scenarioInputs(t, "cli-"+mode+".json", &scenario, [2]string{state, "<state>"})

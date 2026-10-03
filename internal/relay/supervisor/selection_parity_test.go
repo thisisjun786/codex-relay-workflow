@@ -18,6 +18,7 @@ func checkSelection(t *testing.T, f *stageFixture, o Obligation, recipient strin
 	golden.CheckJSON(t, goldenKey(t, "select"), asJSON(t, got), fixtureGolden(t, f.root)...)
 }
 func Test24_SR_5_ConfirmedVerdictDischarges(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	o := f.obligation(t)
 	checkSelection(t, f, o, "", nil)
@@ -38,6 +39,7 @@ func Test24_SR_5_ConfirmedVerdictDischarges(t *testing.T) {
 	}
 }
 func Test24_SR_23_LatestRulingNotWallClock(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	o := f.obligation(t)
 	if _, err := f.s.DB.Exec("INSERT INTO sync_targets (relationship_id,target,target_ref,recorded_at) VALUES ('rel-1','coordination_document','doc-1','t')"); err != nil {
@@ -52,6 +54,7 @@ func Test24_SR_23_LatestRulingNotWallClock(t *testing.T) {
 	}
 }
 func Test24_SR_6_Contactability(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	o := f.obligation(t)
 	now := float64(1700000000)

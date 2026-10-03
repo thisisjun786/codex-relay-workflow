@@ -67,6 +67,7 @@ func compareRCLBytes(t *testing.T, argv func(string) []string, normalize func(ra
 }
 
 func Test24_RCL_1_HelpWholeStdoutBytes(t *testing.T) {
+	t.Parallel()
 	answer := compareRCLBytes(t, func(string) []string { return []string{"reporting-show", "--help"} }, func(raw []byte) []byte { return raw })
 	if answer.code != 0 {
 		t.Fatalf("exit %d", answer.code)
@@ -74,6 +75,7 @@ func Test24_RCL_1_HelpWholeStdoutBytes(t *testing.T) {
 }
 
 func Test24_RCL_3_UnmanagedObservationWholeStdoutBytes(t *testing.T) {
+	t.Parallel()
 	normalizeObservedAt := func(raw []byte) []byte {
 		var value map[string]any
 		if err := json.Unmarshal(raw, &value); err != nil {
@@ -100,6 +102,7 @@ func Test24_RCL_3_UnmanagedObservationWholeStdoutBytes(t *testing.T) {
 // documents: Go's trailing runtime block, and ownership.runtime_build, which names the answering
 // runtime's build (`crw version`) and becomes one token. The golden began as Python's stdout.
 func Test24_RCL_4_DoctorWholeStdoutBytes(t *testing.T) {
+	t.Parallel()
 	version, err := exec.Command(testsupport.CRW(t), "version").Output()
 	if err != nil {
 		t.Fatal(err)

@@ -13,6 +13,7 @@ import (
 // str(services.selection.path): the store's pathlib parent, which keeps a root of two leading
 // slashes that filepath.Dir folds.
 func TestTheChannelNamesItsStateDirectoryAsPathlibSpellsIt(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	s, err := store.Open(context.Background(), "/"+filepath.Join(dir, "relay.sqlite3"), "")
 	if err != nil {

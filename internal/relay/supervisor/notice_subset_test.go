@@ -190,6 +190,7 @@ func nsLive() map[string]any {
 }
 
 func TestNoticeSubset_Compose(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name         string
 		notice, live func(map[string]any)
@@ -236,6 +237,7 @@ func TestNoticeSubset_Compose(t *testing.T) {
 }
 
 func TestNoticeSubset_StageByProject(t *testing.T) {
+	t.Parallel()
 	w := newNoticeWorld(t)
 	steps := &nsSteps{t: t, w: w}
 	w.seed(t, nsSeed{signature: nsProjectSig, scope: nsProjectScope})
@@ -279,6 +281,7 @@ func (l *scriptedLinkage) Up(ctx context.Context, relationshipID string) (map[st
 }
 
 func TestNoticeSubset_StageByRelationship(t *testing.T) {
+	t.Parallel()
 	w := newNoticeWorld(t)
 	steps := &nsSteps{t: t, w: w}
 	w.seed(t, nsSeed{signature: nsRelationSig, scope: nsProjectScope})
@@ -319,6 +322,7 @@ func TestNoticeSubset_StageByRelationship(t *testing.T) {
 // An advancing clock makes the two reads of StageNotice visible: the packet's observedAt is read first,
 // the message's staged_at second.
 func TestNoticeSubset_StageClockReadOrder(t *testing.T) {
+	t.Parallel()
 	w := newNoticeWorld(t)
 	steps := &nsSteps{t: t, w: w}
 	w.seed(t, nsSeed{signature: nsRelationSig, scope: nsProjectScope})
@@ -329,6 +333,7 @@ func TestNoticeSubset_StageClockReadOrder(t *testing.T) {
 // The evidence line of a packet names the program and the state directory, which can hold any character.
 // The packet is stored with non-ASCII kept as it is and a byte that is not UTF-8 read as U+FFFD.
 func TestNoticeSubset_StageProgramPathEncoding(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct{ name, program string }{
 		{"a program path that is not ASCII", "/opt/r\u00e9lay/codex-session-relay"},
 		{"a program path with a byte that is not UTF-8", "/opt/\xff/codex-session-relay"},
@@ -342,6 +347,7 @@ func TestNoticeSubset_StageProgramPathEncoding(t *testing.T) {
 }
 
 func TestNoticeSubset_Refresh(t *testing.T) {
+	t.Parallel()
 	sending := "UPDATE supervisor_messages SET state='sending', lease_owner='daemon', lease_until=1700000300, attempt_count=1 WHERE message_id=?"
 	changed := func(t *testing.T, w *noticeWorld, _ string) {
 		w.exec(t, "UPDATE fault_ledger SET severity='degraded' WHERE fault_id=?", nsFault)
@@ -421,6 +427,7 @@ func seedNoticeMessage(t *testing.T, ctx context.Context, s *store.Store, id, re
 }
 
 func TestNoticeSubset_Park(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name, state string
 		assignments []string
@@ -459,6 +466,7 @@ func TestNoticeSubset_Park(t *testing.T) {
 }
 
 func TestNoticeSubset_ContactReading(t *testing.T) {
+	t.Parallel()
 	w := newNoticeWorld(t)
 	w.seed(t, nsSeed{signature: nsRelationSig, scope: nsProjectScope})
 	stamp := func(offset float64) string { return delivery.ISOOf(nsNow + offset) }
