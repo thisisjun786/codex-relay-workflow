@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
@@ -290,10 +291,13 @@ func cachedCatalog(path, key string, now int64) *LiveCatalog {
 				}
 			}
 		}
-		entries = append(entries, CatalogEntry{id, ModelSource(src), label, reasoningEfforts(efforts)})
+		var ladder []string
+		_ = json.Unmarshal(efforts, &ladder) // Already validated: retain blanks and duplicates in cached rows.
+		entries = append(entries, CatalogEntry{id, ModelSource(src), label, &ladder})
 	}
 	state, _ := stringOf(m["state"])
-	return &LiveCatalog{Catalog: Catalog{State: CatalogState(state), Entries: entries}, Status: status, Source: ModelSource(source), FetchedAt: &at, raw: o, fetchedMS: ms}
+	message, _ := stringOf(m["message"])
+	return &LiveCatalog{Catalog: Catalog{State: CatalogState(state), Entries: entries}, Status: status, Source: ModelSource(source), FetchedAt: &at, Message: message, raw: o, fetchedMS: ms}
 }
 
 // catalogDate covers ISO timestamps/date forms, RFC dates and the legacy numeric
@@ -333,13 +337,27 @@ func catalogDate(s string) (int64, bool) {
 			}
 		}
 	}
-	for _, layout := range []string{time.RFC3339Nano, "2006-01-02T15:04Z07:00", "2006-01-02T15:04:05Z0700", "2006-01-02", "2006-01", "2006", time.RFC1123, time.RFC1123Z, time.RFC822, time.RFC822Z, time.ANSIC, time.UnixDate, time.RFC850, "Mon Jan 02 2006 15:04:05 GMT-0700", "Jan 2 2006", "January 2, 2006", "2006/1/2", "2006,1,2", "1/2/2006", "1-2-2006", "1.2.2006"} {
+	for _, layout := range []string{time.RFC3339Nano, "2006-01-02T15:04Z07:00", "2006-01-02T15:04:05Z0700", "2006-01-02", "2006-01", "2006"} {
 		if at, err := time.Parse(layout, s); err == nil {
 			return at.UnixMilli() + extraDay, true
 		}
 	}
-	for _, layout := range []string{"2006-01-02T15:04:05", "2006-01-02T15:04", "2006-01-02 15:04:05"} {
-		if at, err := time.ParseInLocation(layout, s, time.Local); err == nil {
+	location := time.Local
+	fields := strings.Fields(s)
+	if len(fields) > 0 {
+		name := strings.ToUpper(fields[len(fields)-1])
+		for _, zone := range []struct {
+			name  string
+			hours int
+		}{{"UT", 0}, {"UTC", 0}, {"GMT", 0}, {"EST", -5}, {"EDT", -4}, {"CST", -6}, {"CDT", -5}, {"MST", -7}, {"MDT", -6}, {"PST", -8}, {"PDT", -7}} {
+			if name == zone.name {
+				location = time.FixedZone(zone.name, zone.hours*60*60)
+				break
+			}
+		}
+	}
+	for _, layout := range []string{time.RFC1123, time.RFC1123Z, time.RFC822, time.RFC822Z, time.ANSIC, time.UnixDate, time.RFC850, "Mon Jan 02 2006 15:04:05 GMT-0700", "Jan 2 2006", "January 2, 2006", "2006/1/2", "2006,1,2", "1/2/2006", "1-2-2006", "1.2.2006", "2006-01-02T15:04:05", "2006-01-02T15:04", "2006-01-02 15:04:05"} {
+		if at, err := time.ParseInLocation(layout, s, location); err == nil {
 			return at.UnixMilli() + extraDay, true
 		}
 	}
@@ -413,7 +431,7 @@ func ocxExecutable(env host.LookupEnv) (string, error) {
 	if !set {
 		path = "/bin:/usr/bin"
 	}
-	var denied error
+	var denied, missing error
 	for _, dir := range strings.Split(path, string(os.PathListSeparator)) {
 		candidate := filepath.Join(dir, "ocx")
 		info, err := os.Stat(candidate)
@@ -422,7 +440,8 @@ func ocxExecutable(env host.LookupEnv) (string, error) {
 			continue
 		}
 		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
+			if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
+				missing = err
 				continue
 			}
 			return "", err
@@ -435,6 +454,9 @@ func ocxExecutable(env host.LookupEnv) (string, error) {
 	}
 	if denied != nil {
 		return "", denied
+	}
+	if missing != nil {
+		return "", missing
 	}
 	return "", &os.PathError{Op: "exec", Path: "ocx", Err: os.ErrNotExist}
 }

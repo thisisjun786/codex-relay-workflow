@@ -327,6 +327,7 @@ func TestLiveCatalogOracleDates(t *testing.T) {
 		{"2026/1/2", 1767312000000, true}, {"1/2/2026", 1767312000000, true},
 		{"Thu Jan 01 2026 00:00:00 GMT+0000 (Coordinated Universal Time)", 1767225600000, true},
 		{"Thu, 01 Jan 2026 00:00:00 GMT", 1767225600000, true},
+		{"Thu, 01 Jan 2026 00:00:00 PST", 1767254400000, true},
 		{"0", 946684800000, true}, {"1", 978307200000, true}, {"32", 1956528000000, true},
 		{"49", 2493072000000, true}, {"50", -631152000000, true}, {"1.5", 978652800000, true},
 	} {
@@ -377,6 +378,37 @@ func TestLiveCatalogPersistence(t *testing.T) {
 	}
 }
 
+func TestLiveCatalogReviewTypedCache(t *testing.T) {
+	o := liveOptions(t)
+	path := livePath(o)
+	want := []string{"", "high", "high"}
+	at := "2026-01-01T00:00:00.000Z"
+	c := LiveCatalog{Catalog: Catalog{State: CatalogOcx, Entries: []CatalogEntry{{ID: "x", Source: ModelOcx, Label: "x", ReasoningEfforts: &want}}}, Status: "fresh", Source: ModelOcx, FetchedAt: &at, Message: "cached note"}
+	check(t, os.MkdirAll(filepath.Dir(path), 0700))
+	check(t, os.WriteFile(path, must(Stringify(map[string]any{"key": sourceKey(catalogEnv(o.Environ)), "catalog": c}, "")), 0600))
+	o.RunOcx = func([]string) (string, error) { t.Fatal("valid cache rejected"); return "", nil }
+	var r CatalogReader
+	got := liveRead(t, &r, o)
+	if got.Message != "cached note" || got.Entries[0].ReasoningEfforts == nil || !reflect.DeepEqual(*got.Entries[0].ReasoningEfforts, want) {
+		t.Fatal("typed cache differs from retained JSON", got)
+	}
+}
+
+func TestLiveCatalogReviewLocalCacheDate(t *testing.T) {
+	o := liveOptions(t)
+	path := livePath(o)
+	check(t, os.MkdirAll(filepath.Dir(path), 0700))
+	cache := map[string]any{"key": sourceKey(catalogEnv(o.Environ)), "catalog": map[string]any{"state": "ocx-active", "entries": []any{}, "status": "fresh", "source": "ocx", "fetchedAt": "2026/1/2"}}
+	check(t, os.WriteFile(path, must(json.Marshal(cache)), 0600))
+	cmd := exec.Command(must(os.Executable()), "-test.run=^TestLiveCatalogProcess$")
+	cmd.Env = append(os.Environ(), "TZ=Asia/Seoul", "CRW_LIVE_TEST_MODE=date-cache", "CRW_LIVE_TEST_ENV="+string(must(json.Marshal(o.Environ))))
+	var c LiveCatalog
+	check(t, json.Unmarshal(must(cmd.Output()), &c))
+	if c.Status != "fresh" {
+		t.Fatal("local cache date rejected", c)
+	}
+}
+
 func TestLiveCatalogSubprocess(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX fake executable")
@@ -418,6 +450,16 @@ func TestLiveCatalogSubprocess(t *testing.T) {
 	if out, err := RunOcxModels(append(append([]string{}, base...), "PATH="+first+":"+bin)); err != nil || out != "[]" {
 		t.Fatal(out, err)
 	}
+	t.Run("not-directory-search", func(t *testing.T) {
+		component := filepath.Join(t.TempDir(), "file")
+		check(t, os.WriteFile(component, []byte("regular file"), 0600))
+		if out, err := RunOcxModels(append(append([]string{}, base...), "PATH="+component+":"+bin)); err != nil || out != "[]" {
+			t.Fatal("ENOTDIR prevented later executable", out, err)
+		}
+		if _, err := RunOcxModels(append(append([]string{}, base...), "PATH="+component)); !errors.Is(err, syscall.ENOTDIR) {
+			t.Fatal("exhausted ENOTDIR changed", err)
+		}
+	})
 }
 
 // Re-executes only this helper; the shell wrapper execs it, so the recorded pid belongs to the runner.
@@ -426,11 +468,15 @@ func TestLiveCatalogProcess(t *testing.T) {
 	if mode == "" {
 		return
 	}
-	if mode == "cache" {
+	if mode == "cache" || mode == "date-cache" {
 		var env []string
 		check(t, json.Unmarshal([]byte(os.Getenv("CRW_LIVE_TEST_ENV")), &env))
 		var r CatalogReader
-		c := liveRead(t, &r, CatalogOptions{Environ: env, Now: func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }, RunOcx: func([]string) (string, error) { return "", errors.New("cache not reused") }})
+		now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+		if mode == "date-cache" {
+			now = time.UnixMilli(1767279600000)
+		}
+		c := liveRead(t, &r, CatalogOptions{Environ: env, Now: func() time.Time { return now }, RunOcx: func([]string) (string, error) { return "", errors.New("cache not reused") }})
 		fmt.Print(string(must(Stringify(c, ""))))
 		os.Exit(0)
 	}
