@@ -14,6 +14,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -241,6 +242,14 @@ func grantState(ctx context.Context, s *store.Store, row store.Row) (string, err
 	envelope, ok := loads(colText(event, "receipt")).(contract.OrderedObject)
 	if !ok {
 		return mergeTurnGrantBad, nil
+	}
+	if get(envelope, "kind") == mergeturn.ReturnRequestKind {
+		// A return request rides the grant channel but is no grant: current, or closed with its turn.
+		why, err := mergeturn.GrantSupersessionFor(ctx, s, colText(event, "receipt"))
+		if err != nil || why != "" {
+			return why, err
+		}
+		return mergeturn.ReturnRequestLive, nil
 	}
 	turn, turnOK := get(envelope, "turnId").(string)
 	grant, grantOK := get(envelope, "grantId").(string)
@@ -587,10 +596,13 @@ func reportedState(row, ack store.Row, grant string, superseded store.Row) strin
 		if grant == mergeTurnGrantAnswered {
 			return "grant_acknowledged"
 		}
-		if grant != "" {
+		if grant == mergeturn.ReturnRequestLive {
+			if state == stDispatched {
+				return "dispatched_return_request"
+			}
+		} else if grant != "" {
 			return "superseded:" + grant
-		}
-		if state == stDispatched {
+		} else if state == stDispatched {
 			return "dispatched_awaiting_grant_acknowledgement"
 		}
 	}
@@ -624,7 +636,7 @@ func phase(row store.Row, attempts []store.Row, ack store.Row, failure contract.
 		}
 		return "rejected"
 	}
-	if kind == kindMergeTurnGrant && grant != "" {
+	if kind == kindMergeTurnGrant && grant != "" && grant != mergeturn.ReturnRequestLive {
 		if grant == mergeTurnGrantAnswered {
 			return "grant_acknowledged"
 		}
@@ -644,6 +656,9 @@ func phase(row store.Row, attempts []store.Row, ack store.Row, failure contract.
 			return "awaiting_child_receipt"
 		}
 		if kind == kindMergeTurnGrant {
+			if grant == mergeturn.ReturnRequestLive {
+				return "return_request_delivered"
+			}
 			return "awaiting_grant_acknowledgement"
 		}
 		if len(attempts) > 0 && strings.HasPrefix(colText(attempts[len(attempts)-1], "recipient_scan"), turnCheckUndecided+":") {

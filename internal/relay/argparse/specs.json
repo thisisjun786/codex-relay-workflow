@@ -609,6 +609,15 @@
   {"flag":"--turn","required":true},
   {"flag":"--actor","required":true},
   {"flag":"--evidence","required":true}]},
+{"name":"merge-turn-progress","summary":"record a step the holder took inside its turn, so the turn is not read as stalled","options":[
+  {"flag":"--turn","required":true,"help":"the turn you hold (holding or merging)"},
+  {"flag":"--actor","required":true,"help":"the holder"},
+  {"flag":"--step","required":true,"choices":["base_refresh","ci_started","ci_polled","ci_result","merge_attempt"],"help":"the step: base_refresh after refreshing the candidate, ci_started when its checks start, ci_polled while they run, ci_result when they finish, merge_attempt when the merge is requested"},
+  {"flag":"--evidence","help":"what the step was, for example the run id or the head it concerns"}]},
+{"name":"merge-turn-pass","summary":"pass a holding turn that recorded no progress for the holding limit on to the next waiter","options":[
+  {"flag":"--turn","required":true,"help":"the holding turn; a merging or unknown turn is never passed"},
+  {"flag":"--actor","required":true,"help":"the supervisor above the holder's project, or the parent of a waiting claim on the same target"},
+  {"flag":"--evidence","required":true,"help":"what was observed; kept in the ledger with the holder, the head, the last progress and the limit"}]},
 {"name":"merge-turn-check","options":[
   {"flag":"--turn","required":true},
   {"flag":"--actor","required":true},
@@ -795,7 +804,7 @@
 {"name":"dag-summary-retry","summary":"reopens a failed summary entry (parked by its eighth failure): back to pending with its attempts at zero. It touches only the entry it names; a confirmed or superseded entry is final and is refused","options":[
   {"flag":"--summary","required":true},
   {"flag":"--actor","required":true}]},
-{"name":"dag-region-declare","summary":"declares the edit regions of an implementation node before it is released: repository, path, kind (tree, file, symbol) and change (edit, rename, delete) for 1 to 64 regions. A node with no declaration counts as overlapping everything; renames, deletes and hotspots are exclusive. An identical declaration is a replay","options":[
+{"name":"dag-region-declare","summary":"declares the edit regions of an implementation node before it is released: repository, path, kind (tree, file, symbol), change (edit, rename, delete) and grade (independent, the default; mechanical, which names its rule: union, renumber or regenerate:<command>; local; exclusive) for 1 to 64 regions. A node with no declaration counts as overlapping everything; renames, deletes, hotspots and the shared contract paths are exclusive whatever grade is declared. An identical declaration is a replay","options":[
   {"flag":"--plan","required":true},
   {"flag":"--node","required":true},
   {"flag":"--actor","required":true},
