@@ -17,7 +17,8 @@ import (
 
 // The transition ledger and the interview scan events: appendLedger, appendInterviewEvent and readInterviewEvents of CXC v0.2.40
 // pabcd-state/src/state.ts (216-242, 696-795). A row is one line appended with no lock and no temp file, as the oracle does it;
-// the callers that need one hold their own lock.
+// the callers that need one hold their own lock. One departure: a scan row starts on a new line when the file's last line has no line
+// feed (CRW-474), where the oracle joins it to that line and both rows are lost.
 
 // LedgerFile is the transition ledger under the state directory; InterviewsSubdir holds one scan ledger per session.
 const (
@@ -82,7 +83,7 @@ func (e LedgerEntry) members() []member {
 // AppendLedger appends the row to <state dir>/ledger.jsonl (appendLedger). The counters of a row are written as JSON.stringify
 // writes a number: -0 as 0, NaN and the infinities as null.
 func AppendLedger(cwd string, e LedgerEntry) error {
-	return appendRow(cwd, "", LedgerFile, e.members())
+	return appendRow(cwd, "", LedgerFile, e.members(), false)
 }
 
 // InterviewScanEvent is the kind of a scan row. The scan ledger is shared with the interview ledger's question and answer rows,
@@ -139,9 +140,12 @@ func (e InterviewEvent) members() []member {
 }
 
 // AppendInterviewEvent appends the row to the session's scan ledger (appendInterviewEvent), the durable record that a scan ran.
-// The file is named by SanitizeKey of the row's session id, as the oracle names it.
+// The file is named by SanitizeKey of the row's session id, as the oracle names it. The file is shared with the interview answer
+// ledger's rows; the row starts with a line feed when the file ends in a line that has none, or when its last byte cannot be read,
+// so a final line left by a crash, a full disk or a hand edit is not joined to this row. No lock is taken, as in the oracle: two
+// appenders that meet one unterminated tail each add a line feed, and the blank line between the rows is skipped by both readers.
 func AppendInterviewEvent(cwd string, e InterviewEvent) error {
-	return appendRow(cwd, InterviewsSubdir, SanitizeKey(e.SessionID)+".jsonl", e.members())
+	return appendRow(cwd, InterviewsSubdir, SanitizeKey(e.SessionID)+".jsonl", e.members(), true)
 }
 
 // ReadInterviewEvents reads a session's scan rows, best effort: a file that cannot be read is no rows, and the result is never
@@ -235,8 +239,9 @@ func jsKeyOrder(pairs []MapEntry) []MapEntry {
 }
 
 // appendRow is the tail of appendLedger and appendInterviewEvent, in the oracle's order: the .crw directory, sub below it, the
-// row text, one appended line. A failed step leaves what the earlier ones made.
-func appendRow(cwd, sub, name string, row []member) error {
+// row text, one appended line. A failed step leaves what the earlier ones made. With closeTail the line is preceded by a line feed
+// when the file already ends in a line that has none (endsMidLine), in the same write.
+func appendRow(cwd, sub, name string, row []member, closeTail bool) error {
 	if _, err := crwdir.EnsureDir(cwd); err != nil {
 		return err
 	}
@@ -248,12 +253,39 @@ func appendRow(cwd, sub, name string, row []member) error {
 	if err != nil {
 		return err
 	}
-	f, err := os.OpenFile(filepath.Join(dir, name), os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o666)
+	path := filepath.Join(dir, name)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o666)
 	if err != nil {
 		return err
 	}
-	_, err = f.Write(append(line, '\n'))
+	line = append(line, '\n')
+	if closeTail && endsMidLine(f, path) {
+		line = append([]byte{'\n'}, line...)
+	}
+	_, err = f.Write(line)
 	return errors.Join(err, f.Close())
+}
+
+// endsMidLine reports whether the open file is a non-empty regular file whose last byte is not a line feed, or whose last byte cannot
+// be learned (a write-only file, a failed read): the conservative answer, since a blank line costs nothing and a joined line loses
+// rows. A new or empty file, a FIFO or a device has no tail to protect. It is the helper of the same name in
+// internal/pabcd/interview/ledger, which imports this package and so cannot be imported here; the two are kept alike on purpose.
+func endsMidLine(f *os.File, path string) bool {
+	info, err := f.Stat()
+	if err != nil {
+		return true
+	}
+	if !info.Mode().IsRegular() || info.Size() == 0 {
+		return false
+	}
+	r, err := os.Open(path)
+	if err != nil {
+		return true
+	}
+	defer func() { _ = r.Close() }()
+	var last [1]byte
+	n, _ := r.ReadAt(last[:], info.Size()-1) // n first: a byte read with io.EOF is a byte read
+	return n != 1 || last[0] != '\n'
 }
 
 // member is one key of an object whose key order the caller decides; its value is anything stringify prints, or a []member for a

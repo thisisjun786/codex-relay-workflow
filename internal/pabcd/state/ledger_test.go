@@ -345,3 +345,28 @@ func TestAppendInterviewEventToAFileWhoseTailCannotBeRead(t *testing.T) {
 		}
 	}
 }
+
+// The transition ledger is outside that repair: AppendLedger keeps the oracle's bytes after an unterminated final line, where the row
+// is joined to it. The test marks the scope of CRW-474 and is not a wish; a change that repairs the transition ledger too replaces it.
+func TestAppendLedgerStillJoinsARowToAFinalLineWithoutALineFeed(t *testing.T) {
+	e := LedgerEntry{TS: "t", SessionID: "s", To: PhaseP, Reason: "x"}
+	fresh := t.TempDir()
+	if err := AppendLedger(fresh, e); err != nil {
+		t.Fatal(err)
+	}
+	const old = `{"partial":`
+	cwd := t.TempDir()
+	p := filepath.Join(cwd, crwdir.DirName, LedgerFile)
+	if err := os.MkdirAll(filepath.Dir(p), 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := AppendLedger(cwd, e); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := fileText(t, p), old+fileText(t, filepath.Join(fresh, crwdir.DirName, LedgerFile)); got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
