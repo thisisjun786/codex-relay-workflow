@@ -528,6 +528,9 @@ func BindAnchorIn(ctx context.Context, s *store.Store, clock Clock, rid string, 
 	if err != nil || current == nil {
 		return "ineligible", err
 	}
+	if withdrawn, err := store.GenerationWithdrawn(ctx, s.Q(ctx), rid, number); err != nil || withdrawn {
+		return "ineligible", err
+	}
 	now := clock.ISO()
 	if current.S("anchor_state") == "bound" {
 		if current.S("dispatch_turn_id") == turn {

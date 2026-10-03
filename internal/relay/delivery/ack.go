@@ -636,7 +636,7 @@ func OpenGenerationIn(ctx context.Context, s *store.Store, clock Clock, rid, dis
 		return 0, err
 	}
 	if replay != nil {
-		return replay.I("execution_generation"), nil
+		return replay.I("execution_generation"), store.RefuseWithdrawn(ctx, s.Q(ctx), rid, replay.I("execution_generation"))
 	}
 	current, err := one(ctx, s, "SELECT execution_generation, status, superseded_by FROM relationships WHERE relationship_id = ?", rid)
 	if err != nil {
@@ -648,7 +648,10 @@ func OpenGenerationIn(ctx context.Context, s *store.Store, clock Clock, rid, dis
 	if current.S("status") != "active" || truthy(current.Opt("superseded_by")) {
 		return 0, refuse(RelationshipNotActive, "relationship %s is not active", strconv.Quote(rid))
 	}
-	number := current.I("execution_generation") + 1
+	number, err := store.NextGeneration(ctx, s.Q(ctx), rid)
+	if err != nil {
+		return 0, err
+	}
 	now := clock.ISO()
 	anchor, bound := "anchor_pending", any(nil)
 	if dispatchTurn != nil {
@@ -863,6 +866,9 @@ func BindAnchor(ctx context.Context, s *store.Store, clock Clock, rid string, nu
 		current := r.generation(number)
 		if current == nil {
 			return refuse(UnknownGeneration, "%s has no generation %d", strconv.Quote(rid), number)
+		}
+		if err := store.RefuseWithdrawn(ctx, s.Q(ctx), rid, number); err != nil {
+			return err
 		}
 		if current.S("anchor_state") == "bound" {
 			if current.S("dispatch_turn_id") == turn {
