@@ -72,6 +72,31 @@ writing a split. Only the user can grant an exception: the user's own statement 
 `exception` object the command validates, and passed on to `crw-run` with its record. Check an issue again after it is changed,
 and check every issue a split writes as an issue.
 
+## Record the child pair
+
+Every implementation issue this skill writes or refines carries one child pair line, beside its size
+statement and under none of the headings the size check reads, so the line is neither counted as a
+criterion nor read as a deliverable. The line records which pair a child runs on for this issue.
+[Child pair by issue type](integrations.md#child-pair-by-issue-type) owns the routing table, the form of
+the line, the precedence and the cases the table does not settle; this page only places the duty in the
+plan.
+
+Write the line with the issue, and write it again when a change to the issue changes its type. A split
+writes each new issue its own line, because the parts can differ in type: a port that has an original and
+the new mechanism that replaces its slowest part are one plan and two pairs. A non-PR issue that a child
+will run, an investigation or an operational check, carries the line too. The read-back of the closing
+check below reads it with the other fields.
+
+Classify the issue when the line is written: tag it by [the kind of work and its procedure](integrations.md#classify-the-issue-by-its-kind-of-work),
+read the bundle off [the Bundles rows](integrations.md#bundles), and add the tags, the bundle and the
+source after the reason in [the extended line](integrations.md#the-extended-line), refining the tags
+whenever a change to the issue changes the work they describe. The tags come from what the issue states and
+use no result, run or child; where the issue's text does not settle one, amend the issue and do not guess.
+A line in the older form stays valid and is not rewritten for this; the dispatching parent classifies it at
+release ([the record at release](integrations.md#the-record-at-release)). Put the line on a line of its own
+after a blank line, under a heading of its own such as `## Child pair` that is not deeper than the last
+heading the size check reads, so the check does not read it.
+
 ## Non-PR work and unresolved targets
 
 A research question, a contract or design decision, or an operational verification names
@@ -159,7 +184,7 @@ changes what the next one sees.
    relations, and any project, milestone, document or label it wrote — and compare what is
    observed against what was intended. An implementation issue's project is one of those fields:
    an issue observed with no project, or in a project other than the one intended, is an
-   incomplete write, and a team, a product-family label or a relation does not stand in for it.
+   incomplete write, and a team, a product-family label or a relation does not stand in for it. The child pair line is another of those fields: an implementation issue read back without it is an incomplete write too.
    Report both lists with IDs. An intended relation or
    field that is absent is an incomplete write: repair it on the same IDs rather than
    creating the item again. Where the connector cannot read something back, report it
@@ -218,3 +243,11 @@ wrong row, and both are fixed here.
 | 26 | The size check answers `split_recommended` for an implementation issue and drafts four bundles; two of them can be verified apart and the other two only together. | 3 issues: each independent bundle its own issue, the coupled two as 1 issue keeping every criterion, order edges where the regions overlap; 0 issues written from the draft as given. | Size check: the draft is a guess, the boundary rules decide. |
 | 27 | `split_recommended` and no bundle can pass verification apart. | 1 issue, 0 splits; the answer, the draft and the reason reported to the user; it reaches dispatch only with the user's recorded exception. | Size check: parts that cannot pass apart stay one issue. |
 | 28 | The size check answers `ok` for an issue that also needs a change in a second repository. | 2 issues by the repository rule; the answer changes nothing in the boundary rules. | Size check: `ok` changes nothing. |
+| 29 | An issue ports a module to another language, and the original's recorded outputs decide when it is done. | 1 issue with 1 child pair line, Sonnet (reference exists); 0 lines that name a model or an effort. | Record the child pair: the answer comes from a reference. |
+| 30 | A test fails about one run in twenty, and two earlier fixes did not remove the failure. | 1 issue with 1 child pair line, SOL (answer must be found): the cause is unknown and a measurement ends the work. | Record the child pair: the answer has to be found. |
+| 31 | A new mechanism decides what a sandbox may be asked to do, so its core is a permission decision. | 1 issue with 1 child pair line, Sonnet, whose reason names the security rule although the shape says SOL. | Record the child pair: a security judgment at the core goes to Sonnet. |
+| 32 | An issue written before this rule has no child pair line, and the parent is about to dispatch it. | The parent routes it by the table, writes the line on the issue and reads it back, and only then prepares the packet; 0 children created before the line exists. | Record the child pair: an issue with no line. |
+| 33 | A plan writes an issue that rewrites a skill's procedure under the structure the existing documents already have. | 1 issue with 1 child pair line in the extended form: `answer=reference`, `output=writing`, bundle Sonnet fixed by row 3, axis `reference exists`, source `table`; the size check gives the same decision, counts and regions as for the same body with the older line or with no line. | Record the child pair: classify with the issue. |
+| 34 | An issue reads as a wiring change that an existing pattern decides (`answer=reference`), but two earlier fixes of the same fault did not remove it. | 1 issue with `history=retried`: bundle SOL fixed by row 2 before row 3 is read, axis `answer must be found`; 0 lines that stay Sonnet because the first reading was a wiring change. | Record the child pair: failure history comes before the reference. |
+| 35 | A plan writes an issue for a new report format that nothing outside the issue decides (`output=writing`, `answer=found`). | 1 issue, bundle flexible by row 5, axis `half-half`, pair by the count rule, source `table`; the shape table's third row is not reworded. | Record the child pair: the ambiguous case. |
+| 36 | Two flexible issues are planned in a project with no line yet and no child working. | The first goes to either pair and the pick is recorded; the second goes to the pair the first did not take, because fewer of the project's lines name it. | Record the child pair: the count rule's tie. |
