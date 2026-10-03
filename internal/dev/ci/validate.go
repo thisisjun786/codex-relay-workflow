@@ -14,6 +14,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/dev/skillport"
 )
 
 var (
@@ -249,6 +251,7 @@ func Validate(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return failf(stderr, "%s: %s", manifest, err)
 	}
+	staging := resolve(filepath.Join(root, skillport.StagingRoot))
 	names := sortedSet(strings.Split(string(out), "\x00"))
 	errs := pythonFileErrors(root, names)
 	count := 0
@@ -262,7 +265,7 @@ func Validate(args []string, stdout, stderr io.Writer) int {
 			}
 			errs = append(errs, found...)
 		}
-		if filepath.Base(name) == "SKILL.md" && resolve(filepath.Dir(filepath.Dir(path))) == skills {
+		if parent := resolve(filepath.Dir(filepath.Dir(path))); filepath.Base(name) == "SKILL.md" && (parent == skills || parent == staging) {
 			if err := SkillMetadata(path); err != nil {
 				errs = append(errs, name+": "+err.Error())
 				continue
@@ -270,6 +273,8 @@ func Validate(args []string, stdout, stderr io.Writer) int {
 			count++
 		}
 	}
+	_, fidelity := skillport.Check(root, nil)
+	errs = append(errs, fidelity...)
 	if count == 0 {
 		errs = append(errs, "No skills validated")
 	}

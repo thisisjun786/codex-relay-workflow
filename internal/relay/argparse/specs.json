@@ -72,6 +72,8 @@
   {"flag":"--turn","required":true},
   {"flag":"--actor","required":true},
   {"flag":"--reason"}]},
+{"name":"intervention-show","summary":"the direct parent interventions recorded for a relationship: turns its registered parent admitted with admit-turn, oldest first. A read: it records and sends nothing. A message sent to the child over the thread bridge and never admitted is not visible here","options":[
+  {"flag":"--relationship","required":true}]},
 {"name":"relationship-status","options":[
   {"flag":"--relationship","required":true},
   {"flag":"--status","required":true,"choices":["paused","cancelled","archived"]},
@@ -763,6 +765,7 @@
   {"flag":"--pull-request","type":"int","required":true},
   {"flag":"--restate","help":"a handoff record or an earlier snapshot to grade against a fresh reading; '-' reads it from stdin"},
   {"flag":"--restate-head","help":"the head the restated record is about, when the record itself does not name one"},
+  {"flag":"--late-dispositions","help":"with --restate: a file holding the coordinator's dispositions of review threads that arrived after the record, a JSON object {\"lateDispositions\": [{threadId, disposition (answered, backlog, resolved or refuted), evidenceUrl, head, grade}]}. A thread with an entry for the head under restatement is not a late finding; the grade is recorded as given and never read"},
   {"flag":"--page-size","type":"int"},
   {"flag":"--page-budget","type":"int","help":"how many pages one connection may take before the read is reported unfinished rather than answered"},
   {"flag":"--call-budget","type":"int"},
@@ -865,7 +868,7 @@
   {"flag":"--authority-kind","required":true},
   {"flag":"--authority-ref","required":true},
   {"flag":"--expect-epoch","type":"int","help":"the coordinator epoch this session holds (dag-coordinator-claim answers it); a write from another epoch is refused stale_coordinator_epoch. 0 names none, which only a plan nobody claimed takes"}]},
-{"name":"dag-correct","summary":"takes a correction back to the same child: with --prepare it rebuilds and stores the node's input manifest and prints the instruction line the correction ruling must carry as its restoration block; after the needs_changes ruling it binds the generation the ruling opened to the manifest that block names (or the previous one)","options":[
+{"name":"dag-correct","summary":"takes a correction back to the same child: with --prepare it rebuilds and stores the node's input manifest and prints the instruction line the correction ruling must carry as its restoration block; after the needs_changes ruling it binds the generation the ruling opened to the manifest that block names (or the previous one); for a generation a decision reply opened (split_approval, scope_change) it binds it, once the decision was dispatched, to the manifest the child was dispatched with, brought up to date with the plan's criteria","options":[
   {"flag":"--plan","required":true},
   {"flag":"--node","required":true},
   {"flag":"--actor","required":true},

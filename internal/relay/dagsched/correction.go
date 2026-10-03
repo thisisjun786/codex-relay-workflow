@@ -12,6 +12,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -168,6 +169,9 @@ var manifestNamePattern = regexp.MustCompile(`manifest ([0-9a-f]{64})`)
 // the restoration block of the ruling on the previous generation's head, which names the manifest PrepareCorrection returned, never from the caller's omission; a supplied digest only
 // cross-checks. A ruling with no such block leaves the previous generation's manifest in force (CarriedOver). The previous acceptance, if any, stays active and reads blocked:stale_head
 // (the generation moved) until the parent accepts the corrected result with a supersede; invalidating what depends on it is a later issue.
+//
+// A generation has three ways to have been opened and each is bound by its own rule: a ruling (here), a generation opened by hand (recordHandOpened, revalidation.go) and a decision reply that
+// advanced the generation (recordDecisionOpened, correction_decision.go), which the generation's reason (decision_reply) tells apart.
 func (s *Scheduler) RecordCorrection(ctx context.Context, plan, node, actor, suppliedDigest string) (CorrectionResult, error) {
 	out := CorrectionResult{PlanID: plan, NodeID: node}
 	err := s.Store.Compose(ctx, func(txCtx context.Context, _ *sql.Conn) error {
@@ -242,8 +246,11 @@ func (s *Scheduler) RecordCorrection(ctx context.Context, plan, node, actor, sup
 		if _, err := queryOne(txCtx, tx, "SELECT reason FROM generations WHERE relationship_id = ? AND execution_generation = ?", []any{rel.ID, rel.Generation}, &reason); err != nil {
 			return err
 		}
+		if reason.String == delivery.DecisionReply {
+			return s.recordDecisionOpened(txCtx, tx, plan, snap, n, rel, actor, suppliedDigest, &out)
+		}
 		if reason.String != "needs_changes_revision" {
-			return refuse(contract.RefusalDispositionConflict, "generation %d of %s was not opened by a needs_changes ruling (%q)", rel.Generation, rel.ID, reason.String)
+			return refuse(contract.RefusalDispositionConflict, "generation %d of %s was not opened by a needs_changes ruling or a decision reply (%q)", rel.Generation, rel.ID, reason.String)
 		}
 		// the ruling on the previous generation's head must have opened this generation
 		var findings sql.NullString

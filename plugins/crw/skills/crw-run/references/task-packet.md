@@ -169,6 +169,79 @@ Workspace ownership:
   long, and even a short one is no proof that a test's socket binds. A test that fails with
   `bind: invalid argument` under a short `TMPDIR` is reported with its path length, not worked
   around. Large disposable output goes under a scratch path the packet names separately]
+- Go build resources: [for a task that builds or tests Go code: the build cache, the parallelism and
+  the memory limit it works under, each with its reason. Tasks share a host, so whatever one of
+  them leaves unbounded, all of them multiply, and a child told only to be careful has no number
+  to apply. A child that cannot apply one of the settings below reports that and does not build
+  without it.
+  Build cache: one directory that every child and the parent use, on a local file system and on
+  the volume the `Capacity and large artifacts:` line chose for large output, for example
+  `GOCACHE=<scratch volume>/gocache-shared`, in place of a cache per task. A cache per task makes
+  every task compile the standard library and each dependency from nothing and leaves a cache
+  directory behind for each task. The directory exists before the packet names it and the parent keeps it; a
+  child exports `GOCACHE` for its own commands (never `go env -w`, which rewrites the user's Go
+  configuration for every task) and never creates, moves or empties it. Sharing is safe because the
+  Go command builds its cache for it: `go help cache` says the cache is safe for concurrent
+  invocations, and the comment on `Open` in `cmd/go/internal/cache/cache.go` says that processes on
+  one machine coordinate through file locks on a local file system, may repeat work and do not
+  corrupt the cache, and that a network file system is not safe. A shared cache has three
+  consequences the packet states: no task runs `go clean -cache`, which empties the cache for every
+  other task (a task that needs one rebuild past the cache adds `-a` to its own command; the cache
+  does not see a changed C library under cgo); a package of the repository itself is compiled again
+  in each worktree, because without `-trimpath` the compile key includes the package's directory
+  (`cmd/go/internal/work/exec.go`, `buildActionID`), so what is shared is the standard library and
+  the module dependencies; and `go test` keeps successful results in the same cache, so a
+  `(cached)` line can come from another task's run, and a run whose result is evidence sets
+  `-count` (normally `-count=1`), which turns result caching off. The free-space check of the
+  `Capacity and large artifacts:` line covers this volume as well.
+  Module cache: `GOMODCACHE` stays at its default, the user's module cache, which every task of that
+  user already shares; the Go command guards a module download with a file lock
+  (`cmd/go/internal/modfetch/cache.go`), so the packet names none.
+  Parallelism: `-p=4` in `GOFLAGS` on every local `go` command, written `GOFLAGS=-p=4` below, added
+  to the value the repository or host already sets and not in place of it: read `go env GOFLAGS` and
+  export that value with `-p=4` appended, for example `export GOFLAGS="$(go env GOFLAGS) -p=4"`, so
+  `-mod`, build tags and the like survive. Without it the Go command runs as many
+  compile, link and test processes at once as `GOMAXPROCS`, normally the number of CPUs
+  (`go help build`, `-p`), in every task at the same time. Four is what the hosted CI runner, which
+  has four CPUs, runs at. It limits how many of those processes one `go` command runs at once; it
+  does not limit the threads of the compiler, the parallelism inside a test binary (`-parallel`,
+  `GOMAXPROCS`), a `go` command a test starts itself, the memory a test binary uses or how many
+  tasks run at once. A flag the task adds joins the same value, because a `GOFLAGS` set afterwards
+  replaces it; `go env GOFLAGS` reads back what is in effect.
+  Local runs: the packages the change touches, under the settings above. The packet's
+  `Verification:` line names any other check the repository requires locally (a lint or contract
+  check, say), and this rule replaces none of those. The full test suite is the hosted CI of the same
+  head, as a scoped override of the user's for tasks run under this skill, not a general rule: it
+  applies only when the packet states it, after the packet's writer has confirmed that the hosted CI
+  of that head runs the whole suite (a CI that is partial or selected by changed paths does not
+  qualify). The packet then records where the repository's contribution rules ask for a full local
+  run and that the override covers it, and the child reports the CI run, with its id and head,
+  instead of claiming a local pass. A packet that does not state the override leaves the
+  repository's local check in force.
+  Memory limit: a heavy command, meaning `-race`, `-a`, a load reproduction, a `-count` above 10
+  for example, or one the packet names (a command the child cannot place is treated as heavy), runs
+  alone in its own scope of the user's service manager, never as root:
+  `systemd-run --user --scope -p MemoryMax=<value> -p MemorySwapMax=0 -p OOMPolicy=kill -- <command>`.
+  A command that cannot stay under the limit, once the kernel has failed to reclaim memory, is killed
+  by `OOMPolicy=kill` together with everything else in its scope (a lone command ended with status
+  137 and the scope's `Result=oom-kill` in the test) and that kill touches no process outside the
+  scope; the swap limit stops it from pushing the host into swap first, and `OOMPolicy=kill` states
+  what the service manager would otherwise decide by its own default. Older service managers refuse
+  `OOMPolicy` for a scope (this command was tried with systemd 259 only), and
+  `systemd-run --user --scope -p OOMPolicy=kill true` says whether the one in use accepts it. Where
+  it does not, the child omits `-p OOMPolicy=kill` and keeps the rest: the manager's default then
+  decides what else in the scope ends, so the child also checks the command's exit status and stops
+  what it started, by its recorded process group, that the kill left running. Everything inside one
+  scope ends together, so each heavy command gets its own. Keeping the host itself from running out is the
+  job of the value and the floor: the packet states the value (for example `8G`), which the parent
+  sets from the memory the host has free for such commands so that the limits of the heavy commands
+  that can run at once, together with what the host already uses, stay below its memory, and the
+  floor to start from (for example 15 GB `available` in `free -g`, with swap use below half). The
+  child checks the floor again before each heavy command, waits when it is not met, and runs one
+  heavy command at a time. A command the limit ends is reported with its value and status, and the
+  child does not raise the limit to get past it. Where
+  `systemd-run --user` or the memory controller is missing, the command is not run unlimited: the
+  child says so and relies on the hosted CI of the same head]
 - Processes you start: [carry this rule in the packet's own words, because the child works from
   the packet and may never read this reference. Other tasks build and test on this host at the same
   time, and a command line does not say whose process it is, so a kill that selects by pattern ends
@@ -231,11 +304,16 @@ Execution:
 - Open that pull request non-draft, or transition an existing draft to Ready for review
   as soon as the implementation is reviewable, then request the review the repository
   requires and this assignment authorizes, and confirm it actually started. An optional
-  reviewer that cannot start or stalls is recorded as a gap and does not hold you;
+  reviewer that cannot start or stalls is recorded as a gap and does not hold you, except that you
+  wait for the one run each of Devin and Codex makes on the open pull request to end, or to be skipped,
+  before you emit ([Devin and Codex reviews are references, not merge gates](merge-readiness.md#devin-and-codex-reviews-are-references-not-merge-gates));
   a required gate does. Findings, pending CI and your own revision pushes do not send
   it back to draft; fix on the open pull request and refresh only the review evidence
   invalidated by the change. Apply the [disabled reviewer policy](merge-readiness.md#disabled-reviewer-policy)
-  before requesting or waiting for a review. Ready is review entry, not merge permission. See
+  before requesting or waiting for a review. Ready is review entry, not merge permission. A criterion or gate line in the packet that
+  reads "Devin has no red or security finding" means that if a Devin review exists, its red and security
+  findings are resolved, and that no new Devin review is awaited
+  ([what the record says](merge-readiness.md#what-the-record-says)). See
   [Publish for review when the work is reviewable](../../crw-plan/references/integrations.md#publish-for-review-when-the-work-is-reviewable).
 - Finishing the review is part of finishing the work. Read every applicable review to the
   end of its pagination on the CURRENT head, judge each finding against the code, fix what
@@ -363,6 +441,8 @@ that does not exist. A command that runs a tool directly, such as a focused `go 
 is fine once the writer has confirmed that the top-level test it names exists in the same
 build, with an anchored listing such as `go test -list '^Name$' ./pkg` that prints it]
 [Allowed test data and runtime boundaries]
+[Local runs cover the packages the change touches, under the `Go build resources:` line; the whole
+suite is the hosted CI of the same head, which the packet names as the check that settles it]
 
 Return:
 - Actual task ID, worktree, branch, baseline SHA, and final commit SHA if committed.
@@ -475,6 +555,13 @@ field in brackets where that reduced shape names it differently.
   request's title comes back in `Return:`.
 - Temporary path — a `TMPDIR` or other temporary directory the packet names is short, and the
   packet states the socket path limit, in the `Capacity and large artifacts:` line.
+- Go build resources — the `Go build resources:` line under `Workspace ownership:`, for a task that
+  builds or tests Go code: the shared build cache directory and the module cache decision,
+  `GOFLAGS=-p=4`, local runs on the changed packages with the whole suite left to the hosted CI of
+  the same head (the `Verification:` line says the same), and the memory limit with its value, its
+  starting memory floor and the rule against running unlimited. A packet without them leaves the
+  child a cache of its own and the Go command's default parallelism. [A Non-PR packet names them in
+  its `Workspace ownership:` when its task runs Go commands.]
 - Process rule — the `Processes you start:` line under `Workspace ownership:` carries it in the
   packet's own words: stop only processes the child started, by a recorded pid or its own process
   group, never by pattern or name, and record a long command's pid or run it under `timeout`. The
@@ -1050,7 +1137,7 @@ The kinds of base refresh, and what reruns for each, which is all that a refresh
 
 | Kind | The entry shows | What reruns, and nothing more |
 |---|---|---|
-| `clean` | the merge's expected and actual trees: the tree of `git merge-tree --write-tree <previous> <merged>` and the tree of the merge commit, which are equal | the gates: the repository's local checks for the paths now in the branch and a digest re-record where the merge touched the plugin, then every required job, the `Devin Review` status and the threads on the final head, which [OPS-9.4](operations.md#ops-94-a-new-head-invalidates-the-review-it-outran) reads again on any new head. No review of the change and no audit of the plan |
+| `clean` | the merge's expected and actual trees: the tree of `git merge-tree --write-tree <previous> <merged>` and the tree of the merge commit, which are equal | the gates: the repository's local checks for the paths now in the branch and a digest re-record where the merge touched the plugin, then every required job and the threads on the final head, which [OPS-9.4](operations.md#ops-94-a-new-head-invalidates-the-review-it-outran) reads again on any new head. No review of the change and no audit of the plan |
 | `mechanical` | each resolved hunk with the rule the assignment names for that overlap (its wording or identifier), its path and lines, and the check that reproduces it with its output (for a union or a regeneration, `crw skill base-refresh mechanical` run on the merge) | the gates, and the deterministic checks that read those hunks: that check, the repository's validators and link check, the digest re-record, `git diff --check`. No model review |
 | `manual` | each hand-resolved hunk with its path and lines, and the independent check of those hunks | the gates, and an independent check of the hand-resolved hunks only, run by the child's own independent reviewer on those hunks and what they merge. The rest of the diff is not reviewed again |
 

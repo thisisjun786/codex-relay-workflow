@@ -118,7 +118,7 @@ func workerReadiness(observation contract.OrderedObject, requirements any, calle
 		if !ok || get(expected, "expectation") != execution.Pair {
 			return refused("worker_policy_role_unsupported")
 		}
-		if get(item, "model") != get(expected, "model") || get(item, "reasoningEffort") != get(expected, "reasoningEffort") {
+		if !registry.SummaryAllowsPair(expected, get(item, "model"), get(item, "reasoningEffort")) {
 			return refused("worker_policy_pair_mismatch")
 		}
 	}

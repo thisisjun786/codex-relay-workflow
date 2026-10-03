@@ -30,9 +30,9 @@ Resolve current installed paths; never copy plugin versions from old records.
 CXC owns those phases and subagent routing; the parent does not adopt a child's FSM.
 
 Read [Integrations](../crw-plan/references/integrations.md) for Linear document
-authority, tools, and Paperthin invocation rules. Use the available Linear tools
+authority and tools. Use the available Linear tools
 and relevant workspace Agent Skills for full documents, criteria, and work records.
-Use `readchk` for bundled scope or model corrections, and `catchup` when the user
+Restate a bundled scope or model correction to resolve it, and refresh the state from the records when the user
 needs a refreshed briefing. Route roadmap authoring to
 [crw-plan](../crw-plan/SKILL.md) within the user's requested scope.
 
@@ -743,6 +743,12 @@ scope's service, and the parent that started it does not end it early
 A process of a child's that looks hung is that child's to stop; the parent raises it with that
 child and does not stop it.
 
+What the parent runs locally to verify also follows the launch packet's `Go build resources:` line: the
+shared build cache, `GOFLAGS=-p=4`, the packages the change touches and a memory-limited scope for
+anything heavy. The whole test suite is the hosted CI of the head under verification and is not
+repeated locally
+([The three gates](references/merge-readiness.md#the-three-gates)).
+
 Where a relay holds the assignment, verify the revision it reports as current. If a
 newer revision arrived while the review was in progress, the older result is not a
 completion: re-read the current revision and verify that one. Two competing
@@ -762,14 +768,15 @@ does not fulfill independent verification.
 For substantial intent or acceptance uncertainty, use
 [crw-check](../crw-check/SKILL.md) as a bounded audit and retain coordination
 here. Use [crw-logic](../crw-logic/SKILL.md) for a specific suspected logical
-violation and `mandela` for self-confirming evaluation evidence. Use `shower` when
-a nontrivial task packet needs a fresh-reader check, and `re0` to refresh that
-packet after changes. Do not run every helper on every delivery or auto-invoke
-Paperthin's user-only skills.
+violation, and check that evaluation evidence does not merely confirm its own assumption. When
+a nontrivial task packet needs a fresh-reader check, give it to a context-free reviewer through CXC delegation and rewrite that
+packet after changes so it reads as current. Do not run every check on every delivery.
 
 After verification, the coordinator applies [Default dev integration](../crw-plan/references/integrations.md#default-dev-integration),
 unless the assignment limits delivery. Read [Merge readiness](references/merge-readiness.md)
 to check current CI and reviewer evidence using the repository's actual configuration.
+Devin and Codex reviews are references there and not gates: the merge waits for neither, and the child
+waits for the one run of each before its receipt ([Devin and Codex reviews are references, not merge gates](references/merge-readiness.md#devin-and-codex-reviews-are-references-not-merge-gates)).
 Serialize integrations that share a target, verify the landing, and update the
 coordination record. Work inside a relay merge turn never runs in the background and records
 its steps ([Working inside a merge turn](references/relay.md#working-inside-a-merge-turn)). A capable child owns its commits, push, pull request and the
@@ -783,7 +790,10 @@ enumerated the check runs, so collecting them again repeats work this contract j
 elsewhere, and re-triaging its findings opens a second review round it already owns. What the
 coordinator adds is currency: re-read the head and base immediately before merging and compare
 the counts against the record. That is a mechanical check, not a review. Where they disagree,
-return the candidate to the same child fail-closed rather than fixing it here.
+return the candidate to the same child fail-closed rather than fixing it here. A late review
+thread on the record's head that the coordinator has itself dispositioned with
+`merge-evidence --restate <record> --late-dispositions <file>` is not a disagreement
+([how](references/merge-readiness.md#a-late-thread-the-parent-dispositions-itself)).
 
 Report **verified**, **needs changes**, or **unverified**, with concrete evidence,
 and distinguish implementation, merge, and deployment. Start a successor
@@ -804,6 +814,8 @@ and a delivery that did not move, and one word cannot carry both. A condition ne
 vocabulary names is reported as a blocker against the state that does apply, under
 [OPS-6.2](references/operations.md#ops-62-record-shape).
 
+A child blocked on a person is answered with a decision, never with a verdict or a message the relay cannot see: the answer goes back through `decision-reply`; for a split approval or a scope change, which open the next generation of the same child, `dag-correct` then records that generation for its DAG node; and the child's result in it is ruled and accepted like any other. Follow [Answering a child that stopped for input](references/relay.md#answering-a-child-that-stopped-for-input). A message sent outside that route leaves only the trace `admit-turn` records, which the same section names as the fallback.
+
 After integration, apply [Implementation Done](../crw-plan/references/integrations.md#implementation-done)
 before reporting or recording the issue complete. Read back the one delivery PR's
 actual merge, intended repository/branch and landing revision. For legacy multi-PR
@@ -823,7 +835,9 @@ refreshes whatever a new head, a changed base or a changed dependency
 invalidated. Inside that, polling a check run the child is already carrying,
 reading again every finding on a hosted review it has resolved, and re-running a
 suite that passed and is still valid are the coordinator doing a level below
-itself. Read the head it reports, the conclusions on that head and its
+itself. The coordinator's own verification at the merge gate is the exception: it reads the diff and the
+code and reruns the tests the criteria rest on
+([the three gates](references/merge-readiness.md#the-three-gates)). Read the head it reports, the conclusions on that head and its
 per-finding trail, and accept them as the evidence table above defines them.
 
 Acceptance keeps its own work, which was never the child's. Confirm the reported
