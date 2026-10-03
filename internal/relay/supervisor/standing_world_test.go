@@ -138,7 +138,6 @@ func newStandingWorld(tb testing.TB, relationships, events int) *standingWorld {
 	tb.Helper()
 	ctx := context.Background()
 	root := tb.TempDir()
-	tb.Setenv("HOME", root)
 	s, err := store.Open(ctx, filepath.Join(root, "state", "relay.sqlite3"), "")
 	if err != nil {
 		tb.Fatal(err)

@@ -31,6 +31,7 @@ func leaseBreakBound(t *testing.T) time.Duration {
 }
 
 func Test28IndependentReadLeases(t *testing.T) {
+	// Serial: sends SIGIO to the test process, which every other running test would receive.
 	root := t.TempDir()
 	paths := []string{filepath.Join(root, "a"), filepath.Join(root, "b")}
 	for _, path := range paths {
@@ -83,6 +84,7 @@ func Test28IndependentReadLeases(t *testing.T) {
 }
 
 func Test28ConcurrentReadLeases(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	paths := []string{filepath.Join(root, "a"), filepath.Join(root, "b")}
 	for _, path := range paths {

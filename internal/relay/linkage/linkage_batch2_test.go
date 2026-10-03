@@ -99,6 +99,7 @@ func refusalDetail(step map[string]any) string {
 // Test26_LNK11: contested directives are kept, settled ones are not re-decided, the refusal
 // is retained, and the same instruction after a handover is its own record.
 func Test26_LNK11_contested_directives_are_kept(t *testing.T) {
+	t.Parallel()
 	t.Run("contested", func(t *testing.T) {
 		w := newWorld(t)
 		execution := field(w.superviseDefault(), "linkId").(string)
@@ -132,6 +133,7 @@ func Test26_LNK11_contested_directives_are_kept(t *testing.T) {
 
 // Test26_LNK12: handover confirmation is decided inside the write transaction.
 func Test26_LNK12_handover_confirmation(t *testing.T) {
+	t.Parallel()
 	t.Run("unconfirmed", func(t *testing.T) {
 		w := newWorld(t)
 		rid := w.scoped()
@@ -170,6 +172,7 @@ func Test26_LNK12_handover_confirmation(t *testing.T) {
 
 // Test26_LNK13: a handover would strand the project's attached work.
 func Test26_LNK13_a_handover_would_strand_attached_work(t *testing.T) {
+	t.Parallel()
 	t.Run("would_strand", func(t *testing.T) {
 		w := newWorld(t)
 		rid := w.scoped()
@@ -199,6 +202,7 @@ func Test26_LNK13_a_handover_would_strand_attached_work(t *testing.T) {
 // Test26_LNK14: a handover of a settled scope succeeds; the escape route is reachable; a child
 // is not handed over through linkage.
 func Test26_LNK14_a_settled_handover_succeeds(t *testing.T) {
+	t.Parallel()
 	t.Run("settled", func(t *testing.T) {
 		w := newWorld(t)
 		w.superviseDefault()
@@ -231,6 +235,7 @@ func Test26_LNK14_a_settled_handover_succeeds(t *testing.T) {
 
 // Test26_LNK15: host and endpoint on replay and reactivation.
 func Test26_LNK15_hosts_and_endpoints_on_replay(t *testing.T) {
+	t.Parallel()
 	t.Run("replay_other_host", func(t *testing.T) {
 		w := newWorld(t)
 		w.superviseDefault()
@@ -276,6 +281,7 @@ func Test26_LNK15_hosts_and_endpoints_on_replay(t *testing.T) {
 
 // Test26_LNK16: blank endpoints never reach a binding.
 func Test26_LNK16_blank_endpoints_never_reach_a_binding(t *testing.T) {
+	t.Parallel()
 	t.Run("supervision_and_peer", func(t *testing.T) {
 		w := newWorld(t)
 		for _, pair := range [][2]registry.Endpoint{{supervisorEP(""), parentEP(parent)}, {{TaskID: supervisorTask}, parentEP(parent)},
@@ -308,6 +314,7 @@ func Test26_LNK16_blank_endpoints_never_reach_a_binding(t *testing.T) {
 
 // Test26_LNK17: the assignment lifecycle moves the issue scope with it.
 func Test26_LNK17_assignment_lifecycle_and_the_issue_scope(t *testing.T) {
+	t.Parallel()
 	t.Run("pause_and_cancel", func(t *testing.T) {
 		w := newWorld(t)
 		rid := w.scoped()
@@ -338,6 +345,7 @@ func Test26_LNK17_assignment_lifecycle_and_the_issue_scope(t *testing.T) {
 
 // Test26_LNK18: resume revalidates who holds the scope now and keeps its contest.
 func Test26_LNK18_resume_revalidates_the_scope(t *testing.T) {
+	t.Parallel()
 	t.Run("reassigned_issue", func(t *testing.T) {
 		w := newWorld(t)
 		rid := w.scoped()
@@ -394,6 +402,7 @@ func Test26_LNK18_resume_revalidates_the_scope(t *testing.T) {
 
 // Test26_LNK19: registration and supersession guards on the lower level.
 func Test26_LNK19_lower_level_registration_guards(t *testing.T) {
+	t.Parallel()
 	t.Run("other_issue_successor", func(t *testing.T) {
 		w := newWorld(t)
 		rid := w.scoped()
@@ -455,6 +464,7 @@ func Test26_LNK19_lower_level_registration_guards(t *testing.T) {
 // Test26_LNK20: supersession moves the lower level; late writes from a dead relationship never
 // take it back.
 func Test26_LNK20_supersession_moves_the_lower_level(t *testing.T) {
+	t.Parallel()
 	t.Run("replacement_inherits", func(t *testing.T) {
 		w := newWorld(t)
 		rid := w.scoped()
@@ -504,6 +514,7 @@ func Test26_LNK20_supersession_moves_the_lower_level(t *testing.T) {
 // Test26_LNK19_racer: a contest that only appears after the pre-check is still recorded, and
 // the registration rolls back whole.
 func Test26_LNK19_a_contest_after_the_pre_check_is_still_recorded(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	w.superviseDefault()
 	w.r.SetBeforeRegisterTx(func(in registry.Registration) {

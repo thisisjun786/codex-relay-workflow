@@ -12,6 +12,7 @@ import (
 )
 
 func Test24_SCH_35_OmissionRequiresReading(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	o := f.obligation(t)
 	o.Kind = "unreported"
@@ -24,6 +25,7 @@ func Test24_SCH_35_OmissionRequiresReading(t *testing.T) {
 	}
 }
 func Test24_SCH_36_ReadbackAssertsRecipientOrRefuses(t *testing.T) {
+	t.Parallel()
 	f, h, id, _ := delivered24(t)
 	_, err := f.c.ReadBack(f.ctx, id, "turn-supervisor-1", Proof(id, "turn-supervisor-1"), "intruder", h, 1_700_000_002)
 	var refused Refusal
@@ -36,6 +38,7 @@ func Test24_SCH_36_ReadbackAssertsRecipientOrRefuses(t *testing.T) {
 	}
 }
 func Test24_SCH_37_RenderedReadbackCommandIsComplete(t *testing.T) {
+	t.Parallel()
 	f, h, id, _ := delivered24(t)
 	bytes := h.sends[0]
 	if !strings.Contains(bytes, "--socket YOUR_RELAY_SOCKET supervisor-read --message "+id) || !strings.Contains(bytes, "--turn YOUR_TURN_ID --proof YOUR_PROOF --as supervisor") || !strings.Contains(bytes, "Full record: "+f.c.Program) {
@@ -43,6 +46,7 @@ func Test24_SCH_37_RenderedReadbackCommandIsComplete(t *testing.T) {
 	}
 }
 func Test24_SCH_39_AttemptedReportIsNeverReaddressed(t *testing.T) {
+	t.Parallel()
 	f, h, id, _ := delivered24(t)
 	_ = h
 	o := f.obligation(t)
@@ -67,6 +71,7 @@ func Test24_SCH_39_AttemptedReportIsNeverReaddressed(t *testing.T) {
 	}
 }
 func Test24_SCH_40_RateIsSharedWithDelivery(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	f.c.Settings = &delivery.TaskSettings{}
 	_, stage := f.staged(t)

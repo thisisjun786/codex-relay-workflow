@@ -143,7 +143,7 @@ func (c *Channel) StageWithReading(ctx context.Context, o Obligation, reading ma
 		}
 		existing, err := c.Store.SupervisorMessage(tx, id)
 		if err == nil {
-			if existing.HoldReason.String == "superseded_by_report" {
+			if existing.HoldReason.String == store.SupervisorHoldSuperseded {
 				if err = c.reopenProposal(tx, existing, at); err != nil {
 					return err
 				}
@@ -152,11 +152,11 @@ func (c *Channel) StageWithReading(ctx context.Context, o Obligation, reading ma
 					return err
 				}
 			}
-			if existing.HoldReason.String == "hierarchy_unresolved" && existing.SenderTaskID == live.Sender && existing.RecipientTaskID == live.Recipient && existing.Unsent() {
+			if existing.HoldReason.String == store.SupervisorHoldUnaddressed && existing.SenderTaskID == live.Sender && existing.RecipientTaskID == live.Recipient && existing.Unsent() {
 				if _, err = c.Store.Q(tx).ExecContext(tx, "UPDATE supervisor_messages SET hold_reason=NULL,updated_at=? WHERE message_id=?", at, id); err != nil {
 					return err
 				}
-				detail := pyjson.Dumps(contract.OrderedObject{{Key: "proposal", Value: "addressed"}, {Key: "reason", Value: "the hierarchy names this message's endpoints again, so the hierarchy_unresolved hold is released"}}, pyjson.Options{})
+				detail := pyjson.Dumps(contract.OrderedObject{{Key: "proposal", Value: "addressed"}, {Key: "reason", Value: unaddressedReleasedReason}}, pyjson.Options{})
 				if _, err = c.Store.Q(tx).ExecContext(tx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_reopened',?,?)", at, id, string(detail)); err != nil {
 					return err
 				}

@@ -718,6 +718,67 @@ relay reads the branch again, records it, and keeps the replaced value beside it
 candidate checks again. A waiting parent that is neither cannot run it. Nobody edits the store to
 correct a base.
 
+## Working inside a merge turn
+
+Everything between the grant and the landing runs in the foreground of the turn you hold: refresh
+the head, wait for the jobs, `merge-turn-check`, merge, `merge-turn-land`. Work inside a merge turn
+never runs in the background. A `nohup` script, a detached job or a polling loop is not tied to your
+turn: it can stop with the session that started it (a merge script started that way died with its
+shell on 2026-10-03 and left the turn held for 23 minutes while two pull requests waited), or keep
+running with nobody reading its result. Without progress records the relay cannot tell stopped work
+from unattended work.
+Wait for CI in your own turn, and say that you are alive while you wait.
+
+Record each step as you take it:
+
+    codex-session-relay --state "$RELAY_STATE" merge-turn-progress --turn <id> --actor <task> --step base_refresh|ci_started|ci_polled|ci_result|merge_attempt [--evidence <what>]
+
+- `base_refresh` right after you refresh the candidate (the new head in `--evidence`);
+  `ci_started` when its jobs start (the run ids); `ci_polled` each time you look at them while
+  they run, every few minutes, which is what tells another parent you are still there;
+  `ci_result` when they finish; `merge_attempt` when you request the merge. Only the holder
+  records, while the turn is holding or merging.
+- The grant acknowledgement, a restated head or readiness and a successful `merge-turn-check` also
+  count as signs of life; the newest sign decides.
+- `merge-turn-show --repository <repo> --base-ref <ref>` shows every other parent `lastProgressAt`,
+  `lastProgress`, `stallsAt` and `stalled` while a turn occupies the target. A holding turn silent
+  for the holding limit, 1200 seconds (the longest hosted job, 15 minutes, plus a margin), reads
+  `stalled` true and `blocked.cause` `holder_stalled` (unless the holder no longer owns its project or
+  is paused, which are read first).
+
+**Passing a stalled turn on.** Silence does not prove the holder is gone. A parent that waits
+behind a stalled holding turn, or the supervisor, reads `merge-turn-show` and the holder's pull
+request first and then passes the turn:
+
+    codex-session-relay --state "$RELAY_STATE" merge-turn-pass --turn <the stalled turn> --actor <task> --evidence <what you read: the last progress, how long, why the holder is gone>
+
+The relay checks the silence again inside the call and refuses a turn that is not stalled
+(`merge_turn_not_held`, naming when it would stall). A pass closes the turn as `passed`, keeps the
+holder, head and last progress in the ledger beside who passed it and why, and grants the target to
+the next ready waiter in the usual order with its wake. It frees the target; it does not decide a
+merge: a holder that merged without running `merge-turn-check`, against the protocol, never recorded
+it, so read the pull request before you treat the passed candidate as unmerged. A holder that ran
+the check and died stays merging, and a merging or unknown turn is never passed
+(`merge_turn_unresolved`): the holder or the supervisor reports a merging turn with
+`merge-turn-unknown` and then resolves it with `merge-turn-resolve`; an unknown turn goes straight to
+`merge-turn-resolve`.
+
+**If you are the holder that was passed**, the calls that act on the turn (land, release,
+readiness, check, acknowledge, progress, withdraw) are refused `merge_turn_not_held` and say the turn
+was passed; `merge-turn-show` still reads it. Stop working it. Read the turn, your pull request and
+any job you left running, and claim the target again with `merge-turn-request` only if the candidate
+is still wanted.
+
+**Asking a holder for the target.** `merge-turn-request-return --turn <id> --actor <task> --evidence
+<why>` queues a notice to the holder through the delivery engine, which wakes it when it is idle;
+the answer's `returnNotice` says whether it was queued (queued is not delivered). A holder that gets
+one acts according to the turn's state: while holding, it continues and records progress, or
+releases the turn with `merge-turn-release --disposition returned`; while merging (it has run
+`merge-turn-check`), it records progress and lands the verified result with `merge-turn-land`, or
+reports `merge-turn-unknown`, because a merging turn cannot be released; an unknown outcome is
+resolved by the supervisor or the holder with `merge-turn-resolve` from an observation of the pull
+request and the base. Asking moves nothing by itself.
+
 ## Peer region agreements across a moving base
 
     codex-session-relay --state "$RELAY_STATE" region-propose --repository <repo> --revision <base branch tip now> --path <path> --kind file|symbol|data|tree [--key <name>] --left-project <key> --right-project <key> --peer-link <link> --task <you> --constraint <text> [--condition <yours>] [--issue <key>] [--next-owner <task>]
@@ -1044,7 +1105,9 @@ head that landed is not the head the receipt names: `--expected-event` still pin
 report, and the mark records a revision, not a commit. So the `--evidence` text names the head
 that landed, the head the report named, and the check between them: the `evidence:` line of the
 `base-refresh check` as it printed it (previous head, dev tip, new head, tree OID and the rule
-applied, one line for each step of a chain) and the `merge-evidence` verdict on the landed head.
+applied, one line for each step of a chain; after a conflict settled by a mechanical rule the `base-refresh mechanical`
+output instead, with its `applied:` lines and the wording of [Resolve a mechanical conflict
+yourself](merge-readiness.md#resolve-a-mechanical-conflict-yourself)) and the `merge-evidence` verdict on the landed head.
 Nothing else in the record says why the two heads differ, and `merge-evidence` on the landed head
 is the reading to quote, not the child's record.
 

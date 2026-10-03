@@ -13,6 +13,7 @@ import (
 )
 
 func Test28FrozenByteCountExactPythonParity(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name, token string
 		present     bool

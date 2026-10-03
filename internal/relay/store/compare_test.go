@@ -21,8 +21,6 @@ type identityFixture struct {
 func newIdentityFixture(t *testing.T) *identityFixture {
 	t.Helper()
 	root := t.TempDir()
-	t.Setenv("HOME", root)
-	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "xdg"))
 	a := filepath.Join(root, "a")
 	s, err := fixtureOpen(context.Background(), filepath.Join(a, "relay.sqlite3"), "")
 	if err != nil {
@@ -117,7 +115,9 @@ func logLocation(l Location, inode uint64) string {
 }
 
 func TestCompareStore_python_identity_grades(t *testing.T) {
+	t.Parallel()
 	t.Run("test_a_copy_keeps_the_identifier_and_is_not_the_same_store", func(t *testing.T) {
+		t.Parallel()
 		f := newIdentityFixture(t)
 		mine := f.locate()
 		theirs := f.probe(f.copyStore(filepath.Join(f.tmp, "b")))
@@ -128,6 +128,7 @@ func TestCompareStore_python_identity_grades(t *testing.T) {
 		requireVerdict(t, CompareStore(theirs, CompareExpectations{StoreID: mine.StoreID, Inode: mine.PhysicalIdentity()}), Mismatch)
 	})
 	t.Run("test_a_nonce_written_after_the_copy_separates_them", func(t *testing.T) {
+		t.Parallel()
 		f := newIdentityFixture(t)
 		b := f.copyStore(filepath.Join(f.tmp, "b"))
 		if f.probe(b).StoreID != f.locate().StoreID {
@@ -144,6 +145,7 @@ func TestCompareStore_python_identity_grades(t *testing.T) {
 		requireVerdict(t, CompareStore(f.probe(b), CompareExpectations{Nonce: &there}), Mismatch)
 	})
 	t.Run("test_a_nonce_copied_with_the_bytes_is_not_proof_of_a_shared_store", func(t *testing.T) {
+		t.Parallel()
 		f := newIdentityFixture(t)
 		written := f.challenge()
 		f.close()
@@ -161,6 +163,7 @@ func TestCompareStore_python_identity_grades(t *testing.T) {
 		requireVerdict(t, CompareStore(theirs, CompareExpectations{Inode: mine.PhysicalIdentity(), Nonce: &here}), Mismatch)
 	})
 	t.Run("test_a_nonce_query_that_fails_is_unreadable_rather_than_absent", func(t *testing.T) {
+		t.Parallel()
 		f := newIdentityFixture(t)
 		broken := filepath.Join(f.tmp, "broken")
 		if err := os.MkdirAll(broken, 0o700); err != nil {
@@ -178,6 +181,7 @@ func TestCompareStore_python_identity_grades(t *testing.T) {
 		}
 	})
 	t.Run("test_a_symlinked_directory_is_the_same_store", func(t *testing.T) {
+		t.Parallel()
 		f := newIdentityFixture(t)
 		alias := filepath.Join(f.tmp, "alias")
 		if err := os.Symlink(f.a, alias); err != nil {
@@ -196,6 +200,7 @@ func TestCompareStore_python_identity_grades(t *testing.T) {
 		requireVerdict(t, CompareStore(through, CompareExpectations{Inode: mine.PhysicalIdentity(), Log: mine.LogLocation(), Nonce: &found}), Proven)
 	})
 	t.Run("test_an_agreeing_device_and_inode_is_never_proof_on_its_own", func(t *testing.T) {
+		t.Parallel()
 		f := newIdentityFixture(t)
 		mine := f.locate()
 		if mine.Links != 1 {
@@ -206,6 +211,7 @@ func TestCompareStore_python_identity_grades(t *testing.T) {
 		requireVerdict(t, CompareStore(f.probe(elsewhere), CompareExpectations{Inode: mine.PhysicalIdentity()}), Mismatch)
 	})
 	t.Run("test_a_second_name_for_one_inode_is_not_proof_of_a_shared_store", func(t *testing.T) {
+		t.Parallel()
 		f := newIdentityFixture(t)
 		mine := f.locate()
 		f.close()
@@ -216,6 +222,7 @@ func TestCompareStore_python_identity_grades(t *testing.T) {
 		}
 	})
 	t.Run("test_a_nonce_does_not_talk_the_second_name_up_into_proof", func(t *testing.T) {
+		t.Parallel()
 		f := newIdentityFixture(t)
 		written := f.challenge()
 		f.close()
@@ -227,6 +234,7 @@ func TestCompareStore_python_identity_grades(t *testing.T) {
 		requireVerdict(t, CompareStore(f.probe(other), CompareExpectations{Nonce: &found}), Unproven, "names")
 	})
 	t.Run("test_a_second_pathname_no_name_count_can_see_is_still_refused", func(t *testing.T) {
+		t.Parallel()
 		f := newIdentityFixture(t)
 		written := f.challenge()
 		f.close()
@@ -239,6 +247,7 @@ func TestCompareStore_python_identity_grades(t *testing.T) {
 		requireVerdict(t, CompareStore(measured, CompareExpectations{StoreID: measured.StoreID, Inode: measured.PhysicalIdentity(), Log: peer, Nonce: &found}), Unproven, peer, strconv.FormatUint(measured.LogInode, 10))
 	})
 	t.Run("test_two_pathnames_that_share_one_log_are_still_one_store", func(t *testing.T) {
+		t.Parallel()
 		f := newIdentityFixture(t)
 		written := f.challenge()
 		f.close()
@@ -252,6 +261,7 @@ func TestCompareStore_python_identity_grades(t *testing.T) {
 		requireVerdict(t, CompareStore(elsewhere, expect), Unproven)
 	})
 	t.Run("test_a_nonce_is_not_proof_until_the_log_location_has_been_compared", func(t *testing.T) {
+		t.Parallel()
 		f := newIdentityFixture(t)
 		written := f.challenge()
 		f.close()
@@ -265,6 +275,7 @@ func TestCompareStore_python_identity_grades(t *testing.T) {
 		requireVerdict(t, CompareStore(measured, CompareExpectations{Nonce: &found}), Unproven, "--expect-inode", "--expect-log")
 	})
 	t.Run("test_a_log_location_that_cannot_be_used_is_not_comparable_rather_than_different", func(t *testing.T) {
+		t.Parallel()
 		f := newIdentityFixture(t)
 		measured := f.probe(f.a)
 		// "" is Python's expect_log="", which is supplied; Go's empty string means absent,
@@ -277,6 +288,7 @@ func TestCompareStore_python_identity_grades(t *testing.T) {
 		requireVerdict(t, CompareStore(unmeasured, CompareExpectations{Log: measured.LogLocation()}), Unproven, "not comparable here")
 	})
 	t.Run("test_a_nonce_read_through_another_log_is_not_attributed_to_this_one", func(t *testing.T) {
+		t.Parallel()
 		f := newIdentityFixture(t)
 		written := f.challenge()
 		f.close()
@@ -290,6 +302,7 @@ func TestCompareStore_python_identity_grades(t *testing.T) {
 		requireVerdict(t, CompareStore(measured, CompareExpectations{Inode: measured.PhysicalIdentity(), Log: measured.LogLocation(), Nonce: &unmeasured}), Unproven, "could not be measured")
 	})
 	t.Run("test_a_nonce_read_from_a_replacement_does_not_prove_the_measured_store", func(t *testing.T) {
+		t.Parallel()
 		f := newIdentityFixture(t)
 		mine := f.locate()
 		written := f.challenge()
@@ -308,6 +321,7 @@ func TestCompareStore_python_identity_grades(t *testing.T) {
 		}
 	})
 	t.Run("test_a_name_added_after_the_probe_still_vetoes_a_found_nonce", func(t *testing.T) {
+		t.Parallel()
 		f := newIdentityFixture(t)
 		written := f.challenge()
 		f.close()
@@ -323,6 +337,7 @@ func TestCompareStore_python_identity_grades(t *testing.T) {
 		}
 	})
 	t.Run("test_a_name_that_goes_away_during_the_read_is_still_counted", func(t *testing.T) {
+		t.Parallel()
 		f := newIdentityFixture(t)
 		written := f.challenge()
 		f.close()
@@ -354,9 +369,11 @@ func TestCompareStore_python_identity_grades(t *testing.T) {
 		}
 	})
 	t.Run("test_a_store_with_no_identity_is_never_proven_equal", func(t *testing.T) {
+		t.Parallel()
 		requireVerdict(t, CompareStore(Location{}, CompareExpectations{StoreID: "whatever"}), Unproven)
 	})
 	t.Run("test_an_unreadable_nonce_is_unproven_rather_than_a_mismatch", func(t *testing.T) {
+		t.Parallel()
 		unreadable := NonceReading{Nonce: "abc", Detail: "OperationalError: unable to open database file"}
 		requireVerdict(t, CompareStore(Location{StoreID: "x"}, CompareExpectations{Nonce: &unreadable}), Unproven, "could not be read")
 		absent := NonceReading{Nonce: "abc", Readable: true}

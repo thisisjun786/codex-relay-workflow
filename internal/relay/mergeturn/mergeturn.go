@@ -22,6 +22,9 @@ const (
 	Holding = "holding"
 	Merging = "merging"
 	Unknown = "unknown"
+	// Passed closes a holding turn whose holder went silent past the holding limit and was
+	// passed on to the next waiter.
+	Passed = "passed"
 )
 
 type Service struct {
@@ -93,7 +96,7 @@ func (s *Service) ledger(ctx context.Context, id, kind, from, to, evidence, acto
 	return nil
 }
 func engineLedgerKind(kind string) bool {
-	for _, name := range []string{"claim", "close", "candidate_head_changed", "took_free_target", "promoted", "currency_confirmed", "outcome_unknown", "grant", "grant_acknowledged", "readiness_declared", "readiness_withdrawn", "landing_base_restated"} {
+	for _, name := range []string{"claim", "close", "candidate_head_changed", "took_free_target", "promoted", "currency_confirmed", "outcome_unknown", "grant", "grant_acknowledged", "readiness_declared", "readiness_withdrawn", "landing_base_restated", "progress_recorded", "turn_passed"} {
 		if kind == name {
 			return true
 		}
@@ -464,6 +467,7 @@ func (s *Service) Target(ctx context.Context, repository, base string) (map[stri
 	}
 	waiters := make([]any, 0)
 	var holder any
+	var holderRow store.MergeTurnsRow
 	for _, row := range rows {
 		if row.State == Waiting {
 			waiters = append(waiters, record(row))
@@ -474,6 +478,7 @@ func (s *Service) Target(ctx context.Context, repository, base string) (map[stri
 				return nil, err
 			}
 			holder = h
+			holderRow = row
 		}
 	}
 	conflicts, err := s.Registry.CoordinationConflicts(ctx, registry.DomainMergeTarget, key)
@@ -527,6 +532,15 @@ func (s *Service) Target(ctx context.Context, repository, base string) (map[stri
 		answer["returnRequestedAt"] = requested
 		answer["transportAcceptedAt"] = accepted
 		answer["releasedAt"] = h["closedAt"]
+		silence := stallOf(holderRow, entries, s.now())
+		answer["lastProgressAt"] = silence.Last.At
+		answer["lastProgress"] = silence.Last.record()
+		answer["holdingLimitSeconds"] = int64(HoldingLimitSeconds)
+		answer["stalled"] = silence.Stalled
+		answer["stallsAt"] = nil
+		if silence.Readable {
+			answer["stallsAt"] = silence.StallsAt
+		}
 		checks, err := s.Store.MergeChecks(ctx, h["turnId"].(string))
 		if err != nil {
 			return nil, err
@@ -586,6 +600,8 @@ func (s *Service) Target(ctx context.Context, repository, base string) (map[stri
 			cause = "holder_no_longer_owns_the_project"
 		case holderWhy == "owner_paused":
 			cause = "holder_paused"
+		case silence.Stalled && h["state"] == Holding:
+			cause = "holder_stalled"
 		case !h["declaredReady"].(bool):
 			cause = "candidate_not_ready"
 		case len(tied) > 0:
@@ -614,7 +630,7 @@ func (s *Service) Attest(ctx context.Context, turn, kind, identity, actor, evide
 	if engineLedgerKind(kind) {
 		squatted = "evidence kind " + strconv.Quote(kind)
 	} else {
-		for _, prefix := range []string{"request:", "close:", "head:", "take:", "promote:", "merging:", "unknown:", "ready:", "grant:", "grant_acknowledged:", "restate-base:"} {
+		for _, prefix := range []string{"request:", "close:", "head:", "take:", "promote:", "merging:", "unknown:", "ready:", "grant:", "grant_acknowledged:", "restate-base:", "progress:", "pass:"} {
 			if strings.HasPrefix(identity, prefix) {
 				squatted = "idempotency key " + strconv.Quote(identity) + ", which is in the " + strconv.Quote(prefix) + " namespace"
 				break

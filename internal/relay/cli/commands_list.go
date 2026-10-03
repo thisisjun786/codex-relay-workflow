@@ -28,7 +28,7 @@ var offlineCommands = []string{
 	"supervisor-report-recorded", "reporting-derive", "supervisor-stage", "supervisor-show",
 	"packet-check", "merge-evidence", "intent-declare", "intent-attempt", "intent-bind",
 	"intent-register", "intent-claim", "intent-disposition", "intent-resolve", "intent-show",
-	"dag-plan-put", "dag-plan-show", "dag-plan-log",
+	"dag-plan-put", "dag-plan-show", "dag-plan-log", "merge-turn-progress", "merge-turn-pass",
 }
 var hostRequiredCommands = []string{
 	"daemon", "deliver", "reconcile", "recover", "service run", "service start", "service restart",

@@ -144,7 +144,6 @@ func sameDispositionsAsGolden(t *testing.T, contains ...string) int {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	count := 0
 	for _, name := range names {
 		matched := len(contains) == 0
