@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -22,7 +23,6 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/review/agy"
 )
 
-// repo is a temporary Git repository with no configuration of its own beyond what the test sets.
 type repo struct {
 	t   *testing.T
 	dir string
@@ -131,7 +131,7 @@ func newFixture(t *testing.T) *fixture {
 }
 
 func (f *fixture) args(head string, extra ...string) []string {
-	return append([]string{"--repo", f.repo.dir, "--base", f.base, "--head", head, "--issue", "CRW-506", "--out", f.out, "--state-dir", f.state, "--lock", f.lock}, extra...)
+	return append([]string{"--repo", f.repo.dir, "--base", f.base, "--head", head, "--issue", "CRW-506", "--out", f.out, "--state-dir", f.state, "--lock", f.lock, "--agy", "/nonexistent/agy"}, extra...)
 }
 
 // run is the command with the scripted runner; it is safe to call from a goroutine.
@@ -357,20 +357,22 @@ func TestTerminationSignalsCancelAReview(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer unlock()
+	sink := make(chan os.Signal, 64)
+	signal.Notify(sink, syscall.SIGTERM, syscall.SIGHUP) // whatever happens below, these signals must not end the test process itself
+	t.Cleanup(func() { signal.Stop(sink) })
 	for _, sig := range []syscall.Signal{syscall.SIGTERM, syscall.SIGHUP} {
-		done := make(chan int, 1)
+		done, code := make(chan int, 1), -1
 		go func() { done <- Run(context.Background(), f.args(h, "--lock-wait", "1m"), io.Discard, io.Discard) }()
-		time.Sleep(500 * time.Millisecond) // Run installs its handler first; this is time to reach the lock wait
-		if err := syscall.Kill(os.Getpid(), sig); err != nil {
-			t.Fatal(err)
-		}
-		select {
-		case code := <-done:
-			if code != 130 {
-				t.Fatalf("%v: exit %d, want 130", sig, code)
+		for deadline := time.Now().Add(10 * time.Second); code < 0 && time.Now().Before(deadline); {
+			time.Sleep(200 * time.Millisecond) // a signal sent before Run has installed its handler changes nothing, so it is repeated
+			_ = syscall.Kill(os.Getpid(), sig)
+			select {
+			case code = <-done:
+			default:
 			}
-		case <-time.After(10 * time.Second):
-			t.Fatalf("%v: the review was still waiting 10 s after the signal", sig)
+		}
+		if code != 130 {
+			t.Fatalf("%v: exit %d, want 130 within 10 s", sig, code)
 		}
 	}
 }

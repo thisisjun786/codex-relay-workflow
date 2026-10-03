@@ -56,7 +56,7 @@ Every setting comes from one place, `Config` in [config.go](../../internal/revie
 
 ## Not covered
 
-The artifact's `agyVersion` is `unknown`: reading it would start an agy process outside the runner's host-wide lock. A `SIGKILL` of `crw` cannot be caught: agy, which holds no lock descriptor, may then run on until its time limit while the locks are free; closing that gap belongs to the runner. Posting the result, the receipt field and the parent's reading of the artifact belong to the wiring around this command.
+The artifact's `agyVersion` is `unknown`: reading it would start an agy process outside the runner's host-wide lock. A `SIGKILL` of `crw` cannot be caught: agy, which holds no lock descriptor and whose time limit lives in the parent, may then run on, unbounded, while the locks are free; closing that gap belongs to the runner. Posting the result, the receipt field and the parent's reading of the artifact belong to the wiring around this command.
 
 ## Tests
 

@@ -19,7 +19,6 @@ import (
 func TestSmokeRealAgy(t *testing.T) {
 	r := newRepo(t)
 	base := r.commit(map[string]string{"sum.go": sumSource("_, x := range xs", "x")})
-	r.git("checkout", "-q", "--detach", base)
 	head := r.commit(map[string]string{"sum.go": sumSource("i := 1; i < len(xs); i++", "xs[i]")}) // skips the first number
 	tmp := t.TempDir()
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Minute)
