@@ -12,6 +12,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/role"
 )
 
@@ -25,7 +26,9 @@ const agentThreadModelAdvice = "This Codex Desktop agent-created thread may show
 const agentThreadUserAdvice = "This agent-created thread started in the default approval mode despite your full-access Codex config, so approval prompts may appear. You can switch this thread to Full Access in the composer, or set permissions.agentCreatedThreadAutoAllow to true in ~/.crw/config.json so crw answers these approvals for you, including one-time network requests."
 
 func agentThreadObject(raw string) map[string]any {
-	v, err := jsonValue(raw)
+	// Keep JSON.parse's depth behavior as well as its distinct surrogate IDs;
+	// the harness and file readers already enforce their byte bounds.
+	v, err := pyjson.Loads(raw, pyjson.LoadOptions{Map: true, Surrogates: true, Numbers: pyjson.SpelledNumbers, Deep: true})
 	if err != nil {
 		return nil
 	}

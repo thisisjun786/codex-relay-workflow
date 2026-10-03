@@ -512,3 +512,32 @@ func mustThreadJSON(t *testing.T, p map[string]any) string {
 	}
 	return string(b)
 }
+
+func TestAgentThreadDeepJSON(t *testing.T) {
+	// JSON.parse has no 10,000-container limit; all documents stay inside
+	// the existing hook/config/first-record byte bounds.
+	deep := strings.Repeat("[", 10500) + "0" + strings.Repeat("]", 10500)
+	t.Run("hook payload", func(t *testing.T) {
+		f := threadSetup(t)
+		raw := mustThreadJSON(t, f.input)
+		raw = raw[:len(raw)-1] + `,"tool_input":` + deep + `}`
+		if got := f.raw("permission-request", raw); got != threadAllow {
+			t.Fatalf("deep payload: %q", got)
+		}
+		raw = strings.Replace(raw, `"PermissionRequest"`, `"SessionStart"`, 1)
+		if got := f.raw("session-start", raw); got == "" {
+			t.Fatal("deep advisory silent")
+		}
+	})
+	t.Run("first rollout record", func(t *testing.T) {
+		f := threadSetup(t)
+		f.write(f.transcript, threadMeta[:len(threadMeta)-1]+`,"extra":`+deep+"}\n")
+		f.want(false, nil, threadAllow)
+		f.advised(nil)
+	})
+	t.Run("global opt in", func(t *testing.T) {
+		f := threadSetup(t)
+		f.write(filepath.Join(f.global, "config.json"), threadOpt[:len(threadOpt)-1]+`,"extra":`+deep+"}")
+		f.want(false, nil, threadAllow)
+	})
+}
