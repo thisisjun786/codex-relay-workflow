@@ -238,6 +238,7 @@ func checkRows(t *testing.T, k kind, base func() *composed, rows []row) {
 }
 
 func TestReportComposeBytes(t *testing.T) {
+	t.Parallel()
 	completion, revision := kinds(reportComposeStore(t))
 	unknownSkill := `{"skills":["unknown"]}`
 	surrogate := "a" + string(rune(92)) + "ud800b"

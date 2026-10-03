@@ -39,6 +39,7 @@ func promotedGrant(t *testing.T) (*fixture, *mergeturn.Service, string, string) 
 }
 
 func Test26_MTW_3_real_sender_wakes_parent_once_on_own_thread(t *testing.T) {
+	t.Parallel()
 	f, m, turn, event := promotedGrant(t)
 	before := len(f.host.threads[parent].turns)
 	sent, err := f.delivery.Attempt(f.ctx, event, f.host, nil, "")
@@ -78,6 +79,7 @@ func Test26_MTW_3_real_sender_wakes_parent_once_on_own_thread(t *testing.T) {
 }
 
 func Test26_MTW_4_answered_grant_is_suppressed_before_send(t *testing.T) {
+	t.Parallel()
 	f, m, turn, event := promotedGrant(t)
 	record, err := m.Turn(f.ctx, turn)
 	mustDo(t, err)
@@ -92,6 +94,7 @@ func Test26_MTW_4_answered_grant_is_suppressed_before_send(t *testing.T) {
 }
 
 func Test26_MTW_4_generation_advance_does_not_suppress_grant(t *testing.T) {
+	t.Parallel()
 	f, m, turn, event := promotedGrant(t)
 	_, err := execSQL(f.ctx, f.store, `INSERT INTO generations (relationship_id,execution_generation,dispatch_request_id,anchor_state,reason,opened_at) VALUES (?,?,?,'pending','needs_changes_revision',?)`, f.rid, 2, "revision-1", f.clock.ISO())
 	mustDo(t, err)
@@ -115,6 +118,7 @@ func Test26_MTW_4_generation_advance_does_not_suppress_grant(t *testing.T) {
 }
 
 func Test26_MTW_5_queuing_grant_does_not_supersede_child_correction(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "")
 	rid := f.register(regOpts{recipients: []string{parent, child}})
 	correction := strings.Repeat("f", 32)

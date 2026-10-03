@@ -69,6 +69,7 @@ func busyUntilDue(t *testing.T, f *fixture, event string, n int) {
 }
 
 func TestBusy_the_backoff_grows_with_each_busy_answer_and_reaches_the_cap(t *testing.T) {
+	t.Parallel()
 	t.Run("the delay doubles from BusyBase up to BusyMax", func(t *testing.T) {
 		w := newScaleWorld(t, 1)
 		w.busy(true)
@@ -126,6 +127,7 @@ func TestBusy_the_backoff_grows_with_each_busy_answer_and_reaches_the_cap(t *tes
 // The same walk through the daemon's delivery pass, a tick every 20 s: the recipient is attempted
 // when its delivery is due, so the 40th answer comes 20+40+60+120+240+34*300 seconds after the first.
 func TestBusy_the_scheduler_walks_a_busy_recipient_to_the_cap(t *testing.T) {
+	t.Parallel()
 	w := newScaleWorld(t, 1)
 	f := w.f
 	w.busy(true)
@@ -166,6 +168,7 @@ func TestBusy_the_scheduler_walks_a_busy_recipient_to_the_cap(t *testing.T) {
 // Pre-claim answers hold on the combined count (pre-claim answers and attempts the transport found
 // busy); a transport-only streak is held by settle's own attempt cap, as before.
 func TestBusy_the_combined_count_holds_a_delivery_a_transport_also_found_busy(t *testing.T) {
+	t.Parallel()
 	w := newScaleWorld(t, 1)
 	f := w.f
 	w.busy(true)
@@ -208,6 +211,7 @@ func TestBusy_the_combined_count_holds_a_delivery_a_transport_also_found_busy(t 
 // reconciliation of the transport's busy attempt computes its hold from that number alone. It must not
 // lift a busy_cap hold.
 func TestBusy_a_reconciliation_does_not_lift_the_busy_cap_the_combined_count_set(t *testing.T) {
+	t.Parallel()
 	w := newScaleWorld(t, 1)
 	f := w.f
 	w.busy(true)
@@ -243,6 +247,7 @@ func TestBusy_a_reconciliation_does_not_lift_the_busy_cap_the_combined_count_set
 // deferBusy is not that attempt's: whatever retry-safe rejection the old attempt received, reconciling it
 // must not lift the cap. Only a reading that finds the message was sent may.
 func TestBusy_a_reconciliation_of_an_earlier_rejection_does_not_lift_the_busy_cap(t *testing.T) {
+	t.Parallel()
 	w := newScaleWorld(t, 1)
 	f := w.f
 	event := w.emit(0)
@@ -276,6 +281,7 @@ func TestBusy_a_reconciliation_of_an_earlier_rejection_does_not_lift_the_busy_ca
 // empty detail, and the new count cannot tell those rows from its own. Such a row counts as one answer: a
 // delivery that was already waiting when this was installed starts one step ahead.
 func TestBusy_a_journal_row_the_previous_implementation_left_counts_as_one_answer(t *testing.T) {
+	t.Parallel()
 	w := newScaleWorld(t, 1)
 	f := w.f
 	w.busy(true)
@@ -343,6 +349,7 @@ func newOvertaking(t *testing.T, sameRelationship, transport bool) *overtaking {
 }
 
 func TestBusy_a_newer_delivery_does_not_overtake_an_older_one_in_backoff(t *testing.T) {
+	t.Parallel()
 	// The daemon passes at the given interval until both have gone out; no pass sends anything before
 	// the older delivery is due, and the two go out in creation order.
 	walk := func(t *testing.T, o *overtaking, interval float64) {
@@ -442,6 +449,7 @@ func TestBusy_a_newer_delivery_does_not_overtake_an_older_one_in_backoff(t *test
 // A wait that is not a busy backoff leaves the delivery behind it free, and so does a busy backoff whose
 // delivery a claim could not take anyway. A resumed relationship holds its line again.
 func TestBusy_only_a_busy_backoff_holds_the_line(t *testing.T) {
+	t.Parallel()
 	// heldBack is O waiting out a busy backoff (two answers, due at +45 s) with Y queued behind it at +16 s.
 	heldBack := func(t *testing.T) (*overtaking, string, float64) {
 		t.Helper()
@@ -548,6 +556,7 @@ func TestBusy_only_a_busy_backoff_holds_the_line(t *testing.T) {
 // the newer row's attempt ends the recipient's queue: it is not a refusal, so no marker makes the next
 // tick start after it.
 func TestBusy_the_scheduler_ends_the_queue_when_an_older_busy_row_appears_after_listing(t *testing.T) {
+	t.Parallel()
 	w := newScaleWorld(t, 2)
 	f := w.f
 	w.busy(true)
@@ -637,6 +646,7 @@ func TestBusy_many_waiting_heads_are_listed_in_linear_time(t *testing.T) {
 // A stale observation of a busy recipient cannot overwrite a hold that another path set between its
 // read and its write, and a busy answer that changed nothing is not counted.
 func TestBusy_a_stale_observation_cannot_overwrite_a_hold_set_in_between(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "")
 	event := f.queuedEvent(regOpts{})
 	stale := f.row(event)
