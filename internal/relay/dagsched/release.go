@@ -413,20 +413,8 @@ func (s *Scheduler) rejudge(ctx context.Context, q store.Querier, plan, node str
 	if len(findings) > 0 {
 		return refusalOfFinding(findings[0])
 	}
-	var open int
-	if _, err := queryOne(ctx, q, "SELECT COUNT(*) FROM relationships WHERE issue_key = ? AND status IN ('active','paused') AND superseded_by IS NULL", []any{n.IssueKey}, &open); err != nil {
-		return err
-	}
-	if open > 0 {
-		return refuse(contract.RefusalDuplicateAssignment, "%s already has an open relationship", n.IssueKey)
-	}
-	var pending int
-	if _, err := queryOne(ctx, q, "SELECT COUNT(*) FROM managed_start_requests WHERE issue_key = ? AND state IN ('reserved','create_armed')", []any{n.IssueKey}, &pending); err != nil {
-		return err
-	}
-	if pending > 0 {
-		return refuse(contract.RefusalDuplicateAssignment, "%s has a managed start in flight", n.IssueKey)
-	}
+	// Nothing asks again here whether the issue already has an open relationship or a managed start in flight: Ready, called first on this same transaction, runs those two queries in resourceHold before it
+	// lets a node be ready, or wait only for a slot, and rejudge returns above for any other reading; the store has one connection and nothing is written between, so a node that got here passed both.
 	return nil
 }
 
