@@ -21,16 +21,15 @@ type NoticeChannel struct {
 	Host    SendAdapter
 }
 
+// The deliverer in faults asks the channel through this interface, so faults never imports this package.
+var _ faults.NoticeChannel = NoticeChannel{}
+
 func (n NoticeChannel) Resolve(ctx context.Context, anchor string) (map[string]any, error) {
 	r, err := n.Channel.Resolve(ctx, anchor)
 	if err != nil {
 		return nil, err
 	}
 	return map[string]any{"sender": r.Sender, "recipient": r.Recipient, "projectKey": r.ProjectKey, "initiativeKey": r.InitiativeKey, "source": r.Source}, nil
-}
-func (n NoticeChannel) StageNotice(ctx context.Context, notice map[string]any) (map[string]any, error) {
-	id, _ := notice["faultId"].(string)
-	return n.Ledger.StageNotice(ctx, notice, n.Resolve, n.Channel.command("fault-show", "--fault", id))
 }
 func (n NoticeChannel) Attempt(ctx context.Context, id string, now float64, owner string) error {
 	_, err := n.Channel.attempt(ctx, id, n.Host, now, 0, owner)
@@ -91,14 +90,14 @@ func (c *Channel) refreshNotice(ctx context.Context, row store.SupervisorMessage
 	staged := evidence.Dict(evidence.Decode(row.Packet), false)
 	observed := pyvalue.Str(evidence.Item(staged["envelope"], "observedAt"))
 	live := map[string]any{"sender": r.Sender, "recipient": r.Recipient, "projectKey": r.ProjectKey, "initiativeKey": r.InitiativeKey, "source": r.Source}
-	packet, err := faults.ComposeNotice(notice, live, observed, c.command("fault-show", "--fault", notice["faultId"].(string)))
+	packet, err := composeNotice(notice, live, observed, c.command("fault-show", "--fault", notice["faultId"].(string)))
 	if err != nil {
 		return false, err
 	}
 	if pyvalue.ItemEqual(staged, packet) {
 		return false, nil
 	}
-	packet, err = faults.ComposeNotice(notice, live, at, c.command("fault-show", "--fault", notice["faultId"].(string)))
+	packet, err = composeNotice(notice, live, at, c.command("fault-show", "--fault", notice["faultId"].(string)))
 	if err != nil {
 		return false, err
 	}
