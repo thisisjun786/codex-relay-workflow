@@ -345,7 +345,7 @@ was sent while materializing the thread lands it where policy says it belongs. A
 resume could restore a value the user has since changed. The relay's transport loads such a
 recipient with a resume that requests nothing, compares what the host reports with the record
 before any turn, and refuses a difference as `settings_differ_after_load`, retry-safe with
-nothing started; re-record from a reading the user stands behind rather than retrying. On a child that refusal means the host reports another pair than the record, for example because the user moved it, and is not a transport fault.
+nothing started; re-record from a reading the user stands behind rather than retrying. On a child that refusal can mean the host reports another pair than the record, for example because the user moved it, or that another recorded setting has drifted; the refusal names the field that differs, and the recovery follows that field. It is not a transport fault.
 
 The workspace roots are the one setting read differently, on both routes. A resume never changes
 the roots of a thread the host already has loaded: the thread keeps the roots of whichever load
