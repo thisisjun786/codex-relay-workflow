@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -183,6 +184,13 @@ func TestTheCommandIsRegisteredAndAnswersTheReport(t *testing.T) {
 			t.Fatalf("exit %d: %q %q", code, out.String(), errs.String())
 		}
 		return code, answer
+	}
+	fresh := t.TempDir()
+	var out, errs bytes.Buffer
+	if code := dispatch.Execute(context.Background(), "codex-session-relay", []string{"--state", fresh, "child-cleanup", "--relationship", rid, "--actor", parent}, &out, &errs); code != contract.ExitUsage {
+		t.Fatalf("no --socket is a usage error: exit %d %s", code, out.String())
+	} else if _, err := os.Stat(filepath.Join(fresh, "relay.sqlite3")); err == nil {
+		t.Fatal("a line without --socket created a store")
 	}
 	if code, answer := call("--actor", "someone-else"); code != contract.ExitRefused || answer["ok"] == true || len(s.srv.Requests()) != 0 {
 		t.Fatalf("another actor is refused with exit %d before the App Server is contacted: got %d %v, %d requests", contract.ExitRefused, code, answer, len(s.srv.Requests()))

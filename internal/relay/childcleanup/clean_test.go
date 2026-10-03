@@ -119,6 +119,24 @@ func TestCleanTakesTheNoRolloutPath(t *testing.T) {
 	}
 }
 
+func TestCleanReconcilesANeverRunThreadTakenByAnAncestor(t *testing.T) {
+	threads := family()
+	threads[1].rollout, threads[1].unloadsWith = false, "child" // refused while loaded, then unloaded by the archive of the child
+	report, err := run(t, newScripted(t, threads...), Options{})
+	if got := outcomes(report); err != nil || !report.Complete() || got != "grand:archived sub-2:archived sub-1:released_by_ancestor child:archived" {
+		t.Fatalf("err=%v outcomes=%q", err, got)
+	}
+}
+
+func TestCleanStopsOnATransportFailureInsteadOfCallingItARefusal(t *testing.T) {
+	threads := family()
+	threads[1].dropOnArchive = true
+	report, err := run(t, newScripted(t, threads...), Options{})
+	if got := outcomes(report); err == nil || report.Complete() || report.Stopped == "" || got != "grand:archived sub-2:archived" {
+		t.Fatalf("err=%v outcomes=%q stopped=%q: the unknown request ends the cleanup with the report so far", err, got, report.Stopped)
+	}
+}
+
 func TestCleanReportsAFailureAndGoesOn(t *testing.T) {
 	threads := family()
 	threads[1].refuse = "boom"

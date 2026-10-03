@@ -15,13 +15,18 @@ import (
 // the store read-only). The answer is the report; a cleanup that is not complete (something running, left loaded, failed or unresolved) is the same payload with ok false under exit 2, and the parent runs
 // it again later. A host failure after some threads were released is exit 3 with the report of what was done and the error as "stopped" (the thread being handled when it happened is not in items).
 func init() {
-	dispatch.Register(nil, dispatch.Command{Name: "child-cleanup", ReadOnlyWhen: func(args dispatch.Args) bool { return args.Bool("dry-run") }, Run: runCommand})
+	dispatch.Register(nil, dispatch.Command{Name: "child-cleanup", ReadOnlyWhen: func(args dispatch.Args) bool { return args.Bool("dry-run") }, Validate: needSocket, Run: runCommand})
+}
+
+// needSocket runs before the store is selected or admitted, so a line without --socket creates nothing.
+func needSocket(services dispatch.Services, _ dispatch.Args) error {
+	if services.SocketPath == "" {
+		return &dispatch.UsageError{Detail: "child-cleanup talks to the App Server and requires --socket", Code: contract.ExitUsage}
+	}
+	return nil
 }
 
 func runCommand(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
-	if services.SocketPath == "" {
-		return nil, &dispatch.UsageError{Detail: "child-cleanup talks to the App Server and requires --socket", Code: contract.ExitUsage}
-	}
 	st, err := store.Open(ctx, services.Selection.DBPath(), services.SocketPath)
 	if err != nil {
 		return nil, err

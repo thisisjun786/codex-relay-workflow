@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
+
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 )
@@ -21,6 +23,8 @@ type thread struct {
 	malformed                   string // thread/read answers without a status ("status") or for another thread ("id")
 	refuse                      string // thread/archive fails with this message
 	unloadWhenRefused           bool
+	unloadsWith                 string // the host drops this thread when the thread with this id is archived
+	dropOnArchive               bool   // the connection drops while thread/archive is handled
 }
 
 // scripted is a fake App Server that answers thread/loaded/list, thread/read and thread/archive from its threads.
@@ -124,6 +128,8 @@ func (s *scripted) archive(raw json.RawMessage) fakehost.Reply {
 	s.archives = append(s.archives, p.ThreadID)
 	th := s.byID[p.ThreadID]
 	switch {
+	case th != nil && th.dropOnArchive:
+		return fakehost.Reply{Close: &fakehost.CloseFrame{Code: websocket.StatusInternalError, Reason: "gone"}}
 	case th == nil || !th.rollout:
 		if th != nil && th.unloadWhenRefused {
 			th.loaded = false
@@ -133,6 +139,11 @@ func (s *scripted) archive(raw json.RawMessage) fakehost.Reply {
 		return failure(-32603, th.refuse)
 	}
 	th.loaded = false
+	for _, other := range s.byID {
+		if other.unloadsWith == th.id {
+			other.loaded = false
+		}
+	}
 	return fakehost.Reply{Result: map[string]any{}}
 }
 

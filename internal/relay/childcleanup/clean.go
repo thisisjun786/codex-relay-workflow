@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 )
 
@@ -141,6 +142,14 @@ func Clean(ctx context.Context, host Host, child string, opts Options) (Report, 
 			report.Items = append(report.Items, Item{ThreadID: m.id, ParentID: m.parent, Outcome: outcome, Detail: detail})
 		}
 	}
+	// a never-run thread left loaded may have been taken by the archive of an ancestor that followed
+	if ids, err := d.loadedIDs(ctx); err == nil && slices.ContainsFunc(report.Items, func(it Item) bool { return it.Outcome == OutcomeNoRolloutLeftLoaded }) {
+		for i, it := range report.Items {
+			if it.Outcome == OutcomeNoRolloutLeftLoaded && !slices.Contains(ids, it.ThreadID) {
+				report.Items[i].Outcome, report.Items[i].Detail = OutcomeReleasedByAncestor, "no longer loaded after the archives that followed"
+			}
+		}
+	}
 	return report, nil
 }
 
@@ -179,21 +188,23 @@ func (d *discovery) scan(ctx context.Context, child string, report *Report) (mem
 	return members, hold, detail, nil
 }
 
-// archive asks the host to archive one thread and classifies the answer. "no rollout found" is also what a thread an ancestor's archive already took answers, so the loaded set is read again first.
+// archive asks the host to archive one thread and classifies the answer. Only the host's own refusal is a result for this thread: a transport or phase failure, or a cancellation, leaves this request's
+// outcome unknown and ends the cleanup (an error). "no rollout found" is also what a thread an ancestor's archive already took answers, so the loaded set is read again first.
 func (d *discovery) archive(ctx context.Context, id string) (outcome, detail string, err error) {
 	_, err = d.host.Call(ctx, "thread/archive", map[string]any{"threadId": id})
+	var refusal *appserver.RPCError
 	switch {
 	case err == nil:
 		return OutcomeArchived, "", nil
-	case ctx.Err() != nil:
-		return "", "", ctx.Err()
+	case !errors.As(err, &refusal):
+		return "", "", err
 	case !strings.Contains(err.Error(), noRollout):
 		return OutcomeFailed, err.Error(), nil
 	}
 	ids, err := d.loadedIDs(ctx)
 	switch {
 	case err != nil:
-		return OutcomeFailed, err.Error(), nil
+		return "", "", err
 	case !slices.Contains(ids, id):
 		return OutcomeReleasedByAncestor, "no longer loaded", nil
 	}
