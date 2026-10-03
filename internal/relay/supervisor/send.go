@@ -127,7 +127,7 @@ func (c *Channel) holdUnaddressed(ctx context.Context, row store.SupervisorMessa
 		at = c.clockISO()
 	}
 	return c.Store.Transaction(ctx, func(tx context.Context, _ *sql.Conn) error {
-		result, err := c.Store.Q(tx).ExecContext(tx, "UPDATE supervisor_messages SET hold_reason='hierarchy_unresolved',updated_at=? WHERE message_id=? AND hold_reason IS NULL AND "+store.SupervisorUnsentSQL(""), at, row.MessageID)
+		result, err := c.Store.Q(tx).ExecContext(tx, "UPDATE supervisor_messages SET hold_reason='"+store.SupervisorHoldUnaddressed+"',updated_at=? WHERE message_id=? AND hold_reason IS NULL AND "+store.SupervisorUnsentSQL(""), at, row.MessageID)
 		if err != nil {
 			return err
 		}
@@ -271,7 +271,7 @@ func (c *Channel) holdObsoleteClaim(ctx context.Context, row store.SupervisorMes
 		if row.NextEligibleAt.Valid {
 			next = row.NextEligibleAt.Float64
 		}
-		if err := c.deferMessage(tx, row, row.State, "superseded_by_report", at, next); err != nil {
+		if err := c.deferMessage(tx, row, row.State, store.SupervisorHoldSuperseded, at, next); err != nil {
 			return err
 		}
 		_, err = c.Store.Q(tx).ExecContext(tx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_superseded',?,?)", at, row.MessageID, pyjson.Dumps(map[string]any{"detail": detail}, pyjson.Options{SortKeys: true}))
@@ -288,7 +288,7 @@ func (c *Channel) attempt(ctx context.Context, id string, adapter SendAdapter, n
 	if err != nil {
 		return nil, err
 	}
-	if row.HoldReason.String == "superseded_by_report" {
+	if row.HoldReason.String == store.SupervisorHoldSuperseded {
 		if err := c.reopenProposal(ctx, row, delivery.ISOOf(now)); err != nil {
 			return nil, err
 		}
@@ -297,7 +297,7 @@ func (c *Channel) attempt(ctx context.Context, id string, adapter SendAdapter, n
 			return nil, err
 		}
 	}
-	if row.HoldReason.String == "hierarchy_unresolved" {
+	if row.HoldReason.String == store.SupervisorHoldUnaddressed {
 		if err := c.reopenAddressed(ctx, row, delivery.ISOOf(now)); err != nil {
 			return nil, err
 		}
