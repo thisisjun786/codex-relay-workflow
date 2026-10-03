@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
@@ -304,9 +305,27 @@ func (a *Adapter) guardedSend(ctx context.Context, requestID, thread, message st
 			refuse("thread/read", contract.OrderedObject{{Key: "code", Value: "thread_busy"}, {Key: "message", Value: "Thread is active; message withheld. Wait for completion."}}, false)
 			return nil
 		}
-		params := plain(settings.ResumeParams(thread)).(map[string]any)
-		if settings.SettingsFreeResume {
+		send, expectedMCP, err := a.withMCP(ctx, settings)
+		if err = awaited(err); err != nil {
+			// Resolving a profile only reads the host, so a refusal or a lost read leaves nothing sent and the
+			// request retryable; a caller that has gone, or the run's own bound, is settled as before.
+			var refused *execution.Refusal
+			code, message := "mcp_profile_unresolved", errorText(err)
+			switch {
+			case claimed != nil, errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+				return err
+			case errors.As(err, &refused):
+				code, message = refused.Code, refused.Detail
+			}
+			refuse("config/read", contract.OrderedObject{{Key: "code", Value: code}, {Key: "message", Value: message}}, true)
+			return nil
+		}
+		params := plain(send.ResumeParams(thread)).(map[string]any)
+		if send.SettingsFreeResume {
 			params = map[string]any{"threadId": thread, "excludeTurns": true}
+			if expectedMCP != nil {
+				params["config"] = expectedMCP.Overrides()
+			}
 		}
 		resumed, err := a.callValue(ctx, "thread/resume", params)
 		if err = awaited(err); err != nil {
@@ -316,11 +335,18 @@ func (a *Adapter) guardedSend(ctx context.Context, requestID, thread, message st
 		if settings.SettingsFreeResume {
 			receipt["settingsFreeResume"] = true
 		}
+		response := resumed
+		if expectedMCP != nil {
+			receipt["mcpOverridesTransmitted"] = true
+			response, err = a.observeMCP(ctx, thread, resumed, expectedMCP, receipt)
+			if err = awaited(err); err != nil {
+				return err
+			}
+		}
 		if err = save(); err != nil {
 			return err
 		}
-		response := resumed
-		rpc, findings, notes := verifyResume(*settings, response, status)
+		rpc, findings, notes := verifyResume(*send, response, status)
 		if len(findings) > 0 {
 			receipt["settingsFindings"] = findings
 			refuse("thread/resume", rpc, false)

@@ -43,6 +43,7 @@
       "fixtures": [
         "cli__bg__cancel_does_not_overwrite_finished_job",
         "cli__bg__cancel_missing_id_is_not_an_error",
+        "cli__bg__cancel_running_job_kills_group",
         "cli__bg__drain_session_ignores_off_switch",
         "cli__bg__get_tail_and_missing_id",
         "cli__bg__help_and_unknown_verb_print_usage",
@@ -2657,7 +2658,8 @@
       "status": "recorded",
       "fixtures": [
         "cli__bg__cancel_does_not_overwrite_finished_job",
-        "cli__bg__cancel_missing_id_is_not_an_error"
+        "cli__bg__cancel_missing_id_is_not_an_error",
+        "cli__bg__cancel_running_job_kills_group"
       ]
     },
     {
@@ -3998,6 +4000,7 @@
       "status": "recorded",
       "fixtures": [
         "cli__bg__cancel_does_not_overwrite_finished_job",
+        "cli__bg__cancel_running_job_kills_group",
         "cli__bg__drain_session_ignores_off_switch",
         "cli__bg__get_tail_and_missing_id",
         "cli__bg__list_plain_and_json",
@@ -4319,14 +4322,17 @@
       "contract": "`ps -o lstart= -p <pid>` for background job identity (bg-wake/src/registry.ts:71).",
       "status": "recorded",
       "fixtures": [
+        "cli__bg__cancel_running_job_kills_group",
         "cli__bg__run_detached_records_exit_code"
       ]
     },
     {
       "id": "K6/bg/cancel-running",
       "contract": "`cxc bg cancel <id>` on a live job kills its process group and records status cancelled.",
-      "status": "pending",
-      "method": "Needs a live process started by `bg run` (K6/bg/run); the finished-job half is recorded (cli__bg__cancel_does_not_overwrite_finished_job)."
+      "status": "recorded",
+      "fixtures": [
+        "cli__bg__cancel_running_job_kills_group"
+      ]
     },
     {
       "id": "K6/bg/run",
