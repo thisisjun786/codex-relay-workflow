@@ -222,9 +222,15 @@ func TestAnUnstampedStoreIsRefusedInPlainWords(t *testing.T) {
 	path := unstampedStore(t)
 	want := "store_owned_by_other: " + UnstampedStoreDetail
 
+	// The default probe judges and the write probe tries: the refusal is the same words, said by
+	// the one that ran.
 	probed := Probe(t.Context(), StateSelection{Path: filepath.Dir(path)})
-	if !probed.Access.DBReadable || probed.Access.DBWritable || probed.Access.Detail != "database write probe failed: "+want {
+	if !probed.Access.DBReadable || probed.Access.DBWritable || probed.Access.Detail != "database write judged unavailable: "+want {
 		t.Fatalf("probe access %+v", probed.Access)
+	}
+	probed = ProbeWith(t.Context(), StateSelection{Path: filepath.Dir(path)}, ProbeOptions{Write: true})
+	if !probed.Access.DBReadable || probed.Access.DBWritable || probed.Access.Detail != "database write probe failed: "+want {
+		t.Fatalf("write probe access %+v", probed.Access)
 	}
 
 	_, err := Open(t.Context(), path, "")
@@ -261,8 +267,10 @@ func TestOnlyAnUnstampedStoreGetsThePlainWords(t *testing.T) {
 	s, err := fixtureOpen(ctx, owned, "")
 	must(t, err)
 	must(t, s.Close())
-	if probed := Probe(ctx, StateSelection{Path: filepath.Dir(owned)}); !probed.Access.DBWritable || probed.Access.Detail != "" {
-		t.Fatalf("owned store access %+v", probed.Access)
+	for _, opts := range []ProbeOptions{{}, {Write: true}} {
+		if probed := ProbeWith(ctx, StateSelection{Path: filepath.Dir(owned)}, opts); !probed.Access.DBWritable || probed.Access.Detail != "" || probed.Access.Measured != opts.Write {
+			t.Fatalf("owned store access %+v (write probe %v)", probed.Access, opts.Write)
+		}
 	}
 	if unstampedAt(ctx, owned) {
 		t.Fatal("a stamped store read as unstamped")

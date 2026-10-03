@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"os"
 	"slices"
 
 	pabcdhook "github.com/thisisjun786/codex-relay-workflow/internal/pabcd/hook"
@@ -65,7 +66,13 @@ func Legs() []Leg {
 		{"subagent-stop-verifying-evidence", "subagent-stop", "subagent-stop", Generic, false, true, true, nil},
 		{"subagent-stop-observing-review", "subagent-stop", "subagent-stop-review", Generic, false, true, true, nil},
 		{"post-compact-resetting-reinject-cursor", "post-compact", "post-compact", Generic, false, false, true, nil},
-		{"pre-tool-use-linting-apply-patch", "pre-tool-use", "pre-tool-use-edit", Generic, false, false, false, nil},
+		{"pre-tool-use-linting-apply-patch", "pre-tool-use", "pre-tool-use-edit", Generic, false, false, false, func(c Call) string {
+			out := pabcdhook.HandleApplyPatchLint(c.Raw)
+			if c.PabcdEnabled && out == "" {
+				out = pabcdhook.HandleIdleEditAdvisory(c.Raw, os.LookupEnv)
+			}
+			return out
+		}},
 		{"post-tool-use-tracking-render-observations", "post-tool-use", "post-tool-use-render-observation", Generic, false, false, true, func(call Call) string {
 			if p, ok := ParsePostToolUse(call.Raw); ok {
 				payload := pabcdhook.RenderPayload{Event: "PostToolUse", Cwd: p.Cwd, SessionID: p.SessionID, ToolName: p.ToolName, Input: p.ToolInput, Response: p.ToolResponse}

@@ -2,9 +2,7 @@ package dag
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,17 +14,14 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
-// dig is a stand-in for a digest: 64 lowercase hex characters derived from a name.
-func dig(name string) string {
-	sum := sha256.Sum256([]byte(name))
-	return hex.EncodeToString(sum[:])
-}
+// dig is a stand-in for a digest: 64 lowercase hex characters derived from a name; nodeDoc is a plan node's document. Both are shared with
+// dagsched's tests through internal/testsupport.
+var (
+	dig     = testsupport.Dig
+	nodeDoc = testsupport.NodeDoc
+)
 
 type doc = map[string]any
-
-func nodeDoc(id, kind string) doc {
-	return doc{"node_id": id, "issue_key": "CRW-" + id, "kind": kind, "criteria_set_digest": dig("criteria " + id)}
-}
 
 func addNode(id, kind string) doc { return doc{"op": OpAddNode, "node": nodeDoc(id, kind)} }
 
