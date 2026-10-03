@@ -437,9 +437,10 @@ is waited for; the later instruction has the child wait for the first run before
 the later instruction, and the handoff asks the coordinator to record that amendment.
 
 S27g to S27i were read from the code and the skill text and have not been exercised on a relay.
-`RestateProblems` in internal/relay/evidence/collector.go grades a review thread outside `threadsSeen` as
-`late_finding`, and internal/relay/cli/merge_evidence.go calls it only when `--restate` is given and reads the
-parent's dispositions only when `--late-dispositions` is also given (internal/relay/delivery/rulingchange.go
+`RestateWithDispositions` in internal/relay/evidence/collector.go (`RestateProblems` is its form without
+dispositions) grades a review thread outside `threadsSeen` as `late_finding` unless an entry for the head covers
+it, and internal/relay/cli/merge_evidence.go calls it only when `--restate` is given and reads the parent's
+dispositions only when `--late-dispositions` is also given (internal/relay/delivery/rulingchange.go
 refuses a needs-changes ruling on a result a plan accepted and on one marked merged;
 internal/relay/evidence/mergeevidence.go refuses a record whose unresolved count is not zero). The installed relay at
 the time of writing is older than the source: `merge-evidence --help` there lists no `--late-dispositions`, which is why
