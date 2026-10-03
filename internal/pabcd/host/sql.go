@@ -3,6 +3,7 @@ package host
 import (
 	"database/sql"
 	"net/url"
+	"os"
 	"path/filepath"
 
 	_ "modernc.org/sqlite" // the pure-Go driver the repository already uses: no CGO
@@ -15,11 +16,16 @@ const GoalStatusQuery = "SELECT status FROM thread_goals WHERE thread_id = ?"
 
 // openReadOnly opens an existing database read-only (SQLITE_OPEN_READONLY, node:sqlite's readOnly:
 // true): it never creates the file, no statement run through it can write, and the busy timeout is
-// 0 as node:sqlite's is. database/sql opens lazily, so a failure shows at the first query.
+// 0 as node:sqlite's is. database/sql opens lazily, so a failure shows at the first query. The path
+// reaches SQLite as written: a relative one only gains the working directory, because cleaning it
+// (filepath.Abs does) would drop a ".." that the OS resolves after a symlink.
 func openReadOnly(path string) (*sql.DB, error) {
-	path, err := filepath.Abs(path)
-	if err != nil {
-		return nil, err
+	if !filepath.IsAbs(path) {
+		wd, err := os.Getwd()
+		if err != nil {
+			return nil, err
+		}
+		path = wd + string(filepath.Separator) + path
 	}
 	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: path, RawQuery: "mode=ro"}).String())
 	if err != nil {

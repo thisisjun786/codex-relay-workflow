@@ -73,6 +73,7 @@ func TestHasStageMarkerForPhaseMatchesBothForms(t *testing.T) {
 func TestIsContextPressureTailDetectsMarkers(t *testing.T) {
 	for tail, want := range map[string]bool{
 		"... Compacted Session Handoff ...": true, "the conversation history has been summarized to free": true,
+		"The Context Window Has Been Compacted.": true, "the context window has been expanded": false,
 		"ordinary transcript text": false, "": false,
 		"compacted sess\u0130on handoff": false, // JavaScript lowercases U+0130 to i plus a combining dot
 	} {

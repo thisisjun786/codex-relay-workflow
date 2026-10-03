@@ -90,6 +90,26 @@ func TestGoalActiveStatusUnderAWriterLock(t *testing.T) {
 	}
 }
 
+// The path reaches SQLite as written: a ".." after a symlink is resolved by the OS, as node:sqlite
+// does, and not cleaned away first (which would open the other database).
+func TestGoalsDatabaseKeepsDotDotAfterASymlink(t *testing.T) {
+	root := t.TempDir()
+	for dir, status := range map[string]string{root: "paused", filepath.Join(root, "real"): "active"} {
+		if err := os.MkdirAll(filepath.Join(dir, "sub"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		seed(t, filepath.Join(dir, GoalsDBFilename), goalsSchema)
+		seed(t, filepath.Join(dir, GoalsDBFilename), "INSERT INTO thread_goals VALUES ('t', 'g', 'o', ?)", status)
+	}
+	alias := filepath.Join(root, "alias")
+	if err := os.Symlink(filepath.Join(root, "real", "sub"), alias); err != nil {
+		t.Fatal(err)
+	}
+	if got := GoalActiveStatus("t", alias+"/../"+GoalsDBFilename); got != GoalActive { // real/, not root
+		t.Errorf("the lexically cleaned path was opened: %s", got)
+	}
+}
+
 // "suppressesInterview is true for active AND unreadable (fail-closed), false for inactive"
 func TestSuppressesInterview(t *testing.T) {
 	for status, want := range map[GoalStatus]bool{GoalActive: true, GoalUnreadable: true, GoalInactive: false} {
