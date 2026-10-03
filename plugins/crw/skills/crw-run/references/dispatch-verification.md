@@ -345,7 +345,7 @@ components/pabcd-state/dist/goal-gate.js, read as source and not observed on a h
 enforcement for the first half of the line. That a `blocked_needs_input` turn then reaches the
 parent is not shown: [OPS-8.1](operations.md#ops-81-parent-continuation-and-waiting) says whether
 anything enqueues a delivery for that disposition is a property of the installed runtime and
-unmeasured, which is why the line has the child emit the outcome over a file where a relay holds the
+unmeasured, which is why the line has the child emit the outcome, without a file, where a relay holds the
 assignment. No child's use of the route was observed.
 
 S25c: read-only over the working-tree goalplan files of this host's CRW child worktrees (private,

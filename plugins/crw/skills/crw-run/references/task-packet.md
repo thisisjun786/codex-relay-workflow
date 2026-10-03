@@ -298,7 +298,7 @@ Execution:
 - A finding of your own review that you reject is not yours to close. When the review rated a
   finding High or blocker and you would not apply it, because you rebutted it or place it outside
   this issue, list it in the handoff as a decision request, or ask your parent first when the answer
-  decides what you build next: end the turn `blocked_needs_input` with a blocked receipt. An
+  decides what you build next: end the turn `blocked_needs_input` with a blocked receipt that carries no file (the request is in the blocked file and your final message). An
   internal finding has no pull request thread, so a rejection the handoff does not show is one
   nobody can find.
 - Open that pull request non-draft, or transition an existing draft to Ready for review
@@ -365,6 +365,18 @@ Execution:
   lineage is read within one generation, so naming the previous generation's revision
   declares a predecessor this generation does not contain and leaves it with no
   current head at all.
+- [Only when a relay holds this assignment:] an execution-only receipt carries no file. When you
+  emit `blocked_needs_input`, `failed` or `interrupted`, do not pass `--artifact`: write the
+  reason in the blocked file and in your final message, which the coordinator reads, and emit the
+  outcome alone. The relay refuses a file on those outcomes with `manifest_forbidden`; a file that
+  must travel goes with `ready_for_review`.
+- [Only when a relay holds this assignment:] a refused emit is read, corrected and emitted again,
+  and a turn never ends without an accepted receipt, which is an emit that printed its event id.
+  A refusal is not "receipt not emitted, report and stop": its `reason` and `detail` say what
+  to change, such as dropping `--artifact` from an execution-only outcome or adding the
+  continuation claim to an emit refused `unassigned_turn`, so change that and emit again. Only a
+  refusal that cannot be corrected from its reason, because it is rooted in the assignment's own
+  state, ends the turn as UNEMITTED (the UNEMITTED bullet below).
 - [Only when a relay holds this assignment:] know which turn your receipt is emitted from.
   The relay accepts a receipt from the generation's anchor turn (the dispatch turn it
   bound for that generation) and from a turn already admitted against that anchor, which in
@@ -398,16 +410,18 @@ Execution:
   return your own task id, the issue identity and the state directory you were given. Do not claim
   a receipt you could not write, do not guess a relationship id, and do not wait for the state
   to change: the coordinator closes that gap and recovers the receipt from you, on this same
-  task.
+  task. A refusal of your own emit that names what to change is not this case: correct it and
+  emit again (the bullets above).
 - [Only when a relay holds this assignment:] if the lookup instead finds an assignment owned
   by a DIFFERENT task, that is a conflict rather than a delay and it is not recovered through
   you. Report it naming the owner the lookup returned, preserve your artifact, and write
   nothing into that relationship; the coordinator reconciles your work with that owner.
 - If you need something only a person can give, such as a decision, a credential or an
   approval this packet does not carry, do not ask with `request_user_input`: CXC denies it
-  while your goal is active. Write the question out, record `blocked_needs_input` on your
-  turn and, where a relay holds the assignment, emit that outcome over a file that states
-  it; where none does, return the CXC status the case takes (BLOCKED, UNSAFE or NEEDS_HUMAN)
+  while your goal is active. Write the question out in a blocked file, record `blocked_needs_input` on your
+  turn and, where a relay holds the assignment, emit that outcome without `--artifact` (it
+  carries no file) and put the question and the blocked file's path in your final message;
+  where none does, return the CXC status the case takes (BLOCKED, UNSAFE or NEEDS_HUMAN)
   with the question. Then end the turn. Your parent takes the question to Jun. See
   [Default dev integration](../../crw-plan/references/integrations.md#default-dev-integration).
 - [When CXC Loop is the effective workflow:]
@@ -459,7 +473,7 @@ Return:
 - Where no other task owns the assignment and you still could not emit: the completion marked
   UNEMITTED, the preserved artifact paths, your task id, the issue identity and the state
   directory, and what you actually saw. An empty lookup is reported as the lookup result itself,
-  since there is no refusal to quote; a rejected emit is reported as its exact refusal, and a
+  since there is no refusal to quote; a rejected emit that could not be corrected from its reason is reported as its exact refusal, and a
   refusal like `unbound_generation` means the lookup did find this relationship and generation,
   which the coordinator needs to bind the anchor, so report both. There is no receipt to report.
   A lookup naming another owner is the next case, not this one.
@@ -770,7 +784,7 @@ STOP WHEN
 - Done: <the pull request is open with its body, every required check is green on its head, the one-time reviews are finished or
   skipped, every thread is answered, the receipt is emitted>. Then publish the ready_for_review disposition and end the turn.
 - Blocked: <the size passes the cap, an input mismatch, a question only a person can answer, anything you cannot clear under
-  the assignment>. Write the blocked file, emit blocked_needs_input over it and end the turn.
+  the assignment>. Write the blocked file, emit blocked_needs_input without `--artifact` (it carries no file) and name the blocked file in your final message, then end the turn.
 - <the behavior principles below>
 
 HARD INVARIANTS
@@ -866,13 +880,16 @@ host values filled in.
    `intent-disposition` for that turn (`in_progress`, `blocked_needs_input`, `failed` or `ready_for_review`). When the pull request is
    ready, write the handoff record, which states every field of the merge-readiness handoff and of the disclosures `Return:` lists
    (`none` where there is none), and from inside your own turn emit the completion receipt over it without `--socket`, publish
-   `ready_for_review` and end the turn. If you cannot proceed, write a blocked file and emit `blocked_needs_input` (or `failed`) over it
-   the same way; never end a turn waiting on the parent without emitting. Emitting from a turn that is not the generation's anchor (a
+   `ready_for_review` and end the turn. If you cannot proceed, write a blocked file and emit `blocked_needs_input` (or `failed`) the same way but without `--artifact`: an execution-only receipt
+   carries no file (the relay refuses one with `manifest_forbidden`), so the file stays where you wrote it, your final message names it, and a
+   file that must travel goes with `ready_for_review`. Never end a turn waiting on the parent without emitting, and never end one without an
+   accepted receipt: a refused emit is read, corrected from its reason and emitted again. Emitting from a turn that is not the generation's anchor (a
    goal continuation, a turn after a restart) takes `--continues-anchor`, `--continuation-actor` and `--continuation-reason` on the first
    emit, with the anchor read from the relay's `status` for the relationship; if the emit is refused `unassigned_turn`, re-emit once with
    the anchor its detail names. Before re-emitting inside the same generation read the current revision (`revision-head` or
    `assignment-show`) and name it with `--supersedes-revision`; the first receipt of a new generation names none; every head gets a
-   new handoff file. Any other refusal: stop and report the receipt UNEMITTED with the exact refusal. If the issue
+   new handoff file. Any other refusal is read, corrected from its reason and emitted again; one that cannot be corrected from its reason, such as
+   `unbound_generation`, ends the turn: stop and report the receipt UNEMITTED with the exact refusal. If the issue
    lookup finds no assignment, or is refused `store_absent`, preserve the artifact and report the receipt UNEMITTED with that exact result, your
    task id, the issue identity and the state directory, and do not guess a relationship id; if it names a different owner, report that
    conflict and write nothing into that relationship. Before acting on an assignment,
@@ -880,7 +897,8 @@ host values filled in.
    with `packet-check`, with your own `--observation` when the packet names an artifact, and act only on an accepted answer whose `act` is
    true; once you have acted, record it with `--applied`. Never message or steer the parent: the relay is the only route.
 
-   Source: the relay bullets of `Execution:` (`packet-check`, "emit your completion receipt", "know which turn your receipt is emitted
+   Source: the relay bullets of `Execution:` (`packet-check`, "emit your completion receipt", "an execution-only receipt carries no file", "a refused emit is read, corrected and emitted again",
+   "know which turn your receipt is emitted
    from", the UNEMITTED and other-owner bullets, the `blocked_needs_input` bullet), [Completing on a later turn of the same
    child](relay.md#completing-on-a-later-turn-of-the-same-child) and the handoff and disclosure lines of `Return:`. The Launch packet
    does not spell out `intent-claim` and `intent-disposition`: the managed-start routing record instructs them and
@@ -979,7 +997,7 @@ STOP WHEN
 - Done: the pull request is open with its body, every required check is green on its head (`dev-gate`, which needs every job), the
   one-time reviews are finished or skipped, every thread is answered and the receipt is emitted. Then publish ready_for_review and end the turn.
 - Blocked: the size passes about 1,035 lines, an input mismatch, or anything you cannot clear under this assignment. Write the
-  blocked file, emit blocked_needs_input and end the turn.
+  blocked file, emit blocked_needs_input without `--artifact` (it carries no file), name the blocked file in your final message and end the turn.
 - Do not stop to ask for permission or at a partial fix. No refactor or feature the TASK did not ask for. After three failed attempts at
   the same thing, revert your own changes for it to the last good state and report. A stop condition you declared yourself is binding.
 
@@ -1410,8 +1428,8 @@ not checked.
   proposes, which is the exchange [conditional
   acceptance](merge-readiness.md#conditional-acceptance-and-what-recording-one-costs) already holds
   before a handoff and not a second path. Where the answer decides what the child builds next, it
-  asks before handing over: the turn ends `blocked_needs_input` with a blocked receipt over a file
-  that carries the request. Otherwise it hands over with the list and the verdict answers each
+  asks before handing over: the turn ends `blocked_needs_input` with a blocked receipt that carries no
+  file, the request being in the blocked file the final message names. Otherwise it hands over with the list and the verdict answers each
   entry. The review's label only selects what is listed; the parent classifies each finding by
   [impact](merge-readiness.md#judge-a-finding-by-its-impact), so a High that falls in a blocking
   class is a fix whatever the child concluded.
