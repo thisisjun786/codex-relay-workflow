@@ -26,6 +26,8 @@ type IntegrationResult struct {
 	Observations                 []Observation
 	Integrated, MarkPresent      bool
 	SlotReleased                 bool
+	// Sweep is the conflict sweep a landing owes (conflicts, CRW-410): nil when no head landed in this call.
+	Sweep *SweepResult
 }
 
 // ObserveIntegration records, for each target, whether the head the parent accepted is contained in the branch now, as a fact the relay read itself (git merge-base --is-ancestor for a local
@@ -188,7 +190,26 @@ func (s *Scheduler) ObserveIntegration(ctx context.Context, plan, node, actor st
 		}
 		return err
 	})
-	return out, err
+	if err != nil {
+		return out, err
+	}
+	// a head that landed owes a conflict sweep: the other live heads against each other and against the tip it landed on. It rests on the landing's observation, so a repeat of this command (a replay of the
+	// observation) runs the sweep that a failure left undone and finds one that is done.
+	var tips []SweepTip
+	ref := ""
+	for i, r := range readings {
+		if !r.anc {
+			continue
+		}
+		tips = append(tips, SweepTip{Repository: r.target.Repository, Ref: r.target.BaseRef, SHA: r.tip})
+		if ref == "" && i < len(out.Observations) {
+			ref = out.Observations[i].ObservationID
+		}
+	}
+	if ref != "" {
+		out.Sweep = s.sweepAfter(ctx, plan, node, actor, TriggerLanding, ref, tips, nil)
+	}
+	return out, nil
 }
 
 // observableRelationship refuses an observation for a relationship that is not the parent's to advance: paused or cancelled (contract 3.2), or another parent's. An archived

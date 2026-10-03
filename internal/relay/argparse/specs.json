@@ -816,7 +816,7 @@
   {"flag":"--request-id","required":true,"help":"the managed request id of the abandoned release (dag-release prints it; dag-ready names it in the node's detail): the key that makes a retry exact"},
   {"flag":"--reason","required":true,"help":"why the release is closed (kept with the closure)"},
   {"flag":"--expect-epoch","type":"int","help":"the coordinator epoch this session holds (dag-coordinator-claim answers it); a write from another epoch is refused stale_coordinator_epoch. 0 names none, which only a plan nobody claimed takes"}]},
-{"name":"dag-accept","summary":"records that the parent accepted a DAG node's result: written only when the result is the current head of its generation, acknowledged and verified by the host, ruled verified under the current criteria, and, for an implementation node, on the pull request head the relay reads from the forge itself. The same output again is a replay; the same output re-ruled under re-registered criteria is a revalidation of the same acceptance; a new output replaces an active acceptance only with --supersedes","options":[
+{"name":"dag-accept","summary":"records that the parent accepted a DAG node's result: written only when the result is the current head of its generation, acknowledged and verified by the host, ruled verified under the current criteria, and, for an implementation node, on the pull request head the relay reads from the forge itself. The same output again is a replay; the same output re-ruled under re-registered criteria is a revalidation of the same acceptance; a new output replaces an active acceptance only with --supersedes. The receipt taken in also runs the conflict sweep it owes (conflict_sweep in the answer), once per acceptance","options":[
   {"flag":"--plan","required":true},
   {"flag":"--node","required":true},
   {"flag":"--actor","required":true,"help":"the parent of the node's relationship"},
@@ -826,7 +826,7 @@
   {"flag":"--supersedes","help":"the active acceptance of another output this one replaces"},
   {"flag":"--rule-version","required":true,"help":"the rules the result was verified under, {skills_digest, model, effort} as JSON or @file"},
   {"flag":"--expect-epoch","type":"int","help":"the coordinator epoch this session holds (dag-coordinator-claim answers it); a write from another epoch is refused stale_coordinator_epoch. 0 names none, which only a plan nobody claimed takes"}]},
-{"name":"dag-integration-observe","summary":"records whether an accepted implementation node's head is contained in the branches it has to land on, read by the relay itself (git merge-base --is-ancestor for a local checkout, the compare API for a forge repository). Integration needs every required target to contain the head and the parent's merged mark on the same revision; the node's slot is returned when it does","options":[
+{"name":"dag-integration-observe","summary":"records whether an accepted implementation node's head is contained in the branches it has to land on, read by the relay itself (git merge-base --is-ancestor for a local checkout, the compare API for a forge repository). Integration needs every required target to contain the head and the parent's merged mark on the same revision; the node's slot is returned when it does. A landing also runs the conflict sweep it owes (conflict_sweep in the answer), once per landing","options":[
   {"flag":"--plan","required":true},
   {"flag":"--node","required":true},
   {"flag":"--actor","required":true},
@@ -864,7 +864,7 @@
   {"flag":"--repository","help":"optional cross-check: the forge repository (owner/name) of the accepted pull request"},
   {"flag":"--pull-request","type":"int","help":"optional cross-check: the accepted pull request number"},
   {"flag":"--expect-epoch","type":"int","help":"the coordinator epoch this session holds (dag-coordinator-claim answers it); a write from another epoch is refused stale_coordinator_epoch. 0 names none, which only a plan nobody claimed takes"}]},
-{"name":"dag-conflict-observe","summary":"records how many files git cannot merge between the heads of two parallel implementation branches of a plan (git merge-tree --write-tree, computed in memory), for measurement; nothing waits for it","options":[
+{"name":"dag-conflict-observe","summary":"records how many files git cannot merge between the heads of two parallel implementation branches of a plan (git merge-tree --write-tree, computed in memory), with the files, the nodes whose declarations do not cover them (drift) and a ledger row, for measurement; nothing waits for it","options":[
   {"flag":"--plan","required":true},
   {"flag":"--actor","required":true,"help":"the project's registered parent"},
   {"flag":"--repository","required":true,"help":"an absolute path of a local checkout that holds both heads"},
@@ -872,6 +872,14 @@
   {"flag":"--right-node","required":true},
   {"flag":"--left-head","required":true},
   {"flag":"--right-head","required":true}]},
+{"name":"dag-conflict-sweep","summary":"measures, with git merge-tree, every pair of the plan's live heads and each live head against the tip of the branch it lands on, and records the observations, the declaration drift (a conflict on a path a node did not declare) and a ledger row naming what prompted the sweep (a landing, a receipt, or this command). A head is the one named with --head, else the node's current accepted head, else the HEAD of the checkout its child works in; the relay never fetches, so a commit the checkout lacks is a member that says so. A measurement: nothing waits for it and nothing running is stopped","options":[
+  {"flag":"--plan","required":true},
+  {"flag":"--actor","required":true,"help":"the project's registered parent"},
+  {"flag":"--repository","help":"an absolute path of the local checkout to measure in; the parent_cwd of the plan's relationships by default"},
+  {"flag":"--trigger","help":"what prompted the sweep: landing, receipt or manual (the default)"},
+  {"flag":"--node","help":"the node whose landing or receipt prompted the sweep; also names the manifest whose frozen base is the tip when no --target is given"},
+  {"flag":"--target","kind":"append","help":"repository@ref whose tip every head is measured against (repeatable); the base frozen in the manifest of --node's current execution by default"},
+  {"flag":"--head","kind":"append","help":"NODE=SHA: measure the node at this commit (repeatable)"}]},
 {"name":"dag-cap-basis-record","summary":"records the evidence (W and S minutes and where each came from) that a runs ceiling above the standing cap of 6 rests on; the scheduler honours such a ceiling only for a limit revision that has one. It decides no ceiling","options":[
   {"flag":"--limit","required":true},
   {"flag":"--revision","type":"int","required":true},

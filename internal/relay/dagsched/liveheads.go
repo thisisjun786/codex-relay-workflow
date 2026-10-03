@@ -3,6 +3,7 @@ package dagsched
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -188,4 +189,75 @@ func (m *SweepMember) applyPair(pm pairMeasure, tip bool) {
 	if tip && pm.Missing == 2 {
 		m.Reason = ReasonTipUnreadable
 	}
+}
+
+// sweepTips are the tips an explicit sweep measures against: each target read through the tip reader (one that cannot be read is a tip with no commit, which the sweep records as unmeasured), or, with no
+// target, the base frozen in the manifest of the node's current execution. A manifest that is only stored (a prepared correction, another plan's node of the same name) is not the node's: the execution links
+// it. With neither a target nor a base there is one tip nobody could read.
+func (s *Scheduler) sweepTips(ctx context.Context, plan, node string, targets []Target) ([]SweepTip, error) {
+	if len(targets) == 0 {
+		repository, ref, found, err := s.manifestBase(ctx, s.Store.Q(ctx), plan, node)
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			return []SweepTip{{}}, nil
+		}
+		targets = []Target{{Repository: repository, BaseRef: ref}}
+	}
+	out := make([]SweepTip, len(targets))
+	for i, t := range targets {
+		out[i] = SweepTip{Repository: t.Repository, Ref: t.BaseRef}
+		if s.Tips == nil {
+			continue
+		}
+		if tip, err := s.Tips.Tip(ctx, t.Repository, t.BaseRef); err == nil {
+			out[i].SHA = tip.SHA
+		}
+	}
+	return out, nil
+}
+
+// manifestBase is the base (repository and ref) frozen in the input manifest the node's current execution is linked to: the manifest of its current relationship and generation, else of its open release
+// intent. found is false when the node has no such manifest or the manifest froze no base.
+func (s *Scheduler) manifestBase(ctx context.Context, q store.Querier, plan, node string) (repository, ref string, found bool, err error) {
+	if node == "" {
+		return "", "", false, nil
+	}
+	var digest string
+	rel, relFound, err := currentRelationshipOf(ctx, q, plan, node)
+	if err != nil {
+		return "", "", false, err
+	}
+	if relFound {
+		if _, err := queryOne(ctx, q, "SELECT manifest_digest FROM dag_node_executions WHERE plan_id = ? AND node_id = ? AND relationship_id = ? AND execution_generation = ?", []any{plan, node, rel.ID, rel.Generation}, &digest); err != nil {
+			return "", "", false, err
+		}
+	}
+	if digest == "" {
+		open, ok, err := latestRelease(ctx, q, plan, node)
+		if err != nil {
+			return "", "", false, err
+		}
+		if ok {
+			digest = open.Digest
+		}
+	}
+	var body string
+	if digest == "" {
+		return "", "", false, nil
+	}
+	if ok, err := queryOne(ctx, q, "SELECT body_json FROM dag_input_manifests WHERE manifest_digest = ?", []any{digest}, &body); err != nil || !ok {
+		return "", "", false, err
+	}
+	var manifest struct {
+		Base *struct {
+			Repository string `json:"repository"`
+			Ref        string `json:"ref"`
+		} `json:"base"`
+	}
+	if err := json.Unmarshal([]byte(body), &manifest); err != nil || manifest.Base == nil || manifest.Base.Repository == "" || manifest.Base.Ref == "" {
+		return "", "", false, nil
+	}
+	return manifest.Base.Repository, manifest.Base.Ref, true, nil
 }

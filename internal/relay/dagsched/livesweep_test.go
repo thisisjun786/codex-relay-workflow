@@ -22,9 +22,11 @@ type sweepWorld struct {
 	head      map[string]string
 }
 
-func newSweepWorld(t *testing.T) *sweepWorld {
+func newSweepWorld(t *testing.T) *sweepWorld { return buildSweepWorld(t, newIntegrationKit(t)) }
+
+// buildSweepWorld lays the repository and the plan's other nodes over a kit.
+func buildSweepWorld(t *testing.T, k *integrationKit) *sweepWorld {
 	t.Helper()
-	k := newIntegrationKit(t)
 	repo := k.repo
 	repo.git("remote", "add", "origin", "https://github.com/owner/repo.git")
 	base := repo.commit("c.txt", lines(12, nil))

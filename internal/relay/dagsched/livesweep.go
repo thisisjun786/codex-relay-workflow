@@ -65,7 +65,9 @@ type SweepInput struct {
 	TriggerNode string
 	TriggerRef  string
 	Tips        []SweepTip
-	Heads       map[string]string
+	// TipSource names more tips once the sweep has a checkout to measure in and has not been done before: a tip that is read from the forge is not read for a sweep that cannot run.
+	TipSource func(context.Context) []SweepTip
+	Heads     map[string]string
 }
 
 // SweepMember is one measurement attempt of a sweep: a pair of nodes (left sorts before right) or one node (left) against a tip (right head), with what came of it.
@@ -111,7 +113,7 @@ func (m SweepMember) object() contract.OrderedObject {
 		drift[i] = contract.OrderedObject{{Key: "node_id", Value: d.Node}, {Key: "path", Value: d.Path}}
 	}
 	return contract.OrderedObject{{Key: "kind", Value: m.Kind}, {Key: "left_node_id", Value: m.LeftNode}, {Key: "right_node_id", Value: optionalText(m.RightNode)},
-		{Key: "left_head", Value: optionalText(m.LeftHead)}, {Key: "right_head", Value: optionalText(m.RightHead)}, {Key: "left_head_source", Value: optionalText(m.LeftSource)},
+		{Key: "left_head", Value: optionalText(m.LeftHead)}, {Key: "right_head", Value: optionalText(m.RightHead)}, {Key: "left_head_source", Value: optionalText(m.LeftSource)}, {Key: "right_head_source", Value: optionalText(m.RightSource)},
 		{Key: "status", Value: m.Status}, {Key: "reason", Value: optionalText(m.Reason)}, {Key: "detail", Value: optionalText(m.Detail)}, {Key: "observation_id", Value: optionalText(m.ObservationID)},
 		{Key: "conflicts", Value: int64(m.Conflicts)}, {Key: "files", Value: files}, {Key: "drift", Value: drift}}
 }
@@ -215,7 +217,11 @@ func (s *Scheduler) ObserveLive(ctx context.Context, plan, actor string, in Swee
 	if err != nil {
 		return res, err
 	}
-	members, err := measureSweep(ctx, iso, heads, in.Tips)
+	tips := in.Tips
+	if in.TipSource != nil {
+		tips = append(append([]SweepTip(nil), tips...), in.TipSource(ctx)...)
+	}
+	members, err := measureSweep(ctx, iso, heads, tips)
 	if err != nil {
 		return res, err
 	}
@@ -422,4 +428,14 @@ func loadDrift(ctx context.Context, q store.Querier, observation string) ([]Drif
 		out = append(out, d)
 	}
 	return out, rows.Err()
+}
+
+// sweepAfter runs the sweep a landing or an accepted receipt owes, after the command's own transaction: best effort, because a measurement decides nothing. Whatever goes wrong is the answer's state (failed,
+// with the reason), the command still succeeds, and nothing was written, so the same command run again runs the sweep again. A trigger whose sweep exists answers already_swept; no checkout, skipped.
+func (s *Scheduler) sweepAfter(ctx context.Context, plan, node, actor, trigger, ref string, tips []SweepTip, tipSource func(context.Context) []SweepTip) *SweepResult {
+	res, err := s.ObserveLive(ctx, plan, actor, SweepInput{Trigger: trigger, TriggerNode: node, TriggerRef: ref, Tips: tips, TipSource: tipSource})
+	if err != nil {
+		res.State, res.Reason, res.Members = SweepFailed, err.Error(), nil
+	}
+	return &res
 }
