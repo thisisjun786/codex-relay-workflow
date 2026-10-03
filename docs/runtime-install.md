@@ -1169,22 +1169,39 @@ unreachable exemption. An unestablished guard call still makes the verdict
 `UNREADABLE`, even if it wrote no claim. Keyed unclaimable or failed claims remain
 in `unjudgedInvocations`; malformed rows remain in `rowsUnreadable`.
 
-For `no_event:stdin_unreadable`, `evidence.stdinRead` adds the recorded `detail`
-and `elapsedMs`, and a `case` naming what the detail establishes:
+For `no_event:stdin_unreadable`, `evidence.stdinRead` adds the recorded `detail` and `elapsedMs`
+and a `case` naming what the row establishes. A row written since CRW-504 carries its own account
+of the failed read in `stdinRead` (below) and its `case` is the cause that account names; a row
+without it is read as before.
 
-| Case | What the recorded detail establishes |
+| Case | What it establishes |
 | --- | --- |
-| `read_failed_cause_unrecorded` | Reading stdin failed; the adapter discarded the underlying read error, so its cause is undetermined. |
-| `invalid_utf8` | The adapter read bytes but could not decode them as UTF-8. |
-| `detail_unrecognized` | The detail matches neither known branch; retain it without assigning a cause. |
+| `input_late` | The 100 ms input allocation ran out while the hook waited for the host to supply the payload. |
+| `work_ended` | The invocation's own work context ended while the hook waited (a settings budget shorter than the allocation, or a cancelled run). |
+| `read_error` | The stdin descriptor, or the reader standing in for it, failed; `error` holds the Go error text. |
+| `invalid_utf8` | The adapter read bytes but could not decode them as UTF-8. A row without `stdinRead` is recognised by its detail. |
+| `read_failed_cause_unrecorded` | A row without `stdinRead`: reading stdin failed and the adapter discarded the underlying cause. |
+| `detail_unrecognized` | A row without `stdinRead` whose detail matches no known branch; retain it without assigning a cause. |
 
-These diagnostics change no count, reason, exit code or verdict. Other outcomes
-omit `stdinRead`; malformed rows never receive it. A generic read failure cannot
-distinguish a host that supplies bytes or EOF late from a descriptor error or the
-work deadline. In particular, elapsed time near 100 ms does not prove a timeout,
-a restart, or which session was involved. Correlate the row with host stdin
-write/EOF/error logs and rollout evidence; when those are absent, report the cause
-as undetermined rather than attaching the nearest turn by timestamp.
+`stdinRead` is an optional object on `stdin_unreadable` rows, added beside the existing keys the way
+`runtime` was; rows written before it stay valid. It has five keys: `cause` (`input_late`,
+`work_ended`, `read_error` or `invalid_utf8`), `error` (the Go error text of the failed read, an OS or
+context message about the stdin descriptor with no payload content, and for a recovered panic only
+its Go type), `bytesRead` (the bytes the completed reads reported before the failure was recorded,
+which counts what arrived and not what the host meant to write, and is a lower bound when the
+reader was still running), and `waitStartedMs` and `waitEndedMs` (when the wait began and ended, in
+milliseconds from process entry, the origin of `elapsedMs`). The judge reports `error`, `bytesRead`,
+`waitStartedMs` and `waitEndedMs` beside the case. A row whose `stdinRead` is not that closed shape,
+whose cause disagrees with its detail, or that carries it on another outcome is unreadable.
+
+These diagnostics change no count, reason, exit code or verdict. Other outcomes omit `stdinRead`;
+malformed rows never receive it. A row without `stdinRead` cannot distinguish a host that supplies
+bytes or EOF late from a descriptor error or the work deadline. In particular, elapsed time near
+100 ms does not prove a timeout, a restart, or which session was involved. Correlate such a row with
+host stdin write/EOF/error logs and rollout evidence; when those are absent, report the cause as
+undetermined rather than attaching the nearest turn by timestamp. A row with `stdinRead` says which
+of the four happened and how many bytes had arrived, but not why the host was late; the session and
+turn are unknown before the payload parses and are not recorded.
 
 Host input that remains incomplete when the adapter must wait beyond its 100 ms
 allocation is the intended late-input release case in decisions
@@ -1192,7 +1209,8 @@ allocation is the intended late-input release case in decisions
 and [32](port/decisions.md#32-native-hook-allocations-bound-waiting-not-scheduling).
 Already-readable input is still taken. There is no separate stdin byte cap.
 Empty input whose writer closes normally reaches JSON parsing and is
-`stdin_not_json`, not `stdin_unreadable`.
+`stdin_not_json`, not `stdin_unreadable`: a clean end of input is not a read failure and never
+carries `stdinRead`.
 
 ### Limits
 

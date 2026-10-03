@@ -78,6 +78,8 @@ func (m *Start) Run(ctx context.Context, raw []byte) (contract.OrderedObject, er
 		return nil, err
 	}
 	defer run.finish()
+	eligible := replayState(run.row.State) && pyjson.Map(pyjson.Map(run.req["child"])["settings"])["mcpProfile"] == nil
+	ctx = context.WithValue(ctx, armedReplayKey{}, eligible)
 	for _, step := range []func(context.Context) (contract.OrderedObject, error){
 		run.preflight,
 		run.reserve,
@@ -270,6 +272,15 @@ func (m *Start) recoverStandby(ctx context.Context, id Identity, req map[string]
 		recovered, err = m.Adapter.SendMessage(ctx, SendRequest{RequestID: recoveryOp, ThreadID: task, Message: bootstrap, Settings: settingsWithRole(settings, "child"), GuardRPCRequests: 10, BeforeStart: func(guardCtx context.Context) (map[string]any, error) {
 			if err := m.Adapter.RequireLedger(guardCtx, ledger); err != nil {
 				return map[string]any{"code": "managed_store_changed", "message": "Standby recovery store changed"}, nil
+			}
+			if ArmedReplay(guardCtx) {
+				probe := &startRun{m: m, physical: physical}
+				read, unchanged := probe.openUnchangedStore(guardCtx)
+				if !unchanged {
+					return map[string]any{"code": "managed_store_changed", "message": "Standby recovery store changed"}, nil
+				}
+				guardCtx = recheckReplay(guardCtx, read, id)
+				read.Close()
 			}
 			if code, e := m.ready(guardCtx, req); e != nil {
 				return nil, e

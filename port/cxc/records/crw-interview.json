@@ -1,0 +1,81 @@
+{
+  "origin": {
+    "tag": "v0.2.40",
+    "commit": "3c1459acadeb1906d97c00a598e1457327ae372d",
+    "skills_listing_sha256": "79d9580f39ca27221cb9c24337080e3fe4a1e71f76338c7329fca63f76a32e89"
+  },
+  "table_sha256": "25b5d19d9da7e07d474d2b31bc4d4139c68607457f59174a597f17505f7f23eb",
+  "from": "interview",
+  "files": {
+    "SKILL.md": {
+      "original": "6b2953bc06120c25ecb94600e43b0fdab9423a7096f50bd39e6e4caacec41c04"
+    },
+    "agents/openai.yaml": {
+      "original": "b7ac39ecedb954ce9a94e1b92c2073d7e7fc7edf5f0784b72a15ca55095c0799"
+    },
+    "references/mind-dispatch.md": {
+      "original": "ebb60a7562f29495d8d5599a22c947ee51ea93ef7ac2a379d6bc17501774c427"
+    }
+  },
+  "edits": [
+    {
+      "file": "SKILL.md",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Normalize frontmatter to the repository-supported name and description fields; preserve invocation description and record the removed oracle metadata. Separate task Interview from crw-define initiative discovery without granting phase or Linear-write authority.",
+      "hunks": [
+        {
+          "line": 4,
+          "old": [
+            "metadata:\n",
+            "  short-description: \"Persistent I-phase clarification with contradiction tracking.\"\n"
+          ]
+        },
+        {
+          "line": 15,
+          "new": [
+            "This Interview clarifies one task's requirements as its PABCD I phase. crw-define\n",
+            "owns Linear initiative intent discovery: purpose, desired change, success\n",
+            "evidence, scope and open decisions. Loading either owner does not enter a phase\n",
+            "or authorize Linear writes.\n",
+            "\n"
+          ]
+        },
+        {
+          "line": 20,
+          "old": [
+            "  General mid-work questions follow [Async user questions](../dev/references/async-questions.md).\n"
+          ],
+          "new": [
+            "  General mid-work questions follow [Async user questions](../crw-dev/references/async-questions.md).\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "agents/openai.yaml",
+      "reason": "Provide the default prompt required by CRW skill metadata while preserving the oracle invocation policy.",
+      "hunks": [
+        {
+          "line": 4,
+          "new": [
+            "  default_prompt: \"Use $crw-interview to clarify this task before Plan, with recorded answers and readiness evidence.\"\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/mind-dispatch.md",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments.",
+      "hunks": [
+        {
+          "line": 10,
+          "old": [
+            "[native transport owner](../../pabcd/references/delegation.md). Its live-schema\n"
+          ],
+          "new": [
+            "[native transport owner](../../crw-pabcd/references/delegation.md). Its live-schema\n"
+          ]
+        }
+      ]
+    }
+  ]
+}

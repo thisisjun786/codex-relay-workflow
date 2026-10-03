@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/big"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -118,6 +119,38 @@ func RuntimeRecorded(row Object) bool {
 	}
 	executable, ok := path.(string)
 	return ok && journalAbsolutePath(executable)
+}
+
+// StdinReadRecorded permits rows without stdinRead and validates the account a stdin_unreadable
+// row gives of its failed read: the closed five-key object, a known cause, counts, and a cause that
+// agrees with the row's detail. Like RuntimeRecorded this is shape evidence: the facts are recorded,
+// not authenticated, and are not checked against each other or against elapsedMs.
+func StdinReadRecorded(row Object) bool {
+	value, present := row.Lookup("stdinRead")
+	if !present {
+		return true
+	}
+	reading, ok := value.(Object)
+	if !ok || len(reading) != 5 || row.Get("adapterOutcome") != "stdin_unreadable" {
+		return false
+	}
+	cause, ok := reading.Get("cause").(string)
+	if !ok || !slices.Contains(StdinReadCauses, cause) {
+		return false
+	}
+	if _, ok := reading.Get("error").(string); !ok {
+		return false
+	}
+	for _, name := range []string{"bytesRead", "waitStartedMs", "waitEndedMs"} {
+		if !Count(reading.Get(name), true) {
+			return false
+		}
+	}
+	detail, _ := row.Get("detail").(string)
+	if cause == StdinInvalidUTF8 {
+		return strings.HasPrefix(detail, StdinNotUTF8Prefix) && Count(reading.Get("bytesRead"), false)
+	}
+	return detail == StdinUnreadableDetail
 }
 
 // Count is completion._is_count: an integer of any size, never a bool, that is non-negative

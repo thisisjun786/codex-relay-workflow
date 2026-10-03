@@ -421,11 +421,17 @@ under the same request (the standby turn under a standby operation of its own, t
 asking the scope decision again, as a creation does. When no thread
 is shown, the retry waits 2 minutes from the receipt's last update (`pending`, with `repeatAfter`) and then
 creates again under the same request with a derived bridge operation id, at most three creations in all. A thread that has a turn,
-a creation whose `turn/start` may have been sent, several threads that fit, a thread or a listing the host cannot read, a standby
-recovery the host refused, or a creation with no recorded time stop with `creation_unknown` and a `creationReconciliation` object that says why (`state`,
+a creation whose `turn/start` may have been sent, several threads that fit, an unobservable listing or another host error,
+a non-abandonable standby refusal, or a creation with no recorded time stop with `creation_unknown` and a `creationReconciliation` object that says why (`state`,
 `detail`, `attempt`, `attemptRequestId`, `thread`, `repeatAfter`); no replacement request is ever the answer.
 dag-scheduler.md ([A creation whose outcome is unknown](dag-scheduler.md#a-creation-whose-outcome-is-unknown))
-gives the table and what it does not establish.
+gives the table and what it does not establish. A named thread the host no longer knows or cannot serve, or an unloaded thread whose
+resume was refused before a turn or verified resume, is abandoned and replaced under the same request. A transient resume error
+can leave one usable orphan with no turn or writer. Earlier creation and recovery receipt IDs are excluded from later scans; UUIDv7
+IDs outside the creation window (with one minute of clock slack) are not read.
+An already armed profile-free request uses the child role's declared default during this managed start without changing its frozen
+bytes or recorded settings. NEW and merely reserved requests still require an explicit profile. Unrelated later sends keep the
+legacy record's absence of a profile; a role without a default cannot recover this way.
 The original failed creation receipt is preserved. An unknown or attempted first turn does not
 qualify for this recovery; its effects still need reconciliation.
 
