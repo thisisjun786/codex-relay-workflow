@@ -61,19 +61,24 @@ func counterUnspent(path string) bool {
 // ResolveTombstone clears the tombstone of an agent and turn, for the gate to call when a late valid receipt arrives, so the
 // parent is not left blocked on work that was verified after all. It reports whether an entry was removed and written; every
 // failure is false. The whole read-modify-write runs under the session lock and reads again inside it, with the non-strict read:
-// an unreadable file reads as a default state, holds no entry to remove and is not written. An empty agent id matches the
-// tombstones with an empty agent id and the same turn, which are marked not resolvable because their owners cannot be told
-// apart.
+// an unreadable file reads as a default state, holds no entry to remove and is not written.
 //
-// Changed from the oracle (a loss of state): the oracle writes back the verdicts its read kept, so the verdicts past the cap of 64
-// and the entries the read cannot parse vanish from the file, with only the corruption flag left. Here nothing is written, and
-// the call reports false, when the file holds more verdicts than the read kept.
+// Changed from the oracle in two ways, each a fix. A loss of state: the oracle writes back the verdicts its read kept, so the
+// verdicts past the cap of 64 and the entries the read cannot parse vanish from the file, with only the corruption flag left.
+// Here nothing is written, and the call reports false, when the file holds more verdicts than the read kept. A security
+// weakness: the oracle ignores whether the identity is resolvable, so a receipt from an agent with no id removed every tombstone
+// with an empty agent id and the same turn, the verdicts of other agents whose ids were missing among them, which are marked
+// not resolvable because their owners cannot be told apart. Here an empty agent id resolves nothing: the call returns false
+// before the lock is taken and nothing is read or written.
 func ResolveTombstone(cwd, sessionID string, p Payload) bool {
 	return resolveTombstone(cwd, sessionID, p, state.WithSessionLock)
 }
 
 func resolveTombstone(cwd, sessionID string, p Payload, lock lockFunc) bool {
-	agentID, turnID, _ := tombstoneIdentity(p)
+	agentID, turnID, resolvable := tombstoneIdentity(p)
+	if !resolvable {
+		return false
+	}
 	removed := false
 	_ = lock(cwd, sessionID, func() error { // a lock that cannot be had never runs the function, so removed stays false
 		s := state.ReadState(cwd, sessionID)
