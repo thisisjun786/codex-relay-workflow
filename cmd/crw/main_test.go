@@ -103,7 +103,7 @@ func TestRun_install_dispatches_to_the_installer(t *testing.T) {
 		t.Fatalf("an unknown install command: code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
 	stdout.Reset()
-	if code := run(context.Background(), "crw", []string{"install", "help"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "{install,update,rollback,remove,status,register-mcp,hook}") {
+	if code := run(context.Background(), "crw", []string{"install", "help"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "{install,update,rollback,remove,status,register-mcp,hook,register-service}") {
 		t.Fatalf("install usage: code=%d stdout=%q", code, stdout.String())
 	}
 }

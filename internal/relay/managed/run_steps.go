@@ -45,6 +45,10 @@ type startRun struct {
 	record        registry.Relationship
 	sent          map[string]any // the host's receipt for the business send
 	turn          string         // the business turn the host accepted
+
+	attempt    int             // the creation attempt now current: 0 is the request's own operation (reconcile.go)
+	adopted    bool            // the receipt is an unknown creation continued on the thread the App Server showed
+	reconciled *reconciliation // what reconcileCreation concluded, when it ran
 }
 
 // A step settles the request or hands over to the next one. It settles it with the answer Observe gives
@@ -104,6 +108,9 @@ func (r *startRun) finish() {
 // result is the receipt the request has so far, with the ledger the host runs on.
 func (r *startRun) result() startResult {
 	res := NewStartResult(r.identity, r.row, r.assignment, store.PathlibParent(r.m.Store.Path))
+	if r.reconciled != nil {
+		res.Reconciliation = r.reconciled.object()
+	}
 	if r.row.RequestID == "" {
 		res.Revision = nil
 		res.ReservationState = nil
@@ -193,14 +200,14 @@ func (r *startRun) createChild(ctx context.Context) (contract.OrderedObject, err
 	if err := r.m.Adapter.RequireLedger(ctx, r.ledger); err != nil {
 		return nil, err
 	}
-	receipt, err := r.m.Adapter.GetOperation(ctx, r.identity.CreateRequestID)
+	receipt, err := r.currentCreation(ctx)
 	if err != nil {
 		return nil, err
 	}
 	r.receipt = receipt
 	if receipt == nil || receipt["status"] == "not_attempted" {
 		var notReady string
-		r.receipt, notReady, r.projectLock, err = r.m.create(ctx, r.identity, r.req, r.ledger)
+		r.receipt, notReady, r.projectLock, err = r.m.create(ctx, r.attemptIdentity(), r.req, r.ledger)
 		if err != nil {
 			return nil, err
 		}
@@ -211,13 +218,14 @@ func (r *startRun) createChild(ctx context.Context) (contract.OrderedObject, err
 	return nil, nil
 }
 
-// retryStandby is the retry of a creation that failed after its thread started: the standby turn is sent
-// to the thread the failure left, and the receipt says what came of it.
+// retryStandby is the retry of a creation that failed after its thread started, or that was unknown and reconcileCreation continued on the
+// thread it found: the standby turn is sent to that thread, and the receipt says what came of it.
 func (r *startRun) retryStandby(ctx context.Context) (contract.OrderedObject, error) {
-	if pyjson.Text(r.receipt["status"]) != "failed" {
+	if pyjson.Text(r.receipt["status"]) != "failed" && !r.adopted {
 		return nil, nil
 	}
-	receipt, err := r.m.recoverStandby(ctx, r.identity, r.req, r.ledger, r.physical, r.receipt)
+	// The title is set once the standby is accepted, and not again once the receipt is recorded: a replay of an admitted start sets nothing.
+	receipt, err := r.m.recoverStandby(ctx, r.identity, r.req, r.ledger, r.physical, r.receipt, standbyRecovery{attempt: r.attempt, adopted: r.adopted, rename: r.row.ReceiptStatus.String != "accepted"})
 	if err != nil {
 		return nil, err
 	}

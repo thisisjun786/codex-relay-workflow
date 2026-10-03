@@ -5,14 +5,12 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -116,21 +114,6 @@ func (s *Scheduler) stoodOn(ctx context.Context, q store.Querier, a Acceptance) 
 		heads = append(heads, st.Head)
 	}
 	return append(heads, a.HeadSHA), nil
-}
-
-// refreshReadable is the fail-closed rule for the forge reading a refresh is proved against. An open pull request is read as an acceptance reads one (ClassifyPullRequest: a verdict of unknown, an evidence that was
-// unreadable or truncated, is the host's failure, and a head that moved while it was read is refused). A merged one has the verdict unknown by construction: its snapshot says candidate_not_open and
-// candidate_unknown, because nothing is left to hand over, so it is readable when those two are its only problems.
-func refreshReadable(pr PullRequest) error {
-	if pr.State != "merged" {
-		return ClassifyPullRequest(pr)
-	}
-	for _, p := range pr.Problems {
-		if p.Code != evidence.CandidateNotOpen && p.Code != evidence.CandidateUnknown {
-			return fmt.Errorf("the merged pull request %s#%d could not be read completely (%s: %s); nothing was written", pr.Repository, pr.Number, p.Code, p.Detail)
-		}
-	}
-	return nil
 }
 
 // decodeRefreshProof reads back the proof and the resolved paths a record stores.
@@ -264,7 +247,8 @@ func (s *Scheduler) RecordBaseRefresh(ctx context.Context, plan, node, actor str
 	if pr.State != "open" && pr.State != "merged" {
 		return out, refuse(contract.RefusalDispositionConflict, "pull request %s#%d is %s: a base refresh is read from a pull request that is open or merged", forge, number, pr.State)
 	}
-	if err := refreshReadable(pr); err != nil {
+	// the reading is classified as every reader of a pull request classifies it; a merged pull request is readable by the rule in ClassifyPullRequest (forge.go)
+	if err := ClassifyPullRequest(pr); err != nil {
 		return out, err
 	}
 	if !refreshCommitPattern.MatchString(pr.HeadSHA) || pr.BaseRef == "" {
