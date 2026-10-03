@@ -151,13 +151,13 @@ block's end marker dropped on both sides**. Nothing else is ignored:
 
 * The line before the end marker of the written block is its closing fence. A block that lost the fence, or has any text between the fence and the end marker, is another block; only blank lines there are tolerated, one or more.
 * A blank line anywhere else is a difference: after the start marker, among the headers, missing or extra between the headers and the opening fence, or inside the fenced summary (whose lines are compared one by one,
-  and whose digest the header states). So is any text between the block and the container's end marker, since the container holds the block and nothing else.
+  and whose digest the header states). So is any text between the block and the container's end marker, since the container holds the block and nothing else (line breaks at the container's edges are not text).
 * The refusal is the one it was: `readback_mismatch` for `complete`, with the problem in `last_error` and the entry still claimed. No reason is added.
 
 The text the relay tells the parent to write (`block`, `container`) is unchanged, so the parent writes the same bytes as before and a block that a Linear save has already changed needs no rewrite. A document read back with the blank line is
 `already_written`: `complete` confirms the entry, `previous_block` and the stored `readback` hold the block as the document held it (blank line included), and a confirmed entry that the document still carries is not `again`.
 
-A different change made by a Linear save, elsewhere in the block or in another construct, is not tolerated until it has been measured: the readback is not `already_written` and `complete` refuses it. Other readback comparisons (the relationship outbox's
+This change adds that one tolerance to the block comparison. A different change that a Linear save makes elsewhere inside the block is not tolerated until it has been measured: the readback is not `already_written` and `complete` refuses it. (The check that the container holds the block and nothing else has always ignored line breaks at the container's edges; that is unchanged.) Other readback comparisons (the relationship outbox's
 `sync-complete`, the fault readback) are separate and are not changed here. A new block format that avoids the blank line was not chosen: it would have to be saved to Linear to show that Linear leaves it alone, and blocks already in
 documents would read as stale against it.
 
