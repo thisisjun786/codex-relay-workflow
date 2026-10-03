@@ -349,6 +349,21 @@ This section supersedes the seeded `port: pending` statuses for native Write/Edi
 - Recursive pathname cleanup can remove a lock another writer substituted during a callback (source `goalplan.ts:866-871`; `TestPinnedLookupAndObservedReplacement`, intentionally-changed); port: fixed for an observed replacement by descriptor-path/inode checks and non-following cleanup. The mkdir protocol still requires cooperating writers: removal/replacement between the final check and unlink, or directory relocation after the last binding check, is not atomic or prevented.
 - Go JSON decoding substitutes U+FFFD for an unpaired surrogate escape and could lose stored text on a later write; the reader refuses such plans without changing bytes (source `goalplan.ts:721`, `:727`; recorded case `lone_surrogate`, intentionally-changed; paired surrogates and escaped-backslash controls pass); port: fixed for file reads.
 
+## Found by the helper role native catalog port
+
+- `nativeCatalogPath` decodes a TOML basic string with `JSON.parse`, so TOML-only escapes such as `\U0001F600` and `\e` make the configured catalog unavailable instead of selecting its valid TOML path (source `subagent-config/src/catalog.ts:67-75`; `TestNativeCatalogPaths/toml-unicode-escape`); port: kept.
+- `readNativeCatalog` catches every read/parse failure and returns null, so an unreadable or malformed catalog is indistinguishable from a missing one (source `catalog.ts:88-105`; native oracle cases `invalid-shape`/`malformed` and the missing/directory path tests); port: kept.
+- `nativeEntries` trusts an injected native list without deduplicating it, and `buildCatalog` rejects only empty provider ids rather than blank ids, so native duplicates and a whitespace-only provider id survive (source `catalog.ts:112-121,144-151`; oracle cases `native-duplicates`/`whitespace`); port: kept.
+- `buildCatalog` and `readNativeCatalog` give the same cache entry different labels and only the latter retains its effort ladder (source `catalog.ts:102,119-120`; oracle native/build rows); port: kept.
+
+## CRW-488 — Render observation and artifact ledger
+
+- Appending a row to an unterminated render-ledger tail joins both records and the reader drops the joined line (source `pabcd-state/src/render-observations.ts:71-77`); port: fixed by CRW-488 (one guarded append preserves the tail; intentionally-changed oracle case `tail`).
+- State-directory and ledger links can direct append or reset outside the workspace, where reset truncates an external record (source `pabcd-state/src/render-observations.ts:67-77,126-132`); port: fixed by CRW-488 (workspace-confined opens preserve the external target; intentionally-changed ledger-link cases).
+- A QA declaration can name an outside screenshot, including through a symlink, and establish native evidence from it (source `pabcd-state/src/render-observations.ts:191-217`); port: fixed by CRW-488 (workspace-confined reads; intentionally-changed oracle case `outside`, internal absolute and relative links retained).
+- Failed observation calls still record an ordinary row, and a failed computer-use response still records a structured app signal (source `pabcd-state/src/render-observations.ts:250-275`); port: kept (the ledger records invocation and declared metadata, not successful semantic inspection).
+- The row reader trims JavaScript whitespace before parsing, but the native malformed checker parses the untrimmed line, so a BOM-prefixed valid row is readable and also malformed (source `pabcd-state/src/render-observations.ts:89-115,168-175`); port: kept.
+
 ## Found by the skill-search library port (CRW-278)
 
 - The cache catches write failures as well as fetch failures and calls both a network failure in its stale-cache warning (source `plugins/codexclaw/components/skill-search/src/cache.ts:47-60`; `TestCacheWriteFailureKeepsWholeFile`); port: kept.
