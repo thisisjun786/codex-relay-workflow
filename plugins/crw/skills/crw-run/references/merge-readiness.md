@@ -276,13 +276,36 @@ expected-head guard; preserve required base-update or merge-queue behavior.
 `merge-evidence --restate <record>` is that re-read: it takes a fresh reading of its
 own and grades the child's record against it, rather than reading the child's own
 numbers back. A thread that arrived on the same head and is not in the record's
-`threadsSeen` invalidates the record, which returns to the child that produced it.
+`threadsSeen` invalidates the record, which returns to the child that produced it, unless the
+parent has judged that thread itself and recorded the judgement
+([below](#a-late-thread-the-parent-dispositions-itself)).
 The reading and the merge are not one act, and the command does not pretend they
 are: the expected-head guard is what closes the gap at the moment of merging, and a
 finding that lands after it is a late finding for the original issue's correction
 path.
 A base that only moved is the one disagreement the parent removes itself, under
 [Refresh the base yourself when only the base moved](#refresh-the-base-yourself-when-only-the-base-moved).
+A late thread it has dispositioned is the other, under the heading below.
+
+### A late thread the parent dispositions itself
+
+A late review thread that the parent judges minor and separable under
+[impact](#judge-a-finding-by-its-impact) (a Codex P2 or P3, a Devin yellow) need not go back to the
+child. The parent answers it on the thread, resolves it on the forge, and records its judgement in a
+file that the same command reads:
+
+    codex-session-relay merge-evidence --repository <owner/name> --pull-request <N> \
+      --restate <record.json> --late-dispositions <dispositions.json>
+
+The file is `{"lateDispositions": [{"threadId": ..., "disposition": ..., "evidenceUrl": ..., "head": ..., "grade": ...}]}`.
+`disposition` is `answered`, `backlog`, `resolved` or `refuted`; the evidence is the reply, the
+follow-up or the commit; `head` is the head the record is about; `grade` is the grade the parent gave.
+The relay checks that the entries are well formed and name that head, records the grade without
+reading it, and prints each entry under `restatement.lateDispositions`, which the parent copies into
+the merge record. A disposition names one head, so after a push or a base refresh it does not carry
+to the new head. A thread still unresolved on the forge fails the reading, and a P0, P1 or security
+finding is not recorded this way: it returns to the child. The file format and the refusals are in
+`docs/relay/coordination.md`, "A review thread that arrives after the child's record".
 
 Serialize integrations sharing a target. Verify the actual landing and resulting
 destination revision; an accepted or queued merge request is not a completed merge.
@@ -546,7 +569,8 @@ repeat. The correction is the old base-refresh correction that names that head a
 base, and it carries the [restoration block](task-packet.md#restoration-block) when an earlier
 refresh already moved the branch past what the child holds. Everything else is found on a head the
 parent made: a refusal from `base-refresh check`; a required job that failed on N again after its one rerun, or a
-`Devin Review` status that failed; a thread on N outside `threadsSeen`, or a blocking finding on N
+`Devin Review` status that failed; a thread on N outside `threadsSeen` that the parent has not
+dispositioned for N (a disposition names one head), or a blocking finding on N
 under [impact](#judge-a-finding-by-its-impact). Those corrections name N and not P, and carry the
 restoration block because the child's worktree is now behind its branch. Waiting is not a reason to
 return it. The route is otherwise the
