@@ -46,6 +46,8 @@ func classify(ex execution, logText string, promptBytes int, schema bool) Result
 	switch {
 	case ex.startErr != nil:
 		return res.with(ClassUnavailable, ReasonNotStarted, "agy did not start: %v", ex.startErr)
+	case ex.leftover:
+		return res.with(ClassUnavailable, ReasonCrash, "processes of agy were still present %s after its process group was killed", groupGrace)
 	case ex.timedOut:
 		return res.with(ClassInvalid, ReasonTimeLimit, "agy was killed after the call time limit of %s", ex.limit)
 	case ex.truncated:

@@ -41,34 +41,37 @@ type execution struct {
 	startErr       error
 	timedOut       bool  // the time limit killed the process group
 	readErr        error // reading stdout or stderr failed
+	leftover       bool  // the process group still had members after it was killed
 	limit          time.Duration
 	elapsed        time.Duration
 }
 
-// execute runs bin in dir with the prompt on stdin, in its own process group, and ends that group when the limit passes or ctx is done (ACR's executeCommand
-// and cmdReader.Close, with the output read to the end under a cap instead of streamed).
+// execute runs bin in dir with the prompt on stdin, in a process group of its own, and ends that group when the limit passes or ctx is done, and again when
+// agy has exited, so nothing it started outlives the call (ACR's executeCommand and cmdReader.Close, with the output read to the end under a cap).
 func execute(ctx context.Context, limit time.Duration, bin string, args []string, dir string, env []string, stdin []byte, maxOut int) execution {
+	g, err := startProcessGroup()
+	if err != nil {
+		return execution{exitCode: -1, startErr: err, limit: limit}
+	}
 	tctx, cancel := context.WithTimeout(ctx, limit)
 	defer cancel()
 	cmd := exec.CommandContext(tctx, bin, args...)
 	cmd.Dir, cmd.Env, cmd.Stdin = dir, env, bytes.NewReader(stdin)
 	stdout, stderr := &cappedBuffer{max: maxOut}, &cappedBuffer{max: maxOut}
 	cmd.Stdout, cmd.Stderr = stdout, stderr
-	configureProcessGroup(cmd)
+	g.join(cmd)
 	var killed atomic.Bool
 	cmd.Cancel = func() error {
 		killed.Store(true)
-		return terminateProcessGroup(cmd)
+		return g.kill()
 	}
 	cmd.WaitDelay = killGrace
 	start := time.Now()
-	err := cmd.Run()
-	// The leader has been reaped, so the group id is still held by any descendant it left (the kernel does not reuse it while a member lives) and is free
-	// otherwise, which takes a wrap of the whole pid range to reuse within the microseconds between the reap and this signal: ending the group now means a
-	// descendant does not outlive the call, and waiting until it is gone means not the lock either.
-	_ = terminateProcessGroup(cmd)
-	waitProcessGroupGone(cmd, groupGrace)
-	ex := execution{stdout: stdout.buf.Bytes(), stderr: stderr.buf.Bytes(), truncated: stdout.over || stderr.over, exitCode: -1, limit: limit, elapsed: time.Since(start)}
+	err = cmd.Run()
+	elapsed := time.Since(start)
+	// agy has exited or been killed. Run has stopped watching the context, so no signal races this one, and the sentinel still holds the group id.
+	empty := g.close()
+	ex := execution{stdout: stdout.buf.Bytes(), stderr: stderr.buf.Bytes(), truncated: stdout.over || stderr.over, exitCode: -1, limit: limit, elapsed: elapsed, leftover: !empty}
 	if cmd.ProcessState == nil {
 		ex.startErr = err
 		return ex

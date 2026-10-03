@@ -31,6 +31,9 @@ func TestCallShape(t *testing.T) {
 			t.Errorf("agy inherited the host-wide lock: %v", got.Fds)
 		}
 	}
+	if got.Pgid == 0 || got.Pgid == got.Pid {
+		t.Errorf("agy (pid %d) must join the group of a sentinel, not lead its own (pgid %d)", got.Pid, got.Pgid)
+	}
 	if len(got.Args) != 9 {
 		t.Fatalf("arguments: %v", got.Args)
 	}

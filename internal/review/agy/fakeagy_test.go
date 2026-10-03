@@ -43,7 +43,8 @@ type fakeRecord struct {
 	Cwd         string
 	CwdEntries  []string
 	Schema      string
-	Pid, Child  int
+	Pid, Pgid   int
+	Child       int
 	Start, End  int64
 }
 
@@ -75,7 +76,7 @@ func fakeAgy() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(99)
 	}
-	rec := fakeRecord{Args: os.Args[1:], Env: os.Environ(), Pid: os.Getpid(), Start: time.Now().UnixNano()}
+	rec := fakeRecord{Args: os.Args[1:], Env: os.Environ(), Pid: os.Getpid(), Pgid: syscall.Getpgrp(), Start: time.Now().UnixNano()}
 	rec.Cwd, _ = os.Getwd()
 	if entries, err := os.ReadDir("."); err == nil {
 		for _, e := range entries {
@@ -121,9 +122,10 @@ func fakeAgy() {
 		}
 		_ = os.WriteFile(path, []byte(log), 0o600)
 	}
-	save := func() {
+	save := func() { // atomically, so a test that sees the file sees all of it
 		b, _ := json.Marshal(rec)
-		_ = os.WriteFile(sp.Record, b, 0o600)
+		_ = os.WriteFile(sp.Record+".tmp", b, 0o600)
+		_ = os.Rename(sp.Record+".tmp", sp.Record)
 	}
 	save()
 	time.Sleep(sp.Sleep)

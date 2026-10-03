@@ -76,3 +76,11 @@ func TestClassify(t *testing.T) {
 		})
 	}
 }
+
+// TestLeftoverProcesses: a call whose process group still had members after the kill is not normal, whatever agy printed.
+func TestLeftoverProcesses(t *testing.T) {
+	ex := execution{stdout: []byte(`{"status":"SUCCESS","response":"PONG"}`), leftover: true}
+	if res := classify(ex, "", 0, false); res.Class != ClassUnavailable || res.Reason != ReasonCrash || !strings.Contains(res.Detail, "still present") {
+		t.Errorf("%s/%s: %s", res.Class, res.Reason, res.Detail)
+	}
+}

@@ -48,9 +48,11 @@
 //
 // # Limits and isolation
 //
-// The call time limit is Config.TimeLimitFloor for a prompt up to 100 KiB and grows in proportion beyond that, up to Config.TimeLimitCeiling. agy runs in
-// its own process group and only that group is signalled: when the limit passes, and again once agy has exited, waiting up to two seconds for the group to be empty,
-// so a descendant does not outlive the call or its lock. At most one call runs on the host: Run holds an exclusive flock on Config.LockPath for the whole
+// The call time limit is Config.TimeLimitFloor for a prompt up to 100 KiB and grows in proportion beyond that, up to Config.TimeLimitCeiling. agy runs in a
+// process group of its own, led by a sentinel shell that nobody reaps until the last signal has been sent, so the group id cannot be taken by another process
+// meanwhile; only that group is signalled: when the limit passes, and again once agy has exited, after which the call waits up to two seconds for the group
+// to be empty. A group that is not empty then makes the call unavailable (crash), so a descendant neither outlives the call or its lock unnoticed nor lets
+// its answer count. At most one call runs on the host: Run holds an exclusive flock on Config.LockPath for the whole
 // call and waits for it for at most Config.LockWait; the file is never removed, because replacing it would let two holders in. agy gets an allowlisted
 // environment, by exact name (PATH, HOME, USER, LOGNAME, TZ, TERM, TMPDIR, the XDG_ directories, LANG, LANGUAGE, the LC_ categories, SSL_CERT_*, the proxy
 // variables) and the caller cannot add to it, so GH_TOKEN, GITHUB_TOKEN, SSH_AUTH_SOCK and every other credential stay behind while agy still finds its own
