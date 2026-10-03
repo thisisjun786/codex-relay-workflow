@@ -1,0 +1,592 @@
+{
+  "models": [
+    "gpt-5.5",
+    "gpt-5.4",
+    "gpt-5.4-mini",
+    "gpt-5.6-luna"
+  ],
+  "declaredModels": [
+    "gpt-5.6-luna"
+  ],
+  "build": [
+    {
+      "name": "native",
+      "ids": [
+        "gpt-5.5",
+        "gpt-5.4",
+        "gpt-5.4-mini",
+        "gpt-5.6-luna"
+      ],
+      "provider": null,
+      "expected": {
+        "state": "native-catalog",
+        "entries": [
+          {
+            "id": "gpt-5.5",
+            "source": "native",
+            "label": "gpt-5.5 (native)"
+          },
+          {
+            "id": "gpt-5.4",
+            "source": "native",
+            "label": "gpt-5.4 (native)"
+          },
+          {
+            "id": "gpt-5.4-mini",
+            "source": "native",
+            "label": "gpt-5.4-mini (native)"
+          },
+          {
+            "id": "gpt-5.6-luna",
+            "source": "native",
+            "label": "gpt-5.6-luna (native)"
+          }
+        ]
+      }
+    },
+    {
+      "name": "merged",
+      "ids": [
+        "gpt-5.5",
+        "gpt-5.4"
+      ],
+      "provider": {
+        "mode": "provider",
+        "ocxModels": [
+          "grok-4",
+          "claude-opus",
+          "gemini-3"
+        ]
+      },
+      "expected": {
+        "state": "ocx-active",
+        "entries": [
+          {
+            "id": "gpt-5.5",
+            "source": "native",
+            "label": "gpt-5.5 (native)"
+          },
+          {
+            "id": "gpt-5.4",
+            "source": "native",
+            "label": "gpt-5.4 (native)"
+          },
+          {
+            "id": "grok-4",
+            "source": "ocx",
+            "label": "grok-4 (ocx)"
+          },
+          {
+            "id": "claude-opus",
+            "source": "ocx",
+            "label": "claude-opus (ocx)"
+          },
+          {
+            "id": "gemini-3",
+            "source": "ocx",
+            "label": "gemini-3 (ocx)"
+          }
+        ]
+      }
+    },
+    {
+      "name": "dedup",
+      "ids": [
+        "gpt-5.5",
+        "gpt-5.4"
+      ],
+      "provider": {
+        "mode": "provider",
+        "ocxModels": [
+          "gpt-5.5",
+          "grok-4"
+        ]
+      },
+      "expected": {
+        "state": "ocx-active",
+        "entries": [
+          {
+            "id": "gpt-5.5",
+            "source": "native",
+            "label": "gpt-5.5 (native)"
+          },
+          {
+            "id": "gpt-5.4",
+            "source": "native",
+            "label": "gpt-5.4 (native)"
+          },
+          {
+            "id": "grok-4",
+            "source": "ocx",
+            "label": "grok-4 (ocx)"
+          }
+        ]
+      }
+    },
+    {
+      "name": "unsupported",
+      "ids": [
+        "gpt-5.5"
+      ],
+      "provider": {
+        "mode": "provider"
+      },
+      "expected": {
+        "state": "unsupported-ocx-catalog",
+        "entries": [
+          {
+            "id": "gpt-5.5",
+            "source": "native",
+            "label": "gpt-5.5 (native)"
+          }
+        ]
+      }
+    },
+    {
+      "name": "error",
+      "ids": [
+        "gpt-5.5"
+      ],
+      "provider": {
+        "mode": "error"
+      },
+      "expected": {
+        "state": "native-catalog",
+        "entries": [
+          {
+            "id": "gpt-5.5",
+            "source": "native",
+            "label": "gpt-5.5 (native)"
+          }
+        ]
+      }
+    },
+    {
+      "name": "missing",
+      "ids": null,
+      "provider": null,
+      "expected": {
+        "state": "unavailable",
+        "entries": []
+      }
+    },
+    {
+      "name": "routed-cache",
+      "ids": [
+        "gpt-5.5",
+        "kiro/claude-opus-4.6"
+      ],
+      "provider": null,
+      "expected": {
+        "state": "native-catalog",
+        "entries": [
+          {
+            "id": "gpt-5.5",
+            "source": "native",
+            "label": "gpt-5.5 (native)"
+          },
+          {
+            "id": "kiro/claude-opus-4.6",
+            "source": "ocx",
+            "label": "kiro/claude-opus-4.6 (ocx)"
+          }
+        ]
+      }
+    },
+    {
+      "name": "routed-merged",
+      "ids": [
+        "gpt-5.5"
+      ],
+      "provider": {
+        "mode": "provider",
+        "ocxModels": [
+          "openrouter/grok-4",
+          "anthropic/claude-opus",
+          "gpt-5.5"
+        ]
+      },
+      "expected": {
+        "state": "ocx-active",
+        "entries": [
+          {
+            "id": "gpt-5.5",
+            "source": "native",
+            "label": "gpt-5.5 (native)"
+          },
+          {
+            "id": "openrouter/grok-4",
+            "source": "ocx",
+            "label": "openrouter/grok-4 (ocx)"
+          },
+          {
+            "id": "anthropic/claude-opus",
+            "source": "ocx",
+            "label": "anthropic/claude-opus (ocx)"
+          }
+        ]
+      }
+    },
+    {
+      "name": "routed-active",
+      "ids": [
+        "gpt-5.5",
+        "anthropic/claude-sonnet-5"
+      ],
+      "provider": {
+        "mode": "provider"
+      },
+      "expected": {
+        "state": "ocx-active",
+        "entries": [
+          {
+            "id": "gpt-5.5",
+            "source": "native",
+            "label": "gpt-5.5 (native)"
+          },
+          {
+            "id": "anthropic/claude-sonnet-5",
+            "source": "ocx",
+            "label": "anthropic/claude-sonnet-5 (ocx)"
+          }
+        ]
+      }
+    },
+    {
+      "name": "empty",
+      "ids": [],
+      "provider": {
+        "mode": "provider",
+        "ocxModels": []
+      },
+      "expected": {
+        "state": "ocx-active",
+        "entries": []
+      }
+    },
+    {
+      "name": "native-duplicates",
+      "ids": [
+        "x",
+        "x"
+      ],
+      "provider": null,
+      "expected": {
+        "state": "native-catalog",
+        "entries": [
+          {
+            "id": "x",
+            "source": "native",
+            "label": "x (native)"
+          },
+          {
+            "id": "x",
+            "source": "native",
+            "label": "x (native)"
+          }
+        ]
+      }
+    },
+    {
+      "name": "whitespace",
+      "ids": [],
+      "provider": {
+        "mode": "provider",
+        "ocxModels": [
+          "",
+          " ",
+          " x ",
+          " x "
+        ]
+      },
+      "expected": {
+        "state": "ocx-active",
+        "entries": [
+          {
+            "id": " ",
+            "source": "ocx",
+            "label": "  (ocx)"
+          },
+          {
+            "id": " x ",
+            "source": "ocx",
+            "label": " x  (ocx)"
+          }
+        ]
+      }
+    }
+  ],
+  "native": [
+    {
+      "name": "mix",
+      "input": "{\"models\":[{\"id\":\"gpt-5.5\"},{\"id\":\"rogue-model\"},\"gpt-5.4\"]}",
+      "expected": [
+        {
+          "id": "gpt-5.5",
+          "source": "native",
+          "label": "gpt-5.5",
+          "reasoningEfforts": null
+        },
+        {
+          "id": "rogue-model",
+          "source": "native",
+          "label": "rogue-model",
+          "reasoningEfforts": null
+        },
+        {
+          "id": "gpt-5.4",
+          "source": "native",
+          "label": "gpt-5.4",
+          "reasoningEfforts": null
+        }
+      ]
+    },
+    {
+      "name": "slugs",
+      "input": "{\"models\":[{\"slug\":\"gpt-5.5\"},{\"slug\":\"gpt-5.4-mini\"},{\"slug\":\"gpt-5.3-codex\"},{\"slug\":\"openrouter/grok-4\"},{\"slug\":\"kiro/claude-opus-4.6\"}]}",
+      "expected": [
+        {
+          "id": "gpt-5.5",
+          "source": "native",
+          "label": "gpt-5.5",
+          "reasoningEfforts": null
+        },
+        {
+          "id": "gpt-5.4-mini",
+          "source": "native",
+          "label": "gpt-5.4-mini",
+          "reasoningEfforts": null
+        },
+        {
+          "id": "gpt-5.3-codex",
+          "source": "native",
+          "label": "gpt-5.3-codex",
+          "reasoningEfforts": null
+        },
+        {
+          "id": "openrouter/grok-4",
+          "source": "ocx",
+          "label": "openrouter/grok-4",
+          "reasoningEfforts": null
+        },
+        {
+          "id": "kiro/claude-opus-4.6",
+          "source": "ocx",
+          "label": "kiro/claude-opus-4.6",
+          "reasoningEfforts": null
+        }
+      ]
+    },
+    {
+      "name": "mixed-route",
+      "input": "{\"models\":[{\"id\":\"gpt-5.5\"},{\"id\":\"rogue-model\"},{\"slug\":\"kiro/claude\"}]}",
+      "expected": [
+        {
+          "id": "gpt-5.5",
+          "source": "native",
+          "label": "gpt-5.5",
+          "reasoningEfforts": null
+        },
+        {
+          "id": "rogue-model",
+          "source": "native",
+          "label": "rogue-model",
+          "reasoningEfforts": null
+        },
+        {
+          "id": "kiro/claude",
+          "source": "ocx",
+          "label": "kiro/claude",
+          "reasoningEfforts": null
+        }
+      ]
+    },
+    {
+      "name": "duplicates",
+      "input": "{\"models\":[{\"id\":\"gpt-5.5\"},{\"slug\":\"gpt-5.5\"},{\"slug\":\"gpt-5.4\"}]}",
+      "expected": [
+        {
+          "id": "gpt-5.5",
+          "source": "native",
+          "label": "gpt-5.5",
+          "reasoningEfforts": null
+        },
+        {
+          "id": "gpt-5.4",
+          "source": "native",
+          "label": "gpt-5.4",
+          "reasoningEfforts": null
+        }
+      ]
+    },
+    {
+      "name": "filter",
+      "input": "{\"models\":[{\"id\":\"x\",\"disabled\":true},{\"id\":\"x\"},{\"id\":\"h\",\"visibility\":\"hide\"},null,{},1,\" \",{\"id\":\"\",\"slug\":\"s\"},{\"id\":\" x \"},{\"id\":\"/route\"}]}",
+      "expected": [
+        {
+          "id": "x",
+          "source": "native",
+          "label": "x",
+          "reasoningEfforts": null
+        },
+        {
+          "id": "s",
+          "source": "native",
+          "label": "s",
+          "reasoningEfforts": null
+        },
+        {
+          "id": " x ",
+          "source": "native",
+          "label": " x ",
+          "reasoningEfforts": null
+        },
+        {
+          "id": "/route",
+          "source": "ocx",
+          "label": "/route",
+          "reasoningEfforts": null
+        }
+      ]
+    },
+    {
+      "name": "efforts",
+      "input": "[{\"id\":\"x\",\"reasoningEfforts\":[\"high\",\"\",{\"effort\":\"low\"},\"high\",null,{}]},{\"id\":\"y\",\"reasoningEfforts\":false,\"supported_reasoning_levels\":[\"low\"]},{\"id\":\"z\",\"reasoningEfforts\":null,\"supported_reasoning_levels\":[{\"effort\":\"high\"}]},{\"id\":\"empty\",\"reasoningEfforts\":[]}]",
+      "expected": [
+        {
+          "id": "x",
+          "source": "native",
+          "label": "x",
+          "reasoningEfforts": [
+            "high",
+            "low"
+          ]
+        },
+        {
+          "id": "y",
+          "source": "native",
+          "label": "y",
+          "reasoningEfforts": null
+        },
+        {
+          "id": "z",
+          "source": "native",
+          "label": "z",
+          "reasoningEfforts": [
+            "high"
+          ]
+        },
+        {
+          "id": "empty",
+          "source": "native",
+          "label": "empty",
+          "reasoningEfforts": []
+        }
+      ]
+    },
+    {
+      "name": "invalid-shape",
+      "input": "{}",
+      "expected": null
+    },
+    {
+      "name": "malformed",
+      "input": "not JSON",
+      "expected": null
+    },
+    {
+      "name": "escaped-visibility",
+      "input": "{\"models\":[{\"id\":\"hidden\",\"visibility\":\"hi\\u0064e\"},{\"id\":\"visible\",\"visibility\":\"shown\"}]}",
+      "expected": [
+        {
+          "id": "visible",
+          "source": "native",
+          "label": "visible",
+          "reasoningEfforts": null
+        }
+      ]
+    },
+    {
+      "name": "empty-array",
+      "input": "[]",
+      "expected": []
+    },
+    {
+      "name": "id-precedence",
+      "input": "[{\"id\":\" \",\"slug\":\"usable\"},{\"id\":\"chosen\",\"slug\":\"other\"},{\"id\":9,\"slug\":\"fallback\"}]",
+      "expected": [
+        {
+          "id": "chosen",
+          "source": "native",
+          "label": "chosen",
+          "reasoningEfforts": null
+        },
+        {
+          "id": "fallback",
+          "source": "native",
+          "label": "fallback",
+          "reasoningEfforts": null
+        }
+      ]
+    },
+    {
+      "name": "nullish-efforts",
+      "input": "[{\"id\":\"null\",\"reasoningEfforts\":null,\"supported_reasoning_levels\":[\"high\"]},{\"id\":\"false\",\"reasoningEfforts\":false,\"supported_reasoning_levels\":[\"low\"]},{\"id\":\"empty\",\"reasoningEfforts\":[]},{\"id\":\"unknown\"}]",
+      "expected": [
+        {
+          "id": "null",
+          "source": "native",
+          "label": "null",
+          "reasoningEfforts": [
+            "high"
+          ]
+        },
+        {
+          "id": "false",
+          "source": "native",
+          "label": "false",
+          "reasoningEfforts": null
+        },
+        {
+          "id": "empty",
+          "source": "native",
+          "label": "empty",
+          "reasoningEfforts": []
+        },
+        {
+          "id": "unknown",
+          "source": "native",
+          "label": "unknown",
+          "reasoningEfforts": null
+        }
+      ]
+    },
+    {
+      "name": "strict-flags",
+      "input": "[{\"id\":\"string-disabled\",\"disabled\":\"true\"},{\"id\":\"bool-hidden\",\"visibility\":true},{\"id\":\"empty\",\"reasoningEfforts\":[\"\",{\"effort\":\"\"},[\"high\"],{\"effort\":\"high\"},\" high \"]}]",
+      "expected": [
+        {
+          "id": "string-disabled",
+          "source": "native",
+          "label": "string-disabled",
+          "reasoningEfforts": null
+        },
+        {
+          "id": "bool-hidden",
+          "source": "native",
+          "label": "bool-hidden",
+          "reasoningEfforts": null
+        },
+        {
+          "id": "empty",
+          "source": "native",
+          "label": "empty",
+          "reasoningEfforts": [
+            "high",
+            " high "
+          ]
+        }
+      ]
+    }
+  ]
+}
