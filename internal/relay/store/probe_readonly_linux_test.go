@@ -158,6 +158,34 @@ func TestProbeJudgesWhatItDoesNotTry(t *testing.T) {
 		words := []string{"store_owned_by_other:", "write gate:", "no such file"}
 		both(t, dir, append([]string{judgedPrefix}, words...), append([]string{triedPrefix}, words...))
 	})
+	// ownership.Lock opens the gate with O_NOFOLLOW and trusts only a regular file this user owns
+	// that grants no group or other access, or sits in an owner-only directory: the judgement asks
+	// the same of the gate's metadata without opening it, so it never says true where the write
+	// probe's lock would refuse.
+	gateWords := func(prefix string) []string { return []string{prefix + "store_owned_by_other:", "write gate:"} }
+	t.Run("a write gate that is a symbolic link", func(t *testing.T) {
+		t.Parallel()
+		dir := closedStore(t)
+		gate := filepath.Join(dir, "write-gate.lock")
+		must(t, os.Rename(gate, filepath.Join(dir, "elsewhere.lock")))
+		must(t, os.Symlink("elsewhere.lock", gate))
+		both(t, dir, gateWords(judgedPrefix), gateWords(triedPrefix))
+	})
+	t.Run("a write gate that is a directory", func(t *testing.T) {
+		t.Parallel()
+		dir := closedStore(t)
+		gate := filepath.Join(dir, "write-gate.lock")
+		must(t, os.Remove(gate))
+		must(t, os.Mkdir(gate, 0o700))
+		both(t, dir, gateWords(judgedPrefix), gateWords(triedPrefix))
+	})
+	t.Run("a write gate open to the group in a directory open to it", func(t *testing.T) {
+		t.Parallel()
+		dir := closedStore(t)
+		must(t, os.Chmod(filepath.Join(dir, "write-gate.lock"), 0o666))
+		must(t, os.Chmod(dir, 0o770))
+		both(t, dir, gateWords(judgedPrefix), gateWords(triedPrefix))
+	})
 	t.Run("a stamp this runtime would not be admitted by, beside a healthy mirror and gate", func(t *testing.T) {
 		t.Parallel()
 		dir := closedStore(t)
@@ -204,6 +232,19 @@ func TestProbeJudgesWhatItDoesNotTry(t *testing.T) {
 			t.Errorf("the write probe meets the held gate: %+v", a)
 		}
 	})
+}
+
+// A gate another runtime created under umask 002 is 0664 inside an owner-only directory, which the
+// lock trusts (decision D3): the judgement and the write probe both call that store writable.
+func TestProbeTrustsAGateInAnOwnerOnlyDirectory(t *testing.T) {
+	t.Parallel()
+	dir := closedStore(t)
+	must(t, os.Chmod(filepath.Join(dir, "write-gate.lock"), 0o664))
+	for _, opts := range []ProbeOptions{{}, {Write: true}} {
+		if a := ProbeWith(t.Context(), StateSelection{Path: dir}, opts).Access; !a.DBWritable || a.Detail != "" {
+			t.Errorf("write probe %v: a 0664 gate in a 0700 directory: %+v", opts.Write, a)
+		}
+	}
 }
 
 // walStore is a store a live writer holds open whose newest commits exist ONLY in its write-ahead

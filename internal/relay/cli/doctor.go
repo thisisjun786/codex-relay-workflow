@@ -28,7 +28,7 @@ var doctorCommand = dispatch.Command{Name: "doctor", Exempt: true, ReportsMismat
 // by default, only reads: no write-gate.lock is opened, no ".probe-" file is created, no
 // read-write connection is made, and the store is read without creating SQLite sidecars wherever
 // SQLite allows (store.WithSidecarFreeReads). What it may write is then judged from permissions,
-// the ownership stamp and the write gate's presence. --probe-write measures it by writing instead
+// the ownership stamp and the write gate's own metadata. --probe-write measures it by writing instead
 // (store.ProbeOptions); writeProbe in the answer says which one the answer holds.
 func runDoctor(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
 	ctx = store.WithSidecarFreeReads(ctx)

@@ -293,7 +293,7 @@ live writer on that writer's `-wal` and `-shm` (`mode=ro`), and `immutable=1` wh
 holds a frame, since every commit is then in the database file. A log with frames and no index (an
 unclean shutdown) is read as it always was, which may build the index. A writer that starts between
 the sidecar examination and the connect can make an immutable read stale, the window the Stop path's
-read accepts. What it may write is judged, not tried: the write gate must exist, the durable stamp must
+read accepts. What it may write is judged, not tried: the write gate must be one the lock would take (judged from its own metadata, never opened), the durable stamp must
 name this runtime, and the file and its directory must permit writing; `writeProbe` says so. `--probe-write`
 measures it instead: a temporary file in the state directory, then the write gate shared and a write
 transaction begun and rolled back. That shared lock coexists with the shared lock every writer holds

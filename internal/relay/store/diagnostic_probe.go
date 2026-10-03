@@ -31,7 +31,7 @@ type ProbeOptions struct {
 	// Write measures writability by writing: a temporary file is created and removed in the state
 	// directory, and the write gate is taken shared for a write transaction that is begun and
 	// rolled back on a read-write connection. Without it the probe only reads: writability is
-	// judged from permissions, the ownership stamp and the gate's presence, no file is created
+	// judged from permissions, the ownership stamp and the gate's own metadata, no file is created
 	// and the write gate is never opened.
 	Write bool
 }
@@ -274,16 +274,44 @@ func probeRead(ctx context.Context, file *os.File, expected string, judgeStamp b
 	return stamp, true
 }
 
+// gateUsable is what ownership.Lock demands of write-gate.lock, judged from the file's own
+// metadata so the gate is never opened: a regular file (the lock is opened with O_NOFOLLOW) owned
+// by this user that either grants no group or other access or sits in an owner-only directory
+// (lockFileSafe, decision D3), and that this process may read and write. A gate that is absent
+// answers the Lstat error, which writeGateRefusal words as the plain unstamped store or the gate's
+// own.
+func gateUsable(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	owned := func(info os.FileInfo) bool {
+		st, ok := info.Sys().(*syscall.Stat_t)
+		return ok && int(st.Uid) == os.Geteuid()
+	}
+	if !info.Mode().IsRegular() || !owned(info) {
+		return fmt.Errorf("unsafe lock file %s: not a regular file owned by this user", path)
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		dir, err := os.Stat(ownership.LexicalDir(path))
+		if err != nil || !dir.IsDir() || !owned(dir) || dir.Mode().Perm()&0o022 != 0 {
+			return fmt.Errorf("unsafe lock file %s: grants group or other access and its directory is not owned by this user or is group/world writable", path)
+		}
+	}
+	return syscall.Access(path, 0x4|0x2)
+}
+
 // judgeWrite is what the default probe says in place of the write probe: whether this runtime
 // would be admitted to write the store, from what a read can see, with nothing written and no
-// lock taken. The write gate must exist (Lstat; its failure is worded as the gate's own, or as
-// the plain unstamped store), the durable stamp read on the read connection must name this
-// runtime, and the database file and its directory must permit writing. It does not see a gate
+// lock taken. The write gate must be one ownership.Lock would take (gateUsable; its failure is
+// worded as the gate's own, or as the plain unstamped store when it is absent), the durable stamp
+// read on the read connection must name this runtime, and the database file and its directory
+// must permit writing. It does not see a gate
 // another process holds, or a sandbox that denies writes without changing permissions: only the
 // write probe measures those.
 func judgeWrite(expected string, unstamped bool, stamp error, result *ProbeResult, notes *[]string) {
 	unavailable := func(why string) { *notes = append(*notes, "database write judged unavailable: "+why) }
-	if _, err := os.Lstat(filepath.Join(filepath.Dir(expected), "write-gate.lock")); err != nil {
+	if err := gateUsable(filepath.Join(filepath.Dir(expected), "write-gate.lock")); err != nil {
 		unavailable(writeGateRefusal(err, unstamped).Error())
 		return
 	}

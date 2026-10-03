@@ -45,7 +45,7 @@ Every command prints JSON. Exit 0 success, 2 a refusal carrying a machine-readab
 configured, and what connecting to it actually returned. Read it from the process that will run
 the work. By default `doctor` only reads: it creates no probe file, never opens `write-gate.lock` and
 makes no read-write connection, so "writable" is judged from file permissions, the ownership stamp
-and the gate's presence (`writeProbe.judgedBy` is `permission`). `doctor --probe-write` measures it
+and the write gate's own metadata (`writeProbe.judgedBy` is `permission`). `doctor --probe-write` measures it
 by writing a temporary file in the state directory and beginning and rolling back a write
 transaction under the write gate (`judgedBy` is `measured`); only that sees a sandbox that denies
 writes without changing permissions. What a given task can do is a property of that task's profile on that host, not a fixed

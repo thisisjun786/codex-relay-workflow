@@ -4808,8 +4808,9 @@ directory or a store this runtime may not write executes nothing, and its false 
 
 What the default says instead of measuring (`judgeWrite`, after the read leg succeeded and the closing relocation check): the
 directory is writable when `access(2)` grants `W_OK|X_OK`; the database is writable when this runtime is admitted (the
-ownership preflight, then the durable stamp read on the read connection with `stampOn`, one SELECT), `write-gate.lock` exists
-(`Lstat`), the file grants `W_OK` and the directory is writable. A missing gate is worded as before (`store_owned_by_other`: the plain
+ownership preflight, then the durable stamp read on the read connection with `stampOn`, one SELECT), `write-gate.lock` is one `ownership.Lock` would take
+(`gateUsable`, from its own metadata and never opened: a regular file this user owns that is closed to group and others or sits in an owner-only
+directory, readable and writable), the file grants `W_OK` and the directory is writable. A missing or unusable gate is worded as before (`store_owned_by_other`: the plain
 unstamped-store words, or the gate's own for a stamped store), under the prefix `database write judged unavailable:` where the
 measurement says `database write probe failed:`. It does not see a gate another process holds (the measurement says false with the
 gate's EWOULDBLOCK) or a sandbox that denies writes without changing permissions (Landlock does not hook `access(2)`); only `--probe-write`

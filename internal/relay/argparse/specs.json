@@ -527,7 +527,7 @@
   {"flag":"--expect-log","help":"the device:inode:name another participant reported for its write-ahead log"},
   {"flag":"--expect-nonce","help":"a nonce another participant wrote here"},
   {"flag":"--issue","help":"also answer whether this store holds an assignment for this issue identity"},
-  {"flag":"--probe-write","kind":"true","help":"measure writability by writing: create and remove a temporary file in the state directory and begin and roll back a write transaction under the write gate; without it writability is judged from permissions and the ownership stamp and nothing is written"}]},
+  {"flag":"--probe-write","kind":"true","help":"measure writability by writing: create and remove a temporary file in the state directory and begin and roll back a write transaction under the write gate; without it writability is judged from permissions, the ownership stamp and the write gate's own metadata, no file of its own is created and the write gate is never opened (a store left after an unclean shutdown is still read the plain way, which may create SQLite's -shm index)"}]},
 {"name":"store-identity"},
 {"name":"store-challenge","options":[
   {"flag":"--write","kind":"true"},
