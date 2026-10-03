@@ -12,6 +12,7 @@ import (
 )
 
 func Test28FrozenDetailedJSONParity(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ name, manifest string }{{"float-bytes", `{"entries":[{"path":"/a","sha256":"0000000000000000000000000000000000000000000000000000000000000000","bytes":1.0}]}`}, {"missing-digest", `{"entries":[{"path":"/a"}]}`}} {
 		t.Run(tc.name, func(t *testing.T) {
 			ref := t.TempDir()
@@ -37,6 +38,7 @@ func Test28FrozenDetailedJSONParity(t *testing.T) {
 }
 
 func Test28FrozenDetailedManifestStatParity(t *testing.T) {
+	t.Parallel()
 	ref := t.TempDir()
 	if err := os.Symlink("MANIFEST.json", filepath.Join(ref, "MANIFEST.json")); err != nil {
 		t.Fatal(err)

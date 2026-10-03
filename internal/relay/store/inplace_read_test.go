@@ -17,6 +17,7 @@ import (
 // while an empty WAL (or none) leaves every commit in D, read immutable, and both sidecars
 // present are read mode=ro.
 func TestInPlaceReadRefusesAWALWithoutItsIndex(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "relay.sqlite3")
@@ -118,6 +119,7 @@ func TestInPlaceReadRefusesAWALWithoutItsIndex(t *testing.T) {
 // file is no usable index, so frames beside it are refused as beside none; a -wal that is not a
 // regular file is not a header-only log; and a -wal that cannot be examined has no read either.
 func TestInPlaceReadRefusesAnUnusableIndexOrAnUnexaminableWAL(t *testing.T) {
+	t.Parallel()
 	frames := make([]byte, walHeaderSize+1)
 	for _, state := range []struct {
 		name  string
@@ -154,6 +156,7 @@ func TestInPlaceReadRefusesAnUnusableIndexOrAnUnexaminableWAL(t *testing.T) {
 // index is refused, and nothing is created beside the link. A connection SQLite made to a file
 // other than the one examined is refused.
 func TestInPlaceReadExaminesTheSidecarsOfTheFileALinkNames(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "relay.sqlite3")

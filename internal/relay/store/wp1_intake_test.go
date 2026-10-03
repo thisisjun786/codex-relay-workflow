@@ -12,11 +12,13 @@ import (
 
 // test_wp1_regressions.py receipt and scope classes, through the intake.
 func TestWP1_python_turn_identity_and_contradiction(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	payloadFor := func(f *intakeFixture, thread, turn string) receiptPayload {
 		return f.readyPayload(f.relationship, []string{f.artifact("out.txt", "payload")}, 1, TurnReference{ThreadID: thread, TurnID: turn, Status: "completed"})
 	}
 	t.Run("test_the_registered_child_on_its_assigned_turn_is_accepted", func(t *testing.T) {
+		t.Parallel()
 		f := newIntakeFixture(t)
 		stored, err := f.acceptPayload(payloadFor(f, fixtureChild, fixtureTurn))
 		if err != nil || stored.Duplicate {
@@ -24,6 +26,7 @@ func TestWP1_python_turn_identity_and_contradiction(t *testing.T) {
 		}
 	})
 	t.Run("test_an_unregistered_child_is_refused_even_when_it_is_self_consistent", func(t *testing.T) {
+		t.Parallel()
 		f := newIntakeFixture(t)
 		_, err := f.acceptPayload(payloadFor(f, "unregistered-task", fixtureTurn))
 		requireReason(t, err, ReasonUnassignedTurn)
@@ -32,6 +35,7 @@ func TestWP1_python_turn_identity_and_contradiction(t *testing.T) {
 		}
 	})
 	t.Run("test_an_unassigned_turn_is_refused_even_for_the_right_child", func(t *testing.T) {
+		t.Parallel()
 		f := newIntakeFixture(t)
 		_, err := f.acceptPayload(payloadFor(f, fixtureChild, "unassigned-turn"))
 		requireReason(t, err, ReasonUnassignedTurn)
@@ -40,6 +44,7 @@ func TestWP1_python_turn_identity_and_contradiction(t *testing.T) {
 		}
 	})
 	t.Run("test_a_daemon_observation_of_a_foreign_turn_is_refused", func(t *testing.T) {
+		t.Parallel()
 		f := newIntakeFixture(t)
 		_, err := f.intake.DaemonObservation(ctx, f.relationship.ID, TurnReference{ThreadID: fixtureChild, TurnID: "some-other-turn", Status: "failed"})
 		requireReason(t, err, ReasonUnassignedTurn)
@@ -47,6 +52,7 @@ func TestWP1_python_turn_identity_and_contradiction(t *testing.T) {
 	for _, status := range []string{"failed", "interrupted"} {
 		name := map[string]string{"failed": "test_a_ready_claim_on_a_failed_turn_is_refused_at_intake", "interrupted": "test_a_ready_claim_on_an_interrupted_turn_is_refused_at_intake"}[status]
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			f := newIntakeFixture(t)
 			payload := f.readyPayload(f.relationship, []string{f.artifact("out.txt", "payload")}, 1, assignedTurn(status))
 			_, err := f.acceptPayload(payload)
@@ -54,6 +60,7 @@ func TestWP1_python_turn_identity_and_contradiction(t *testing.T) {
 		})
 	}
 	t.Run("test_a_daemon_receipt_may_only_restate_what_it_observed", func(t *testing.T) {
+		t.Parallel()
 		f := newIntakeFixture(t)
 		payload := f.executionPayload(f.relationship, "failed", assignedTurn("completed"))
 		payload.Producer = ProducerDaemon
@@ -65,7 +72,9 @@ func TestWP1_python_turn_identity_and_contradiction(t *testing.T) {
 }
 
 func TestWP1_python_non_regular_and_frozen_artifacts(t *testing.T) {
+	t.Parallel()
 	t.Run("test_a_named_pipe_is_refused_promptly_rather_than_blocking", func(t *testing.T) {
+		t.Parallel()
 		f := newIntakeFixture(t)
 		fifo := filepath.Join(f.root, "artifact.fifo")
 		if err := syscall.Mkfifo(fifo, 0o600); err != nil {
@@ -82,11 +91,13 @@ func TestWP1_python_non_regular_and_frozen_artifacts(t *testing.T) {
 		}
 	})
 	t.Run("test_a_directory_is_refused", func(t *testing.T) {
+		t.Parallel()
 		f := newIntakeFixture(t)
 		_, _, _, err := HashArtifact(context.Background(), f.root, []string{f.root}, false)
 		requireReason(t, err, ReasonNotARegularFile)
 	})
 	t.Run("test_a_frozen_fallback_cannot_satisfy_an_enforced_minimum", func(t *testing.T) {
+		t.Parallel()
 		f := newIntakeFixture(t)
 		strict := f.intake
 		strict.Minimum = LeaseEnforced
@@ -106,6 +117,7 @@ func TestWP1_python_non_regular_and_frozen_artifacts(t *testing.T) {
 		}
 	})
 	t.Run("test_a_non_digest_blob_name_is_refused_before_any_path_is_built", func(t *testing.T) {
+		t.Parallel()
 		f := newIntakeFixture(t)
 		size := int64(1)
 		destination := filepath.Join(f.tmp, "evil")
@@ -116,10 +128,12 @@ func TestWP1_python_non_regular_and_frozen_artifacts(t *testing.T) {
 		}
 	})
 	t.Run("test_canonicalization_rejects_a_non_hex_digest", func(t *testing.T) {
+		t.Parallel()
 		_, err := ManifestRevision([]ManifestEntry{{Path: "/a", SHA256: strings.Repeat("z", 64)}})
 		requireReason(t, err, ReasonManifestUnverified)
 	})
 	t.Run("test_frozen_verification_checks_byte_counts", func(t *testing.T) {
+		t.Parallel()
 		f := newIntakeFixture(t)
 		entries, err := BuildManifest(context.Background(), []string{f.artifact("sized.txt", "exactly this")}, []string{f.root})
 		if err != nil {
@@ -140,6 +154,7 @@ func TestWP1_python_non_regular_and_frozen_artifacts(t *testing.T) {
 }
 
 func TestWP1_python_malformed_receipts(t *testing.T) {
+	t.Parallel()
 	mangled := func(t *testing.T, mutate func(map[string]any)) (*intakeFixture, []byte, TurnReference) {
 		f := newIntakeFixture(t)
 		payload := f.readyPayload(f.relationship, []string{f.artifact("out.txt", "payload")}, 1, assignedTurn("completed"))
@@ -158,12 +173,14 @@ func TestWP1_python_malformed_receipts(t *testing.T) {
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			f, payload, turn := mangled(t, tc.mutate)
 			_, err := f.accept(payload, turn)
 			requireReason(t, err, ReasonMalformedReceipt)
 		})
 	}
 	t.Run("test_a_malformed_receipt_is_recorded_as_a_refusal", func(t *testing.T) {
+		t.Parallel()
 		f, payload, turn := mangled(t, func(m map[string]any) { m["surprise"] = 1 })
 		if _, err := f.accept(payload, turn); err == nil {
 			t.Fatal("malformed receipt accepted")
@@ -174,6 +191,7 @@ func TestWP1_python_malformed_receipts(t *testing.T) {
 		}
 	})
 	t.Run("test_a_daemon_receipt_carrying_a_rerun_counter_is_refused", func(t *testing.T) {
+		t.Parallel()
 		f := newIntakeFixture(t)
 		payload := f.executionPayload(f.relationship, "failed", assignedTurn("failed"))
 		payload.Producer = ProducerDaemon
@@ -181,6 +199,7 @@ func TestWP1_python_malformed_receipts(t *testing.T) {
 		requireReason(t, err, ReasonOutcomeInconsistent)
 	})
 	t.Run("test_a_non_object_receipt_is_refused", func(t *testing.T) {
+		t.Parallel()
 		f := newIntakeFixture(t)
 		_, err := f.accept([]byte(`"not a receipt"`), assignedTurn("completed"))
 		requireReason(t, err, ReasonMalformedReceipt)
@@ -188,6 +207,7 @@ func TestWP1_python_malformed_receipts(t *testing.T) {
 }
 
 func TestWP1_python_active_turn_self_emission(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	staged := func(t *testing.T) (*intakeFixture, receiptPayload, StoredReceipt) {
 		t.Helper()
@@ -216,12 +236,14 @@ func TestWP1_python_active_turn_self_emission(t *testing.T) {
 		return row
 	}
 	t.Run("test_a_claim_from_a_live_turn_is_accepted_but_staged", func(t *testing.T) {
+		t.Parallel()
 		f, payload, stored := staged(t)
 		if stored.Stage != StageStaged || deliverable(t, f, payload.EventID) || stage(t, f, payload.EventID).TurnStatus != "inProgress" {
 			t.Fatalf("stored %+v", stored)
 		}
 	})
 	t.Run("test_a_receipt_from_a_completed_turn_is_final_immediately", func(t *testing.T) {
+		t.Parallel()
 		f := newIntakeFixture(t)
 		payload := f.readyPayload(f.relationship, []string{f.artifact("out.txt", "done")}, 1, assignedTurn("completed"))
 		stored, err := f.acceptPayload(payload)
@@ -230,6 +252,7 @@ func TestWP1_python_active_turn_self_emission(t *testing.T) {
 		}
 	})
 	t.Run("test_staging_does_not_relax_the_registry_identity_checks", func(t *testing.T) {
+		t.Parallel()
 		f := newIntakeFixture(t)
 		turn := TurnReference{ThreadID: fixtureChild, TurnID: "unassigned-turn", Status: "inProgress"}
 		payload := f.readyPayload(f.relationship, []string{f.artifact("out.txt", "payload")}, 1, turn)

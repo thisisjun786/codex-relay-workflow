@@ -13,6 +13,7 @@ func request(id, issue string) ManagedStartRequestsRow {
 }
 
 func TestManagedStart_reserves_one_pending_request_per_issue(t *testing.T) {
+	t.Parallel()
 	// Given: a request reserved for CRW-1 whatever state the row claimed.
 	s := recordStore(t)
 	ctx := context.Background()
@@ -34,6 +35,7 @@ func TestManagedStart_reserves_one_pending_request_per_issue(t *testing.T) {
 }
 
 func TestManagedStart_moves_only_from_the_expected_state_and_revision(t *testing.T) {
+	t.Parallel()
 	// Given: a reserved request.
 	s := recordStore(t)
 	ctx := context.Background()
@@ -66,6 +68,7 @@ func TestManagedStart_moves_only_from_the_expected_state_and_revision(t *testing
 }
 
 func TestManagedStart_release_leaves_a_tombstone_that_frees_the_issue(t *testing.T) {
+	t.Parallel()
 	// Given/When: a reserved request released at its revision.
 	s := recordStore(t)
 	ctx := context.Background()
@@ -85,6 +88,7 @@ func TestManagedStart_release_leaves_a_tombstone_that_frees_the_issue(t *testing
 }
 
 func TestReportingSessionAndTurnDeclaration_are_insert_once(t *testing.T) {
+	t.Parallel()
 	// Given: a reporting session and a declaration recorded.
 	s := recordStore(t)
 	ctx := context.Background()

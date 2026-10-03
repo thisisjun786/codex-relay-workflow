@@ -36,6 +36,7 @@ func duringRead(t *testing.T, act func(fd int, before *statSnapshot)) {
 }
 
 func TestAcceptReceipt_refuses_symlink_component_when_artifact_is_swapped_for_a_link(t *testing.T) {
+	t.Parallel()
 	// Given: a receipt built from a real artifact whose declared path is then a symlink to
 	// identical bytes, so only the pinned walk can tell the difference.
 	f := newIntakeFixture(t)
@@ -55,6 +56,7 @@ func TestAcceptReceipt_refuses_symlink_component_when_artifact_is_swapped_for_a_
 }
 
 func TestAcceptReceipt_refuses_symlink_component_when_an_ancestor_is_a_link(t *testing.T) {
+	t.Parallel()
 	// Given: the artifact's directory replaced by a symlink to a directory with the same bytes.
 	f := newIntakeFixture(t)
 	if err := os.Mkdir(filepath.Join(f.root, "sub"), 0o700); err != nil {
@@ -75,6 +77,7 @@ func TestAcceptReceipt_refuses_symlink_component_when_an_ancestor_is_a_link(t *t
 }
 
 func TestAcceptReceipt_refuses_path_relocated_when_ancestor_moves_during_the_read(t *testing.T) {
+	// Serial: assigns the package-level betweenPasses seam, which every other running test would reach.
 	// Given: an authorized artifact whose ancestor is renamed after the descriptor is pinned.
 	f := newIntakeFixture(t)
 	if err := os.Mkdir(filepath.Join(f.root, "sub"), 0o700); err != nil {
@@ -94,6 +97,7 @@ func TestAcceptReceipt_refuses_path_relocated_when_ancestor_moves_during_the_rea
 }
 
 func TestAcceptReceipt_refuses_artifact_mutated_when_bytes_change_between_passes(t *testing.T) {
+	// Serial: assigns the package-level betweenPasses seam, which every other running test would reach.
 	// Given: a same-size rewrite between the passes with the metadata snapshot re-baselined,
 	// the mapped-writer case where only the second hash can notice.
 	f := newIntakeFixture(t)
@@ -116,6 +120,7 @@ func TestAcceptReceipt_refuses_artifact_mutated_when_bytes_change_between_passes
 }
 
 func TestAcceptReceipt_refuses_artifact_mutated_when_metadata_changes_during_the_read(t *testing.T) {
+	// Serial: assigns the package-level betweenPasses seam, which every other running test would reach.
 	// Given: identical bytes on both passes, but the timestamps change between them.
 	f := newIntakeFixture(t)
 	path := f.artifact("out.txt", "payload")

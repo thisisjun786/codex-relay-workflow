@@ -9,6 +9,7 @@ import (
 )
 
 func TestCanonicalSocket_resolves_symlink_before_parent(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	actual := filepath.Join(root, "target", "child")
 	if err := os.MkdirAll(actual, 0700); err != nil {
@@ -30,6 +31,7 @@ func TestCanonicalSocket_resolves_symlink_before_parent(t *testing.T) {
 	}
 }
 func TestExpandUser_matches_python_home_and_named_user(t *testing.T) {
+	// Serial: sets process environment variables, which every other running test would see.
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	current, err := user.Current()
@@ -44,6 +46,7 @@ func TestExpandUser_matches_python_home_and_named_user(t *testing.T) {
 	}
 }
 func TestDiscoverStateDir_normalizes_legacy_spelling(t *testing.T) {
+	// Serial: sets process environment variables, which every other running test would see.
 	root := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", root)
 	for _, spelling := range []string{"./socket", "a//b"} {
@@ -62,6 +65,7 @@ func TestDiscoverStateDir_normalizes_legacy_spelling(t *testing.T) {
 	}
 }
 func TestOpen_refuses_symlink_into_live_state(t *testing.T) {
+	// Serial: sets process environment variables, which every other running test would see.
 	root := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", root)
 	t.Setenv("CRW_REFUSE_LIVE_STATE", "1")
@@ -79,6 +83,7 @@ func TestOpen_refuses_symlink_into_live_state(t *testing.T) {
 	}
 }
 func TestLocate_returns_empty_physical_fields_when_missing(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "relay.sqlite3")
 	s, err := fixtureOpen(context.Background(), path, "")
 	if err != nil {
@@ -94,6 +99,7 @@ func TestLocate_returns_empty_physical_fields_when_missing(t *testing.T) {
 	}
 }
 func TestOpen_seeds_identity_once_and_preserves_socket(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "relay.sqlite3")
 	ctx := context.Background()
 	s, err := fixtureOpen(ctx, path, "first.sock")
@@ -129,6 +135,7 @@ func TestOpen_seeds_identity_once_and_preserves_socket(t *testing.T) {
 	}
 }
 func TestBoundedDB_rw_refuses_missing_database(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "missing.sqlite3")
 	db, err := boundedDB(path, "rw", 0)
 	if err != nil {

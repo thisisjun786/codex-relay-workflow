@@ -9,6 +9,7 @@ import (
 // The hour count of one relationship's sends to one recipient is read from rows the relay
 // already writes: nothing is stored for it, so these rows are the whole fixture.
 func TestRelationshipSends_counts_one_relationship_to_one_recipient_in_one_window(t *testing.T) {
+	t.Parallel()
 	s := recordStore(t)
 	ctx := context.Background()
 	const window = 1_699_999_200.0

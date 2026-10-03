@@ -660,11 +660,13 @@ func Test26_CCT_2_one_bounded_write_then_an_answer(t *testing.T) {
 		}
 	})
 
-	// Reading the target twice with the clock advanced answers the same.
+	// Reading the target twice with the clock advanced answers the same. Since CRW-408 a holding
+	// turn silent for the holding limit reads as stalled, so the clock moves to just inside the
+	// limit here; the readings past it are pinned in progress_test.go.
 	w3 := newFx(t)
 	w3.claim(alpha, fxA, "head-a")
 	before := jsonValue(t, w3.must(w3.m.Target(w3.ctx, fxRepo, fxBase)))
-	w3.m.Now = func() string { return registry.ISO(time.Unix(1_700_000_000+1_000_000, 0)) }
+	w3.m.Now = func() string { return registry.ISO(time.Unix(1_700_000_000+HoldingLimitSeconds-1, 0)) }
 	w3.r.Now = w3.m.Now
 	if after := jsonValue(t, w3.must(w3.m.Target(w3.ctx, fxRepo, fxBase))); !reflect.DeepEqual(before, after) {
 		t.Fatalf("target moved with the clock:\n%v\n%v", before, after)
