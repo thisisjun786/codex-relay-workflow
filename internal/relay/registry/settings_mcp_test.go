@@ -75,6 +75,33 @@ func TestMismatchesCompareTheMCPExpectationOnlyWhenTheRowCarriesOne(t *testing.T
 	}
 }
 
+// A later record of a child's settings (a host observation after a transition states no profile) keeps the
+// profile the child was recorded under, and a record that states one replaces it.
+func TestRecordingSettingsAgainKeepsTheMCPProfileUnlessOneIsStated(t *testing.T) {
+	x := multiPairRun(t)
+	record := func(role, profile string) any {
+		t.Helper()
+		settings := settingsFixture(x.root).Set("model", multiSonnet).Set("reasoningEffort", "xhigh")
+		if profile != "" {
+			settings = settings.Set("mcpProfile", profile)
+		}
+		if _, err := x.r.RecordSettings(ctx(), "child-profiled", settings, "managed_start", role, Citation{}); err != nil {
+			t.Fatal(err)
+		}
+		stored, _ := x.stored("child-profiled").(contract.OrderedObject)
+		return stored.Get("mcpProfile")
+	}
+	if got := record("child", "ui-qa"); got != "ui-qa" {
+		t.Fatalf("recorded profile = %v", got)
+	}
+	if got := record("", ""); got != "ui-qa" {
+		t.Fatalf("a record that states none dropped the profile: %v", got)
+	}
+	if got := record("", "minimal"); got != "minimal" {
+		t.Fatalf("a stated profile did not replace the recorded one: %v", got)
+	}
+}
+
 // Something was transmitted for an MCP finding, so it is not renamed as a difference nothing
 // could have made agree.
 func TestASettingsFreeRefusalKeepsTheCodeOfAnMCPFinding(t *testing.T) {

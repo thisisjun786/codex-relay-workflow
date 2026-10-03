@@ -35,6 +35,7 @@ type mcpRPC struct {
 	configured []string
 	applied    bool
 	paged      bool
+	failRead   bool
 	model      string
 }
 
@@ -59,6 +60,9 @@ func (r *mcpRPC) Call(_ context.Context, method string, params map[string]any) (
 	case "turn/start":
 		answer = map[string]any{"turn": map[string]any{"id": "turn-1"}}
 	case "config/read":
+		if r.failRead {
+			return nil, fmt.Errorf("config/read: the host is busy")
+		}
 		servers := map[string]any{}
 		for _, name := range r.configured {
 			servers[name] = map[string]any{"enabled": true}
@@ -270,6 +274,20 @@ func TestAStoredMCPServersKeyIsNeverTakenForTheSendsExpectation(t *testing.T) {
 				t.Fatalf("receipt=%v config=%v", receipt, resumeConfig(rpc))
 			}
 		})
+	}
+}
+
+// A lost read of the profile is no effect: the send stays retryable under its own request id.
+func TestALostProfileReadLeavesTheSendRetryable(t *testing.T) {
+	rpc := &mcpRPC{configured: []string{"node_repl", "oracle"}, applied: true, failRead: true}
+	a := mcpAdapter(t, rpc, relayPolicy(t))
+	receipt := sendRecord(t, a, "send-lost-read", childRecord(false, "ui-qa"))
+	if receipt["status"] != "not_attempted" || receipt["retrySafe"] != true || rpc.count("thread/resume") != 0 {
+		t.Fatalf("receipt=%v calls=%v", receipt, rpc.calls)
+	}
+	rpc.failRead = false
+	if again := sendRecord(t, a, "send-lost-read", childRecord(false, "ui-qa")); again["status"] != "accepted" {
+		t.Fatalf("the same request id could not be sent again: %v", again)
 	}
 }
 

@@ -195,7 +195,8 @@ resolves the profile against the host on each such send, on a copy of the record
 `mcpServers` key, and compares the thread's `mcpServerStatus/list` afterwards: a difference withholds the
 message as `settings_not_preserved` on the field `mcpServers` (the code a settings-free resume keeps,
 because something was sent) and an unreadable list is `setting_unobservable`. A profile the host cannot
-resolve is refused before anything is sent, as `not_attempted` and retry-safe. A resume of a thread the host
+resolve, or whose reads are lost, is refused before anything is sent, as `not_attempted` and retry-safe. A later
+record of the child's settings that states no profile keeps the recorded one. A resume of a thread the host
 already has loaded ignores the overrides.
 
 Not covered yet. `create_worktree_thread` sends no overrides, and `create_thread` has no input to name a

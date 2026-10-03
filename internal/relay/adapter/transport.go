@@ -307,11 +307,17 @@ func (a *Adapter) guardedSend(ctx context.Context, requestID, thread, message st
 		}
 		send, expectedMCP, err := a.withMCP(ctx, settings)
 		if err = awaited(err); err != nil {
+			// Resolving a profile only reads the host, so a refusal or a lost read leaves nothing sent and the
+			// request retryable; a caller that has gone, or the run's own bound, is settled as before.
 			var refused *execution.Refusal
-			if !errors.As(err, &refused) {
+			code, message := "mcp_profile_unresolved", errorText(err)
+			switch {
+			case claimed != nil, errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 				return err
+			case errors.As(err, &refused):
+				code, message = refused.Code, refused.Detail
 			}
-			refuse("config/read", contract.OrderedObject{{Key: "code", Value: refused.Code}, {Key: "message", Value: refused.Detail}}, true)
+			refuse("config/read", contract.OrderedObject{{Key: "code", Value: code}, {Key: "message", Value: message}}, true)
 			return nil
 		}
 		params := plain(send.ResumeParams(thread)).(map[string]any)
