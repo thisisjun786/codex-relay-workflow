@@ -73,9 +73,9 @@ const Interrupted = 130
 //
 // The first interrupt of a crw process only cancels its run (cmd/crw serve), where Node's default
 // action ends the oracle at once, even while it waits for its input: so Hook answers Interrupted as
-// soon as ctx is done, whatever the run is waiting for. The run itself is not stopped: crw exits with
-// the status Hook returns, which ends what is left of it, and a caller that outlives Hook must not
-// rely on that.
+// soon as ctx is done, whatever the run is waiting for. A read that is still blocked is not stopped
+// (crw exits with the status Hook returns, which ends it; a caller that outlives Hook leaves that
+// goroutine to wait for its input), but what it reads afterwards is neither recorded, run nor written.
 //
 // Intentional change: arguments that name no leg of the table (an unknown leg, an event that is not the
 // leg's, no --leg) release the hook in silence, without reading its input and without a record. The
@@ -88,7 +88,7 @@ func Hook(ctx context.Context, args []string, in io.Reader, stdout, stderr io.Wr
 		return 0
 	}
 	done := make(chan int, 1)
-	go func() { done <- dispatch(leg, in, stdout, stderr, env) }()
+	go func() { done <- dispatch(ctx, leg, in, stdout, stderr, env) }()
 	select {
 	case code := <-done:
 		return code
@@ -102,8 +102,9 @@ func Hook(ctx context.Context, args []string, in io.Reader, stdout, stderr io.Wr
 	}
 }
 
-// dispatch runs one leg through the stages of Hook.
-func dispatch(leg Leg, in io.Reader, stdout, stderr io.Writer, env host.LookupEnv) (code int) {
+// dispatch runs one leg through the stages of Hook. Input that arrives after ctx is done finds a Hook
+// that has already answered Interrupted, so nothing is recorded, run or written for it.
+func dispatch(ctx context.Context, leg Leg, in io.Reader, stdout, stderr io.Writer, env host.LookupEnv) (code int) {
 	defer func() {
 		if p := recover(); p != nil {
 			fmt.Fprintf(stderr, "crw cli failed: %v\n", p)
@@ -111,6 +112,9 @@ func dispatch(leg Leg, in io.Reader, stdout, stderr io.Writer, env host.LookupEn
 		}
 	}()
 	raw, overflow := ReadStdin(in)
+	if ctx.Err() != nil {
+		return Interrupted
+	}
 	if overflow {
 		if out := OversizedHookOutput(leg.Slug); out != "" {
 			io.WriteString(stdout, out)
