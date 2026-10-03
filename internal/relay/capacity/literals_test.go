@@ -16,7 +16,7 @@ func Test27_region_settle_bad_invocation_is_spelled_as_python_spells_it(t *testi
 	if !errors.As(settleConditionRefusal(), &payload) {
 		t.Fatal("not a payload exit")
 	}
-	if payload.Code != contract.ExitRefused || get(payload.Payload, "reason") != "bad_invocation" || get(payload.Payload, "ok") != false {
+	if payload.Code != contract.ExitRefused || payload.Payload.Get("reason") != "bad_invocation" || payload.Payload.Get("ok") != false {
 		t.Fatalf("%v", payload)
 	}
 }

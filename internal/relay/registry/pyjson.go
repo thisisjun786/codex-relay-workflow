@@ -24,25 +24,6 @@ func decodeJSON(data []byte) (any, error) {
 	return value, err
 }
 
-func setField(object contract.OrderedObject, key string, value any) contract.OrderedObject {
-	for i := range object {
-		if object[i].Key == key {
-			object[i].Value = value
-			return object
-		}
-	}
-	return append(object, contract.Field{Key: key, Value: value})
-}
-
-func getField(object contract.OrderedObject, key string) (any, bool) {
-	for _, field := range object {
-		if field.Key == key {
-			return field.Value, true
-		}
-	}
-	return nil, false
-}
-
 func dropField(object contract.OrderedObject, key string) contract.OrderedObject {
 	out := contract.OrderedObject{}
 	for _, field := range object {

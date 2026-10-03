@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 	py "github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -40,18 +41,10 @@ func packetKind(kind string) string {
 	}
 	return "notification"
 }
-func shellQuote(s string) string {
-	if s != "" && strings.IndexFunc(s, func(r rune) bool {
-		return !strings.ContainsRune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_@%+=:,./-", r)
-	}) < 0 {
-		return s
-	}
-	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
-}
 func command(parts ...string) string {
 	out := make([]string, len(parts))
 	for i, p := range parts {
-		out[i] = shellQuote(p)
+		out[i] = quote.Shell(p)
 	}
 	return strings.Join(out, " ")
 }

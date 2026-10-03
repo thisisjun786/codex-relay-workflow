@@ -23,7 +23,7 @@ func TestLookupReceiptAnswersAsTheStopHookAlwaysHas(t *testing.T) {
 	}
 
 	receipt, readable, err := LookupReceipt(ctx, path, nil, "rel-none", "session", "turn", nil, nil)
-	if err != nil || !readable || get(receipt, "evidence") != "relationship_absent" || get(receipt, "atCurrentHead") != false {
+	if err != nil || !readable || receipt.Get("evidence") != "relationship_absent" || receipt.Get("atCurrentHead") != false {
 		t.Errorf("a relationship the store does not hold: %v readable=%v err=%v", receipt, readable, err)
 	}
 	receipt, readable, err = LookupReceipt(ctx, path, nil, "rel-\xff", "session", "turn", nil, nil)
@@ -37,7 +37,7 @@ func TestLookupReceiptAnswersAsTheStopHookAlwaysHas(t *testing.T) {
 		t.Errorf("an unnamed session: %v readable=%v err=%v asked=%v, want readable, no answer and no store asked for", receipt, readable, err, asked)
 	}
 	receipt, readable, err = LookupReceipt(ctx, "", resolver, "rel-none", "session", "turn", nil, nil)
-	if err != nil || !readable || get(receipt, "evidence") != "relationship_absent" || !asked {
+	if err != nil || !readable || receipt.Get("evidence") != "relationship_absent" || !asked {
 		t.Errorf("the resolver's store: %v readable=%v err=%v asked=%v", receipt, readable, err, asked)
 	}
 	receipt, readable, err = LookupReceipt(ctx, "", nil, "rel-none", "session", "turn", nil, nil)

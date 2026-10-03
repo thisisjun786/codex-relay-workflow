@@ -6,6 +6,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
@@ -123,12 +124,12 @@ func (h *hl) rrState() Obj {
 	switch {
 	case r.Status == "paused":
 		state = "paused"
-	case slices.Contains(ambiguousEvidence, str(head, "evidence")):
+	case slices.Contains(ambiguousEvidence, pyjson.Text(head.Get("evidence"))):
 		state = "ambiguous"
 	case verdict != nil && verdict.S("verdict") == "verified" && !current:
 		state = "re_review_needed"
 	case mark != nil:
-		state = str(mark, "mark")
+		state = pyjson.Text(mark.Get("mark"))
 	case verdict != nil && verdict.S("verdict") == "verified":
 		state = "verified"
 	case headID != nil && previous != nil:
@@ -199,25 +200,25 @@ func Test21_RRD01_a_criteria_edit_after_a_verified_verdict_needs_a_re_review(t *
 	t.Run("managed verified then edit", func(t *testing.T) {
 		rrMirror(t, "ReReviewIsReachable.test_the_starting_point_is_the_state_the_view_already_reports", func(h *hl) {
 			h.managedVerified()
-			h.eq(str(h.rrState(), "state"))
+			h.eq(pyjson.Text(h.rrState().Get("state")))
 			h.editCriteria()
 			record := h.rrState()
-			h.eq(str(record, "state"))
-			h.eq(str(record, "nextExpectedAction"))
+			h.eq(pyjson.Text(record.Get("state")))
+			h.eq(pyjson.Text(record.Get("nextExpectedAction")))
 		})
 	})
 	t.Run("legacy verdict then first registration", func(t *testing.T) {
 		rrMirror(t, "ReviewClaimedBeforeTheEdit.test_registering_criteria_after_a_legacy_verdict_opens_a_re_review", func(h *hl) {
 			event := h.claimed(false)
 			h.mustRule(event, "verified", "v1", nil, nil, nil)
-			h.eq(str(h.rrState(), "state"))
+			h.eq(pyjson.Text(h.rrState().Get("state")))
 			h.registerCriteria(rrSet)
-			h.eq(str(h.rrState(), "state"))
+			h.eq(pyjson.Text(h.rrState().Get("state")))
 			h.eq(h.claim(event, "re-review-turn"))
 			h.refusal(h.rule(event, "verified", "v2", rrPassing, nil, nil))
 			record := h.mustRule(event, "verified", "v2", rrPassing, nil, h.setDigest())
 			h.eq(replayed(record))
-			h.eq(str(h.rrState(), "state"))
+			h.eq(pyjson.Text(h.rrState().Get("state")))
 		})
 	})
 }
@@ -266,7 +267,7 @@ func Test21_RRD02_a_re_claim_rebinds_once_and_only_once(t *testing.T) {
 			h.registerCriteria(rrSet)
 			record := h.mustRule(event, "verified", "v2", rrPassing, nil, h.setDigest())
 			h.eq(replayed(record))
-			h.eq(str(h.rrState(), "state"))
+			h.eq(pyjson.Text(h.rrState().Get("state")))
 			h.eq(h.boundDigest(event))
 			h.eq(h.claim(event, "fifth-turn"))
 		})
@@ -293,7 +294,7 @@ func Test21_RRD03_a_re_review_is_decided_not_replayed(t *testing.T) {
 		h.editCriteria()
 		h.reReview(event, "verified", nil)
 		record := h.rrState()
-		h.eq(str(record, "state"))
+		h.eq(pyjson.Text(record.Get("state")))
 		h.eq(field(sub(record, "criteria"), "current"))
 		h.eq(field(sub(record, "criteria"), "reviewedSetDigest"))
 	})
@@ -335,12 +336,12 @@ func Test21_RRD05_an_earlier_merge_mark_is_state_again_once_the_re_review_lands(
 	rrMirror(t, "ReReviewIsReachable.test_an_earlier_merge_mark_is_state_again_once_the_re_review_lands", func(h *hl) {
 		event := h.managedVerified()
 		h.rrMark(event, "merged as abc1234", parent)
-		h.eq(str(h.rrState(), "state"))
+		h.eq(pyjson.Text(h.rrState().Get("state")))
 		h.editCriteria()
-		h.eq(str(h.rrState(), "state"))
+		h.eq(pyjson.Text(h.rrState().Get("state")))
 		h.reReview(event, "verified", nil)
 		record := h.rrState()
-		h.eq(str(record, "state"))
+		h.eq(pyjson.Text(record.Get("state")))
 		h.eq(field(sub(record, "mark"), "eventId"))
 	})
 }
@@ -357,7 +358,7 @@ func Test21_RRD06_a_review_claimed_before_the_edit_finishes_once_claimed_again(t
 		h.eq(h.claim(event, "re-review-turn"))
 		record := h.mustRule(event, "verified", "v1", rrPassing, nil, nil)
 		h.eq(replayed(record))
-		h.eq(str(h.rrState(), "state"))
+		h.eq(pyjson.Text(h.rrState().Get("state")))
 	})
 	rrMirror(t, "ReviewClaimedBeforeTheEdit.test_an_unruled_re_review_needs_no_stated_digest", func(h *hl) {
 		event := h.claimed(true)
@@ -377,7 +378,7 @@ func Test21_RRD07_a_recorded_verdict_or_old_findings_cannot_certify_the_new_set(
 		h.claim(event, "re-review-turn")
 		h.refusal(h.rule(event, "verified", "v1", rrPassing, nil, nil))
 		h.refusal(h.rule(event, "verified", "v1", rrPassing, nil, old))
-		h.eq(str(h.rrState(), "state"))
+		h.eq(pyjson.Text(h.rrState().Get("state")))
 	})
 	rrMirror(t, "ProtectionsThatMustSurvive.test_findings_made_against_the_old_wording_are_still_refused", func(h *hl) {
 		event := h.managedVerified()
@@ -393,8 +394,8 @@ func Test21_RRD08_a_re_review_cannot_replace_a_certification_with_no_state(t *te
 			h.editCriteria()
 			h.claim(event, "re-review-turn")
 			h.refusal(h.rule(event, "unverified", "v2", rrFinding("unverified", "could not reach it"), nil, h.setDigest()))
-			h.eq(str(h.rrState(), "state"))
-			h.eq(str(h.rrState(), "nextExpectedAction"))
+			h.eq(pyjson.Text(h.rrState().Get("state")))
+			h.eq(pyjson.Text(h.rrState().Get("nextExpectedAction")))
 		})
 	})
 	t.Run("aborted", func(t *testing.T) {
@@ -403,7 +404,7 @@ func Test21_RRD08_a_re_review_cannot_replace_a_certification_with_no_state(t *te
 			h.editCriteria()
 			h.claim(event, "re-review-turn")
 			h.refusal(h.rule(event, "aborted", "v2", nil, "stopping", h.setDigest()))
-			h.eq(str(h.rrState(), "state"))
+			h.eq(pyjson.Text(h.rrState().Get("state")))
 		})
 	})
 	t.Run("first ruling unverified", func(t *testing.T) {

@@ -13,33 +13,6 @@ type Obj = contract.OrderedObject
 // F is one field of an Obj.
 type F = contract.Field
 
-// get returns the value of key in o, and whether it was present.
-func get(o Obj, key string) (any, bool) {
-	for _, f := range o {
-		if f.Key == key {
-			return f.Value, true
-		}
-	}
-	return nil, false
-}
-
-// set replaces key in o, or appends it, as a Python dict assignment does.
-func set(o Obj, key string, value any) Obj {
-	for i, f := range o {
-		if f.Key == key {
-			o[i].Value = value
-			return o
-		}
-	}
-	return append(o, F{Key: key, Value: value})
-}
-
-func str(o Obj, key string) string {
-	v, _ := get(o, key)
-	s, _ := v.(string)
-	return s
-}
-
 // dumps is Python json.dumps(value) with the default separators and ensure_ascii.
 func dumps(value any) string { return pyjson.Dumps(value, pyjson.Options{}) }
 

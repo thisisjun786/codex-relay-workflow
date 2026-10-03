@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
@@ -110,15 +111,15 @@ func Test_round3_a_send_receipt_reports_the_requests_its_dispatch_met(t *testing
 	if err != nil || receipt["status"] != "accepted" {
 		t.Fatalf("receipt=%v err=%v", receipt, err)
 	}
-	got := object(jsonShaped(t, receipt["approvalRequests"]))
+	got := pyjson.Map(jsonShaped(t, receipt["approvalRequests"]))
 	if got == nil {
 		t.Fatalf("receipt has no approvalRequests: %v", receipt)
 	}
 	for _, entry := range got["thisThread"].([]any) {
-		if _, ok := object(entry)["at"].(float64); !ok {
+		if _, ok := pyjson.Map(entry)["at"].(float64); !ok {
 			t.Fatalf("entry has no numeric at: %v", entry)
 		}
-		delete(object(entry), "at")
+		delete(pyjson.Map(entry), "at")
 	}
 	sameJSON(t, "approvalRequests", got)
 }
@@ -152,7 +153,7 @@ func Test_round3_a_worktree_receipt_carries_its_fields(t *testing.T) {
 		t.Fatal(err)
 	}
 	sameJSON(t, "validation failure keys", receiptKeys(failed))
-	association := object(failed["desktopProjectAssociation"])
+	association := pyjson.Map(failed["desktopProjectAssociation"])
 	if len(association) != 2 || association["status"] != "unverified" || association["sourceRepository"] != taken.Source {
 		t.Fatalf("desktopProjectAssociation=%v", association)
 	}

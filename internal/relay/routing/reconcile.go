@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"slices"
 )
 
@@ -28,7 +29,7 @@ func (r *Router) redecide(ctx context.Context, product string) ([]any, error) {
 			return nil, err
 		}
 		for _, v := range list(page["routes"]) {
-			answer, err := r.again(ctx, object(v), registry, bindings)
+			answer, err := r.again(ctx, pyjson.Map(v), registry, bindings)
 			if err != nil {
 				return nil, err
 			}
@@ -43,10 +44,10 @@ func (r *Router) redecide(ctx context.Context, product string) ([]any, error) {
 	}
 }
 func (r *Router) again(ctx context.Context, route, registry Object, bindings []Object) (Object, error) {
-	if slices.Contains([]string{"project_proposal", "completion_mismatch", "completion_unverified"}, text(route["disposition"])) {
+	if slices.Contains([]string{"project_proposal", "completion_mismatch", "completion_unverified"}, pyjson.Text(route["disposition"])) {
 		return nil, nil
 	}
-	id := text(route["fault_id"])
+	id := pyjson.Text(route["fault_id"])
 	var fault Object
 	var err error
 	if route["stage"] == "filed" {
@@ -65,8 +66,8 @@ func (r *Router) again(ctx context.Context, route, registry Object, bindings []O
 	if len(stored) == 0 {
 		return nil, nil
 	}
-	incident := object(stored[len(stored)-1])
-	run, err := r.RunIssue(ctx, object(incident["context"])["run"])
+	incident := pyjson.Map(stored[len(stored)-1])
+	run, err := r.RunIssue(ctx, pyjson.Map(incident["context"])["run"])
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +76,7 @@ func (r *Router) again(ctx context.Context, route, registry Object, bindings []O
 	if decision["disposition"] == "attach_current" {
 		return nil, nil
 	}
-	current := object(route["target"])
+	current := pyjson.Map(route["target"])
 	destination := target(decision, registry, incident, Obligations(decision, route, current["cause"], IssueLabels(incident)), current["cause"], current["unverifiedCause"])
 	comparable := func(t Object, disposition any) []any {
 		team := t["team"]
@@ -84,7 +85,7 @@ func (r *Router) again(ctx context.Context, route, registry Object, bindings []O
 		}
 		related := []string{}
 		for _, v := range list(t["relate"]) {
-			related = append(related, text(v))
+			related = append(related, pyjson.Text(v))
 		}
 		slices.Sort(related)
 		return []any{t["project"], t["owner"], t["hold"], team, disposition, related}
@@ -92,7 +93,7 @@ func (r *Router) again(ctx context.Context, route, registry Object, bindings []O
 	if equal(comparable(destination, decision["disposition"]), comparable(current, route["disposition"])) {
 		return nil, nil
 	}
-	place := scope(text(route["workspace"]), decision["project"])
+	place := scope(pyjson.Text(route["workspace"]), decision["project"])
 	unplaced := false
 	if decision["project"] == nil {
 		fault, err = r.Ledger.Get(ctx, id)
@@ -103,12 +104,12 @@ func (r *Router) again(ctx context.Context, route, registry Object, bindings []O
 	}
 	err = r.Store.Compose(ctx, func(ctx context.Context, _ *sql.Conn) error {
 		if decision["owner"] != nil {
-			if _, err := r.Ledger.Adopt(ctx, id, text(decision["owner"]), place); err != nil {
+			if _, err := r.Ledger.Adopt(ctx, id, pyjson.Text(decision["owner"]), place); err != nil {
 				return err
 			}
 		}
 		if decision["project"] != nil {
-			if _, err := r.Ledger.SetWorkspaceTarget(ctx, text(registry["product"]), text(route["workspace"]), text(decision["project"]), text(destination["team"]), text(decision["project"])); err != nil {
+			if _, err := r.Ledger.SetWorkspaceTarget(ctx, pyjson.Text(registry["product"]), pyjson.Text(route["workspace"]), pyjson.Text(decision["project"]), pyjson.Text(destination["team"]), pyjson.Text(decision["project"])); err != nil {
 				return err
 			}
 		}
@@ -146,9 +147,9 @@ func (r *Router) reconcileRoute(ctx context.Context, route Object) (Object, erro
 		bound, err := r.bindConfirmed(ctx, route)
 		return Object{"queued": []any{}, "bound": bound}, err
 	}
-	for _, v := range list(object(route["target"])["obligations"]) {
-		if object(v)["state"] == "open" {
-			queued, err := r.discharge(ctx, text(route["fault_id"]))
+	for _, v := range list(pyjson.Map(route["target"])["obligations"]) {
+		if pyjson.Map(v)["state"] == "open" {
+			queued, err := r.discharge(ctx, pyjson.Text(route["fault_id"]))
 			return Object{"queued": queued, "bound": []any{}}, err
 		}
 	}
@@ -171,7 +172,7 @@ func (r *Router) reconcile(ctx context.Context, product any, limit, after any) (
 		}
 		for _, v := range list(page["routes"]) {
 			seen++
-			done, err := r.reconcileRoute(ctx, object(v))
+			done, err := r.reconcileRoute(ctx, pyjson.Map(v))
 			if err != nil {
 				return nil, err
 			}
@@ -187,7 +188,7 @@ func (r *Router) reconcile(ctx context.Context, product any, limit, after any) (
 }
 
 func digestEntry(route, now Object) Object {
-	t := object(route["target"])
+	t := pyjson.Map(route["target"])
 	return Object{"faultId": route["fault_id"], "product": route["product_key"], "disposition": route["disposition"], "stage": route["stage"], "state": now["state"], "severity": now["severity"], "claimedSeverity": now["claimedSeverity"], "occurrences": now["occurrenceCount"], "issue": now["externalRef"], "project": t["project"], "owner": t["owner"], "hold": t["hold"], "unverifiedCause": t["unverifiedCause"], "origin": route["origin"], "detail": route["detail"]}
 }
 func severe(s Object) bool {
@@ -218,14 +219,14 @@ func (r *Router) Digest(ctx context.Context, limit, after any) (Object, error) {
 		return nil, err
 	}
 	for _, v := range proposals {
-		route := object(v)
+		route := pyjson.Map(v)
 		done, err := r.reconcileRoute(ctx, route)
 		if err != nil {
 			return nil, err
 		}
 		made = append(made, list(done["bound"])...)
 		reached = append(reached, route["fault_id"])
-		if err = r.Store.CheckIncidentRoute(ctx, text(route["fault_id"])); err != nil {
+		if err = r.Store.CheckIncidentRoute(ctx, pyjson.Text(route["fault_id"])); err != nil {
 			return nil, err
 		}
 	}
@@ -250,7 +251,7 @@ func (r *Router) Digest(ctx context.Context, limit, after any) (Object, error) {
 			unreached := map[string]any{}
 			for _, v := range list(page["routes"]) {
 				read++
-				route := object(v)
+				route := pyjson.Map(v)
 				if route["stage"] == "superseded" {
 					continue
 				}
@@ -261,14 +262,14 @@ func (r *Router) Digest(ctx context.Context, limit, after any) (Object, error) {
 					}
 					linked = append(linked, list(done["queued"])...)
 				}
-				route, err = r.routes().Get(ctx, text(route["fault_id"]))
+				route, err = r.routes().Get(ctx, pyjson.Text(route["fault_id"]))
 				if err != nil {
 					return err
 				}
-				held := route["stage"] == "held" && object(route["target"])["hold"] == "no_project"
+				held := route["stage"] == "held" && pyjson.Map(route["target"])["hold"] == "no_project"
 				key := fmt.Sprint(route["product_key"], "|", route["goal"])
 				if _, ok := unreached[key]; held && !ok {
-					unreached[key], err = r.routes().UnreachedProposal(ctx, text(route["product_key"]), route["goal"], reached)
+					unreached[key], err = r.routes().UnreachedProposal(ctx, pyjson.Text(route["product_key"]), route["goal"], reached)
 					if err != nil {
 						return err
 					}
@@ -276,12 +277,12 @@ func (r *Router) Digest(ctx context.Context, limit, after any) (Object, error) {
 				if held && unreached[key] != nil {
 					continue
 				}
-				fault, err := r.Ledger.Get(ctx, text(route["fault_id"]))
+				fault, err := r.Ledger.Get(ctx, pyjson.Text(route["fault_id"]))
 				if err != nil {
 					return err
 				}
 				now := snapshot(route, fault)
-				before := object(route["reported"])
+				before := pyjson.Map(route["reported"])
 				if equal(now, before) {
 					continue
 				}
@@ -297,7 +298,7 @@ func (r *Router) Digest(ctx context.Context, limit, after any) (Object, error) {
 					previous = Attention(before)
 				}
 				if decision != nil && decision != previous {
-					if _, err = r.Ledger.Notify(ctx, text(route["fault_id"]), text(decision), "route:"+text(route["fault_id"])); err != nil {
+					if _, err = r.Ledger.Notify(ctx, pyjson.Text(route["fault_id"]), pyjson.Text(decision), "route:"+pyjson.Text(route["fault_id"])); err != nil {
 						return err
 					}
 					d := clone(entry)
@@ -310,8 +311,8 @@ func (r *Router) Digest(ctx context.Context, limit, after any) (Object, error) {
 					reported = true
 				}
 				if !reported {
-					key := text(route["product_key"])
-					summary := object(routine[key])
+					key := pyjson.Text(route["product_key"])
+					summary := pyjson.Map(routine[key])
 					if summary == nil {
 						summary = Object{"records": int64(0), "newOccurrences": int64(0)}
 						routine[key] = summary
@@ -323,7 +324,7 @@ func (r *Router) Digest(ctx context.Context, limit, after any) (Object, error) {
 				if err != nil {
 					return err
 				}
-				if err = r.Store.SetIncidentReported(ctx, text(route["fault_id"]), encoded, r.Clock.ISO()); err != nil {
+				if err = r.Store.SetIncidentReported(ctx, pyjson.Text(route["fault_id"]), encoded, r.Clock.ISO()); err != nil {
 					return err
 				}
 			}

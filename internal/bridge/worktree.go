@@ -8,6 +8,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/worktrees"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 type CreateWorktree struct {
@@ -160,7 +161,7 @@ func (b *Bridge) CreateWorktreeThread(ctx context.Context, in CreateWorktree) (l
 		placed := settings.Contract{CWD: w.Destination, Sandbox: in.Sandbox, ExpectedPolicy: in.Policy, Model: auth.Model, ReasoningEffort: auth.Effort, Roots: []string{w.Destination}}
 		receipt["threadId"] = threadID
 		receipt["permissionReceipt"] = map[string]any{"approvalPolicy": created["approvalPolicy"], "sandbox": created["sandbox"], "activePermissionProfile": created["activePermissionProfile"], "runtimeWorkspaceRoots": created["runtimeWorkspaceRoots"]}
-		receipt["desktopProjectAssociation"] = map[string]any{"status": "unverified", "sourceRepository": in.Source, "checkout": created["cwd"], "appServerProjectId": object(created["thread"])["projectId"]}
+		receipt["desktopProjectAssociation"] = map[string]any{"status": "unverified", "sourceRepository": in.Source, "checkout": created["cwd"], "appServerProjectId": pyjson.Map(created["thread"])["projectId"]}
 		receipt["creation"] = created
 		receipt["settings"] = placed.Receipt(created, "creation")
 		if err = checkpoint("checking_environment"); err != nil {
@@ -170,7 +171,7 @@ func (b *Bridge) CreateWorktreeThread(ctx context.Context, in CreateWorktree) (l
 			first := findings[0]
 			return &worktrees.Error{Reason: findingText(first.Code, first.Field, first.Returned, first.Expected) + "; initial prompt withheld. Inspect creation receipt"}
 		}
-		if text(object(created["thread"])["cwd"]) != w.Destination || (in.ProjectID != "" && text(object(created["thread"])["projectId"]) != in.ProjectID) {
+		if pyjson.Text(pyjson.Map(created["thread"])["cwd"]) != w.Destination || (in.ProjectID != "" && pyjson.Text(pyjson.Map(created["thread"])["projectId"]) != in.ProjectID) {
 			return &Invalid{"Created thread placement differs; initial prompt withheld. Inspect creation receipt"}
 		}
 		if in.Title != "" {
@@ -218,7 +219,7 @@ func (b *Bridge) CreateWorktreeThread(ctx context.Context, in CreateWorktree) (l
 		return checkpoint("complete")
 	}, nil, func(receipt ledger.Receipt) {
 		// bridge.py reconcile: the prompt's advance outcome_unknown is corrected by what went out.
-		if in.Prompt == "" || object(receipt["initialPrompt"])["state"] != "outcome_unknown" {
+		if in.Prompt == "" || pyjson.Map(receipt["initialPrompt"])["state"] != "outcome_unknown" {
 			return
 		}
 		effects, _ := receipt["attemptedEffects"].([]string)

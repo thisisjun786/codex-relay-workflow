@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 )
 
@@ -67,19 +68,19 @@ func Classify(receipt Obj) Facts {
 	if receipt == nil {
 		return Facts{OutcomeUnknown, HeldUncertain, "unknown", false, "unclassified", nil, nil, nil, nil}
 	}
-	status, _ := get(receipt, "status")
-	errorText, _ := get(receipt, "error")
-	rpc, _ := get(receipt, "rpcError")
+	status, _ := receipt.Lookup("status")
+	errorText, _ := receipt.Lookup("error")
+	rpc, _ := receipt.Lookup("rpcError")
 	var code any
 	if o, ok := rpc.(Obj); ok {
-		code, _ = get(o, "code")
+		code, _ = o.Lookup("code")
 	}
-	resumed, _ := get(receipt, "resumed")
+	resumed, _ := receipt.Lookup("resumed")
 	var policy any
 	if o, ok := resumed.(Obj); ok {
-		policy, _ = get(o, "approvalPolicy")
+		policy, _ = o.Lookup("approvalPolicy")
 	}
-	rawTurn, _ := get(receipt, "turnId")
+	rawTurn, _ := receipt.Lookup("turnId")
 	turn := usableTurnID(rawTurn)
 	f := func(rs, ds, sa string, safe bool, op any, turn any) Facts {
 		return Facts{rs, ds, sa, safe, op, turn, policy, code, errorText}
@@ -142,12 +143,12 @@ func AttemptRecord(facts Facts, requestID, eventID string, attemptNo int64, reci
 
 // AssertAttemptInvariants re-implements the frozen schema's conditional rules before persisting.
 func AssertAttemptInvariants(record Obj) error {
-	state := str(record, "deliveryState")
-	safe, _ := get(record, "retrySafe")
-	sent := str(record, "sendAttempted")
-	status := str(record, "transportReceiptStatus")
-	op, _ := get(record, "failedOperation")
-	turn, _ := get(record, "turnId")
+	state := pyjson.Text(record.Get("deliveryState"))
+	safe, _ := record.Lookup("retrySafe")
+	sent := pyjson.Text(record.Get("sendAttempted"))
+	status := pyjson.Text(record.Get("transportReceiptStatus"))
+	op, _ := record.Lookup("failedOperation")
+	turn, _ := record.Lookup("turnId")
 	fail := func(rule string) error { return fmt.Errorf("delivery: attempt invariant: %s", rule) }
 	if state == HeldUncertain && (safe != false || (sent != "unknown" && sent != "yes")) {
 		return fail("an uncertain attempt is never retry-safe")

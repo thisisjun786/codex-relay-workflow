@@ -1,6 +1,9 @@
 package managed
 
-import "context"
+import (
+	"context"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+)
 
 // hostReady bounds the archived/unarchived search before checking goal and runtime state.
 func hostReady(ctx context.Context, rpc HostRPC, task string) (string, error) {
@@ -18,7 +21,7 @@ func hostReady(ctx context.Context, rpc HostRPC, task string) (string, error) {
 			}
 			if data, ok := page["data"].([]any); ok {
 				for _, item := range data {
-					if obj(item)["id"] == task {
+					if pyjson.Map(item)["id"] == task {
 						found, archived = true, filter
 						break
 					}
@@ -27,7 +30,7 @@ func hostReady(ctx context.Context, rpc HostRPC, task string) (string, error) {
 			if found {
 				break
 			}
-			cursor = str(page["nextCursor"])
+			cursor = pyjson.Text(page["nextCursor"])
 			if cursor == "" {
 				break
 			}
@@ -68,11 +71,11 @@ func hostReady(ctx context.Context, rpc HostRPC, task string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	thread := obj(answer["thread"])
+	thread := pyjson.Map(answer["thread"])
 	if thread["canAcceptDirectInput"] == false {
 		return "recipient_cannot_accept_input", nil
 	}
-	switch obj(thread["status"])["type"] {
+	switch pyjson.Map(thread["status"])["type"] {
 	case "idle", "notLoaded":
 		return "", nil
 	default:

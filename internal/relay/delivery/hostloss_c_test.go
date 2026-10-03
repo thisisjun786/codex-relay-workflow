@@ -6,6 +6,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -123,7 +124,7 @@ func Test21_HLT19_an_ack_while_the_relay_is_still_sending_is_kept(t *testing.T) 
 		during.send = func(requestID, thread, message string, settings *TaskSettings) (Obj, error) {
 			receipt, err := h.host.SendMessage(requestID, thread, message, settings)
 			keptState = h.row(event).S("state")
-			keptRecord = h.cliAck(event, str(receipt, "turnId"), counting)
+			keptRecord = h.cliAck(event, pyjson.Text(receipt.Get("turnId")), counting)
 			return receipt, err
 		}
 		h.attemptOn(event, during, nil)
@@ -238,7 +239,7 @@ func Test21_HLT23_an_ack_answers_only_attempts_sent_before_it_was_authored(t *te
 			h.parentHistory()
 			event := h.queuedEvent(regOpts{})
 			h.host.script = []string{"in_progress"}
-			first := str(h.attemptOn(event, h.host, nil), "requestId")
+			first := pyjson.Text(h.attemptOn(event, h.host, nil).Get("requestId"))
 			h.clock.Advance(2)
 			h.host.startTurn(parent, "ack-turn", "completed", "")
 			h.eq(field(h.cliAck(event, "ack-turn", nil), "_verified"))
@@ -246,8 +247,8 @@ func Test21_HLT23_an_ack_answers_only_attempts_sent_before_it_was_authored(t *te
 			h.reconcile(first, h.host)
 			h.clock.Advance(100000)
 			second := h.attemptOn(event, h.host, at(h.clock.Now()))
-			h.eq(str(second, "deliveryState"))
-			h.hostReloadsLosing(str(second, "turnId"))
+			h.eq(pyjson.Text(second.Get("deliveryState")))
+			h.hostReloadsLosing(pyjson.Text(second.Get("turnId")))
 			h.clock.Advance(120)
 			h.tick()
 			h.eq(h.attemptStates(event))
@@ -263,7 +264,7 @@ func Test21_HLT23_an_ack_answers_only_attempts_sent_before_it_was_authored(t *te
 			h.reconcile(first, h.host)
 			h.clock.Advance(100000)
 			h.host.script = []string{"in_progress"}
-			second := str(h.attemptOn(event, h.host, at(h.clock.Now())), "requestId")
+			second := pyjson.Text(h.attemptOn(event, h.host, at(h.clock.Now())).Get("requestId"))
 			h.item(parent, "folded", "requestId: "+second, "")
 			h.clock.Advance(5)
 			h.tick()
@@ -353,7 +354,7 @@ func Test21_HLT24_every_settlement_is_a_compare_and_set(t *testing.T) {
 			h.parentHistory()
 			event := h.queuedEvent(regOpts{})
 			h.host.script = []string{"in_progress"}
-			request := str(h.attemptOn(event, h.host, nil), "requestId")
+			request := pyjson.Text(h.attemptOn(event, h.host, nil).Get("requestId"))
 			fired := false
 			rejects := &hooked{Adapter: h.host}
 			rejects.findToken = func(thread, token string, limit int, messageOnly bool) (TokenScan, error) {
@@ -391,7 +392,7 @@ func Test21_HLT24_every_settlement_is_a_compare_and_set(t *testing.T) {
 			h.parentHistory()
 			event := h.queuedEvent(regOpts{})
 			h.host.script = []string{"in_progress"}
-			request := str(h.attemptOn(event, h.host, nil), "requestId")
+			request := pyjson.Text(h.attemptOn(event, h.host, nil).Get("requestId"))
 			h.host.ledger[request] = preSendRejection(request)
 			h.reconcile(request, h.host)
 			h.eq(h.evidenceOf(event))
@@ -492,7 +493,7 @@ func Test21_HLT25_the_sender_and_a_concurrent_reconcile_never_undo_each_other(t 
 			close(settled)
 			wg.Wait()
 			h.eq(anyErrors(failure))
-			h.eq(str(result, "deliveryState"))
+			h.eq(pyjson.Text(result.Get("deliveryState")))
 			h.eq(truthy(field(seen, "changed")))
 			h.eq(h.attemptStates(event))
 			row := h.row(event)

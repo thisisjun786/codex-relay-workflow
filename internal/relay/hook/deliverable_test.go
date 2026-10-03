@@ -252,7 +252,7 @@ func TestDeliverableStateAnswersAsTheGuard(t *testing.T) {
 				t.Fatal(err)
 			}
 			o, _ := spec.(Object)
-			state, binding, detail, raised := DeliverableState(context.Background(), get(o, "payload"), named, get(o, "roots"))
+			state, binding, detail, raised := DeliverableState(context.Background(), o.Get("payload"), named, o.Get("roots"))
 			got := []any{state, nullable(binding), nullable(detail)}
 			if raised != nil {
 				var exception *store.ManifestException

@@ -9,6 +9,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 // Python's schedule: one send holds the mutation lock (paused at its thread/read) while a
@@ -74,7 +75,7 @@ func Test_test_a_caller_mutating_its_settings_cannot_split_identity_from_dispatc
 	case <-time.After(5 * time.Second):
 		t.Fatal("waiting hung")
 	}
-	if dispatched["status"] != "accepted" || object(dispatched["executionPolicy"])["model"] != "explicit-model" {
+	if dispatched["status"] != "accepted" || pyjson.Map(dispatched["executionPolicy"])["model"] != "explicit-model" {
 		t.Fatalf("dispatched=%v", dispatched)
 	}
 	replay, err := b.SendMessageToThread(context.Background(), SendMessage{RequestID: "waiting", ThreadID: "thread-1", Message: "hello", Expected: pair()})

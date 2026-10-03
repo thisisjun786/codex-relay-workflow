@@ -40,13 +40,13 @@ func (l *Ledger) SetWorkspaceTarget(ctx context.Context, product, workspace, pro
 			return err
 		}
 		if other != nil {
-			return fmt.Errorf("fault_scope_conflict: scope key %s is already carried by product %s; one product's issues are never filed through another's key", quote.Value(key), quote.Value(text(other, "product")))
+			return fmt.Errorf("fault_scope_conflict: scope key %s is already carried by product %s; one product's issues are never filed through another's key", quote.Value(key), quote.Value(other.Text("product")))
 		}
 		current, err := l.one(ctx, "SELECT t.tracker_ref,p.product,p.project_ref FROM fault_targets t LEFT JOIN fault_target_projects p ON p.scope_key = t.scope_key WHERE t.scope_key = ?", key)
 		if err != nil {
 			return err
 		}
-		changed = current == nil || text(current, "tracker_ref") != team || text(current, "product") != product || text(current, "project_ref") != projectRef
+		changed = current == nil || current.Text("tracker_ref") != team || current.Text("product") != product || current.Text("project_ref") != projectRef
 		if changed {
 			if _, err = l.exec(ctx, "INSERT INTO fault_targets(scope_key,tracker_ref,recorded_at) VALUES(?,?,?) ON CONFLICT(scope_key) DO UPDATE SET tracker_ref = excluded.tracker_ref, recorded_at = excluded.recorded_at", key, team, stamp); err != nil {
 				return err

@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -72,8 +73,8 @@ func ValidateProjectPayload(value any) []string {
 
 // ConfirmProject requires a positive readback of the team, not merely the create block.
 func ConfirmProject(expected, observed any) []string {
-	payload := object(object(expected)["payload"])
-	team := object(observed)["team"]
+	payload := pyjson.Map(pyjson.Map(expected)["payload"])
+	team := pyjson.Map(observed)["team"]
 	if team == nil || team == "" || team == false {
 		return []string{"the readback does not show which team the project was created in"}
 	}
@@ -84,7 +85,7 @@ func ConfirmProject(expected, observed any) []string {
 }
 
 func readStored(value any) (Object, error) {
-	decoder := json.NewDecoder(strings.NewReader(text(value)))
+	decoder := json.NewDecoder(strings.NewReader(pyjson.Text(value)))
 	decoder.UseNumber()
 	var out Object
 	if err := decoder.Decode(&out); err != nil {
@@ -130,7 +131,7 @@ func ProjectEligibility(ctx context.Context, s *store.Store, payload Object) ([]
 		if route == nil || route.Get("product_key") != payload["product"] || route.Get("workspace") != payload["workspace"] {
 			continue
 		}
-		latest, err := latestIncident(ctx, s, text(id))
+		latest, err := latestIncident(ctx, s, pyjson.Text(id))
 		if err != nil {
 			return nil, err
 		}
@@ -141,11 +142,11 @@ func ProjectEligibility(ctx context.Context, s *store.Store, payload Object) ([]
 		if err != nil {
 			return nil, err
 		}
-		if target["hold"] != "no_project" || route.Get("goal") != payload["goal"] || object(latest["goal"])["criteria"] != payload["criteria"] {
+		if target["hold"] != "no_project" || route.Get("goal") != payload["goal"] || pyjson.Map(latest["goal"])["criteria"] != payload["criteria"] {
 			continue
 		}
-		members = append(members, text(id))
-		if c := text(latest["component"]); c != "" {
+		members = append(members, pyjson.Text(id))
+		if c := pyjson.Text(latest["component"]); c != "" {
 			counted[c] = true
 		}
 	}
@@ -156,7 +157,7 @@ func ProjectEligibility(ctx context.Context, s *store.Store, payload Object) ([]
 	}
 	named := Object{}
 	for _, c := range list(payload["components"]) {
-		named[text(c)] = true
+		named[pyjson.Text(c)] = true
 	}
 	if len(members) > 0 && !slices.Equal(sortedKeys(named), sortedKeys(counted)) {
 		problems = append(problems, fmt.Sprintf("the create covers %s, but its members' components are %s", pyvalue.Repr(sortedKeys(named)), pyvalue.Repr(sortedKeys(counted))))
@@ -174,13 +175,13 @@ func ProjectEligibility(ctx context.Context, s *store.Store, payload Object) ([]
 		if target["hold"] != "no_project" {
 			continue
 		}
-		latest, err := latestIncident(ctx, s, text(row.Get("fault_id")))
+		latest, err := latestIncident(ctx, s, pyjson.Text(row.Get("fault_id")))
 		if err != nil {
 			return nil, err
 		}
-		criteria := object(latest["goal"])["criteria"]
+		criteria := pyjson.Map(latest["goal"])["criteria"]
 		if criteria != nil && criteria != payload["criteria"] {
-			others[text(criteria)] = true
+			others[pyjson.Text(criteria)] = true
 		}
 	}
 	if len(others) > 0 {
@@ -219,10 +220,10 @@ func ProjectEligibility(ctx context.Context, s *store.Store, payload Object) ([]
 			continue
 		}
 		for _, component := range list(project["components"]) {
-			if _, ok := named[text(component)]; ok {
+			if _, ok := named[pyjson.Text(component)]; ok {
 				components := make([]string, 0, len(list(payload["components"])))
 				for _, c := range list(payload["components"]) {
-					components = append(components, text(c))
+					components = append(components, pyjson.Text(c))
 				}
 				slices.Sort(components)
 				problems = append(problems, fmt.Sprintf("%s now covers %s", project["ref"], pyvalue.Repr(components)))

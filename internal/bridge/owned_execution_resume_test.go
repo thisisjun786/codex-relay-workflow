@@ -10,6 +10,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 func Test_test_a_resume_that_disagrees_withholds_the_message(t *testing.T) {
@@ -29,7 +30,7 @@ func Test_test_a_resume_that_disagrees_withholds_the_message(t *testing.T) {
 			}
 			host.Respond("thread/resume", resume)
 			receipt, err := b.SendMessageToThread(context.Background(), input)
-			findings := object(receipt["settings"])["findings"].([]settings.Finding)
+			findings := pyjson.Map(receipt["settings"])["findings"].([]settings.Finding)
 			if err != nil || receipt["status"] != "failed" || len(findings) == 0 || findings[0].Code != scenario.code || host.Count("turn/start") != 0 {
 				t.Fatalf("receipt=%v err=%v", receipt, err)
 			}
@@ -43,7 +44,7 @@ func Test_test_a_loaded_thread_reports_its_own_pair_and_the_message_is_withheld(
 	actual := startReply(t.TempDir())
 	host.Respond("thread/resume", actual)
 	receipt, err := b.SendMessageToThread(context.Background(), input)
-	findings := object(receipt["settings"])["findings"].([]settings.Finding)
+	findings := pyjson.Map(receipt["settings"])["findings"].([]settings.Finding)
 	if err != nil || receipt["status"] != "failed" || receipt["statusBeforeResume"] != "idle" || len(findings) == 0 || findings[0].Code != settings.NotPreserved || receipt["echoIndependence"] != nil || host.Count("turn/start") != 0 {
 		t.Fatalf("receipt=%v err=%v", receipt, err)
 	}
@@ -65,10 +66,10 @@ func Test_test_an_unloaded_thread_never_lets_an_echo_stand_as_proof_of_preservat
 				t.Fatalf("receipt=%v err=%v", receipt, err)
 			}
 			if adopts {
-				if receipt["status"] != "accepted" || len(object(receipt["settings"])["findings"].([]settings.Finding)) != 0 {
+				if receipt["status"] != "accepted" || len(pyjson.Map(receipt["settings"])["findings"].([]settings.Finding)) != 0 {
 					t.Fatalf("adopted=%v", receipt)
 				}
-			} else if receipt["status"] != "failed" || object(receipt["settings"])["findings"].([]settings.Finding)[0].Code != settings.NotPreserved || host.Count("turn/start") != 0 {
+			} else if receipt["status"] != "failed" || pyjson.Map(receipt["settings"])["findings"].([]settings.Finding)[0].Code != settings.NotPreserved || host.Count("turn/start") != 0 {
 				t.Fatalf("not adopted=%v", receipt)
 			}
 		})
@@ -92,7 +93,7 @@ func Test_test_an_exception_on_the_resume_path_must_state_its_directory(t *testi
 	host.Respond("thread/resume", resume)
 	host.Respond("turn/start", fakehost.Reply{Result: map[string]any{"turn": map[string]any{"id": "turn-1"}}})
 	receipt, err := b.SendMessageToThread(context.Background(), input)
-	if err != nil || receipt["status"] != "accepted" || object(receipt["executionPolicy"])["exception"] != "one-task" {
+	if err != nil || receipt["status"] != "accepted" || pyjson.Map(receipt["executionPolicy"])["exception"] != "one-task" {
 		t.Fatalf("receipt=%v err=%v", receipt, err)
 	}
 }
@@ -121,7 +122,7 @@ func Test_test_a_named_supervisor_the_host_has_not_loaded_is_not_resumed_at_all(
 	host.Respond("thread/read", fakehost.Reply{Result: map[string]any{"thread": map[string]any{"status": map[string]any{"type": "notLoaded"}}}})
 	input := SendMessage{RequestID: "supervisor-send", ThreadID: "thread-1", Message: "work", Role: "supervisor", Expected: map[string]any{"model": "gpt-6-astra", "reasoning_effort": "high"}}
 	receipt, err := b.SendMessageToThread(context.Background(), input)
-	if err != nil || receipt["status"] != "failed" || object(receipt["rpcError"])["code"] != "unverified_pair_for_unloaded_thread" || host.Count("thread/resume") != 0 || host.Count("turn/start") != 0 {
+	if err != nil || receipt["status"] != "failed" || pyjson.Map(receipt["rpcError"])["code"] != "unverified_pair_for_unloaded_thread" || host.Count("thread/resume") != 0 || host.Count("turn/start") != 0 {
 		t.Fatalf("receipt=%v err=%v", receipt, err)
 	}
 }

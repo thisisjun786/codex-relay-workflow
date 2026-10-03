@@ -147,31 +147,13 @@ func writeAtomic(path, prefix string, data []byte) (err error) {
 }
 
 // Lookup is dict lookup.
-func Lookup(o Object, key string) (any, bool) {
-	for _, f := range o {
-		if f.Key == key {
-			return f.Value, true
-		}
-	}
-	return nil, false
-}
+func Lookup(o Object, key string) (any, bool) { return o.Lookup(key) }
 
 // Get is dict.get(key).
-func Get(o Object, key string) any {
-	v, _ := Lookup(o, key)
-	return v
-}
+func Get(o Object, key string) any { return o.Get(key) }
 
 // Set replaces key's value in place, or appends it (dict assignment).
-func Set(o Object, key string, value any) Object {
-	for i := range o {
-		if o[i].Key == key {
-			o[i].Value = value
-			return o
-		}
-	}
-	return append(o, contract.Field{Key: key, Value: value})
-}
+func Set(o Object, key string, value any) Object { return o.Set(key, value) }
 
 // Delete is del o[key].
 func Delete(o Object, key string) Object {
@@ -185,10 +167,7 @@ func Delete(o Object, key string) Object {
 }
 
 // Text is the string at key, or "".
-func Text(o Object, key string) string {
-	s, _ := Get(o, key).(string)
-	return s
-}
+func Text(o Object, key string) string { return pyjson.Text(o.Get(key)) }
 
 // Component is hostrecord.component: the component entry with its two lists present. It
 // returns the record (which may have grown) and the entry.

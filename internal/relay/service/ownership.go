@@ -6,47 +6,48 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 	"golang.org/x/sys/unix"
 )
 
 func (s *Service) foreignMarkers(r Object) []string {
 	out := []string{}
-	if b := get(r, "bootId"); b != nil && !equal(b, BootID()) {
+	if b := r.Get("bootId"); b != nil && !equal(b, BootID()) {
 		out = append(out, "recorded before a different boot")
 	}
-	if text(get(r, "installationId")) != s.InstallationID {
+	if pyjson.Text(r.Get("installationId")) != s.InstallationID {
 		out = append(out, "another installation owns it")
 	}
-	if s.StoreID != "" && get(r, "storeId") != nil && get(r, "storeId") != s.StoreID {
+	if s.StoreID != "" && r.Get("storeId") != nil && r.Get("storeId") != s.StoreID {
 		out = append(out, "it is using a different store")
 	}
 	return out
 }
 func (s *Service) storeUnreadable(r Object) string {
-	if s.StoreID != "" || !s.StoreUnidentified || !truth(get(r, "storeId")) {
+	if s.StoreID != "" || !s.StoreUnidentified || !truth(r.Get("storeId")) {
 		return ""
 	}
-	return "a store is present here and its identity could not be read, so the store this record names (" + text(get(r, "storeId")) + ") cannot be compared against it"
+	return "a store is present here and its identity could not be read, so the store this record names (" + pyjson.Text(r.Get("storeId")) + ") cannot be compared against it"
 }
 func (s *Service) Ownership(r Object) (string, *ProcessHandle, string) {
 	orphanBoot := "no boot id is recorded, so this worker pid cannot be distinguished from one reused after a reboot"
-	if !truth(get(r, "pid")) {
-		if truth(get(r, "workerPid")) {
+	if !truth(r.Get("pid")) {
+		if truth(r.Get("workerPid")) {
 			if f := s.foreignMarkers(r); len(f) > 0 {
 				return "foreign", nil, strings.Join(f, "; ")
 			}
 			if d := s.storeUnreadable(r); d != "" {
 				return "unverifiable", nil, d
 			}
-			if get(r, "bootId") == nil && BootID() != nil {
+			if r.Get("bootId") == nil && BootID() != nil {
 				return "unverifiable", nil, orphanBoot
 			}
 		}
 		return "none", nil, "no daemon record"
 	}
 	f := s.foreignMarkers(r)
-	h := OpenProcess(num(get(r, "pid")))
+	h := OpenProcess(num(r.Get("pid")))
 	if len(f) > 0 {
 		return "foreign", h, strings.Join(f, "; ")
 	}
@@ -54,7 +55,7 @@ func (s *Service) Ownership(r Object) (string, *ProcessHandle, string) {
 		if d := s.storeUnreadable(r); d != "" {
 			return "unverifiable", h, d
 		}
-		if truth(get(r, "workerPid")) && get(r, "bootId") == nil && BootID() != nil {
+		if truth(r.Get("workerPid")) && r.Get("bootId") == nil && BootID() != nil {
 			return "unverifiable", h, orphanBoot
 		}
 		return "none", h, "the recorded process is gone"
@@ -65,26 +66,26 @@ func (s *Service) Ownership(r Object) (string, *ProcessHandle, string) {
 	if d := s.storeUnreadable(r); d != "" {
 		return "unverifiable", h, d
 	}
-	if get(r, "bootId") == nil && BootID() != nil {
+	if r.Get("bootId") == nil && BootID() != nil {
 		return "unverifiable", h, "no boot id is recorded, so a pid from before a reboot cannot be ruled out"
 	}
 	ticks := StartTicks(h.PID)
-	if get(r, "startTicks") == nil || ticks == nil {
+	if r.Get("startTicks") == nil || ticks == nil {
 		return "unverifiable", h, "no start time is available for this pid, so identity cannot be established"
 	}
-	if !equal(ticks, get(r, "startTicks")) {
+	if !equal(ticks, r.Get("startTicks")) {
 		return "foreign", h, "the pid was reused by a different process"
 	}
 	return "ours", h, ""
 }
 func (s *Service) workerIdentified(r Object) bool {
-	pid := num(get(r, "workerPid"))
-	if pid == 0 || (get(r, "bootId") == nil && BootID() != nil) {
+	pid := num(r.Get("workerPid"))
+	if pid == 0 || (r.Get("bootId") == nil && BootID() != nil) {
 		return false
 	}
 	h := OpenProcess(pid)
 	defer h.Close()
-	return h.FD >= 0 && get(r, "workerStartTicks") != nil && equal(StartTicks(pid), get(r, "workerStartTicks"))
+	return h.FD >= 0 && r.Get("workerStartTicks") != nil && equal(StartTicks(pid), r.Get("workerStartTicks"))
 }
 func (s *Service) holderRefusal() Object {
 	r := s.Record()
@@ -142,10 +143,10 @@ func (s *Service) Disable(actor string, timeout time.Duration) (Object, error) {
 		return nil, err
 	}
 	stopped, err := s.Stop(actor, timeout)
-	failed := !truth(get(stopped, "ok")) && get(stopped, "reason") != "not_running"
+	failed := !truth(stopped.Get("ok")) && stopped.Get("reason") != "not_running"
 	var reason any
 	if failed {
-		reason = get(stopped, "reason")
+		reason = stopped.Get("reason")
 	}
 	return obj("ok", !failed, "reason", reason, "intent", written, "stop", stopped), err
 }
@@ -181,7 +182,7 @@ func terminate(h *ProcessHandle, timeout time.Duration) string {
 	return "still_running"
 }
 func (s *Service) stopWorker(r Object, timeout time.Duration) string {
-	pid := num(get(r, "workerPid"))
+	pid := num(r.Get("workerPid"))
 	if pid == 0 {
 		return "gone"
 	}
@@ -194,22 +195,22 @@ func (s *Service) stopWorker(r Object, timeout time.Duration) string {
 		return "unverifiable"
 	}
 	current := StartTicks(pid)
-	if get(r, "workerStartTicks") == nil || current == nil {
+	if r.Get("workerStartTicks") == nil || current == nil {
 		return "unverifiable"
 	}
-	if !equal(current, get(r, "workerStartTicks")) {
+	if !equal(current, r.Get("workerStartTicks")) {
 		return "gone"
 	}
 	return terminate(h, timeout)
 }
 func launchIdentity(r Object) string {
-	if get(r, "launchId") != nil {
-		return "launchId:" + text(get(r, "launchId"))
+	if r.Get("launchId") != nil {
+		return "launchId:" + pyjson.Text(r.Get("launchId"))
 	}
-	if get(r, "startedAt") != nil {
-		return "startedAt:" + text(get(r, "startedAt")) + ":" + stringNumber(get(r, "startTicks"))
+	if r.Get("startedAt") != nil {
+		return "startedAt:" + pyjson.Text(r.Get("startedAt")) + ":" + stringNumber(r.Get("startTicks"))
 	}
-	return "pid:" + stringNumber(get(r, "pid"))
+	return "pid:" + stringNumber(r.Get("pid"))
 }
 func (s *Service) RequestStop() error {
 	if err := os.MkdirAll(s.Selection.Path, 0700); err != nil {
@@ -229,7 +230,7 @@ func (s *Service) Stop(actor string, timeout time.Duration) (out Object, err err
 	absent := func() Object {
 		return obj("ok", false, "reason", "not_running", "detail", nullable(detail), "supervisor", "gone", "worker", "gone")
 	}
-	if owner == "none" && !truth(get(r, "workerPid")) {
+	if owner == "none" && !truth(r.Get("workerPid")) {
 		f, e := lockIfFree(s.path("daemon.lock"))
 		if e != nil {
 			return nil, e
@@ -242,7 +243,7 @@ func (s *Service) Stop(actor string, timeout time.Duration) (out Object, err err
 		}
 		r = s.Record()
 		owner, h, detail = s.Ownership(r)
-		if owner == "none" && !truth(get(r, "workerPid")) {
+		if owner == "none" && !truth(r.Get("workerPid")) {
 			return obj("ok", false, "reason", "ownership_unverifiable", "detail", "the daemon lock is held by a process that has not yet recorded its identity", "supervisor", "untouched", "worker", "untouched"), nil
 		}
 	}

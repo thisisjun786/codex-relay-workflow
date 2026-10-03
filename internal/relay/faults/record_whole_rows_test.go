@@ -89,7 +89,7 @@ func recordFaults(t *testing.T, observations []map[string]any) {
 		if alias, e := goStore.One(context.Background(), "SELECT fault_id FROM fault_aliases WHERE alias_id = ?", id); e != nil {
 			t.Fatal(e)
 		} else if alias != nil {
-			id = text(alias, "fault_id")
+			id = alias.Text("fault_id")
 		}
 		row, e := goStore.One(context.Background(), "SELECT state,cycle,severity,occurrence_count,suppression FROM fault_ledger WHERE fault_id = ?", id)
 		if e != nil {
@@ -102,7 +102,7 @@ func recordFaults(t *testing.T, observations []map[string]any) {
 			reply = map[string]any{"faultId": id, "recorded": false, "state": textRow(row, "state"), "occurrenceCount": numberRow(row, "occurrence_count"), "reason": "this occurrence was already recorded in this episode", "publication": nil}
 		} else {
 			var published any
-			if before == nil || text(before, "state") == cancelled {
+			if before == nil || before.Text("state") == cancelled {
 				published = publicationAnswer(context.Background(), l, id, recorded, before != nil)
 			}
 			if adoptedBefore == nil {

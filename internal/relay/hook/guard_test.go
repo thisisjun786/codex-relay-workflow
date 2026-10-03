@@ -110,7 +110,7 @@ func Test33HoldReservation(t *testing.T) {
 		t.Fatalf("duplicate %v %v", ok, err)
 	}
 	counts, bad, unreadable := HoldCounters(ctx, directory, "s", "t", o.Now, root)
-	if bad != "" || unreadable != "" || get(counts, "holdsThisTurn") != int64(1) || get(counts, "holdsThisGeneration") != int64(1) || get(counts, "holdsThisSessionWindow") != int64(1) {
+	if bad != "" || unreadable != "" || counts.Get("holdsThisTurn") != int64(1) || counts.Get("holdsThisGeneration") != int64(1) || counts.Get("holdsThisSessionWindow") != int64(1) {
 		t.Fatal(counts, bad, unreadable)
 	}
 }
@@ -125,7 +125,7 @@ func Test33DecisionBoundsAndIdentity(t *testing.T) {
 		state, decision string
 	}{{Hold, Object{}, "undeclared_turn_end", "block"}, {Observe, Object{}, "undeclared_turn_end", "release"}, {Hold, Object{{Key: "holdsThisTurn", Value: int64(1)}}, "hold_in_flight", "release"}, {Hold, Object{{Key: "holdsThisGeneration", Value: int64(2)}, {Key: "holdsThisTurn", Value: int64(1)}}, "unresolved_handoff", "release"}, {Hold, Object{{Key: "holdsThisSessionWindow", Value: int64(3)}}, "unresolved_handoff", "release"}, {Hold, Object{{Key: "holdsThisTurn", Value: nil}}, "marker_malformed", "release"}} {
 		v := Decide(o, c.counts, c.mode)
-		if get(v, "state") != c.state || get(v, "decision") != c.decision {
+		if v.Get("state") != c.state || v.Get("decision") != c.decision {
 			t.Fatal(v)
 		}
 	}
