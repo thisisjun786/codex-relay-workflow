@@ -297,9 +297,10 @@ with this correction in place of the base-refresh one.
      disposition as the coordinator recorded it (an accepted one carries `addressedBy` naming the reply, with the
      `followUpOwner` and `reopenTrigger` it states), and emit it again as the first receipt of the new generation.
      It asks for no code change, no push and no review, and the child reuses what still applies to the same head.
-  4. Read the new record with `merge-evidence --restate` like any record. The dispositions the child lists for
-     the late threads are the coordinator's, and the restatement confirms them against the coordinator's own
-     replies ([the parent's acceptance](#conditional-acceptance-and-what-recording-one-costs)).
+  4. Read the new record with `merge-evidence --restate` like any record. That checks coverage only: every
+     thread is in `threadsSeen` and none is unresolved. The dispositions the child lists for the late threads are
+     the coordinator's, so the coordinator itself compares each one with its own reply, as it does for any
+     acceptance ([the parent's acceptance](#conditional-acceptance-and-what-recording-one-costs)).
 
 **After the acceptance of a current result.** A DAG node that reads `done:accepted` and is not stale takes no
 second ruling, and `dag-correct` records a correction only for a stale result (step 6 of
