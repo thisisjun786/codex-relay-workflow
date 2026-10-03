@@ -261,8 +261,10 @@ A review thread is late when it is on the candidate's head and is not in the rec
 reviewer's one run ended after the child's receipt, or a reviewer that showed no signal for 30 minutes posted
 afterwards. `merge-evidence --restate` is the one reader that compares a thread with the record. It reports each
 late thread as `late_finding`, resolved or not and whatever its grade, and a record with a late finding no longer
-describes the candidate. A reply or a resolved thread does not remove that reading; a record that lists the
-thread does. The restatement reads review threads only: a late finding that sits in a reviewer's summary comment
+describes the candidate. A reply or a resolved thread does not remove that reading. A record that lists the thread
+does, and so does a disposition the parent records for that head
+([a late thread the parent dispositions itself](#a-late-thread-the-parent-dispositions-itself)). Both the
+restatement and that recording read review threads only: a late finding that sits in a reviewer's summary comment
 is graded by the coordinator by the rule below, and a minor one needs no round trip because the record is not
 invalidated.
 
@@ -270,8 +272,23 @@ The grade decides who handles the thread, read as
 [What each finding needs before the receipt](#what-each-finding-needs-before-the-receipt) reads it and decided by
 [impact](#judge-a-finding-by-its-impact). A Devin yellow, a Codex P2 or a Codex P3 is minor only where it is minor
 and separable under that section. One whose real effect is in a blocking class is handled as red and is never a
-conditional acceptance. A thread from any other reviewer is graded by impact in the same way. The stage of the candidate
-decides whether a correction can reach the child at all.
+conditional acceptance. A thread from any other reviewer is graded by impact in the same way.
+
+**A minor thread** is the coordinator's to triage, because nothing in the code is asked of the child. What the
+coordinator can do depends on the relay it runs, and `codex-session-relay merge-evidence --help` shows which:
+
+- *The installed `merge-evidence` lists `--late-dispositions`.* The coordinator replies on the thread, resolves it
+  on the forge and records its judgement in the file that option reads
+  ([a late thread the parent dispositions itself](#a-late-thread-the-parent-dispositions-itself)). The restatement
+  then no longer reads the thread as late, nothing goes back to the child, and no correction route is needed, so
+  this holds at every stage up to the merge, the acceptance included. A disposition names one head: after a push
+  or the parent's base refresh the thread is recorded again for the new head.
+- *It does not.* The option is in this repository's source and the installed relay may be older; installing is a
+  separate step. The temporary procedure below applies, and it needs a correction route, so it is limited by stage.
+
+**A red, P0, P1 or security thread**, a blocking P2 or P3, or a thread the coordinator cannot grade without
+reconstructing the child's reasoning, is not recorded by the coordinator. It goes to the child as an ordinary
+correction while a correction can reach the child, and after that the candidate is held.
 
 **Before the acceptance.** In a DAG-managed project that is a node `dag-ready` does not yet read as accepted; in
 a project with no plan it lasts until the merged mark. A merge turn of the candidate that is merging or of
@@ -287,12 +304,11 @@ the node, as the first way of opening a generation in
 `dag-correct` then binds the generation. Without that, `dag-accept` refuses the child's new result as
 `stale_generation`.
 
-- A red, P0, P1 or security thread, a blocking P2 or P3, or a thread the coordinator cannot grade without
-  reconstructing the child's reasoning: an ordinary correction. It carries the restoration block, names the head
-  and each thread, and asks the child to fix the finding or answer it with code evidence. The child pushes and
-  reruns checks only if it changed something, and emits again. The candidate does not merge meanwhile.
-- A minor thread: the coordinator triages it itself, because nothing in the code is asked of the child. This is
-  the temporary procedure, in force until the relay path below exists.
+- A red, P0, P1 or security thread, a blocking P2 or P3, or a thread the coordinator cannot grade: an ordinary
+  correction. It carries the restoration block, names the head and each thread, and asks the child to fix the
+  finding or answer it with code evidence. The child pushes and reruns checks only if it changed something, and
+  emits again. The candidate does not merge meanwhile.
+- A minor thread where the installed relay cannot record the disposition: the temporary procedure.
   1. Read the late threads to the end (`merge-evidence` on the head lists them) and grade each by impact. A
      thread that needs a change and not an answer is an ordinary correction naming the change.
   2. Reply on each thread with the judgment and its evidence, then resolve it. `merge-evidence` refuses a
@@ -313,30 +329,27 @@ the node, as the first way of opening a generation in
 **After the acceptance of a current result.** A DAG node that reads `done:accepted` and is not stale takes no
 second ruling, and `dag-correct` records a correction only for a stale result (step 6 of
 [a base conflict after the ruling and before the acceptance](#a-base-conflict-after-the-ruling-and-before-the-acceptance)).
-No grade has a correction route in this build, and resolving the thread does not release the candidate. The
-coordinator still triages a minor thread as above so that its disposition is ready, reports the case on the
-coordination record, and holds the candidate: it does not merge, and it opens no generation by hand around
-`dag-correct`. A red, P0, P1 or security thread is reported the same way and the candidate does not merge. The two
-exceptions of that step are unchanged: a stale result whose reading says `correct` goes through `dag-correct`,
-and an open criteria re-review is decided first. The base-refresh route for an accepted node concerns the base
-only and is no way around a late thread. Only the relay path below releases a minor thread without a round trip.
+No grade has a correction route in this build, and resolving the thread does not release the candidate. A minor
+thread that the installed relay can record is dispositioned as above and needs no route. Where it cannot, the
+coordinator still triages the thread as in the temporary procedure so that its disposition is ready, reports the
+case on the coordination record, and holds the candidate: it does not merge, and it opens no generation by hand
+around `dag-correct`. A red, P0, P1 or security thread is reported the same way and the candidate does not merge.
+The two exceptions of that step are unchanged: a stale result whose reading says `correct` goes through
+`dag-correct`, and an open criteria re-review is decided first. The base-refresh route for an accepted node
+concerns the base only and is no way around a late thread.
 
 **After the merge.** The delivery is not reopened, and a late thread is new work. A minor one is replied to and
 listed for the backlog; a red, P0, P1 or security one is raised at once as a correction issue for the same area.
 
-**The relay path that replaces the temporary procedure.** A separate issue is building a relay path by which the
-coordinator records its own disposition of a late thread and `merge-evidence --restate` reads it, so that a minor
-thread costs no round trip to the child. It is not in this baseline or in the installed runtime, so this skill
-names no command for it. When the installed relay documents it, step 3 above and the hold after the acceptance go
-for minor threads. The grade split stays, and a red, P0, P1 or security thread still goes to the child.
-
 **Why this is not a re-triage, and its limits.** The parent restates the child's handoff and does not judge again
 what the child judged ([OPS-9.3](operations.md#ops-93-the-parent-merges-and-does-not-release)). A late thread is one
 the child never saw, so the coordinator's grading of it is the first judgment and not a second one, and every
-thread in `threadsSeen` stays the child's. The coordinator removes no disagreement itself: the record still returns
-to the child and is rebuilt by it. The coordinator never edits the child's handoff, never restates a record as if
-it had seen the thread, and never reads its own triage as a verdict or a merge. The verdict, the acceptance and the
-merge turn still run on a record that has seen the thread, and nothing merges outside the lane.
+thread in `threadsSeen` stays the child's. In the temporary procedure the coordinator removes no disagreement
+itself: the record returns to the child and is rebuilt by it. A recorded disposition is the one other case
+OPS-9.3 and OPS-9.4 name. The coordinator never edits the child's handoff, never lists a late thread in a record as
+if the child had seen it, and never reads its own triage as a verdict or a merge. The verdict, the acceptance and
+the merge turn still run on a record that has seen the thread or a disposition for it, and nothing merges outside
+the lane.
 
 ## Judge a finding by its impact
 

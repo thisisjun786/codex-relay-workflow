@@ -241,9 +241,9 @@ Execution:
   reads "Devin has no red or security finding" means that if a Devin review exists, its red and security
   findings are resolved, and that no new Devin review is awaited
   ([what the record says](merge-readiness.md#what-the-record-says)). A thread that still reaches the head
-  after your receipt is not yours to chase and needs no new review: the coordinator triages a minor one and
-  asks you only to read the review threads again and emit again, and a red, P0, P1 or security one comes back
-  as an ordinary correction ([Late review threads](merge-readiness.md#late-review-threads)). See
+  after your receipt is not yours to chase and needs no new review: the coordinator triages a minor one itself,
+  and where its relay cannot record that it asks you only to read the review threads again and emit again, and
+  a red, P0, P1 or security one comes back as an ordinary correction ([Late review threads](merge-readiness.md#late-review-threads)). See
   [Publish for review when the work is reviewable](../../crw-plan/references/integrations.md#publish-for-review-when-the-work-is-reviewable).
 - Finishing the review is part of finishing the work. Read every applicable review to the
   end of its pagination on the CURRENT head, judge each finding against the code, fix what
