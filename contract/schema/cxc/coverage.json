@@ -51,6 +51,7 @@
         "cli__bg__off_on_status",
         "cli__bg__on_after_off_gates_earlier_completions",
         "cli__bg__removal_checklist",
+        "cli__bg__run_detached_records_exit_code",
         "cli__bg__status_reports_env_switch",
         "hook__stop-waking-on-background-completion__missing_session_id_falls_back_to_codex_thread_id"
       ]
@@ -3723,7 +3724,8 @@
       "status": "recorded",
       "fixtures": [
         "cli__bg__drain_session_ignores_off_switch",
-        "cli__bg__list_plain_and_json"
+        "cli__bg__list_plain_and_json",
+        "cli__bg__run_detached_records_exit_code"
       ]
     },
     {
@@ -4001,6 +4003,7 @@
         "cli__bg__list_plain_and_json",
         "cli__bg__off_on_status",
         "cli__bg__on_after_off_gates_earlier_completions",
+        "cli__bg__run_detached_records_exit_code",
         "hook__session-start-adopting-background-completions__adopts_previous_sessions_completion",
         "hook__session-start-adopting-background-completions__off_flag_adopts_silently",
         "hook__session-start-adopting-background-completions__own_delivered_task_affordance_only",
@@ -4314,8 +4317,10 @@
     {
       "id": "K12/ps",
       "contract": "`ps -o lstart= -p <pid>` for background job identity (bg-wake/src/registry.ts:71).",
-      "status": "pending",
-      "method": "Recorded with K6/bg/run."
+      "status": "recorded",
+      "fixtures": [
+        "cli__bg__run_detached_records_exit_code"
+      ]
     },
     {
       "id": "K6/bg/cancel-running",
@@ -4326,60 +4331,10 @@
     {
       "id": "K6/bg/run",
       "contract": "`cxc bg run [--note] [--json] -- <cmd>` spawns a detached shell that writes <id>.out and <id>.exit, records the job (id bg + 6 hex, pid, startToken from `ps -o lstart=`), and a later Stop wakes on it.",
-      "status": "pending",
-      "spec": [
-        {
-          "id": "cli__bg__run_detached_records_exit_code",
-          "covers": [
-            "K6/bg/run",
-            "K7/bg",
-            "K8/ws/.codexclaw/bg",
-            "K12/ps",
-            "A/bg-wake/cli.test.ts"
-          ],
-          "note": "bg run spawns a detached sh that outlives the step; the recorder must wait for <id>.exit (the id is random, aliased <BG_1>) before the next step, and give `ps` a stub or the real program. Then bg list --json shows the reconciled failed record (exit 3) and the Stop wakes on it.",
-          "given": {
-            "env": {
-              "CODEX_THREAD_ID": "rec-s1"
-            }
-          },
-          "steps": [
-            {
-              "cli": [
-                "bg",
-                "run",
-                "--note",
-                "rec",
-                "--json",
-                "--",
-                "sh",
-                "-c",
-                "echo hi; exit 3"
-              ]
-            },
-            {
-              "cli": [
-                "bg",
-                "list",
-                "--json"
-              ]
-            },
-            {
-              "hook": "stop-waking-on-background-completion",
-              "stdin": {
-                "hook_event_name": "Stop",
-                "session_id": "rec-s1",
-                "cwd": "${WS}",
-                "turn_id": "rec-t1",
-                "stop_hook_active": false,
-                "last_assistant_message": "Done.",
-                "transcript_path": null
-              }
-            }
-          ]
-        }
-      ],
-      "method": "Needs a recorder step that waits for a file to appear (the detached child's <id>.exit) and a `ps` on PATH; the detached process must be reaped by session id at the end of the scenario."
+      "status": "recorded",
+      "fixtures": [
+        "cli__bg__run_detached_records_exit_code"
+      ]
     },
     {
       "id": "K8/json-schemas",
