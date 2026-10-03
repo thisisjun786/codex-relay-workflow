@@ -122,3 +122,119 @@ func TestCRW398ClaimedChildTimingIsUnchanged(t *testing.T) {
 		}
 	}
 }
+
+func TestCRW398AdmissionAndReportBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		name, state, reason string
+		owed                bool
+		change              func(*testing.T, *unclaimedChild)
+	}{
+		{"business anchor", "unreported", delivery.OmittedReason, true, func(t *testing.T, c *unclaimedChild) {
+			c.exec(t, "DELETE FROM generation_turns")
+			c.exec(t, "UPDATE generations SET dispatch_turn_id='business'")
+		}},
+		{"unadmitted", "unmeasured", "dispatch_uncorrelated", false, func(t *testing.T, c *unclaimedChild) { c.exec(t, "DELETE FROM generation_turns") }},
+		{"standby even if explicitly admitted", "unmeasured", "dispatch_uncorrelated", false, func(t *testing.T, c *unclaimedChild) {
+			c.r.Turn = "standby"
+			c.exec(t, "INSERT INTO generation_turns SELECT relationship_id,execution_generation,'standby',evidence,actor,detail,admitted_at FROM generation_turns")
+		}},
+		{"wrong claim", "unmeasured", "dispatch_uncorrelated", false, func(t *testing.T, c *unclaimedChild) {
+			c.marker(t, "claims/child/claim.json", map[string]any{"sessionId": "child", "dispatchRequestId": "another-dispatch"})
+		}},
+		{"foreign binding", "unmeasured", "dispatch_uncorrelated", false, func(t *testing.T, c *unclaimedChild) {
+			c.marker(t, "bound.json", map[string]any{"sessionId": "foreign", "taskId": "foreign"})
+		}},
+		{"unattached", "unmeasured", "dispatch_uncorrelated", false, func(t *testing.T, c *unclaimedChild) {
+			c.exec(t, "UPDATE managed_start_requests SET state='create_armed'")
+		}},
+		{"stale generation", "unmeasured", "dispatch_uncorrelated", false, func(t *testing.T, c *unclaimedChild) { c.exec(t, "UPDATE relationships SET execution_generation=2") }},
+		{"wrong marker generation", "unmeasured", "dispatch_uncorrelated", false, func(t *testing.T, c *unclaimedChild) {
+			c.marker(t, "relationship.json", map[string]any{"relationshipId": "rel-1", "executionGeneration": 2})
+		}},
+		{"foreign registry child", "unmeasured", "dispatch_uncorrelated", false, func(t *testing.T, c *unclaimedChild) { c.exec(t, "UPDATE relationships SET child_task_id='foreign'") }},
+		{"wrong dispatch preimage", "unmeasured", "dispatch_uncorrelated", false, func(t *testing.T, c *unclaimedChild) {
+			c.exec(t, "UPDATE generations SET dispatch_request_id='other'")
+			c.exec(t, "UPDATE managed_start_requests SET dispatch_request_id='other'")
+		}},
+		{"wrong registry workspace", "unmeasured", "dispatch_uncorrelated", false, func(t *testing.T, c *unclaimedChild) {
+			c.exec(t, "UPDATE managed_start_requests SET workspace=?", c.root)
+		}},
+		{"wrong marker root", "unmeasured", "dispatch_uncorrelated", false, func(t *testing.T, c *unclaimedChild) {
+			c.exec(t, "UPDATE managed_start_requests SET marker_root=?", c.root)
+		}},
+		{"superseded", "unmeasured", "dispatch_uncorrelated", false, func(t *testing.T, c *unclaimedChild) {
+			c.exec(t, "UPDATE relationships SET superseded_by='replacement'")
+		}},
+		{"ambiguous start", "unmeasured", "dispatch_uncorrelated", false, func(t *testing.T, c *unclaimedChild) {
+			c.exec(t, "INSERT INTO managed_start_requests SELECT 'req-2',issue_key,'fp-2',fingerprint_version,workspace,marker_root,socket_identity,'create-2',dispatch_request_id,state,revision,child_task_id,standby_turn_id,relationship_id,execution_generation,receipt_status,created_at,updated_at FROM managed_start_requests")
+		}},
+		{"bounded facts exceeded", "unmeasured", "dispatch_uncorrelated", false, func(t *testing.T, c *unclaimedChild) {
+			c.exec(t, "WITH RECURSIVE numbers(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM numbers WHERE n<513) INSERT INTO assignment_settlements SELECT 'rel-1','child','business','completed',? FROM numbers", nsAt)
+		}},
+		{"conflicting settlement", "unmeasured", "terminal_conflict", false, func(t *testing.T, c *unclaimedChild) {
+			c.exec(t, "INSERT INTO assignment_settlements VALUES('rel-1','child','business','failed',?)", nsAt)
+		}},
+		{"no settlement", "unmeasured", "host_terminal_unobserved", false, func(t *testing.T, c *unclaimedChild) { c.exec(t, "DELETE FROM assignment_settlements") }},
+		{"later admitted", "unreported", delivery.OmittedReason, false, func(t *testing.T, c *unclaimedChild) {
+			c.exec(t, "INSERT INTO generation_turns SELECT relationship_id,execution_generation,'later',evidence,actor,detail,admitted_at FROM generation_turns")
+		}},
+		{"earlier admission", "unreported", delivery.OmittedReason, true, func(t *testing.T, c *unclaimedChild) {
+			c.exec(t, "INSERT INTO generation_turns SELECT relationship_id,execution_generation,'earlier',evidence,actor,detail,? FROM generation_turns", delivery.ISOOf(nsNow-1))
+		}},
+		{"own receipt", "unreported", delivery.OmittedReason, false, func(t *testing.T, c *unclaimedChild) { c.event(t, "child", "final", "completed", 1) }},
+		{"foreign-generation receipt", "unreported", delivery.OmittedReason, true, func(t *testing.T, c *unclaimedChild) { c.event(t, "child", "final", "completed", 2) }},
+		{"daemon report", "reported", "daemon_execution_report", false, func(t *testing.T, c *unclaimedChild) {
+			c.exec(t, "UPDATE assignment_settlements SET terminal_status='failed'")
+			c.event(t, store.ProducerDaemon, "final", "failed", 1)
+		}},
+		{"wrong daemon status", "unreported", delivery.OmittedReason, true, func(t *testing.T, c *unclaimedChild) {
+			c.exec(t, "UPDATE assignment_settlements SET terminal_status='failed'")
+			c.event(t, store.ProducerDaemon, "final", "interrupted", 1)
+		}},
+		{"staged daemon report", "unreported", delivery.OmittedReason, true, func(t *testing.T, c *unclaimedChild) {
+			c.exec(t, "UPDATE assignment_settlements SET terminal_status='failed'")
+			c.event(t, store.ProducerDaemon, "staged", "failed", 1)
+		}},
+		{"unclaimed declaration", "unmeasured", "dispatch_uncorrelated", false, func(t *testing.T, c *unclaimedChild) {
+			c.marker(t, "dispositions/child/business.json", map[string]any{"sessionId": "child", "turnId": "business", "outcome": "in_progress", "at": nsAt})
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newUnclaimedChild(t)
+			tc.change(t, c)
+			reading := c.observe(t)
+			if reading["reportingState"] != tc.state || reading["reason"] != tc.reason || reading["owed"] != tc.owed {
+				t.Fatalf("got %v; want %s/%s, owed %v", reading, tc.state, tc.reason, tc.owed)
+			}
+		})
+	}
+}
+
+func (c *unclaimedChild) event(t *testing.T, producer, stage, status string, generation int) {
+	t.Helper()
+	c.exec(t, "INSERT INTO events(event_id,relationship_id,execution_generation,revision_hash,outcome,producer,turn_thread_id,turn_id,turn_status,receipt,stage,first_seen_at,last_seen_at) VALUES('receipt','rel-1',?,'x',?,?,'child','business',?,'{}',?,?,?)", generation, status, producer, status, stage, nsAt, nsAt)
+}
+
+func TestCRW398ConcurrentPublicationIsNotAnOmission(t *testing.T) {
+	for _, kind := range []string{"declaration", "unreadable declaration", "claim", "registry change"} {
+		t.Run(kind, func(t *testing.T) {
+			c := newUnclaimedChild(t)
+			original := delivery.ObserveOmission(c.ctx, c.r.Selection.(store.StateSelection), c.r.Root, c.r.Workspace, c.r.Assignment, c.r.Session, c.r.Turn, c.r.Now, 0)
+			reading := unclaimedOmission(c.ctx, c.r.Selection.(store.StateSelection), c.r, original, func() {
+				switch kind {
+				case "declaration":
+					c.marker(t, "dispositions/child/business.json", map[string]any{"sessionId": "child", "turnId": "business", "outcome": "failed", "at": nsAt})
+				case "unreadable declaration":
+					c.marker(t, "dispositions/child/business.json", "not an object")
+				case "claim":
+					c.marker(t, "claims/child/claim.json", map[string]any{"sessionId": "child", "dispatchRequestId": "dispatch-1"})
+				case "registry change":
+					c.exec(t, "UPDATE relationships SET parent_task_id='other'")
+				}
+			})
+			if reading.Get("reportingState") != "unmeasured" || reading.Get("owed") != false {
+				t.Fatalf("mixed concurrent evidence: %v", reading)
+			}
+		})
+	}
+}

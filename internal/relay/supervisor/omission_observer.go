@@ -76,16 +76,19 @@ func unclaimedOmission(ctx context.Context, selection store.StateSelection, r fa
 	var rows []unclaimedTurn
 	read := func() store.RowsRead {
 		rows = nil
-		return store.ReadOnlyRows(ctx, selection, unclaimedTurnSQL, []any{r.Session, r.Turn, r.Session, r.Turn, r.Session, r.Turn, relation.Get("relationshipId"), r.Session}, func(row store.RowScanner) error {
+		return store.ReadOnlyRows(ctx, selection, unclaimedTurnSQL, []any{r.Session, r.Turn, r.Session, r.Turn, relation.Get("relationshipId"), r.Session}, func(row store.RowScanner) error {
 			var turn unclaimedTurn
-			var settlements, admissions string
-			if err := row.Scan(&turn.Request, &turn.Dispatch, &turn.Issue, &turn.Workspace, &turn.Root, &turn.Standby, &turn.Anchor, &turn.Status, &turn.Parent, &turn.Cwd, &turn.Generation, &turn.Requests, &settlements, &admissions, &turn.Receipted, &turn.ExecutionReport); err != nil {
+			var settlements, admissions, events string
+			if err := row.Scan(&turn.Request, &turn.Dispatch, &turn.Issue, &turn.Workspace, &turn.Root, &turn.Standby, &turn.Anchor, &turn.Status, &turn.Parent, &turn.Cwd, &turn.Generation, &turn.Requests, &settlements, &admissions, &events); err != nil {
 				return err
 			}
 			if err := json.Unmarshal([]byte(settlements), &turn.Settlements); err != nil {
 				return err
 			}
 			if err := json.Unmarshal([]byte(admissions), &turn.Admissions); err != nil {
+				return err
+			}
+			if err := json.Unmarshal([]byte(events), &turn.Events); err != nil {
 				return err
 			}
 			rows = append(rows, turn)
@@ -97,7 +100,7 @@ func unclaimedOmission(ctx context.Context, selection store.StateSelection, r fa
 		return original
 	}
 	t := rows[0]
-	if t.Requests != 1 || delivery.AssignmentID(t.Dispatch) != r.Assignment || t.Issue != intent.Get("issueKey") || fmt.Sprint(t.Generation) != fmt.Sprint(relation.Get("executionGeneration")) || !samePath(t.Workspace, r.Workspace) || !samePath(t.Cwd, r.Workspace) || !samePath(t.Root, r.Root) || r.Turn == t.Standby || len(t.Settlements) > delivery.OmittedMaxFacts || len(t.Admissions) > delivery.OmittedMaxFacts {
+	if t.Requests != 1 || delivery.AssignmentID(t.Dispatch) != r.Assignment || t.Issue != intent.Get("issueKey") || fmt.Sprint(t.Generation) != fmt.Sprint(relation.Get("executionGeneration")) || !samePath(t.Workspace, r.Workspace) || !samePath(t.Cwd, r.Workspace) || !samePath(t.Root, r.Root) || r.Turn == t.Standby || len(t.Settlements) > delivery.OmittedMaxFacts || len(t.Admissions) > delivery.OmittedMaxFacts || len(t.Events) > delivery.OmittedMaxFacts {
 		return original
 	}
 	admitted := r.Turn == t.Anchor
@@ -134,7 +137,17 @@ func unclaimedOmission(ctx context.Context, selection store.StateSelection, r fa
 		return original
 	}
 	witness := true
-	verdict := delivery.ClassifyOmission(delivery.OmissionFacts{Witness: &witness, Admission: "admitted", Settlements: t.Settlements, Label: "undeclared_turn_end", ExecutionReport: t.ExecutionReport, Receipted: t.Receipted, LaterAdmitted: later, Now: r.Now, Grace: omissionObserverGrace})
+	receipted := false
+	reports := []any{}
+	for _, e := range t.Events {
+		if e["producer"] == "child" && e["stage"] == "final" {
+			receipted = true
+		}
+		if len(t.Settlements) > 0 && e["producer"] == store.ProducerDaemon && e["stage"] == "final" && e["outcome"] == t.Settlements[0].Status && e["status"] == t.Settlements[0].Status {
+			reports = append(reports, e)
+		}
+	}
+	verdict := delivery.ClassifyOmission(delivery.OmissionFacts{Witness: &witness, Admission: "admitted", Settlements: t.Settlements, Label: "undeclared_turn_end", ExecutionReport: len(reports) > 0, Receipted: receipted, LaterAdmitted: later, Now: r.Now, Grace: omissionObserverGrace})
 	answer := append(delivery.Obj(nil), original...)
 	for _, field := range verdict {
 		answer = answer.Set(field.Key, field.Value)
@@ -143,7 +156,14 @@ func unclaimedOmission(ctx context.Context, selection store.StateSelection, r fa
 	answer = answer.Set("managedRequests", []any{map[string]any{"requestId": t.Request, "state": "attached", "child": r.Session, "standby": t.Standby, "relationship": relation.Get("relationshipId"), "generation": t.Generation, "workspace": t.Workspace, "markerRoot": t.Root, "issue": t.Issue}})
 	answer = answer.Set("currentObservation", delivery.Obj{{Key: "label", Value: "undeclared_turn_end"}})
 	if len(t.Settlements) > 0 && verdict.Get("reason") != "terminal_conflict" {
-		answer = answer.Set("terminalObservation", delivery.Obj{{Key: "source", Value: "relay_settlement"}, {Key: "status", Value: t.Settlements[0].Status}, {Key: "records", Value: t.Settlements}})
+		records := make([]any, len(t.Settlements))
+		for i, s := range t.Settlements {
+			records[i] = delivery.Obj{{Key: "status", Value: s.Status}, {Key: "at", Value: s.At}}
+		}
+		answer = answer.Set("terminalObservation", delivery.Obj{{Key: "source", Value: "relay_settlement"}, {Key: "records", Value: records}, {Key: "status", Value: t.Settlements[0].Status}})
+	}
+	if verdict.Get("reason") == "daemon_execution_report" {
+		answer = answer.Set("executionReports", reports)
 	}
 	return answer
 }
@@ -158,7 +178,7 @@ type unclaimedTurn struct {
 	Generation, Requests                                                            int64
 	Settlements                                                                     []delivery.OmissionSettlement
 	Admissions                                                                      []unclaimedAdmission
-	Receipted, ExecutionReport                                                      bool
+	Events                                                                          []map[string]any
 }
 
 // Admission, terminal and event evidence come from one statement, bounded like the delivery reader.
@@ -172,13 +192,10 @@ const unclaimedTurnSQL = `SELECT m.request_id,m.dispatch_request_id,m.issue_key,
  (SELECT json_group_array(json_object('turn',a.turn_id,'at',a.admitted_at,'row',a.rowid)) FROM
   (SELECT turn_id,admitted_at,rowid FROM generation_turns WHERE relationship_id=r.relationship_id
    AND execution_generation=g.execution_generation AND evidence=('explicit_admission_bound:' || g.dispatch_turn_id) LIMIT 513) a),
- EXISTS(SELECT 1 FROM events e WHERE e.relationship_id=r.relationship_id AND e.execution_generation=g.execution_generation
-  AND e.turn_thread_id=? AND e.turn_id=? AND e.producer='child' AND e.stage='final'),
- EXISTS(SELECT 1 FROM events e JOIN assignment_settlements s ON s.relationship_id=e.relationship_id
-  AND s.thread_id=e.turn_thread_id AND s.turn_id=e.turn_id WHERE e.relationship_id=r.relationship_id
-  AND e.execution_generation=g.execution_generation AND e.turn_thread_id=? AND e.turn_id=?
-  AND e.producer='daemon_observation' AND e.stage='final' AND s.terminal_status IN ('failed','interrupted')
-  AND e.outcome=s.terminal_status AND e.turn_status=s.terminal_status)
+ (SELECT json_group_array(json_object('eventId',e.event_id,'outcome',e.outcome,'stage',e.stage,
+  'producer',e.producer,'status',e.turn_status)) FROM (SELECT event_id,outcome,stage,producer,turn_status FROM events
+  WHERE relationship_id=r.relationship_id AND execution_generation=g.execution_generation
+  AND turn_thread_id=? AND turn_id=? LIMIT 513) e)
  FROM managed_start_requests m JOIN relationships r ON r.relationship_id=m.relationship_id
  JOIN generations g ON g.relationship_id=r.relationship_id AND g.execution_generation=r.execution_generation
   AND g.dispatch_request_id=m.dispatch_request_id
