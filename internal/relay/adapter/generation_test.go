@@ -12,6 +12,7 @@ import (
 // Replay is checked inside the composing transaction, before active-status checks
 // or another generation is inserted. The second call observes uncommitted writes.
 func Test28_OpenGenerationInInnerReplay(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	s := seedIntake(t, filepath.Join(root, "state.sqlite3"), root)
 	ctx := context.Background()

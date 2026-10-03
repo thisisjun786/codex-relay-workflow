@@ -46,6 +46,7 @@ func routingRow(generation int64) store.ManagedStartRequestsRow {
 }
 
 func TestRoutingText_GenerationOneIsTheBaselineText(t *testing.T) {
+	t.Parallel()
 	m := &Start{Store: &store.Store{Path: "/state/relay.sqlite3"}, Socket: "/sock"}
 	id := Identity{DispatchRequestID: "managed-business-d", Workspace: "/ws", MarkerRoot: "/marker"}
 	got := m.packet(id, routingRow(1), map[string]any{"prompt": "do the work"}, "assignment-1")
@@ -55,6 +56,7 @@ func TestRoutingText_GenerationOneIsTheBaselineText(t *testing.T) {
 }
 
 func TestRoutingText_EachGenerationNamesItsOwnAnchor(t *testing.T) {
+	t.Parallel()
 	const record = "{\"standbyTurnId\":\"turn-a\"}"
 	anchors := []string{"turn-a", "turn-b", "turn-c"}
 	for generation, anchor := range anchors {
@@ -136,6 +138,7 @@ func (x *routingRun) run() map[string]any {
 // A retry of a request whose business send was not attempted carries the same request id and has to
 // carry the same message: the bridge ledger fingerprints it, and a different text is a conflict.
 func TestRoutingText_RetryWithTheSameRequestIDSendsTheSameBytes(t *testing.T) {
+	t.Parallel()
 	x := newRoutingRun(t)
 	var sent []string
 	x.host.beforeSend = func(in SendRequest) { sent = append(sent, in.RequestID+"\n"+in.Message) }
@@ -160,6 +163,7 @@ func TestRoutingText_RetryWithTheSameRequestIDSendsTheSameBytes(t *testing.T) {
 // A relationship that has moved to generation 2 before the business message goes is refused at the final
 // guard, so managed-start never sends the first generation's text as a later generation's.
 func TestRoutingText_ALaterGenerationIsNeverSent(t *testing.T) {
+	t.Parallel()
 	x := newRoutingRun(t)
 	var verdict string
 	x.host.beforeSend = func(in SendRequest) {

@@ -280,7 +280,7 @@ func TestSharedContractSurfacesAreExclusive(t *testing.T) {
 			t.Errorf("%s: ready = %q q = %+v %+v, want the second mechanical declaration cut", path, got, q, q.Release)
 		}
 	}
-	// the stored declaration says exclusive, with no rule, and no whole-repository hold except where the classifier already made one
+	// the stored declaration says exclusive, with no rule, and no whole-repository hold (only the declarer's word makes one)
 	f := newFixture(t)
 	f.putPlan("d", 0, "d-r1", addNode("impl", dag.NodeImplementation))
 	declared, err := f.sched.DeclareRegions(context.Background(), "d", "impl", "parent", []Region{gr("internal/relay/argparse/specs.json", "mechanical", "union"), gr("contract/golden/ack-proof.json", "local", "")})

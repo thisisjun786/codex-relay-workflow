@@ -32,11 +32,13 @@ func (h *jsonReceiptHost) SendMessage(ctx context.Context, in SendRequest) (map[
 // began as what Python's ManagedStart._business_result answered. Both runs of the start, the
 // second a replay, must give the same result.
 func Test24ManagedReceiptAccessorPython(t *testing.T) {
+	t.Parallel()
 	values := evidence.Items(evidence.Decode(`[null, false, true, 0, 2, 1.5, "", "x", [], [1], {}, {"a": 1}]`))
 	results := make([]any, len(values))
-	defer func() { golden.CheckJSON(t, "business-results", results) }()
+	t.Cleanup(func() { golden.CheckJSON(t, "business-results", results) })
 	for i, value := range values {
 		t.Run(pyvalue.Repr(value), func(t *testing.T) {
+			t.Parallel()
 			ctx := context.Background()
 			dir := t.TempDir()
 			s, err := store.Open(ctx, filepath.Join(dir, "relay.sqlite3"), "")

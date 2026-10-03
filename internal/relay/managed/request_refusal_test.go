@@ -12,6 +12,7 @@ import (
 // lone surrogate escape anywhere is refused before any field is judged. Each refusal's text is the
 // golden.
 func TestAnUnknownRequestFieldIsNamed(t *testing.T) {
+	t.Parallel()
 	var documents []string
 	for _, key := range []string{"it's", `a\b`, "x\u00a0y", "x\u2028y", "x\u200by", `say "it's"`} {
 		raw, err := json.Marshal(map[string]any{key: 1, "b'": 2})
