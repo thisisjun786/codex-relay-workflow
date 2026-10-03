@@ -805,6 +805,8 @@ and a delivery that did not move, and one word cannot carry both. A condition ne
 vocabulary names is reported as a blocker against the state that does apply, under
 [OPS-6.2](references/operations.md#ops-62-record-shape).
 
+A child blocked on a person is answered with a decision, never with a verdict or a message the relay cannot see: the answer goes back through `decision-reply`; for a split approval or a scope change, which open the next generation of the same child, `dag-correct` then records that generation for its DAG node; and the child's result in it is ruled and accepted like any other. Follow [Answering a child that stopped for input](references/relay.md#answering-a-child-that-stopped-for-input). A message sent outside that route leaves only the trace `admit-turn` records, which the same section names as the fallback.
+
 After integration, apply [Implementation Done](../crw-plan/references/integrations.md#implementation-done)
 before reporting or recording the issue complete. Read back the one delivery PR's
 actual merge, intended repository/branch and landing revision. For legacy multi-PR
