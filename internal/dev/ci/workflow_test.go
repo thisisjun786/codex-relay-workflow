@@ -158,8 +158,8 @@ func TestWorkflow_each_check_runs_once(t *testing.T) {
 
 var (
 	// pythonStep matches what installs or runs Python in a workflow line: the setup action and its
-	// version input, and a python or pip command word (python3, python3.12, pip3, pipx).
-	pythonStep = regexp.MustCompile(`(?:^|[^A-Za-z0-9_.-])(?:setup-python|python-version|python[0-9.]*|pipx?[0-9.]*)(?:$|[^A-Za-z0-9_-])`)
+	// version input, and a python or pip word (python3, python3.12, pip3, pipx, python3-minimal).
+	pythonStep = regexp.MustCompile(`(?:^|[^A-Za-z0-9_.-])(?:setup-python|python-version|python[0-9.]*|pipx?[0-9.]*)(?:$|[^A-Za-z0-9_])`)
 	// skillStep matches a path below a skills directory (the roots of the one allow-list in
 	// validate.go): a step cannot run a skill's script without naming where it lives, in a
 	// working-directory or a cd as well as in the command.
@@ -226,6 +226,8 @@ func TestWorkflow_python_detector(t *testing.T) {
 		{"      - run: pip install -r requirements.txt", true},
 		{"      - run: pip3 install build", true},
 		{"      - run: pipx run build", true},
+		{"      - run: sudo apt-get install -y python3-minimal", true}, // an interpreter package is an install too
+		{"      - run: apt-get install python3-dev python3-pip", true},
 		{"      - run: ./plugins/crw/skills/example/scripts/helper.py", true},
 		{"      - run: \"$GITHUB_WORKSPACE/plugins/crw/skills/example/scripts/helper\"", true},
 		{"      - run: sh port/cxc/skills/crw-example/examples/demo.sh", true},
