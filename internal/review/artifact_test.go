@@ -219,3 +219,60 @@ func TestSchemaMatchesTypes(t *testing.T) {
 	}
 	check("", reflect.TypeFor[Artifact](), root)
 }
+
+func TestArtifactExtensions(t *testing.T) {
+	a := validArtifact()
+	a.Findings[0].NeedsContext, a.Findings[0].Verdict = true, VerdictUnverified
+	a.Calls = []CallRecord{{Stage: "review", Reviewer: 0, Chunk: 0, Perspective: "correctness", Class: "normal", Model: "served", Error: "cleanup failed", ElapsedMillis: 12, Tokens: TokenUsage{Input: 1 << 40, Output: 3}}}
+	data, err := a.Marshal(testHead)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := ParseArtifact(data, testHead)
+	if err != nil || !reflect.DeepEqual(*got, a) {
+		t.Fatalf("extended roundtrip: %+v %v", got, err)
+	}
+	for _, c := range []struct {
+		field  string
+		mutate func(*Artifact)
+	}{
+		{"calls[0].class", func(a *Artifact) { a.Calls[0].Class = "empty" }},
+		{"calls[0].reason", func(a *Artifact) { a.Calls[0].Reason = "quota" }},
+		{"calls[0].stage", func(a *Artifact) { a.Calls[0].Stage = "publish" }},
+		{"calls[0]", func(a *Artifact) { a.Calls[0].Tokens.CacheRead = -1 }},
+		{"calls[0]", func(a *Artifact) { a.Calls[0].ElapsedMillis = -1 }},
+		{"calls[0]", func(a *Artifact) { a.Calls[0].Reviewer = 3 }},
+		{"findings[0].needsContext", func(a *Artifact) { a.Findings[0].Verdict = VerdictConfirmed }},
+		{"dropped[0].finding.needsContext", func(a *Artifact) {
+			a.Dropped[0].Finding.NeedsContext = true
+			a.Dropped[0].Finding.Verdict = VerdictConfirmed
+		}},
+	} {
+		b := a
+		b.Calls = slices.Clone(a.Calls)
+		b.Findings = slices.Clone(a.Findings)
+		b.Dropped = slices.Clone(a.Dropped)
+		c.mutate(&b)
+		wantField(t, b.Validate(testHead), c.field)
+	}
+	for _, field := range []string{"calls", "needsContext", "error"} {
+		var raw map[string]any
+		_ = json.Unmarshal(data, &raw)
+		switch field {
+		case "calls":
+			raw["calls"] = nil
+		case "needsContext":
+			raw["findings"].([]any)[0].(map[string]any)[field] = nil
+		case "error":
+			raw["calls"].([]any)[0].(map[string]any)[field] = nil
+		}
+		nullData, _ := json.Marshal(raw)
+		if _, err := ParseArtifact(nullData, testHead); err == nil {
+			t.Errorf("explicit null %s accepted", field)
+		}
+	}
+	legacy, _ := json.Marshal(validArtifact())
+	if _, err := ParseArtifact(legacy, testHead); err != nil {
+		t.Fatalf("omitted extensions: %v", err)
+	}
+}
