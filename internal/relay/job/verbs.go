@@ -1,19 +1,265 @@
 package job
 
 import (
+	"encoding/json"
 	"io"
+	"slices"
+	"strconv"
+	"strings"
 	"time"
+	"unicode/utf16"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
+// CLIResult retains the oracle value and exit code. Relay dispatch wraps Out in
+// its answer envelope; JSON forms carry data rather than a JSON string.
 type CLIResult struct {
 	Out  any
 	Code int
 }
 
+// MaxCLIStdinBytes is MAX_STDIN_BYTES, actually a UTF-16 unit limit.
 const MaxCLIStdinBytes = 1024 * 1024
+const cliUsage = `crw relay job run [--note "..."] -- <command...>   백그라운드로 실행하고 id를 반환
+crw relay job list [--json]                        이 디렉터리의 백그라운드 작업
+crw relay job get <id> [--tail N]                  상태와 출력 꼬리
+crw relay job cancel <id>                          중지
+crw relay job off | on | status                    완료 웨이크 스위치 (이 워크트리)
+crw relay job drain --session <id> [--json]        미전달 완료를 받아가고 전달 표시
+crw relay job removal                              제거 체크리스트`
 
-func ReadCLIStdin(io.Reader) string { return "" }
-func ParseCLIPayload(string) any    { return map[string]any{} }
-func RunCLI([]string, string, func(string) (string, bool), func() time.Time) (CLIResult, error) {
-	return CLIResult{Out: ""}, nil
+// ReadCLIStdin is readStdin, including reading before applying the unit bound.
+// It is a forward-use seam for the separately ported hook entry.
+func ReadCLIStdin(in io.Reader) string {
+	b, err := io.ReadAll(in)
+	if err != nil {
+		return ""
+	}
+	raw := decodeUTF8(b)
+	if len(utf16.Encode([]rune(raw))) > MaxCLIStdinBytes {
+		return ""
+	}
+	return raw
+}
+
+// ParseCLIPayload keeps parsePayload's object/array tolerance and silent fallback.
+func ParseCLIPayload(raw string) any {
+	dec := json.NewDecoder(strings.NewReader(raw))
+	dec.UseNumber()
+	var v any
+	if dec.Decode(&v) == nil {
+		if _, err := dec.Token(); err == io.EOF {
+			switch v.(type) {
+			case map[string]any, []any:
+				return v
+			}
+		}
+	}
+	return map[string]any{}
+}
+
+func cliFlagValue(args []string, name string) *string {
+	i := slices.Index(args, name)
+	if i < 0 || i+1 == len(args) {
+		return nil
+	}
+	return &args[i+1]
+}
+
+func cliFormatList(recs []BgRecord) string {
+	if len(recs) == 0 {
+		return "백그라운드 작업 없음"
+	}
+	lines := make([]string, len(recs))
+	for i, rec := range recs {
+		lines[i] = DescribeRecord(rec)
+		if rec.Status != StatusRunning {
+			delivered := "미전달"
+			if rec.DeliveredAt != nil {
+				delivered = "전달됨"
+			}
+			lines[i] += "  [" + delivered + "]"
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func cliRecord(rec BgRecord) (any, error) {
+	b, err := encode(rec)
+	if err != nil {
+		return nil, err
+	}
+	return pyjson.Loads(string(b), pyjson.LoadOptions{})
+}
+
+// RunCLI ports run's local-file operations. The relay supplies validated options
+// and operands; its strict help/refusal contract takes precedence.
+func RunCLI(argv []string, cwd string, getenv func(string) (string, bool), clock func() time.Time) (result CLIResult, err error) {
+	result.Out = ""
+	verb, args := "", []string{}
+	if len(argv) > 0 {
+		verb, args = argv[0], argv[1:]
+	}
+	id := ""
+	if len(args) > 0 {
+		id = args[0]
+	}
+	asJSON := slices.Contains(args, "--json")
+	switch verb {
+	case "run":
+		sep := slices.Index(args, "--")
+		if sep < 0 || sep == len(args)-1 {
+			return CLIResult{cliUsage, 1}, nil
+		}
+		var session *string
+		if s, ok := getenv("CODEX_THREAD_ID"); ok {
+			session = &s
+		}
+		var rec BgRecord
+		rec, err = RunBackground(cwd, RunOptions{SessionID: session, Command: args[sep+1:], Note: cliFlagValue(args[:sep], "--note")}, clock)
+		if err == nil {
+			result.Out = rec.ID
+			if slices.Contains(args[:sep], "--json") {
+				result.Out, err = cliRecord(rec)
+			}
+		}
+	case "list":
+		var recs []BgRecord
+		recs, err = ListRecords(cwd, clock)
+		result.Out = cliFormatList(recs)
+		if err == nil && asJSON {
+			items := make([]any, 0, len(recs))
+			for _, rec := range recs {
+				var item any
+				if item, err = cliRecord(rec); err != nil {
+					break
+				}
+				items = append(items, item)
+			}
+			result.Out = items
+		}
+	case "get", "cancel":
+		rec, ok := ReadRecord(cwd, id)
+		if !ok {
+			code := 0
+			if verb == "get" {
+				code = 1
+			}
+			return CLIResult{"없는 id: " + id, code}, nil
+		}
+		if verb == "cancel" {
+			rec, err = Cancel(cwd, rec, clock)
+			result.Out = rec.ID + " " + string(rec.Status)
+		} else {
+			rec, err = Reconcile(cwd, rec, clock)
+			body, _ := ReadText(OutPath(cwd, id))
+			lines := text.SplitLinesByteExact(body)
+			tail := cliTail(cliFlagValue(args, "--tail"), len(lines))
+			shown := ""
+			if tail > 0 {
+				shown = strings.Join(lines[len(lines)-tail:], "\n")
+			}
+			result.Out = strings.TrimRightFunc(DescribeRecord(rec)+"\n\n"+shown, func(r rune) bool { return text.Trim(string(r)) == "" })
+		}
+	case "off", "on":
+		result.Out, err = cliSwitch(cwd, verb, clock)
+	case "status":
+		state := ReadDisabledState(cwd)
+		envOff := EnvDisabled(func(k string) string { v, _ := getenv(k); return v })
+		wake, env, flag := "ON", "unset/on", "  파일 플래그: on"
+		if state.Disabled || envOff {
+			wake = "OFF"
+		}
+		if envOff {
+			env = "off"
+		}
+		if state.Disabled {
+			since := "?"
+			if state.Since != nil {
+				since = *state.Since
+			}
+			flag = "  파일 플래그: off (" + since + ")"
+		}
+		var recs []BgRecord
+		recs, err = ListRecords(cwd, clock)
+		result.Out = strings.Join([]string{"wake: " + wake, flag, "  " + EnvVar + ": " + env, "  작업 " + strconv.Itoa(len(recs)) + "건"}, "\n")
+	case "drain":
+		session := cliFlagValue(args, "--session")
+		if session == nil {
+			return CLIResult{cliUsage, 1}, nil
+		}
+		body := cliDrain(cwd, session, clock)
+		result.Out = body
+		if body == "" {
+			result.Out = "미전달 완료 없음"
+		}
+		if asJSON {
+			result.Out = pyjson.Object{{Key: "delivered", Value: body != ""}, {Key: "text", Value: body}}
+		}
+	case "removal":
+		result.Out = RemovalText()
+	default:
+		result.Out = cliUsage
+	}
+	if err != nil {
+		result = CLIResult{Out: "", Code: 1}
+	}
+	return result, err
+}
+
+func cliSwitch(cwd, verb string, clock func() time.Time) (string, error) {
+	if _, err := EnsureDir(cwd); err != nil {
+		return "", err
+	}
+	if verb == "on" && !ReadDisabledState(cwd).Disabled {
+		return "bg wake 이미 ON", nil
+	}
+	path, event := DisabledPath(cwd), "disabled"
+	out := "bg wake OFF (이 워크트리). 다시 켜려면: crw relay job on"
+	if verb == "on" {
+		if err := RemovePath(cwd, path); err != nil {
+			return "", err
+		}
+		path, event = EnabledAtPath(cwd), "enabled"
+		out = "bg wake ON. 꺼져 있는 동안 끝난 작업은 웨이크하지 않고 crw relay job list 에만 남습니다."
+	}
+	if err := AtomicWrite(cwd, path, clock().UTC().Format(isoLayout)+"\n"); err != nil {
+		return "", err
+	}
+	_ = appendLedger(cwd, Event{{"event", event}}, clock)
+	return out, nil
+}
+
+func cliTail(arg *string, available int) int {
+	if arg == nil {
+		return min(20, available)
+	}
+	body, end := text.Trim(*arg), 0
+	if body != "" && (body[0] == '+' || body[0] == '-') {
+		end++
+	}
+	for end < len(body) && body[end] >= '0' && body[end] <= '9' {
+		end++
+	}
+	n, _ := strconv.ParseFloat(body[:end], 64)
+	if n >= float64(available) {
+		return available
+	}
+	return max(0, int(n))
+}
+
+func cliDrain(cwd string, session *string, clock func() time.Time) string {
+	recs, err := SelectWake(cwd, session, WakeBatchLimit, clock)
+	if err != nil || len(recs) == 0 {
+		return ""
+	}
+	lines := []string{"[crw bg] 백그라운드 작업 " + strconv.Itoa(len(recs)) + "건이 끝났습니다."}
+	for _, rec := range recs {
+		lines = append(lines, DescribeRecord(rec))
+	}
+	lines = append(lines, "출력은 `crw relay job get <id> --tail 40`으로 봅니다. 전체 목록은 `crw relay job list`.\n결과를 확인하고 필요한 후속 작업을 이어가세요.")
+	MarkDelivered(cwd, recs, clock)
+	return strings.Join(lines, "\n")
 }

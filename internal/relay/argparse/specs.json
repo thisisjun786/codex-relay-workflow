@@ -959,5 +959,15 @@
   {"flag":"--expect-epoch","type":"int","help":"the coordinator epoch this session holds (dag-coordinator-claim answers it); a write from another epoch is refused stale_coordinator_epoch. 0 names none, which only a plan nobody claimed takes"}]},
 {"name":"dag-restart","summary":"what the store says to a parent that starts again, rebuilt from the store alone with no clock: the newest coordinator claim and whether the actor holds it, and for every node somebody owns what to do (adopt a live child, run dag-adopt, reconcile an effect whose outcome is unknown by replaying the same request or observing, needs_operator, or none). Reads only","options":[
   {"flag":"--plan","required":true},
-  {"flag":"--actor","required":true,"help":"the task that starts again"}]}
+  {"flag":"--actor","required":true,"help":"the task that starts again"}]},
+{"name":"job","commands":true,"summary":"workspace-local background jobs"},
+{"name":"job run","summary":"run [--note TEXT] [--json] -- <command...>","options":[{"flag":"--note"},{"flag":"--json","kind":"true"}]},
+{"name":"job list","options":[{"flag":"--json","kind":"true"}]},
+{"name":"job get","summary":"get <id> [--tail N]","options":[{"flag":"--tail"}]},
+{"name":"job cancel","summary":"cancel <id>"},
+{"name":"job off"},
+{"name":"job on"},
+{"name":"job status"},
+{"name":"job drain","options":[{"flag":"--session","required":true},{"flag":"--json","kind":"true"}]},
+{"name":"job removal"}
 ]
