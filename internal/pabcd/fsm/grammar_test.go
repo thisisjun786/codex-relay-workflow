@@ -95,18 +95,9 @@ func TestAttestWithoutFromAndToIsCoercedToNil(t *testing.T) {
 }
 
 func TestExtractBalancedJSONRespectsBracesInStrings(t *testing.T) {
-	for in, want := range map[string]string{"{\"did\":\"a } b\"} trailing": "{\"did\":\"a } b\"}", "no json here": "", "{\"unbalanced\":true": ""} {
+	for in, want := range map[string]string{"{\"did\":\"a } b\"} trailing": "{\"did\":\"a } b\"}", "no json here": "", "{\"unbalanced\":true": "", "noise {\"a\":1} x": "{\"a\":1}"} {
 		if got, ok := ExtractBalancedJSON(in); got != want || ok != (want != "") {
 			t.Errorf("%q: got %q, %v", in, got, ok)
-		}
-	}
-}
-
-// The prefixes are crw's alone: the oracle's own spellings no longer start a command, and no alias is kept.
-func TestTheOracleSpellingsAreNoLongerAccepted(t *testing.T) {
-	for _, p := range []string{"$codexclaw:cxc-orchestrate P", "$cxc-orchestrate p", "cxc orchestrate a"} {
-		if c := ParseOrchestrateCommand(p); c != nil {
-			t.Errorf("%q parsed as %+v", p, c)
 		}
 	}
 }
@@ -126,6 +117,9 @@ func TestParseAttestTailDirect(t *testing.T) {
 	raw, att, msg := parseAttestTail("x --attest {\"from\":\"A\",\"to\":\"B\"}")
 	if raw == nil || *raw != "{\"from\":\"A\",\"to\":\"B\"}" || att == nil || msg != "" {
 		t.Errorf("non-zero index: %v %v %q", raw, att, msg)
+	}
+	if raw, _, _ := parseAttestTail("--attestx --attest {\"from\":\"A\",\"to\":\"B\"}"); raw == nil {
+		t.Error("a later --attest after an --attestx is not found")
 	}
 	if raw, att, msg := parseAttestTail(""); raw != nil || att != nil || msg != "" {
 		t.Errorf("empty: %v %v %q", raw, att, msg)

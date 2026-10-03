@@ -19,11 +19,11 @@ const tracker = (o = {}) => ({ roundId: 1, dimensions: { goal: dim(o.level ?? "m
 const trackers = { null: null, ready: tracker(), noscan: tracker({ scan: 0 }), mid: tracker({ level: "mid" }), high: tracker({ level: "high" }), low: tracker({ level: "low", scan: 0 }),
   contradiction: tracker({ contradictions: [{ contradictionId: "c1", severity: "high", summary: "s" }] }), unrecorded: tracker({ assumptions: [{ id: "a1", text: "t", recorded: false }] }), recorded: tracker({ assumptions: [{ id: "a1", text: "t", recorded: true }] }) };
 // every field of a persisted state holds a distinct value, so a port that clears or keeps the wrong one shows
-const seed = (phase, n, interview = null) => ({ phase, sessionId: "rec-s1", slug: "seed", updatedAt: "2026-01-01T00:00:00.000Z", flags: flagsOf(n), supersededBy: null, injectedTurns: ["x"], lastInjectedPhase: "C", orchestrationActive: true, interview,
+const seed = (phase, n, interview = null) => ({ phase, sessionId: "rec-s1", slug: "seed", updatedAt: "2026-01-01T00:00:00.000Z", flags: flagsOf(n), supersededBy: "s2", injectedTurns: ["x"], lastInjectedPhase: "C", orchestrationActive: true, interview,
   stopBlockPhase: "B", stopBlockCount: 2, stopBlockWorkPhaseId: "wp1", stopMetricCursor: 3, stopBlockTotal: 4, stopBlockTurnId: "t9", stopBlockCapNotified: true, loopArmSeen: true, idleEditNudges: 5, memoryWriteRequested: true, memoryWriteTurn: "t8", memoryWriteGrant: true,
   unverifiedSubagents: [{ agentId: "a1", turnId: "t1", agentType: "worker", attempts: 2, receiptClaimed: "r.json", recordedAt: "2026-01-01T00:00:00.000Z", resolvable: true }], unverifiedCorrupt: true,
   phaseEntrySource: { kind: "resolved", commitSha: "abc", dirty: true, capturedAt: "2026-01-01T00:00:00.000Z", treeHash: "def", sourceRoot: "/r" }, boundSourceRoot: "/r", planUnit: "devlog/_plan/u", planEpoch: "e1", checkEpoch: "c1",
-  dcloseRecovery: { sessionId: "rec-s1", checkEpoch: "c1", closedWorkPhaseId: "wp1", nextWorkPhaseId: null } });
+  dcloseRecovery: { sessionId: "rec-s1", checkEpoch: "c1", closedWorkPhaseId: "wp1", nextWorkPhaseId: "wp2" } });
 const run = (f) => { try { return f(); } catch { return { threw: true }; } };
 const verdict = (r) => (r.threw ? 2 : r.ok ? 1 : 0);
 const edges = [...PHASES, ...ODD].flatMap((f) => [...PHASES, "Z", "constructor"].map((t) => [f, t]));
@@ -35,7 +35,7 @@ const attests = (f, t) => [null, { from: f, to: t, did: "implemented the audited
   { from: f, to: t, did: "ran tests", checkOutput: "77 pass", exitCode: 0 }, { from: f, to: t, did: "ran tests", checkOutput: "x", exitCode: 1 }].map((a) => (a === null ? null : JSON.stringify(a)));
 const transitions = [];
 for (const [f, t] of edges.filter(([f, t]) => (PHASES.includes(f) && PHASES.includes(t)) || (!PHASES.includes(f) && ["I", "P", "IDLE"].includes(t)))) for (const raw of attests(f, t).slice(0, PHASES.includes(f) ? 7 : 2)) for (const n of FLAGS) {
-  const r = run(() => F.transition(seed(f, n), t, raw === null ? null : A.coerceAttest(JSON.parse(raw))));
+  const r = run(() => F.transition(seed(f, n, trackers.recorded), t, raw === null ? null : A.coerceAttest(JSON.parse(raw))));
   transitions.push([f, t, n, raw === null ? -1 : I(raw), verdict(r), r.reason === undefined ? -1 : T(r.reason), r.state === undefined ? -1 : S(JSON.stringify(r.state))]);
 }
 const derive = Object.entries(trackers).flatMap(([name, tr]) => [7, 0].map((n) => [name, n, S(JSON.stringify(F.deriveInterviewFlag(seed("I", n, tr))))]));

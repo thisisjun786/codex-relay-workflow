@@ -115,7 +115,7 @@ func TestFsmMatchesTheRecordedOracle(t *testing.T) {
 		}
 	}
 	for _, r := range f.Transitions {
-		in, att := f.seed(t, r.s(0), r.n(2), ""), (*attest.Attestation)(nil)
+		in, att := f.seed(t, r.s(0), r.n(2), "recorded"), (*attest.Attestation)(nil)
 		if r.n(3) >= 0 {
 			att = attest.Coerce(decode(t, f.Inputs[r.n(3)]))
 		}
@@ -189,9 +189,9 @@ func TestGrammarMatchesTheRecordedOracle(t *testing.T) {
 	}
 }
 
-// Nesting deeper than 10000 levels is the one input the port answers differently from the oracle, which accepts it
-// (V8's JSON.parse has no limit): encoding/json, jsontext included, stops at 10000, so the Go answer is that the JSON is not valid.
-// The recorded oracle answer pins what is not carried; this test pins what the port does instead.
+// Nesting deeper than 10000 levels is one of the differences the package doc lists: the oracle accepts it (V8's JSON.parse has no
+// limit), encoding/json, jsontext included, stops at 10000, so the Go answer is that the JSON is not valid. The recorded oracle
+// answer pins what is not carried; this test pins what the port does instead.
 func TestNestingBeyondTenThousandLevelsIsRefused(t *testing.T) {
 	var g struct {
 		Deep struct {
