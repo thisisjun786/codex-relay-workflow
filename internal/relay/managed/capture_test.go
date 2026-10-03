@@ -24,6 +24,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/buildinfo"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
@@ -241,10 +242,7 @@ var executionTime = regexp.MustCompile(`\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?
 // goRuntimeBuild is the build doctor's ownership.runtime_build names for the Go runtime: the
 // holder-identity build, else the version (cli doctor.go runtimeBuild).
 func goRuntimeBuild() string {
-	if cli.Build != "" {
-		return cli.Build
-	}
-	return cli.Version
+	return buildinfo.ID()
 }
 
 // answeringBuild stands for doctor's ownership.runtime_build when it names the runtime that

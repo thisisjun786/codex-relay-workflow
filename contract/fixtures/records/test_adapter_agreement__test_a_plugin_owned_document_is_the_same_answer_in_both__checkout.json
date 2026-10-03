@@ -68,6 +68,7 @@
      "observation",
      "processEnding",
      "recordVersion",
+     "runtime",
      "sessionId",
      "signal",
      "stdoutReading",
@@ -315,6 +316,18 @@
      "turnId"
     ],
     "value": "t-1"
+   },
+   {
+    "kind": "set_eq",
+    "path": [
+     "rows",
+     0,
+     "runtime"
+    ],
+    "value": [
+     "build",
+     "executable"
+    ]
    }
   ]
  }
