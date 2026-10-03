@@ -65,12 +65,32 @@ type FileEntry struct {
 	Exec     bool   `json:"exec,omitempty"`
 }
 
+// Hunk replaces the original lines Old, which start at the 1-based original line Line, by New.
+type Hunk struct {
+	Line int      `json:"line"`
+	Old  []string `json:"old,omitempty"`
+	New  []string `json:"new,omitempty"`
+}
+
+// Edit is the difference of one file from its substituted original: hunks, a file only the staged
+// copy has (Add, with its digest and mode) or a dropped original (Remove).
+type Edit struct {
+	File   string `json:"file"`
+	Reason string `json:"reason"`
+	Add    bool   `json:"add,omitempty"`
+	Remove bool   `json:"remove,omitempty"`
+	SHA256 string `json:"sha256,omitempty"`
+	Exec   bool   `json:"exec,omitempty"`
+	Hunks  []Hunk `json:"hunks,omitempty"`
+}
+
 // Skill is the record of one staged skill.
 type Skill struct {
 	Origin Origin               `json:"origin"`
 	Table  string               `json:"table_sha256"`
 	From   string               `json:"from"`
 	Files  map[string]FileEntry `json:"files"`
+	Edits  []Edit               `json:"edits,omitempty"`
 }
 
 func sum(b []byte) string {
