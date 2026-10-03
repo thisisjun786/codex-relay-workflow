@@ -2,8 +2,10 @@ package state
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -177,27 +179,6 @@ func noReplaceWorks(t *testing.T, dir string) bool {
 	return errors.Is(renameNoReplace(a, b), fs.ErrExist)
 }
 
-// limitFileSize lowers RLIMIT_FSIZE to 16 bytes, so that a write past them fails after a partial write (EFBIG), as a full disk
-// does, and returns the restore; the limit is process-wide, so a test restores it as soon as the call under test returns.
-func limitFileSize(t *testing.T) (restore func()) {
-	t.Helper()
-	var old syscall.Rlimit
-	if err := syscall.Getrlimit(syscall.RLIMIT_FSIZE, &old); err != nil {
-		t.Skip(err)
-	}
-	limited := syscall.Rlimit{Cur: 16, Max: old.Max}
-	if err := syscall.Setrlimit(syscall.RLIMIT_FSIZE, &limited); err != nil {
-		t.Skip(err)
-	}
-	restore = func() {
-		if err := syscall.Setrlimit(syscall.RLIMIT_FSIZE, &old); err != nil {
-			t.Errorf("restoring the file size limit: %v", err)
-		}
-	}
-	t.Cleanup(restore)
-	return restore
-}
-
 // standing is what is at path, without following a link: the text of a file, or the target of a symlink.
 func standing(t *testing.T, path string) string {
 	t.Helper()
@@ -249,31 +230,56 @@ func TestEnsureStateFallbackLeavesNothingAtTheFinalPathWhenAStepFails(t *testing
 	}
 }
 
+// TestFileSizeLimitHelperProcess is the child of TestEnsureStateFallbackALimitedFileSizeLeavesNothingAtTheFinalPath, not a test of its
+// own: a file size limit is a setting of the whole process, and in the process of go test it also fails the writes of the test
+// harness itself (its test log), so the limit is lowered in a child that exits as soon as the call under test has returned.
+func TestFileSizeLimitHelperProcess(t *testing.T) {
+	cwd, mode := os.Getenv("CRW_STATE_FSIZE_CWD"), os.Getenv("CRW_STATE_FSIZE_MODE")
+	if cwd == "" {
+		t.Skip("child of the file size limit test")
+	}
+	var old syscall.Rlimit
+	if err := syscall.Getrlimit(syscall.RLIMIT_FSIZE, &old); err != nil {
+		fmt.Println("setup:", err)
+		os.Exit(2)
+	}
+	limited := syscall.Rlimit{Cur: 16, Max: old.Max} // a write past 16 bytes fails with EFBIG after a partial write, as a full disk does
+	lower := func() {
+		if err := syscall.Setrlimit(syscall.RLIMIT_FSIZE, &limited); err != nil {
+			fmt.Println("setup:", err)
+			os.Exit(2)
+		}
+	}
+	link := func(existing, created string) error {
+		if mode == "temp" {
+			lower() // the temp file of the fallback is the first to be written past the limit
+		}
+		return &os.LinkError{Op: "link", Old: existing, New: created, Err: syscall.EPERM}
+	}
+	fail := hook(nil)
+	if mode == "in place" { // the temp file is written whole, then the publication is unsupported and the in-place file is the one that fails
+		fail = func(s ensureStep, path string) error {
+			if s != stepPublish {
+				return nil
+			}
+			lower()
+			return &os.LinkError{Op: "rename", Err: syscall.EINVAL}
+		}
+	}
+	created, err := ensureStateWith(cwd, "fallback-efbig", at, link, fail)
+	_ = syscall.Setrlimit(syscall.RLIMIT_FSIZE, &old)
+	fmt.Printf("created=%v err=%v\n", created, err)
+	os.Exit(0)
+}
+
 func TestEnsureStateFallbackALimitedFileSizeLeavesNothingAtTheFinalPath(t *testing.T) { // real partial writes (EFBIG), no failing hook
-	const id = "fallback-efbig"
-	for _, inPlace := range []bool{false, true} {
-		cwd, restore := t.TempDir(), func() {}
-		lower := func() { restore = limitFileSize(t) }
-		link := func(old, created string) error {
-			if !inPlace {
-				lower() // the temp file of the fallback is the first to be written past the limit
-			}
-			return &os.LinkError{Op: "link", Old: old, New: created, Err: syscall.EPERM}
-		}
-		fail := hook(nil)
-		if inPlace { // the temp file is written whole, then the publication is unsupported and the in-place file is the one that fails
-			fail = func(s ensureStep, path string) error {
-				if s != stepPublish {
-					return nil
-				}
-				lower()
-				return &os.LinkError{Op: "rename", Err: syscall.EINVAL}
-			}
-		}
-		created, err := ensureStateWith(cwd, id, at, link, fail)
-		restore()
-		if created || !errors.Is(err, syscall.EFBIG) || len(sessionFiles(cwd)) != 0 {
-			t.Errorf("in place %v: created %v, %v, files %v", inPlace, created, err, sessionFiles(cwd))
+	for _, mode := range []string{"temp", "in place"} {
+		cwd := t.TempDir()
+		cmd := exec.Command(os.Args[0], "-test.run=^TestFileSizeLimitHelperProcess$")
+		cmd.Env = append(os.Environ(), "CRW_STATE_FSIZE_CWD="+cwd, "CRW_STATE_FSIZE_MODE="+mode)
+		out, err := cmd.Output()
+		if err != nil || !strings.HasPrefix(string(out), "created=false err=") || !strings.Contains(string(out), syscall.EFBIG.Error()) || len(sessionFiles(cwd)) != 0 {
+			t.Errorf("%s: %v, output %q, files %v", mode, err, out, sessionFiles(cwd))
 		}
 	}
 }
