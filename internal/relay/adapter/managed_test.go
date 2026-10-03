@@ -22,7 +22,6 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/managed"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
@@ -92,7 +91,7 @@ func Test28_ManagedSixMethodsRealSocket(t *testing.T) {
 		}
 		return fakehost.Reply{Result: map[string]any{"data": data, "nextCursor": nil}}
 	})
-	s, err := store.Open(context.Background(), filepath.Join(state, "relay.sqlite3"), host.SocketPath)
+	s, err := openStore(context.Background(), filepath.Join(state, "relay.sqlite3"), host.SocketPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +224,7 @@ func Test28_ManagedStartEndsOnTheFirstInterrupt(t *testing.T) {
 		}
 		return fakehost.Reply{Result: map[string]any{"data": data, "nextCursor": nil}}
 	})
-	s, err := store.Open(context.Background(), filepath.Join(state, "relay.sqlite3"), host.SocketPath)
+	s, err := openStore(context.Background(), filepath.Join(state, "relay.sqlite3"), host.SocketPath)
 	if err != nil {
 		t.Fatal(err)
 	}

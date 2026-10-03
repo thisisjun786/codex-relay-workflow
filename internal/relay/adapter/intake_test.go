@@ -19,7 +19,7 @@ import (
 
 func seedIntake(t *testing.T, path, root string) *store.Store {
 	t.Helper()
-	s, err := store.Open(context.Background(), path, "")
+	s, err := openStore(context.Background(), path, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,6 +37,7 @@ func seedIntake(t *testing.T, path, root string) *store.Store {
 	return s
 }
 func Test28_MSC_11_IntakeAdmissionUnchanged(t *testing.T) {
+	t.Parallel()
 	shareGoldens(t)
 	kinds := []string{"frozen-good", "frozen-unreachable", "frozen-tampered", "frozen-absent", "frozen-blocked", "frozen-corrupt", "frozen-manifest-unreadable", "frozen-parent-of-missing", "frozen-parent-through-symlink", "live-good", "live-changed", "live-unreadable", "claimed-digest-newline", "claimed-revision-newline"}
 	// A frozen MANIFEST.json no freeze writes is read as json.loads reads it, so the intake takes
@@ -48,6 +49,7 @@ func Test28_MSC_11_IntakeAdmissionUnchanged(t *testing.T) {
 	}
 	for _, kind := range kinds {
 		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			work := filepath.Join(root, "work")
 			if err := os.Mkdir(work, 0700); err != nil {

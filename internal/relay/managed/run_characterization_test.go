@@ -275,6 +275,7 @@ var happyPathEvents = []string{
 // The calls of a start that goes through, in order. Each ask the engine makes of the host, and each
 // readiness ask, is a point where the world can have moved: the order is the contract.
 func TestRunCharacterization_HappyPathCallOrder(t *testing.T) {
+	t.Parallel()
 	x := newCharRun(t)
 	got := x.run()
 	checkAnswer(t, got, "admitted", "business_accepted", "")
@@ -358,6 +359,7 @@ var recoveryEvents = []string{
 // A start whose standby turn is not finished is retried until it is, and the retry sends the business turn
 // once; replaying the finished request neither creates nor sends again.
 func TestRunCharacterization_RetryAndReplay(t *testing.T) {
+	t.Parallel()
 	x := newCharRun(t)
 	x.fake.standby = "inProgress"
 	checkAnswer(t, x.run(), "incomplete", "standby", "standby_incomplete")
@@ -381,6 +383,7 @@ func TestRunCharacterization_RetryAndReplay(t *testing.T) {
 // A creation that failed after the thread started is recovered by sending the standby turn to the thread it
 // left, before the business turn.
 func TestRunCharacterization_StandbyRecoveryCallOrder(t *testing.T) {
+	t.Parallel()
 	x := newCharRun(t)
 	x.fake.partial = true
 	checkAnswer(t, x.run(), "admitted", "business_accepted", "")
@@ -395,6 +398,7 @@ func TestRunCharacterization_StandbyRecoveryCallOrder(t *testing.T) {
 // next try goes through. The one exception is inside the final guard, where a ledger that moved is not an
 // error of the start but the reason the business turn is withheld.
 func TestRunCharacterization_ErrorsPropagatePerCall(t *testing.T) {
+	t.Parallel()
 	probe := newCharRun(t)
 	probe.run()
 	events := probe.takeEvents()
@@ -402,6 +406,7 @@ func TestRunCharacterization_ErrorsPropagatePerCall(t *testing.T) {
 	for i, event := range events {
 		call := i + 1
 		t.Run(fmt.Sprintf("%02d %s", call, event), func(t *testing.T) {
+			t.Parallel()
 			x := newCharRun(t)
 			x.tr.failAt, x.tr.failErr = call, sentinel
 			out, err := x.runRaw()
@@ -494,6 +499,7 @@ func checkVerdict(t *testing.T, verdict map[string]any, code, prefix string) {
 // Each way the world can have moved between the standby turn and the business send is a refusal of the
 // final guard, with its own code.
 func TestRunCharacterization_FinalGuardRefusals(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name   string
 		code   string
@@ -523,6 +529,7 @@ func TestRunCharacterization_FinalGuardRefusals(t *testing.T) {
 		{"ledger replaced", "managed_store_changed", ledgerReplaced},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			x := newCharRun(t)
 			checkVerdict(t, x.guardVerdict(c.mutate), c.code, withheldPrefix)
 		})
@@ -531,6 +538,7 @@ func TestRunCharacterization_FinalGuardRefusals(t *testing.T) {
 
 // With nothing moved the guard lets the send through.
 func TestRunCharacterization_FinalGuardPassesAnUnchangedStart(t *testing.T) {
+	t.Parallel()
 	x := newCharRun(t)
 	if verdict := x.guardVerdict(); verdict != nil {
 		t.Fatalf("guard refused an unchanged start: %v", verdict)
@@ -539,6 +547,7 @@ func TestRunCharacterization_FinalGuardPassesAnUnchangedStart(t *testing.T) {
 
 // A store file replaced under its path is a different store, whatever it holds.
 func TestRunCharacterization_FinalGuardRefusesAReplacedStoreFile(t *testing.T) {
+	t.Parallel()
 	x := newCharRun(t)
 	path := x.store.Path
 	replace := func(x *charRun) {
@@ -564,6 +573,7 @@ func TestRunCharacterization_FinalGuardRefusesAReplacedStoreFile(t *testing.T) {
 
 // When two things moved, the guard names the first it checks.
 func TestRunCharacterization_FinalGuardRefusalOrder(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name      string
 		code      string
@@ -578,6 +588,7 @@ func TestRunCharacterization_FinalGuardRefusalOrder(t *testing.T) {
 		{"settings over criteria", "managed_settings_changed", []func(*charRun){criterionRetitled, childSettingsGone}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			x := newCharRun(t)
 			checkVerdict(t, x.guardVerdict(c.mutations...), c.code, withheldPrefix)
 		})
@@ -586,21 +597,26 @@ func TestRunCharacterization_FinalGuardRefusalOrder(t *testing.T) {
 
 // The host's own answer about the thread is the last thing the guard asks, and its refusal has its own wording.
 func TestRunCharacterization_FinalGuardRefusesByTheHostsAnswer(t *testing.T) {
+	t.Parallel()
+	x := newCharRun(t)
+	x.fake.hostScenario = "recipient_paused"
+	t.Cleanup(func() {
+		checkVerdict(t, x.guardVerdict(modeLegacy), "managed_criteria_changed", withheldPrefix)
+	})
 	for _, scenario := range []string{"recipient_archived", "recipient_paused", "lifecycle_unknown", "recipient_not_idle", "recipient_cannot_accept_input"} {
 		t.Run(scenario, func(t *testing.T) {
+			t.Parallel()
 			x := newCharRun(t)
 			x.fake.hostScenario = scenario
 			checkVerdict(t, x.guardVerdict(), scenario, hostPrefix)
 		})
 	}
-	x := newCharRun(t)
-	x.fake.hostScenario = "recipient_paused"
-	checkVerdict(t, x.guardVerdict(modeLegacy), "managed_criteria_changed", withheldPrefix)
 }
 
 // Two requests of one dispatch request id that disagree on the criteria source are refused as an
 // intent conflict before any host effect.
 func TestRunCharacterization_IntentConflictRefusesBeforeAnyHostEffect(t *testing.T) {
+	t.Parallel()
 	x := newCharRun(t)
 	id := x.identity()
 	_, err := delivery.DeclareIntent(context.Background(), id.MarkerRoot, delivery.IntentDeclaration{Workspace: id.Workspace, DispatchRequestID: id.DispatchRequestID, IssueKey: id.IssueKey, DeclaredAt: "2026-09-26T00:00:00.000000+00:00", CriteriaSource: "issue:other", BaselineRevision: x.req["baselineRevision"], AuthorizedSettings: deliveryValue(pyjson.Map(pyjson.Map(x.req["child"])["settings"])), DBPath: x.store.Path})
@@ -615,6 +631,7 @@ func TestRunCharacterization_IntentConflictRefusesBeforeAnyHostEffect(t *testing
 
 // A creation answer that names no thread or no standby turn cannot be used and nothing is registered.
 func TestRunCharacterization_UnobservedCreationIdentityIsIncomplete(t *testing.T) {
+	t.Parallel()
 	for _, receipt := range []map[string]any{
 		{"status": "accepted", "threadId": "", "turnId": "standby", "creation": map[string]any{}},
 		{"status": "accepted", "threadId": "child-new", "turnId": "", "creation": map[string]any{}},
@@ -634,6 +651,7 @@ func TestRunCharacterization_UnobservedCreationIdentityIsIncomplete(t *testing.T
 
 // The assignment marker already bound to another task refuses the child the creation just made.
 func TestRunCharacterization_MarkerBoundToAnotherTaskIsRefusedAtBinding(t *testing.T) {
+	t.Parallel()
 	x := newCharRun(t)
 	id := x.identity()
 	x.fake.onCreate = func() {
@@ -649,6 +667,7 @@ func TestRunCharacterization_MarkerBoundToAnotherTaskIsRefusedAtBinding(t *testi
 
 // What the host answers a send with is believed only when it names this thread and a turn.
 func TestRunCharacterization_BusinessReceiptIdentityAndStatus(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name   string
 		reason string
@@ -661,6 +680,7 @@ func TestRunCharacterization_BusinessReceiptIdentityAndStatus(t *testing.T) {
 		{"unknown status", "business_unknown", func(x *charRun) { x.fake.sendStatus = "unknown" }},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			x := newCharRun(t)
 			c.set(x)
 			checkAnswer(t, x.run(), "incomplete", "business", c.reason)
@@ -670,6 +690,7 @@ func TestRunCharacterization_BusinessReceiptIdentityAndStatus(t *testing.T) {
 
 // A registration that no longer matches once the business turn was accepted is reported, not admitted.
 func TestRunCharacterization_RegistrationChangedAfterTheSendIsIncomplete(t *testing.T) {
+	t.Parallel()
 	x := newCharRun(t)
 	x.fake.onSend = func(SendRequest) { scopeMoved(x) }
 	checkAnswer(t, x.run(), "incomplete", "business_accepted", "managed_scope_changed")
@@ -689,6 +710,7 @@ func TestRunCharacterization_RegistrationChangedAfterTheSendIsIncomplete(t *test
 // is the one made just after the child's settings were recorded (the settings carry the stamp of their call),
 // and the second run moves the relationship on that call.
 func TestRunCharacterization_RegistrationChangedBeforeReadbackIsRefused(t *testing.T) {
+	t.Parallel()
 	stamp := func(n int) string { return fmt.Sprintf("2026-09-26T00:%02d:%02d.000000+00:00", n/60, n%60) }
 	calls := 0
 	probe := newCharRun(t)
@@ -743,6 +765,7 @@ func TestRunCharacterization_RegistrationChangedBeforeReadbackIsRefused(t *testi
 
 // A receipt that cannot be journaled is returned together with the error that says so.
 func TestRunCharacterization_ObserveFailureReturnsReceiptAndError(t *testing.T) {
+	t.Parallel()
 	x := newCharRun(t)
 	x.start.Readiness = func(context.Context, map[string]any) (string, error) {
 		x.exec("DROP TABLE journal")
@@ -824,6 +847,7 @@ func TestRunCharacterization_ProjectLockIsLetGoAtRegistrationAndRequestLockIsKep
 // when the child was registered. A request that a readiness callback changes afterwards does not move it: the
 // start goes on to send, and the registration that is read back after the send is the one that disagrees.
 func TestRunCharacterization_GuardKeepsTheParentRegisteredWithTheChild(t *testing.T) {
+	t.Parallel()
 	x := newCharRun(t)
 	x.start.Readiness = func(ctx context.Context, req map[string]any) (string, error) {
 		if tagOf(ctx) == "guard" {

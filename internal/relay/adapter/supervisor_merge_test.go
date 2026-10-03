@@ -31,7 +31,7 @@ type supervisorRun struct {
 func seedSupervisorCLI(t *testing.T, state, socket string) string {
 	t.Helper()
 	ctx := context.Background()
-	s, err := store.Open(ctx, filepath.Join(state, "relay.sqlite3"), socket)
+	s, err := openStore(ctx, filepath.Join(state, "relay.sqlite3"), socket)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +155,7 @@ func normalizeSupervisorTables(tables map[string]any, state, socket string) map[
 
 func supervisorTables(t *testing.T, state string) map[string]any {
 	t.Helper()
-	s, err := store.Open(context.Background(), filepath.Join(state, "relay.sqlite3"), "")
+	s, err := openStore(context.Background(), filepath.Join(state, "relay.sqlite3"), "")
 	if err != nil {
 		t.Fatal(err)
 	}
