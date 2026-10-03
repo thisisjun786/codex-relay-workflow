@@ -375,6 +375,27 @@ No new oracle defect was identified in the directive text and assembly of `pabcd
 - SessionStart adopts every undelivered terminal record not owned by this session without checking whether a previous adopting session is still alive, so a second session can take the first session's adopted completion; adoption still runs while automatic wakes are off (source `plugins/codexclaw/components/bg-wake/src/hook.ts:114-119`, `registry.ts:235-250`); port: kept.
 - Selection, delivery stamping and adoption are separate unlocked operations, so concurrent hooks can select or adopt the same completion before either stamps it; a delivery write that fails is still described by the hook and can wake again later (source `plugins/codexclaw/components/bg-wake/src/hook.ts:63-70,99-103`, `registry.ts:217-250`); port: kept.
 
+## Found by the CRW-345 job verb port
+
+- `MAX_STDIN_BYTES` counts UTF-16 units, and `readStdin` reads the whole input before applying the bound (source `plugins/codexclaw/components/bg-wake/src/cli.ts:38-45`); port: kept.
+- `flagValue` takes the first occurrence and accepts another flag as its value (source `bg-wake/src/cli.ts:81-85`); port: kept in the argv facade; the approved relay parser validates options and uses its existing last-value rule.
+- A note equal to `--` becomes the command separator, and `--json` inside the command selects record output (source `bg-wake/src/cli.ts:101-107`); port: kept in the argv facade; the approved relay contract passes parsed metadata separately and selects JSON only from declared flags.
+- `get` counts the final empty line of a newline-terminated output toward its tail and trims whitespace from the displayed output (source `bg-wake/src/cli.ts:123-127`); port: kept.
+- Manual drain returns the selected completions even when a record cannot be stamped, and stamps before the caller emits the result (source `bg-wake/src/hook.ts:81-91`, `cli.ts:170-175`); port: kept.
+- A failed `on` can lose the persistent off flag: it removes `disabled` before the `enabled-at` write (source `bg-wake/src/cli.ts:145-154`; oracle reproduction makes `enabled-at` a directory); port: fixed by writing the gate before removing the flag, covered by `TestCLIOnRetainsTheOffFlagWhenGateWriteFails` and the intentionally-changed case `testdata/cli-on-gate-failure.json`.
+
+## Found by the recall storage primitives port
+
+- Version suffixes use JavaScript Number, so state_9007199254740993.sqlite ties state_9007199254740992.sqlite and the earlier sorted name wins (source plugins/codexclaw/components/recall/src/paths.ts:35-36; TestRecallVersionedDB); port: kept.
+- A matching directory or symbolic link is eligible as the newest database, because the resolver checks only its name (source recall/src/paths.ts:32-38; TestRecallVersionedDBKeepsNonFilesAndLexicalJoin); port: kept.
+- A home containing a symlink followed by .. lists the OS-resolved directory but path.join cleans the returned path lexically, potentially naming another directory's database (source recall/src/paths.ts:32,38; TestRecallVersionedDBKeepsNonFilesAndLexicalJoin); port: kept.
+- URI mode=memory overrides a read-only SQLite open and permits writes to the temporary database (source recall/src/sqlite.ts:29-31; Node-recorded case and TestRecallSQLiteOpens); port: kept. Ordinary file paths and the empty/:memory: paths remain read-only.
+- The legacy-column retry catches every query error, so an unsafe INTEGER in git_origin_url drops origin metadata silently when the shorter SELECT succeeds (source recall/src/threads-db.ts:41-49; TestRecallThreadMetaLegacyAndUnsafeFallback); port: kept.
+- SQLite resolves column names without case sensitivity, but row keys keep their declared spelling; an ID column rather than id makes every metadata row disappear without warning (source recall/src/threads-db.ts:52; TestRecallThreadMetaWarningsAndCase); port: kept.
+- node:sqlite accepts the minimum signed 64-bit INTEGER as a rounded JavaScript number, while neighboring unsafe integers throw, consistent with an absolute-value overflow in its range check (recorded Node case; recall/src/sqlite.ts:29-36 delegates to DatabaseSync; TestRecallSQLiteMinimumIntegerOracleOverflow); port: kept.
+- An ambiguous bare named-parameter map throws on its first construction but leaves a partial per-statement alias cache, so repeating Get/All/Run can bind the first alias while the other remains NULL (recorded Node case; recall/src/sqlite.ts delegates to DatabaseSync; TestRecallSQLiteNamedOrderAndCachedAmbiguity); port: kept.
+- Named SQLite binding keys containing NUL resolve by the prefix before NUL, while unknown-name diagnostics retain the original key (recorded Node case; recall/src/sqlite.ts delegates to DatabaseSync; TestRecallSQLiteNamedOrderAndCachedAmbiguity); port: kept.
+
 ## Found by the agent-thread TOML scanner port (CRW-343)
 
 - A space-separated date-time is rejected by the bare-token scan despite being in the scalar grammar (source `plugins/codexclaw/components/pabcd-state/src/agent-thread-permissions.ts:227,306-308`; recorded spaced date-time); port: kept.
