@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 // FromBytes is ExecutionPolicy.from_bytes: parse bytes already read from source as json.loads
@@ -70,7 +72,32 @@ func fromMapping(value any, digest string) (Policy, error) {
 	if section, ok := data.Get("roles").(object); ok {
 		roleOrder = append(roleOrder, keys(section)...)
 	}
-	return Policy{allowed: allowed, roles: roles, roleOrder: roleOrder, exceptions: exceptions, digest: digest}, nil
+	policy := Policy{allowed: allowed, roles: roles, roleOrder: roleOrder, exceptions: exceptions, digest: digest}
+	if err := policy.describable(); err != nil {
+		return Policy{}, err
+	}
+	return policy, nil
+}
+
+// MaxDescriptionBytes bounds how large a policy's description of its roles may be once a role
+// lists more than one pair. The relay publishes that description in the worker policy receipt, which
+// its readers refuse above 64 KiB, so a list long enough to push the receipt past that would load here
+// and then leave every worker check reading "unreadable". Half the limit leaves the rest of the
+// receipt its room. A policy whose roles each state one pair is never refused for its size.
+const MaxDescriptionBytes = 32 << 10
+
+func (p Policy) describable() error {
+	several := false
+	for _, role := range p.roles {
+		several = several || len(role.Pairs) > 1
+	}
+	if !several {
+		return nil
+	}
+	if size := len(pyjson.Dumps(p.Summary(), pyjson.Options{SortKeys: true})); size > MaxDescriptionBytes {
+		return &PolicyError{fmt.Sprintf("the roles of this policy describe themselves in %d bytes, over the %d the relay's worker policy receipt can carry; list fewer pairs or shorter names", size, MaxDescriptionBytes)}
+	}
+	return nil
 }
 
 func parseAllowed(entries any, rolesDeclared bool) (map[string][]string, error) {

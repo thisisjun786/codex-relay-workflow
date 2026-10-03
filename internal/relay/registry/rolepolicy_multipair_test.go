@@ -57,8 +57,10 @@ func TestARecordOnAnyPairOfTheRoleIsCurrentAndAnotherIsStale(t *testing.T) {
 		if finding := CheckRecord(pairSettings(pair[0], pair[1]), "child", x.r.Policy); finding != nil {
 			t.Fatalf("%v: %v", pair, finding)
 		}
-		if !derivedFromRolePair(pairSettings(pair[0], pair[1]), "child", x.r.Policy) {
-			t.Fatalf("%v: a record on a pair of the role is derived from the role", pair)
+		// The policy lists both pairs and chooses neither, so a record on either may have been moved
+		// to the other since: it is never a pair the policy derived, and is not transmitted.
+		if derivedFromRolePair(pairSettings(pair[0], pair[1]), "child", x.r.Policy) {
+			t.Fatalf("%v: a record on one of several pairs is not derived from the role", pair)
 		}
 	}
 	for _, pair := range [][2]string{{multiSonnet, "high"}, {multiSol, "high"}, {multiOpus, "xhigh"}} {
@@ -76,6 +78,10 @@ func TestARecordOnAnyPairOfTheRoleIsCurrentAndAnotherIsStale(t *testing.T) {
 	cited := pairSettings(multiSol, "xhigh").Set("citedException", "x")
 	if derivedFromRolePair(cited, "child", x.r.Policy) {
 		t.Fatal("a record citing an exception is not derived from the role")
+	}
+	// A role pinned to one pair still derives it: that pair is transmitted as before.
+	if !derivedFromRolePair(pairSettings(multiOpus, "xhigh"), "parent", x.r.Policy) {
+		t.Fatal("the parent's one pair is derived from its role")
 	}
 	// The parent keeps one pair: its finding still names that one pair as an object.
 	finding := CheckRecord(pairSettings(multiSol, "xhigh"), "parent", x.r.Policy)
@@ -116,7 +122,8 @@ func TestRecordingSettingsForABoundChildUsesEveryPairOfItsRole(t *testing.T) {
 		if _, err := x.r.RecordSettings(ctx(), task, settings(pair[0], pair[1]), "managed_start", "child", Citation{}); err != nil {
 			t.Fatalf("%v: %v", pair, err)
 		}
-		if _, free, err := x.r.AuthorizedSettings(ctx(), task); err != nil || free {
+		// Neither pair of the role is policy-derived, so a delivery resumes the child settings-free.
+		if _, free, err := x.r.AuthorizedSettings(ctx(), task); err != nil || !free {
 			t.Fatalf("%v: settings-free=%v err=%v", pair, free, err)
 		}
 	}

@@ -106,6 +106,9 @@ The file is refused when it is read, not at the first creation, if a `pairs` lis
 list, names the same pair twice, holds an entry that is not exactly `{model, reasoningEffort}`, sits in
 the same entry as `model` or `reasoningEffort`, is declared for the `supervisor`, or names a pair that the
 file's `allowed` list does not approve. A list of one pair is the one-pair form written another way.
+The description of a policy whose roles list several pairs must also fit what the relay publishes
+about it (half of the 64 KiB its readers accept), so an absurdly long list is refused when the file is
+read instead of leaving every worker check reading "unreadable".
 
 A file written for one pair per role reads exactly as before: the same digest (the SHA-256 of its
 bytes), the same description from `get_capabilities`, the same answers and the same refusals. Only a
@@ -123,6 +126,11 @@ role that lists more than one pair is described differently:
   and one on another pair is `settings_record_stale_for_role` or `role_binding_mismatch` with `expected`
   listing the pairs. `managed-start` and `--require-worker-policy` accept a requested pair when it is
   any of them.
+- a role that lists several pairs derives none of them. The policy says which pairs a task may run on,
+  not which it does run on, and the user may have moved a task from one to another. So a relay delivery
+  to such a task resumes it without transmitting the recorded pair and compares what the host reports
+  with the record, the route a supervisor takes (see Changing an existing task), instead of restoring a
+  pair the user has since changed. A role with one pair keeps transmitting it.
 
 ## The file
 

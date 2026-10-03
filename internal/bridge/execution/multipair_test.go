@@ -3,6 +3,7 @@ package execution
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -249,4 +250,27 @@ func TestAnExistingPolicyFileKeepsItsDigestSummaryAndAnswers(t *testing.T) {
 	if r.Code != RoleMismatch || r.Field != "reasoning_effort" || !sameStrings(r.Allowed, "xhigh") {
 		t.Fatalf("%+v", r)
 	}
+}
+
+// The relay publishes a policy's description in a receipt its readers refuse above 64 KiB, so a
+// list long enough to outgrow that is refused when the file is read, while a long list that fits
+// still loads and a role with one pair is never refused for its size.
+func TestAPairListTooLongForTheRelaysReceiptDoesNotLoad(t *testing.T) {
+	many := func(n int) doc {
+		pairs := make([]doc, n)
+		for i := range pairs {
+			pairs[i] = pairDoc(fmt.Sprintf("vendor/model-%04d-%s", i, strings.Repeat("x", 80)), "xhigh")
+		}
+		return doc{"roles": doc{"child": doc{"pairs": pairList(pairs...)}}}
+	}
+	p := mustLoad(t, many(50))
+	if got := len(p.Summary()["roles"].(map[string]any)["child"].(map[string]any)["pairs"].([]any)); got != 50 {
+		t.Fatalf("%d pairs described", got)
+	}
+	err := second(load(t, many(600)))
+	if err == nil || !strings.Contains(policyError(t, err).Error(), "worker policy receipt") {
+		t.Fatalf("a 600-pair role loaded or was refused for another reason: %v", err)
+	}
+	long := strings.Repeat("m", Maximum)
+	mustLoad(t, doc{"roles": doc{"parent": doc{"model": long, "reasoningEffort": long}, "child": doc{"model": long, "reasoningEffort": long}}})
 }
