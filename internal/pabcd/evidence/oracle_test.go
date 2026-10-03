@@ -186,7 +186,7 @@ func attemptsDir(cwd string) []string {
 	if err != nil {
 		return nil
 	}
-	tmp := regexp.MustCompile("\\.\\d+\\.[A-Z2-7]+\\.tmp$")
+	tmp := regexp.MustCompile(`\.\d+\.[A-Z2-7]+\.tmp$`)
 	names := []string{}
 	for _, e := range entries {
 		names = append(names, tmp.ReplaceAllString(e.Name(), ".<PID>.<MS>.tmp"))

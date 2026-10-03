@@ -21,7 +21,10 @@ import (
 type fixture struct {
 	Given struct{ Files, Symlinks map[string]string }
 	Run   struct {
-		Steps []struct{ Stdin map[string]any }
+		Steps []struct {
+			Hook  string
+			Stdin map[string]any
+		}
 	}
 	Expect struct {
 		Steps []map[string]any
@@ -55,10 +58,14 @@ func gate(cwd, sessionID string, p Payload) string {
 
 func TestCorpusFixtureTrees(t *testing.T) {
 	names := []string{"context_pressure_in_message_still_blocks", "context_pressure_releases", "empty_receipt_blocks", "receipt_outside_evidence_root_blocks",
-		"symlinked_receipt_blocks", "three_attempts_then_release", "valid_receipt_passes"}
-	isoTime := regexp.MustCompile("^\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\d\\.\\d{3}Z$")
+		"symlinked_receipt_blocks", "three_attempts_then_release", "valid_receipt_passes", "held_session_lock_exhausts_retries"}
+	isoTime := regexp.MustCompile(`^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$`)
 	for _, name := range names {
-		raw, err := os.ReadFile("../../../contract/fixtures/cxc/hook__subagent-stop-verifying-evidence__" + name + ".json")
+		stem := "hook__subagent-stop-verifying-evidence__"
+		if name == "held_session_lock_exhausts_retries" {
+			stem = "cli__memory-allow-write__"
+		}
+		raw, err := os.ReadFile("../../../contract/fixtures/cxc/" + stem + name + ".json")
 		must(t, err)
 		var fx fixture
 		must(t, json.Unmarshal(raw, &fx))
@@ -72,6 +79,9 @@ func TestCorpusFixtureTrees(t *testing.T) {
 			must(t, os.Symlink(rename.Replace(target), filepath.Join(cwd, rename.Replace(path))))
 		}
 		for i, step := range fx.Run.Steps {
+			if step.Hook == "" { // a cli step: a fixture that mixes them is checked by its evidence files
+				continue
+			}
 			str := func(key string) string { s, _ := step.Stdin[key].(string); return rename.Replace(s) }
 			p := Payload{AgentType: str("agent_type"), AgentID: str("agent_id"), TurnID: str("turn_id"), LastAssistantMessage: str("last_assistant_message")}
 			want := map[string]string{"json": "block", "empty": ""}[fx.Expect.Steps[i]["stdout_form"].(string)]
