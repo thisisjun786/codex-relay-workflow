@@ -297,6 +297,8 @@ func runCorrect(ctx context.Context, services dispatch.Services, args dispatch.A
 	}
 	defer closeStore()
 	if args.Bool("prepare") {
+		// the commit of the correction's base is read from the target branch, as dag-release reads it
+		sched.Tips = mergeturn.TargetReader{}
 		raw, err := readDocument(args.Text("manifest-request"))
 		if err != nil {
 			return nil, err
