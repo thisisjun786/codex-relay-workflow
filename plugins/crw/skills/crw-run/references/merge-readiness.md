@@ -177,7 +177,8 @@ packages the change touches, a `-count` (normally `-count=1`) for a result it wi
 `(cached)` line can be another task's run), and `-race`, a large `-count` or a load reproduction only
 inside its own memory-limited scope, one at a time. The whole test suite is gate 1's hosted CI on this
 head and is not repeated locally; the checks gate 3 names stay, and a full local test run is replaced
-by this CI where the packet says so, which is the user's operating rule for tasks under this skill.
+by this CI only where the packet states the user's scoped override, after confirming that the CI runs
+the whole suite.
 
 Nothing else is a gate, and neither reviewer is one. A required review source or a mandatory formal approval
 that the target repository's own rules declare still applies as

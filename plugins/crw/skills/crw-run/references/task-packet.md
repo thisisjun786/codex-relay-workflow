@@ -197,21 +197,27 @@ Workspace ownership:
   Module cache: `GOMODCACHE` stays at its default, the user's module cache, which every task of that
   user already shares; the Go command guards a module download with a file lock
   (`cmd/go/internal/modfetch/cache.go`), so the packet names none.
-  Parallelism: `GOFLAGS=-p=4` on every local `go` command. Without it the Go command runs as many
+  Parallelism: `-p=4` in `GOFLAGS` on every local `go` command, written `GOFLAGS=-p=4` below, added
+  to the value the repository or host already sets and not in place of it: read `go env GOFLAGS` and
+  export that value with `-p=4` appended, for example `export GOFLAGS="$(go env GOFLAGS) -p=4"`, so
+  `-mod`, build tags and the like survive. Without it the Go command runs as many
   compile, link and test processes at once as `GOMAXPROCS`, normally the number of CPUs
   (`go help build`, `-p`), in every task at the same time. Four is what the hosted CI runner, which
   has four CPUs, runs at. It limits how many of those processes one `go` command runs at once; it
   does not limit the threads of the compiler, the parallelism inside a test binary (`-parallel`,
   `GOMAXPROCS`), a `go` command a test starts itself, the memory a test binary uses or how many
-  tasks run at once. A flag the task adds joins the value (`GOFLAGS='-p=4 -count=1'`), because a
-  `GOFLAGS` set afterwards replaces it; `go env GOFLAGS` reads back what is in effect.
+  tasks run at once. A flag the task adds joins the same value, because a `GOFLAGS` set afterwards
+  replaces it; `go env GOFLAGS` reads back what is in effect.
   Local runs: the packages the change touches, under the settings above. The packet's
   `Verification:` line names any other check the repository requires locally (a lint or contract
   check, say), and this rule replaces none of those. The full test suite is the hosted CI of the same
-  head. That is the user's operating rule for tasks run under this skill: where the repository's
-  contribution rules ask for a full local run, the hosted CI of the same head stands in for it, the
-  packet says so, and the child reports that run, with its id and head, instead of claiming a local
-  pass. A packet that does not say so leaves the repository's local check in force.
+  head, as a scoped override of the user's for tasks run under this skill, not a general rule: it
+  applies only when the packet states it, after the packet's writer has confirmed that the hosted CI
+  of that head runs the whole suite (a CI that is partial or selected by changed paths does not
+  qualify). The packet then records where the repository's contribution rules ask for a full local
+  run and that the override covers it, and the child reports the CI run, with its id and head,
+  instead of claiming a local pass. A packet that does not state the override leaves the
+  repository's local check in force.
   Memory limit: a heavy command, meaning `-race`, `-a`, a load reproduction, a `-count` above 10
   for example, or one the packet names (a command the child cannot place is treated as heavy), runs
   alone in its own scope of the user's service manager, never as root:
@@ -220,8 +226,13 @@ Workspace ownership:
   by `OOMPolicy=kill` together with everything else in its scope (a lone command ended with status
   137 and the scope's `Result=oom-kill` in the test) and that kill touches no process outside the
   scope; the swap limit stops it from pushing the host into swap first, and `OOMPolicy=kill` states
-  what the service manager would otherwise decide by its own default. Everything inside one scope
-  ends together, so each heavy command gets its own. Keeping the host itself from running out is the
+  what the service manager would otherwise decide by its own default. Older service managers refuse
+  `OOMPolicy` for a scope (this command was tried with systemd 259 only), and
+  `systemd-run --user --scope -p OOMPolicy=kill true` says whether the one in use accepts it. Where
+  it does not, the child omits `-p OOMPolicy=kill` and keeps the rest: the manager's default then
+  decides what else in the scope ends, so the child also checks the command's exit status and stops
+  what it started, by its recorded process group, that the kill left running. Everything inside one
+  scope ends together, so each heavy command gets its own. Keeping the host itself from running out is the
   job of the value and the floor: the packet states the value (for example `8G`), which the parent
   sets from the memory the host has free for such commands so that the limits of the heavy commands
   that can run at once, together with what the host already uses, stay below its memory, and the
