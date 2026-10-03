@@ -180,6 +180,10 @@ func TestGoalplanLockProcess(t *testing.T) {
 				signal("overlap")
 			}
 		}
+		signal(who + "-entered")
+		if who == "a" {
+			helperWait(t, filepath.Join(cwd, "release"))
+		}
 		p.WorkPhases = append(p.WorkPhases, GoalplanWorkPhase{ID: "wp-" + who, Title: who, Status: WorkPhasePending, Tasks: []GoalplanTask{}, CriteriaIDs: []string{}})
 		data, e := json.Marshal(p)
 		if e != nil {
@@ -191,10 +195,6 @@ func TestGoalplanLockProcess(t *testing.T) {
 		}
 		if e = crwdir.Publish(filepath.Join(dir, GoalplanFile), data); e != nil {
 			return "", e
-		}
-		signal(who + "-entered")
-		if who == "a" {
-			helperWait(t, filepath.Join(cwd, "release"))
 		}
 		return who, nil
 	}, opts)
