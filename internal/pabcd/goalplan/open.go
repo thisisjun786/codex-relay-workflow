@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"golang.org/x/sys/unix"
 )
 
@@ -23,7 +24,7 @@ func openPlanDir(cwd, slug string) (*os.File, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	dir := filepath.Join(base, ".crw", GoalplansSubdir, slug)
+	dir := filepath.Join(base, crwdir.DirName, GoalplansSubdir, slug)
 	fd, err := unix.Open("/", directoryOpenFlags()|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, dir, err
