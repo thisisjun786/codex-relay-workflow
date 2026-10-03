@@ -367,3 +367,50 @@ This section supersedes the seeded `port: pending` statuses for native Write/Edi
 ## Found by the PABCD phase directive and assembly port
 
 No new oracle defect was identified in the directive text and assembly of `pabcd-state/src/hook.ts:212-235,324-575` (CXC v0.2.40, commit 3c1459ac). The prefix-only resolver's unterminated-backtick matching and whole-string fail-open behavior are preserved and recorded as edge cases, not changed into a Markdown parser. The goalplan reader and active-phase selector are outside this port.
+
+## Found by the CRW-490 bg hooks port
+
+- Stop, prompt delivery and drain stamp records before handing their output to the caller, so discarded output or a broken stdout loses the notification while the job record/output files remain intact (source `plugins/codexclaw/components/bg-wake/src/hook.ts:67-70,85-87,101-103`, `cli.ts:72-77`); port: kept.
+- A read error or input over the 1Mi UTF-16-unit limit becomes an empty payload, which can still wake completions through the process cwd and `CODEX_THREAD_ID` fallback (source `plugins/codexclaw/components/bg-wake/src/cli.ts:38-47,62-68`, `hook.ts:34-41`); port: kept.
+- SessionStart adopts every undelivered terminal record not owned by this session without checking whether a previous adopting session is still alive, so a second session can take the first session's adopted completion; adoption still runs while automatic wakes are off (source `plugins/codexclaw/components/bg-wake/src/hook.ts:114-119`, `registry.ts:235-250`); port: kept.
+- Selection, delivery stamping and adoption are separate unlocked operations, so concurrent hooks can select or adopt the same completion before either stamps it; a delivery write that fails is still described by the hook and can wake again later (source `plugins/codexclaw/components/bg-wake/src/hook.ts:63-70,99-103`, `registry.ts:217-250`); port: kept.
+
+## Found by the CRW-345 job verb port
+
+- `MAX_STDIN_BYTES` counts UTF-16 units, and `readStdin` reads the whole input before applying the bound (source `plugins/codexclaw/components/bg-wake/src/cli.ts:38-45`); port: kept.
+- `flagValue` takes the first occurrence and accepts another flag as its value (source `bg-wake/src/cli.ts:81-85`); port: kept in the argv facade; the approved relay parser validates options and uses its existing last-value rule.
+- A note equal to `--` becomes the command separator, and `--json` inside the command selects record output (source `bg-wake/src/cli.ts:101-107`); port: kept in the argv facade; the approved relay contract passes parsed metadata separately and selects JSON only from declared flags.
+- `get` counts the final empty line of a newline-terminated output toward its tail and trims whitespace from the displayed output (source `bg-wake/src/cli.ts:123-127`); port: kept.
+- Manual drain returns the selected completions even when a record cannot be stamped, and stamps before the caller emits the result (source `bg-wake/src/hook.ts:81-91`, `cli.ts:170-175`); port: kept.
+- A failed `on` can lose the persistent off flag: it removes `disabled` before the `enabled-at` write (source `bg-wake/src/cli.ts:145-154`; oracle reproduction makes `enabled-at` a directory); port: fixed by writing the gate before removing the flag, covered by `TestCLIOnRetainsTheOffFlagWhenGateWriteFails` and the intentionally-changed case `testdata/cli-on-gate-failure.json`.
+
+## Found by the recall storage primitives port
+
+- Version suffixes use JavaScript Number, so state_9007199254740993.sqlite ties state_9007199254740992.sqlite and the earlier sorted name wins (source plugins/codexclaw/components/recall/src/paths.ts:35-36; TestRecallVersionedDB); port: kept.
+- A matching directory or symbolic link is eligible as the newest database, because the resolver checks only its name (source recall/src/paths.ts:32-38; TestRecallVersionedDBKeepsNonFilesAndLexicalJoin); port: kept.
+- A home containing a symlink followed by .. lists the OS-resolved directory but path.join cleans the returned path lexically, potentially naming another directory's database (source recall/src/paths.ts:32,38; TestRecallVersionedDBKeepsNonFilesAndLexicalJoin); port: kept.
+- URI mode=memory overrides a read-only SQLite open and permits writes to the temporary database (source recall/src/sqlite.ts:29-31; Node-recorded case and TestRecallSQLiteOpens); port: kept. Ordinary file paths and the empty/:memory: paths remain read-only.
+- The legacy-column retry catches every query error, so an unsafe INTEGER in git_origin_url drops origin metadata silently when the shorter SELECT succeeds (source recall/src/threads-db.ts:41-49; TestRecallThreadMetaLegacyAndUnsafeFallback); port: kept.
+- SQLite resolves column names without case sensitivity, but row keys keep their declared spelling; an ID column rather than id makes every metadata row disappear without warning (source recall/src/threads-db.ts:52; TestRecallThreadMetaWarningsAndCase); port: kept.
+- node:sqlite accepts the minimum signed 64-bit INTEGER as a rounded JavaScript number, while neighboring unsafe integers throw, consistent with an absolute-value overflow in its range check (recorded Node case; recall/src/sqlite.ts:29-36 delegates to DatabaseSync; TestRecallSQLiteMinimumIntegerOracleOverflow); port: kept.
+- An ambiguous bare named-parameter map throws on its first construction but leaves a partial per-statement alias cache, so repeating Get/All/Run can bind the first alias while the other remains NULL (recorded Node case; recall/src/sqlite.ts delegates to DatabaseSync; TestRecallSQLiteNamedOrderAndCachedAmbiguity); port: kept.
+- Named SQLite binding keys containing NUL resolve by the prefix before NUL, while unknown-name diagnostics retain the original key (recorded Node case; recall/src/sqlite.ts delegates to DatabaseSync; TestRecallSQLiteNamedOrderAndCachedAmbiguity); port: kept.
+
+## Found by the agent-thread TOML scanner port (CRW-343)
+
+- A space-separated date-time is rejected by the bare-token scan despite being in the scalar grammar (source `plugins/codexclaw/components/pabcd-state/src/agent-thread-permissions.ts:227,306-308`; recorded spaced date-time); port: kept.
+- Year 0000 uses Date.UTC's year-1900 calendar, rejecting its leap day (source `agent-thread-permissions.ts:79`; recorded `0000-02-29`); port: kept.
+- Second 60 is accepted at any minute and date, without checking whether a leap second occurred (source `agent-thread-permissions.ts:83`; recorded `12:00:60`); port: kept.
+- Raw form feed passes all four string scanners, and raw carriage return passes the multiline forms (source `agent-thread-permissions.ts:246-247`; recorded control-character strings); port: kept.
+- The first triple closing mark ends a string, so the TOML four/five-quote closing forms are rejected (source `agent-thread-permissions.ts:245`; recorded adjacent closing quotes); port: kept.
+- JavaScript whitespace such as vertical tab, form feed and non-ASCII spaces is accepted between value tokens although TOML whitespace is narrower (source `agent-thread-permissions.ts:230`; recorded whitespace arrays); port: kept.
+- A table implicitly created by a dotted assignment may later be explicitly declared, which TOML forbids (source `agent-thread-permissions.ts:182-188,212-216`; recorded dotted-assignment/table sequence); port: kept.
+
+## Found by the skill-search library port (CRW-278)
+
+- The cache catches write failures as well as fetch failures and calls both a network failure in its stale-cache warning (source `plugins/codexclaw/components/skill-search/src/cache.ts:47-60`; `TestCacheWriteFailureKeepsWholeFile`); port: kept.
+- A future cache mtime is fresh until that time plus the TTL, because the age test has no lower bound (source `skill-search/src/cache.ts:40`; `TestCacheThresholdRefreshAndZero/future`); port: kept.
+- The cache overwrites its file in place, so a failed partial write can truncate the previously usable cache (source `skill-search/src/cache.ts:50`); port: fixed by the assignment's temp-and-rename requirement through `crwdir.Publish`; write failure keeps the whole old file. The shared writer checks write/sync errors before rename; its fault tests exercise failures before publication steps, not a simulated short write.
+- Remote bodies, entry paths and skill identifiers are accepted without a size/path boundary, and ClawHub keeps non-text display names/summaries (source `skill-search/src/sources.ts:21-38,59-77,87-108`); port: fixed by the assignment's bounded, strict untrusted-input requirement: 4 MiB bodies, typed collection envelopes and safe name/path components. Recorded `testdata/boundaries.json` cases are intentionally-changed with their reason; one refused row refuses the catalog. Transport read limits remain the injected fetcher's responsibility.
+- Tied ranks use the host's default ICU locale, so ordering can change across hosts (source `skill-search/src/scoring.ts:49`); port: kept for ASCII root collation through the existing `metric.CompareTimestamps`. Non-ASCII ids are ordered by code point after ASCII, whereas ICU interleaves them; this is the existing platform limitation, not a full Unicode parity claim.
+- `JSON.parse` keeps lone surrogate escapes where Go's default JSON reading replaces them with U+FFFD; the catalog has the same documented platform limitation as the other JSON ports (source `skill-search/src/sources.ts:21,89`; `pyjson.Loads` default reading); port: kept as a platform difference. Valid paired Unicode text is preserved.
