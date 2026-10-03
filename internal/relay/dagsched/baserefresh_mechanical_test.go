@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -13,9 +15,20 @@ import (
 
 // The production checker is bootstrapped by the external test package, not mocked.
 func mechanicalRefresh(t *testing.T, rule string, mixed bool, declared ...Region) *refreshScenario {
+	return mechanicalRefreshAt(t, rule, mixed, nil, declared...)
+}
+
+func mechanicalRefreshAt(t *testing.T, rule string, mixed bool, target func(*gitRepo) string, declared ...Region) *refreshScenario {
 	t.Helper()
 	k := newIntegrationKit(t)
 	r := k.repo
+	repository := r.path
+	if target != nil {
+		repository = target(r)
+		k.putPlan("g", 1, "local-target", doc{"op": "retire_edge", "edge_id": "ik"}, addEdge("ik-alias", "I", "K", "integrated", doc{"target_repository": repository}))
+		declared = []Region{gr("shared.json", GradeMechanical, rule)}
+		declared[0].Repository = repository
+	}
 	r.commit("shared.json", "base\n")
 	if mixed {
 		r.commit("manual.txt", "base\n")
@@ -35,7 +48,7 @@ func mechanicalRefresh(t *testing.T, rule string, mixed bool, declared ...Region
 	if _, err := k.sched.DeclareRegions(context.Background(), "g", "I", "parent", declared); err != nil {
 		t.Fatal(err)
 	}
-	a := k.acceptNode("g", "I", acceptOpts{HeadSHA: head, PR: 7, Forge: "owner/repo", Repository: r.path})
+	a := k.acceptNode("g", "I", acceptOpts{HeadSHA: head, PR: 7, Forge: "owner/repo", Repository: repository})
 	n, _ := nodeOf(k.snapshot("g"), "I")
 	s := &refreshScenario{integrationKit: k, rid: a.Acceptance.RelationshipID, accepted: a, h1: head, head: head, criteria: n.CriteriaSetDigest}
 	s.openGeneration()
@@ -336,5 +349,28 @@ func TestBaseRefreshMechanicalRegenerateEachHop(t *testing.T) {
 		if len(st.Resolved) != 1 || st.Resolved[0].Rule != rule {
 			t.Fatalf("missing per-hop rule: %+v", st)
 		}
+	}
+}
+
+func TestBaseRefreshMechanicalCanonicalLocalAlias(t *testing.T) {
+	for _, name := range []string{"symlink", "noncanonical"} {
+		t.Run(name, func(t *testing.T) {
+			s := mechanicalRefreshAt(t, RuleUnion, false, func(r *gitRepo) string {
+				if name == "noncanonical" {
+					return r.path + "/."
+				}
+				alias := filepath.Join(t.TempDir(), "checkout")
+				if err := os.Symlink(r.path, alias); err != nil {
+					t.Fatal(err)
+				}
+				return alias
+			})
+			mechanicalMerge(t, s, "base\nchild\ndev\n", false)
+			got, err := s.record()
+			if err != nil || len(got.Resolved) != 0 {
+				t.Fatalf("canonical %s region dropped: %v %+v", name, err, got)
+			}
+			refreshRuleRecord(t, s, "shared.json", RuleUnion)
+		})
 	}
 }

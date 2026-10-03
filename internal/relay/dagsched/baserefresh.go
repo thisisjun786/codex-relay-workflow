@@ -325,9 +325,15 @@ func (s *Scheduler) RecordBaseRefresh(ctx context.Context, plan, node, actor str
 	if err != nil {
 		return out, err
 	}
+	names := []string{acc.Repository, forge}
+	canonical, err := canonicalRepository(acc.Repository)
+	if err != nil {
+		return out, err
+	}
+	names = append(names, canonical)
 	var regions []Region
 	for _, r := range declarations[node] {
-		if hasName([]string{acc.Repository, forge}, r.Repository) {
+		if hasName(names, r.Repository) {
 			regions = append(regions, r)
 		}
 	}
