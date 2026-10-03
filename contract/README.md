@@ -8,7 +8,7 @@ Until todo 44 a Python runner (`contract/runner`, discovered through a root `con
 
 Use exactly `contract/fixtures/<domain>/<source-test-file-stem>__<test-function-name>[__<param-id>].json`. Domains: `cli-shape`, `exit-codes`, `sqlite-ddl`, `mcp-tools`, `appserver`, `git`, `hook`, `records`, `ledger-fingerprint`, `event-key`. Keep parameter IDs stable and filesystem-safe. Relay owns cli-shape, exit-codes, sqlite-ddl, hook, records and event-key; bridge owns mcp-tools, appserver and ledger-fingerprint. A scenario ID is its filename stem; failures must report it. Each scenario is a separate JSON file, even when several scenarios share a source test.
 
-`contract/fixtures/cxc` is a different corpus with its own grammar: the behaviour of CodexClaw v0.2.40, recorded from its Node build for the CRW port of CXC (CRW-279), owned by that port (Linear CRW-189). Its fixtures are named `<surface>__<subject>__<case>.json`, are written only by `crw-dev cxc record`, and are described with their specs, normalisation, rename table and coverage index in [`schema/cxc/README.md`](schema/cxc/README.md). The Go runner skips the `cxc` domain by name until the port implements CXC (see the Go runner below).
+`contract/fixtures/cxc` is a different corpus with its own grammar: the behaviour of CodexClaw v0.2.40, recorded from its Node build for the CRW port of CXC (CRW-279), owned by that port (Linear CRW-189). Its fixtures are named `<surface>__<subject>__<case>.json`, are written only by `crw-dev cxc record`, and are described with their specs, normalisation, rename table and coverage index in [`schema/cxc/README.md`](schema/cxc/README.md). The Go runner replays it too, deciding each fixture by the status files in [`notes/cxc`](notes/cxc/README.md): pending until the port issue that owns it claims it in its own file (see the Go runner below).
 
 ## Grammar
 
@@ -39,7 +39,7 @@ The 20 `test_completion_hook__*.json` cases added `call.argv`, captured raw stdi
 
 Live-interleaving cases remain Python tests until an equivalent Go package test exists: `test_worktree::test_cancellation_after_git_creation_retains_checkout_without_starting_task` requires intercepting the exact git subprocess between creation and checkout; `test_worktree::test_checkout_change_during_thread_start_withholds_prompt` and `test_worktree::test_interrupted_dispatch_is_retained_and_never_repeated` require live paused RPC interleavings; `test_worker_policy::test_record_changing_during_read_is_not_a_ready_snapshot` requires replacing a method between two reads; `test_completion_hook::test_a_link_retargeted_under_the_listing_is_not_published_as_an_alias` requires an exact mid-read symlink retarget. They must not be represented by a fixture that simply calls the original test. Other live races and monkeypatch cases in those files need the same per-case determination during lane conversion.
 
-Until todo 44, `scripts/port/check_corpus_count.py` was the corpus's coverage check, not a fixture count (it left with the Python test files it counted; `contract/notes/*.md` keep its per-file record). It parsed every fixture as JSON and failed naming any that did not parse. It listed every class-A test function from the class-A files in `docs/port/test-map.md` (by AST, including class methods; one parametrised function is one function). It read `contract/notes/*.md` and required each function to appear exactly once with status `converted`, `kept`, or `blocked`: converted needed at least one existing fixture whose name starts with `<stem>__<function>`, kept needed a reason, and blocked needed the missing kind named. The number of fixtures did not need to match the number of tests. `go test ./internal/contracttest/...` runs every fixture of every domain except the pending domains `internal/contracttest` lists by name (today only `cxc`), each skipped with its reason.
+Until todo 44, `scripts/port/check_corpus_count.py` was the corpus's coverage check, not a fixture count (it left with the Python test files it counted; `contract/notes/*.md` keep its per-file record). It parsed every fixture as JSON and failed naming any that did not parse. It listed every class-A test function from the class-A files in `docs/port/test-map.md` (by AST, including class methods; one parametrised function is one function). It read `contract/notes/*.md` and required each function to appear exactly once with status `converted`, `kept`, or `blocked`: converted needed at least one existing fixture whose name starts with `<stem>__<function>`, kept needed a reason, and blocked needed the missing kind named. The number of fixtures did not need to match the number of tests. `go test ./internal/contracttest/...` runs every fixture of every domain except the pending domains `internal/contracttest` lists by name (today none), each skipped with its reason; the `cxc` domain has its own runner.
 
 ## Implemented runner families
 
@@ -121,9 +121,10 @@ scenario ID.
 ## The Go runner (`internal/contracttest`)
 
 `go test ./internal/contracttest/...` replays every fixture of every domain with no Python on
-the machine, apart from the domains `pendingDomains` in `contract_test.go` names (only `cxc`,
-recorded for an implementation the Go build does not have yet; it is skipped by name with its
-reason, and `crw-dev cxc lint` checks it meanwhile); a fixture whose kind has no runner, or that asks a runner for something it cannot
+the machine, apart from the domains `pendingDomains` in `contract_test.go` names (none today: a domain recorded
+for an implementation the Go build does not have yet is skipped by name with its reason). The `cxc`
+domain is replayed by its own runner, `cxc_replay.go`: each fixture is pending, identical or
+intentionally changed as `contract/notes/cxc` says, and one no file registers fails. A fixture whose kind has no runner, or that asks a runner for something it cannot
 do, fails as a corpus defect (until wave R1 such a fixture was skipped unless
 `CRW_CONTRACT_STRICT=1` was set, which CI never set). Its `records` runners drive the built `crw hook`, which asks the
 owner over its control socket instead of starting a relay subprocess, with a guard peer
