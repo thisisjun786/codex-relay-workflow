@@ -130,6 +130,21 @@ func TestRealResolverRetainsRelativePATH(t *testing.T) {
 	}
 }
 
+func TestResolvedOcxWithEmptyPATH(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	t.Setenv("HOME", root)
+	t.Setenv("CODEX_HOME", root)
+	t.Setenv("PATH", "")
+	if err := os.WriteFile("ocx", []byte("#!/bin/sh\nprintf '%s' '{\"proxy\":{\"running\":true}}'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if Run(context.Background(), &out) != 0 || !strings.Contains(out.String(), "\"ocxPath\":\"ocx\"") || !strings.Contains(out.String(), "\"mode\":\"provider\"") {
+		t.Fatal(out.String())
+	}
+}
+
 func TestStatusTimeoutAndBufferLimit(t *testing.T) {
 	path := providerPath(t, "while :; do :; done")
 	code, _, err := readStatus(context.Background(), path, 20*time.Millisecond)

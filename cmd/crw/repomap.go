@@ -76,6 +76,10 @@ func runRepoMap(c invocation) int {
 	d := mapDeps{
 		run: func(command string, args []string, quiet bool) (int, error) {
 			cmd := exec.CommandContext(c.ctx, command, args...)
+			// POSIX oracle lookup permits relative PATH entries.
+			if errors.Is(cmd.Err, exec.ErrDot) {
+				cmd.Path, cmd.Err = filepath.Abs(cmd.Path)
+			}
 			if !quiet {
 				cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, c.stdout, c.stderr
 			}

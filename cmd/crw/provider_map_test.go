@@ -57,3 +57,47 @@ printf '%s\n' 'fake map'`)
 		}
 	}
 }
+
+func TestRepoMapRelativePATHIngress(t *testing.T) {
+	for _, c := range []struct {
+		name, override string
+		uv, bootstrap  bool
+		want           string
+	}{
+		{"override", "pinned", false, false, "pinned"},
+		{"uv", "", true, false, "uv map"},
+		{"bootstrap", "", false, true, "python map"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			root := t.TempDir()
+			t.Chdir(root)
+			if err := os.Mkdir("bin", 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("HOME", root)
+			t.Setenv("CODEX_HOME", root)
+			t.Setenv("CRW_HOME", root)
+			t.Setenv("PATH", "bin")
+			t.Setenv("CRW_PYTHON", c.override)
+			flag := ""
+			if c.bootstrap {
+				flag = "1"
+			}
+			t.Setenv("CRW_MAP_BOOTSTRAP", flag)
+			uv := "exit 1"
+			if c.uv {
+				uv = "if test \"$1\" = '--version'; then exit 0; fi\nprintf 'uv map'"
+			}
+			portCommand(t, "bin", "uv", uv)
+			portCommand(t, "bin", "pinned", "printf 'pinned'")
+			portCommand(t, "bin", "python3", "if test \"$1\" = '-m'; then printf 'fake bootstrap' >&2; exit 1; fi\nprintf 'python map'")
+			var out, stderr strings.Builder
+			if code := run(context.Background(), "crw", []string{"map", "."}, &out, &stderr); code != 0 || out.String() != c.want {
+				t.Fatalf("exit %d %q %q", code, out.String(), stderr.String())
+			}
+			if c.bootstrap && !strings.Contains(stderr.String(), "fake bootstrap") {
+				t.Fatal("bootstrap executable was not run")
+			}
+		})
+	}
+}

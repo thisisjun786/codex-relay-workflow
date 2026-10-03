@@ -50,6 +50,9 @@ func readStatus(parent context.Context, path string, timeout time.Duration) (*in
 		})
 	}
 	cmd := exec.CommandContext(ctx, path, "status", "--json")
+	// command -v already resolved this executable. Spawn that path directly;
+	// a second lookup rejects relative entries or loses it when PATH is empty.
+	cmd.Path, cmd.Err = path, nil
 	cmd.Stdout, cmd.Stderr = capture(&out), capture(io.Discard)
 	err := cmd.Run()
 	raw, _ := harness.ReadStdin(bytes.NewReader(out.Bytes()))
