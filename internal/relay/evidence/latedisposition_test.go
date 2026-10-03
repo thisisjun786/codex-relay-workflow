@@ -1,6 +1,7 @@
 package evidence
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -197,6 +198,25 @@ func TestRestateWithDispositions(t *testing.T) {
 		problems, results := RestateWithDispositions("", restateRecord(), late(), dispositionDocument(dispositionEntry("T1", "answered", restateHead)))
 		if len(problems) == 0 || problems[0].Code != Malformed || len(results) != 0 {
 			t.Fatal(restateLines(problems), results)
+		}
+	})
+	t.Run("a finding whose id is not a string cannot be named by an entry", func(t *testing.T) {
+		// An entry's threadId is a string, so a number, boolean or null id must not match the text
+		// it would print as.
+		for name, tc := range map[string]struct {
+			id   any
+			text string
+		}{"a number": {json.Number("7"), "7"}, "an int": {7, "7"}, "a boolean": {true, "True"}, "null": {nil, "None"}} {
+			t.Run(name, func(t *testing.T) {
+				snapshot := restateSnapshot(nil, map[string]any{"kind": "reviewThread", "id": tc.id, "url": "u/odd"})
+				problems, results := RestateWithDispositions(restateHead, restateRecord(), snapshot, dispositionDocument(dispositionEntry(tc.text, "answered", restateHead)))
+				if got := restateLines(problems); len(got) != 1 || got[0] != lateMessage(1, "u/odd") {
+					t.Fatal(got)
+				}
+				if got := results[0].(map[string]any); got["effect"] != LateIgnored || got["reason"] != LateUnknownThread {
+					t.Fatal(got)
+				}
+			})
 		}
 	})
 }

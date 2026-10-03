@@ -782,8 +782,13 @@ func RestateWithDispositions(head string, record, snapshot, document any) ([]Pro
 			continue
 		}
 		id := pyvalue.Str(one["id"])
-		shown[id] = seen[id]
-		if !seen[id] && !disposed[id] {
+		// An entry names a thread by a string id, and a number, boolean or null id must not become
+		// one by coercion, so only a thread whose id is a string can be named or disposed of.
+		text, named := one["id"].(string)
+		if named {
+			shown[text] = seen[id]
+		}
+		if !seen[id] && !(named && disposed[text]) {
 			label := strOf(one["url"])
 			if label == "" {
 				label = id
