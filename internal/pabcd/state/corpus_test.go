@@ -29,7 +29,7 @@ func TestCorpusStateFilesAreGoldens(t *testing.T) {
 	if err != nil || len(files) < 500 {
 		t.Fatalf("corpus: %d fixtures, %v", len(files), err)
 	}
-	bind := strings.NewReplacer("$"+"{WS}", "/ws", "$"+"{TMP}", "/tmp/t", "$"+"{HOME}", "/home/h", "$"+"{CODEX_HOME}", "/codex", "$"+"{CXC_HOME}", "/cxc")
+	bind := strings.NewReplacer("$"+"{WS}", "/ws", "$"+"{TMP}", "/tmp/t", "$"+"{HOME}", "/h", "$"+"{CODEX_HOME}", "/codex", "$"+"{CXC_HOME}", "/cxc")
 	var encoded, partial, rejected int
 	for _, file := range files {
 		raw, err := os.ReadFile(file)
