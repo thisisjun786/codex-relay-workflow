@@ -242,6 +242,11 @@ func TestRecallSQLiteNamedOrderAndCachedAmbiguity(t *testing.T) {
 	if _, err := s.Get(map[string]any{"x": 1, "$x": 2}); err == nil {
 		t.Fatal("unordered aliases silently chose a write value")
 	}
+	for _, args := range []any{NamedParams{{"", 7}}, map[string]any{"": 7}} {
+		if _, err := recallStmt(t, d, "SELECT ? AS x").Get(args); err == nil || err.Error() != "Unknown named parameter ''" {
+			t.Fatal(err)
+		}
+	}
 	for _, q := range []string{"SELECT $$x AS b,$x AS a", "SELECT $x AS a,$$x AS b"} {
 		for _, args := range []any{NamedParams{{"$x", 7}}, map[string]any{"$x": 7}} {
 			r := recallRow(t, recallStmt(t, d, q), args)

@@ -1,6 +1,5 @@
-// CXC v0.2.40 recall/src/sqlite.ts, backed by the existing pure-Go SQLite engine.
-// Direct engine calls preserve Node's raw values, errmsg and first-statement
-// prepare, which database/sql's DATE/TIMESTAMP conversion would change.
+// CXC v0.2.40 recall/src/sqlite.ts uses the existing pure-Go SQLite engine
+// directly to preserve Node's raw values, errmsg and first-statement prepare.
 package recall
 
 import (
@@ -19,8 +18,7 @@ import (
 	sqlite "modernc.org/sqlite/lib"
 )
 
-// RwDb owns a synchronous connection. The lock covers TLS and whole operations,
-// including copying SQLite-owned values before reset and releasing them on Close.
+// RwDb owns statements and serializes TLS/bind/step/copy/reset and Close.
 type RwDb struct {
 	mu         sync.Mutex
 	tls        *libc.TLS
@@ -314,6 +312,9 @@ func (s *Stmt) bind(params []any) error {
 				index := int32(0)
 				for i := int32(1); i <= count; i++ {
 					name := s.parameterName(i)
+					if name == "" {
+						continue
+					}
 					if name == key {
 						index = i
 						break
