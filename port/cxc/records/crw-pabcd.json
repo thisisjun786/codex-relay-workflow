@@ -1,0 +1,50 @@
+{
+  "origin": {
+    "tag": "v0.2.40",
+    "commit": "3c1459acadeb1906d97c00a598e1457327ae372d",
+    "skills_listing_sha256": "79d9580f39ca27221cb9c24337080e3fe4a1e71f76338c7329fca63f76a32e89"
+  },
+  "table_sha256": "25b5d19d9da7e07d474d2b31bc4d4139c68607457f59174a597f17505f7f23eb",
+  "from": "pabcd",
+  "files": {
+    "SKILL.md": {
+      "original": "d080fce03cae65b0bc5e081f409f02be98d771e44bdd4e44d0bb1657427dc640"
+    },
+    "agents/openai.yaml": {
+      "original": "234470af1ede36e42afab4899cfdaa3c837501ac64467211bc777b348382ce73"
+    },
+    "references/catalog-discovery.yaml": {
+      "original": "906dd52c37774888fcffb4bbba4cee31d1e055a471e46f315727530ebe0e2820"
+    },
+    "references/delegation.md": {
+      "original": "65ebbb511384c2f332658638b67a37af5c6a1e2a46b5213c7caf54bbaa8b6da9"
+    },
+    "references/dispatch-surfaces.md": {
+      "original": "0ee25f178da61abca9b56de80b2f1890e55479a44088509c7490cf9345785a3d"
+    },
+    "references/implementation-units.md": {
+      "original": "3b3ccc9a1f1264ca603a37082a7a70bbc1577924c76d132a4c49c139d7660f32"
+    },
+    "references/loop-engineering.md": {
+      "original": "841cab83d5142da14689d7a04eb84b35d62e31d40e4e8afa39e28c432df3ba43"
+    },
+    "references/optimization.md": {
+      "original": "23aab46ec630e2365f2c6eccd3aa673876e971298d95e0386269fc5257d6b024"
+    },
+    "references/phase-audit.md": {
+      "original": "df4289299cfc9f14cb83b0885aca734581941991b2f46a54ee7162897a325175"
+    },
+    "references/phase-check.md": {
+      "original": "926a105cdd159c5525089e25d0eaf29ee5337f4efde2aee5415266a34aa03ad1"
+    },
+    "references/phase-control.md": {
+      "original": "a40317ac1b149c79260e4947cec67c8e910a8e73585f24c538625374ac49074b"
+    },
+    "references/phase-plan.md": {
+      "original": "84ba35c87e3fc8aa892d212d58a1918a01cc48077047a5cdfb0a5ae9e9d719c8"
+    },
+    "references/plan-output.md": {
+      "original": "008afe31f5c350909f207d3e99a276adae4bda78fe42b28ae9020d2e13dd6795"
+    }
+  }
+}

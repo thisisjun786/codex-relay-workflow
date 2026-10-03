@@ -1,0 +1,62 @@
+{
+  "origin": {
+    "tag": "v0.2.40",
+    "commit": "3c1459acadeb1906d97c00a598e1457327ae372d",
+    "skills_listing_sha256": "79d9580f39ca27221cb9c24337080e3fe4a1e71f76338c7329fca63f76a32e89"
+  },
+  "table_sha256": "25b5d19d9da7e07d474d2b31bc4d4139c68607457f59174a597f17505f7f23eb",
+  "from": "dev",
+  "files": {
+    "SKILL.md": {
+      "original": "0336240a1d58a21ba2ee88ae22d8b246a79504f095454a9d7f9f335823065eed"
+    },
+    "agents/openai.yaml": {
+      "original": "29e40e9559f5a0654cee58322e739970e953b0f01ac0ecb7159acf0a3964b3ee"
+    },
+    "references/async-questions.md": {
+      "original": "0a1c7d098d09615aea5b74cdfeb3cbeef3f1b94be2bbb92e3bad898b234720c2"
+    },
+    "references/browser-routing.md": {
+      "original": "370dc95304d62d7242da596c4e9b16928ec1ea9525880252491de750b50afb94"
+    },
+    "references/code-mode-examples.md": {
+      "original": "e169ef61e445c4c4fd90040db4b3dca04e6b26aecb3041598a62df33af3360d9"
+    },
+    "references/development-practice.md": {
+      "original": "a5f8fea9182c31086122341cdb86f720b1eb961b13ea8de6799cf09997e10387"
+    },
+    "references/logging.md": {
+      "original": "1df35d0d747e761aec24fd59dfa39be13ec0d0302cbbce03c6b402257718ddb5"
+    },
+    "references/methodology-overlays.md": {
+      "original": "a8e66d5a8f613c566b39e706d674e2c746f04f3e28aea9c95b2a9e7a1e36e80f"
+    },
+    "references/native-execution.md": {
+      "original": "801308a4f8ac0fafceeb61edecb443c03c2ce2a271f09d86293e418ba40e2dcc"
+    },
+    "references/peer-collaboration.md": {
+      "original": "4c9ddd63c4a7655f9a1f76db59d27f6a1253235f392150e37b571264985768ea"
+    },
+    "references/product/crud-product-development.md": {
+      "original": "bf8da9615b4d12976515ff9959f020692d82094d674509864f588e6af468ef9a"
+    },
+    "references/reader-documents.md": {
+      "original": "981e31b0b5a2e7ce428bf77e37fc161be09c654243c88ffce3c0cced8bd0dbae"
+    },
+    "references/skill-catalog.md": {
+      "original": "af6d9b358381a00590790147db39a18222744c11719837d516fd6c3d4ac553cf"
+    },
+    "references/skill-ownership.md": {
+      "original": "5b44fbeebc2ff8b54103cd36785178b59bbbcd5f2b5bf1141c4f940fb7361782"
+    },
+    "references/stacked-prs.md": {
+      "original": "4e8bc6364deaabb9948a48cc0435335650d00be1b590974bc248d0806f62b282"
+    },
+    "references/static-analysis-gate.md": {
+      "original": "610ae022c17f2d61f615c9eaa0af13d7e4d29abe09613749db6cd3baf7158d77"
+    },
+    "references/static-analysis.md": {
+      "original": "1e3f3017b62b06af5ff3f44d030282811b4a0b96d0b0267380cd32380e378f36"
+    }
+  }
+}

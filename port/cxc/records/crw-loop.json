@@ -1,0 +1,32 @@
+{
+  "origin": {
+    "tag": "v0.2.40",
+    "commit": "3c1459acadeb1906d97c00a598e1457327ae372d",
+    "skills_listing_sha256": "79d9580f39ca27221cb9c24337080e3fe4a1e71f76338c7329fca63f76a32e89"
+  },
+  "table_sha256": "25b5d19d9da7e07d474d2b31bc4d4139c68607457f59174a597f17505f7f23eb",
+  "from": "loop",
+  "files": {
+    "SKILL.md": {
+      "original": "a88a738c2af6dab62dfd042c0768fef031a1980efe6dfc0fed7d870e51313f73"
+    },
+    "agents/openai.yaml": {
+      "original": "fb791326ba91720b13f446f02ccf608e6f7b43b253d11cb20d5db8b6ffd0c6a4"
+    },
+    "references/divergence-tiers.md": {
+      "original": "11b8c283bd9e94ad4a4decefe670c1909ff4a9b5539ba1629d4e7d7f6c92f0f3"
+    },
+    "references/durable-goalplan.md": {
+      "original": "caa74cd7b79a9b242065d2ea0795616bbf055141652517d69af44779fc0c2b92"
+    },
+    "references/lane-dispatch.md": {
+      "original": "6ec4aafdd8fa68c214551ff1b21efbc5b9af803bd48a656463ab95ee58388764"
+    },
+    "references/runtime-lifecycle.md": {
+      "original": "a40258d0a21479f180dbab044f7cea32e4ce827953d3cb764da3ed992b43999b"
+    },
+    "references/waiting.md": {
+      "original": "66cffc33e851239e22489f0b9ee0d70e3c10f1c54d398d2dfc9c4610fc42574a"
+    }
+  }
+}
