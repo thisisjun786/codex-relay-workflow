@@ -471,6 +471,8 @@ rather than claiming the host is safe at the cap. Where an observation shows pre
 another parent's live children, a resource reading, or a tool or permission constraint, the parent
 lowers or holds dispatch and records the observation that caused it.
 
+Under a DAG plan the relay takes one such resource reading itself. `dag-ready` and `dag-release` read MemAvailable, the swap in use and the memory pressure of the host once per command and, while one is over its threshold (15 GiB, 50 percent and a `some avg10` of 10 unless the environment says otherwise), defer every new release as `defer:host_memory` and refuse `dag-release` with `capacity_exhausted`. The reading and the thresholds are recorded with each recorded pass (`pass.host_memory`), and a reading nobody could take is `unmeasured`, not a clear host. It holds new releases only and stops no child, and it is not a demonstration that any cap is safe.
+
 Three claims this does not support:
 
 - The standing cap is a policy default, not a demonstration that a host runs that many children

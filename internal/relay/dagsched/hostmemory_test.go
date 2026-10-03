@@ -89,12 +89,12 @@ func TestProcHostMemoryUnreadableFilesAreNoReading(t *testing.T) {
 		{"no MemAvailable line (a kernel before 3.14)", "MemTotal: 1 kB\nSwapTotal: 8 kB\nSwapFree: 8 kB\n", psi("1.00"), []string{"available"}},
 		{"a MemAvailable that is not a number", "MemAvailable: lots kB\nSwapTotal: 8 kB\nSwapFree: 8 kB\n", psi("1.00"), []string{"available"}},
 		{"a MemAvailable in an unknown unit", "MemAvailable: 5 GB\nSwapTotal: 8 kB\nSwapFree: 8 kB\n", psi("1.00"), []string{"available"}},
-		{"swap free above swap total", memInfo(5, 8, 9), psi("1.00"), []string{"swap"}},
-		{"no SwapFree line", "MemAvailable: 5 kB\nSwapTotal: 8 kB\n", psi("1.00"), []string{"swap"}},
-		{"a pressure file without a some line", memInfo(5, 8, 8), "full avg10=0.00 avg60=0.00 avg300=0.00 total=1\n", []string{"pressure"}},
-		{"a some line without avg10", memInfo(5, 8, 8), "some avg60=0.00 avg300=0.00 total=1\n", []string{"pressure"}},
-		{"a pressure avg10 that is not a number", memInfo(5, 8, 8), psi("high"), []string{"pressure"}},
-		{"a pressure avg10 below zero", memInfo(5, 8, 8), psi("-1.00"), []string{"pressure"}},
+		{"swap free above swap total", memInfo(40*kibPerGiB, 8, 9), psi("1.00"), []string{"swap"}},
+		{"no SwapFree line", "MemAvailable: 41943040 kB\nSwapTotal: 8 kB\n", psi("1.00"), []string{"swap"}},
+		{"a pressure file without a some line", memInfo(40*kibPerGiB, 8, 8), "full avg10=0.00 avg60=0.00 avg300=0.00 total=1\n", []string{"pressure"}},
+		{"a some line without avg10", memInfo(40*kibPerGiB, 8, 8), "some avg60=0.00 avg300=0.00 total=1\n", []string{"pressure"}},
+		{"a pressure avg10 that is not a number", memInfo(40*kibPerGiB, 8, 8), psi("high"), []string{"pressure"}},
+		{"a pressure avg10 below zero", memInfo(40*kibPerGiB, 8, 8), psi("-1.00"), []string{"pressure"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -109,7 +109,7 @@ func TestProcHostMemoryUnreadableFilesAreNoReading(t *testing.T) {
 		})
 	}
 	t.Run("a pressure path that is a directory", func(t *testing.T) {
-		root := fakeProc(t, memInfo(5, 8, 8), psi("1.00"))
+		root := fakeProc(t, memInfo(40*kibPerGiB, 8, 8), psi("1.00"))
 		if err := os.Remove(filepath.Join(root, "pressure", "memory")); err != nil {
 			t.Fatal(err)
 		}
@@ -220,10 +220,7 @@ func TestHostMemoryFromEnvironment(t *testing.T) {
 				t.Errorf("%s=%q: err = %v, want a refusal that names the variable", name, value, err)
 			}
 		}
-		for _, bad := range []string{"NaN", "Inf", "-0.5", ""} {
-			if bad == "" {
-				continue
-			}
+		for _, bad := range []string{"NaN", "Inf", "-0.5"} {
 			if _, err := HostMemoryFromEnvironment(env(map[string]string{EnvHostMinAvailableGiB: bad})); err == nil {
 				t.Errorf("%s=%q was accepted", EnvHostMinAvailableGiB, bad)
 			}

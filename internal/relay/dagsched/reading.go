@@ -123,13 +123,15 @@ func (r Reading) Object() contract.OrderedObject {
 	if r.PlanState != "" {
 		o = append(o, contract.Field{Key: "plan_state", Value: r.PlanState})
 	}
-	tail := contract.OrderedObject{
-		{Key: "pass", Value: contract.OrderedObject{
-			{Key: "free_slots", Value: r.Pass.FreeSlots}, {Key: "ceiling", Value: r.Pass.Ceiling}, {Key: "ceiling_source", Value: r.Pass.CeilingSource},
-			{Key: "held", Value: r.Pass.Held}, {Key: "ready_count", Value: r.Pass.ReadyCount}, {Key: "deciding_limit", Value: r.Pass.DecidingLimit},
-			{Key: "overlap_count", Value: r.Pass.Overlaps.Counted()}, {Key: "overlaps", Value: r.Pass.Overlaps.object()}, {Key: "order_constraints", Value: r.Pass.OrderConstraints},
-		}},
+	pass := contract.OrderedObject{
+		{Key: "free_slots", Value: r.Pass.FreeSlots}, {Key: "ceiling", Value: r.Pass.Ceiling}, {Key: "ceiling_source", Value: r.Pass.CeilingSource},
+		{Key: "held", Value: r.Pass.Held}, {Key: "ready_count", Value: r.Pass.ReadyCount}, {Key: "deciding_limit", Value: r.Pass.DecidingLimit},
+		{Key: "overlap_count", Value: r.Pass.Overlaps.Counted()}, {Key: "overlaps", Value: r.Pass.Overlaps.object()}, {Key: "order_constraints", Value: r.Pass.OrderConstraints},
 	}
+	if r.Pass.HostMemory != nil {
+		pass = append(pass, contract.Field{Key: "host_memory", Value: r.Pass.HostMemory.object()})
+	}
+	tail := contract.OrderedObject{{Key: "pass", Value: pass}}
 	if r.ReleasePolicy != nil {
 		tail = append(tail, contract.Field{Key: "release_policy", Value: r.ReleasePolicy.object()})
 	}

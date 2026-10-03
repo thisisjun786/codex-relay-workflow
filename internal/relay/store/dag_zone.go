@@ -676,4 +676,17 @@ BEGIN SELECT RAISE(ABORT, 'dag_base_refreshes rows are append-only: never delete
     PRIMARY KEY (plan_id, pass_seq),
     FOREIGN KEY (plan_id, pass_seq) REFERENCES dag_passes (plan_id, pass_seq)
 )`,
+
+	// CRW-468: the host memory bound a recorded pass saw (dag-ready --record), a side table because a shipped statement is never edited and dag_passes.deciding_limit has a CHECK of four values: state is the
+	// verdict (within, deferring, unmeasured), reading_limit the limit the reading decided by (host_memory among the five), host_json the object pass.host_memory prints (the sample, the limits and where they
+	// came from). A row exists for every recorded pass of a scheduler that carried the bound.
+	`CREATE TABLE IF NOT EXISTS dag_pass_host_memory (
+    plan_id       TEXT NOT NULL,
+    pass_seq      INTEGER NOT NULL,
+    state         TEXT NOT NULL CHECK (state IN ('within','deferring','unmeasured')),
+    reading_limit TEXT NOT NULL CHECK (reading_limit IN ('none','no_capacity','edit_overlap','capacity_unmeasured','host_memory')),
+    host_json     TEXT NOT NULL,
+    PRIMARY KEY (plan_id, pass_seq),
+    FOREIGN KEY (plan_id, pass_seq) REFERENCES dag_passes (plan_id, pass_seq)
+)`,
 }

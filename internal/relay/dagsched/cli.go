@@ -80,6 +80,9 @@ func runReady(ctx context.Context, services dispatch.Services, args dispatch.Arg
 		return nil, err
 	}
 	defer closeStore()
+	if err := sched.useHostMemory(); err != nil {
+		return nil, err
+	}
 	if !record {
 		reading, err := sched.Read(ctx, args.Text("plan"), ReadyOptions{})
 		if err != nil {
@@ -193,6 +196,9 @@ func runRelease(ctx context.Context, services dispatch.Services, args dispatch.A
 		return nil, err
 	}
 	defer closeStore()
+	if err := sched.useHostMemory(); err != nil {
+		return nil, err
+	}
 	sched.Tips = mergeturn.TargetReader{}
 	sched.PRs = ForgePullRequestReader(ExecRunner)
 	sched.Start = ProductionStarter(services, args)

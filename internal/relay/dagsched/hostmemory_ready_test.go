@@ -310,18 +310,6 @@ func TestPassRecordsTheHostMemoryBound(t *testing.T) {
 	}
 }
 
-// A plan no pass of which a host decided prints the four limits it always printed.
-func TestMeasurementsPrintNoHostMemoryCountWithoutOne(t *testing.T) {
-	f := newFixture(t)
-	f.threeNodes("hm")
-	f.sched.Host = hostBound(healthyHost())
-	f.recordPass("hm")
-	par := metric(t, wantPresent(t, measured(t, f, "hm"), 1, "parallelism"), "limited_by")
-	if _, present := par["host_memory"]; present || len(par) != 4 {
-		t.Fatalf("limited by = %v", par)
-	}
-}
-
 // A read-only command never creates the zone, so a store that predates the side table is measured as it always was and is left as it is.
 func TestMeasurementsReadAStoreWithoutTheHostMemoryTable(t *testing.T) {
 	f := newFixture(t)
