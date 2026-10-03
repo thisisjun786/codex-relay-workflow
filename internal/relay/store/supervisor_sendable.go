@@ -27,6 +27,15 @@ import (
 // supervisorUnsentStates are the states in which no send of the message is in flight or settled.
 var supervisorUnsentStates = []string{"queued", "deferred_busy", "withheld_pre_send"}
 
+// The two holds a fault notice sets and releases itself. A hold keeps an unsent message out of the
+// queue (see SupervisorClaimableSQL); a notice parks its message under SupervisorHoldSuperseded when
+// what it said went up another way, and the channel holds a message under SupervisorHoldUnaddressed
+// while the hierarchy no longer names its endpoints. Staging releases either of them and no other.
+const (
+	SupervisorHoldSuperseded  = "superseded_by_report"
+	SupervisorHoldUnaddressed = "hierarchy_unresolved"
+)
+
 // supervisorStateList is supervisorUnsentStates as the body of a SQL IN list.
 var supervisorStateList = func() string {
 	quoted := make([]string, len(supervisorUnsentStates))

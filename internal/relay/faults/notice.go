@@ -3,7 +3,6 @@ package faults
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"strconv"
 	"strings"
@@ -13,19 +12,24 @@ import (
 )
 
 const NoticePage = 20
-const NoticeParkedHold = "superseded_by_report"
-const noticeUnaddressedHold = "hierarchy_unresolved"
 
 // NoticeChannel is the supervisor channel boundary. Resolve must read on ctx's
 // store transaction and never observe a host. Attempt/Recover own the transport
 // start fence, lifecycle, pacing, and uncertain-send recovery (todo 24).
 // Measure records lifecycle.observe through lifecycle.record, not just a boolean.
+// StageNotice and Park are the channel's too: it composes the packet, freezes it
+// as one message per notification, and parks a message nothing of which has gone
+// (the hold and its journal row are the channel's), so this package asks and the
+// supervisor package answers.
 type NoticeChannel interface {
 	Resolve(context.Context, string) (map[string]any, error)
 	StageNotice(context.Context, map[string]any) (map[string]any, error)
 	Attempt(context.Context, string, float64, string) error
 	Recover(context.Context, string, float64) error
 	Measure(context.Context, string) error
+	// Park holds the notice's message, named by its message id, out of the channel's
+	// oldest-claimable queue, and does nothing when any of it may have been sent.
+	Park(ctx context.Context, messageID, reason string) error
 }
 
 // NoticeDeliverer is a bounded pass; cursors intentionally live only in memory.
@@ -92,7 +96,11 @@ func (d *NoticeDeliverer) mayHaveSent(ctx context.Context, id string) (bool, err
 	r, err := d.Ledger.one(ctx, "SELECT request_id FROM supervisor_attempts WHERE message_id=? AND "+store.SupervisorAttemptMayHaveGoneSQL("")+" ORDER BY attempt_no DESC LIMIT 1", id)
 	return r != nil, err
 }
-func noticeAddressed(r row, live map[string]any) bool {
+
+// NoticeAddressed reports whether the staged message r is addressed from and to the
+// hierarchy live names. The deliverer asks it before it trusts the message's hold, and the
+// channel asks it when it stages, so both read one definition.
+func NoticeAddressed(r store.Row, live map[string]any) bool {
 	return text(r, "sender_task_id") == live["sender"] && text(r, "recipient_task_id") == live["recipient"] && text(r, "project_key") == live["projectKey"]
 }
 
@@ -125,7 +133,7 @@ func (d *NoticeDeliverer) waitingFor(ctx context.Context, one map[string]any, no
 	if relation == "" {
 		return "no relationship this store holds places fault " + noticeString(one, "faultId") + " under a project, and its scope names no project, so there is no level above to tell", nil
 	}
-	if unfit := unfitNotice(notice); unfit != "" {
+	if unfit := UnfitNotice(notice); unfit != "" {
 		return "the fault's " + unfit + " is not a value the ledger writes, so no notice can carry it; fault-show has the fault", nil
 	}
 	live, err := d.Channel.Resolve(ctx, relation)
@@ -135,12 +143,12 @@ func (d *NoticeDeliverer) waitingFor(ctx context.Context, one map[string]any, no
 		}
 		return "", err
 	}
-	if unfit := unfitNoticeHierarchy(live); unfit != "" {
+	if unfit := UnfitNoticeHierarchy(live); unfit != "" {
 		return "the " + unfit + " the linkage names is not a plain identifier, so no notice can carry it; fault-show has the fault", nil
 	}
-	if r != nil && noticeAddressed(r, live) {
+	if r != nil && NoticeAddressed(r, live) {
 		hold := text(r, "hold_reason")
-		if hold != "" && hold != NoticeParkedHold && hold != noticeUnaddressedHold {
+		if hold != "" && hold != store.SupervisorHoldSuperseded && hold != store.SupervisorHoldUnaddressed {
 			return "its message " + text(r, "message_id") + " is held by the supervisor channel: " + hold, nil
 		}
 		if next, ok := r.Get("next_eligible_at").(float64); ok && next > now {
@@ -278,7 +286,7 @@ func (d *NoticeDeliverer) returnPending(ctx context.Context, id, token, message,
 		return err
 	}
 	if message != "" {
-		return d.Ledger.ParkNotice(ctx, message, why)
+		return d.Channel.Park(ctx, message, why)
 	}
 	return nil
 }
@@ -379,7 +387,7 @@ func (d *NoticeDeliverer) reconcile(ctx context.Context, answer *NoticeAnswer, n
 			return err
 		}
 		if park != "" {
-			if err = d.Ledger.ParkNotice(ctx, park, why); err != nil {
+			if err = d.Channel.Park(ctx, park, why); err != nil {
 				return err
 			}
 		}
@@ -424,34 +432,4 @@ func (d *NoticeDeliverer) because(ctx context.Context, id string) (string, error
 		suffix = ": " + fmt.Sprint(reason)
 	}
 	return " (" + text(r, "kind") + suffix + ")", nil
-}
-
-// ParkNotice cannot hide a message that may have sent. PARKED_HOLD keeps a
-// pending notice out of the channel's oldest-claimable report queue.
-func (l *Ledger) ParkNotice(ctx context.Context, id, reason string) error {
-	return l.Store.Compose(ctx, func(ctx context.Context, _ *sql.Conn) error {
-		result, err := l.exec(ctx, "UPDATE supervisor_messages SET hold_reason=?,updated_at=? WHERE message_id=? AND obligation_kind='fault_notification' AND hold_reason IS NULL AND "+store.SupervisorNeverSentSQL(), NoticeParkedHold, l.Clock.ISO(), id)
-		if err != nil {
-			return err
-		}
-		if result == 1 {
-			return l.noticeJournal(ctx, "supervisor_notice_parked", id, map[string]any{"reason": reason})
-		}
-		return nil
-	})
-}
-func (l *Ledger) noticeJournal(ctx context.Context, kind, id string, detail map[string]any) error {
-	keys := map[string][]string{
-		"supervisor_notice_staged":       {"notificationId", "faultId", "recipient"},
-		"supervisor_message_readdressed": {"from", "to", "fromRelationship", "toRelationship", "releasedHold", "releasedState", "reason"},
-		"supervisor_message_restated":    {"at", "reason"},
-		"supervisor_notice_reopened":     {"hold", "reason"},
-		"supervisor_notice_parked":       {"reason"},
-	}[kind]
-	parts := make([]string, 0, len(keys))
-	for _, key := range keys {
-		parts = append(parts, dumps(key, false)+": "+dumps(detail[key], false))
-	}
-	_, err := l.exec(ctx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,?,?,?)", l.Clock.ISO(), kind, id, "{"+strings.Join(parts, ", ")+"}")
-	return err
 }
