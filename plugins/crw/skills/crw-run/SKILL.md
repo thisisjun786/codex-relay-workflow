@@ -537,7 +537,9 @@ The parent orders the merges and settles the mechanical conflicts by their rule,
 In a DAG plan the scheduler applies this by grade: a region is declared `independent`, `mechanical` (with the rule that settles it: `union`, `renumber` or `regenerate:<command>`), `local` or `exclusive`,
 `dag-ready` releases mechanical and local overlaps and defers only exclusive ones, and the rule it released a node under, with the rows that rest on and the overlap count by grade, is in the reading and
 in the recorded pass. [Release by region grade](references/region-grades.md) says how to declare the grades, how to read the judgement, and what the parent does at merge time: deciding the merge order,
-settling a mechanical overlap, and when a candidate goes back to its child.
+settling a mechanical overlap, and when a candidate goes back to its child. A conflict only in mechanical places is settled by the
+parent and proved by `crw skill base-refresh mechanical` ([Resolve a mechanical conflict
+yourself](references/merge-readiness.md#resolve-a-mechanical-conflict-yourself)).
 
 ### Start policy and child cap
 
