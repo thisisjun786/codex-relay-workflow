@@ -507,14 +507,7 @@ func setUp(c *Case, g Given, rt Runtime) error {
 	}
 	// Every given entry carries the frozen clock's time, so age and staleness readings agree
 	// with the oracle's Date.
-	epoch := Epoch()
-	err := filepath.WalkDir(c.Root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.Type()&fs.ModeSymlink != 0 {
-			return err
-		}
-		return os.Chtimes(path, epoch, epoch)
-	})
-	if err != nil {
+	if err := freezeTimes(c.Root, Epoch(), os.Chtimes); err != nil {
 		return err
 	}
 	for _, rel := range sortedKeys(g.Mtimes) {
@@ -531,6 +524,17 @@ func setUp(c *Case, g Given, rt Runtime) error {
 		}
 	}
 	return nil
+}
+
+// freezeTimes gives every entry under root, symlinks apart, the time when through set (os.Chtimes
+// in a run; a test passes a set that makes an entry vanish first). A walk or set error fails it.
+func freezeTimes(root string, when time.Time, set func(path string, atime, mtime time.Time) error) error {
+	return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err == nil && d.Type()&fs.ModeSymlink == 0 {
+			err = set(path, when, when)
+		}
+		return err
+	})
 }
 
 // rawResult is one step before normalisation.
