@@ -1,4 +1,4 @@
-# Linear, CXC, and Paperthin integration
+# Linear and CXC integration
 
 Shared guidance and Jun's workflow defaults for `crw-define`, `crw-next`, `crw-plan`, `crw-run`, `crw-loop`, `crw-status`, `crw-check`, `crw-logic`, `crw-tidy`, and `crw-refactor`. Read the operation-specific skill for scope. Apply these defaults within the user's assignment and current host permissions.
 
@@ -960,7 +960,7 @@ Where the child's workflow runs an independent review of its candidate, that rev
 
 Which of those findings has to be fixed before that report, and which may be left with a recorded acceptance, is decided by [impact](../../crw-run/references/merge-readiness.md#judge-a-finding-by-its-impact) rather than by how a reviewer labelled it or how many rounds have already run. A conditional acceptance there belongs to the parent that owns the criteria, and it is recorded as an acceptance carrying its follow-up rather than as a fix.
 
-An optional reviewer that cannot start, stalls, or sits outside the authorized scope does not become an indefinite wait: use the fallback in [Merge readiness](../../crw-run/references/merge-readiness.md), record the gap, and continue. A required review gate is not waivable that way.
+An optional reviewer that cannot start, stalls, or sits outside the authorized scope does not become an indefinite wait: use the fallback in [Merge readiness](../../crw-run/references/merge-readiness.md), record the gap, and continue. The first run Devin and Codex each make on the pull request is the exception: it is awaited to its end before the receipt ([Devin and Codex reviews are references, not merge gates](../../crw-run/references/merge-readiness.md#devin-and-codex-reviews-are-references-not-merge-gates)). A required review gate is not waivable that way.
 
 Review findings, pending CI, and ordinary revision pushes never send a pull request back to draft. Re-draft only when the implementation itself stops being reviewable.
 
@@ -1026,26 +1026,7 @@ Apply the [disabled reviewer policy](../../crw-run/references/merge-readiness.md
 
 Use the target repository's actual review configuration and observed results. Public/private visibility alone does not determine which reviewers run or what they can access. No named bot, vendor, or repository-management app is a universal dependency; a planned integration is not proof of an operational reviewer. Requirements come from the repository policy, enforced rules, and the assignment.
 
-Judge review coverage, revisions, completion, and finding disposition rather than a tool's name or green badge. A provider's severity badge is not severity either, and neither is the round count or the cost of one more round: [impact](../../crw-run/references/merge-readiness.md#judge-a-finding-by-its-impact) decides that, and it neither exempts a real defect nor promotes a minor one. Reuse sufficient independent evidence, including an authorized local review where policy permits it. Optional integrations do not create an indefinite wait or a new approval round; required checks and formal approvals still apply. Keep credentials, private-source access, and any new paid usage within the existing scope.
-
-## Paperthin supplies focused checks
-
-Read the selected installed `SKILL.md` and follow its workflow. Load only skills that answer a concrete question in the operation.
-
-| Situation | Skill and use |
-|---|---|
-| Bundled or ambiguous instruction | `readchk`: resolve intended scope before spending work |
-| Human lost the product context | `catchup`: brief from refreshed state |
-| Conflicting copies of a requirement/status | `ssotize`, audit mode: map sources and disagreement |
-| Acceptance test or metric validates itself | `mandela`: find missing independent evidence |
-| Factual premise needs external verification | `factchk`, with `cxc-search` for public/current lookup |
-| Packet/report must stand alone | `shower`: fresh-context cold read when justified and delegation is available |
-| Revised document accumulated noise | `re0`: refresh only the authorized artifact |
-| Where to start or what follows finished work | [crw-next](../../crw-next/SKILL.md): gather scoped state, use `readchk` for ambiguity and `nba` for one next action |
-
-`hate`, `prism`, `feynman`, and other skills marked `disable-model-invocation` or an equivalent explicit-only policy remain deliberate user choices. The user's current operative request must name the skill or explicitly authorize that named chain. A wrapper selection, quoted example, pasted log, or skill document mentioning it is not opt-in. Preserve the selected skill's output and independence rules.
-
-Read-only scope applies to helpers: `factchk`, `re0`, or `ssotize` findings remain proposals when edits are outside the request. Do not use a helper's broader capabilities to expand scope. Missing helpers produce a disclosed limitation, not a claimed run.
+Judge review coverage, revisions, completion, and finding disposition rather than a tool's name or green badge. A provider's severity badge is not severity either, and neither is the round count or the cost of one more round: [impact](../../crw-run/references/merge-readiness.md#judge-a-finding-by-its-impact) decides that, and it neither exempts a real defect nor promotes a minor one. Reuse sufficient independent evidence, including an authorized local review where policy permits it. Optional integrations do not create an indefinite wait or a new approval round, except the first run of Devin and of Codex, which is awaited before the receipt ([Devin and Codex reviews are references, not merge gates](../../crw-run/references/merge-readiness.md#devin-and-codex-reviews-are-references-not-merge-gates)); required checks and formal approvals still apply. Keep credentials, private-source access, and any new paid usage within the existing scope.
 
 ## Evidence and handoff
 

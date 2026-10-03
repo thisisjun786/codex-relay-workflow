@@ -63,30 +63,59 @@ func refreshDigest(acceptance, relationship string, generation int64, event, rev
 		"event_id": event, "revision_hash": revision, "head_sha": head, "base_repository": baseRepository, "base_ref": baseRef, "base_tip_sha": baseTip, "proof": proofJSON, "resolved_paths": resolvedJSON})))[:32]
 }
 
-// standOf reads what an acceptance stands on now. The table arrived after the first zone, so a store opened read-only that predates it has no refresh; a row that does not digest to its id is ignored.
-func (s *Scheduler) standOf(ctx context.Context, q store.Querier, a Acceptance) (acceptanceStand, error) {
-	own := acceptanceStand{RelationshipID: a.RelationshipID, Generation: a.ExecutionGeneration, EventID: a.EventID, RevisionHash: a.RevisionHash, Head: a.HeadSHA}
+// ownStand is what an acceptance stands on before any base refresh was recorded for it: its own relationship, generation, event, revision and head.
+func ownStand(a Acceptance) acceptanceStand {
+	return acceptanceStand{RelationshipID: a.RelationshipID, Generation: a.ExecutionGeneration, EventID: a.EventID, RevisionHash: a.RevisionHash, Head: a.HeadSHA}
+}
+
+// validStands are the base refreshes recorded for an acceptance that digest to their ids, newest first. The table arrived after the first zone, so a store opened read-only that predates it has none; a row
+// that does not digest to its id is ignored.
+func (s *Scheduler) validStands(ctx context.Context, q store.Querier, a Acceptance) ([]acceptanceStand, error) {
 	present, err := tableExists(ctx, q, "dag_base_refreshes")
 	if err != nil || !present {
-		return own, err
+		return nil, err
 	}
 	rows, err := q.QueryContext(ctx, "SELECT refresh_id, relationship_id, execution_generation, event_id, revision_hash, head_sha, base_repository, base_ref, base_tip_sha, proof_json, resolved_paths_json"+
 		" FROM dag_base_refreshes WHERE acceptance_id = ? ORDER BY refresh_seq DESC", a.AcceptanceID)
 	if err != nil {
-		return own, err
+		return nil, err
 	}
 	defer rows.Close()
+	var out []acceptanceStand
 	for rows.Next() {
 		var id, rid, event, revision, head, baseRepo, baseRef, baseTip, proof, resolved string
 		var generation int64
 		if err := rows.Scan(&id, &rid, &generation, &event, &revision, &head, &baseRepo, &baseRef, &baseTip, &proof, &resolved); err != nil {
-			return own, err
+			return nil, err
 		}
 		if rid == a.RelationshipID && generation > a.ExecutionGeneration && id == refreshDigest(a.AcceptanceID, rid, generation, event, revision, head, baseRepo, baseRef, baseTip, proof, resolved) {
-			return acceptanceStand{RelationshipID: rid, Generation: generation, EventID: event, RevisionHash: revision, Head: head, RefreshID: id}, nil
+			out = append(out, acceptanceStand{RelationshipID: rid, Generation: generation, EventID: event, RevisionHash: revision, Head: head, RefreshID: id})
 		}
 	}
-	return own, rows.Err()
+	return out, rows.Err()
+}
+
+// standOf reads what an acceptance stands on now: the newest valid base refresh recorded for it, else its own.
+func (s *Scheduler) standOf(ctx context.Context, q store.Querier, a Acceptance) (acceptanceStand, error) {
+	stands, err := s.validStands(ctx, q, a)
+	if err != nil || len(stands) == 0 {
+		return ownStand(a), err
+	}
+	return stands[0], nil
+}
+
+// stoodOn is every head the acceptance has stood on: its own and the head of each valid base refresh recorded for it, newest first. A merge turn of the node, or a check of its pull request, made for any
+// of them is the node's own (the newest is what it stands on now; the others are what it stood on before a record moved it).
+func (s *Scheduler) stoodOn(ctx context.Context, q store.Querier, a Acceptance) ([]string, error) {
+	stands, err := s.validStands(ctx, q, a)
+	if err != nil {
+		return nil, err
+	}
+	heads := make([]string, 0, len(stands)+1)
+	for _, st := range stands {
+		heads = append(heads, st.Head)
+	}
+	return append(heads, a.HeadSHA), nil
 }
 
 // refreshReadable is the fail-closed rule for the forge reading a refresh is proved against. An open pull request is read as an acceptance reads one (ClassifyPullRequest: a verdict of unknown, an evidence that was
