@@ -393,6 +393,12 @@ That title names the Codex task, not the pull request, which the child titles in
 directory the packet names is short, and every make target, CI check and script it names for
 verification was confirmed to exist when the packet was written ([First full assignment required fields](references/task-packet.md#first-full-assignment-required-fields)).
 
+Choose the child's MCP profile at release, from the issue and its packet, and state it in the packet and in the
+release request's `child.settings.mcpProfile`: `ui-qa` for UI or browser QA, `second-opinion` when an
+external-model review is named, otherwise `minimal`. A host whose policy declares profiles refuses a child
+whose request states none. A child that needs a server its profile lacks raises a decision request; the profile
+is not widened under it. Selection rule and what the host does with it: [MCP profiles](references/mcp-profiles.md).
+
 Apply [Independent implementation tasks](#independent-implementation-tasks) even
 when no new branch or worktree is needed. Non-PR work uses its permitted working
 directory and artifact access without Git metadata. For code work, reuse a checkout whose ownership is

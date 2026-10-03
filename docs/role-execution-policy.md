@@ -136,6 +136,60 @@ role that lists more than one pair is described differently:
   withheld from a thread the host has not loaded, as `unverified_pair_for_unloaded_thread`, exactly as a
   supervisor's or an exception's pair is.
 
+## A role may carry MCP profiles
+
+A thread starts every MCP server config.toml defines and every installed plugin provides, when it
+starts or when a resume loads it, whether or not it ever calls them, and each sub-thread it spawns
+does the same. A child kept hundreds of megabytes of helper processes this way. A role entry may
+therefore declare an `mcp` section, and a request picks one of its profiles:
+
+    "child": {"pairs": [...], "mcp": {"default": "minimal", "profiles": {
+      "minimal": {},
+      "ui-qa": {"servers": ["node_repl"]},
+      "second-opinion": {"servers": ["oracle"], "disablePlugins": ["unified-computer-use@openai-bundled"]}
+    }}}
+
+- `servers` are the config.toml servers the profile keeps on; every other server the host's config.toml
+  defines is switched off for the thread. A profile with none is the minimal one. A kept server that
+  config.toml does not define is refused with its reason before the thread starts
+  (`execution_mcp_server_unknown`, naming it and the servers the host does define), because an override
+  naming it would fail the start.
+- `disablePlugins` switches whole plugins off. A plugin's server has no switch of its own on Codex 0.154:
+  an override naming it fails the start, and the per-thread control of the plugin takes its skills and
+  hooks with it, so a profile names only plugins a child can do without. An id that is not installed
+  is skipped. The plugins a profile does not name keep their servers.
+- `default` is the profile a creation that names none gets. A file is refused when it is read if a name
+  is blank or over 128 characters, a list names a server or plugin twice, `default` names no profile,
+  the section holds another key, or a `supervisor` declares `mcp`. The description of the roles
+  (`get_capabilities`, the worker policy receipt) does not mention profiles, so declaring them does
+  not make a worker and its caller disagree. A file without an `mcp` section behaves as before and
+  asks the host nothing extra.
+
+Which profile a thread runs under. The bridge's `create_thread` takes the role's default, since it has no
+input to name another. Managed start takes `child.settings.mcpProfile`, and a host whose policy declares
+profiles for the child role admits a child only when its request states one of them
+(`mcp_profile_required` and `mcp_profile_unknown` refuse at the preflight, before any thread exists), so a
+child's record always states its profile. `send_message_to_thread` applies a profile only when
+`expected_settings.mcp_profile` names one. Sub-agents inherit the overrides of the thread that
+spawns them, so one profile covers a child and its sub-threads.
+
+How it is applied and checked. The profile is resolved against the host, not a file: `config/read` for the
+servers config.toml defines for the thread's directory and `plugin/installed` for the plugins. The
+overrides go in the thread's config as nested objects (`mcp_servers.<name>.enabled=false`,
+`plugins.<id>.enabled=false`); a dotted key with a plugin id is silently ignored. The host does not keep
+a thread's overrides, so every resume of a thread it has not loaded sends them again: the bridge's send,
+and the relay's delivery for a record that states a profile, including the settings-free resume of a
+role with several pairs, which sends the overrides and no pair. A resume of a thread the host already
+has loaded ignores them. After the start or resume the thread's `mcpServerStatus/list` is compared with
+the profile: a server to be off must report `disabled`, a kept one anything else, a switched-off plugin
+must be absent. A difference withholds the prompt or message as `settings_not_preserved` on the field
+`mcpServers` (it keeps that code on a settings-free resume, because something was sent), and an
+unreadable list is `setting_unobservable`. A profile the host cannot resolve is refused before anything
+is sent and the request may be sent again.
+
+Not covered: `create_worktree_thread` sends no overrides, and a thread the bridge creates keeps its
+profile across a later unloaded resume only when the caller names it again on the send.
+
 ## The file
 
 The policy file is named by `CODEX_THREAD_BRIDGE_EXECUTION_POLICY` in the bridge server process's
