@@ -601,6 +601,14 @@ host and uses what the host actually reports. **Offline, a readiness claim can o
 stored and visible, and it becomes deliverable only once an independent observation sees that turn
 end normally. A turn that ends failed or interrupted suppresses the claim instead of promoting it.
 
+A child that itself reports `failed` or `interrupted` from its own live turn states how the turn
+ended: `--turn-status failed` or `--turn-status interrupted`, which is a claim and makes the receipt
+final. `--turn-status` is `inProgress` when it is left out, a turn in progress cannot carry those two
+outcomes, and the emit is refused `contradictory_observation`; the refusal's detail names the status
+to pass. With `--socket` the relay reads the status from the host and ignores `--turn-status`, so a
+live turn reads `inProgress` there: such an emit is made without `--socket`, with `--state` naming the
+store this emit used. `blocked_needs_input` takes no `--turn-status` and stays staged.
+
 A loop spanning several turns completes on a turn that is not the anchor, and says so in the same
 call:
 
