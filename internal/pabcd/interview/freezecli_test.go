@@ -1,8 +1,8 @@
 package interview
 
 import (
-	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -14,16 +14,13 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/cxccorpus"
 )
 
-// freezeEntry is one file of a recorded scenario, named relative to the state directory; freezeStep is one run of the command with
-// what the oracle printed, the manifest it left (frozenAt as <TS>) and the tree below the workspace (the state directory written as
-// a STATE placeholder).
+// freezeEntry is one file of a recorded scenario: its path below the state directory and its data as bytes (base64 in the recording)
+// and its kind (file, dir, link, remove). freezeStep is one run of the command with what the oracle printed, the manifest it left
+// (frozenAt as <TS>) and the tree below the workspace (the state directory written as a STATE placeholder; null where not recorded).
 type freezeEntry struct {
-	Path   string
-	Text   *string
-	B64    *string
-	Link   *string
-	Dir    bool
-	Remove bool
+	P []byte
+	K string
+	D []byte
 }
 
 type freezeStep struct {
@@ -38,30 +35,23 @@ type freezeStep struct {
 
 func (e freezeEntry) apply(t *testing.T, ws string) {
 	t.Helper()
-	p := filepath.Join(ws, ".crw", e.Path)
+	p := filepath.Join(ws, ".crw") + "/" + string(e.P)
 	var err error
-	switch {
-	case e.Remove:
+	switch e.K {
+	case "remove":
 		err = os.RemoveAll(p)
-	case e.Dir:
+	case "dir":
 		err = os.MkdirAll(p, 0o777)
 	default:
-		if err = os.MkdirAll(filepath.Dir(p), 0o777); err != nil {
-			break
-		}
-		switch {
-		case e.Link != nil:
-			err = os.Symlink(*e.Link, p)
-		case e.B64 != nil:
-			var data []byte
-			if data, err = base64.StdEncoding.DecodeString(*e.B64); err == nil {
-				err = os.WriteFile(p, data, 0o666)
-			}
-		default:
-			err = os.WriteFile(p, []byte(*e.Text), 0o666)
+		if err = os.MkdirAll(filepath.Dir(p), 0o777); err == nil && e.K == "link" {
+			err = os.Symlink(string(e.D), p)
+		} else if err == nil {
+			err = os.WriteFile(p, e.D, 0o666)
 		}
 	}
-	if err != nil {
+	if errors.Is(err, syscall.EILSEQ) || errors.Is(err, syscall.EINVAL) { // a file system may refuse a name that is not UTF-8
+		t.Skipf("this file system refuses the name: %v", err)
+	} else if err != nil {
 		t.Fatal(err)
 	}
 }
@@ -99,8 +89,6 @@ func freezeFileReader(cwd, id string) (string, *Tracker) {
 	return slug, ReconstructInterview(m["interview"])
 }
 
-func freezeNoSession(string, string) (string, *Tracker) { return "", nil }
-
 // Every recorded scenario is run step by step over the tree the oracle had: the printed text (through the corpus replayer's name
 // table), the manifest's bytes, the tree it leaves and whether it failed must be the oracle's.
 func TestFreezeRunsLikeTheRecordedOracle(t *testing.T) {
@@ -134,11 +122,9 @@ func TestFreezeRunsLikeTheRecordedOracle(t *testing.T) {
 				}
 				tree := freezeTree(t, ws, "")
 				for j, p := range tree {
-					if strings.HasPrefix(p, ".crw") {
-						tree[j] = "$" + "{STATE}" + strings.TrimPrefix(p, ".crw")
-					}
+					tree[j] = strings.Replace(p, ".crw", "$"+"{STATE}", 1)
 				}
-				if !slices.Equal(tree, step.Tree) {
+				if step.Tree != nil && !slices.Equal(tree, step.Tree) {
 					t.Errorf("step %d tree\n got %q\nwant %q", i, tree, step.Tree)
 				}
 			}
@@ -164,52 +150,35 @@ func TestFreezeParseArgsMatchesTheRecordedOracle(t *testing.T) {
 	}
 }
 
-func freezeReadyTracker() *Tracker {
-	tr := readyTracker()
-	tr.Assumptions = append(tr.Assumptions, Assumption{Text: "Assume X", Recorded: true})
-	return tr
-}
-
-// freeze.test.ts "freeze --dry-run produces a summary without writing", and the two L14.2 tests: the goal-activation directive
-// follows the summary only when the interview is ready.
-func TestFreezeSummaryAndDirective(t *testing.T) {
-	ws := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(ws, ".crw", "plan", "demo"), 0o777); err != nil {
+// parseFreezeArgs reads process.cwd() while parsing, when --cwd gives none, so even a help request fails in a deleted directory.
+func TestFreezeParseArgsFailsInADeletedWorkingDirectory(t *testing.T) {
+	gone := filepath.Join(t.TempDir(), "gone")
+	if err := os.Mkdir(gone, 0o777); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(ws, ".crw", "plan", "demo", "plan.md"), []byte("# Plan\n## OPEN ASSUMPTIONS\n- A1"), 0o666); err != nil {
-		t.Fatal(err)
+	t.Chdir(gone)
+	if err := os.Remove(gone); err != nil {
+		t.Skipf("this system does not remove a working directory: %v", err)
 	}
-	args := FreezeCliArgs{Cwd: ws, SessionID: "s1", DryRun: true}
-	out, err := RunFreeze(args, func(string, string) (string, *Tracker) { return "demo", nil })
-	for _, want := range []string{"planHash: ", "planFiles: 1", "[crw freeze --dry-run]", "interviewReady: false"} {
-		if err != nil || !strings.Contains(out, want) {
-			t.Errorf("summary lacks %q (%v):\n%s", want, err, out)
+	for _, argv := range [][]string{{"--help"}, {"--help", "--cwd"}} {
+		if _, err := ParseFreezeArgs(argv); err == nil {
+			t.Errorf("ParseFreezeArgs(%q) succeeded without a working directory", argv)
 		}
 	}
-	if strings.Contains(out, GoalActivationDirective) {
-		t.Error("a not-ready freeze must not surface the handoff")
-	}
-	if _, err := os.Stat(filepath.Join(ws, ".crw", "interview")); err == nil {
-		t.Error("a dry run wrote the interview directory")
-	}
-	out, err = RunFreeze(args, func(string, string) (string, *Tracker) { return "demo", freezeReadyTracker() })
-	if err != nil || !strings.Contains(out, "interviewReady: true") || !strings.Contains(out, "openAssumptions: 1") || !strings.HasSuffix(out, "\n\n"+GoalActivationDirective) {
-		t.Errorf("a ready freeze must end with the handoff directive (%v):\n%s", err, out)
+	if got, err := ParseFreezeArgs([]string{"--cwd", "--help"}); err != nil || got.Cwd != "--help" || !got.Help {
+		t.Errorf("an explicit --cwd needs no working directory: %+v, %v", got, err)
 	}
 }
 
-// ListPlanFiles: a missing plan directory is no files, a plan directory that is a file an error.
-func TestFreezeListPlanFilesEdges(t *testing.T) {
-	ws := t.TempDir()
-	if files, err := ListPlanFiles(filepath.Join(ws, "absent")); err != nil || len(files) != 0 {
-		t.Errorf("an absent directory: %v, %v", files, err)
-	}
-	if err := os.WriteFile(filepath.Join(ws, "file"), nil, 0o666); err != nil {
+// ListPlanFiles reads a plan directory that exists with readdirSync: one that cannot be read is an error, not an empty plan (the
+// absent and file cases are recorded scenarios).
+func TestFreezeAnUnreadablePlanDirectoryFails(t *testing.T) {
+	closed := filepath.Join(t.TempDir(), "closed")
+	if err := os.Mkdir(closed, 0o000); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ListPlanFiles(filepath.Join(ws, "file")); err == nil {
-		t.Error("a plan directory that is a file must fail")
+	if _, err := ListPlanFiles(closed); err == nil && os.Geteuid() != 0 {
+		t.Error("a plan directory that cannot be read must fail")
 	}
 }
 
@@ -219,12 +188,10 @@ func TestFreezePublishesTheManifestAtomically(t *testing.T) {
 	ws := t.TempDir()
 	manifest := filepath.Join(ws, ".crw", "interview", "freeze.json")
 	freeze := func() os.FileInfo {
-		if _, err := RunFreeze(FreezeCliArgs{Cwd: ws, SessionID: "default"}, freezeNoSession); err != nil {
-			t.Fatal(err)
-		}
-		info, err := os.Stat(manifest)
-		if err != nil {
-			t.Fatal(err)
+		_, err := RunFreeze(FreezeCliArgs{Cwd: ws, SessionID: "default"}, freezeFileReader)
+		info, statErr := os.Stat(manifest)
+		if err != nil || statErr != nil {
+			t.Fatal(err, statErr)
 		}
 		return info
 	}

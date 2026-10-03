@@ -74,6 +74,7 @@ const session = (id, o) => t("sessions/" + id + ".json", JSON.stringify(sessionF
 const prior = (text) => ({ files: [...plan, session("s1", { interview: null }), t("interview/freeze.json", text)], steps: [{ session: "s1", dryRun: true }] });
 const good = { planFiles: [{ path: "000_plan.md", sha256: freeze.sha256("# plan\n") }, { path: "010_phase.md", sha256: freeze.sha256("# phase\n") }] };
 good.planHash = freeze.computePlanHash(good.planFiles);
+const tostring = (extra) => ({ files: [...plan, session("s1", { interview: null }), t("interview/freeze.json", JSON.stringify({ planFiles: [...good.planFiles, ...extra], planHash: good.planHash }))], steps: [{ session: "s1", dryRun: true }] });
 const named = (names) => names.map((n) => t("plan/default/" + n, n));
 const scenarios = {
   empty_default: { files: [], steps: [{ dryRun: false }, { dryRun: false }] },
@@ -101,19 +102,74 @@ const scenarios = {
   prior_empty_files: prior('{"planFiles":[]}'),
   prior_no_hash: prior(JSON.stringify({ planFiles: good.planFiles })),
   prior_good: prior(JSON.stringify(good)),
+  invalid_name: { noTree: true, files: [t("plan/default/ok.md", "ok"), { pathB64: Buffer.from("plan/default/bad-\xff.md", "latin1").toString("base64"), text: "x" }, { pathB64: Buffer.from("plan/default/.dot-\xff", "latin1").toString("base64"), text: "skipped" }], steps: [{ dryRun: false }] },
+  invalid_name_collides: { noTree: true, files: [t("plan/default/ok.md", "ok"), { pathB64: Buffer.from("plan/default/bad-\xff.md", "latin1").toString("base64"), text: "a" }, t("plan/default/bad-\ufffd.md", "b")], steps: [{ dryRun: false }] },
+  // checkStale sorts changedFiles with the default sort, which converts each element but undefined to a string: an object with its own
+  // toString member (never callable from JSON) throws, so the manifest reads as unreadable when two or more such elements changed
+  prior_tostring_single: tostring([{ path: { toString: null }, sha256: "x" }]),
+  prior_tostring_with_undefined: tostring([{ path: { toString: null }, sha256: "x" }, { sha256: "z" }]),
+  prior_tostring_with_string: tostring([{ path: { toString: null }, sha256: "x" }, { path: "new.md", sha256: "q" }]),
+  prior_tostring_nested_array: tostring([{ path: [[{ toString: 1 }]], sha256: "x" }, { path: "new.md", sha256: "q" }]),
+  prior_tostring_plain_and_throwing: tostring([{ path: { a: 1 }, sha256: "x" }, { path: { toString: "s" }, sha256: "x" }]),
+  prior_plain_objects_only: tostring([{ path: { a: 1 }, sha256: "x" }, { path: [1, null], sha256: "x" }]),
+  plan_is_file: { files: [t("plan/default", "not a directory")], steps: [{ dryRun: false }] },
+  prior_garbage_rewrite: { files: [...plan, session("s1", { interview: null }), t("interview/freeze.json", "{not json")], steps: [{ session: "s1", dryRun: true }, { session: "s1", dryRun: false }, { session: "s1", dryRun: true }] },
+  prior_missing_sha_gone: { files: [t("interview/freeze.json", JSON.stringify({ planFiles: [{ path: "gone.md" }], planHash: freeze.computePlanHash([]) }))], steps: [{ dryRun: true }] },
+  prior_missing_sha_present: { files: [t("plan/default/a.md", "a"), t("interview/freeze.json", JSON.stringify({ planFiles: [{ path: "a.md" }], planHash: freeze.computePlanHash([]) }))], steps: [{ dryRun: true }] },
+  prior_null_sha: { files: [t("interview/freeze.json", JSON.stringify({ planFiles: [{ path: "gone.md", sha256: null }], planHash: freeze.computePlanHash([]) }))], steps: [{ dryRun: true }] },
+  prior_mixed_types: prior(JSON.stringify({ planFiles: [{ path: 1, sha256: "x" }, { path: 1.0, sha256: "y" }, { path: true }, { path: null, sha256: "y" }, { sha256: "z" }, [1], "str", 5, { path: "000_plan.md" }, { path: { a: 1 }, sha256: "q" }, { path: { a: 1 }, sha256: "q" }, { path: "010_phase.md", sha256: 7 }], planHash: 7 })),
   prior_good_pretty_extra: prior(JSON.stringify({ ...good, extra: 1, objective: "demo" }, null, 2)),
 };
+// seeded random malformed prior manifests: values from a pool of absent, null, booleans, numbers, strings, real hashes, objects and arrays
+let seed = 20261003;
+const rnd = () => {
+  seed = (seed + 0x6d2b79f5) | 0;
+  let x = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+  x = (x + Math.imul(x ^ (x >>> 7), 61 | x)) ^ x;
+  return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
+};
+const pick = (a) => a[Math.floor(rnd() * a.length)];
+const ABSENT = Symbol("absent");
+const paths = [ABSENT, null, true, false, 0, 1, 1.5, "", "x.md", "000_plan.md", "010_phase.md", "new.md", { a: 1 }, [1], "000_plan.md", { toString: null }, [{ toString: 1 }], [[{ toString: null }]], [null, 2]];
+const shas = [ABSENT, null, 1, "", "x", freeze.sha256("# plan\n"), freeze.sha256("# phase\n"), true, { a: 1 }, [], "000_plan.md"];
+const entry = () => {
+  if (rnd() < 0.08) return pick([5, "str", [1], true, null]);
+  const o = {}, p = pick(paths), s = pick(shas);
+  if (p !== ABSENT) o.path = p;
+  if (s !== ABSENT) o.sha256 = s;
+  return o;
+};
+for (let i = 0; i < 60; i++) {
+  const m = {};
+  let files = rnd() < 0.05 ? pick([ABSENT, "abc", {}, null, 5]) : rnd() < 0.5 ? structuredClone(good.planFiles) : Array.from({ length: Math.floor(rnd() * 6) }, entry);
+  if (Array.isArray(files) && rnd() < 0.6) { // a valid list with one change
+    const i = Math.floor(rnd() * (files.length + 1)), op = rnd();
+    if (op < 0.3) files.splice(i, 1);
+    else if (op < 0.6) files.splice(i, 0, entry());
+    else if (files[i] && typeof files[i] === "object") { const k = pick(["path", "sha256"]), v = pick(k === "path" ? paths : shas); if (v === ABSENT) delete files[i][k]; else files[i][k] = v; }
+  }
+  if (files !== ABSENT) m.planFiles = files;
+  const hash = rnd() < 0.5 ? good.planHash : pick([ABSENT, null, 7, "", freeze.computePlanHash([])]);
+  if (hash !== ABSENT) m.planHash = hash;
+  scenarios["fuzz_" + String(i).padStart(2, "0")] = { noTree: true, files: [...plan, session("s1", { interview: null }), t("interview/freeze.json", JSON.stringify(m))], steps: [{ session: "s1", dryRun: true }] };
+}
 const apply = (ws, f) => {
-  const p = join(ws, ".codexclaw", f.path);
+  const p = f.pathB64 !== undefined ? Buffer.concat([Buffer.from(join(ws, ".codexclaw") + "/"), Buffer.from(f.pathB64, "base64")]) : join(ws, ".codexclaw", f.path);
   if (f.remove) return rmSync(p, { recursive: true, force: true });
   if (f.dir) return mkdirSync(p, { recursive: true });
-  mkdirSync(dirname(p), { recursive: true });
+  if (f.pathB64 === undefined) mkdirSync(dirname(p), { recursive: true });
   if (f.link !== undefined) symlinkSync(f.link, p);
   else writeFileSync(p, f.b64 !== undefined ? Buffer.from(f.b64, "base64") : f.text);
 };
 const list = (root, rel = "") => readdirSync(join(root, rel)).sort().flatMap((n) => {
   const r = rel ? rel + "/" + n : n;
   return lstatSync(join(root, r)).isDirectory() ? [r + "/", ...list(root, r)] : [r];
+});
+// every file as base64 path bytes (p), kind (k: file, dir, link, remove) and base64 data or link target (d)
+const norm = (f) => ({
+  p: Buffer.from(f.pathB64 !== undefined ? Buffer.from(f.pathB64, "base64") : f.path).toString("base64"),
+  k: f.remove ? "remove" : f.dir ? "dir" : f.link !== undefined ? "link" : "file",
+  d: Buffer.from(f.link ?? (f.b64 !== undefined ? Buffer.from(f.b64, "base64") : f.text ?? "")).toString("base64"),
 });
 out.scenarios = {};
 for (const [id, sc] of Object.entries(scenarios)) {
@@ -128,9 +184,9 @@ for (const [id, sc] of Object.entries(scenarios)) {
     } catch { error = true; }
     let manifest = null;
     try { manifest = readFileSync(join(ws, ".codexclaw/interview/freeze.json"), "utf8").replace(/"frozenAt": "[^"]*"/, '"frozenAt": "<TS>"'); } catch {}
-    steps.push({ session: step.session ?? "default", dryRun: step.dryRun, edits: step.edits ?? [], output, error, manifest, tree: list(ws).map((p) => p.replace(/^\.codexclaw/, STATE)) });
+    steps.push({ session: step.session ?? "default", dryRun: step.dryRun, edits: (step.edits ?? []).map(norm), output, error, manifest, tree: sc.noTree ? null : list(ws).map((p) => p.replace(/^\.codexclaw/, STATE)) });
   }
-  out.scenarios[id] = { files: sc.files, steps };
+  out.scenarios[id] = { files: sc.files.map(norm), steps };
   rmSync(ws, { recursive: true, force: true });
 }
 process.stdout.write(JSON.stringify(out, null, 1) + "\n");

@@ -2,30 +2,27 @@ package interview
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/cxccorpus"
 )
 
-// testdata/oracle-freeze.json holds what the CXC v0.2.40 oracle answered for freeze.ts and freeze-cli.ts, recorded once under
-// Node 24 (ICU 78.3, en-US) with testdata/record-freeze-oracle.mjs; no Node runs here. The slices are the oracle's inputs and
-// answers; a scenario is a whole run of the command (output, manifest bytes, tree) over a tree the test rebuilds.
+// testdata/oracle-freeze.json holds what the CXC v0.2.40 oracle answered for freeze.ts and freeze-cli.ts, recorded once under Node 24
+// (ICU 78.3, en-US) with testdata/record-freeze-oracle.mjs; no Node runs here. The slices are the oracle's inputs and answers, a
+// scenario is a whole run of the command (output, manifest bytes, tree) over a tree the test rebuilds.
 type freezeRecorded struct {
 	AsciiOrder string
-	Matrix     struct {
-		Strings []string
-		Rows    []string
-	}
-	Sets []struct {
-		Files    []PlanFileHash
-		Sorted   []string
-		PlanHash string
-		Hash     string
+	Matrix     struct{ Strings, Rows []string }
+	Sets       []struct {
+		Files          []PlanFileHash
+		Sorted         []string
+		PlanHash, Hash string
 	}
 	Slugs []struct{ Objective, Slug string }
 	Stale []struct {
@@ -47,27 +44,16 @@ type freezeRecorded struct {
 	}
 }
 
-func freezeOracle(t *testing.T) freezeRecorded {
+func freezeOracle(t *testing.T) (o freezeRecorded) {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("testdata", "oracle-freeze.json"))
-	if err != nil {
-		t.Fatal(err)
+	if err == nil {
+		err = json.Unmarshal(raw, &o)
 	}
-	var o freezeRecorded
-	if err := json.Unmarshal(raw, &o); err != nil {
-		t.Fatal(err)
-	}
-	if len(o.Slugs) < 15 || len(o.Stale) < 8 || len(o.Argv) < 15 || len(o.Scenarios) < 25 || len(o.Sets) < 4 {
-		t.Fatalf("recorded cases: %d slugs, %d stale, %d argv, %d scenarios, %d sets", len(o.Slugs), len(o.Stale), len(o.Argv), len(o.Scenarios), len(o.Sets))
+	if err != nil || len(o.Scenarios) < 90 || len(o.Slugs) < 15 || len(o.Stale) < 8 || len(o.Argv) < 15 || len(o.Sets) < 4 {
+		t.Fatalf("recorded oracle: %d scenarios (%v)", len(o.Scenarios), err)
 	}
 	return o
-}
-
-func freezePaths(files []PlanFileHash) (paths []string) {
-	for _, f := range files {
-		paths = append(paths, f.Path)
-	}
-	return paths
 }
 
 // The plan files hash in the order of JavaScript's localeCompare: every ASCII character, a matrix of path-like strings and sorted
@@ -82,22 +68,21 @@ func TestFreezeCollationMatchesTheRecordedOracle(t *testing.T) {
 	if got := strings.Join(chars, ""); got != o.AsciiOrder {
 		t.Errorf("ASCII order\n got %q\nwant %q", got, o.AsciiOrder)
 	}
-	sign := func(n int) byte { return "=<>"[(n+3)%3] }
 	for i, a := range o.Matrix.Strings {
 		for j, b := range o.Matrix.Strings {
-			if got := sign(localeCompare(a, b)); got != o.Matrix.Rows[i][j] {
+			if got := "=><"[(localeCompare(a, b)+3)%3]; got != o.Matrix.Rows[i][j] {
 				t.Errorf("localeCompare(%q, %q) = %q, oracle %q", a, b, got, o.Matrix.Rows[i][j])
 			}
 		}
 	}
 	for i, s := range o.Sets {
-		given := slices.Clone(s.Files)
+		given, sorted := slices.Clone(s.Files), []string{}
 		m := BuildFreezeManifest(BuildManifestInput{Objective: "o", PlanFiles: s.Files, Now: func() string { return "T" }})
-		if got := freezePaths(m.PlanFiles); !slices.Equal(got, s.Sorted) || m.PlanHash != s.PlanHash || ComputePlanHash(s.Files) != s.Hash {
-			t.Errorf("set %d: order %q hash %s (computePlanHash %s), oracle %q %s", i, got, m.PlanHash, ComputePlanHash(s.Files), s.Sorted, s.PlanHash)
+		for _, f := range m.PlanFiles {
+			sorted = append(sorted, f.Path)
 		}
-		if !slices.Equal(given, s.Files) {
-			t.Errorf("set %d: the input list was reordered", i)
+		if !slices.Equal(sorted, s.Sorted) || m.PlanHash != s.PlanHash || ComputePlanHash(s.Files) != s.Hash || !slices.Equal(given, s.Files) {
+			t.Errorf("set %d: order %q hash %s, oracle %q %s (or the input list was reordered)", i, sorted, m.PlanHash, s.Sorted, s.PlanHash)
 		}
 	}
 }
@@ -111,17 +96,14 @@ func TestFreezeManifestUsesThePinnedFieldNames(t *testing.T) {
 	files := []PlanFileHash{{"b.md", Sha256("B")}, {"a.md", Sha256("A")}}
 	m := BuildFreezeManifest(BuildManifestInput{Objective: "Build the Thing!", PlanFiles: files, EvidenceBundle: freezeBundle(), Now: func() string { return "2026-06-30T00:00:00Z" }})
 	raw, _ := json.Marshal(m)
-	want := "{\"frozenAt\":\"2026-06-30T00:00:00Z\",\"planFiles\":[{\"path\":\"a.md\",\"sha256\":\"" + Sha256("A") + "\"},{\"path\":\"b.md\",\"sha256\":\"" + Sha256("B") +
-		"\"}],\"planHash\":\"" + ComputePlanHash(files) + "\",\"objective\":\"Build the Thing!\",\"slug\":\"build-the-thing\",\"evidenceBundle\":{\"dimensions\":null," +
-		"\"openAssumptions\":[\"- Assume X (low)\"],\"contradictions\":[],\"acceptanceCriteria\":[\"AC1\"],\"researchReportRef\":null}}"
-	if string(raw) != want {
+	want := fmt.Sprintf("{\"frozenAt\":\"2026-06-30T00:00:00Z\",\"planFiles\":[{\"path\":\"a.md\",\"sha256\":%q},{\"path\":\"b.md\",\"sha256\":%q}],\"planHash\":%q,"+
+		"\"objective\":\"Build the Thing!\",\"slug\":\"build-the-thing\",\"evidenceBundle\":{\"dimensions\":null,\"openAssumptions\":[\"- Assume X (low)\"],"+
+		"\"contradictions\":[],\"acceptanceCriteria\":[\"AC1\"],\"researchReportRef\":null}}", Sha256("A"), Sha256("B"), ComputePlanHash(files))
+	if string(raw) != want || Sha256("A") != "559aead08264d5795d3909718cdd05abd49572e84fe55590eef31a88a08fdffd" {
 		t.Errorf("manifest\n got %s\nwant %s", raw, want)
 	}
-	if Sha256("A") != "559aead08264d5795d3909718cdd05abd49572e84fe55590eef31a88a08fdffd" {
-		t.Error("sha256 is not the hex digest of the UTF-8 text")
-	}
-	if now := BuildFreezeManifest(BuildManifestInput{}).FrozenAt; !regexp.MustCompile("^\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\d\\.\\d{3}Z$").MatchString(now) {
-		t.Errorf("default frozenAt %q is not toISOString()", now)
+	if _, err := time.Parse("2006-01-02T15:04:05.000Z", BuildFreezeManifest(BuildManifestInput{}).FrozenAt); err != nil {
+		t.Errorf("default frozenAt is not toISOString(): %v", err)
 	}
 }
 
@@ -148,8 +130,8 @@ func TestFreezeOpenAssumptionsAreHashCovered(t *testing.T) {
 	}
 }
 
-// freeze.test.ts "checkStale catches changed/missing/new files AND planHash mismatch", then the recorded verdicts and reasons,
-// with changedFiles in UTF-16 order.
+// freeze.test.ts "checkStale catches changed/missing/new files AND planHash mismatch", then the recorded verdicts and reasons, with
+// changedFiles in UTF-16 order.
 func TestFreezeCheckStale(t *testing.T) {
 	files := []PlanFileHash{{"plan.md", Sha256("v1")}}
 	m := BuildFreezeManifest(BuildManifestInput{Objective: "o", PlanFiles: files})
@@ -165,8 +147,8 @@ func TestFreezeCheckStale(t *testing.T) {
 	}
 }
 
-// freeze.test.ts "activation directive instructs get_goal -> objective-only create_goal + verify + re-freeze", pinned as a golden:
-// the constant is the oracle's text recorded in contract/schema/cxc/injected-text.json, under CRW's names.
+// freeze.test.ts "activation directive instructs get_goal -> objective-only create_goal + verify + re-freeze", pinned as a golden: the
+// constant is the oracle's text recorded in contract/schema/cxc/injected-text.json, under CRW's names.
 func TestFreezeGoalActivationDirectiveIsTheRecordedConstant(t *testing.T) {
 	root := filepath.Join("..", "..", "..")
 	sub, err := cxccorpus.LoadSubstitution(root)
@@ -194,10 +176,5 @@ func TestFreezeGoalActivationDirectiveIsTheRecordedConstant(t *testing.T) {
 	}
 	if PlanSubdir != oracle("PLAN_SUBDIR") || FreezeManifestDir != oracle("FREEZE_MANIFEST_DIR") || FreezeManifestFile != oracle("FREEZE_MANIFEST_FILE") {
 		t.Error("a path constant differs from the oracle's")
-	}
-	for _, pattern := range []string{"get_goal", "(?i)objective ONLY", "(?i)no token_budget", "(?i)Verify a goal row", "(?i)recompute planHash"} {
-		if !regexp.MustCompile(pattern).MatchString(GoalActivationDirective) {
-			t.Errorf("the directive lacks %s", pattern)
-		}
 	}
 }

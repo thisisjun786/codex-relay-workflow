@@ -1028,40 +1028,49 @@
   "nested_hidden": {
    "files": [
     {
-     "path": "plan/demo/000_plan.md",
-     "text": "# plan\n"
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
     },
     {
-     "path": "plan/demo/010_phase.md",
-     "text": "# phase\n"
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
     },
     {
-     "path": "plan/demo/sub/020_x.md",
-     "text": "x"
+     "p": "cGxhbi9kZW1vL3N1Yi8wMjBfeC5tZA==",
+     "k": "file",
+     "d": "eA=="
     },
     {
-     "path": "plan/demo/sub/deep/030.md",
-     "text": "y"
+     "p": "cGxhbi9kZW1vL3N1Yi9kZWVwLzAzMC5tZA==",
+     "k": "file",
+     "d": "eQ=="
     },
     {
-     "path": "plan/demo/.hidden.md",
-     "text": "h"
+     "p": "cGxhbi9kZW1vLy5oaWRkZW4ubWQ=",
+     "k": "file",
+     "d": "aA=="
     },
     {
-     "path": "plan/demo/.hd/z.md",
-     "text": "z"
+     "p": "cGxhbi9kZW1vLy5oZC96Lm1k",
+     "k": "file",
+     "d": "eg=="
     },
     {
-     "path": "plan/demo/sub/.h",
-     "text": "q"
+     "p": "cGxhbi9kZW1vL3N1Yi8uaA==",
+     "k": "file",
+     "d": "cQ=="
     },
     {
-     "path": "plan/demo/empty",
-     "dir": true
+     "p": "cGxhbi9kZW1vL2VtcHR5",
+     "k": "dir",
+     "d": ""
     },
     {
-     "path": "sessions/s1.json",
-     "text": "{\"phase\":\"I\",\"slug\":\"demo\",\"flags\":{\"interview\":true,\"auditPassed\":false,\"checkPassed\":false},\"orchestrationActive\":false,\"lastInjectedPhase\":null,\"injectedTurns\":[],\"stopBlockPhase\":null,\"stopBlockCount\":0,\"interview\":null}"
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
     }
    ],
    "steps": [
@@ -1098,60 +1107,74 @@
   "case_and_punct": {
    "files": [
     {
-     "path": "plan/default/a.md",
-     "text": "a.md"
+     "p": "cGxhbi9kZWZhdWx0L2EubWQ=",
+     "k": "file",
+     "d": "YS5tZA=="
     },
     {
-     "path": "plan/default/B.md",
-     "text": "B.md"
+     "p": "cGxhbi9kZWZhdWx0L0IubWQ=",
+     "k": "file",
+     "d": "Qi5tZA=="
     },
     {
-     "path": "plan/default/_x.md",
-     "text": "_x.md"
+     "p": "cGxhbi9kZWZhdWx0L194Lm1k",
+     "k": "file",
+     "d": "X3gubWQ="
     },
     {
-     "path": "plan/default/-y.md",
-     "text": "-y.md"
+     "p": "cGxhbi9kZWZhdWx0Ly15Lm1k",
+     "k": "file",
+     "d": "LXkubWQ="
     },
     {
-     "path": "plan/default/a_b.md",
-     "text": "a_b.md"
+     "p": "cGxhbi9kZWZhdWx0L2FfYi5tZA==",
+     "k": "file",
+     "d": "YV9iLm1k"
     },
     {
-     "path": "plan/default/aB.md",
-     "text": "aB.md"
+     "p": "cGxhbi9kZWZhdWx0L2FCLm1k",
+     "k": "file",
+     "d": "YUIubWQ="
     },
     {
-     "path": "plan/default/a-b.md",
-     "text": "a-b.md"
+     "p": "cGxhbi9kZWZhdWx0L2EtYi5tZA==",
+     "k": "file",
+     "d": "YS1iLm1k"
     },
     {
-     "path": "plan/default/10.md",
-     "text": "10.md"
+     "p": "cGxhbi9kZWZhdWx0LzEwLm1k",
+     "k": "file",
+     "d": "MTAubWQ="
     },
     {
-     "path": "plan/default/9.md",
-     "text": "9.md"
+     "p": "cGxhbi9kZWZhdWx0LzkubWQ=",
+     "k": "file",
+     "d": "OS5tZA=="
     },
     {
-     "path": "plan/default/A.md",
-     "text": "A.md"
+     "p": "cGxhbi9kZWZhdWx0L0EubWQ=",
+     "k": "file",
+     "d": "QS5tZA=="
     },
     {
-     "path": "plan/default/a b.md",
-     "text": "a b.md"
+     "p": "cGxhbi9kZWZhdWx0L2EgYi5tZA==",
+     "k": "file",
+     "d": "YSBiLm1k"
     },
     {
-     "path": "plan/default/Z.md",
-     "text": "Z.md"
+     "p": "cGxhbi9kZWZhdWx0L1oubWQ=",
+     "k": "file",
+     "d": "Wi5tZA=="
     },
     {
-     "path": "plan/default/sub/x.md",
-     "text": "sub/x.md"
+     "p": "cGxhbi9kZWZhdWx0L3N1Yi94Lm1k",
+     "k": "file",
+     "d": "c3ViL3gubWQ="
     },
     {
-     "path": "plan/default/sub.md",
-     "text": "sub.md"
+     "p": "cGxhbi9kZWZhdWx0L3N1Yi5tZA==",
+     "k": "file",
+     "d": "c3ViLm1k"
     }
    ],
    "steps": [
@@ -1190,24 +1213,29 @@
   "invalid_utf8_and_bom": {
    "files": [
     {
-     "path": "plan/default/bad.md",
-     "b64": "Yf/+Yg=="
+     "p": "cGxhbi9kZWZhdWx0L2JhZC5tZA==",
+     "k": "file",
+     "d": "Yf/+Yg=="
     },
     {
-     "path": "plan/default/trunc.md",
-     "b64": "4oI="
+     "p": "cGxhbi9kZWZhdWx0L3RydW5jLm1k",
+     "k": "file",
+     "d": "4oI="
     },
     {
-     "path": "plan/default/bom.md",
-     "b64": "77u/eA=="
+     "p": "cGxhbi9kZWZhdWx0L2JvbS5tZA==",
+     "k": "file",
+     "d": "77u/eA=="
     },
     {
-     "path": "plan/default/surr.md",
-     "b64": "7aCA"
+     "p": "cGxhbi9kZWZhdWx0L3N1cnIubWQ=",
+     "k": "file",
+     "d": "7aCA"
     },
     {
-     "path": "plan/default/ok.md",
-     "b64": "b2s="
+     "p": "cGxhbi9kZWZhdWx0L29rLm1k",
+     "k": "file",
+     "d": "b2s="
     }
    ],
    "steps": [
@@ -1236,20 +1264,24 @@
   "hangul_names": {
    "files": [
     {
-     "path": "plan/default/010_계획.md",
-     "text": "010_계획.md"
+     "p": "cGxhbi9kZWZhdWx0LzAxMF/qs4Ttmo0ubWQ=",
+     "k": "file",
+     "d": "MDEwX+qzhO2ajS5tZA=="
     },
     {
-     "path": "plan/default/000_plan.md",
-     "text": "000_plan.md"
+     "p": "cGxhbi9kZWZhdWx0LzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "MDAwX3BsYW4ubWQ="
     },
     {
-     "path": "plan/default/a.md",
-     "text": "a.md"
+     "p": "cGxhbi9kZWZhdWx0L2EubWQ=",
+     "k": "file",
+     "d": "YS5tZA=="
     },
     {
-     "path": "plan/default/가.md",
-     "text": "가.md"
+     "p": "cGxhbi9kZWZhdWx0L+qwgC5tZA==",
+     "k": "file",
+     "d": "6rCALm1k"
     }
    ],
    "steps": [
@@ -1277,28 +1309,34 @@
   "symlinks": {
    "files": [
     {
-     "path": "plan/demo/000_plan.md",
-     "text": "# plan\n"
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
     },
     {
-     "path": "plan/demo/010_phase.md",
-     "text": "# phase\n"
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
     },
     {
-     "path": "plan/demo/link.md",
-     "link": "000_plan.md"
+     "p": "cGxhbi9kZW1vL2xpbmsubWQ=",
+     "k": "link",
+     "d": "MDAwX3BsYW4ubWQ="
     },
     {
-     "path": "plan/demo/linkdir",
-     "link": "sub"
+     "p": "cGxhbi9kZW1vL2xpbmtkaXI=",
+     "k": "link",
+     "d": "c3Vi"
     },
     {
-     "path": "plan/demo/sub/x.md",
-     "text": "x"
+     "p": "cGxhbi9kZW1vL3N1Yi94Lm1k",
+     "k": "file",
+     "d": "eA=="
     },
     {
-     "path": "sessions/s1.json",
-     "text": "{\"phase\":\"I\",\"slug\":\"demo\",\"flags\":{\"interview\":true,\"auditPassed\":false,\"checkPassed\":false},\"orchestrationActive\":false,\"lastInjectedPhase\":null,\"injectedTurns\":[],\"stopBlockPhase\":null,\"stopBlockCount\":0,\"interview\":null}"
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
     }
    ],
    "steps": [
@@ -1330,20 +1368,24 @@
   "broken_symlink": {
    "files": [
     {
-     "path": "plan/demo/000_plan.md",
-     "text": "# plan\n"
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
     },
     {
-     "path": "plan/demo/010_phase.md",
-     "text": "# phase\n"
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
     },
     {
-     "path": "plan/demo/gone.md",
-     "link": "nowhere"
+     "p": "cGxhbi9kZW1vL2dvbmUubWQ=",
+     "k": "link",
+     "d": "bm93aGVyZQ=="
     },
     {
-     "path": "sessions/s1.json",
-     "text": "{\"phase\":\"I\",\"slug\":\"demo\",\"flags\":{\"interview\":true,\"auditPassed\":false,\"checkPassed\":false},\"orchestrationActive\":false,\"lastInjectedPhase\":null,\"injectedTurns\":[],\"stopBlockPhase\":null,\"stopBlockCount\":0,\"interview\":null}"
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
     }
    ],
    "steps": [
@@ -1370,16 +1412,19 @@
   "stale_changed": {
    "files": [
     {
-     "path": "plan/demo/000_plan.md",
-     "text": "# plan\n"
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
     },
     {
-     "path": "plan/demo/010_phase.md",
-     "text": "# phase\n"
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
     },
     {
-     "path": "sessions/s1.json",
-     "text": "{\"phase\":\"I\",\"slug\":\"demo\",\"flags\":{\"interview\":true,\"auditPassed\":false,\"checkPassed\":false},\"orchestrationActive\":false,\"lastInjectedPhase\":null,\"injectedTurns\":[],\"stopBlockPhase\":null,\"stopBlockCount\":0,\"interview\":null}"
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
     }
    ],
    "steps": [
@@ -1426,16 +1471,19 @@
      "dryRun": true,
      "edits": [
       {
-       "path": "plan/demo/000_plan.md",
-       "text": "# changed\n"
+       "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+       "k": "file",
+       "d": "IyBjaGFuZ2VkCg=="
       },
       {
-       "path": "plan/demo/new.md",
-       "text": "n"
+       "p": "cGxhbi9kZW1vL25ldy5tZA==",
+       "k": "file",
+       "d": "bg=="
       },
       {
-       "path": "plan/demo/010_phase.md",
-       "remove": true
+       "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+       "k": "remove",
+       "d": ""
       }
      ],
      "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6ce1d881bfa7d3e91d40363fad1fc9975ce578c3bd63874712246b62eab724f7\ninterviewReady: false\nopenAssumptions: 0\nstale-check: STALE — plan changed since freeze (3 file(s), planHash differs); re-freeze before goal start — stale execution refused",
@@ -1496,16 +1544,19 @@
   "ready_interview": {
    "files": [
     {
-     "path": "plan/demo/000_plan.md",
-     "text": "# plan\n"
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
     },
     {
-     "path": "plan/demo/010_phase.md",
-     "text": "# phase\n"
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
     },
     {
-     "path": "sessions/s1.json",
-     "text": "{\"phase\":\"I\",\"slug\":\"demo\",\"flags\":{\"interview\":true,\"auditPassed\":false,\"checkPassed\":false},\"orchestrationActive\":false,\"lastInjectedPhase\":null,\"injectedTurns\":[],\"stopBlockPhase\":null,\"stopBlockCount\":0,\"interview\":{\"dimensions\":{\"goal\":{\"level\":\"max\",\"known\":[\"k\"],\"unknown\":[],\"confidence\":1},\"constraint\":{\"level\":\"max\",\"known\":[\"k\"],\"unknown\":[],\"confidence\":1},\"success\":{\"level\":\"max\",\"known\":[\"k\"],\"unknown\":[],\"confidence\":1},\"ontology\":{\"level\":\"max\",\"known\":[\"k\"],\"unknown\":[],\"confidence\":1}},\"contradictions\":[],\"assumptions\":[{\"text\":\"Assume X\",\"recorded\":true}],\"scanRounds\":1}}"
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6eyJkaW1lbnNpb25zIjp7ImdvYWwiOnsibGV2ZWwiOiJtYXgiLCJrbm93biI6WyJrIl0sInVua25vd24iOltdLCJjb25maWRlbmNlIjoxfSwiY29uc3RyYWludCI6eyJsZXZlbCI6Im1heCIsImtub3duIjpbImsiXSwidW5rbm93biI6W10sImNvbmZpZGVuY2UiOjF9LCJzdWNjZXNzIjp7ImxldmVsIjoibWF4Iiwia25vd24iOlsiayJdLCJ1bmtub3duIjpbXSwiY29uZmlkZW5jZSI6MX0sIm9udG9sb2d5Ijp7ImxldmVsIjoibWF4Iiwia25vd24iOlsiayJdLCJ1bmtub3duIjpbXSwiY29uZmlkZW5jZSI6MX19LCJjb250cmFkaWN0aW9ucyI6W10sImFzc3VtcHRpb25zIjpbeyJ0ZXh0IjoiQXNzdW1lIFgiLCJyZWNvcmRlZCI6dHJ1ZX1dLCJzY2FuUm91bmRzIjoxfX0="
     }
    ],
    "steps": [
@@ -1531,16 +1582,19 @@
   "rich_tracker": {
    "files": [
     {
-     "path": "plan/demo/000_plan.md",
-     "text": "# plan\n"
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
     },
     {
-     "path": "plan/demo/010_phase.md",
-     "text": "# phase\n"
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
     },
     {
-     "path": "sessions/s1.json",
-     "text": "{\"phase\":\"I\",\"slug\":\"demo\",\"flags\":{\"interview\":true,\"auditPassed\":false,\"checkPassed\":false},\"orchestrationActive\":false,\"lastInjectedPhase\":null,\"injectedTurns\":[],\"stopBlockPhase\":null,\"stopBlockCount\":0,\"interview\":{\"dimensions\":{\"goal\":{\"level\":\"high\",\"known\":[\"k\"],\"unknown\":[],\"confidence\":1},\"constraint\":{\"level\":\"mid\",\"known\":[\"a\",\"b\"],\"unknown\":[\"c\"],\"confidence\":0.3333333333333333},\"success\":{\"level\":\"max\",\"known\":[\"k\"],\"unknown\":[],\"confidence\":1},\"ontology\":{\"level\":\"low\",\"known\":[],\"unknown\":[],\"confidence\":0.5}},\"contradictions\":[{\"contradictionId\":\"c1\",\"severity\":\"high\",\"summary\":\"A <b> &   ü\"}],\"assumptions\":[{\"text\":\"A <1>\",\"recorded\":true},{\"text\":\"B\",\"recorded\":false},{\"text\":\"C \",\"recorded\":true}],\"scanRounds\":2}}"
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6eyJkaW1lbnNpb25zIjp7ImdvYWwiOnsibGV2ZWwiOiJoaWdoIiwia25vd24iOlsiayJdLCJ1bmtub3duIjpbXSwiY29uZmlkZW5jZSI6MX0sImNvbnN0cmFpbnQiOnsibGV2ZWwiOiJtaWQiLCJrbm93biI6WyJhIiwiYiJdLCJ1bmtub3duIjpbImMiXSwiY29uZmlkZW5jZSI6MC4zMzMzMzMzMzMzMzMzMzMzfSwic3VjY2VzcyI6eyJsZXZlbCI6Im1heCIsImtub3duIjpbImsiXSwidW5rbm93biI6W10sImNvbmZpZGVuY2UiOjF9LCJvbnRvbG9neSI6eyJsZXZlbCI6ImxvdyIsImtub3duIjpbXSwidW5rbm93biI6W10sImNvbmZpZGVuY2UiOjAuNX19LCJjb250cmFkaWN0aW9ucyI6W3siY29udHJhZGljdGlvbklkIjoiYzEiLCJzZXZlcml0eSI6ImhpZ2giLCJzdW1tYXJ5IjoiQSA8Yj4gJiDigKggw7wifV0sImFzc3VtcHRpb25zIjpbeyJ0ZXh0IjoiQSA8MT4iLCJyZWNvcmRlZCI6dHJ1ZX0seyJ0ZXh0IjoiQiIsInJlY29yZGVkIjpmYWxzZX0seyJ0ZXh0IjoiQ+KAqSIsInJlY29yZGVkIjp0cnVlfV0sInNjYW5Sb3VuZHMiOjJ9fQ=="
     }
    ],
    "steps": [
@@ -1568,8 +1622,9 @@
   "session_id_objective": {
    "files": [
     {
-     "path": "plan/my-session/000_plan.md",
-     "text": "p"
+     "p": "cGxhbi9teS1zZXNzaW9uLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "cA=="
     }
    ],
    "steps": [
@@ -1594,12 +1649,14 @@
   "state_slug_wins": {
    "files": [
     {
-     "path": "plan/other-name/000_plan.md",
-     "text": "p"
+     "p": "cGxhbi9vdGhlci1uYW1lLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "cA=="
     },
     {
-     "path": "sessions/s1.json",
-     "text": "{\"phase\":\"I\",\"slug\":\"Other Name!\",\"flags\":{\"interview\":true,\"auditPassed\":false,\"checkPassed\":false},\"orchestrationActive\":false,\"lastInjectedPhase\":null,\"injectedTurns\":[],\"stopBlockPhase\":null,\"stopBlockCount\":0,\"interview\":null}"
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiT3RoZXIgTmFtZSEiLCJmbGFncyI6eyJpbnRlcnZpZXciOnRydWUsImF1ZGl0UGFzc2VkIjpmYWxzZSwiY2hlY2tQYXNzZWQiOmZhbHNlfSwib3JjaGVzdHJhdGlvbkFjdGl2ZSI6ZmFsc2UsImxhc3RJbmplY3RlZFBoYXNlIjpudWxsLCJpbmplY3RlZFR1cm5zIjpbXSwic3RvcEJsb2NrUGhhc2UiOm51bGwsInN0b3BCbG9ja0NvdW50IjowLCJpbnRlcnZpZXciOm51bGx9"
     }
    ],
    "steps": [
@@ -1624,8 +1681,9 @@
   "interview_is_file": {
    "files": [
     {
-     "path": "interview",
-     "text": "x"
+     "p": "aW50ZXJ2aWV3",
+     "k": "file",
+     "d": "eA=="
     }
    ],
    "steps": [
@@ -1646,20 +1704,24 @@
   "manifest_is_dir": {
    "files": [
     {
-     "path": "plan/demo/000_plan.md",
-     "text": "# plan\n"
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
     },
     {
-     "path": "plan/demo/010_phase.md",
-     "text": "# phase\n"
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
     },
     {
-     "path": "sessions/s1.json",
-     "text": "{\"phase\":\"I\",\"slug\":\"demo\",\"flags\":{\"interview\":true,\"auditPassed\":false,\"checkPassed\":false},\"orchestrationActive\":false,\"lastInjectedPhase\":null,\"injectedTurns\":[],\"stopBlockPhase\":null,\"stopBlockCount\":0,\"interview\":null}"
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
     },
     {
-     "path": "interview/freeze.json/keep",
-     "text": "k"
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29uL2tlZXA=",
+     "k": "file",
+     "d": "aw=="
     }
    ],
    "steps": [
@@ -1708,20 +1770,24 @@
   "prior_garbage": {
    "files": [
     {
-     "path": "plan/demo/000_plan.md",
-     "text": "# plan\n"
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
     },
     {
-     "path": "plan/demo/010_phase.md",
-     "text": "# phase\n"
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
     },
     {
-     "path": "sessions/s1.json",
-     "text": "{\"phase\":\"I\",\"slug\":\"demo\",\"flags\":{\"interview\":true,\"auditPassed\":false,\"checkPassed\":false},\"orchestrationActive\":false,\"lastInjectedPhase\":null,\"injectedTurns\":[],\"stopBlockPhase\":null,\"stopBlockCount\":0,\"interview\":null}"
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
     },
     {
-     "path": "interview/freeze.json",
-     "text": "{not json"
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "e25vdCBqc29u"
     }
    ],
    "steps": [
@@ -1749,20 +1815,24 @@
   "prior_null": {
    "files": [
     {
-     "path": "plan/demo/000_plan.md",
-     "text": "# plan\n"
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
     },
     {
-     "path": "plan/demo/010_phase.md",
-     "text": "# phase\n"
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
     },
     {
-     "path": "sessions/s1.json",
-     "text": "{\"phase\":\"I\",\"slug\":\"demo\",\"flags\":{\"interview\":true,\"auditPassed\":false,\"checkPassed\":false},\"orchestrationActive\":false,\"lastInjectedPhase\":null,\"injectedTurns\":[],\"stopBlockPhase\":null,\"stopBlockCount\":0,\"interview\":null}"
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
     },
     {
-     "path": "interview/freeze.json",
-     "text": "null"
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "bnVsbA=="
     }
    ],
    "steps": [
@@ -1790,20 +1860,24 @@
   "prior_array": {
    "files": [
     {
-     "path": "plan/demo/000_plan.md",
-     "text": "# plan\n"
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
     },
     {
-     "path": "plan/demo/010_phase.md",
-     "text": "# phase\n"
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
     },
     {
-     "path": "sessions/s1.json",
-     "text": "{\"phase\":\"I\",\"slug\":\"demo\",\"flags\":{\"interview\":true,\"auditPassed\":false,\"checkPassed\":false},\"orchestrationActive\":false,\"lastInjectedPhase\":null,\"injectedTurns\":[],\"stopBlockPhase\":null,\"stopBlockCount\":0,\"interview\":null}"
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
     },
     {
-     "path": "interview/freeze.json",
-     "text": "[]"
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "W10="
     }
    ],
    "steps": [
@@ -1831,20 +1905,24 @@
   "prior_number": {
    "files": [
     {
-     "path": "plan/demo/000_plan.md",
-     "text": "# plan\n"
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
     },
     {
-     "path": "plan/demo/010_phase.md",
-     "text": "# phase\n"
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
     },
     {
-     "path": "sessions/s1.json",
-     "text": "{\"phase\":\"I\",\"slug\":\"demo\",\"flags\":{\"interview\":true,\"auditPassed\":false,\"checkPassed\":false},\"orchestrationActive\":false,\"lastInjectedPhase\":null,\"injectedTurns\":[],\"stopBlockPhase\":null,\"stopBlockCount\":0,\"interview\":null}"
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
     },
     {
-     "path": "interview/freeze.json",
-     "text": "42"
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "NDI="
     }
    ],
    "steps": [
@@ -1872,20 +1950,24 @@
   "prior_empty_object": {
    "files": [
     {
-     "path": "plan/demo/000_plan.md",
-     "text": "# plan\n"
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
     },
     {
-     "path": "plan/demo/010_phase.md",
-     "text": "# phase\n"
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
     },
     {
-     "path": "sessions/s1.json",
-     "text": "{\"phase\":\"I\",\"slug\":\"demo\",\"flags\":{\"interview\":true,\"auditPassed\":false,\"checkPassed\":false},\"orchestrationActive\":false,\"lastInjectedPhase\":null,\"injectedTurns\":[],\"stopBlockPhase\":null,\"stopBlockCount\":0,\"interview\":null}"
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
     },
     {
-     "path": "interview/freeze.json",
-     "text": "{}"
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "e30="
     }
    ],
    "steps": [
@@ -1913,20 +1995,24 @@
   "prior_plan_files_string": {
    "files": [
     {
-     "path": "plan/demo/000_plan.md",
-     "text": "# plan\n"
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
     },
     {
-     "path": "plan/demo/010_phase.md",
-     "text": "# phase\n"
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
     },
     {
-     "path": "sessions/s1.json",
-     "text": "{\"phase\":\"I\",\"slug\":\"demo\",\"flags\":{\"interview\":true,\"auditPassed\":false,\"checkPassed\":false},\"orchestrationActive\":false,\"lastInjectedPhase\":null,\"injectedTurns\":[],\"stopBlockPhase\":null,\"stopBlockCount\":0,\"interview\":null}"
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
     },
     {
-     "path": "interview/freeze.json",
-     "text": "{\"planFiles\":\"abc\"}"
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOiJhYmMifQ=="
     }
    ],
    "steps": [
@@ -1954,20 +2040,24 @@
   "prior_null_entry": {
    "files": [
     {
-     "path": "plan/demo/000_plan.md",
-     "text": "# plan\n"
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
     },
     {
-     "path": "plan/demo/010_phase.md",
-     "text": "# phase\n"
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
     },
     {
-     "path": "sessions/s1.json",
-     "text": "{\"phase\":\"I\",\"slug\":\"demo\",\"flags\":{\"interview\":true,\"auditPassed\":false,\"checkPassed\":false},\"orchestrationActive\":false,\"lastInjectedPhase\":null,\"injectedTurns\":[],\"stopBlockPhase\":null,\"stopBlockCount\":0,\"interview\":null}"
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
     },
     {
-     "path": "interview/freeze.json",
-     "text": "{\"planFiles\":[null]}"
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOltudWxsXX0="
     }
    ],
    "steps": [
@@ -1995,20 +2085,24 @@
   "prior_empty_files": {
    "files": [
     {
-     "path": "plan/demo/000_plan.md",
-     "text": "# plan\n"
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
     },
     {
-     "path": "plan/demo/010_phase.md",
-     "text": "# phase\n"
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
     },
     {
-     "path": "sessions/s1.json",
-     "text": "{\"phase\":\"I\",\"slug\":\"demo\",\"flags\":{\"interview\":true,\"auditPassed\":false,\"checkPassed\":false},\"orchestrationActive\":false,\"lastInjectedPhase\":null,\"injectedTurns\":[],\"stopBlockPhase\":null,\"stopBlockCount\":0,\"interview\":null}"
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
     },
     {
-     "path": "interview/freeze.json",
-     "text": "{\"planFiles\":[]}"
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOltdfQ=="
     }
    ],
    "steps": [
@@ -2036,20 +2130,24 @@
   "prior_no_hash": {
    "files": [
     {
-     "path": "plan/demo/000_plan.md",
-     "text": "# plan\n"
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
     },
     {
-     "path": "plan/demo/010_phase.md",
-     "text": "# phase\n"
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
     },
     {
-     "path": "sessions/s1.json",
-     "text": "{\"phase\":\"I\",\"slug\":\"demo\",\"flags\":{\"interview\":true,\"auditPassed\":false,\"checkPassed\":false},\"orchestrationActive\":false,\"lastInjectedPhase\":null,\"injectedTurns\":[],\"stopBlockPhase\":null,\"stopBlockCount\":0,\"interview\":null}"
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
     },
     {
-     "path": "interview/freeze.json",
-     "text": "{\"planFiles\":[{\"path\":\"000_plan.md\",\"sha256\":\"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"},{\"path\":\"010_phase.md\",\"sha256\":\"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"}]}"
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOiIwMDBfcGxhbi5tZCIsInNoYTI1NiI6Ijk4YWNmMzJlMWE3MDAwNGI2NGNmNzRmYzMxOTVmYmM2NDI3ZGEzN2UzOTg3YTRjZWMwMDFmZjEwN2YwOWI4NDQifSx7InBhdGgiOiIwMTBfcGhhc2UubWQiLCJzaGEyNTYiOiI2MzVlNDczZjBkODliMzA0OTdjOThmMzNkZmNmZjA2Y2VkZmJjMDk5YWE0N2IxOTc5OGVmYjE5NzZjMDhkNDBjIn1dfQ=="
     }
    ],
    "steps": [
@@ -2077,20 +2175,24 @@
   "prior_good": {
    "files": [
     {
-     "path": "plan/demo/000_plan.md",
-     "text": "# plan\n"
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
     },
     {
-     "path": "plan/demo/010_phase.md",
-     "text": "# phase\n"
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
     },
     {
-     "path": "sessions/s1.json",
-     "text": "{\"phase\":\"I\",\"slug\":\"demo\",\"flags\":{\"interview\":true,\"auditPassed\":false,\"checkPassed\":false},\"orchestrationActive\":false,\"lastInjectedPhase\":null,\"injectedTurns\":[],\"stopBlockPhase\":null,\"stopBlockCount\":0,\"interview\":null}"
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
     },
     {
-     "path": "interview/freeze.json",
-     "text": "{\"planFiles\":[{\"path\":\"000_plan.md\",\"sha256\":\"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"},{\"path\":\"010_phase.md\",\"sha256\":\"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"}],\"planHash\":\"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\"}"
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOiIwMDBfcGxhbi5tZCIsInNoYTI1NiI6Ijk4YWNmMzJlMWE3MDAwNGI2NGNmNzRmYzMxOTVmYmM2NDI3ZGEzN2UzOTg3YTRjZWMwMDFmZjEwN2YwOWI4NDQifSx7InBhdGgiOiIwMTBfcGhhc2UubWQiLCJzaGEyNTYiOiI2MzVlNDczZjBkODliMzA0OTdjOThmMzNkZmNmZjA2Y2VkZmJjMDk5YWE0N2IxOTc5OGVmYjE5NzZjMDhkNDBjIn1dLCJwbGFuSGFzaCI6IjZjNTg1NWM0YjVmMjA3YjBjYWJiNDU4OGRmOTJiZTEyODQ3M2JiMjIwNzY4MjNiZGJmZDFhOWE3NmUzMTBhNGQifQ=="
     }
    ],
    "steps": [
@@ -2115,23 +2217,589 @@
     }
    ]
   },
+  "invalid_name": {
+   "files": [
+    {
+     "p": "cGxhbi9kZWZhdWx0L29rLm1k",
+     "k": "file",
+     "d": "b2s="
+    },
+    {
+     "p": "cGxhbi9kZWZhdWx0L2JhZC3/Lm1k",
+     "k": "file",
+     "d": "eA=="
+    },
+    {
+     "p": "cGxhbi9kZWZhdWx0Ly5kb3Qt/w==",
+     "k": "file",
+     "d": "c2tpcHBlZA=="
+    }
+   ],
+   "steps": [
+    {
+     "session": "default",
+     "dryRun": false,
+     "edits": [],
+     "output": null,
+     "error": true,
+     "manifest": null,
+     "tree": null
+    }
+   ]
+  },
+  "invalid_name_collides": {
+   "files": [
+    {
+     "p": "cGxhbi9kZWZhdWx0L29rLm1k",
+     "k": "file",
+     "d": "b2s="
+    },
+    {
+     "p": "cGxhbi9kZWZhdWx0L2JhZC3/Lm1k",
+     "k": "file",
+     "d": "YQ=="
+    },
+    {
+     "p": "cGxhbi9kZWZhdWx0L2JhZC3vv70ubWQ=",
+     "k": "file",
+     "d": "Yg=="
+    }
+   ],
+   "steps": [
+    {
+     "session": "default",
+     "dryRun": false,
+     "edits": [],
+     "output": "[codexclaw freeze]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: default\nplanFiles: 3\nplanHash: 2c498999f8f283090fcb29a02530e4810a43d93e6930d2049f719eb16453e05c\ninterviewReady: false\nopenAssumptions: 0\nstale-check: no prior manifest",
+     "error": false,
+     "manifest": "{\n  \"frozenAt\": \"<TS>\",\n  \"planFiles\": [\n    {\n      \"path\": \"bad-�.md\",\n      \"sha256\": \"3e23e8160039594a33894f6564e1b1348bbd7a0088d42c4acb73eeaed59c009d\"\n    },\n    {\n      \"path\": \"bad-�.md\",\n      \"sha256\": \"3e23e8160039594a33894f6564e1b1348bbd7a0088d42c4acb73eeaed59c009d\"\n    },\n    {\n      \"path\": \"ok.md\",\n      \"sha256\": \"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\"\n    }\n  ],\n  \"planHash\": \"2c498999f8f283090fcb29a02530e4810a43d93e6930d2049f719eb16453e05c\",\n  \"objective\": \"default\",\n  \"slug\": \"default\",\n  \"evidenceBundle\": {\n    \"dimensions\": null,\n    \"openAssumptions\": [],\n    \"contradictions\": [],\n    \"acceptanceCriteria\": [],\n    \"researchReportRef\": null\n  }\n}",
+     "tree": null
+    }
+   ]
+  },
+  "prior_tostring_single": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOiIwMDBfcGxhbi5tZCIsInNoYTI1NiI6Ijk4YWNmMzJlMWE3MDAwNGI2NGNmNzRmYzMxOTVmYmM2NDI3ZGEzN2UzOTg3YTRjZWMwMDFmZjEwN2YwOWI4NDQifSx7InBhdGgiOiIwMTBfcGhhc2UubWQiLCJzaGEyNTYiOiI2MzVlNDczZjBkODliMzA0OTdjOThmMzNkZmNmZjA2Y2VkZmJjMDk5YWE0N2IxOTc5OGVmYjE5NzZjMDhkNDBjIn0seyJwYXRoIjp7InRvU3RyaW5nIjpudWxsfSwic2hhMjU2IjoieCJ9XSwicGxhbkhhc2giOiI2YzU4NTVjNGI1ZjIwN2IwY2FiYjQ1ODhkZjkyYmUxMjg0NzNiYjIyMDc2ODIzYmRiZmQxYTlhNzZlMzEwYTRkIn0="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: STALE — plan changed since freeze (1 file(s), planHash matches); re-freeze before goal start — stale execution refused",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":\"000_plan.md\",\"sha256\":\"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"},{\"path\":\"010_phase.md\",\"sha256\":\"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"},{\"path\":{\"toString\":null},\"sha256\":\"x\"}],\"planHash\":\"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\"}",
+     "tree": [
+      "${STATE}/",
+      "${STATE}/interview/",
+      "${STATE}/interview/freeze.json",
+      "${STATE}/plan/",
+      "${STATE}/plan/demo/",
+      "${STATE}/plan/demo/000_plan.md",
+      "${STATE}/plan/demo/010_phase.md",
+      "${STATE}/sessions/",
+      "${STATE}/sessions/s1.json"
+     ]
+    }
+   ]
+  },
+  "prior_tostring_with_undefined": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOiIwMDBfcGxhbi5tZCIsInNoYTI1NiI6Ijk4YWNmMzJlMWE3MDAwNGI2NGNmNzRmYzMxOTVmYmM2NDI3ZGEzN2UzOTg3YTRjZWMwMDFmZjEwN2YwOWI4NDQifSx7InBhdGgiOiIwMTBfcGhhc2UubWQiLCJzaGEyNTYiOiI2MzVlNDczZjBkODliMzA0OTdjOThmMzNkZmNmZjA2Y2VkZmJjMDk5YWE0N2IxOTc5OGVmYjE5NzZjMDhkNDBjIn0seyJwYXRoIjp7InRvU3RyaW5nIjpudWxsfSwic2hhMjU2IjoieCJ9LHsic2hhMjU2IjoieiJ9XSwicGxhbkhhc2giOiI2YzU4NTVjNGI1ZjIwN2IwY2FiYjQ1ODhkZjkyYmUxMjg0NzNiYjIyMDc2ODIzYmRiZmQxYTlhNzZlMzEwYTRkIn0="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: STALE — plan changed since freeze (2 file(s), planHash matches); re-freeze before goal start — stale execution refused",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":\"000_plan.md\",\"sha256\":\"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"},{\"path\":\"010_phase.md\",\"sha256\":\"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"},{\"path\":{\"toString\":null},\"sha256\":\"x\"},{\"sha256\":\"z\"}],\"planHash\":\"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\"}",
+     "tree": [
+      "${STATE}/",
+      "${STATE}/interview/",
+      "${STATE}/interview/freeze.json",
+      "${STATE}/plan/",
+      "${STATE}/plan/demo/",
+      "${STATE}/plan/demo/000_plan.md",
+      "${STATE}/plan/demo/010_phase.md",
+      "${STATE}/sessions/",
+      "${STATE}/sessions/s1.json"
+     ]
+    }
+   ]
+  },
+  "prior_tostring_with_string": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOiIwMDBfcGxhbi5tZCIsInNoYTI1NiI6Ijk4YWNmMzJlMWE3MDAwNGI2NGNmNzRmYzMxOTVmYmM2NDI3ZGEzN2UzOTg3YTRjZWMwMDFmZjEwN2YwOWI4NDQifSx7InBhdGgiOiIwMTBfcGhhc2UubWQiLCJzaGEyNTYiOiI2MzVlNDczZjBkODliMzA0OTdjOThmMzNkZmNmZjA2Y2VkZmJjMDk5YWE0N2IxOTc5OGVmYjE5NzZjMDhkNDBjIn0seyJwYXRoIjp7InRvU3RyaW5nIjpudWxsfSwic2hhMjU2IjoieCJ9LHsicGF0aCI6Im5ldy5tZCIsInNoYTI1NiI6InEifV0sInBsYW5IYXNoIjoiNmM1ODU1YzRiNWYyMDdiMGNhYmI0NTg4ZGY5MmJlMTI4NDczYmIyMjA3NjgyM2JkYmZkMWE5YTc2ZTMxMGE0ZCJ9"
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: prior manifest unreadable (will re-freeze)",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":\"000_plan.md\",\"sha256\":\"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"},{\"path\":\"010_phase.md\",\"sha256\":\"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"},{\"path\":{\"toString\":null},\"sha256\":\"x\"},{\"path\":\"new.md\",\"sha256\":\"q\"}],\"planHash\":\"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\"}",
+     "tree": [
+      "${STATE}/",
+      "${STATE}/interview/",
+      "${STATE}/interview/freeze.json",
+      "${STATE}/plan/",
+      "${STATE}/plan/demo/",
+      "${STATE}/plan/demo/000_plan.md",
+      "${STATE}/plan/demo/010_phase.md",
+      "${STATE}/sessions/",
+      "${STATE}/sessions/s1.json"
+     ]
+    }
+   ]
+  },
+  "prior_tostring_nested_array": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOiIwMDBfcGxhbi5tZCIsInNoYTI1NiI6Ijk4YWNmMzJlMWE3MDAwNGI2NGNmNzRmYzMxOTVmYmM2NDI3ZGEzN2UzOTg3YTRjZWMwMDFmZjEwN2YwOWI4NDQifSx7InBhdGgiOiIwMTBfcGhhc2UubWQiLCJzaGEyNTYiOiI2MzVlNDczZjBkODliMzA0OTdjOThmMzNkZmNmZjA2Y2VkZmJjMDk5YWE0N2IxOTc5OGVmYjE5NzZjMDhkNDBjIn0seyJwYXRoIjpbW3sidG9TdHJpbmciOjF9XV0sInNoYTI1NiI6IngifSx7InBhdGgiOiJuZXcubWQiLCJzaGEyNTYiOiJxIn1dLCJwbGFuSGFzaCI6IjZjNTg1NWM0YjVmMjA3YjBjYWJiNDU4OGRmOTJiZTEyODQ3M2JiMjIwNzY4MjNiZGJmZDFhOWE3NmUzMTBhNGQifQ=="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: prior manifest unreadable (will re-freeze)",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":\"000_plan.md\",\"sha256\":\"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"},{\"path\":\"010_phase.md\",\"sha256\":\"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"},{\"path\":[[{\"toString\":1}]],\"sha256\":\"x\"},{\"path\":\"new.md\",\"sha256\":\"q\"}],\"planHash\":\"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\"}",
+     "tree": [
+      "${STATE}/",
+      "${STATE}/interview/",
+      "${STATE}/interview/freeze.json",
+      "${STATE}/plan/",
+      "${STATE}/plan/demo/",
+      "${STATE}/plan/demo/000_plan.md",
+      "${STATE}/plan/demo/010_phase.md",
+      "${STATE}/sessions/",
+      "${STATE}/sessions/s1.json"
+     ]
+    }
+   ]
+  },
+  "prior_tostring_plain_and_throwing": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOiIwMDBfcGxhbi5tZCIsInNoYTI1NiI6Ijk4YWNmMzJlMWE3MDAwNGI2NGNmNzRmYzMxOTVmYmM2NDI3ZGEzN2UzOTg3YTRjZWMwMDFmZjEwN2YwOWI4NDQifSx7InBhdGgiOiIwMTBfcGhhc2UubWQiLCJzaGEyNTYiOiI2MzVlNDczZjBkODliMzA0OTdjOThmMzNkZmNmZjA2Y2VkZmJjMDk5YWE0N2IxOTc5OGVmYjE5NzZjMDhkNDBjIn0seyJwYXRoIjp7ImEiOjF9LCJzaGEyNTYiOiJ4In0seyJwYXRoIjp7InRvU3RyaW5nIjoicyJ9LCJzaGEyNTYiOiJ4In1dLCJwbGFuSGFzaCI6IjZjNTg1NWM0YjVmMjA3YjBjYWJiNDU4OGRmOTJiZTEyODQ3M2JiMjIwNzY4MjNiZGJmZDFhOWE3NmUzMTBhNGQifQ=="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: prior manifest unreadable (will re-freeze)",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":\"000_plan.md\",\"sha256\":\"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"},{\"path\":\"010_phase.md\",\"sha256\":\"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"},{\"path\":{\"a\":1},\"sha256\":\"x\"},{\"path\":{\"toString\":\"s\"},\"sha256\":\"x\"}],\"planHash\":\"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\"}",
+     "tree": [
+      "${STATE}/",
+      "${STATE}/interview/",
+      "${STATE}/interview/freeze.json",
+      "${STATE}/plan/",
+      "${STATE}/plan/demo/",
+      "${STATE}/plan/demo/000_plan.md",
+      "${STATE}/plan/demo/010_phase.md",
+      "${STATE}/sessions/",
+      "${STATE}/sessions/s1.json"
+     ]
+    }
+   ]
+  },
+  "prior_plain_objects_only": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOiIwMDBfcGxhbi5tZCIsInNoYTI1NiI6Ijk4YWNmMzJlMWE3MDAwNGI2NGNmNzRmYzMxOTVmYmM2NDI3ZGEzN2UzOTg3YTRjZWMwMDFmZjEwN2YwOWI4NDQifSx7InBhdGgiOiIwMTBfcGhhc2UubWQiLCJzaGEyNTYiOiI2MzVlNDczZjBkODliMzA0OTdjOThmMzNkZmNmZjA2Y2VkZmJjMDk5YWE0N2IxOTc5OGVmYjE5NzZjMDhkNDBjIn0seyJwYXRoIjp7ImEiOjF9LCJzaGEyNTYiOiJ4In0seyJwYXRoIjpbMSxudWxsXSwic2hhMjU2IjoieCJ9XSwicGxhbkhhc2giOiI2YzU4NTVjNGI1ZjIwN2IwY2FiYjQ1ODhkZjkyYmUxMjg0NzNiYjIyMDc2ODIzYmRiZmQxYTlhNzZlMzEwYTRkIn0="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: STALE — plan changed since freeze (2 file(s), planHash matches); re-freeze before goal start — stale execution refused",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":\"000_plan.md\",\"sha256\":\"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"},{\"path\":\"010_phase.md\",\"sha256\":\"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"},{\"path\":{\"a\":1},\"sha256\":\"x\"},{\"path\":[1,null],\"sha256\":\"x\"}],\"planHash\":\"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\"}",
+     "tree": [
+      "${STATE}/",
+      "${STATE}/interview/",
+      "${STATE}/interview/freeze.json",
+      "${STATE}/plan/",
+      "${STATE}/plan/demo/",
+      "${STATE}/plan/demo/000_plan.md",
+      "${STATE}/plan/demo/010_phase.md",
+      "${STATE}/sessions/",
+      "${STATE}/sessions/s1.json"
+     ]
+    }
+   ]
+  },
+  "plan_is_file": {
+   "files": [
+    {
+     "p": "cGxhbi9kZWZhdWx0",
+     "k": "file",
+     "d": "bm90IGEgZGlyZWN0b3J5"
+    }
+   ],
+   "steps": [
+    {
+     "session": "default",
+     "dryRun": false,
+     "edits": [],
+     "output": null,
+     "error": true,
+     "manifest": null,
+     "tree": [
+      "${STATE}/",
+      "${STATE}/plan/",
+      "${STATE}/plan/default"
+     ]
+    }
+   ]
+  },
+  "prior_garbage_rewrite": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "e25vdCBqc29u"
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: prior manifest unreadable (will re-freeze)",
+     "error": false,
+     "manifest": "{not json",
+     "tree": [
+      "${STATE}/",
+      "${STATE}/interview/",
+      "${STATE}/interview/freeze.json",
+      "${STATE}/plan/",
+      "${STATE}/plan/demo/",
+      "${STATE}/plan/demo/000_plan.md",
+      "${STATE}/plan/demo/010_phase.md",
+      "${STATE}/sessions/",
+      "${STATE}/sessions/s1.json"
+     ]
+    },
+    {
+     "session": "s1",
+     "dryRun": false,
+     "edits": [],
+     "output": "[codexclaw freeze]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: prior manifest unreadable (will re-freeze)",
+     "error": false,
+     "manifest": "{\n  \"frozenAt\": \"<TS>\",\n  \"planFiles\": [\n    {\n      \"path\": \"000_plan.md\",\n      \"sha256\": \"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"\n    },\n    {\n      \"path\": \"010_phase.md\",\n      \"sha256\": \"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"\n    }\n  ],\n  \"planHash\": \"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\",\n  \"objective\": \"demo\",\n  \"slug\": \"demo\",\n  \"evidenceBundle\": {\n    \"dimensions\": null,\n    \"openAssumptions\": [],\n    \"contradictions\": [],\n    \"acceptanceCriteria\": [],\n    \"researchReportRef\": null\n  }\n}",
+     "tree": [
+      "${STATE}/",
+      "${STATE}/interview/",
+      "${STATE}/interview/freeze.json",
+      "${STATE}/plan/",
+      "${STATE}/plan/demo/",
+      "${STATE}/plan/demo/000_plan.md",
+      "${STATE}/plan/demo/010_phase.md",
+      "${STATE}/sessions/",
+      "${STATE}/sessions/s1.json"
+     ]
+    },
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: fresh — frozen manifest matches current plan",
+     "error": false,
+     "manifest": "{\n  \"frozenAt\": \"<TS>\",\n  \"planFiles\": [\n    {\n      \"path\": \"000_plan.md\",\n      \"sha256\": \"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"\n    },\n    {\n      \"path\": \"010_phase.md\",\n      \"sha256\": \"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"\n    }\n  ],\n  \"planHash\": \"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\",\n  \"objective\": \"demo\",\n  \"slug\": \"demo\",\n  \"evidenceBundle\": {\n    \"dimensions\": null,\n    \"openAssumptions\": [],\n    \"contradictions\": [],\n    \"acceptanceCriteria\": [],\n    \"researchReportRef\": null\n  }\n}",
+     "tree": [
+      "${STATE}/",
+      "${STATE}/interview/",
+      "${STATE}/interview/freeze.json",
+      "${STATE}/plan/",
+      "${STATE}/plan/demo/",
+      "${STATE}/plan/demo/000_plan.md",
+      "${STATE}/plan/demo/010_phase.md",
+      "${STATE}/sessions/",
+      "${STATE}/sessions/s1.json"
+     ]
+    }
+   ]
+  },
+  "prior_missing_sha_gone": {
+   "files": [
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOiJnb25lLm1kIn1dLCJwbGFuSGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ=="
+    }
+   ],
+   "steps": [
+    {
+     "session": "default",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: default\nplanFiles: 0\nplanHash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\ninterviewReady: false\nopenAssumptions: 0\nstale-check: fresh — frozen manifest matches current plan",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":\"gone.md\"}],\"planHash\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"}",
+     "tree": [
+      "${STATE}/",
+      "${STATE}/interview/",
+      "${STATE}/interview/freeze.json"
+     ]
+    }
+   ]
+  },
+  "prior_missing_sha_present": {
+   "files": [
+    {
+     "p": "cGxhbi9kZWZhdWx0L2EubWQ=",
+     "k": "file",
+     "d": "YQ=="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOiJhLm1kIn1dLCJwbGFuSGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ=="
+    }
+   ],
+   "steps": [
+    {
+     "session": "default",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: default\nplanFiles: 1\nplanHash: da3811154d59c4267077ddd8bb768fa9b06399c486e1fc00485116b57c9872f5\ninterviewReady: false\nopenAssumptions: 0\nstale-check: STALE — plan changed since freeze (1 file(s), planHash differs); re-freeze before goal start — stale execution refused",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":\"a.md\"}],\"planHash\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"}",
+     "tree": [
+      "${STATE}/",
+      "${STATE}/interview/",
+      "${STATE}/interview/freeze.json",
+      "${STATE}/plan/",
+      "${STATE}/plan/default/",
+      "${STATE}/plan/default/a.md"
+     ]
+    }
+   ]
+  },
+  "prior_null_sha": {
+   "files": [
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOiJnb25lLm1kIiwic2hhMjU2IjpudWxsfV0sInBsYW5IYXNoIjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSJ9"
+    }
+   ],
+   "steps": [
+    {
+     "session": "default",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: default\nplanFiles: 0\nplanHash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\ninterviewReady: false\nopenAssumptions: 0\nstale-check: STALE — plan changed since freeze (1 file(s), planHash matches); re-freeze before goal start — stale execution refused",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":\"gone.md\",\"sha256\":null}],\"planHash\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"}",
+     "tree": [
+      "${STATE}/",
+      "${STATE}/interview/",
+      "${STATE}/interview/freeze.json"
+     ]
+    }
+   ]
+  },
+  "prior_mixed_types": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOjEsInNoYTI1NiI6IngifSx7InBhdGgiOjEsInNoYTI1NiI6InkifSx7InBhdGgiOnRydWV9LHsicGF0aCI6bnVsbCwic2hhMjU2IjoieSJ9LHsic2hhMjU2IjoieiJ9LFsxXSwic3RyIiw1LHsicGF0aCI6IjAwMF9wbGFuLm1kIn0seyJwYXRoIjp7ImEiOjF9LCJzaGEyNTYiOiJxIn0seyJwYXRoIjp7ImEiOjF9LCJzaGEyNTYiOiJxIn0seyJwYXRoIjoiMDEwX3BoYXNlLm1kIiwic2hhMjU2Ijo3fV0sInBsYW5IYXNoIjo3fQ=="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: STALE — plan changed since freeze (6 file(s), planHash differs); re-freeze before goal start — stale execution refused",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":1,\"sha256\":\"x\"},{\"path\":1,\"sha256\":\"y\"},{\"path\":true},{\"path\":null,\"sha256\":\"y\"},{\"sha256\":\"z\"},[1],\"str\",5,{\"path\":\"000_plan.md\"},{\"path\":{\"a\":1},\"sha256\":\"q\"},{\"path\":{\"a\":1},\"sha256\":\"q\"},{\"path\":\"010_phase.md\",\"sha256\":7}],\"planHash\":7}",
+     "tree": [
+      "${STATE}/",
+      "${STATE}/interview/",
+      "${STATE}/interview/freeze.json",
+      "${STATE}/plan/",
+      "${STATE}/plan/demo/",
+      "${STATE}/plan/demo/000_plan.md",
+      "${STATE}/plan/demo/010_phase.md",
+      "${STATE}/sessions/",
+      "${STATE}/sessions/s1.json"
+     ]
+    }
+   ]
+  },
   "prior_good_pretty_extra": {
    "files": [
     {
-     "path": "plan/demo/000_plan.md",
-     "text": "# plan\n"
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
     },
     {
-     "path": "plan/demo/010_phase.md",
-     "text": "# phase\n"
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
     },
     {
-     "path": "sessions/s1.json",
-     "text": "{\"phase\":\"I\",\"slug\":\"demo\",\"flags\":{\"interview\":true,\"auditPassed\":false,\"checkPassed\":false},\"orchestrationActive\":false,\"lastInjectedPhase\":null,\"injectedTurns\":[],\"stopBlockPhase\":null,\"stopBlockCount\":0,\"interview\":null}"
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
     },
     {
-     "path": "interview/freeze.json",
-     "text": "{\n  \"planFiles\": [\n    {\n      \"path\": \"000_plan.md\",\n      \"sha256\": \"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"\n    },\n    {\n      \"path\": \"010_phase.md\",\n      \"sha256\": \"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"\n    }\n  ],\n  \"planHash\": \"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\",\n  \"extra\": 1,\n  \"objective\": \"demo\"\n}"
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "ewogICJwbGFuRmlsZXMiOiBbCiAgICB7CiAgICAgICJwYXRoIjogIjAwMF9wbGFuLm1kIiwKICAgICAgInNoYTI1NiI6ICI5OGFjZjMyZTFhNzAwMDRiNjRjZjc0ZmMzMTk1ZmJjNjQyN2RhMzdlMzk4N2E0Y2VjMDAxZmYxMDdmMDliODQ0IgogICAgfSwKICAgIHsKICAgICAgInBhdGgiOiAiMDEwX3BoYXNlLm1kIiwKICAgICAgInNoYTI1NiI6ICI2MzVlNDczZjBkODliMzA0OTdjOThmMzNkZmNmZjA2Y2VkZmJjMDk5YWE0N2IxOTc5OGVmYjE5NzZjMDhkNDBjIgogICAgfQogIF0sCiAgInBsYW5IYXNoIjogIjZjNTg1NWM0YjVmMjA3YjBjYWJiNDU4OGRmOTJiZTEyODQ3M2JiMjIwNzY4MjNiZGJmZDFhOWE3NmUzMTBhNGQiLAogICJleHRyYSI6IDEsCiAgIm9iamVjdGl2ZSI6ICJkZW1vIgp9"
     }
    ],
    "steps": [
@@ -2153,6 +2821,2106 @@
       "${STATE}/sessions/",
       "${STATE}/sessions/s1.json"
      ]
+    }
+   ]
+  },
+  "fuzz_00": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOlsxXSwic2hhMjU2IjpudWxsfSx7InBhdGgiOlsxXSwic2hhMjU2IjoxfV0sInBsYW5IYXNoIjoiNmM1ODU1YzRiNWYyMDdiMGNhYmI0NTg4ZGY5MmJlMTI4NDczYmIyMjA3NjgyM2JkYmZkMWE5YTc2ZTMxMGE0ZCJ9"
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: STALE — plan changed since freeze (4 file(s), planHash matches); re-freeze before goal start — stale execution refused",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":[1],\"sha256\":null},{\"path\":[1],\"sha256\":1}],\"planHash\":\"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\"}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_01": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InNoYTI1NiI6IngifSx7InBhdGgiOiIwMDBfcGxhbi5tZCIsInNoYTI1NiI6Ijk4YWNmMzJlMWE3MDAwNGI2NGNmNzRmYzMxOTVmYmM2NDI3ZGEzN2UzOTg3YTRjZWMwMDFmZjEwN2YwOWI4NDQifSx7InBhdGgiOiIwMTBfcGhhc2UubWQiLCJzaGEyNTYiOiI2MzVlNDczZjBkODliMzA0OTdjOThmMzNkZmNmZjA2Y2VkZmJjMDk5YWE0N2IxOTc5OGVmYjE5NzZjMDhkNDBjIn1dLCJwbGFuSGFzaCI6IjZjNTg1NWM0YjVmMjA3YjBjYWJiNDU4OGRmOTJiZTEyODQ3M2JiMjIwNzY4MjNiZGJmZDFhOWE3NmUzMTBhNGQifQ=="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: STALE — plan changed since freeze (1 file(s), planHash matches); re-freeze before goal start — stale execution refused",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"sha256\":\"x\"},{\"path\":\"000_plan.md\",\"sha256\":\"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"},{\"path\":\"010_phase.md\",\"sha256\":\"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"}],\"planHash\":\"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\"}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_02": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOjEuNSwic2hhMjU2IjoiMDAwX3BsYW4ubWQifSx7InNoYTI1NiI6dHJ1ZX0seyJwYXRoIjp7ImEiOjF9LCJzaGEyNTYiOjF9LHsicGF0aCI6Im5ldy5tZCIsInNoYTI1NiI6dHJ1ZX0seyJwYXRoIjoibmV3Lm1kIiwic2hhMjU2IjoiNjM1ZTQ3M2YwZDg5YjMwNDk3Yzk4ZjMzZGZjZmYwNmNlZGZiYzA5OWFhNDdiMTk3OThlZmIxOTc2YzA4ZDQwYyJ9LHsicGF0aCI6IjAwMF9wbGFuLm1kIiwic2hhMjU2Ijp7ImEiOjF9fV0sInBsYW5IYXNoIjoiNmM1ODU1YzRiNWYyMDdiMGNhYmI0NTg4ZGY5MmJlMTI4NDczYmIyMjA3NjgyM2JkYmZkMWE5YTc2ZTMxMGE0ZCJ9"
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: STALE — plan changed since freeze (6 file(s), planHash matches); re-freeze before goal start — stale execution refused",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":1.5,\"sha256\":\"000_plan.md\"},{\"sha256\":true},{\"path\":{\"a\":1},\"sha256\":1},{\"path\":\"new.md\",\"sha256\":true},{\"path\":\"new.md\",\"sha256\":\"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"},{\"path\":\"000_plan.md\",\"sha256\":{\"a\":1}}],\"planHash\":\"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\"}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_03": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOiIwMDBfcGxhbi5tZCIsInNoYTI1NiI6Ijk4YWNmMzJlMWE3MDAwNGI2NGNmNzRmYzMxOTVmYmM2NDI3ZGEzN2UzOTg3YTRjZWMwMDFmZjEwN2YwOWI4NDQifSx7InBhdGgiOiIwMTBfcGhhc2UubWQiLCJzaGEyNTYiOiI2MzVlNDczZjBkODliMzA0OTdjOThmMzNkZmNmZjA2Y2VkZmJjMDk5YWE0N2IxOTc5OGVmYjE5NzZjMDhkNDBjIn1dLCJwbGFuSGFzaCI6IjZjNTg1NWM0YjVmMjA3YjBjYWJiNDU4OGRmOTJiZTEyODQ3M2JiMjIwNzY4MjNiZGJmZDFhOWE3NmUzMTBhNGQifQ=="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: fresh — frozen manifest matches current plan",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":\"000_plan.md\",\"sha256\":\"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"},{\"path\":\"010_phase.md\",\"sha256\":\"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"}],\"planHash\":\"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\"}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_04": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOiIwMTBfcGhhc2UubWQiLCJzaGEyNTYiOiI2MzVlNDczZjBkODliMzA0OTdjOThmMzNkZmNmZjA2Y2VkZmJjMDk5YWE0N2IxOTc5OGVmYjE5NzZjMDhkNDBjIn1dLCJwbGFuSGFzaCI6IjZjNTg1NWM0YjVmMjA3YjBjYWJiNDU4OGRmOTJiZTEyODQ3M2JiMjIwNzY4MjNiZGJmZDFhOWE3NmUzMTBhNGQifQ=="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: STALE — plan changed since freeze (1 file(s), planHash matches); re-freeze before goal start — stale execution refused",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":\"010_phase.md\",\"sha256\":\"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"}],\"planHash\":\"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\"}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_05": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOls1LFsxXSx7InBhdGgiOiJuZXcubWQiLCJzaGEyNTYiOiIwMDBfcGxhbi5tZCJ9XSwicGxhbkhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: STALE — plan changed since freeze (3 file(s), planHash differs); re-freeze before goal start — stale execution refused",
+     "error": false,
+     "manifest": "{\"planFiles\":[5,[1],{\"path\":\"new.md\",\"sha256\":\"000_plan.md\"}],\"planHash\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_06": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOiIwMDBfcGxhbi5tZCIsInNoYTI1NiI6Ijk4YWNmMzJlMWE3MDAwNGI2NGNmNzRmYzMxOTVmYmM2NDI3ZGEzN2UzOTg3YTRjZWMwMDFmZjEwN2YwOWI4NDQifSx7InBhdGgiOiIwMTBfcGhhc2UubWQiLCJzaGEyNTYiOiI2MzVlNDczZjBkODliMzA0OTdjOThmMzNkZmNmZjA2Y2VkZmJjMDk5YWE0N2IxOTc5OGVmYjE5NzZjMDhkNDBjIn1dLCJwbGFuSGFzaCI6IjZjNTg1NWM0YjVmMjA3YjBjYWJiNDU4OGRmOTJiZTEyODQ3M2JiMjIwNzY4MjNiZGJmZDFhOWE3NmUzMTBhNGQifQ=="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: fresh — frozen manifest matches current plan",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":\"000_plan.md\",\"sha256\":\"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"},{\"path\":\"010_phase.md\",\"sha256\":\"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"}],\"planHash\":\"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\"}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_07": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOiIwMDBfcGxhbi5tZCIsInNoYTI1NiI6Ijk4YWNmMzJlMWE3MDAwNGI2NGNmNzRmYzMxOTVmYmM2NDI3ZGEzN2UzOTg3YTRjZWMwMDFmZjEwN2YwOWI4NDQifSx7InBhdGgiOiIwMTBfcGhhc2UubWQiLCJzaGEyNTYiOiI2MzVlNDczZjBkODliMzA0OTdjOThmMzNkZmNmZjA2Y2VkZmJjMDk5YWE0N2IxOTc5OGVmYjE5NzZjMDhkNDBjIn1dLCJwbGFuSGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ=="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: STALE — plan changed since freeze (0 file(s), planHash differs); re-freeze before goal start — stale execution refused",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":\"000_plan.md\",\"sha256\":\"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"},{\"path\":\"010_phase.md\",\"sha256\":\"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"}],\"planHash\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_08": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOiJhYmMiLCJwbGFuSGFzaCI6IjZjNTg1NWM0YjVmMjA3YjBjYWJiNDU4OGRmOTJiZTEyODQ3M2JiMjIwNzY4MjNiZGJmZDFhOWE3NmUzMTBhNGQifQ=="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: prior manifest unreadable (will re-freeze)",
+     "error": false,
+     "manifest": "{\"planFiles\":\"abc\",\"planHash\":\"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\"}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_09": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOltudWxsLDJdLCJzaGEyNTYiOnsiYSI6MX19XSwicGxhbkhhc2giOiI2YzU4NTVjNGI1ZjIwN2IwY2FiYjQ1ODhkZjkyYmUxMjg0NzNiYjIyMDc2ODIzYmRiZmQxYTlhNzZlMzEwYTRkIn0="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: STALE — plan changed since freeze (3 file(s), planHash matches); re-freeze before goal start — stale execution refused",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":[null,2],\"sha256\":{\"a\":1}}],\"planHash\":\"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\"}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_10": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOiJ4Lm1kIn0seyJwYXRoIjoiMDAwX3BsYW4ubWQifV0sInBsYW5IYXNoIjoiNmM1ODU1YzRiNWYyMDdiMGNhYmI0NTg4ZGY5MmJlMTI4NDczYmIyMjA3NjgyM2JkYmZkMWE5YTc2ZTMxMGE0ZCJ9"
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: STALE — plan changed since freeze (2 file(s), planHash matches); re-freeze before goal start — stale execution refused",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":\"x.md\"},{\"path\":\"000_plan.md\"}],\"planHash\":\"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\"}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_11": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOnt9fQ=="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: prior manifest unreadable (will re-freeze)",
+     "error": false,
+     "manifest": "{\"planFiles\":{}}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_12": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOltdLCJwbGFuSGFzaCI6IiJ9"
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: STALE — plan changed since freeze (2 file(s), planHash differs); re-freeze before goal start — stale execution refused",
+     "error": false,
+     "manifest": "{\"planFiles\":[],\"planHash\":\"\"}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_13": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOiIwMDBfcGxhbi5tZCIsInNoYTI1NiI6Ijk4YWNmMzJlMWE3MDAwNGI2NGNmNzRmYzMxOTVmYmM2NDI3ZGEzN2UzOTg3YTRjZWMwMDFmZjEwN2YwOWI4NDQifSx7InBhdGgiOltudWxsLDJdLCJzaGEyNTYiOiJ4In0seyJwYXRoIjoibmV3Lm1kIiwic2hhMjU2IjoiIn0seyJwYXRoIjpbbnVsbCwyXSwic2hhMjU2IjoxfV19"
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: STALE — plan changed since freeze (4 file(s), planHash differs); re-freeze before goal start — stale execution refused",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":\"000_plan.md\",\"sha256\":\"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"},{\"path\":[null,2],\"sha256\":\"x\"},{\"path\":\"new.md\",\"sha256\":\"\"},{\"path\":[null,2],\"sha256\":1}]}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_14": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOiIwMDBfcGxhbi5tZCIsInNoYTI1NiI6Ijk4YWNmMzJlMWE3MDAwNGI2NGNmNzRmYzMxOTVmYmM2NDI3ZGEzN2UzOTg3YTRjZWMwMDFmZjEwN2YwOWI4NDQifSx7InBhdGgiOiIwMTBfcGhhc2UubWQiLCJzaGEyNTYiOiI2MzVlNDczZjBkODliMzA0OTdjOThmMzNkZmNmZjA2Y2VkZmJjMDk5YWE0N2IxOTc5OGVmYjE5NzZjMDhkNDBjIn1dLCJwbGFuSGFzaCI6IjZjNTg1NWM0YjVmMjA3YjBjYWJiNDU4OGRmOTJiZTEyODQ3M2JiMjIwNzY4MjNiZGJmZDFhOWE3NmUzMTBhNGQifQ=="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: fresh — frozen manifest matches current plan",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":\"000_plan.md\",\"sha256\":\"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"},{\"path\":\"010_phase.md\",\"sha256\":\"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"}],\"planHash\":\"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\"}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_15": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOiIwMDBfcGxhbi5tZCIsInNoYTI1NiI6Ijk4YWNmMzJlMWE3MDAwNGI2NGNmNzRmYzMxOTVmYmM2NDI3ZGEzN2UzOTg3YTRjZWMwMDFmZjEwN2YwOWI4NDQifSx7InBhdGgiOiIwMTBfcGhhc2UubWQiLCJzaGEyNTYiOiI2MzVlNDczZjBkODliMzA0OTdjOThmMzNkZmNmZjA2Y2VkZmJjMDk5YWE0N2IxOTc5OGVmYjE5NzZjMDhkNDBjIn0seyJwYXRoIjoiIn1dLCJwbGFuSGFzaCI6IjZjNTg1NWM0YjVmMjA3YjBjYWJiNDU4OGRmOTJiZTEyODQ3M2JiMjIwNzY4MjNiZGJmZDFhOWE3NmUzMTBhNGQifQ=="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: fresh — frozen manifest matches current plan",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":\"000_plan.md\",\"sha256\":\"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"},{\"path\":\"010_phase.md\",\"sha256\":\"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"},{\"path\":\"\"}],\"planHash\":\"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\"}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_16": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOiIwMDBfcGxhbi5tZCIsInNoYTI1NiI6Ijk4YWNmMzJlMWE3MDAwNGI2NGNmNzRmYzMxOTVmYmM2NDI3ZGEzN2UzOTg3YTRjZWMwMDFmZjEwN2YwOWI4NDQifSx7InBhdGgiOiIwMTBfcGhhc2UubWQiLCJzaGEyNTYiOiI2MzVlNDczZjBkODliMzA0OTdjOThmMzNkZmNmZjA2Y2VkZmJjMDk5YWE0N2IxOTc5OGVmYjE5NzZjMDhkNDBjIn1dLCJwbGFuSGFzaCI6N30="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: STALE — plan changed since freeze (0 file(s), planHash differs); re-freeze before goal start — stale execution refused",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":\"000_plan.md\",\"sha256\":\"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"},{\"path\":\"010_phase.md\",\"sha256\":\"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"}],\"planHash\":7}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_17": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOjUsInBsYW5IYXNoIjoiIn0="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: prior manifest unreadable (will re-freeze)",
+     "error": false,
+     "manifest": "{\"planFiles\":5,\"planHash\":\"\"}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_18": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOltbeyJ0b1N0cmluZyI6bnVsbH1dXSwic2hhMjU2IjoiIn0seyJwYXRoIjoiIiwic2hhMjU2IjoxfSx7InBhdGgiOlt7InRvU3RyaW5nIjoxfV19LHsic2hhMjU2IjoiMDAwX3BsYW4ubWQifV0sInBsYW5IYXNoIjoiNmM1ODU1YzRiNWYyMDdiMGNhYmI0NTg4ZGY5MmJlMTI4NDczYmIyMjA3NjgyM2JkYmZkMWE5YTc2ZTMxMGE0ZCJ9"
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: prior manifest unreadable (will re-freeze)",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":[[{\"toString\":null}]],\"sha256\":\"\"},{\"path\":\"\",\"sha256\":1},{\"path\":[{\"toString\":1}]},{\"sha256\":\"000_plan.md\"}],\"planHash\":\"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\"}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_19": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOiIwMDBfcGxhbi5tZCIsInNoYTI1NiI6MX0seyJwYXRoIjoiMDEwX3BoYXNlLm1kIiwic2hhMjU2IjoiNjM1ZTQ3M2YwZDg5YjMwNDk3Yzk4ZjMzZGZjZmYwNmNlZGZiYzA5OWFhNDdiMTk3OThlZmIxOTc2YzA4ZDQwYyJ9XSwicGxhbkhhc2giOiI2YzU4NTVjNGI1ZjIwN2IwY2FiYjQ1ODhkZjkyYmUxMjg0NzNiYjIyMDc2ODIzYmRiZmQxYTlhNzZlMzEwYTRkIn0="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: STALE — plan changed since freeze (1 file(s), planHash matches); re-freeze before goal start — stale execution refused",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":\"000_plan.md\",\"sha256\":1},{\"path\":\"010_phase.md\",\"sha256\":\"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"}],\"planHash\":\"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\"}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_20": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOltdLCJwbGFuSGFzaCI6IjZjNTg1NWM0YjVmMjA3YjBjYWJiNDU4OGRmOTJiZTEyODQ3M2JiMjIwNzY4MjNiZGJmZDFhOWE3NmUzMTBhNGQifQ=="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: STALE — plan changed since freeze (2 file(s), planHash matches); re-freeze before goal start — stale execution refused",
+     "error": false,
+     "manifest": "{\"planFiles\":[],\"planHash\":\"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\"}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_21": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOiIwMDBfcGxhbi5tZCIsInNoYTI1NiI6Ijk4YWNmMzJlMWE3MDAwNGI2NGNmNzRmYzMxOTVmYmM2NDI3ZGEzN2UzOTg3YTRjZWMwMDFmZjEwN2YwOWI4NDQifSx7InBhdGgiOiIwMDBfcGxhbi5tZCIsInNoYTI1NiI6IjAwMF9wbGFuLm1kIn0seyJwYXRoIjoiMDEwX3BoYXNlLm1kIiwic2hhMjU2IjoiNjM1ZTQ3M2YwZDg5YjMwNDk3Yzk4ZjMzZGZjZmYwNmNlZGZiYzA5OWFhNDdiMTk3OThlZmIxOTc2YzA4ZDQwYyJ9XSwicGxhbkhhc2giOiI2YzU4NTVjNGI1ZjIwN2IwY2FiYjQ1ODhkZjkyYmUxMjg0NzNiYjIyMDc2ODIzYmRiZmQxYTlhNzZlMzEwYTRkIn0="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: STALE — plan changed since freeze (1 file(s), planHash matches); re-freeze before goal start — stale execution refused",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":\"000_plan.md\",\"sha256\":\"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"},{\"path\":\"000_plan.md\",\"sha256\":\"000_plan.md\"},{\"path\":\"010_phase.md\",\"sha256\":\"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"}],\"planHash\":\"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\"}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_22": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOiIwMDBfcGxhbi5tZCIsInNoYTI1NiI6Ijk4YWNmMzJlMWE3MDAwNGI2NGNmNzRmYzMxOTVmYmM2NDI3ZGEzN2UzOTg3YTRjZWMwMDFmZjEwN2YwOWI4NDQifSx7InBhdGgiOiIwMTBfcGhhc2UubWQiLCJzaGEyNTYiOiI2MzVlNDczZjBkODliMzA0OTdjOThmMzNkZmNmZjA2Y2VkZmJjMDk5YWE0N2IxOTc5OGVmYjE5NzZjMDhkNDBjIn1dLCJwbGFuSGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ=="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: STALE — plan changed since freeze (0 file(s), planHash differs); re-freeze before goal start — stale execution refused",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":\"000_plan.md\",\"sha256\":\"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"},{\"path\":\"010_phase.md\",\"sha256\":\"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"}],\"planHash\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_23": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOiIwMDBfcGxhbi5tZCIsInNoYTI1NiI6Ijk4YWNmMzJlMWE3MDAwNGI2NGNmNzRmYzMxOTVmYmM2NDI3ZGEzN2UzOTg3YTRjZWMwMDFmZjEwN2YwOWI4NDQifSx7InBhdGgiOiIwMTBfcGhhc2UubWQiLCJzaGEyNTYiOiI2MzVlNDczZjBkODliMzA0OTdjOThmMzNkZmNmZjA2Y2VkZmJjMDk5YWE0N2IxOTc5OGVmYjE5NzZjMDhkNDBjIn1dLCJwbGFuSGFzaCI6bnVsbH0="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: STALE — plan changed since freeze (0 file(s), planHash differs); re-freeze before goal start — stale execution refused",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":\"000_plan.md\",\"sha256\":\"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"},{\"path\":\"010_phase.md\",\"sha256\":\"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"}],\"planHash\":null}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_24": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOltdLCJwbGFuSGFzaCI6IjZjNTg1NWM0YjVmMjA3YjBjYWJiNDU4OGRmOTJiZTEyODQ3M2JiMjIwNzY4MjNiZGJmZDFhOWE3NmUzMTBhNGQifQ=="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: STALE — plan changed since freeze (2 file(s), planHash matches); re-freeze before goal start — stale execution refused",
+     "error": false,
+     "manifest": "{\"planFiles\":[],\"planHash\":\"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\"}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_25": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOiIwMDBfcGxhbi5tZCIsInNoYTI1NiI6Ijk4YWNmMzJlMWE3MDAwNGI2NGNmNzRmYzMxOTVmYmM2NDI3ZGEzN2UzOTg3YTRjZWMwMDFmZjEwN2YwOWI4NDQifSx7InBhdGgiOiIwMTBfcGhhc2UubWQiLCJzaGEyNTYiOiI2MzVlNDczZjBkODliMzA0OTdjOThmMzNkZmNmZjA2Y2VkZmJjMDk5YWE0N2IxOTc5OGVmYjE5NzZjMDhkNDBjIn1dLCJwbGFuSGFzaCI6bnVsbH0="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: STALE — plan changed since freeze (0 file(s), planHash differs); re-freeze before goal start — stale execution refused",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":\"000_plan.md\",\"sha256\":\"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"},{\"path\":\"010_phase.md\",\"sha256\":\"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"}],\"planHash\":null}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_26": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOmZhbHNlLCJzaGEyNTYiOiJ4In0seyJwYXRoIjoiMDAwX3BsYW4ubWQiLCJzaGEyNTYiOiI5OGFjZjMyZTFhNzAwMDRiNjRjZjc0ZmMzMTk1ZmJjNjQyN2RhMzdlMzk4N2E0Y2VjMDAxZmYxMDdmMDliODQ0In0seyJwYXRoIjoiMDEwX3BoYXNlLm1kIiwic2hhMjU2IjoiNjM1ZTQ3M2YwZDg5YjMwNDk3Yzk4ZjMzZGZjZmYwNmNlZGZiYzA5OWFhNDdiMTk3OThlZmIxOTc2YzA4ZDQwYyJ9XSwicGxhbkhhc2giOiI2YzU4NTVjNGI1ZjIwN2IwY2FiYjQ1ODhkZjkyYmUxMjg0NzNiYjIyMDc2ODIzYmRiZmQxYTlhNzZlMzEwYTRkIn0="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: STALE — plan changed since freeze (1 file(s), planHash matches); re-freeze before goal start — stale execution refused",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":false,\"sha256\":\"x\"},{\"path\":\"000_plan.md\",\"sha256\":\"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"},{\"path\":\"010_phase.md\",\"sha256\":\"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"}],\"planHash\":\"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\"}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_27": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOiIwMDBfcGxhbi5tZCIsInNoYTI1NiI6Ijk4YWNmMzJlMWE3MDAwNGI2NGNmNzRmYzMxOTVmYmM2NDI3ZGEzN2UzOTg3YTRjZWMwMDFmZjEwN2YwOWI4NDQifSx7InBhdGgiOnsidG9TdHJpbmciOm51bGx9LCJzaGEyNTYiOiI2MzVlNDczZjBkODliMzA0OTdjOThmMzNkZmNmZjA2Y2VkZmJjMDk5YWE0N2IxOTc5OGVmYjE5NzZjMDhkNDBjIn1dLCJwbGFuSGFzaCI6IjZjNTg1NWM0YjVmMjA3YjBjYWJiNDU4OGRmOTJiZTEyODQ3M2JiMjIwNzY4MjNiZGJmZDFhOWE3NmUzMTBhNGQifQ=="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: prior manifest unreadable (will re-freeze)",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":\"000_plan.md\",\"sha256\":\"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"},{\"path\":{\"toString\":null},\"sha256\":\"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"}],\"planHash\":\"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\"}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_28": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOiIwMDBfcGxhbi5tZCIsInNoYTI1NiI6IngifSx7InBhdGgiOltbeyJ0b1N0cmluZyI6bnVsbH1dXSwic2hhMjU2Ijp7ImEiOjF9fSx7InBhdGgiOm51bGwsInNoYTI1NiI6IjAwMF9wbGFuLm1kIn1dLCJwbGFuSGFzaCI6IjZjNTg1NWM0YjVmMjA3YjBjYWJiNDU4OGRmOTJiZTEyODQ3M2JiMjIwNzY4MjNiZGJmZDFhOWE3NmUzMTBhNGQifQ=="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: prior manifest unreadable (will re-freeze)",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":\"000_plan.md\",\"sha256\":\"x\"},{\"path\":[[{\"toString\":null}]],\"sha256\":{\"a\":1}},{\"path\":null,\"sha256\":\"000_plan.md\"}],\"planHash\":\"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\"}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_29": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOiIwMDBfcGxhbi5tZCIsInNoYTI1NiI6Ijk4YWNmMzJlMWE3MDAwNGI2NGNmNzRmYzMxOTVmYmM2NDI3ZGEzN2UzOTg3YTRjZWMwMDFmZjEwN2YwOWI4NDQifSx7InBhdGgiOlt7InRvU3RyaW5nIjoxfV0sInNoYTI1NiI6IjYzNWU0NzNmMGQ4OWIzMDQ5N2M5OGYzM2RmY2ZmMDZjZWRmYmMwOTlhYTQ3YjE5Nzk4ZWZiMTk3NmMwOGQ0MGMifSx7InBhdGgiOiIwMTBfcGhhc2UubWQiLCJzaGEyNTYiOiI2MzVlNDczZjBkODliMzA0OTdjOThmMzNkZmNmZjA2Y2VkZmJjMDk5YWE0N2IxOTc5OGVmYjE5NzZjMDhkNDBjIn1dLCJwbGFuSGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ=="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: STALE — plan changed since freeze (1 file(s), planHash differs); re-freeze before goal start — stale execution refused",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":\"000_plan.md\",\"sha256\":\"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"},{\"path\":[{\"toString\":1}],\"sha256\":\"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"},{\"path\":\"010_phase.md\",\"sha256\":\"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"}],\"planHash\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_30": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOiIiLCJzaGEyNTYiOjF9LHsicGF0aCI6eyJ0b1N0cmluZyI6bnVsbH0sInNoYTI1NiI6IjYzNWU0NzNmMGQ4OWIzMDQ5N2M5OGYzM2RmY2ZmMDZjZWRmYmMwOTlhYTQ3YjE5Nzk4ZWZiMTk3NmMwOGQ0MGMifSx7InBhdGgiOlsxXX0sWzFdXSwicGxhbkhhc2giOjd9"
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: prior manifest unreadable (will re-freeze)",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":\"\",\"sha256\":1},{\"path\":{\"toString\":null},\"sha256\":\"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"},{\"path\":[1]},[1]],\"planHash\":7}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_31": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOiIwMDBfcGxhbi5tZCIsInNoYTI1NiI6Ijk4YWNmMzJlMWE3MDAwNGI2NGNmNzRmYzMxOTVmYmM2NDI3ZGEzN2UzOTg3YTRjZWMwMDFmZjEwN2YwOWI4NDQifSx7InBhdGgiOiIwMTBfcGhhc2UubWQiLCJzaGEyNTYiOiI2MzVlNDczZjBkODliMzA0OTdjOThmMzNkZmNmZjA2Y2VkZmJjMDk5YWE0N2IxOTc5OGVmYjE5NzZjMDhkNDBjIn1dLCJwbGFuSGFzaCI6IjZjNTg1NWM0YjVmMjA3YjBjYWJiNDU4OGRmOTJiZTEyODQ3M2JiMjIwNzY4MjNiZGJmZDFhOWE3NmUzMTBhNGQifQ=="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: fresh — frozen manifest matches current plan",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":\"000_plan.md\",\"sha256\":\"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"},{\"path\":\"010_phase.md\",\"sha256\":\"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"}],\"planHash\":\"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\"}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_32": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOm51bGwsInNoYTI1NiI6IiJ9LHsicGF0aCI6MH1dLCJwbGFuSGFzaCI6IiJ9"
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: STALE — plan changed since freeze (3 file(s), planHash differs); re-freeze before goal start — stale execution refused",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":null,\"sha256\":\"\"},{\"path\":0}],\"planHash\":\"\"}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_33": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOltbMV0sWzFdXSwicGxhbkhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: STALE — plan changed since freeze (2 file(s), planHash differs); re-freeze before goal start — stale execution refused",
+     "error": false,
+     "manifest": "{\"planFiles\":[[1],[1]],\"planHash\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_34": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOnsiYSI6MX0sInNoYTI1NiI6Ijk4YWNmMzJlMWE3MDAwNGI2NGNmNzRmYzMxOTVmYmM2NDI3ZGEzN2UzOTg3YTRjZWMwMDFmZjEwN2YwOWI4NDQifSx7InBhdGgiOiIwMTBfcGhhc2UubWQiLCJzaGEyNTYiOiI2MzVlNDczZjBkODliMzA0OTdjOThmMzNkZmNmZjA2Y2VkZmJjMDk5YWE0N2IxOTc5OGVmYjE5NzZjMDhkNDBjIn1dfQ=="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: STALE — plan changed since freeze (2 file(s), planHash differs); re-freeze before goal start — stale execution refused",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":{\"a\":1},\"sha256\":\"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"},{\"path\":\"010_phase.md\",\"sha256\":\"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"}]}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_35": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InNoYTI1NiI6eyJhIjoxfX0seyJwYXRoIjpbeyJ0b1N0cmluZyI6MX1dLCJzaGEyNTYiOnRydWV9LHsicGF0aCI6MCwic2hhMjU2IjoieCJ9LHsicGF0aCI6MCwic2hhMjU2IjoiMDAwX3BsYW4ubWQifV0sInBsYW5IYXNoIjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSJ9"
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: prior manifest unreadable (will re-freeze)",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"sha256\":{\"a\":1}},{\"path\":[{\"toString\":1}],\"sha256\":true},{\"path\":0,\"sha256\":\"x\"},{\"path\":0,\"sha256\":\"000_plan.md\"}],\"planHash\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_36": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOiJ4Lm1kIiwic2hhMjU2Ijp0cnVlfSx7InBhdGgiOnsidG9TdHJpbmciOm51bGx9LCJzaGEyNTYiOnsiYSI6MX19XSwicGxhbkhhc2giOiI2YzU4NTVjNGI1ZjIwN2IwY2FiYjQ1ODhkZjkyYmUxMjg0NzNiYjIyMDc2ODIzYmRiZmQxYTlhNzZlMzEwYTRkIn0="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: prior manifest unreadable (will re-freeze)",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":\"x.md\",\"sha256\":true},{\"path\":{\"toString\":null},\"sha256\":{\"a\":1}}],\"planHash\":\"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\"}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_37": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InNoYTI1NiI6dHJ1ZX1dLCJwbGFuSGFzaCI6IiJ9"
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: STALE — plan changed since freeze (3 file(s), planHash differs); re-freeze before goal start — stale execution refused",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"sha256\":true}],\"planHash\":\"\"}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_38": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOltdLCJwbGFuSGFzaCI6bnVsbH0="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: STALE — plan changed since freeze (2 file(s), planHash differs); re-freeze before goal start — stale execution refused",
+     "error": false,
+     "manifest": "{\"planFiles\":[],\"planHash\":null}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_39": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOjUsInBsYW5IYXNoIjoiNmM1ODU1YzRiNWYyMDdiMGNhYmI0NTg4ZGY5MmJlMTI4NDczYmIyMjA3NjgyM2JkYmZkMWE5YTc2ZTMxMGE0ZCJ9"
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: prior manifest unreadable (will re-freeze)",
+     "error": false,
+     "manifest": "{\"planFiles\":5,\"planHash\":\"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\"}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_40": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOltdfQ=="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: STALE — plan changed since freeze (2 file(s), planHash differs); re-freeze before goal start — stale execution refused",
+     "error": false,
+     "manifest": "{\"planFiles\":[]}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_41": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOiIwMDBfcGxhbi5tZCIsInNoYTI1NiI6Ijk4YWNmMzJlMWE3MDAwNGI2NGNmNzRmYzMxOTVmYmM2NDI3ZGEzN2UzOTg3YTRjZWMwMDFmZjEwN2YwOWI4NDQifSx7InBhdGgiOiIwMTBfcGhhc2UubWQiLCJzaGEyNTYiOiI2MzVlNDczZjBkODliMzA0OTdjOThmMzNkZmNmZjA2Y2VkZmJjMDk5YWE0N2IxOTc5OGVmYjE5NzZjMDhkNDBjIn1dLCJwbGFuSGFzaCI6IjZjNTg1NWM0YjVmMjA3YjBjYWJiNDU4OGRmOTJiZTEyODQ3M2JiMjIwNzY4MjNiZGJmZDFhOWE3NmUzMTBhNGQifQ=="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: fresh — frozen manifest matches current plan",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":\"000_plan.md\",\"sha256\":\"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"},{\"path\":\"010_phase.md\",\"sha256\":\"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"}],\"planHash\":\"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\"}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_42": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOiIwMDBfcGxhbi5tZCIsInNoYTI1NiI6Ijk4YWNmMzJlMWE3MDAwNGI2NGNmNzRmYzMxOTVmYmM2NDI3ZGEzN2UzOTg3YTRjZWMwMDFmZjEwN2YwOWI4NDQifV0sInBsYW5IYXNoIjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSJ9"
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: STALE — plan changed since freeze (1 file(s), planHash differs); re-freeze before goal start — stale execution refused",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":\"000_plan.md\",\"sha256\":\"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"}],\"planHash\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_43": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOiIwMDBfcGxhbi5tZCIsInNoYTI1NiI6Ijk4YWNmMzJlMWE3MDAwNGI2NGNmNzRmYzMxOTVmYmM2NDI3ZGEzN2UzOTg3YTRjZWMwMDFmZjEwN2YwOWI4NDQifSx7InBhdGgiOiIwMTBfcGhhc2UubWQiLCJzaGEyNTYiOiI2MzVlNDczZjBkODliMzA0OTdjOThmMzNkZmNmZjA2Y2VkZmJjMDk5YWE0N2IxOTc5OGVmYjE5NzZjMDhkNDBjIn1dLCJwbGFuSGFzaCI6IjZjNTg1NWM0YjVmMjA3YjBjYWJiNDU4OGRmOTJiZTEyODQ3M2JiMjIwNzY4MjNiZGJmZDFhOWE3NmUzMTBhNGQifQ=="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: fresh — frozen manifest matches current plan",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":\"000_plan.md\",\"sha256\":\"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"},{\"path\":\"010_phase.md\",\"sha256\":\"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"}],\"planHash\":\"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\"}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_44": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOiIwMDBfcGxhbi5tZCIsInNoYTI1NiI6Ijk4YWNmMzJlMWE3MDAwNGI2NGNmNzRmYzMxOTVmYmM2NDI3ZGEzN2UzOTg3YTRjZWMwMDFmZjEwN2YwOWI4NDQifSx7InBhdGgiOiIwMTBfcGhhc2UubWQiLCJzaGEyNTYiOiI2MzVlNDczZjBkODliMzA0OTdjOThmMzNkZmNmZjA2Y2VkZmJjMDk5YWE0N2IxOTc5OGVmYjE5NzZjMDhkNDBjIn0seyJzaGEyNTYiOm51bGx9XSwicGxhbkhhc2giOiI2YzU4NTVjNGI1ZjIwN2IwY2FiYjQ1ODhkZjkyYmUxMjg0NzNiYjIyMDc2ODIzYmRiZmQxYTlhNzZlMzEwYTRkIn0="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: STALE — plan changed since freeze (1 file(s), planHash matches); re-freeze before goal start — stale execution refused",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":\"000_plan.md\",\"sha256\":\"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"},{\"path\":\"010_phase.md\",\"sha256\":\"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"},{\"sha256\":null}],\"planHash\":\"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\"}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_45": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOiIwMDBfcGxhbi5tZCIsInNoYTI1NiI6Ijk4YWNmMzJlMWE3MDAwNGI2NGNmNzRmYzMxOTVmYmM2NDI3ZGEzN2UzOTg3YTRjZWMwMDFmZjEwN2YwOWI4NDQifSx7InBhdGgiOiIwMTBfcGhhc2UubWQiLCJzaGEyNTYiOiI2MzVlNDczZjBkODliMzA0OTdjOThmMzNkZmNmZjA2Y2VkZmJjMDk5YWE0N2IxOTc5OGVmYjE5NzZjMDhkNDBjIn1dfQ=="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: STALE — plan changed since freeze (0 file(s), planHash differs); re-freeze before goal start — stale execution refused",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":\"000_plan.md\",\"sha256\":\"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"},{\"path\":\"010_phase.md\",\"sha256\":\"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"}]}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_46": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOlt7InRvU3RyaW5nIjoxfV0sInNoYTI1NiI6W119LHsicGF0aCI6MCwic2hhMjU2IjoiMDAwX3BsYW4ubWQifSx7InBhdGgiOnsiYSI6MX0sInNoYTI1NiI6MX0seyJwYXRoIjpbMV0sInNoYTI1NiI6IiJ9XSwicGxhbkhhc2giOm51bGx9"
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: prior manifest unreadable (will re-freeze)",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":[{\"toString\":1}],\"sha256\":[]},{\"path\":0,\"sha256\":\"000_plan.md\"},{\"path\":{\"a\":1},\"sha256\":1},{\"path\":[1],\"sha256\":\"\"}],\"planHash\":null}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_47": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOnsidG9TdHJpbmciOm51bGx9LCJzaGEyNTYiOm51bGx9LHsicGF0aCI6IjAwMF9wbGFuLm1kIiwic2hhMjU2IjpbXX0seyJwYXRoIjoiMDAwX3BsYW4ubWQiLCJzaGEyNTYiOnRydWV9LHsicGF0aCI6MX0seyJwYXRoIjowLCJzaGEyNTYiOiI5OGFjZjMyZTFhNzAwMDRiNjRjZjc0ZmMzMTk1ZmJjNjQyN2RhMzdlMzk4N2E0Y2VjMDAxZmYxMDdmMDliODQ0In0seyJwYXRoIjpbMV0sInNoYTI1NiI6eyJhIjoxfX1dLCJwbGFuSGFzaCI6IjZjNTg1NWM0YjVmMjA3YjBjYWJiNDU4OGRmOTJiZTEyODQ3M2JiMjIwNzY4MjNiZGJmZDFhOWE3NmUzMTBhNGQifQ=="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: prior manifest unreadable (will re-freeze)",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":{\"toString\":null},\"sha256\":null},{\"path\":\"000_plan.md\",\"sha256\":[]},{\"path\":\"000_plan.md\",\"sha256\":true},{\"path\":1},{\"path\":0,\"sha256\":\"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"},{\"path\":[1],\"sha256\":{\"a\":1}}],\"planHash\":\"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\"}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_48": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOiIwMDBfcGxhbi5tZCIsInNoYTI1NiI6Ijk4YWNmMzJlMWE3MDAwNGI2NGNmNzRmYzMxOTVmYmM2NDI3ZGEzN2UzOTg3YTRjZWMwMDFmZjEwN2YwOWI4NDQifSx7InBhdGgiOiIwMTBfcGhhc2UubWQiLCJzaGEyNTYiOiI2MzVlNDczZjBkODliMzA0OTdjOThmMzNkZmNmZjA2Y2VkZmJjMDk5YWE0N2IxOTc5OGVmYjE5NzZjMDhkNDBjIn1dLCJwbGFuSGFzaCI6IiJ9"
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: STALE — plan changed since freeze (0 file(s), planHash differs); re-freeze before goal start — stale execution refused",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":\"000_plan.md\",\"sha256\":\"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"},{\"path\":\"010_phase.md\",\"sha256\":\"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"}],\"planHash\":\"\"}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_49": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOiJuZXcubWQiLCJzaGEyNTYiOiIifSx7InBhdGgiOm51bGwsInNoYTI1NiI6bnVsbH0seyJwYXRoIjp7InRvU3RyaW5nIjpudWxsfSwic2hhMjU2IjoiIn1dLCJwbGFuSGFzaCI6N30="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: prior manifest unreadable (will re-freeze)",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":\"new.md\",\"sha256\":\"\"},{\"path\":null,\"sha256\":null},{\"path\":{\"toString\":null},\"sha256\":\"\"}],\"planHash\":7}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_50": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOjEsInNoYTI1NiI6bnVsbH0seyJwYXRoIjoibmV3Lm1kIiwic2hhMjU2IjoiNjM1ZTQ3M2YwZDg5YjMwNDk3Yzk4ZjMzZGZjZmYwNmNlZGZiYzA5OWFhNDdiMTk3OThlZmIxOTc2YzA4ZDQwYyJ9LHsic2hhMjU2IjoiNjM1ZTQ3M2YwZDg5YjMwNDk3Yzk4ZjMzZGZjZmYwNmNlZGZiYzA5OWFhNDdiMTk3OThlZmIxOTc2YzA4ZDQwYyJ9LCJzdHIiXSwicGxhbkhhc2giOiI2YzU4NTVjNGI1ZjIwN2IwY2FiYjQ1ODhkZjkyYmUxMjg0NzNiYjIyMDc2ODIzYmRiZmQxYTlhNzZlMzEwYTRkIn0="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: STALE — plan changed since freeze (4 file(s), planHash matches); re-freeze before goal start — stale execution refused",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":1,\"sha256\":null},{\"path\":\"new.md\",\"sha256\":\"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"},{\"sha256\":\"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"},\"str\"],\"planHash\":\"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\"}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_51": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOiIwMDBfcGxhbi5tZCIsInNoYTI1NiI6Ijk4YWNmMzJlMWE3MDAwNGI2NGNmNzRmYzMxOTVmYmM2NDI3ZGEzN2UzOTg3YTRjZWMwMDFmZjEwN2YwOWI4NDQifSx7InBhdGgiOiIwMTBfcGhhc2UubWQiLCJzaGEyNTYiOiI2MzVlNDczZjBkODliMzA0OTdjOThmMzNkZmNmZjA2Y2VkZmJjMDk5YWE0N2IxOTc5OGVmYjE5NzZjMDhkNDBjIn1dLCJwbGFuSGFzaCI6IjZjNTg1NWM0YjVmMjA3YjBjYWJiNDU4OGRmOTJiZTEyODQ3M2JiMjIwNzY4MjNiZGJmZDFhOWE3NmUzMTBhNGQifQ=="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: fresh — frozen manifest matches current plan",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":\"000_plan.md\",\"sha256\":\"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"},{\"path\":\"010_phase.md\",\"sha256\":\"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"}],\"planHash\":\"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\"}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_52": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOiIwMDBfcGxhbi5tZCJ9LHsicGF0aCI6dHJ1ZSwic2hhMjU2IjoiMDAwX3BsYW4ubWQifSx7InBhdGgiOm51bGwsInNoYTI1NiI6IjAwMF9wbGFuLm1kIn0seyJwYXRoIjpbeyJ0b1N0cmluZyI6MX1dLCJzaGEyNTYiOnRydWV9XSwicGxhbkhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: prior manifest unreadable (will re-freeze)",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":\"000_plan.md\"},{\"path\":true,\"sha256\":\"000_plan.md\"},{\"path\":null,\"sha256\":\"000_plan.md\"},{\"path\":[{\"toString\":1}],\"sha256\":true}],\"planHash\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_53": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOiIwMDBfcGxhbi5tZCIsInNoYTI1NiI6Ijk4YWNmMzJlMWE3MDAwNGI2NGNmNzRmYzMxOTVmYmM2NDI3ZGEzN2UzOTg3YTRjZWMwMDFmZjEwN2YwOWI4NDQifSx7InBhdGgiOiIwMTBfcGhhc2UubWQiLCJzaGEyNTYiOiI2MzVlNDczZjBkODliMzA0OTdjOThmMzNkZmNmZjA2Y2VkZmJjMDk5YWE0N2IxOTc5OGVmYjE5NzZjMDhkNDBjIn1dLCJwbGFuSGFzaCI6IjZjNTg1NWM0YjVmMjA3YjBjYWJiNDU4OGRmOTJiZTEyODQ3M2JiMjIwNzY4MjNiZGJmZDFhOWE3NmUzMTBhNGQifQ=="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: fresh — frozen manifest matches current plan",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":\"000_plan.md\",\"sha256\":\"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"},{\"path\":\"010_phase.md\",\"sha256\":\"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"}],\"planHash\":\"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\"}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_54": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOiIwMDBfcGxhbi5tZCIsInNoYTI1NiI6Ijk4YWNmMzJlMWE3MDAwNGI2NGNmNzRmYzMxOTVmYmM2NDI3ZGEzN2UzOTg3YTRjZWMwMDFmZjEwN2YwOWI4NDQifSx7InBhdGgiOiIwMTBfcGhhc2UubWQiLCJzaGEyNTYiOiI2MzVlNDczZjBkODliMzA0OTdjOThmMzNkZmNmZjA2Y2VkZmJjMDk5YWE0N2IxOTc5OGVmYjE5NzZjMDhkNDBjIn1dLCJwbGFuSGFzaCI6bnVsbH0="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: STALE — plan changed since freeze (0 file(s), planHash differs); re-freeze before goal start — stale execution refused",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":\"000_plan.md\",\"sha256\":\"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"},{\"path\":\"010_phase.md\",\"sha256\":\"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"}],\"planHash\":null}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_55": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOiIwMDBfcGxhbi5tZCIsInNoYTI1NiI6IjYzNWU0NzNmMGQ4OWIzMDQ5N2M5OGYzM2RmY2ZmMDZjZWRmYmMwOTlhYTQ3YjE5Nzk4ZWZiMTk3NmMwOGQ0MGMifSx7InBhdGgiOnsidG9TdHJpbmciOm51bGx9LCJzaGEyNTYiOiIifV19"
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: prior manifest unreadable (will re-freeze)",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":\"000_plan.md\",\"sha256\":\"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"},{\"path\":{\"toString\":null},\"sha256\":\"\"}]}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_56": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOjEuNX1dLCJwbGFuSGFzaCI6IjZjNTg1NWM0YjVmMjA3YjBjYWJiNDU4OGRmOTJiZTEyODQ3M2JiMjIwNzY4MjNiZGJmZDFhOWE3NmUzMTBhNGQifQ=="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: STALE — plan changed since freeze (2 file(s), planHash matches); re-freeze before goal start — stale execution refused",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":1.5}],\"planHash\":\"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\"}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_57": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOnRydWUsInNoYTI1NiI6eyJhIjoxfX0seyJwYXRoIjpudWxsLCJzaGEyNTYiOiI2MzVlNDczZjBkODliMzA0OTdjOThmMzNkZmNmZjA2Y2VkZmJjMDk5YWE0N2IxOTc5OGVmYjE5NzZjMDhkNDBjIn1dfQ=="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: STALE — plan changed since freeze (4 file(s), planHash differs); re-freeze before goal start — stale execution refused",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":true,\"sha256\":{\"a\":1}},{\"path\":null,\"sha256\":\"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"}]}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_58": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOlt7InBhdGgiOiIwMDBfcGxhbi5tZCIsInNoYTI1NiI6Ijk4YWNmMzJlMWE3MDAwNGI2NGNmNzRmYzMxOTVmYmM2NDI3ZGEzN2UzOTg3YTRjZWMwMDFmZjEwN2YwOWI4NDQifSx7InBhdGgiOiIwMTBfcGhhc2UubWQiLCJzaGEyNTYiOiI2MzVlNDczZjBkODliMzA0OTdjOThmMzNkZmNmZjA2Y2VkZmJjMDk5YWE0N2IxOTc5OGVmYjE5NzZjMDhkNDBjIn1dLCJwbGFuSGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ=="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: STALE — plan changed since freeze (0 file(s), planHash differs); re-freeze before goal start — stale execution refused",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":\"000_plan.md\",\"sha256\":\"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"},{\"path\":\"010_phase.md\",\"sha256\":\"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"}],\"planHash\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"}",
+     "tree": null
+    }
+   ]
+  },
+  "fuzz_59": {
+   "files": [
+    {
+     "p": "cGxhbi9kZW1vLzAwMF9wbGFuLm1k",
+     "k": "file",
+     "d": "IyBwbGFuCg=="
+    },
+    {
+     "p": "cGxhbi9kZW1vLzAxMF9waGFzZS5tZA==",
+     "k": "file",
+     "d": "IyBwaGFzZQo="
+    },
+    {
+     "p": "c2Vzc2lvbnMvczEuanNvbg==",
+     "k": "file",
+     "d": "eyJwaGFzZSI6IkkiLCJzbHVnIjoiZGVtbyIsImZsYWdzIjp7ImludGVydmlldyI6dHJ1ZSwiYXVkaXRQYXNzZWQiOmZhbHNlLCJjaGVja1Bhc3NlZCI6ZmFsc2V9LCJvcmNoZXN0cmF0aW9uQWN0aXZlIjpmYWxzZSwibGFzdEluamVjdGVkUGhhc2UiOm51bGwsImluamVjdGVkVHVybnMiOltdLCJzdG9wQmxvY2tQaGFzZSI6bnVsbCwic3RvcEJsb2NrQ291bnQiOjAsImludGVydmlldyI6bnVsbH0="
+    },
+    {
+     "p": "aW50ZXJ2aWV3L2ZyZWV6ZS5qc29u",
+     "k": "file",
+     "d": "eyJwbGFuRmlsZXMiOltdLCJwbGFuSGFzaCI6IjZjNTg1NWM0YjVmMjA3YjBjYWJiNDU4OGRmOTJiZTEyODQ3M2JiMjIwNzY4MjNiZGJmZDFhOWE3NmUzMTBhNGQifQ=="
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: STALE — plan changed since freeze (2 file(s), planHash matches); re-freeze before goal start — stale execution refused",
+     "error": false,
+     "manifest": "{\"planFiles\":[],\"planHash\":\"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\"}",
+     "tree": null
     }
    ]
   }
