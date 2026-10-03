@@ -3,6 +3,7 @@ package role
 import (
 	"bytes"
 	"encoding/json"
+	"math"
 	"strconv"
 	"strings"
 )
@@ -36,9 +37,9 @@ func jsText(v any) (string, error) {
 	case json.Number:
 		f, _ := strconv.ParseFloat(string(v), 64) // out of range is an infinity, as it is in JavaScript
 		switch {
-		case f > 1.7976931348623157e308:
+		case math.IsInf(f, 1):
 			return "Infinity", nil
-		case f < -1.7976931348623157e308:
+		case math.IsInf(f, -1):
 			return "-Infinity", nil
 		case f == 0:
 			return "0", nil // -0 prints as 0

@@ -28,8 +28,9 @@ func lockStore(path string, sleep func(time.Duration)) (release func(), err erro
 	for attempt := 0; ; attempt++ {
 		f, err := os.OpenFile(lock, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) // an existing symbolic link is refused, never followed
 		if err == nil {
-			release = func() { _ = os.Remove(lock) }
-			if err = writePid(f); err != nil {
+			release = func() { _ = os.Remove(lock) } // registered before the pid is written, so a failed write leaves no lock
+			_, err = f.WriteString(strconv.Itoa(os.Getpid()))
+			if err = errors.Join(err, f.Close()); err != nil {
 				release()
 				return nil, refused(err)
 			}
@@ -40,12 +41,6 @@ func lockStore(path string, sleep func(time.Duration)) (release func(), err erro
 		}
 		sleep(delays[attempt] * time.Millisecond)
 	}
-}
-
-// writePid writes the pid into the lock file and closes it, so the file is closed before any release.
-func writePid(f *os.File) error {
-	_, err := f.WriteString(strconv.Itoa(os.Getpid()))
-	return errors.Join(err, f.Close())
 }
 
 // refused is how a write that cannot start reads, as the oracle's refusal of a store it cannot read does.
