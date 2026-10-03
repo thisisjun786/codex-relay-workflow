@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/adapter"
@@ -32,7 +33,8 @@ type realKit struct {
 	turns int
 }
 
-func newRealKit(t *testing.T) *realKit {
+// newRealKit builds the kit; phase bounds, when given, replace the real client's 20 s bounds so a test can have the host answer after the ack bound.
+func newRealKit(t *testing.T, bounds ...appserver.PhaseBounds) *realKit {
 	t.Helper()
 	root := t.TempDir()
 	t.Setenv("CODEX_SESSION_RELAY_SCOPE_DIR", filepath.Join(root, "scopes"))
@@ -97,7 +99,11 @@ func newRealKit(t *testing.T) *realKit {
 		}
 		return fakehost.Reply{Result: map[string]any{"data": data, "nextCursor": nil}}
 	})
-	a, err := adapter.Open(host.SocketPath, state, adapter.Options{Policy: policy, Clock: delivery.NewFakeClock()})
+	options := adapter.Options{Policy: policy, Clock: delivery.NewFakeClock()}
+	if len(bounds) > 0 {
+		options.RPC = appserver.New(host.SocketPath, bounds[0])
+	}
+	a, err := adapter.Open(host.SocketPath, state, options)
 	if err != nil {
 		t.Fatal(err)
 	}
