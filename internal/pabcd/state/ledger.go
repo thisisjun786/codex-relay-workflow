@@ -17,8 +17,9 @@ import (
 
 // The transition ledger and the interview scan events: appendLedger, appendInterviewEvent and readInterviewEvents of CXC v0.2.40
 // pabcd-state/src/state.ts (216-242, 696-795). A row is one line appended with no lock and no temp file, as the oracle does it;
-// the callers that need one hold their own lock. One departure: a scan row starts on a new line when the file's last line has no line
-// feed (CRW-474), where the oracle joins it to that line and both rows are lost.
+// the callers that need one hold their own lock. One departure, for both appenders (CRW-474): a row starts on a new line when the
+// file's last line has no line feed or its last byte cannot be read, where the oracle joins it to that line. A scan ledger reader then
+// skips the joined line and both rows are lost; the oracle's readers of the transition ledger parse every line unguarded and throw.
 
 // LedgerFile is the transition ledger under the state directory; InterviewsSubdir holds one scan ledger per session.
 const (
@@ -81,9 +82,10 @@ func (e LedgerEntry) members() []member {
 }
 
 // AppendLedger appends the row to <state dir>/ledger.jsonl (appendLedger). The counters of a row are written as JSON.stringify
-// writes a number: -0 as 0, NaN and the infinities as null.
+// writes a number: -0 as 0, NaN and the infinities as null. The row starts with a line feed when the file ends in a line that has
+// none, or when its last byte cannot be read (appendRow), so a final line left by a crash, a full disk or a hand edit is not joined to it.
 func AppendLedger(cwd string, e LedgerEntry) error {
-	return appendRow(cwd, "", LedgerFile, e.members(), false)
+	return appendRow(cwd, "", LedgerFile, e.members(), true)
 }
 
 // InterviewScanEvent is the kind of a scan row. The scan ledger is shared with the interview ledger's question and answer rows,
@@ -239,8 +241,8 @@ func jsKeyOrder(pairs []MapEntry) []MapEntry {
 }
 
 // appendRow is the tail of appendLedger and appendInterviewEvent, in the oracle's order: the .crw directory, sub below it, the
-// row text, one appended line. A failed step leaves what the earlier ones made. With closeTail the line is preceded by a line feed
-// when the file already ends in a line that has none (endsMidLine), in the same write.
+// row text, one appended line. A failed step leaves what the earlier ones made. With closeTail, which both appenders set, the line is
+// preceded by a line feed when the file already ends in a line that has none (endsMidLine), in the same write.
 func appendRow(cwd, sub, name string, row []member, closeTail bool) error {
 	if _, err := crwdir.EnsureDir(cwd); err != nil {
 		return err
