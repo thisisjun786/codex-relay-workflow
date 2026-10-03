@@ -266,3 +266,44 @@ func TestTwoConcurrentCreationsOfOneRequestStartOneThread(t *testing.T) {
 		t.Fatalf("thread/start x%d, config/read x%d", host.Count("thread/start"), host.Count("config/read"))
 	}
 }
+
+func mcpSend(id, profile string) SendMessage {
+	expected := map[string]any{"model": pyModel, "reasoning_effort": pyEffort}
+	if profile != "" {
+		expected["mcp_profile"] = profile
+	}
+	return SendMessage{RequestID: id, ThreadID: "thread-1", Message: "work", Role: "child", Expected: expected}
+}
+
+func TestASendNamingAProfileResumesUnderItsOverrides(t *testing.T) {
+	b, host, _ := mcpBridge(t, true)
+	receipt, err := b.SendMessageToThread(context.Background(), mcpSend("send-ui-qa", "ui-qa"))
+	if err != nil || receipt["status"] != "accepted" || !equalNames(switchedOff(t, host), []string{"gemini_notebook", "oracle"}) || host.Count("turn/start") != 1 {
+		t.Fatalf("receipt=%v err=%v off=%v", receipt, err, switchedOff(t, host))
+	}
+	if methods := hostMethods(host); indexOf(methods, "config/read") > indexOf(methods, "thread/resume") || host.Count("mcpServerStatus/list") != 1 {
+		t.Fatalf("host calls %v", methods)
+	}
+	if _, err := b.SendMessageToThread(context.Background(), mcpSend("send-nope", "nope")); err == nil {
+		t.Fatal("a send naming an unknown profile was accepted")
+	}
+}
+
+func TestASendResumedOntoAThreadThatIgnoredTheOverridesIsWithheld(t *testing.T) {
+	b, host, _ := mcpBridge(t, false)
+	receipt, err := b.SendMessageToThread(context.Background(), mcpSend("send-ignored", "ui-qa"))
+	if err != nil || receipt["status"] != "failed" || pyjson.Map(receipt["rpcError"])["code"] != settings.NotPreserved || host.Count("turn/start") != 0 {
+		t.Fatalf("receipt=%v err=%v", receipt, err)
+	}
+}
+
+// Overrides are not kept with a thread, and no default is applied on a send: a send that names no
+// profile resumes as it always did.
+func TestASendNamingNoProfileAsksTheHostNothingExtra(t *testing.T) {
+	b, host, _ := mcpBridge(t, true)
+	receipt, err := b.SendMessageToThread(context.Background(), mcpSend("send-plain", ""))
+	config := pyjson.Map(hostParams(t, host, "thread/resume")["config"])
+	if err != nil || receipt["status"] != "accepted" || config["mcp_servers"] != nil || host.Count("config/read") != 0 || host.Count("mcpServerStatus/list") != 0 {
+		t.Fatalf("receipt=%v err=%v config=%v", receipt, err, config)
+	}
+}
