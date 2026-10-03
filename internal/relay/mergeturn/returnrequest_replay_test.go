@@ -37,6 +37,20 @@ func Test408_c4_a_replay_keeps_the_original_request_and_adds_no_second_record(t 
 	}
 }
 
+func Test408_c4_a_replay_reports_the_queued_notice_when_the_assignment_is_no_longer_active(t *testing.T) {
+	w, turn := returnFixture(t)
+	first := notice(t, w.must(w.m.RequestReturn(w.ctx, turn, beta.TaskID, "I have a ready candidate")))
+	// The assignment stops being active after the notice was queued; the retry still reports it.
+	w.exec("UPDATE relationships SET status = 'archived' WHERE relationship_id = 'rel-a'")
+	again := notice(t, w.must(w.m.RequestReturn(w.ctx, turn, beta.TaskID, "I have a ready candidate")))
+	if again["state"] != "queued" || again["eventId"] != first["eventId"] {
+		t.Fatalf("the notice already queued is reported on a replay, not lost because the channel is closed now: %v %v", first, again)
+	}
+	if rows, _ := w.s.All(w.ctx, "SELECT 1 FROM journal WHERE kind = 'merge_turn_wake_unaddressed'"); len(rows) != 0 {
+		t.Fatalf("a replay of a queued request journals nothing: %v", rows)
+	}
+}
+
 func Test408_c4_a_notice_that_cannot_be_queued_leaves_no_request_behind(t *testing.T) {
 	w, turn := returnFixture(t)
 	calls := 0

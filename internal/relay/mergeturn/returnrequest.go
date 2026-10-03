@@ -62,6 +62,19 @@ func (s *Service) RequestReturn(ctx context.Context, turn, actor, evidence strin
 			return nil
 		}
 		requestID := ReturnRequestID(turn, actor)
+		// A notice already queued for this request is reported as it is, whatever state its
+		// assignment is in now: the channel only decides whether a notice can be queued.
+		if r.RelationshipID.Valid && r.RelationshipID.String != "" {
+			existing := GrantEventID(r.RelationshipID.String, requestID)
+			queued, err := s.Store.One(tx, "SELECT 1 FROM events WHERE event_id = ?", existing)
+			if err != nil {
+				return err
+			}
+			if queued != nil {
+				notice = map[string]any{"state": "queued", "eventId": existing, "requestId": requestID}
+				return nil
+			}
+		}
 		refused, eventID := "no delivery channel is configured", ""
 		if s.Delivery != nil {
 			if refused, eventID, err = s.Delivery.Channel(tx, r.RelationshipID, r.HolderTaskID, requestID, r.ProjectKey); err != nil {
@@ -76,10 +89,6 @@ func (s *Service) RequestReturn(ctx context.Context, turn, actor, evidence strin
 			return s.journalOutcome(tx, "merge_turn_wake_unaddressed", turn, contract.OrderedObject{{Key: "requestId", Value: requestID}, {Key: "recipientTaskId", Value: r.HolderTaskID}, {Key: "reason", Value: refused}}, at)
 		}
 		notice = map[string]any{"state": "queued", "eventId": eventID, "requestId": requestID}
-		queued, err := s.Store.One(tx, "SELECT 1 FROM events WHERE event_id = ?", eventID)
-		if err != nil || queued != nil {
-			return err
-		}
 		receipt := canonicalJSON(map[string]any{"kind": ReturnRequestKind, "requestId": requestID, "turnId": r.TurnID, "tenure": r.Tenure, "targetKey": r.TargetKey, "repository": r.Repository, "baseRef": r.BaseRef, "recipientTaskId": r.HolderTaskID, "candidateHead": r.CandidateHead, "requestedBy": actor, "evidence": stated, "holdingLimitSeconds": int64(HoldingLimitSeconds), "wake": map[string]any{"eventId": eventID}})
 		if err = s.Delivery.Queue(tx, eventID, r.RelationshipID.String, r.HolderTaskID, receipt, requestID, at); err != nil {
 			return err
