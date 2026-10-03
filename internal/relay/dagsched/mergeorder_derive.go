@@ -161,6 +161,7 @@ func classify(left, right string, declarations map[string][]Region, names, files
 		a, b := coveringRegions(declarations[left], names, file), coveringRegions(declarations[right], names, file)
 		fileGrade := GradeLocal
 		if len(a) == 0 || len(b) == 0 {
+			// the declaration did not name the path: drift for the node that did not, whatever else it holds
 			if len(a) == 0 {
 				driftSet[left] = true
 			}
@@ -175,6 +176,10 @@ func classify(left, right string, declarations map[string][]Region, names, files
 				}
 			}
 		}
+		// a rename, a delete or a hotspot holds the whole repository (Region.Exclusive): a conflict anywhere in it is exclusive for that node's hold, whether or not the node declared the path (which is what drift says)
+		if holdsRepository(declarations[left], names) || holdsRepository(declarations[right], names) {
+			fileGrade = GradeExclusive
+		}
 		grade = worse(grade, fileGrade)
 	}
 	for node := range driftSet {
@@ -185,6 +190,16 @@ func classify(left, right string, declarations map[string][]Region, names, files
 		return "", nil
 	}
 	return grade, drift
+}
+
+// holdsRepository is whether a declaration holds the whole of a repository the observed checkout is known as: a region with the exclusive flag (a rename, a delete, a hotspot or the caller's word).
+func holdsRepository(regions []Region, names []string) bool {
+	for _, r := range regions {
+		if r.Exclusive && hasName(names, r.Repository) {
+			return true
+		}
+	}
+	return false
 }
 
 func capFiles(files []string) []string {
@@ -290,7 +305,7 @@ func (s *Scheduler) orderConstraints(ctx context.Context, q store.Querier, plan 
 		get(first).Before = append(get(first).Before, earlier)
 		constrained++
 	}
-	tips, err := latestTips(ctx, q, plan, byNode)
+	tips, err := latestTips(ctx, q, plan, byNode, stored)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -307,8 +322,8 @@ func (s *Scheduler) orderConstraints(ctx context.Context, q store.Querier, plan 
 
 // latestTips are, for the holders, the latest measurement of the node's head against a tip (the member of the highest sweep that measured it, and of that sweep's tips the one with most conflicts) when it
 // conflicts.
-func latestTips(ctx context.Context, q store.Querier, plan string, holders map[string]orderHolder) (map[string]*TipRow, error) {
-	rows, err := q.QueryContext(ctx, "SELECT m.left_node_id, m.observation_id, m.conflicts, m.left_head_source, m.right_head FROM dag_conflict_sweep_members m"+
+func latestTips(ctx context.Context, q store.Querier, plan string, holders map[string]orderHolder, stored map[string]string) (map[string]*TipRow, error) {
+	rows, err := q.QueryContext(ctx, "SELECT m.left_node_id, m.observation_id, m.conflicts, m.left_head_source, m.right_head, m.left_head FROM dag_conflict_sweep_members m"+
 		" WHERE m.plan_id = ? AND m.kind = 'tip' AND m.status <> 'unmeasured' AND m.sweep_seq = (SELECT MAX(x.sweep_seq) FROM dag_conflict_sweep_members x"+
 		" WHERE x.plan_id = m.plan_id AND x.kind = 'tip' AND x.left_node_id = m.left_node_id AND x.status <> 'unmeasured')"+
 		" ORDER BY m.left_node_id, m.conflicts DESC, m.observation_id", plan)
@@ -316,13 +331,13 @@ func latestTips(ctx context.Context, q store.Querier, plan string, holders map[s
 		return nil, err
 	}
 	type tipMember struct {
-		node, observation, source, tip string
-		conflicts                      int
+		node, observation, source, tip, head string
+		conflicts                            int
 	}
 	var members []tipMember
 	for rows.Next() {
 		var m tipMember
-		if err := rows.Scan(&m.node, &m.observation, &m.conflicts, &m.source, &m.tip); err != nil {
+		if err := rows.Scan(&m.node, &m.observation, &m.conflicts, &m.source, &m.tip, &m.head); err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
@@ -348,12 +363,22 @@ func latestTips(ctx context.Context, q store.Querier, plan string, holders map[s
 		if err != nil {
 			return nil, err
 		}
-		tip := &TipRow{ObservationID: m.observation, TipSHA: m.tip, HeadSource: m.source, Conflicts: m.conflicts, Files: capFiles(files), DriftNodes: []string{}}
+		tip := &TipRow{ObservationID: m.observation, TipSHA: m.tip, Head: m.head, HeadSource: m.source, HeadsCurrent: HeadsCurrentUnknown, Conflicts: m.conflicts, Files: capFiles(files), DriftNodes: []string{}}
+		switch current := stored[m.node]; {
+		case current == "":
+		case current == m.head:
+			tip.HeadsCurrent = HeadsCurrentYes
+		default:
+			tip.HeadsCurrent = HeadsCurrentNo
+		}
+		seen := map[string]bool{}
 		for _, d := range drift {
-			if len(tip.DriftNodes) == 0 || tip.DriftNodes[len(tip.DriftNodes)-1] != d.Node {
+			if !seen[d.Node] {
+				seen[d.Node] = true
 				tip.DriftNodes = append(tip.DriftNodes, d.Node)
 			}
 		}
+		sort.Strings(tip.DriftNodes)
 		out[m.node] = tip
 	}
 	return out, nil
@@ -373,6 +398,9 @@ func describeRow(r OrderRow) string {
 	}
 	if len(r.DriftNodes) > 0 {
 		text += "; undeclared by " + strings.Join(r.DriftNodes, ", ")
+	}
+	if r.HeadsCurrent == HeadsCurrentNo {
+		text += "; measured at other heads than the store holds now: measure again"
 	}
 	return text + ")"
 }
@@ -395,7 +423,11 @@ func orderReason(m MergeOrder) string {
 		parts = append(parts, "lands before "+strings.Join(rows, ", ")+", which "+plural(len(m.Before), "refreshes", "refresh")+" the base after it")
 	}
 	if m.Tip != nil {
-		parts = append(parts, fmt.Sprintf("its head conflicts with the tip %s (observation %s: %d conflicting %s): refresh the base", m.Tip.TipSHA, m.Tip.ObservationID, m.Tip.Conflicts, plural(m.Tip.Conflicts, "file", "files")))
+		if m.Tip.HeadsCurrent == HeadsCurrentNo {
+			parts = append(parts, fmt.Sprintf("a head of this node (%s) conflicted with the tip %s (observation %s: %d conflicting %s) and is no longer the head the store holds: measure again", m.Tip.Head, m.Tip.TipSHA, m.Tip.ObservationID, m.Tip.Conflicts, plural(m.Tip.Conflicts, "file", "files")))
+		} else {
+			parts = append(parts, fmt.Sprintf("its head conflicts with the tip %s (observation %s: %d conflicting %s): refresh the base", m.Tip.TipSHA, m.Tip.ObservationID, m.Tip.Conflicts, plural(m.Tip.Conflicts, "file", "files")))
+		}
 	}
 	return strings.Join(parts, "; ")
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -320,4 +321,73 @@ func turnOf(w *sweepWorld, id, relationship, head, requested string) {
 	w.k.t.Helper()
 	w.k.exec("INSERT INTO merge_turns (turn_id, target_key, repository, base_ref, project_key, holder_task_id, holder_host_id, relationship_id, candidate_head, state, tenure, requested_at, updated_at) VALUES (?, 'tgt', 'owner/repo', 'dev', 'P-TEST', ?, 'host', ?, ?, 'waiting', 1, ?, ?)",
 		id, "holder-"+id, relationship, head, requested, requested)
+}
+
+// A rename, a delete or a hotspot holds the whole repository, so a conflict anywhere in it is exclusive for that node's hold, whether or not the node declared the path; whether it declared the path is what drift
+// says, and stays by path.
+func TestMergeOrderGradeFollowsARepositoryWideHold(t *testing.T) {
+	rename := Region{Repository: "owner/repo", Path: "old.go", Kind: "file", Change: "rename"}
+	for name, c := range map[string]struct {
+		d        []Region
+		wantDrft []string
+	}{
+		"the node declared the conflicting path as well":  {[]Region{local("c.txt"), rename}, nil},
+		"the node declared only the rename, not the path": {[]Region{rename}, []string{"D"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newSweepWorld(t)
+			w.declareRegions("D", c.d...)
+			w.declareRegions("E", local("c.txt"))
+			w.declareRegions("F", local("f.txt"))
+			w.declareRegions("I", local("i.txt"))
+			w.running("D", "E")
+			w.measure(w.heads("D", "E"))
+			row := w.k.read("g").node("E").MergeOrder.After[0]
+			drift := row.DriftNodes
+			if len(drift) == 0 {
+				drift = nil
+			}
+			if row.Grade != GradeExclusive || !reflect.DeepEqual(drift, c.wantDrft) {
+				t.Fatalf("row = %+v, want an exclusive conflict with drift %v", row, c.wantDrft)
+			}
+		})
+	}
+}
+
+// The latest tip measurement says which head it was made at and whether the store still holds that head; a measurement at another head than the node's accepted one is labelled and the reason says to measure again.
+func TestMergeOrderTipRowSaysWhetherItsHeadIsCurrent(t *testing.T) {
+	w := orderWorld(t)
+	w.accept("D")
+	// D measured at E's head (the parent's word): that head conflicts with the tip, and it is not D's accepted head
+	w.measureAt(map[string]string{"D": w.head["E"]})
+	tip := w.k.read("g").node("D").MergeOrder.Tip
+	if tip == nil || tip.Head != w.head["E"] || tip.HeadsCurrent != HeadsCurrentNo || tip.HeadSource != HeadExplicit {
+		t.Fatalf("tip = %+v", tip)
+	}
+	if reason := w.k.read("g").node("D").MergeOrder.Reason; !strings.Contains(reason, "no longer the head the store holds") || strings.Contains(reason, "refresh the base") {
+		t.Errorf("reason = %q", reason)
+	}
+	// at its own accepted head the measurement is current
+	w.measureAt(nil)
+	if tip := w.k.read("g").node("D").MergeOrder.Tip; tip == nil || tip.Head != w.head["D"] || tip.HeadsCurrent != HeadsCurrentYes || tip.HeadSource != HeadAcceptance {
+		t.Fatalf("tip at the accepted head = %+v", tip)
+	}
+}
+
+// A node is named once in the drift of a tip, however many paths drifted: the rows come sorted by path.
+func TestMergeOrderTipDriftNamesEachNodeOnce(t *testing.T) {
+	w := orderWorld(t)
+	k := w.k
+	w.running("D")
+	sha := func(c string) string { return strings.Repeat(c, 40) }
+	k.exec("INSERT INTO dag_tip_conflict_observations (observation_id, plan_id, node_id, repository, head, head_source, tip_ref, tip_sha, base_sha, conflict_count, method, observed_by, observed_at) VALUES ('dto-x','g','D','/checkout',?, 'explicit','owner/repo@dev',?,?,2,'m','parent','t')", sha("1"), sha("2"), sha("3"))
+	for _, row := range [][2]string{{"a.go", "D"}, {"a.go", "E"}, {"b.go", "D"}} {
+		k.exec("INSERT INTO dag_conflict_drift (observation_id, node_id, path) VALUES ('dto-x', ?, ?)", row[1], row[0])
+	}
+	k.exec("INSERT INTO dag_tip_conflict_observation_files (observation_id, repository, path) VALUES ('dto-x','/checkout','a.go'), ('dto-x','/checkout','b.go')")
+	k.exec("INSERT INTO dag_conflict_sweeps (plan_id, sweep_seq, trigger_kind, trigger_node, trigger_ref, repository, observed_by, observed_at) VALUES ('g', 1, 'manual', '', '', '/checkout', 'parent', 't')")
+	k.exec("INSERT INTO dag_conflict_sweep_members (plan_id, sweep_seq, member_seq, kind, left_node_id, right_node_id, left_head, right_head, left_head_source, right_head_source, status, reason, observation_id, conflicts) VALUES ('g', 1, 1, 'tip', 'D', '', ?, ?, 'explicit', '', 'observed', '', 'dto-x', 2)", sha("1"), sha("2"))
+	if tip := k.read("g").node("D").MergeOrder.Tip; tip == nil || !reflect.DeepEqual(tip.DriftNodes, []string{"D", "E"}) || !reflect.DeepEqual(tip.Files, []string{"a.go", "b.go"}) {
+		t.Fatalf("tip = %+v", tip)
+	}
 }

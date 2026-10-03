@@ -35,11 +35,12 @@ type OrderRow struct {
 	Unattributed                                            bool
 }
 
-// TipRow is the latest measurement of a node's head against the tip it lands on, when it conflicts: the base refresh the node needs whatever lands first.
+// TipRow is the latest measurement of a node's head against the tip it lands on, when it conflicts: the base refresh the node needs whatever lands first. Head is the commit that was measured and HeadsCurrent
+// whether it is still the head the store holds for the node (yes, no, or unknown for a node whose head the store does not hold).
 type TipRow struct {
-	ObservationID, TipSHA, HeadSource string
-	Conflicts                         int
-	Files, DriftNodes                 []string
+	ObservationID, TipSHA, Head, HeadSource, HeadsCurrent string
+	Conflicts                                             int
+	Files, DriftNodes                                     []string
 }
 
 // MergeOrder is what the reading says of a node's place in the merge order: the nodes that land before it (After) and after it (Before), each with its observation, the node's own conflict with the tip, and
@@ -74,12 +75,12 @@ func (r OrderRow) canonical() map[string]any {
 }
 
 func (t TipRow) object() contract.OrderedObject {
-	return contract.OrderedObject{{Key: "observation_id", Value: t.ObservationID}, {Key: "tip_sha", Value: t.TipSHA}, {Key: "head_source", Value: t.HeadSource}, {Key: "conflicts", Value: t.Conflicts},
+	return contract.OrderedObject{{Key: "observation_id", Value: t.ObservationID}, {Key: "tip_sha", Value: t.TipSHA}, {Key: "head", Value: t.Head}, {Key: "head_source", Value: t.HeadSource}, {Key: "heads_current", Value: t.HeadsCurrent}, {Key: "conflicts", Value: t.Conflicts},
 		{Key: "files", Value: stringList(t.Files)}, {Key: "drift_nodes", Value: stringList(t.DriftNodes)}}
 }
 
 func (t TipRow) canonical() map[string]any {
-	return map[string]any{"observation_id": t.ObservationID, "tip_sha": t.TipSHA, "head_source": t.HeadSource, "conflicts": t.Conflicts, "files": stringList(t.Files), "drift_nodes": stringList(t.DriftNodes)}
+	return map[string]any{"observation_id": t.ObservationID, "tip_sha": t.TipSHA, "head": t.Head, "head_source": t.HeadSource, "heads_current": t.HeadsCurrent, "conflicts": t.Conflicts, "files": stringList(t.Files), "drift_nodes": stringList(t.DriftNodes)}
 }
 
 func (m MergeOrder) object() contract.OrderedObject {
