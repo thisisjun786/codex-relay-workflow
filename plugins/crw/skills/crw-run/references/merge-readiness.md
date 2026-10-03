@@ -442,7 +442,7 @@ task](../SKILL.md#return-corrections-to-the-existing-task)).
    [impact](#judge-a-finding-by-its-impact) always gets this answer, whatever label the review gave
    it and whatever the child concluded: it is fixed, or the candidate is reported blocked. A verdict
    that does not name a request is incomplete. Where the child asked first and ended its turn
-   `blocked_needs_input`, the answer goes back on that route and the request cites it.
+   `blocked_needs_input`, the answer goes back through `decision-reply`, then the DAG reflection when the criteria changed ([Answering a child that stopped for input](relay.md#answering-a-child-that-stopped-for-input)), and the request cites it.
 
 3. **Every commit after the review is accounted for.** With a `reviewedHead`,
    `git rev-list --first-parent <reviewedHead>..<head>` names exactly the merge commits of the
@@ -692,9 +692,25 @@ counts; refreshing only the candidate about to merge is what keeps it short. The
 scheduler's, which has no re-acceptance of a verified refresh: the refresh is recorded beside the acceptance instead.
 
 **On the relay's merge lane**, claim the turn with N (`merge-turn-request --head N`). A claim already
-made at P is restated with `merge-turn-ready --head N`, which resets readiness and, for a turn
-already holding, issues a new grant: acknowledge it with `merge-turn-acknowledge` and declare the
-candidate ready again. `merge-turn-check` states N and the required names read from the reading of N.
+made at P is restated with `merge-turn-ready --head N`. That resets readiness, so a `--ready` given with
+it is accepted and not recorded, and on a holding turn it issues a new grant. The relay reads no CI when
+readiness is declared, so the order below is yours to keep. Run it in the foreground of the turn, with
+the owner's binding active (`merge-turn-acknowledge` refuses a paused one):
+
+1. The refresh gives N (progress step `base_refresh`).
+2. `merge-turn-ready --turn <id> --actor <task> --head N --not-ready`. The answer's `readinessReset`
+   names the previous head, N, the grant you now owe (`grantId`) and the steps that follow.
+3. `merge-turn-acknowledge --turn <id> --actor <task> --grant <grantId> --evidence <what you read>`.
+4. Wait for N's jobs and judge them on this page (`ci_started`, `ci_polled`, `ci_result`).
+5. `merge-turn-ready --turn <id> --actor <task> --head N --ready`: recorded, no new grant.
+6. `merge-turn-check`, which states N, then the merge and `merge-turn-land`.
+
+The acknowledgement (step 3) may also come after step 5; declare readiness only once N's jobs have finished.
+The check refuses a missing step with its reason unchanged and the next step
+in the answer: an undeclared head is `merge_candidate_moved`, an unanswered grant is
+`merge_turn_not_held`, and a check that states another head than the turn holds is
+`merge_candidate_moved` again ([the lane's rules](../../../../../docs/relay/coordination.md#a-restated-head-is-a-new-candidate)).
+`merge-turn-check` states N and the required names read from the reading of N.
 It also compares N with the head of any work report recorded for the assignment, and refuses a
 different one as `merge_candidate_moved`. Nothing in the product records a work report
 (`docs/port/decisions.md`, section 53), so N has no report head to disagree with; a store that holds
