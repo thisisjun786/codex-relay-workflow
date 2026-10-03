@@ -959,6 +959,22 @@
         "cwd": "WORKSPACE",
         "date": null
       }
+    },
+    {
+      "argv": [
+        "init",
+        "x",
+        "--cwd",
+        "override",
+        "--cwd"
+      ],
+      "result": {
+        "verb": "init",
+        "slug": "x",
+        "phases": 1,
+        "cwd": "WORKSPACE",
+        "date": null
+      }
     }
   ],
   "help": {
