@@ -1,0 +1,279 @@
+{
+  "origin": {
+    "tag": "v0.2.40",
+    "commit": "3c1459acadeb1906d97c00a598e1457327ae372d",
+    "skills_listing_sha256": "79d9580f39ca27221cb9c24337080e3fe4a1e71f76338c7329fca63f76a32e89"
+  },
+  "table_sha256": "25b5d19d9da7e07d474d2b31bc4d4139c68607457f59174a597f17505f7f23eb",
+  "from": "pabcd",
+  "files": {
+    "SKILL.md": {
+      "original": "d080fce03cae65b0bc5e081f409f02be98d771e44bdd4e44d0bb1657427dc640"
+    },
+    "agents/openai.yaml": {
+      "original": "234470af1ede36e42afab4899cfdaa3c837501ac64467211bc777b348382ce73"
+    },
+    "references/catalog-discovery.yaml": {
+      "original": "906dd52c37774888fcffb4bbba4cee31d1e055a471e46f315727530ebe0e2820"
+    },
+    "references/delegation.md": {
+      "original": "65ebbb511384c2f332658638b67a37af5c6a1e2a46b5213c7caf54bbaa8b6da9"
+    },
+    "references/dispatch-surfaces.md": {
+      "original": "0ee25f178da61abca9b56de80b2f1890e55479a44088509c7490cf9345785a3d"
+    },
+    "references/implementation-units.md": {
+      "original": "3b3ccc9a1f1264ca603a37082a7a70bbc1577924c76d132a4c49c139d7660f32"
+    },
+    "references/loop-engineering.md": {
+      "original": "841cab83d5142da14689d7a04eb84b35d62e31d40e4e8afa39e28c432df3ba43"
+    },
+    "references/optimization.md": {
+      "original": "23aab46ec630e2365f2c6eccd3aa673876e971298d95e0386269fc5257d6b024"
+    },
+    "references/phase-audit.md": {
+      "original": "df4289299cfc9f14cb83b0885aca734581941991b2f46a54ee7162897a325175"
+    },
+    "references/phase-check.md": {
+      "original": "926a105cdd159c5525089e25d0eaf29ee5337f4efde2aee5415266a34aa03ad1"
+    },
+    "references/phase-control.md": {
+      "original": "a40317ac1b149c79260e4947cec67c8e910a8e73585f24c538625374ac49074b"
+    },
+    "references/phase-plan.md": {
+      "original": "84ba35c87e3fc8aa892d212d58a1918a01cc48077047a5cdfb0a5ae9e9d719c8"
+    },
+    "references/plan-output.md": {
+      "original": "008afe31f5c350909f207d3e99a276adae4bda78fe42b28ae9020d2e13dd6795"
+    }
+  },
+  "edits": [
+    {
+      "file": "SKILL.md",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Normalize frontmatter to the repository-supported name and description fields; preserve invocation description and record the removed oracle metadata. Distinguish task implementation P/C from Linear plan/check ownership and exclude the crw-run parent from implementation PABCD. Disambiguate task host-goal execution from crw-run parent goal mode beside the goal firewall. Remove the nonexistent orchestrate skill stub; keep the human chat command and the CRW CLI.",
+      "hunks": [
+        {
+          "line": 4,
+          "old": [
+            "metadata:\n",
+            "  last-verified: \"2026-07-02\"\n",
+            "  short-description: \"Codex-native PABCD loop (Interview/Plan/Audit/Build/Check/Done) with class-scaled depth.\"\n"
+          ]
+        },
+        {
+          "line": 11,
+          "old": [
+            "A Codex-native reimplementation of the IPABCD development loop (Interview + Plan / Audit / Build / Check / Done). There is no external orchestrator server. State lives in `.crw/sessions/<sessionId>.json` plus `.crw/ledger.jsonl`; transitions are driven by the `pabcd-state` hook component, the chat-side `crw-orchestrate` surface (human free-pass), and the live `crw pabcd orchestrate` terminal CLI (agent-gated).\n"
+          ],
+          "new": [
+            "A Codex-native reimplementation of the IPABCD development loop (Interview + Plan / Audit / Build / Check / Done). There is no external orchestrator server. State lives in `.crw/sessions/<sessionId>.json` plus `.crw/ledger.jsonl`; transitions are driven by the `pabcd-state` hook component, the chat-side `orchestrate` command (human free-pass), and the live `crw pabcd orchestrate` terminal CLI (agent-gated).\n"
+          ]
+        },
+        {
+          "line": 23,
+          "new": [
+            "P here plans one task's implementation; crw-plan decomposes a goal into Linear\n",
+            "projects, milestones and issues. C verifies this task's implementation; crw-check\n",
+            "compares delivered work with canonical Linear documents and issue criteria. A\n",
+            "crw-run project parent never follows this procedure and creates no implementation\n",
+            "goalplan or FSM, including in crw-run goal mode. A task's host goal running PABCD\n",
+            "is distinct from that parent goal.\n",
+            "\n"
+          ]
+        },
+        {
+          "line": 49,
+          "old": [
+            "You can return to Interview (I) from any phase to clarify requirements; the plan and audit context are preserved. Phases P, A, B pause for confirmation in interactive use; C and D proceed once their work is genuinely done. In goal mode the agent must explicitly run `crw pabcd orchestrate P --session <id>` to start each PABCD cycle; nothing self-advances into P automatically, but the P->D sequence is never skipped. Goal mode is PABCD-only: while a goal is active the Interview NEVER fires — entry is suppressed and `request_user_input` is hard-denied, so the Interview is HITL-only and runs only with no active goal.\n"
+          ],
+          "new": [
+            "You can return to Interview (I) from any phase to clarify requirements; the plan and audit context are preserved. Phases P, A, B pause for confirmation in interactive use; C and D proceed once their work is genuinely done. In goal mode the agent must explicitly run `crw pabcd orchestrate P --session <id>` to start each PABCD cycle; nothing self-advances into P automatically, but the P->D sequence is never skipped. Here goal mode means a task host goal; crw-run parent goal mode runs no PABCD. Task goal mode is PABCD-only: while a goal is active the Interview NEVER fires — entry is suppressed and `request_user_input` is hard-denied, so the Interview is HITL-only and runs only with no active goal.\n"
+          ]
+        },
+        {
+          "line": 58,
+          "old": [
+            "Goal activation and scoped continuation are owned by [crw-loop](../loop/SKILL.md).\n"
+          ],
+          "new": [
+            "Goal activation and scoped continuation are owned by [crw-loop](../crw-loop/SKILL.md).\n"
+          ]
+        },
+        {
+          "line": 63,
+          "old": [
+            "phase work, use [native execution](../dev/references/native-execution.md).\n"
+          ],
+          "new": [
+            "phase work, use [native execution](../crw-dev/references/native-execution.md).\n"
+          ]
+        },
+        {
+          "line": 84,
+          "old": [
+            "5. **D — Done**: Summarize what was checked with evidence, update STATUS/devlog, commit (local only — pushing remains gated by DEV-GIT-PUSH-01), and confirm no pending work remains for this work-phase before returning to idle. The D summary is written for a reader who was not in the loop — conclusion, what changed, evidence pointers — per [Reader documents](../dev/references/reader-documents.md) READER-DOC-02/04. For loop/multi-pass work, **LOOP-PESSIMIST-01 (DEFAULT)** also records what did not improve, which hypothesis died, and what evidence would show the current direction is wrong; D -> IDLE -> P is a context/bias-flush boundary, so the next cycle resumes from disk artifacts rather than transcript momentum.\n"
+          ],
+          "new": [
+            "5. **D — Done**: Summarize what was checked with evidence, update STATUS/devlog, commit (local only — pushing remains gated by DEV-GIT-PUSH-01), and confirm no pending work remains for this work-phase before returning to idle. The D summary is written for a reader who was not in the loop — conclusion, what changed, evidence pointers — per [Reader documents](../crw-dev/references/reader-documents.md) READER-DOC-02/04. For loop/multi-pass work, **LOOP-PESSIMIST-01 (DEFAULT)** also records what did not improve, which hypothesis died, and what evidence would show the current direction is wrong; D -> IDLE -> P is a context/bias-flush boundary, so the next cycle resumes from disk artifacts rather than transcript momentum.\n"
+          ]
+        },
+        {
+          "line": 143,
+          "old": [
+            "[peer collaboration](../dev/references/peer-collaboration.md). Outbound contact\n"
+          ],
+          "new": [
+            "[peer collaboration](../crw-dev/references/peer-collaboration.md). Outbound contact\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "agents/openai.yaml",
+      "reason": "Provide the default prompt required by CRW skill metadata while preserving the oracle invocation policy.",
+      "hunks": [
+        {
+          "line": 4,
+          "new": [
+            "  default_prompt: \"Use $crw-pabcd to plan, audit, build, check and close this task within its authorized scope.\"\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/delegation.md",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments.",
+      "hunks": [
+        {
+          "line": 141,
+          "old": [
+            "[Waiting on work](../../loop/references/waiting.md) rules in either HITL or HOTL.\n"
+          ],
+          "new": [
+            "[Waiting on work](../../crw-loop/references/waiting.md) rules in either HITL or HOTL.\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/dispatch-surfaces.md",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Relocate manifest validation to the loop skill that owns lane helper assets. Explain skill-directory resolution for the moved lane manifest helper. Quote the resolved helper path so a skill directory containing spaces is usable.",
+      "hunks": [
+        {
+          "line": 150,
+          "old": [
+            "[Lane dispatch](../../loop/references/lane-dispatch.md) carries the packet contract and\n"
+          ],
+          "new": [
+            "[Lane dispatch](../../crw-loop/references/lane-dispatch.md) carries the packet contract and\n"
+          ]
+        },
+        {
+          "line": 253,
+          "old": [
+            "Validate it with `node plugins/crw/scripts/check-lane-manifest.mjs <manifest.json>`.\n"
+          ],
+          "new": [
+            "Resolve `<crw-loop skill directory>` from the loaded loop skill path, then validate\n",
+            "it with `node \"<crw-loop skill directory>/scripts/check-lane-manifest.mjs\" <manifest.json>`.\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/implementation-units.md",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments.",
+      "hunks": [
+        {
+          "line": 5,
+          "old": [
+            "[Implementation log](../../dev-scaffolding/references/implementation-log.md).\n"
+          ],
+          "new": [
+            "[Implementation log](../../crw-dev-scaffolding/references/implementation-log.md).\n"
+          ]
+        },
+        {
+          "line": 28,
+          "old": [
+            "C0/C1 record behavior is canonically defined by [crw-dev §0.1](../../dev/SKILL.md):\n"
+          ],
+          "new": [
+            "C0/C1 record behavior is canonically defined by [crw-dev §0.1](../../crw-dev/SKILL.md):\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/loop-engineering.md",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments.",
+      "hunks": [
+        {
+          "line": 143,
+          "old": [
+            "Continuation belongs to [crw-loop](../../loop/SKILL.md);\n",
+            "divergence operation belongs to [Divergence tiers](../../loop/references/divergence-tiers.md).\n"
+          ],
+          "new": [
+            "Continuation belongs to [crw-loop](../../crw-loop/SKILL.md);\n",
+            "divergence operation belongs to [Divergence tiers](../../crw-loop/references/divergence-tiers.md).\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/phase-check.md",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments.",
+      "hunks": [
+        {
+          "line": 12,
+          "old": [
+            "   [Reader documents](../../dev/references/reader-documents.md) READER-DOC-05 and records\n"
+          ],
+          "new": [
+            "   [Reader documents](../../crw-dev/references/reader-documents.md) READER-DOC-05 and records\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/phase-control.md",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Remove the obsolete orchestrate skill invocation; the settled transition uses crw-pabcd and the chat/CLI commands.",
+      "hunks": [
+        {
+          "line": 20,
+          "old": [
+            "Accepted prefixes include `$crw:crw-orchestrate`, `$crw-pabcd`,\n"
+          ],
+          "new": [
+            "Accepted prefixes include `$crw-pabcd`,\n"
+          ]
+        },
+        {
+          "line": 115,
+          "old": [
+            "Execution intent and HOTL activation belong to [crw-loop](../../loop/SKILL.md).\n"
+          ],
+          "new": [
+            "Execution intent and HOTL activation belong to [crw-loop](../../crw-loop/SKILL.md).\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/plan-output.md",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments.",
+      "hunks": [
+        {
+          "line": 53,
+          "old": [
+            "[Reader documents](../../dev/references/reader-documents.md) READER-DOC-02: the\n"
+          ],
+          "new": [
+            "[Reader documents](../../crw-dev/references/reader-documents.md) READER-DOC-02: the\n"
+          ]
+        }
+      ]
+    }
+  ]
+}
