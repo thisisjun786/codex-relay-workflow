@@ -28,23 +28,23 @@ func TestRestoreMatchesTheRecordedOracle(t *testing.T) {
 	}
 	for _, c := range cases {
 		s, unreadable := restore("rec-s1", []byte(c.Raw), at())
-		if got, want := compact(t, c.ID, s), compactJSON(t, c.ID, c.State); unreadable != c.Unreadable || got != want {
+		got, want := compactEncoding(t, c.ID, s), compactJSON(t, c.ID, c.State)
+		if unreadable != c.Unreadable || got != want {
 			t.Errorf("%s: unreadable %v (oracle %v)\n got %s\nwant %s", c.ID, unreadable, c.Unreadable, got, want)
 		}
 		// written and read again: the oracle's second answer is the state itself, or the recorded "again"
 		enc, _ := Encode(s)
 		again, unreadableAgain := restore("rec-s1", enc, at())
-		want := compactJSON(t, c.ID, c.State)
 		if c.Again != nil {
 			want = compactJSON(t, c.ID, c.Again)
 		}
-		if got := compact(t, c.ID, again); unreadableAgain || got != want {
+		if got := compactEncoding(t, c.ID, again); unreadableAgain || got != want {
 			t.Errorf("%s: second pass\n got %s\nwant %s", c.ID, got, want)
 		}
 	}
 }
 
-func compact(t *testing.T, id string, s State) string {
+func compactEncoding(t *testing.T, id string, s State) string {
 	t.Helper()
 	enc, err := Encode(s)
 	if err != nil {

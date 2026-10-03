@@ -141,15 +141,17 @@ func stringsOf(arr []any) []string {
 	return out
 }
 
-// number is typeof v === "number" for a value decoded with UseNumber; a literal too large for a float64 is ±Inf, as JSON.parse
-// reads it.
+// number is typeof v === "number" for a value decoded into any with UseNumber (json.Number) or without it (float64); a
+// literal too large for a float64 is ±Inf, as JSON.parse reads it.
 func number(v any) (float64, bool) {
-	n, ok := v.(json.Number)
-	if !ok {
-		return 0, false
+	switch n := v.(type) {
+	case json.Number:
+		f, err := strconv.ParseFloat(string(n), 64)
+		return f, err == nil || errors.Is(err, strconv.ErrRange)
+	case float64:
+		return n, true
 	}
-	f, err := strconv.ParseFloat(string(n), 64)
-	return f, err == nil || errors.Is(err, strconv.ErrRange)
+	return 0, false
 }
 
 // count is a finite non-negative number floored, else 0; adding 0 turns a negative zero into 0, as JSON.stringify prints it.

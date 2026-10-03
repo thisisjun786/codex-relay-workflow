@@ -2,6 +2,7 @@ package state
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
@@ -93,8 +94,7 @@ func TestRestoreRules(t *testing.T) {
 		{"L8 fresh session reads interview null", `{"phase":"P"}`, func(s State) bool { return s.Interview == nil }},
 		{"L8 HIGH-1 persisted flags.interview true with a non-ready tracker reads false", `{"phase":"I","flags":{"interview":true},"interview":{"roundId":1,"dimensions":{},"contradictions":[],"assumptions":[]}}`, func(s State) bool { return !s.Flags.Interview && s.Interview != nil }},
 		{"wp5 marker without the successor field restores as legacy", `{"phase":"IDLE","checkEpoch":"c","dcloseRecovery":{"sessionId":"s","checkEpoch":"c","closedWorkPhaseId":"wp-1"}}`, func(s State) bool {
-			m := s.DcloseRecovery
-			return m != nil && m.Legacy && m.NextWorkPhaseID == nil
+			return s.DcloseRecovery != nil && s.DcloseRecovery.Legacy && s.DcloseRecovery.NextWorkPhaseID == nil
 		}},
 		{"wp5 malformed successor value restores as legacy instead of an explicit null", `{"phase":"IDLE","checkEpoch":"c","dcloseRecovery":{"sessionId":"s","checkEpoch":"c","closedWorkPhaseId":"wp-1","nextWorkPhaseId":7}}`, func(s State) bool {
 			return s.DcloseRecovery != nil && s.DcloseRecovery.Legacy && s.DcloseRecovery.NextWorkPhaseID == nil
@@ -172,14 +172,9 @@ func TestSanitizeKeyAndIsCanonicalSessionID(t *testing.T) {
 			t.Errorf("SanitizeKey(%q) = %q, want %q", in, got, want)
 		}
 	}
-	for _, id := range []string{"019f4a8a-b1a1-7113-b72a-460a39a8f096", "session_1.example"} {
-		if !IsCanonicalSessionID(id) {
-			t.Errorf("%q should be canonical", id)
-		}
-	}
-	for _, id := range []string{"", "  session-1  ", "../session-1", "세션-1", "-session-1"} {
-		if IsCanonicalSessionID(id) {
-			t.Errorf("%q should not be canonical", id)
+	for id, want := range map[string]bool{"019f4a8a-b1a1-7113-b72a-460a39a8f096": true, "session_1.example": true, "": false, "  session-1  ": false, "../session-1": false, "세션-1": false, "-session-1": false} {
+		if got := IsCanonicalSessionID(id); got != want {
+			t.Errorf("IsCanonicalSessionID(%q) = %v", id, got)
 		}
 	}
 }
@@ -193,16 +188,44 @@ func TestFindForeignSessionCopiesListsOtherTreesHoldingTheSameSession(t *testing
 }
 
 func TestMatchesDcloseRecoveryNeedsOwnSessionEpochAndPhase(t *testing.T) {
-	s := State{SessionID: "s", CheckEpoch: str("c"), DcloseRecovery: &DcloseRecoveryMarker{SessionID: "s", CheckEpoch: "c", ClosedWorkPhaseID: "wp-1"}}
-	if !MatchesDcloseRecovery(s, "wp-1") || MatchesDcloseRecovery(s, "wp-2") {
-		t.Fatal("phase id")
+	m := &DcloseRecoveryMarker{SessionID: "s", CheckEpoch: "c", ClosedWorkPhaseID: "wp-1"}
+	for i, c := range []struct {
+		s     State
+		phase string
+		want  bool
+	}{
+		{State{SessionID: "s", CheckEpoch: str("c"), DcloseRecovery: m}, "wp-1", true},
+		{State{SessionID: "s", CheckEpoch: str("c"), DcloseRecovery: m}, "wp-2", false},
+		{State{SessionID: "s", CheckEpoch: str("other"), DcloseRecovery: m}, "wp-1", false},
+		{State{SessionID: "s", DcloseRecovery: m}, "wp-1", false},
+		{State{SessionID: "t", CheckEpoch: str("c"), DcloseRecovery: m}, "wp-1", false},
+		{State{SessionID: "s", CheckEpoch: str("c")}, "wp-1", false},
+	} {
+		if got := MatchesDcloseRecovery(c.s, c.phase); got != c.want {
+			t.Errorf("case %d: %v, want %v", i, got, c.want)
+		}
 	}
-	s.CheckEpoch = str("other")
-	if MatchesDcloseRecovery(s, "wp-1") {
-		t.Fatal("epoch")
+}
+
+func TestReconstructUnverifiedReadsPlainJSONDecoding(t *testing.T) {
+	var raw any // json.Unmarshal yields float64; ReadStateStrict decodes with UseNumber
+	if err := json.Unmarshal([]byte(`[{"agentId":"a","recordedAt":"t","attempts":3}]`), &raw); err != nil {
+		t.Fatal(err)
 	}
-	if s.CheckEpoch, s.DcloseRecovery = nil, nil; MatchesDcloseRecovery(s, "wp-1") {
-		t.Fatal("no marker")
+	if got, corrupt := ReconstructUnverified(raw); corrupt || len(got) != 1 || got[0].Attempts != 3 {
+		t.Fatalf("%+v corrupt=%v", got, corrupt)
+	}
+}
+
+// The oracle resolves paths without following symlinks (path.resolve), so a symlink to cwd's own tree is another tree.
+func TestFindForeignSessionCopiesTakesASymlinkAliasForAnotherTree(t *testing.T) {
+	mine := put(t, "s", "{}")
+	alias := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(mine, alias); err != nil {
+		t.Skip(err)
+	}
+	if got := FindForeignSessionCopies(mine, "s", []string{alias}); len(got) != 1 || got[0] != StatePath(alias, "s") {
+		t.Fatalf("%v", got)
 	}
 }
 

@@ -1,7 +1,7 @@
 // Package state is the PABCD session state model and its read path: the Go form of CXC v0.2.40 pabcd-state/src/state.ts
 // (commit 3c1459ac) from the top of the file to readStateStrict, with the session file at .crw/sessions/<id>.json
-// (name-substitution R26). It reads and rebuilds; it writes nothing. The state-writes issue owns writeState, the session
-// lock, the ledgers (LedgerEntry, appendLedger, the interview scan events) and ensureState, the exclusive create of a file.
+// (name-substitution R26). It reads and rebuilds; it writes nothing. The state-writes issue owns writeState, the session lock,
+// the ledgers (LedgerEntry, LEDGER_FILE, appendLedger, the interview scan events) and ensureState, the exclusive create.
 //
 // Behaviour is ported as-is, oracle defects included. A file never becomes a State by decoding it into the struct:
 // ReadStateStrict rebuilds every field from known keys and defaults or drops what is malformed, so a hand-written or
@@ -49,12 +49,8 @@ func WorkPhases() []Phase { return []Phase{PhaseI, PhaseP, PhaseA, PhaseB, Phase
 // AllPhases is the oracle's ALL_PHASES: IDLE, then the work phases.
 func AllPhases() []Phase { return append([]Phase{PhaseIdle}, WorkPhases()...) }
 
-// The names under the state directory (STATE_DIR is crwdir.DirName).
-const (
-	SessionsSubdir   = "sessions"
-	LedgerFile       = "ledger.jsonl"
-	InterviewsSubdir = "interviews"
-)
+// SessionsSubdir is the directory of the session files under the state directory (STATE_DIR is crwdir.DirName).
+const SessionsSubdir = "sessions"
 
 // Retention caps of the unverified-subagent list; overflow sets State.UnverifiedCorrupt.
 const (
