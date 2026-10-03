@@ -209,7 +209,7 @@ func capture(t *testing.T, s scenario) {
 				result = plain(receipt)
 				receiptBytes = append(receiptBytes, dumps(receipt, false))
 				if action[0] == "send" {
-					record, err := delivery.AttemptRecord(delivery.Classify(receipt), action[1].(string), "ev-1", 1, "01parent", "unknown", "2026-09-22T00:00:00Z", nil)
+					record, err := delivery.AttemptRecord(delivery.Classify(receipt), action[1].(string), "ev-1", 1, "01parent", "unknown", "2026-09-22T00:00:00Z", nil, nil)
 					if err != nil {
 						t.Fatal(err)
 					}

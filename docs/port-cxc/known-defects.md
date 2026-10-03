@@ -364,6 +364,10 @@ This section supersedes the seeded `port: pending` statuses for native Write/Edi
 - Failed observation calls still record an ordinary row, and a failed computer-use response still records a structured app signal (source `pabcd-state/src/render-observations.ts:250-275`); port: kept (the ledger records invocation and declared metadata, not successful semantic inspection).
 - The row reader trims JavaScript whitespace before parsing, but the native malformed checker parses the untrimmed line, so a BOM-prefixed valid row is readable and also malformed (source `pabcd-state/src/render-observations.ts:89-115,168-175`); port: kept.
 
+## Found by the PABCD phase directive and assembly port
+
+No new oracle defect was identified in the directive text and assembly of `pabcd-state/src/hook.ts:212-235,324-575` (CXC v0.2.40, commit 3c1459ac). The prefix-only resolver's unterminated-backtick matching and whole-string fail-open behavior are preserved and recorded as edge cases, not changed into a Markdown parser. The goalplan reader and active-phase selector are outside this port.
+
 ## Found by the skill-search library port (CRW-278)
 
 - The cache catches write failures as well as fetch failures and calls both a network failure in its stale-cache warning (source `plugins/codexclaw/components/skill-search/src/cache.ts:47-60`; `TestCacheWriteFailureKeepsWholeFile`); port: kept.

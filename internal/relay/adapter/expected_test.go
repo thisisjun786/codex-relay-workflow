@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -126,6 +127,11 @@ func repoRoot(t testing.TB) string {
 func goldenOptions(t testing.TB, extra ...golden.Option) []golden.Option {
 	t.Helper()
 	options := append([]golden.Option{}, extra...)
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	options = append(options, golden.Substitute(executable, "<runtime executable>"))
 	for _, path := range []struct{ actual, placeholder string }{{testTempParent(t), "<test-tmp>"}, {suiteDirectory, "<suite>"}, {repoRoot(t), "<repo>"}} {
 		options = append(options, golden.Substitute(path.actual, path.placeholder))
 		if real, err := filepath.EvalSymlinks(path.actual); err == nil && real != path.actual {

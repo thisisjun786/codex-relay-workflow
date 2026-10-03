@@ -116,6 +116,7 @@ var PathUntriedReasons = []string{IdentityFieldsIncomplete, TranscriptPathMissin
 // row that did not fault ends with SettledFields, and a fault adds FaultFields instead.
 var (
 	RowFields           = []string{"recordVersion", "event", "at", "adapterOutcome", "processEnding", "stdoutReading", "guardState", "guardDecision", "guardMode", "assignmentId", "guardRecordedAs", "held", "eventKey", "eventIdentity", "identityScanMs", "acceptance", "acceptedAs", "guardInvoked", "configuration", "elapsedMs"}
+	OptionalRowFields   = []string{"runtime"} // absent in rows written before runtime attribution
 	PayloadFields       = []string{"sessionId", "turnId", "stopHookActive"}
 	GuardCallFields     = []string{"exitCode", "signal", "errno", "guardElapsedMs", "guardStderr"}
 	AnswerFields        = []string{"observation", "counters"}
