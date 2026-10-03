@@ -24,8 +24,8 @@ import (
 // --issue names nothing else: the installer's own issue.
 const DefaultIssue = "CRW-158"
 
-// backupHelp is the flag that acknowledges the additive DAG zone arriving (D-01, OPS-4.5).
-const backupHelp = "the directory the whole relay state directory is copied to (copy only, byte for byte, recorded) before a swap that brings the additive DAG zone to a store that predates it; the acknowledgement that route needs"
+// backupHelp is the flag that acknowledges the additive DAG zone, or ordinary indexes, arriving (D-01, CRW-472, OPS-4.5).
+const backupHelp = "the directory the whole relay state directory is copied to (copy only, byte for byte, recorded) before a swap that brings the additive DAG zone, or ordinary indexes on tables the store already holds, to a store that lacks them; the acknowledgement that route needs"
 
 // Commands are `crw install`'s subcommands.
 var Commands = []string{"install", "update", "rollback", "remove", "status", "register-mcp", "hook", "register-service"}

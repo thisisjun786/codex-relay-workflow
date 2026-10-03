@@ -1217,8 +1217,9 @@ independent review obtained instead under the repository's policy, and the work 
 indefinitely for an optional reviewer is not diligence; the one run each of Devin and Codex makes on a
 pull request is the exception, awaited to its end before the receipt
 ([Devin and Codex reviews are references, not merge gates](merge-readiness.md#devin-and-codex-reviews-are-references-not-merge-gates)). Apart from that run, a reviewer
-the [reviewer policy](merge-readiness.md#disabled-reviewer-policy) rules out is not requested or awaited;
-its existing findings still require evidence-backed disposition.
+is not requested again or awaited under the [reviewer policy](merge-readiness.md#reviewer-policy);
+its existing findings, and any thread that arrives after the receipt, still require evidence-backed disposition
+([Late review threads](merge-readiness.md#late-review-threads)).
 
 A missing mandatory review or a required check that has not passed is BLOCKED, and blocked is
 reported as blocked. It is never reported as completion with a note, because the note is what gets
@@ -1260,13 +1261,17 @@ round the child already owns. What the parent adds is currency, which only it ca
 the head and the base immediately before merging and compares the counts it sees against the record.
 That comparison is mechanical validity, not a review round. Where the re-read disagrees with the
 record, the candidate returns to the same child fail-closed; neither the parent nor the supervisor
-reviews on the child's behalf.
+reviews on the child's behalf. A review thread outside `threadsSeen` is the one thing the coordinator grades
+first: the child never judged it, so grading it is not a second review of the child's work
+([Late review threads](merge-readiness.md#late-review-threads)).
 
 One disagreement is the parent's own to remove: a base that moved under an otherwise verified head.
 The parent refreshes that itself under
 [Refresh the base yourself when only the base moved](merge-readiness.md#refresh-the-base-yourself-when-only-the-base-moved),
 and it is the one case where the parent builds the reading of the new head itself, because the
-record it would restate names the head the refresh replaced. Every other disagreement returns as
+record it would restate names the head the refresh replaced. A late review thread on the record's
+head that the parent has itself dispositioned under [OPS-9.4](#ops-94-a-new-head-invalidates-the-review-it-outran)
+is not a disagreement either. Every other disagreement returns as
 above.
 
 Two further things the parent does are not a second review round either. Deciding an acceptance
@@ -1299,8 +1304,13 @@ carry a green result forward across a head it never saw.
 
 A handoff record is invalidated the same way, and a review thread that appears on the SAME head
 counts: if it is not in the record's `threadsSeen`, the record did not see it and no longer
-describes the candidate. An invalidated record is not a verdict and is not a merge candidate. It
-returns to the child that produced it, through the correction path the assignment already uses.
+describes the candidate, unless the parent has itself judged that thread and recorded its
+disposition for that head (`merge-evidence --restate <record> --late-dispositions <file>`, in
+[a late thread the parent dispositions itself](merge-readiness.md#a-late-thread-the-parent-dispositions-itself)).
+An invalidated record is not a verdict and is not a merge candidate. It
+returns to the child that produced it, through the correction path the assignment already uses, for as long as
+that path is open: once the node is accepted no correction can reach the child, and
+[Late review threads](merge-readiness.md#late-review-threads) says what holds then.
 
 The one head the parent makes itself, a base refresh under that rule, is a head the child's evidence
 never saw either, and it is handled the same way: the jobs and the review are read again on it, the
@@ -1393,8 +1403,8 @@ code rather than with the repository it lands in.
 
 The skills and the runtime own different things. The skills hold workflow instructions that an agent
 reads; `cmd/` and `internal/` hold runtime code that a host executes. A rule that belongs to one does not move
-into the other just because they now share a commit. CXC and Paperthin stay outside this repository
-entirely and are not vendored by this decision.
+into the other just because they now share a commit. CXC stays outside this repository
+entirely and is not vendored by this decision.
 
 ### OPS-11.3 Four stages that are not one event
 
