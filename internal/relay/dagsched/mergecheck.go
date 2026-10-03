@@ -127,7 +127,8 @@ func (s *Scheduler) pinnedPredecessors(ctx context.Context, q store.Querier, pla
 // freshness is E-10 for the pull requests a release builds on: the relay reads each pinned predecessor's pull request itself and refuses the release when its head is
 // no longer the one the acceptance stands on (the accepted head, or after a recorded base refresh the head the record names), after recording that observation (a stale_head row), so no release
 // follows a push (contract E-10). It applies the fail-closed rule in its
-// release form: a reader error or a verdict of unknown is the host's failure and nothing is written, a verdict of stale is refused, a closed or merged pull request is
+// release form: a reader error or a verdict of unknown is the host's failure and nothing is written (a merged pull request is read by the rule in ClassifyPullRequest: its verdict is unknown by
+// construction, and it is readable beside what merging explains), a verdict of stale is refused, a closed or merged pull request is
 // allowed (a predecessor that landed before its successor got capacity keeps its immutable accepted head) and only the head is compared. A failure to read is retryable;
 // a moved head is not. A record that lands while the forge is read moves what the acceptance stands on: the observation is then not written (it would be made under a head the acceptance no longer stands on)
 // and the release is refused as a moved candidate, to be repeated.
