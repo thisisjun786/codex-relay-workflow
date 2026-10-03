@@ -13,6 +13,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/managed"
 )
 
 func slicesSort(values []string) { sort.Strings(values) }
@@ -216,7 +217,7 @@ func (a *Adapter) Send(ctx context.Context, requestID, thread, message string, s
 	}
 	answerCh := make(chan answer, 1)
 	go func() {
-		work, stopWork := context.WithCancel(context.WithValue(t.ctx, leaseKey{}, held))
+		work, stopWork := context.WithCancel(context.WithValue(managed.PropagateArmedReplay(t.ctx, ctx), leaseKey{}, held))
 		defer stopWork()
 		// Stops a call the caller no longer waits for. It runs on a goroutine of its own, so it
 		// decides nothing: an answer can land before it runs, and guardedSend asks the caller's

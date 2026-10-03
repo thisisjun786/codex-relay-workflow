@@ -370,12 +370,18 @@ Execution:
   reason in the blocked file and in your final message, which the coordinator reads, and emit the
   outcome alone. The relay refuses a file on those outcomes with `manifest_forbidden`; a file that
   must travel goes with `ready_for_review`.
+  `failed` and `interrupted` also state how your turn ended: pass `--turn-status failed` or
+  `--turn-status interrupted` with them. `--turn-status` is `inProgress` when you leave it out, a
+  turn in progress cannot carry those two outcomes, and the relay refuses the emit
+  `contradictory_observation`. `blocked_needs_input` takes no `--turn-status`: it stays staged from
+  your live turn until the relay sees the turn end.
 - [Only when a relay holds this assignment:] a refused emit is read, corrected and emitted again,
   and a turn that ends the work, finished or stopped (`ready_for_review`, `blocked_needs_input` or `failed`),
   never ends without an accepted receipt, which is an emit that printed its event id; a turn that
   continues the work (`in_progress`) owes none.
   A refusal is not "receipt not emitted, report and stop": its `reason` and `detail` say what
-  to change, such as dropping `--artifact` from an execution-only outcome or adding the
+  to change, such as dropping `--artifact` from an execution-only outcome, passing
+  `--turn-status failed` to a `failed` emit refused `contradictory_observation` or adding the
   continuation claim to an emit refused `unassigned_turn`, so change that and emit again. Only a
   refusal that cannot be corrected from its reason, because it is rooted in the assignment's own
   state, ends the turn as UNEMITTED (the UNEMITTED bullet below).
@@ -882,7 +888,7 @@ host values filled in.
    `intent-disposition` for that turn (`in_progress`, `blocked_needs_input`, `failed` or `ready_for_review`). When the pull request is
    ready, write the handoff record, which states every field of the merge-readiness handoff and of the disclosures `Return:` lists
    (`none` where there is none), and from inside your own turn emit the completion receipt over it without `--socket`, publish
-   `ready_for_review` and end the turn. If you cannot proceed, write a blocked file and emit `blocked_needs_input` (or `failed`) the same way but without `--artifact`: an execution-only receipt
+   `ready_for_review` and end the turn. If you cannot proceed, write a blocked file and emit `blocked_needs_input` (or `failed`, with `--turn-status failed`) the same way but without `--artifact`: an execution-only receipt
    carries no file (the relay refuses one with `manifest_forbidden`), so the file stays where you wrote it, your final message names it, and a
    file that must travel goes with `ready_for_review`. Never end a turn waiting on the parent without emitting, and never end a turn that finishes or stops the
    work without an accepted receipt (an `in_progress` turn owes none): a refused emit is read, corrected from its reason and emitted again. Emitting from a turn that is not the generation's anchor (a

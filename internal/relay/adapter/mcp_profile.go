@@ -7,6 +7,7 @@ import (
 	bridgesettings "github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/managed"
 )
 
 // withMCP is the record a send resumes with: a copy that carries no stored mcpServers key (settings-record
@@ -26,7 +27,7 @@ func (a *Adapter) withMCP(ctx context.Context, record *delivery.TaskSettings) (*
 	cited, _ := record.Data.Lookup("citedRole")
 	profile, _ := stated.(string)
 	role, _ := cited.(string)
-	if profile == "" || role == "" {
+	if role == "" || profile == "" && !(stated == nil && role == "child" && managed.ArmedReplay(ctx)) {
 		return send, nil, nil
 	}
 	declared, ok := a.bridge.Policy.Role(role)
@@ -36,6 +37,9 @@ func (a *Adapter) withMCP(ctx context.Context, record *delivery.TaskSettings) (*
 	selection, err := declared.SelectMCP(role, profile)
 	if err != nil {
 		return nil, nil, err
+	}
+	if selection.Name == "" {
+		return send, nil, nil
 	}
 	cwd, _ := record.Data.Lookup("cwd")
 	cwdText, _ := cwd.(string)
