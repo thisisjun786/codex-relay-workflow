@@ -89,6 +89,8 @@ counterpart of the Python-recorded scenarios beside it in `contract/fixtures/` (
   `stdin_pad` appends that many spaces (an oversized payload that is still one JSON document).
   A `write` step runs nothing: the recorder writes those files between invocations, standing in
   for an agent's edit, and records the step with `"action": "write"`.
+  A `wait` step runs nothing either: it polls, up to the step deadline, for a file a detached process of an earlier
+  step writes (a case-path glob such as `ws/.codexclaw/bg/*.exit`) and is recorded with `"action": "wait"`.
 - `observe` lists the roots or subtrees to record afterwards; the default is all five roots
   without `codex/codexclaw/hook-observations`, the diagnostic record every hook invocation
   writes. Naming that path observes it too.
