@@ -1,0 +1,17 @@
+{
+  "issue": "CRW-434",
+  "identical": [],
+  "intentionally-changed": [],
+  "pending": [
+    "cli__orchestrate__bound_c_to_d_requires_test_receipt",
+    "cli__orchestrate__check_output_fail_line_with_exit_zero",
+    "cli__orchestrate__full_cycle_idle_p_a_b_c_d_idle",
+    "cli__orchestrate__reset_clears_to_idle",
+    "cli__orchestrate__split_cwd_cycle_closes_on_real_commit_receipt",
+    "cli__session__source_binds_linked_worktree",
+    "hook__user-prompt-submit-checking-pabcd-trigger__chat_orchestrate_a_free_pass_from_p",
+    "hook__user-prompt-submit-checking-pabcd-trigger__chat_orchestrate_illegal_edge_refused",
+    "hook__user-prompt-submit-checking-pabcd-trigger__chat_orchestrate_p_enters_plan",
+    "hook__user-prompt-submit-checking-pabcd-trigger__codexclaw_cxc_override_in_directive"
+  ]
+}
