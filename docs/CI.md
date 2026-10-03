@@ -86,15 +86,15 @@ A runner spends about 50 s before its tests (checkout, toolchain, the one `crw` 
 runs a few packages at a time on four CPUs, in the order a part lists them, so a leg takes about that
 plus its slowest package, or its packages' total over four CPUs if that is longer; list a slow
 package first. The legs as balanced after the slow packages' tests ran in parallel (CRW-424), with the
-hosted job time before and after (median of at least three runs each):
+hosted job time before and after (median of four runs before and six after):
 
 | Leg | Packages | Before | After |
 | --- | --- | --- | --- |
-| `test-1` | `relay/dagsched`, `relay/delivery`, `relay/cli` | 159 s | 190 s |
-| `test-2` | `runtime/install`, `relay/supervisor`, `relay/registry` | 118 s | 214 s |
-| `test-3` | `contracttest`, `relay/store`, `relay/mergeturn`, `relay/service`, `relay/sync`, `relay/faults` | 170 s | 169 s |
-| `test-4` | `relay/hook`, `relay/linkage`, `relay/evidence`, `relay/managed` | 95 s | 80 s |
-| `test-rest` | the other 58 packages and the `dev`-tagged tests | 285 s | 179 s |
+| `test-1` | `relay/dagsched`, `relay/delivery`, `relay/cli` | 159 s | 204.5 s |
+| `test-2` | `runtime/install`, `relay/supervisor`, `relay/registry` | 118.5 s | 214 s |
+| `test-3` | `contracttest`, `relay/store`, `relay/mergeturn`, `relay/service`, `relay/sync`, `relay/faults` | 170.5 s | 169 s |
+| `test-4` | `relay/hook`, `relay/linkage`, `relay/evidence`, `relay/managed` | 95 s | 84 s |
+| `test-rest` | the other 58 packages and the `dev`-tagged tests | 285.5 s | 172.5 s |
 
 `runtime/install` is the floor of the longest leg: its tests run one after another for about 140 s, so
 the leg that holds it takes about 215 s however the others are split, and a sixth leg would not
