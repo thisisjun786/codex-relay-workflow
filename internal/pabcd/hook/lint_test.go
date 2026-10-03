@@ -185,3 +185,13 @@ func TestEditLegLintPrecedenceAndPabcdOff(t *testing.T) {
 		t.Fatalf("lint denies and disabled advisory mutated count: %v", got)
 	}
 }
+
+func TestLintJSONDepthPlatformLimit(t *testing.T) {
+	for _, depth := range []int{9999, 10001} {
+		raw := `{"hook_event_name":"PreToolUse","tool_name":"apply_patch","tool_input":{"command":"+debugger;"},"extra":` + strings.Repeat("[", depth) + "0" + strings.Repeat("]", depth) + "}" // justified: recorded decoder-limit fixture
+		out := hook.HandleApplyPatchLint(raw)
+		if (out == "") != (depth == 10001) {
+			t.Fatalf("depth %d returned %q", depth, out)
+		}
+	}
+}
