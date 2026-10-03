@@ -2,6 +2,7 @@ package goalplan
 
 import (
 	"path"
+	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 )
@@ -114,9 +115,22 @@ func reviveReviewRounds(raw any) []ReviewRoundState {
 	return out
 }
 
-// revivePlanFiles rebuilds the file list of a round: every entry must have a non-empty path and sha256, or the whole list is
-// dropped, because a partial file set would silently narrow what the round claims to have covered. nil is absent, and an empty
-// list is absent too. The path is not examined beyond that (an absolute path or one with ".." is kept).
+// escapesWorkspace reports whether a plan-file path leaves the working directory it is resolved against: an absolute path, or a
+// relative one that, cleaned, is ".." or climbs out with "../". It reads the text only: a symlink inside the workspace is not
+// followed here, which is the reader of the path's job.
+func escapesWorkspace(p string) bool {
+	if path.IsAbs(p) {
+		return true
+	}
+	c := path.Clean(p)
+	return c == ".." || strings.HasPrefix(c, "../")
+}
+
+// revivePlanFiles rebuilds the file list of a round: every entry must have a non-empty sha256 and a non-empty path that stays
+// inside the working directory, or the whole list is dropped, because a partial file set would silently narrow what the round
+// claims to have covered, and a round without its files is refused by the A to B gate rather than trusted. nil is absent, and
+// an empty list is absent too. The oracle keeps any non-empty path, so one naming a file outside the workspace is hashed on
+// every staleness check (a review finding of kind security, fixed here on purpose: known-defects.md, port: fixed).
 func revivePlanFiles(raw any) []PlanFileHash {
 	list, ok := raw.([]any)
 	if !ok || len(list) == 0 {
@@ -127,7 +141,7 @@ func revivePlanFiles(raw any) []PlanFileHash {
 		f, ok := entry.(map[string]any)
 		file, _ := text(f, "path")
 		sum, _ := text(f, "sha256")
-		if !ok || file == "" || sum == "" {
+		if !ok || file == "" || sum == "" || escapesWorkspace(file) {
 			return nil
 		}
 		out = append(out, PlanFileHash{Path: file, Sha256: sum})

@@ -94,8 +94,21 @@ func TestReviveReviewRounds(t *testing.T) {
 
 func TestRevivePlanFiles(t *testing.T) {
 	ok := obj{"path": "a/000.md", "sha256": "aa"}
-	if got := revivePlanFiles([]any{ok, obj{"path": "../b", "sha256": "bb", "size": 3}}); !reflect.DeepEqual(got, []PlanFileHash{{"a/000.md", "aa"}, {"../b", "bb"}}) {
+	if got := revivePlanFiles([]any{ok, obj{"path": "./a/../b/010.md", "sha256": "bb", "size": 3}}); !reflect.DeepEqual(got, []PlanFileHash{{"a/000.md", "aa"}, {"./a/../b/010.md", "bb"}}) {
 		t.Errorf("valid list: got %+v", got)
+	}
+	// A path stays as written, and may name a dotted entry or come back to the working directory without leaving it.
+	for _, inside := range []string{"..hidden/000.md", "a/..", ".", "a/../b", "b/.../c"} {
+		if got := revivePlanFiles([]any{obj{"path": inside, "sha256": "aa"}}); len(got) != 1 || got[0].Path != inside {
+			t.Errorf("%q stays inside the working directory: got %+v", inside, got)
+		}
+	}
+	// A review finding of kind security, fixed on purpose where the oracle keeps the path: a path outside the working
+	// directory drops the whole list, however it is spelled.
+	for _, outside := range []string{"/etc/hostname", "/", "..", "../x", "a/../../x", "./../x", "a/b/../../../x"} {
+		if got := revivePlanFiles([]any{ok, obj{"path": outside, "sha256": "bb"}}); got != nil {
+			t.Errorf("%q leaves the working directory: got %+v, want the whole list dropped", outside, got)
+		}
 	}
 	for name, raw := range map[string]any{"absent": nil, "empty": []any{}, "not a list": obj{}, "text": "x"} {
 		if got := revivePlanFiles(raw); got != nil {

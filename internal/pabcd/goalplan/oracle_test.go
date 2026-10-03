@@ -68,15 +68,34 @@ func TestOracleParity(t *testing.T) {
 	if len(cases) < 100 {
 		t.Fatalf("%d recorded cases", len(cases))
 	}
+	// The one recorded case where this port departs from the oracle, by decision: a review finding of kind security (plan-file
+	// paths that leave the working directory are hashed by the oracle's staleness check). It is tagged intentionally-changed.
+	// The recording stays what the oracle answered; the replay expects the new answer, and a tag whose recorded answer already
+	// equals the new one fails.
+	changed := map[string]string{
+		"files_path_absolute_and_dotdot_accepted": `{"reviewRounds":[{"roundId":"r1","purpose":"plan_audit","planPath":"devlog/_plan/260101_demo","planSha256":"ab12","status":"pending","lane":{"launchId":"r1-20260101000000"},"openedAt":"2026-01-01T00:00:00.000Z"}]}`,
+	}
+	for name := range changed {
+		if _, ok := cases[name]; !ok {
+			t.Fatalf("%s is tagged intentionally-changed but is not a recorded case", name)
+		}
+	}
 	for _, name := range slices.Sorted(maps.Keys(cases)) {
 		c := cases[name]
 		t.Run(name, func(t *testing.T) {
 			if c.Oracle == nil {
 				t.Fatal("the oracle refused the plan; no recorded case expects that")
 			}
+			want := *c.Oracle
+			if port, ok := changed[name]; ok {
+				if port == want {
+					t.Fatal("tagged intentionally-changed but the recorded answer is the new one")
+				}
+				want = port
+			}
 			got := compact(t, reviveBoth(c.Input))
-			if got != *c.Oracle {
-				t.Fatalf("revived\n%s\noracle\n%s", got, *c.Oracle)
+			if got != want {
+				t.Fatalf("revived\n%s\nwant\n%s", got, want)
 			}
 			// What a revived plan holds survives being written and read back: reviving it again changes nothing.
 			var again map[string]any
