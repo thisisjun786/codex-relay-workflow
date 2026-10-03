@@ -64,8 +64,8 @@ func ExitPath(cwd, id string) string   { return filepath.Join(BGDir(cwd), id+".e
 func DisabledPath(cwd string) string  { return filepath.Join(BGDir(cwd), DisabledFile) }
 func EnabledAtPath(cwd string) string { return filepath.Join(BGDir(cwd), EnabledAtFile) }
 
-// EnsureDir creates .crw with its .gitignore when it is new, then bg, and returns bg (ensureDir). It refuses a .crw or bg that
-// resolves outside the workspace.
+// EnsureDir creates .crw with its .gitignore when it is new, then bg, and returns bg (ensureDir). It judges .crw, then bg, before it
+// creates anything below them, and refuses one that resolves outside the workspace.
 func EnsureDir(cwd string) (string, error) {
 	crw, err := crwdir.EnsureDir(cwd)
 	if err != nil {
@@ -75,10 +75,10 @@ func EnsureDir(cwd string) (string, error) {
 		return "", err
 	}
 	dir := BGDir(cwd)
-	if err := os.MkdirAll(dir, 0o777); err != nil {
+	if err := inside(cwd, dir); err != nil {
 		return "", err
 	}
-	if err := inside(cwd, dir); err != nil {
+	if err := os.MkdirAll(dir, 0o777); err != nil {
 		return "", err
 	}
 	return dir, nil
@@ -128,7 +128,8 @@ func confined(cwd, path string) (string, error) {
 }
 
 // AtomicWrite publishes text at path through a temporary file beside it and a rename, so a reader never sees a torn file
-// (atomicWrite). The temporary file is <path>.tmp-<pid>-<ms>; a rename that fails leaves it behind, as the oracle did.
+// (atomicWrite). The temporary file is <path>.tmp-<pid>-<ms>, created exclusively; a taken name (a write of the same target in the same
+// millisecond, a planted entry) is skipped for <path>.tmp-<pid>-<ms>-1 and on. A rename that fails leaves it behind, as the oracle did.
 func AtomicWrite(cwd, path, text string) error {
 	return atomicWrite(cwd, path, text, os.Getpid(), time.Now().UnixMilli())
 }
@@ -138,8 +139,14 @@ func atomicWrite(cwd, path, text string, pid int, ms int64) error {
 	if err != nil {
 		return err
 	}
-	tmp := path + ".tmp-" + strconv.Itoa(pid) + "-" + strconv.FormatInt(ms, 10)
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o666)
+	const exclusive = os.O_WRONLY | os.O_CREATE | os.O_EXCL
+	base := path + ".tmp-" + strconv.Itoa(pid) + "-" + strconv.FormatInt(ms, 10)
+	tmp := base
+	f, err := os.OpenFile(tmp, exclusive, 0o666)
+	for try := 1; errors.Is(err, os.ErrExist) && try < 100; try++ {
+		tmp = base + "-" + strconv.Itoa(try)
+		f, err = os.OpenFile(tmp, exclusive, 0o666)
+	}
 	if err != nil {
 		return err
 	}
@@ -159,8 +166,7 @@ func ReadText(path string) (string, bool) {
 	return decodeUTF8(b), true
 }
 
-// ReadJSON is the text of a file that holds one JSON object or array, or false for anything else (readJsonOrNull; its typeof test lets
-// an array through).
+// ReadJSON is the text of a file that holds one JSON object or array, or false (readJsonOrNull; its typeof test lets an array through).
 func ReadJSON(path string) (json.RawMessage, bool) {
 	text, ok := ReadText(path)
 	if !ok || !json.Valid([]byte(text)) {
@@ -280,8 +286,7 @@ func object(members []Member, depth int) ([]byte, error) {
 	return append(b, '}'), nil
 }
 
-// maxDepth bounds the nesting of a row, so a value that contains itself is an error and not a stack overflow (JSON.stringify throws
-// at a similar depth).
+// maxDepth makes a value that contains itself an error and not a stack overflow (JSON.stringify throws at a similar depth).
 const (
 	maxDepth       = 4096
 	errTooDeep     = sentinel("ledger value nested too deeply")

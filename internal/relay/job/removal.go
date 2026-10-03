@@ -15,7 +15,7 @@ import (
 func RemovalSteps() []string {
 	return []string{
 		"1. internal/relay/job/ 디렉터리 삭제 (bg 저장소와 그 위에 얹힌 코드 전부)",
-		"2. crw relay job 동사가 연결돼 있으면 제거: internal/relay/cli 의 job 연결과 그 argparse 명세",
+		"2. crw relay job 동사가 연결돼 있으면 제거: internal/relay/cli 의 job 연결과 internal/relay/argparse/specs.json 의 job 명세",
 		"3. plugins/crw/wiring/hooks/ 에 bg 훅 파일 3개 (stop / user-prompt-submit / session-start)가 있으면 삭제하고, plugins/crw/.codex-plugin/plugin.json 의 hooks[] 에서 그 3줄 제거",
 		"4. contract/notes/cxc/ 에 bg fixture (cli__bg__*, cli-help__bg__*, 백그라운드 완료 훅)를 맡은 claim 이 있으면 삭제 (그 fixture 는 pending 으로 돌아간다)",
 		"5. go run -tags dev ./cmd/crw-dev ci plugin --record-version 으로 플러그인 digest 다시 기록",

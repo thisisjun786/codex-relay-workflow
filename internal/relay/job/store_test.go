@@ -14,9 +14,8 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 )
 
-// The byte-level expectations marked "oracle" are what Node v24 printed running the unmodified CXC v0.2.40 bg-wake/src/store.ts in a
-// scratch workspace (ensureDir, the path builders, appendLedger, listRecordIds, readJsonOrNull, readTextOrNull, removePath,
-// atomicWrite, mtimeMs); the confinement cases have no oracle counterpart, they are the deliberate security difference.
+// Expectations marked "oracle" are what Node v24 printed running the unmodified CXC v0.2.40 bg-wake/src/store.ts in a scratch
+// workspace; the confinement cases have no oracle counterpart, they are the deliberate security difference.
 
 func workspace(t *testing.T) string {
 	t.Helper()
@@ -177,18 +176,20 @@ func TestAtomicWriteLeavesTheTmpWhenTheRenameFails(t *testing.T) {
 	}
 }
 
-func TestAtomicWriteNeverFollowsAPlantedTmpLink(t *testing.T) {
+// A taken tmp name (a concurrent write in the same millisecond, a planted entry) is never written through: the write takes the next.
+func TestAtomicWriteTakesAnotherNameWhenTheTmpIsTaken(t *testing.T) {
 	cwd := workspace(t)
-	store(t, cwd)
+	dir := store(t, cwd)
 	target := filepath.Join(workspace(t), "target")
 	put(t, target, "untouched")
 	path := RecordPath(cwd, "r")
-	symlink(t, target, path+".tmp-42-7")
-	if err := atomicWrite(cwd, path, "payload", 42, 7); err == nil {
-		t.Error("a planted tmp link was written through")
+	put(t, path+".tmp-42-7", "another writer")
+	symlink(t, target, path+".tmp-42-7-1")
+	if err := atomicWrite(cwd, path, "payload", 42, 7); err != nil || get(t, path) != "payload" {
+		t.Fatalf("err = %v", err)
 	}
-	if get(t, target) != "untouched" {
-		t.Errorf("the link target holds %q", get(t, target))
+	if get(t, target) != "untouched" || get(t, path+".tmp-42-7") != "another writer" || len(names(t, dir)) != 3 {
+		t.Errorf("a taken name was written through: target %q, directory %v", get(t, target), names(t, dir))
 	}
 }
 
