@@ -857,3 +857,26 @@ func TestDoctorComparesTheAppServerDimension(t *testing.T) {
 		t.Errorf("the bridge asked is %s, not the selected runtime's", asked)
 	}
 }
+
+// alwaysActive stays not_verified whatever the doctor finds: a unit file is a registration, and surviving a
+// host restart is only established by one being observed. Its evidence names the default unit file it found,
+// did not find, or found to be somebody else's.
+func TestAlwaysActiveEvidenceNamesTheDefaultUnitFile(t *testing.T) {
+	for _, c := range []struct{ name, content, want string }{
+		{"absent", "", "no relay unit file at"},
+		{"owned", "[Unit]\n" + doctor.UnitOwnerLine + "\n", "the installer's relay unit file"},
+		{"foreign", "[Unit]\nDescription=mine\n", "is not the installer's unit file"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h := newHost(t)
+			if c.content != "" {
+				write(t, filepath.Join(h.home, ".config", "systemd", "user", doctor.ServiceUnit), c.content, 0o644)
+			}
+			report := h.diagnose(t)
+			evidence, _ := at(report, "checks", "results", "alwaysActive", "evidence").(string)
+			if at(report, "checks", "results", "alwaysActive", "value") != "not_verified" || !strings.Contains(evidence, c.want) {
+				t.Fatalf("%s: %q", c.name, evidence)
+			}
+		})
+	}
+}
