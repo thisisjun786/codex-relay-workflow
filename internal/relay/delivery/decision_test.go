@@ -31,6 +31,12 @@ type decWorld struct {
 // completion delivery to the parent, as the daemon does once that turn has ended.
 func newDecWorld(t *testing.T, recipients ...string) *decWorld {
 	t.Helper()
+	return newDecWorldWith(t, nil, recipients...)
+}
+
+// newDecWorldWith is newDecWorld with a step that runs after the criteria are registered and before the blocked receipt is taken.
+func newDecWorldWith(t *testing.T, before func(*decWorld), recipients ...string) *decWorld {
+	t.Helper()
 	h := newRulingHL(t)
 	if len(recipients) == 0 {
 		recipients = []string{parent, child}
@@ -38,6 +44,9 @@ func newDecWorld(t *testing.T, recipients ...string) *decWorld {
 	rid := h.register(regOpts{recipients: recipients})
 	h.registerCriteria(rrSet)
 	d := &decWorld{hl: h, rid: rid}
+	if before != nil {
+		before(d)
+	}
 	d.blocked = d.emit("blocked_needs_input", "completed", store.AcceptOptions{})
 	_, err := h.delivery.Enqueue(h.ctx, d.blocked, "", "")
 	mustDo(t, err)
@@ -441,6 +450,71 @@ func TestDR10_an_advancing_decision_reports_an_anchor_bound_to_another_turn(t *t
 	if got := d.one("SELECT dispatch_turn_id FROM generations WHERE relationship_id = ? AND execution_generation = 2", d.rid).S("dispatch_turn_id"); got != "turn-bound-by-hand" {
 		t.Fatalf("generation 2 is bound to %s", got)
 	}
+}
+
+// c1: the message carries the criteria the decision was made under, so the child works from what the parent approved even when the set
+// is registered again before the message is sent.
+func TestDR11_the_message_carries_the_criteria_the_decision_was_made_under(t *testing.T) {
+	d := newDecWorld(t)
+	digest := pyjson.Text(d.setDigest())
+	d.mustReply(DecisionSplitApproval, "keep the endpoint half", digest)
+	d.registerCriteria(rrEdited)
+	if rep := d.deliver(); len(rep.Notes) != 0 {
+		t.Fatalf("the scheduler's delivery: %v", rep.Notes)
+	}
+	message := d.sent().message
+	for _, want := range []string{"the endpoint returns the agreed shape", "a malformed request is refused", digest} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("the message does not carry %q:\n%s", want, message)
+		}
+	}
+	if strings.Contains(message, "COMPLETELY different") {
+		t.Fatalf("the message carries the set registered after the decision:\n%s", message)
+	}
+}
+
+// c1: receipts first seen at one instant are ordered by the order they were stored in, not by their ids, which are hashes of the receipts.
+func TestDR12_receipts_first_seen_at_one_instant_are_ordered_by_storage(t *testing.T) {
+	rid, err := store.RelationshipID(parent, child, issue)
+	mustDo(t, err)
+	idOf := func(outcome string, attempt int) string {
+		event, err := store.EventID(rid, 1, store.NoDeliverable, outcome, dispatchTurn, &attempt)
+		mustDo(t, err)
+		return event
+	}
+	attemptOf := func(smaller bool) int {
+		for n := 2; n < 200; n++ {
+			if (idOf("failed", n) < idOf("blocked_needs_input", 1)) == smaller {
+				return n
+			}
+		}
+		t.Fatal("no attempt number gives the wanted order of ids")
+		return 0
+	}
+	emitAttempt := func(d *decWorld, attempt int) {
+		_, err := d.accept(d.executionPayload(d.rid, 1, "failed", attempt, assigned("completed")), store.AcceptOptions{})
+		mustDo(t, err)
+	}
+	t.Run("a newer receipt whose id sorts first still supersedes the answer", func(t *testing.T) {
+		attempt := attemptOf(true)
+		d := newDecWorld(t)
+		event := decEvent(d.mustReply(DecisionAnswer, "go on", ""))
+		emitAttempt(d, attempt)
+		d.attempt(event, nil)
+		if row := d.row(event); row.S("state") != Superseded || row.S("hold_reason") != SupersededRevision {
+			t.Fatalf("the reply after a later receipt with a smaller id: %v", row)
+		}
+		r := newDecWorld(t)
+		emitAttempt(r, attempt)
+		r.refused(DecisionAnswer, "go on", "", SupersededRevision)
+	})
+	t.Run("an older receipt whose id sorts last does not block the answer", func(t *testing.T) {
+		attempt := attemptOf(false)
+		d := newDecWorldWith(t, func(d *decWorld) { emitAttempt(d, attempt) })
+		if out, err := d.reply(DecisionAnswer, "go on", ""); err != nil {
+			t.Fatalf("a reply to a receipt that is the newest, behind an older receipt with a larger id: %v (%v)", err, out)
+		}
+	})
 }
 
 // c1: the replies read back with their delivery, and the two commands run over the same writer and reader.

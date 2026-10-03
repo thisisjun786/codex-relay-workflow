@@ -571,9 +571,9 @@ func (d *Service) SupersessionReason(ctx context.Context, eventID string) (strin
 	if event.S("outcome") == DecisionReply {
 		// a decision answers a receipt, not a revision: a newer generation replaces it, and so does a later receipt of the
 		// child in its own generation, because the child has moved on and the answer is no longer to what it asks. Later is
-		// read against the receipt that was answered, in the order RecordDecision uses, so a receipt staged before the
-		// decision and made final after it still counts.
-		later, err := one(ctx, d.Store, "SELECT 1 FROM events c JOIN events b ON b.event_id = ? WHERE c.relationship_id = ? AND c.execution_generation = ? AND c.stage = 'final' AND c.suppressed_reason IS NULL AND c.producer = 'child' AND c.event_id != b.event_id AND (c.first_seen_at > b.first_seen_at OR (c.first_seen_at = b.first_seen_at AND c.event_id > b.event_id))", pyjson.Text(loadsObj(event.S("receipt")).Get("answersEvent")), event.S("relationship_id"), event.I("execution_generation"))
+		// read against the receipt that was answered, in the order RecordDecision uses (first seen, then stored), so a receipt
+		// staged before the decision and made final after it still counts.
+		later, err := one(ctx, d.Store, "SELECT 1 FROM events c JOIN events b ON b.event_id = ? WHERE c.relationship_id = ? AND c.execution_generation = ? AND c.stage = 'final' AND c.suppressed_reason IS NULL AND c.producer = 'child' AND c.event_id != b.event_id AND (c.first_seen_at > b.first_seen_at OR (c.first_seen_at = b.first_seen_at AND c.rowid > b.rowid))", pyjson.Text(loadsObj(event.S("receipt")).Get("answersEvent")), event.S("relationship_id"), event.I("execution_generation"))
 		if err != nil || later == nil {
 			return "", err
 		}

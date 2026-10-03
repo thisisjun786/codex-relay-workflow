@@ -128,7 +128,9 @@ func (a *Ack) RecordDecision(ctx context.Context, req DecisionRequest) (Obj, err
 		if generation != current.I("execution_generation") {
 			return refuse(StaleGeneration, "%s is generation %d and the assignment is on generation %d: a decision answers the receipt the current generation stands on", strconv.Quote(req.EventID), generation, current.I("execution_generation"))
 		}
-		later, err := one(ctx, a.Store, "SELECT event_id FROM events WHERE relationship_id = ? AND execution_generation = ? AND stage = 'final' AND suppressed_reason IS NULL AND producer = 'child' AND event_id != ? AND (first_seen_at > ? OR (first_seen_at = ? AND event_id > ?)) ORDER BY first_seen_at DESC, event_id DESC LIMIT 1",
+		// later is read in the order the relay saw the receipts: when it first saw each one, and for receipts first seen at one
+		// instant the order they were stored in (an event id is a hash of the receipt, not a sequence)
+		later, err := one(ctx, a.Store, "SELECT event_id FROM events WHERE relationship_id = ? AND execution_generation = ? AND stage = 'final' AND suppressed_reason IS NULL AND producer = 'child' AND event_id != ? AND (first_seen_at > ? OR (first_seen_at = ? AND rowid > (SELECT rowid FROM events WHERE event_id = ?))) ORDER BY first_seen_at DESC, rowid DESC LIMIT 1",
 			rid, generation, req.EventID, event.S("first_seen_at"), event.S("first_seen_at"), req.EventID)
 		if err != nil {
 			return err
@@ -141,6 +143,7 @@ func (a *Ack) RecordDecision(ctx context.Context, req DecisionRequest) (Obj, err
 			return refuse(RecipientNotAuthorized, "child %s is not an allowed recipient, so a decision cannot be routed to it", strconv.Quote(child))
 		}
 		effect, anchor := "stays", any(nil)
+		var criteria any
 		if advances(req.Decision) {
 			effect = "advances"
 			registered, err := a.Criteria.Get(ctx, rid)
@@ -153,6 +156,7 @@ func (a *Ack) RecordDecision(ctx context.Context, req DecisionRequest) (Obj, err
 			if set := pyjson.Text(registered.Get("setDigest")); set != digest {
 				return refuse(CriteriaSetChanged, "the criteria registered for %s have digest %s and the reply names %s: register the set the child continues under (criteria-register), then reply with its digest", strconv.Quote(rid), set, digest)
 			}
+			criteria, _ = registered.Lookup("criteria")
 		} else {
 			bound, err := one(ctx, a.Store, "SELECT dispatch_turn_id FROM generations WHERE relationship_id = ? AND execution_generation = ?", rid, generation)
 			if err != nil {
@@ -172,7 +176,9 @@ func (a *Ack) RecordDecision(ctx context.Context, req DecisionRequest) (Obj, err
 		record = Obj{{Key: "eventId", Value: id}, {Key: "relationshipId", Value: rid}, {Key: "executionGeneration", Value: number}, {Key: "kind", Value: DecisionReply}, {Key: "decision", Value: req.Decision},
 			{Key: "answersEvent", Value: req.EventID}, {Key: "decisionTurnId", Value: turn}, {Key: "note", Value: note}, {Key: "generationEffect", Value: effect}}
 		if advances(req.Decision) {
-			record = append(record, F{Key: "nextExecutionGeneration", Value: number}, F{Key: "criteriaDigest", Value: digest})
+			// the set is kept as it was when the decision was made: the message prints it, so the child works from what the parent
+			// approved even if the set is registered again before the message is sent
+			record = append(record, F{Key: "nextExecutionGeneration", Value: number}, F{Key: "criteriaDigest", Value: digest}, F{Key: "criteria", Value: criteria})
 		} else {
 			record = append(record, F{Key: "anchorTurnId", Value: anchor})
 		}
@@ -203,6 +209,22 @@ func (a *Ack) DecisionsOf(ctx context.Context, rid string) (Obj, error) {
 	return Obj{{Key: "relationshipId", Value: rid}, {Key: "executionGeneration", Value: r.Generation}, {Key: "decisions", Value: decisions}}, nil
 }
 
+// criteriaLines is the criteria set a decision carries, one line per criterion, as many as the revision message shows of its findings.
+func criteriaLines(set any, event string) []string {
+	items, _ := set.([]any)
+	var lines []string
+	for _, item := range items[:min(len(items), manifestLines)] {
+		o, _ := item.(Obj)
+		id, _ := o.Lookup("id")
+		title, _ := o.Lookup("title")
+		lines = append(lines, "  "+unheaded(inline(id))+": "+inline(title))
+	}
+	if len(items) > manifestLines {
+		lines = append(lines, fmt.Sprintf("  ... and %d more: codex-session-relay show --event %s prints the whole set", len(items)-manifestLines, event))
+	}
+	return lines
+}
+
 // renderDecision is the message the child receives: the decision, what it changes and the claim that admits its next turn.
 func renderDecision(row Row, record Obj, request string) string {
 	g := func(k string) any { v, _ := record.Lookup(k); return v }
@@ -229,7 +251,9 @@ func renderDecision(row Row, record Obj, request string) string {
 		lines = append(lines, "Stop the work now and change nothing more in your checkout. End this turn recording the disposition interrupted and emit an interrupted receipt.")
 	default:
 		lines = append(lines,
-			"Your criteria changed. Read the set registered for this relationship (criteria-show --relationship "+rid+"; its setDigest is the criteriaDigest above) and continue on the same node under it.",
+			"Your criteria changed: continue on the same node under the set below, which is the set registered for this relationship when the decision was made (criteria-show --relationship "+rid+" prints the set registered now; the criteriaDigest above names this one).")
+		lines = append(lines, criteriaLines(g("criteria"), event)...)
+		lines = append(lines,
 			"This turn is the anchor of generation "+generation+": your next receipts name that generation, and the first one passes no --supersedes-revision (this generation holds no earlier revision to replace).")
 	}
 	lines = append(lines, "", "Nothing is acknowledged: this direction defines no acknowledgement and the relay refuses one by kind.")
