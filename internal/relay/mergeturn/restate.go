@@ -3,8 +3,10 @@ package mergeturn
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
@@ -133,28 +135,10 @@ func (s *Service) RestateBase(ctx context.Context, turn, actor, stated, evidence
 			answered = true
 			return nil
 		}
-		entries, e := s.Store.MergeLedger(tx, turn)
-		if e != nil {
-			return e
-		}
-		keys := map[string]bool{}
-		for _, entry := range entries {
-			keys[entry.IdempotencyKey] = true
-		}
-		sequence := nextRestatement(keys)
-		from := r.ObservedBaseSHA.String
-		body := `{"evidence":` + canonicalJSON(evidence) + `,"from":` + canonicalJSON(from) + `,"sequence":` + sequence + `,"source":` + canonicalJSON(tip.Source) + `,"to":` + canonicalJSON(tip.SHA) + `,"turnId":` + canonicalJSON(turn) + `}`
-		if e = s.ledger(tx, turn, "transition", "landed", "landed", "landing_base_restated", actor, body, "restate-base:"+sequence, at); e != nil {
-			return e
-		}
-		if _, e = s.Store.Querier(tx).ExecContext(tx, "UPDATE merge_turns SET observed_base_sha = ?, updated_at = ? WHERE turn_id = ?", tip.SHA, at, turn); e != nil {
-			return e
-		}
-		var previous any
-		if r.ObservedBaseSHA.Valid {
-			previous = r.ObservedBaseSHA.String
-		}
-		return s.journalOutcome(tx, "merge_turn_base_restated", turn, contract.OrderedObject{{Key: "from", Value: previous}, {Key: "to", Value: tip.SHA}, {Key: "source", Value: tip.Source}, {Key: "actor", Value: actor}}, at)
+		_, e = s.writeRestatement(tx, r, tip, actor, func(sequence string) string {
+			return `{"evidence":` + canonicalJSON(evidence) + `,"from":` + canonicalJSON(r.ObservedBaseSHA.String) + `,"sequence":` + sequence + `,"source":` + canonicalJSON(tip.Source) + `,"to":` + canonicalJSON(tip.SHA) + `,"turnId":` + canonicalJSON(turn) + `}`
+		}, nil, at)
+		return e
 	})
 	if err != nil {
 		return nil, err
@@ -169,4 +153,95 @@ func (s *Service) RestateBase(ctx context.Context, turn, actor, stated, evidence
 	answer["baseObservation"] = observation(tip)
 	answer["restated"] = !answered
 	return answer, nil
+}
+
+// writeRestatement records tip as the base a landing leaves behind, beside the value it
+// replaces, inside the caller's transaction: one restate-base ledger entry (its body made from the
+// sequence it takes), the landing's observed_base_sha and the journal row. extra is appended to the
+// journal row's fields. It is the one writer of a restatement, for the command and for a check.
+func (s *Service) writeRestatement(ctx context.Context, r store.MergeTurnsRow, tip Tip, actor string, body func(sequence string) string, extra contract.OrderedObject, at string) (string, error) {
+	entries, err := s.Store.MergeLedger(ctx, r.TurnID)
+	if err != nil {
+		return "", err
+	}
+	keys := map[string]bool{}
+	for _, entry := range entries {
+		keys[entry.IdempotencyKey] = true
+	}
+	sequence := nextRestatement(keys)
+	if err = s.ledger(ctx, r.TurnID, "transition", "landed", "landed", "landing_base_restated", actor, body(sequence), "restate-base:"+sequence, at); err != nil {
+		return "", err
+	}
+	if _, err = s.Store.Querier(ctx).ExecContext(ctx, "UPDATE merge_turns SET observed_base_sha = ?, updated_at = ? WHERE turn_id = ?", tip.SHA, at, r.TurnID); err != nil {
+		return "", err
+	}
+	var previous any
+	if r.ObservedBaseSHA.Valid {
+		previous = r.ObservedBaseSHA.String
+	}
+	detail := contract.OrderedObject{{Key: "from", Value: previous}, {Key: "to", Value: tip.SHA}, {Key: "source", Value: tip.Source}, {Key: "actor", Value: actor}}
+	return sequence, s.journalOutcome(ctx, "merge_turn_base_restated", r.TurnID, append(detail, extra...), at)
+}
+
+// restateAfterOutOfLaneMerge is what a check does inside its transaction when the base the last
+// landing recorded is not the base the candidate states, which the tip read for this check equals.
+// When the reading taken before the transaction confirms the move as merge commits on the first-parent
+// line that no landing on the target records, it records the base again, as merge-turn-restate-base
+// would, and returns what it wrote. Otherwise it returns the refusal detail: nothing is written
+// unless the cause is confirmed.
+func (s *Service) restateAfterOutOfLaneMerge(ctx context.Context, row store.MergeTurnsRow, landing store.Row, actor, base string, tip Tip, moved *moveReading, checkID, at string) (map[string]any, string, error) {
+	landed := landing.Text("turn_id")
+	recorded := landing.Text("observed_base_sha")
+	unconfirmed := func(why string) (map[string]any, string, error) {
+		return nil, staleLandingDetail(row, landing, base, tip.SHA, why), nil
+	}
+	if moved == nil || moved.landing != landed || !SameCommit(moved.from, recorded) || !SameCommit(moved.to, tip.SHA) {
+		return unconfirmed("the landing record changed while the branch was being read; call again")
+	}
+	if moved.why != "" {
+		return unconfirmed(moved.why)
+	}
+	flight, err := s.Store.One(ctx, "SELECT turn_id FROM merge_turns WHERE target_key = ? AND state IN (?,?)  ORDER BY turn_id LIMIT 1", row.TargetKey, Merging, Unknown)
+	if err != nil {
+		return nil, "", err
+	}
+	if flight != nil {
+		return unconfirmed("turn " + pyvalue.StrRepr(flight.Text("turn_id")) + " is merging or unknown on this target, so its landing is not yet known")
+	}
+	landings, err := s.Store.All(ctx, "SELECT turn_id, landed_sha FROM merge_turns WHERE target_key = ? AND state = 'landed' AND landed_sha IS NOT NULL", row.TargetKey)
+	if err != nil {
+		return nil, "", err
+	}
+	landedShas := map[string]string{}
+	for _, l := range landings {
+		landedShas[strings.ToLower(l.Text("landed_sha"))] = l.Text("turn_id")
+	}
+	merges, why := outsideMerges(moved.movement, recorded, tip.SHA, landedShas)
+	if why != "" {
+		return unconfirmed(why)
+	}
+	landingRow, err := s.row(ctx, landed)
+	if err != nil {
+		return nil, "", err
+	}
+	described := make([]string, len(merges))
+	commits := make([]any, len(merges))
+	for i, step := range merges {
+		subject := cleanSubject(step.Subject)
+		described[i] = step.SHA + " (" + subject + ")"
+		commits[i] = contract.OrderedObject{{Key: "sha", Value: step.SHA}, {Key: "subject", Value: subject}}
+	}
+	evidence := "automatic: merge-turn-check of turn " + row.TurnID + " by " + actor + " read that " + row.BaseRef + " of " + row.Repository + " moved from " + recorded + " to " + tip.SHA +
+		" through " + strconv.Itoa(len(merges)) + " merge commit(s) on its first-parent line that no landing on this target records (read from " + tip.Source + "): " + strings.Join(described, "; ")
+	sequence, err := s.writeRestatement(ctx, landingRow, tip, actor, func(sequence string) string {
+		return canonicalJSON(contract.OrderedObject{
+			{Key: "automatic", Value: true}, {Key: "checkId", Value: checkID}, {Key: "checkTurnId", Value: row.TurnID},
+			{Key: "evidence", Value: evidence}, {Key: "from", Value: recorded}, {Key: "mergeCommits", Value: commits},
+			{Key: "sequence", Value: json.Number(sequence)}, {Key: "source", Value: tip.Source}, {Key: "to", Value: tip.SHA}, {Key: "turnId", Value: landed},
+		})
+	}, contract.OrderedObject{{Key: "automatic", Value: true}, {Key: "checkTurnId", Value: row.TurnID}}, at)
+	if err != nil {
+		return nil, "", err
+	}
+	return map[string]any{"turnId": landed, "from": recorded, "to": tip.SHA, "sequence": json.Number(sequence), "source": tip.Source, "mergeCommits": commits}, "", nil
 }

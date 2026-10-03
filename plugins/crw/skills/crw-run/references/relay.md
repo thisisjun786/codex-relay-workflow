@@ -679,7 +679,9 @@ The base a landing records is the value the next candidate on the same target ha
 `--base-sha`, so the relay does not take it from you: at the check, the landing, a resolution and
 a restatement it reads where the base branch points, from the target the claim named (git for an
 absolute repository path, which must be the repository the merge goes into; a read-only forge
-GET for `owner/name`), and records that reading. What you pass is compared with it.
+GET for `owner/name`), and records that reading. What you pass is compared with it. A check that
+finds the last landing's recorded base older than the branch also reads how the branch moved
+(below).
 
 - `--base-sha` is the branch tip now, in full. Anything else is refused `merge_currency_stale`.
 - `--landed-sha` is the commit your merge put on the base: the merge or squash commit, the last
@@ -697,11 +699,24 @@ target the relay cannot read refuses `merge_target_unreadable` and nothing is re
 merging turn checked before the relay read its base is refused `merge_evidence_required` and
 leaves through `merge-turn-unknown` and `merge-turn-resolve`.
 
-When `merge-turn-check` is refused because the last landing on the target recorded a different
-base, the refusal names that landing and who may correct it: its holder, or the supervisor above
-its project. That task runs `merge-turn-restate-base` on the landing; the relay reads the branch
-again, records it, and keeps the replaced value beside it (`merge-turn-show --turn <landing>`,
-`baseRestatements`). Then the candidate checks again. Nobody edits the store to correct a base.
+When the last landing on the target recorded a different base than the tip the check states, either
+the branch moved after that landing without a landing of the lane, or that landing recorded a
+wrong base. The check reads how the branch moved: the
+first-parent line of the base branch from the tip down to the recorded base. If every commit on
+it is a merge commit that no landing on the target records, which is what a pull request merged
+outside the lane leaves, the check records the base again itself, keeps the replaced value beside
+it (`merge-turn-show --turn <landing>`, `baseRestatements`, evidence beginning `automatic:`),
+reports it as `landingBaseRestated` in its answer and goes on. The parent that merged outside the
+lane has nothing to record afterwards, and no other parent waits for it.
+
+When the check cannot confirm that (the branch was rewritten, a commit on it is not a merge commit,
+more than 32 merges, a turn is in flight, or the branch could not be read) it writes nothing and
+is refused `merge_currency_stale` as before. The refusal names why and the command, with the
+landing and its holder filled in: that holder, or the supervisor above its project, runs
+`merge-turn-restate-base --turn <landing> --actor <task> --evidence <why the base moved>`; the
+relay reads the branch again, records it, and keeps the replaced value beside it. Then the
+candidate checks again. A waiting parent that is neither cannot run it. Nobody edits the store to
+correct a base.
 
 ## Peer region agreements across a moving base
 

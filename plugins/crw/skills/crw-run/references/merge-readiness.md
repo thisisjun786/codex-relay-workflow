@@ -570,6 +570,10 @@ different one as `merge_candidate_moved`. Nothing in the product records a work 
 (`docs/port/decisions.md`, section 53), so N has no report head to disagree with; a store that holds
 such a row naming P anyway refuses N there, when the turn is already held: return the turn and send
 the candidate back like any other refusal.
+A merge made outside the lane needs no step from the parent that made it: the next
+`merge-turn-check` finds the base the last landing recorded behind the branch and records it again
+itself when it can confirm the move as merge commits no landing recorded
+([the base a landing records](relay.md#checking-landing-and-correcting-a-landings-base)).
 
 **Record the refresh** where the merge is recorded. `assignment-mark merged --evidence` carries the
 check's `evidence:` line exactly as printed (previous head, dev tip, new head, tree OID and the rule
