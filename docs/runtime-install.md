@@ -350,6 +350,19 @@ The one release that changes the schema is the one that adds the DAG zone ([DAG 
 `dag_*` tables are created by the first write-open and are declared by that build. That decision is made (D-01), so the gate has an answer of
 its own for the zone and for nothing else, and the supported install command has a route through it.
 
+**The history indexes (CRW-301).** A second change reaches the frozen v1 schema script itself: six `CREATE INDEX IF NOT EXISTS` statements
+for the tables that only grow (`attempts`, `supervisor_attempts`, `acks`, `sync_outbox`, `supervisor_messages`,
+`managed_start_requests`; the list and the reason for each are in `contract/schema/relay-sqlite-history-indexes.json`). They are not zone
+objects, so the gate has no answer of its own for them. A candidate that declares them over a store that lacks them reads `EXTENDS` and refuses,
+and it refuses whether or not the zone arrives with them, which is the case of every store there is: the arrival is no longer the zone alone, so
+`--backup-state-to` does not release it (`ZoneArrivalOnly` is false). The reverse, a store that holds them against a candidate that does
+not declare them, reads `NARROWS` and refuses, although an older runtime opens such a store and maintains the indexes without reading them.
+Neither direction has a route today; one needs its own decision in the way D-01 gave the zone one, with the OPS-4.5 backup taken by the route. Until
+then an install over an existing store waits on that decision. The build itself creates the indexes: the schema script runs on every write-open, so the
+first command to open a store of the previous version builds them, one index in a transaction of its own, and a command that declares itself
+read-only builds them too, since it tries the writable open first (a read that opens nothing for writing builds nothing). The swap gate test
+`TestTheHistoryIndexesArriveAsAPlainExtendsAndLeaveAsAPlainNarrows` pins this reading.
+
 **The zone arrives (`EXTENDS_ZONE`).** Installing a build that declares the zone onto a store that has none (every store there is) refuses,
 and the refusal names the route: `crw install update --from ... --backup-state-to DIR` (the same flag is on `install` and `rollback`). The flag is the
 operator's acknowledgement, and under it the command itself takes the OPS-4.5 backup, so the backup is guaranteed by the route and not by
