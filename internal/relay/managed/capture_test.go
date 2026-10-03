@@ -1368,6 +1368,12 @@ func compareManaged(t *testing.T, scenario string, steps int) {
 		if e := json.Unmarshal(buf.Bytes(), &value); e != nil {
 			t.Fatal(e)
 		}
+		if answer, ok := value.(map[string]any); ok && (scenario == "unknown" || scenario == "ledger-retry") {
+			// Go only (CRW-464): the Python engine never asked the host what a lost creation left, so its answer has no such key. The golden is
+			// untouched; TestReconcile* assert the key. Every other scenario compares its whole answer, which shows the key absent whenever
+			// no reconciliation ran.
+			delete(answer, "creationReconciliation")
+		}
 		got = append(got, value)
 		var compact bytes.Buffer
 		if e := json.Compact(&compact, buf.Bytes()); e != nil {

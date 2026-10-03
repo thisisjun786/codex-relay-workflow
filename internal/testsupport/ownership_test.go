@@ -533,6 +533,13 @@ func TestRestamp_gives_a_copy_to_the_other_runtime_as_its_creator(t *testing.T) 
 			requireOwnedBy(t, copied, socket, "go")
 			requireOwnedBy(t, original, socket, "python")
 			from, to := meta(t, original), meta(t, copied)
+			// Go's admission of the copy above is a writable open of a store from before the
+			// settlements backfill's marker, and records it: the one row besides the owner by which
+			// the copy differs.
+			if to["backfill:assignment_settlements"] != "1" {
+				t.Fatalf("the copy Go admitted carries no backfill marker: %v", to)
+			}
+			delete(to, "backfill:assignment_settlements")
 			var differing []string
 			for key, value := range from {
 				if to[key] != value {
@@ -586,8 +593,9 @@ func TestRestamp_refuses_an_original_a_transferred_a_shared_and_an_unfenced_stor
 }
 
 // A store Create stamps for Python - the store the foreign-owner tests put before Go - holds the
-// schema_meta rows Go's absent-store initializer leaves but for the owner value and the store's own
-// identity; OwnerNeutral removes Go's owner and nothing else.
+// schema_meta rows Go's absent-store initializer leaves but for the owner value, the store's own
+// identity and the settlements backfill's marker a store Go creates is born with; OwnerNeutral
+// removes Go's owner and nothing else.
 func TestOwnerNeutral_is_the_only_runtime_difference_in_schema_meta(t *testing.T) {
 	root := t.TempDir()
 	socket := fixedSocket
@@ -611,6 +619,11 @@ func TestOwnerNeutral_is_the_only_runtime_difference_in_schema_meta(t *testing.T
 	for _, key := range []string{"store_id", "store_created_at"} {
 		delete(goMeta, key)
 	}
+	// Go's initializer has no observation to backfill, so it creates the store with the marker.
+	if goMeta["backfill:assignment_settlements"] != "1" {
+		t.Fatalf("a store Go created carries no backfill marker: %v", goMeta)
+	}
+	delete(goMeta, "backfill:assignment_settlements")
 	var differing []string
 	for key, value := range pythonMeta {
 		if goMeta[key] != value {

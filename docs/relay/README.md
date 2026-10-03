@@ -393,13 +393,26 @@ rechecked before host mutations. Replacing that file refuses recovery rather tha
 another child from an empty ledger.
 
 Retry the **same request with the same paths and contents**. A fingerprint mismatch refuses
-rather than rewriting the assignment; uncertain creation or delivery is reconciled against the
-bridge's retained operation, never retried under a new identity. A still-running standby returns
+rather than rewriting the assignment; an uncertain delivery is reconciled against the
+bridge's retained operation, never retried under a new identity, and an uncertain creation is
+reconciled by observing the App Server under the same request (below). A still-running standby returns
 `incomplete`; the caller may retry when it ends. This command does not install a retry scheduler.
 `admitted` means the business turn was dispatched, not that the child claimed it, that its hook
 fired, or that its issue passed review. Those remain separately observed facts.
 If naming failed after a verified task was created and the bridge recorded that no first turn
 was attempted, retry resumes that same task with a separately retained standby operation.
+A creation whose outcome is unknown (the bridge receipt is `outcome_unknown`, or
+`in_progress_or_unknown` when the process stopped inside it) is reconciled by the next retry of the same
+request, which observes the App Server before it answers. A thread that exists with no turn is continued
+under the same request (the standby turn under a standby operation of its own, then the title), after taking the project's lock and
+asking the scope decision again, as a creation does. When no thread
+is shown, the retry waits 2 minutes from the receipt's last update (`pending`, with `repeatAfter`) and then
+creates again under the same request with a derived bridge operation id, at most three creations in all. A thread that has a turn,
+a creation whose `turn/start` may have been sent, several threads that fit, a thread or a listing the host cannot read, a standby
+recovery the host refused, or a creation with no recorded time stop with `creation_unknown` and a `creationReconciliation` object that says why (`state`,
+`detail`, `attempt`, `attemptRequestId`, `thread`, `repeatAfter`); no replacement request is ever the answer.
+dag-scheduler.md ([A creation whose outcome is unknown](dag-scheduler.md#a-creation-whose-outcome-is-unknown))
+gives the table and what it does not establish.
 The original failed creation receipt is preserved. An unknown or attempted first turn does not
 qualify for this recovery; its effects still need reconciliation.
 
@@ -428,7 +441,8 @@ Running it does not wake a parent, write a queue, or publish a new report.
 | `incomplete` / `standby_incomplete` | Wait for that standby to complete, then retry the same request. |
 | worker policy absent or mismatched | Restore the declared serving policy, verify its reading, retry the same request. |
 | paused/archived recipient, changed settings/scope/criteria | Preserve the hold; obtain the owning user's supported transition before retrying. |
-| creation or business outcome unknown | Inspect the retained bridge operation; keep the reservation and do not create a replacement. |
+| creation outcome unknown | Retry the same request: it observes the App Server and continues, creates again after the grace period, or stops with `creationReconciliation` saying why. Do not start a replacement request. |
+| business outcome unknown | Inspect the retained bridge operation; keep the reservation and do not create a replacement. |
 | request fingerprint conflict | Recover the original input and selectors; never overwrite them to force a replay. |
 
 Before the business turn, authorization is checked again after resume. A known paused, archived,
@@ -664,7 +678,7 @@ When a step refuses, the refusal names what to do:
 | recorded `verified`, asked `unverified` or `aborted` | `disposition_conflict` | rule `needs_changes`, or stop the assignment by changing the relationship's status |
 | recorded `needs_changes` | `disposition_conflict` | the ruling opened a generation and is not withdrawn: rule the head of that generation when the child reports there |
 | recorded `unverified` or `aborted` | `disposition_conflict` | the ruling is final for the event: open a fresh execution generation (`generation-open`, then `generation-bind`) and rule what the child reports there |
-| a plan accepted the verified event | `disposition_conflict` | read the node's stale reading: when its action is `correct`, `dag-correct --prepare` prints the instruction and the dispatch request id, the generation is opened by hand and `dag-correct` binds it; `revalidate` and `hold` have their own steps; when the accepted result is current this build records no correction route, so report it and open no generation that `dag-correct` will refuse |
+| a plan accepted the verified event | `disposition_conflict` | read the node's stale reading: when its action is `correct`, `dag-correct --prepare` prints the instruction and the dispatch request id, the generation is opened by hand and `dag-correct` binds it; `revalidate` and `hold` have their own steps; when the accepted result is current, a base that moved after the acceptance is recorded by `dag-base-refresh` (a generation opened by hand that only merges the base, ruled `verified`; the relay proves from git that its head is the accepted head plus merges of the base), and for any other current result this build records no correction route, so report it and open no generation that `dag-correct` will refuse |
 | the work is marked merged, or a turn landed it | `disposition_conflict` | a merged result is corrected by new work, not by a second ruling |
 | a merge turn is merging or of unknown effect | `disposition_conflict` | resolve the turn (`merge-turn-resolve` reads the branch), then rule again |
 | the event is not the head | `stale_generation` or `superseded_revision` | rule the head the assignment shows |

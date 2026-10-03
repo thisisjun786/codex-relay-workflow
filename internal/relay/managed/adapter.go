@@ -30,8 +30,9 @@ type SendRequest struct {
 
 type Turn struct{ ID, Status string }
 
-// HostRPC is the scoped, retained host read seam used by the send's BeforeStart guard.
-// Implementations route these calls through the same host as SendMessage.
+// HostRPC is the scoped host seam: the reads the send's BeforeStart guard makes and the reads a creation reconciliation makes
+// (thread/loaded/list, thread/read, thread/turns/list), and one write, the idempotent thread/name/set of the title that reconciliation
+// sets once a standby is accepted. Implementations route these calls through the same host as SendMessage.
 type HostRPC interface {
 	HostCall(context.Context, string, map[string]any) (map[string]any, error)
 }

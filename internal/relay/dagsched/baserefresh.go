@@ -5,14 +5,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -30,7 +29,7 @@ const SchemaBaseRefresh = "dag-base-refresh/1"
 
 // RefreshInput is what the parent supplies to record a base refresh. A checkout is where the commits are read (git objects are content addressed, so any clone that holds them answers alike): it is
 // needed when the node lands in a forge repository and refused when the target is itself a local checkout. Resolved names the files whose hand resolution the parent accepts; the relay proves where a
-// hand resolution can sit (the files git could not merge) and cannot read what was put into them, so the paths named must be exactly the ones the chain resolved by hand.
+// hand resolution can sit (the files git could not merge) and applies declared mechanical rules; the paths named must be exactly those no rule proved in at least one hop.
 type RefreshInput struct {
 	Checkout string
 	Resolved []string
@@ -118,21 +117,6 @@ func (s *Scheduler) stoodOn(ctx context.Context, q store.Querier, a Acceptance) 
 	return append(heads, a.HeadSHA), nil
 }
 
-// refreshReadable is the fail-closed rule for the forge reading a refresh is proved against. An open pull request is read as an acceptance reads one (ClassifyPullRequest: a verdict of unknown, an evidence that was
-// unreadable or truncated, is the host's failure, and a head that moved while it was read is refused). A merged one has the verdict unknown by construction: its snapshot says candidate_not_open and
-// candidate_unknown, because nothing is left to hand over, so it is readable when those two are its only problems.
-func refreshReadable(pr PullRequest) error {
-	if pr.State != "merged" {
-		return ClassifyPullRequest(pr)
-	}
-	for _, p := range pr.Problems {
-		if p.Code != evidence.CandidateNotOpen && p.Code != evidence.CandidateUnknown {
-			return fmt.Errorf("the merged pull request %s#%d could not be read completely (%s: %s); nothing was written", pr.Repository, pr.Number, p.Code, p.Detail)
-		}
-	}
-	return nil
-}
-
 // decodeRefreshProof reads back the proof and the resolved paths a record stores.
 func decodeRefreshProof(proofJSON, resolvedJSON string) ([]RefreshStep, []string, error) {
 	var proof struct {
@@ -144,6 +128,7 @@ func decodeRefreshProof(proofJSON, resolvedJSON string) ([]RefreshStep, []string
 			Resolved   []struct {
 				Path string `json:"path"`
 				Blob string `json:"blob"`
+				Rule string `json:"rule"`
 			} `json:"resolved"`
 		} `json:"steps"`
 	}
@@ -158,7 +143,7 @@ func decodeRefreshProof(proofJSON, resolvedJSON string) ([]RefreshStep, []string
 	for i, st := range proof.Steps {
 		steps[i] = RefreshStep{Previous: st.Previous, BaseParent: st.BaseParent, Head: st.Head, Tree: st.Tree}
 		for _, r := range st.Resolved {
-			steps[i].Resolved = append(steps[i].Resolved, RefreshResolved{Path: r.Path, Blob: r.Blob})
+			steps[i].Resolved = append(steps[i].Resolved, RefreshResolved{Path: r.Path, Blob: r.Blob, Rule: r.Rule})
 		}
 	}
 	return steps, paths, nil
@@ -264,7 +249,8 @@ func (s *Scheduler) RecordBaseRefresh(ctx context.Context, plan, node, actor str
 	if pr.State != "open" && pr.State != "merged" {
 		return out, refuse(contract.RefusalDispositionConflict, "pull request %s#%d is %s: a base refresh is read from a pull request that is open or merged", forge, number, pr.State)
 	}
-	if err := refreshReadable(pr); err != nil {
+	// the reading is classified as every reader of a pull request classifies it; a merged pull request is readable by the rule in ClassifyPullRequest (forge.go)
+	if err := ClassifyPullRequest(pr); err != nil {
 		return out, err
 	}
 	if !refreshCommitPattern.MatchString(pr.HeadSHA) || pr.BaseRef == "" {
@@ -314,18 +300,72 @@ func (s *Scheduler) RecordBaseRefresh(ctx context.Context, plan, node, actor str
 	if refusal != nil {
 		return out, refusedProof(refusal)
 	}
-	resolved := proof.resolvedPaths()
+	// Check authority before executing any declared regeneration command; the write
+	// checks it again in its transaction, as every deciding write does.
+	if err := s.fence(ctx, q, plan, actor); err != nil {
+		return out, err
+	}
+	declarations, err := loadDeclarations(ctx, q, plan)
+	if err != nil {
+		return out, err
+	}
+	names := []string{acc.Repository, forge}
+	canonical, err := canonicalRepository(acc.Repository)
+	if err != nil {
+		return out, err
+	}
+	names = append(names, canonical)
+	var regions []Region
+	for _, r := range declarations[node] {
+		if hasName(names, r.Repository) {
+			regions = append(regions, r)
+		}
+	}
+	// A recorded proof is immutable evidence. Replay its stored classification,
+	// including manual-only proofs made before the checker was linked, without
+	// running candidate code again or making the caller change the original names.
+	var existing, baseRepo, baseRef, baseTip, storedProof, storedResolved string
+	var recordedGeneration int64
+	var recordedRel, recordedRevision string
+	has, err := queryOne(ctx, q, "SELECT refresh_id, relationship_id, execution_generation, revision_hash, base_repository, base_ref, base_tip_sha, proof_json, resolved_paths_json FROM dag_base_refreshes WHERE acceptance_id = ? AND event_id = ? AND head_sha = ?",
+		[]any{acc.AcceptanceID, head.EventID, pr.HeadSHA}, &existing, &recordedRel, &recordedGeneration, &recordedRevision, &baseRepo, &baseRef, &baseTip, &storedProof, &storedResolved)
+	if err != nil {
+		return out, err
+	}
+	var resolved []string
+	if has {
+		if existing != refreshDigest(acc.AcceptanceID, recordedRel, recordedGeneration, head.EventID, recordedRevision, pr.HeadSHA, baseRepo, baseRef, baseTip, storedProof, storedResolved) || recordedRel != rel.ID || recordedGeneration != rel.Generation || recordedRevision != head.RevisionHash {
+			return out, refuse(contract.RefusalDispositionConflict, "the stored base refresh for %s has invalid identity; nothing was replayed", node)
+		}
+		proof.Steps, resolved, err = decodeRefreshProof(storedProof, storedResolved)
+		if err != nil {
+			return out, err
+		}
+	} else {
+		refusal, err := proof.applyMechanical(ctx, checkout, regions)
+		if err != nil {
+			return out, refuse(contract.RefusalMergeTargetUnreadable, "mechanical check could not answer: %v", err)
+		}
+		if refusal != nil {
+			return out, refusedProof(refusal)
+		}
+		resolved = proof.resolvedPaths()
+	}
 	named := append([]string{}, in.Resolved...)
 	sort.Strings(named)
 	if strings.Join(named, "\x00") != strings.Join(resolved, "\x00") {
-		return out, refuse(contract.RefusalDispositionConflict, "the merges between %s and %s resolved these files by hand: [%s]; the relay proves only that the resolution is confined to files git could not merge, and cannot read what was put into them. Name exactly them (--resolved) to accept them, after reading them; you named [%s]",
+		return out, refuse(contract.RefusalDispositionConflict, "the merges between %s and %s resolved these files by hand: [%s]; no mechanical rule proved those resolutions. Name exactly them (--resolved) to accept them, after reading them; you named [%s]",
 			short(acc.HeadSHA), short(pr.HeadSHA), strings.Join(resolved, ", "), strings.Join(named, ", "))
 	}
 	steps := make([]any, len(proof.Steps))
 	for i, st := range proof.Steps {
 		list := make([]any, len(st.Resolved))
 		for j, r := range st.Resolved {
-			list[j] = map[string]any{"path": r.Path, "blob": r.Blob}
+			entry := map[string]any{"path": r.Path, "blob": r.Blob}
+			if r.Rule != "" {
+				entry["rule"] = r.Rule
+			}
+			list[j] = entry
 		}
 		steps[i] = map[string]any{"previous": st.Previous, "base_parent": st.BaseParent, "head": st.Head, "tree": st.Tree, "resolved": list}
 	}
@@ -345,6 +385,13 @@ func (s *Scheduler) RecordBaseRefresh(ctx context.Context, plan, node, actor str
 		tx := s.Store.Q(txCtx)
 		if err := s.fence(txCtx, tx, plan, actor); err != nil {
 			return err
+		}
+		currentDeclarations, err := loadDeclarations(txCtx, tx, plan)
+		if err != nil {
+			return err
+		}
+		if !slices.Equal(declarations[node], currentDeclarations[node]) {
+			return refuse(contract.RefusalDispositionConflict, "the regions of %s changed while its base refresh was being proved", node)
 		}
 		current, _, err := dag.SnapshotAt(txCtx, tx, plan, 0)
 		if err != nil {

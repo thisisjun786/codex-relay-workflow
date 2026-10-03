@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -27,7 +28,8 @@ func TestOpen_matches_python_schema_when_fresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	// Then: SQLite's persisted CREATE text is the one Python's Store persisted, byte for byte.
+	// Then: SQLite's persisted CREATE text is the one Python's Store persisted, byte for byte, and the indexes
+	// CRW-301 added to it (contract/schema/relay-sqlite-history-indexes.json).
 	checkJSON(t, "sqlite_master", master(t, goDB))
 }
 func TestOpen_preserves_python_database_when_reopened(t *testing.T) {
@@ -51,9 +53,30 @@ func TestOpen_preserves_python_database_when_reopened(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer reopened.Close()
-	// Then: schema remains untouched and integrity holds.
-	if got := master(t, path); !reflect.DeepEqual(got, before) {
-		t.Fatal("reopen changed sqlite_master")
+	// Then: the schema gains the history indexes (CRW-301) and no other object changes, a second open
+	// changes nothing, and integrity holds.
+	indexes, err := testsupport.HistoryIndexes()
+	if err != nil || len(indexes) == 0 {
+		t.Fatalf("the golden delta: %d indexes: %v", len(indexes), err)
+	}
+	want := append([]string(nil), before...)
+	for _, index := range indexes {
+		want = append(want, "index\x00"+index.Name+"\x00"+index.Table+"\x00"+index.SQL)
+	}
+	sort.Strings(want)
+	if got := master(t, path); !reflect.DeepEqual(got, want) {
+		t.Fatalf("reopen: sqlite_master is %q, want the previous one plus the history indexes %q", got, want)
+	}
+	if err := reopened.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err = fixtureOpen(ctx, path, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	if got := master(t, path); !reflect.DeepEqual(got, want) {
+		t.Fatal("a second open changed sqlite_master")
 	}
 	var integrity string
 	if err := reopened.DB.QueryRowContext(ctx, "PRAGMA integrity_check").Scan(&integrity); err != nil || integrity != "ok" {

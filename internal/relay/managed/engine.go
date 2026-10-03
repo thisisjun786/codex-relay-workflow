@@ -2,7 +2,6 @@ package managed
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -32,6 +31,9 @@ type Start struct {
 	// Readiness returns the same worker policy refusal code as rolepolicy.worker_readiness,
 	// or empty when the role pair is ready; it is called again before each host effect.
 	Readiness func(context.Context, map[string]any) (string, error)
+	// CreationGrace is how long after a creation's answer was lost a thread that is not listed yet may still appear; no thread is declared absent
+	// before it has passed. Zero is DefaultCreationGrace.
+	CreationGrace time.Duration
 }
 
 type managedClock struct{ now func() string }
@@ -82,6 +84,7 @@ func (m *Start) Run(ctx context.Context, raw []byte) (contract.OrderedObject, er
 		run.declareIntent,
 		run.decideScope,
 		run.createChild,
+		run.reconcileCreation,
 		run.retryStandby,
 		run.incompleteCreation,
 		run.verifyCreation,
@@ -207,7 +210,17 @@ func creationMatches(expected, created map[string]any) bool {
 	observed := deliveryValue(created).(contract.OrderedObject)
 	return len(settings.Mismatches(observed, true, true, false)) == 0
 }
-func (m *Start) recoverStandby(ctx context.Context, id Identity, req map[string]any, ledger map[string]any, physical store.Location, receipt map[string]any) (map[string]any, error) {
+
+// standbyRecovery says how a standby recovery is made: for which creation attempt; whether the receipt is an unknown creation continued on
+// the thread the App Server showed (reconcile.go decided its attempted turn, and a thread/start that timed out left no creation record: the
+// resume of the standby send is checked against the settings and stands in for it); and whether the title is still to be set once the standby is
+// accepted.
+type standbyRecovery struct {
+	attempt         int
+	adopted, rename bool
+}
+
+func (m *Start) recoverStandby(ctx context.Context, id Identity, req map[string]any, ledger map[string]any, physical store.Location, receipt map[string]any, how standbyRecovery) (map[string]any, error) {
 	task := pyjson.Text(receipt["threadId"])
 	effects, ok := receipt["attemptedEffects"].([]any)
 	attemptedStart, attemptedTurn := false, false
@@ -220,15 +233,15 @@ func (m *Start) recoverStandby(ctx context.Context, id Identity, req map[string]
 		}
 	}
 	settings := pyjson.Map(pyjson.Map(req["child"])["settings"])
-	if !delivery.ValidSegment(task) || receipt["turnId"] != nil || !ok || !attemptedStart || attemptedTurn || !creationMatches(settings, pyjson.Map(receipt["creation"])) {
+	creation := pyjson.Map(receipt["creation"])
+	if !delivery.ValidSegment(task) || receipt["turnId"] != nil || !ok || !attemptedStart || attemptedTurn || (!how.adopted || creation != nil) && !creationMatches(settings, creation) {
 		return receipt, nil
 	}
-	digest := sha256.Sum256([]byte(id.RequestID))
-	recoveryID := fmt.Sprintf("managed-standby-%x", digest)
+	recoveryOp := recoveryID(id.RequestID, how.attempt)
 	if err := m.Adapter.RequireLedger(ctx, ledger); err != nil {
 		return nil, err
 	}
-	recovered, err := m.Adapter.GetOperation(ctx, recoveryID)
+	recovered, err := m.Adapter.GetOperation(ctx, recoveryOp)
 	if err != nil {
 		return nil, err
 	}
@@ -254,7 +267,7 @@ func (m *Start) recoverStandby(ctx context.Context, id Identity, req map[string]
 		if err := m.Adapter.RequireLedger(ctx, ledger); err != nil {
 			return nil, err
 		}
-		recovered, err = m.Adapter.SendMessage(ctx, SendRequest{RequestID: recoveryID, ThreadID: task, Message: bootstrap, Settings: settings, GuardRPCRequests: 10, BeforeStart: func(guardCtx context.Context) (map[string]any, error) {
+		recovered, err = m.Adapter.SendMessage(ctx, SendRequest{RequestID: recoveryOp, ThreadID: task, Message: bootstrap, Settings: settings, GuardRPCRequests: 10, BeforeStart: func(guardCtx context.Context) (map[string]any, error) {
 			if err := m.Adapter.RequireLedger(guardCtx, ledger); err != nil {
 				return map[string]any{"code": "managed_store_changed", "message": "Standby recovery store changed"}, nil
 			}
@@ -287,7 +300,7 @@ func (m *Start) recoverStandby(ctx context.Context, id Identity, req map[string]
 			return nil, err
 		}
 	}
-	receipt["recoveryRequestId"] = recoveryID
+	receipt["recoveryRequestId"] = recoveryOp
 	if recovered == nil || recovered["status"] != "accepted" || recovered["threadId"] != task || !delivery.ValidSegment(recovered["turnId"]) {
 		receipt["recoveryStatus"] = "unknown"
 		if recovered != nil {
@@ -303,6 +316,16 @@ func (m *Start) recoverStandby(ctx context.Context, id Identity, req map[string]
 	combined["status"] = "accepted"
 	combined["turnId"] = recovered["turnId"]
 	combined["standbyRecovery"] = recovered
+	if how.adopted {
+		if title := pyjson.Text(pyjson.Map(req["child"])["title"]); title != "" && how.rename {
+			if _, err := m.Adapter.HostCall(ctx, "thread/name/set", map[string]any{"threadId": task, "name": title}); err != nil {
+				return nil, err
+			}
+		}
+		if combined["creation"] == nil {
+			combined["creation"] = pyjson.Map(recovered["resumed"])
+		}
+	}
 	return combined, nil
 }
 func (m *Start) registeredProblem(ctx context.Context, id Identity, row store.ManagedStartRequestsRow, req map[string]any, recipients []string, complete bool) (string, error) {

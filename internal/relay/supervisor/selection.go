@@ -8,13 +8,17 @@ import (
 	"time"
 )
 
+// syncVerdictsSQL is the Linear writes a verdict has had, oldest first, for a relationship and an event: what Selection
+// reads for every obligation it is asked about. It reaches them through sync_outbox_relationship_event (CRW-301).
+const syncVerdictsSQL = "SELECT sync_id,state,target,target_ref,external_ref,confirmed_at,last_error FROM sync_outbox WHERE relationship_id = ? AND event_id = ? AND subject_kind = 'verdict' AND target = 'coordination_document' ORDER BY rowid"
+
 // Selection is supervision.select: reporting and standing are independent answers.
 func (c *Channel) Selection(ctx context.Context, o Obligation, recipient string, now *float64) (map[string]any, error) {
 	event := o.Subject
 	if v, ok := o.Basis["eventId"].(string); ok && v != "" {
 		event = v
 	}
-	rows, err := c.Store.All(ctx, "SELECT sync_id,state,target,target_ref,external_ref,confirmed_at,last_error FROM sync_outbox WHERE relationship_id = ? AND event_id = ? AND subject_kind = 'verdict' AND target = 'coordination_document' ORDER BY rowid", o.RelationID, event)
+	rows, err := c.Store.All(ctx, syncVerdictsSQL, o.RelationID, event)
 	if err != nil {
 		return nil, err
 	}

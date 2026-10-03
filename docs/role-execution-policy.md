@@ -136,6 +136,54 @@ role that lists more than one pair is described differently:
   withheld from a thread the host has not loaded, as `unverified_pair_for_unloaded_thread`, exactly as a
   supervisor's or an exception's pair is.
 
+## A role may carry MCP profiles
+
+A thread starts every MCP server config.toml defines and every installed plugin provides, whether or
+not it ever calls them, and each sub-thread it spawns does the same. A child kept hundreds of
+megabytes of helper processes this way. A role entry may therefore declare an `mcp` section, and a
+thread is created under one of its profiles:
+
+    "child": {"pairs": [...], "mcp": {"default": "minimal", "profiles": {
+      "minimal": {},
+      "ui-qa": {"servers": ["node_repl"]},
+      "second-opinion": {"servers": ["oracle"], "disablePlugins": ["unified-computer-use@openai-bundled"]}
+    }}}
+
+- `servers` are the config.toml servers the profile keeps on; every other server the host's config.toml
+  defines is switched off for the thread. A profile with none is the minimal one. A kept server that
+  config.toml does not define is refused before the thread starts (`execution_mcp_server_unknown`,
+  naming it and the servers the host does define), because an override naming it would fail the start.
+- `disablePlugins` switches whole plugins off. A plugin's server has no switch of its own on Codex 0.154:
+  an override naming it fails the start, and the per-thread control of the plugin takes its skills and
+  hooks with it, so a profile names only plugins a child can do without. An id that is not installed
+  is skipped. The plugins a profile does not name keep their servers.
+- `default` is the profile a creation that names none gets. A file is refused when it is read if a name
+  is blank or over 128 characters, a list names a server or plugin twice, `default` names no profile,
+  the section holds another key, or a `supervisor` declares `mcp`. The description of the roles
+  (`get_capabilities`, the worker policy receipt) does not mention profiles, so declaring them does
+  not make a worker and its caller disagree. A file without an `mcp` section behaves exactly as
+  before and asks the host nothing extra.
+
+What the bridge does when it creates a thread under a role that declares profiles. It resolves the
+profile against the host, not a file: `config/read` for the servers config.toml defines for the
+thread's directory, and `plugin/installed` when the profile names a plugin. It sends the switch-offs in
+the `thread/start` config as nested objects (`mcp_servers.<name>.enabled=false`,
+`plugins.<id>.enabled=false`; a dotted key with a plugin id is silently ignored). After the start it
+reads the thread's `mcpServerStatus/list` and compares it with the profile: a server to be off must
+report `disabled`, a kept one anything else, a switched-off plugin must be absent. A difference
+withholds the initial prompt as `settings_not_preserved` on the field `mcpServers`, and an unreadable
+list is `setting_unobservable`. The profile's reads are not effects: if one is lost the creation
+stays retry-safe. The receipt records the profile as `mcpProfile` and the raw list as `mcpServerStatus`.
+`create_thread` takes the role's default, since it has no input to name another profile.
+
+Not covered yet. The host keeps no overrides with a thread, so a resume of a thread it has unloaded
+starts every server again unless the overrides are sent; applying a profile on
+`send_message_to_thread`, on the relay's resume and in managed start's admission is left to a follow-up
+change, as are `create_worktree_thread`, an input to name a profile on `create_thread` and the
+crw-run text that chooses one. A policy should not declare `mcp` for a role until that follow-up
+lands: a created thread would start under the profile and a later send or relay resume would not
+carry it.
+
 ## The file
 
 The policy file is named by `CODEX_THREAD_BRIDGE_EXECUTION_POLICY` in the bridge server process's
