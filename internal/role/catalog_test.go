@@ -103,6 +103,7 @@ func TestNativeCatalogPaths(t *testing.T) {
 		{"toml-unicode-escape", `model_catalog_json = "\U0001F600.json"`, ""},
 		{"blank", `model_catalog_json = ' '`, ""},
 		{"tilde-trailing-slash", "model_catalog_json = '~/models.json/'", filepath.Join(root, "models.json") + "/"},
+		{"tilde-empty-remainder", "model_catalog_json = '~/'", root},
 		{"comment-cr", "model_catalog_json = 'models.json' # a\rb", ""},
 		{"comment-line-separator", "model_catalog_json = 'models.json' # a\u2028b", ""},
 	} {

@@ -134,12 +134,20 @@ func NativeCatalogPath(env host.LookupEnv) string {
 			return ""
 		}
 		if strings.HasPrefix(selected, "~/") || strings.HasPrefix(selected, "~\\") {
-			trailingSlash := strings.HasSuffix(selected, "/")
 			h, e := host.Home(env)
 			if e != nil {
 				return ""
 			}
-			selected = filepath.Join(h, selected[2:])
+			rest := selected[2:]
+			last := rest
+			if last == "" {
+				last = h
+			}
+			trailingSlash := strings.HasSuffix(last, "/")
+			selected = filepath.Join(h, rest)
+			if selected == "" {
+				selected = "."
+			}
 			if trailingSlash && !strings.HasSuffix(selected, "/") {
 				selected += "/"
 			}
