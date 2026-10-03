@@ -414,3 +414,12 @@ No new oracle defect was identified in the directive text and assembly of `pabcd
 - Remote bodies, entry paths and skill identifiers are accepted without a size/path boundary, and ClawHub keeps non-text display names/summaries (source `skill-search/src/sources.ts:21-38,59-77,87-108`); port: fixed by the assignment's bounded, strict untrusted-input requirement: 4 MiB bodies, typed collection envelopes and safe name/path components. Recorded `testdata/boundaries.json` cases are intentionally-changed with their reason; one refused row refuses the catalog. Transport read limits remain the injected fetcher's responsibility.
 - Tied ranks use the host's default ICU locale, so ordering can change across hosts (source `skill-search/src/scoring.ts:49`); port: kept for ASCII root collation through the existing `metric.CompareTimestamps`. Non-ASCII ids are ordered by code point after ASCII, whereas ICU interleaves them; this is the existing platform limitation, not a full Unicode parity claim.
 - `JSON.parse` keeps lone surrogate escapes where Go's default JSON reading replaces them with U+FFFD; the catalog has the same documented platform limitation as the other JSON ports (source `skill-search/src/sources.ts:21,89`; `pyjson.Loads` default reading); port: kept as a platform difference. Valid paired Unicode text is preserved.
+
+## CRW-496 — skill-search CLI
+
+- Unknown options (including `--help`) and dangling flags become query/id text rather than help or a flag error (`skill-search/src/cli.ts:32-43` at v0.2.40); port: kept.
+- Catalog cache keys retain only the first 24 base64url URL characters, discarding the remainder of the URL identity (`skill-search/src/cli.ts:63-67` at v0.2.40); port: kept.
+- Search source, gh launch/auth and malformed-gh-JSON failures can produce empty results with exit 0 (`skill-search/src/cli.ts:101-135,170-194` at v0.2.40); port: kept.
+- `show --source gh` searches jaw, hermes and clawhub instead of GitHub, while unsupported show sources fall through to a no-skill message (`skill-search/src/cli.ts:204-229` at v0.2.40); port: kept.
+- Show suppresses catalog errors, but a matching row's body-fetch failure stops fallback; fetched skill bodies have no size cap (`skill-search/src/cli.ts:209-220` at v0.2.40); port: kept.
+- The default fetch transport reports only `fetch failed` for a network failure, discarding its cause (`skill-search/src/cli.ts:46` at v0.2.40, Node fetch transport); port: kept.
