@@ -42,18 +42,18 @@ func TestRunScenario_a_wait_that_never_ends_or_mixes_kinds_is_an_error(t *testin
 	}
 }
 
-// The pid a ps call names is live, so the recorder cannot normalise it by context: the argument after -p is <PID>, whatever else follows.
+// The pid a ps call names is live, so the recorder cannot normalise it by context: a number after -p is <PID>, anything else stays.
 func TestReadCalls_names_the_pid_of_a_ps_call(t *testing.T) {
 	c := &Case{Root: t.TempDir()}
 	if err := os.Mkdir(filepath.Join(c.Root, ".rec"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	rows := "{\"cmd\":\"ps\",\"argv\":[\"-o\",\"lstart=\",\"-p\",\"48213\"],\"cwd\":\"/x\"}\n{\"cmd\":\"gh\",\"argv\":[\"-p\",\"48213\"],\"cwd\":\"/x\"}\n"
+	rows := "{\"cmd\":\"ps\",\"argv\":[\"-o\",\"lstart=\",\"-p\",\"48213\"],\"cwd\":\"/x\"}\n{\"cmd\":\"gh\",\"argv\":[\"-p\",\"48213\"],\"cwd\":\"/x\"}\n{\"cmd\":\"ps\",\"argv\":[\"-p\",\"abc\"],\"cwd\":\"/x\"}\n"
 	if err := os.WriteFile(filepath.Join(c.Root, ".rec", "calls.jsonl"), []byte(rows), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	calls, err := readCalls(c, testNormaliser(t).NewSession(nil))
-	if err != nil || len(calls) != 2 || !slices.Equal(calls[0].Argv, []string{"-o", "lstart=", "-p", "<PID>"}) || calls[1].Argv[1] != "48213" {
+	if err != nil || len(calls) != 3 || !slices.Equal(calls[0].Argv, []string{"-o", "lstart=", "-p", "<PID>"}) || calls[1].Argv[1] != "48213" || calls[2].Argv[1] != "abc" {
 		t.Errorf("%+v %v", calls, err)
 	}
 }

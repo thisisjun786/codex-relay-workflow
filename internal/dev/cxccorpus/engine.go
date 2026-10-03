@@ -827,7 +827,7 @@ func readCalls(c *Case, s *Session) ([]Call, error) {
 			return nil, err
 		}
 		for i := range call.Argv {
-			if call.Cmd == "ps" && i > 0 && call.Argv[i-1] == "-p" { // a live process id, which no text rule can tell from another number
+			if call.Cmd == "ps" && i > 0 && call.Argv[i-1] == "-p" && call.Argv[i] != "" && strings.Trim(call.Argv[i], "0123456789") == "" { // a live process id, which no text rule can tell from another number
 				call.Argv[i] = "<PID>"
 			}
 			call.Argv[i] = s.Text(call.Argv[i])

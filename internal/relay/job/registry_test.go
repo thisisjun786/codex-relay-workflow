@@ -99,6 +99,7 @@ func TestReadRecordKeepsTheOraclesFourTestsAndTheKeysItDoesNotName(t *testing.T)
 	}{ // oracle: only the minimal record is listed
 		"junk": {"nope", false}, "empty object": {"{}", false}, "array": {"[1]", false}, "no command": {"{\"id\":\"n\",\"cwd\":\"x\",\"status\":\"running\"}", false},
 		"upper-case key": {"{\"ID\":\"u\",\"cwd\":\"x\",\"command\":[],\"status\":\"s\"}", false}, "null id": {head + "\"id\":null}", false}, "minimal": {head + "\"id\":\"m\"}", true},
+		"another record's id": {head + "\"id\":\"b\"}", false},
 	} {
 		ws := workspace(t)
 		put(t, RecordPath(ws, "m"), c.text)
@@ -259,7 +260,7 @@ func TestProcessStartTokenIsWhatPsPrints(t *testing.T) {
 
 func TestListRecordsReconcilesAndSkipsJunk(t *testing.T) { // oracle: only the record is listed
 	ws := workspace(t)
-	for id, text := range map[string]string{"arr": "[1]", "empty": "{}", "nope": "nope", "z-nullid": "{\"id\":null,\"cwd\":\"x\",\"command\":[],\"status\":\"s\"}"} {
+	for id, text := range map[string]string{"arr": "[1]", "empty": "{}", "nope": "nope", "z-other": "{\"id\":\"b\",\"cwd\":\"x\",\"command\":[],\"status\":\"running\"}", "z-nullid": "{\"id\":null,\"cwd\":\"x\",\"command\":[],\"status\":\"s\"}"} {
 		put(t, RecordPath(ws, id), text)
 	}
 	fresh := mk(ws, "b")

@@ -105,7 +105,8 @@ func writeRecord(ws string, rec BgRecord, clock func() time.Time) error {
 	return atomicWrite(ws, RecordPath(ws, rec.ID), string(b), os.Getpid(), clock().UnixMilli())
 }
 
-// ReadRecord is the record of that id, or false when its file is missing, is not a JSON object or fails isRecord (readRecord).
+// ReadRecord is the record of that id, or false when its file is missing, is not a JSON object, fails isRecord or holds another id: the
+// oracle returned it under the id asked for and then wrote its corrections to the record file of the id it held (readRecord).
 func ReadRecord(ws, id string) (BgRecord, bool) {
 	raw, ok := ReadJSON(RecordPath(ws, id))
 	var m map[string]json.RawMessage
@@ -117,6 +118,9 @@ func ReadRecord(ws, id string) (BgRecord, bool) {
 		Note: nullable[string](get("note")), PID: nullable[int](get("pid")), StartToken: nullable[string](get("startToken")), Status: BgStatus(str(get("status"))),
 		ExitCode: nullable[float64](get("exitCode")), StartedAt: str(get("startedAt")), EndedAt: nullable[string](get("endedAt")), DeliveredAt: nullable[string](get("deliveredAt"))}
 	_ = json.Unmarshal(get("command"), &rec.Command)
+	if rec.ID != id {
+		return BgRecord{}, false
+	}
 	for _, key := range slices.Sorted(maps.Keys(m)) {
 		rec.Extra = append(rec.Extra, Member{key, m[key]})
 	}
@@ -273,7 +277,8 @@ func ListRecords(ws string, clock func() time.Time) ([]BgRecord, error) {
 	return out, nil
 }
 
-// DisabledState is the "bg off" switch: whether its file is there, and the time the file holds (disabledState).
+// DisabledState is the "bg off" switch: whether its file could be read (the oracle's readTextOrNull answers null for every read error,
+// so an unreadable file is not off), and the time the file holds (disabledState).
 type DisabledState struct {
 	Disabled bool
 	Since    *string
