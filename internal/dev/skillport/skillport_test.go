@@ -298,6 +298,18 @@ func TestUnsafeLayoutsAreRefused(t *testing.T) {
 	expectProblem(t, "linked record", f.problems(nil), "not a regular file")
 }
 
+func TestUnreadableRootsAreNotEmpty(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads any directory")
+	}
+	f := newFixture(t)
+	dir := filepath.Join(f.root, StagingRoot)
+	must(t, os.MkdirAll(dir, 0o755))
+	must(t, os.Chmod(dir, 0))
+	t.Cleanup(func() { os.Chmod(dir, 0o755) })
+	expectProblem(t, "unreadable staging root", f.problems(nil), "permission denied")
+}
+
 // Two runs that race for one skill: exactly one gets it (an empty skill would let both rename).
 func TestConcurrentStagesPublishOnce(t *testing.T) {
 	for i := 0; i < 20; i++ {
