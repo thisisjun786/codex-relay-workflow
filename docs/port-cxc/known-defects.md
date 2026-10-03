@@ -484,3 +484,12 @@ No new oracle defect was identified in the directive text and assembly of `pabcd
 - A failed pip run removes the whole rebuildable venv directory, including pre-existing partial cache contents when its interpreter was absent (source `bin/codexclaw.mjs:383,386,397-399`; `TestRepoMapBootstrapWithFakesOnly/pip-fails`); port: kept (the cache is disposable; no settings, state or record path is written by the launcher).
 - The uv availability probe always runs, even for help or an explicit Python override, and has no timeout (source `bin/codexclaw.mjs:404-406`; the map ladder/ingress tests and replayed calls); port: kept.
 - Any numeric listen.port is accepted, including negative/fractional values and overflow to Infinity, which renders as null; no valid-port range is checked (source `provider-bridge/src/detect.ts:54`; Node-recorded `testdata/oracle.jsonl`, `TestDetectNodeRecordedStatusCases`); port: kept.
+
+## CRW-501 — Helper role live catalog
+
+- Cache validation does not validate `state`, accepts blank entry IDs/labels and arbitrary string effort values, and echoes unknown members (source `subagent-config/src/live-catalog.ts:64-68,112`; `TestLiveCatalogValidation`); port: kept.
+- The source key omits the resolved native home, so changing `HOME` with an explicit unchanged catalog home and absent `CODEX_HOME` can reuse a list from the old native home (source `live-catalog.ts:55-58,86-93`; `TestLiveCatalogSourceIdentityAndClock`); port: kept.
+- The 30-second TTL only limits fresh reuse; a validated last-success list is returned stale without an age limit while discovery keeps failing (source `live-catalog.ts:92-93,110-113`; `TestLiveCatalogCache`); port: kept.
+- `fetchedAt` is declared a string but cache validation coerces truthy numbers through `Date.parse`, which also normalizes February days 30/31 and `24:00` (source `live-catalog.ts:15,65`; `TestLiveCatalogValidation/numeric-date` and `TestLiveCatalogOracleDates`); port: kept.
+
+The pinned oracle already publishes through an exclusive 0600 temporary file and rename (`live-catalog.ts:71-79`). This port preserves that invariant: the forced-rename failure case retains the previous bytes and removes its own temporary file. No new truncation defect or intentionally-changed fix is claimed.
