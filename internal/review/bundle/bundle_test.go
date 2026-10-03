@@ -20,7 +20,7 @@ func TestBundleCommittedMaterial(t *testing.T) {
 	}
 	anchor := r.commit()
 	r.write("base-only", "must not enter diff\n")
-	r.commit()
+	baseTip := r.commit()
 	r.git("checkout", "-qb", "topic", anchor)
 	lines[29] = "edited-at-head\n"
 	r.write("code.txt", strings.Join(lines, ""))
@@ -39,6 +39,17 @@ func TestBundleCommittedMaterial(t *testing.T) {
 	}
 	if strings.Contains(b.Chunks[0].Text, "base-only") {
 		t.Error("diff did not use merge-base")
+	}
+	m := b.Metadata
+	if m.Base != baseTip || m.Head != head || m.MergeBase != anchor || len(m.PatchID) != 40 || m.FileCount != 1 || m.Additions != 1 || m.Deletions != 1 || m.ChunkCount != 1 || m.ChunkSizes[0] != len(b.Chunks[0].Text) || m.TotalBytes != len(b.Chunks[0].Text) || m.HeadBytes == 0 || m.RuleBytes == 0 || m.DiffBytes == 0 {
+		t.Fatalf("incomplete metadata: %+v", m)
+	}
+	wide, err := Build(context.Background(), r.dir, "base", head, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wide.Metadata.PatchID != m.PatchID || !strings.Contains(wide.Chunks[0].Text, "@@ -5,51 +5,51 @@") {
+		t.Fatal("default context or context-independent patch-id")
 	}
 	r.write("code.txt", "dirty worktree must not enter\n")
 	r.write("POLICY.md", "dirty rule\n")
