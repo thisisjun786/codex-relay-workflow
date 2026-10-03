@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/capacity"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -60,9 +61,16 @@ func (k *releaseKit) journal(kind string) []map[string]any {
 // child. It returns the manifest digest and the request id of the abandoned intent.
 func (k *releaseKit) abandon(plan, node string) (digest, request string) {
 	k.t.Helper()
+	n, _ := nodeOf(k.snapshot(plan), node)
+	return k.abandonWith(plan, node, k.request(n.Kind == dag.NodeImplementation))
+}
+
+// abandonWith is abandon for a release request the test supplies.
+func (k *releaseKit) abandonWith(plan, node string, req ReleaseRequest) (digest, request string) {
+	k.t.Helper()
 	real := k.sched.Start
 	k.sched.Start = func(context.Context, []byte) (StartAnswer, error) { return StartAnswer{}, context.DeadlineExceeded }
-	_, err := k.release(plan, node)
+	_, err := k.sched.Release(context.Background(), plan, node, "parent", req)
 	k.sched.Start = real
 	if err == nil {
 		k.t.Fatal("the start was expected to fail")
@@ -699,13 +707,7 @@ func TestCloseKeepsACopyALiveIntentNames(t *testing.T) {
 // newReleaseKitAt is newReleaseKit over a store at a given state directory, for the tests that run the built binary.
 func newReleaseKitAt(t *testing.T, state string) *releaseKit {
 	t.Helper()
-	f := newFixtureAt(t, filepath.Join(state, "relay.sqlite3"))
-	root := t.TempDir()
-	settings := map[string]any{"sandbox": map[string]any{"type": "workspaceWrite"}, "approvalPolicy": "never", "cwd": root, "runtimeWorkspaceRoots": []any{root}, "model": "gpt-5", "reasoningEffort": "medium", "environments": []any{}}
-	k := &releaseKit{fixture: f, host: newScriptedHost(t, settings), tips: &tips{sha: head1}, forge: &prs{by: map[string]PullRequest{}}, root: root, marker: t.TempDir(), state: t.TempDir()}
-	f.projectParent()
-	k.wire(f.sched)
-	return k
+	return newReleaseKitOn(t, newFixtureAt(t, filepath.Join(state, "relay.sqlite3")))
 }
 
 // c2: the command through the built binary: the shapes of success, replay, refusal and usage.

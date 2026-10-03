@@ -1,13 +1,10 @@
 package dag
 
 import (
-	"bytes"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -18,23 +15,13 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
-// crw runs the built binary as an operator would, one process per command: crw relay --state <state> <args>.
-func crw(t testing.TB, state string, args ...string) (string, int) {
-	t.Helper()
-	cmd := exec.Command(testsupport.CRW(t), append([]string{"relay", "--state", state}, args...)...)
-	var out, errs bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &errs
-	err := cmd.Run()
-	code := 0
-	if err != nil {
-		var exit *exec.ExitError
-		if !errors.As(err, &exit) {
-			t.Fatal(err)
-		}
-		code = exit.ExitCode()
-	}
-	return out.String(), code
-}
+// The helpers this package's tests share with dagsched's live in internal/testsupport; these are the names the tests use. crw runs the
+// built binary as an operator would, one process per command: crw relay --state <state> <args>.
+var (
+	crw       = testsupport.Relay
+	parseOut  = testsupport.ParseJSON
+	catalogOf = testsupport.SQLiteCatalog
+)
 
 func writeDoc(t testing.TB, dir, name string, d doc) string {
 	t.Helper()
@@ -43,15 +30,6 @@ func writeDoc(t testing.TB, dir, name string, d doc) string {
 		t.Fatal(err)
 	}
 	return "@" + path
-}
-
-func parseOut(t testing.TB, out string) map[string]any {
-	t.Helper()
-	var m map[string]any
-	if err := json.Unmarshal([]byte(out), &m); err != nil {
-		t.Fatalf("output is not JSON: %v\n%s", err, out)
-	}
-	return m
 }
 
 func ids(list any, key string) []string {
@@ -250,29 +228,6 @@ func listing(t testing.TB, dir string, sidecars ...bool) []string {
 		names = append(names, fmt.Sprintf("%s %d", e.Name(), info.Size()))
 	}
 	return names
-}
-
-func catalogOf(t testing.TB, path string) map[string]string {
-	t.Helper()
-	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	rows, err := db.Query("SELECT type || ' ' || name, COALESCE(sql, '') FROM sqlite_master")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	out := map[string]string{}
-	for rows.Next() {
-		var k, v string
-		if err := rows.Scan(&k, &v); err != nil {
-			t.Fatal(err)
-		}
-		out[k] = v
-	}
-	return out
 }
 
 // Nothing a rejected request asks for is left behind: no state directory, no store, no zone, no byte of an existing store.

@@ -23,7 +23,7 @@ follows is about what is read before anything moves and what is put back when it
 | `crw install register-mcp [--owner plugin]` | Write the bridge record the plugin's declared server reads | OPS-2.2 |
 | `crw install hook [--owner plugin]` | Write the Stop settings the plugin's declared hook reads | OPS-6.3 |
 | `crw install register-service [--remove]` | Write and enable the one systemd user unit that starts the relay service when the user manager starts; with `--remove`, disable and delete it | OPS-4.1, OPS-6.1 |
-| `crw install status`, `crw doctor` | Read the installation, classify it and report the six check results; write nothing | OPS-2.1, OPS-2.2, OPS-6.1 |
+| `crw install status`, `crw doctor` | Read the installation, classify it and report the six check results; write nothing (the relay readings behind them are the relay's `doctor` without `--probe-write`, which creates no file of its own and never opens its write gate; what it still does is named under [Installing the runtime](#installing-the-runtime)) | OPS-2.1, OPS-2.2, OPS-6.1 |
 | `crw-dev skills link --check` or `--apply` | Skill links into Codex, from a checkout | OPS-2.3 |
 
 Every `crw install` and `crw doctor` command prints one JSON document. Runtime installation is never
@@ -148,8 +148,17 @@ and the pointer where it was ([what a failed update restores](#what-a-failed-upd
 Nothing here removes, moves or recreates the store: update failure and store loss are different
 accidents and the recovery for one must not cause the other.
 
-The exercise and the swap gate read the store without opening it, through the relay's `doctor`
-and `service status` and a catalog read that takes no lock. The runtime opens it afterwards, for
+The exercise and the swap gate read the store through the relay's `doctor` and `service status` and a
+catalog read that takes no lock. They run `doctor` with no option, so it only reads: it opens the
+database read-only, creates no `.probe-` file and no SQLite sidecar where SQLite allows, makes no
+read-write connection and never opens `write-gate.lock`; `doctor --probe-write`, which writes a
+temporary file and begins and rolls back a write transaction, is not what they run
+([decision 76](port/decisions.md#76-the-relays-doctor-reads-by-default-and-measures-writability-only-on-request-crw-399)).
+The ownership reading copies the database into the temporary directory, the worker-policy reading
+takes the daemon lock for an instant when a worker record exists, and a store left after an unclean
+shutdown is read the plain way, which may create SQLite's `-shm` index beside it; none of these writes
+the store's data. The
+runtime opens it afterwards, for
 the relay commands the skills run and for the Stop hook's guard whenever it has to read the store,
 in the relay's default state directory with no variable set. Until todo 43 the Go build refused
 that directory unless `CRW_ALLOW_LIVE_STATE=1` was set, so an install left a runtime that could
@@ -1148,6 +1157,17 @@ records' own `YYYY-MM-DDTHH:MM:SSZ` format, `--journal-root` repeats for every r
 registrations write to, and `--codex-home` adds a host whose ledger no claim names yet. The
 invocations it cannot judge, whose identity was not established or that had no owner, are counted by
 reason and never read as answered.
+
+When the window contains readable version-2 rows with no event key, the optional
+`excludedInvocations` list names each row, timestamp, session and turn, and its
+`unestablished:<reason>` or `no_event:<outcome>` reason. `evidence` holds the recorded
+acceptance, event key, accepted path, adapter outcome, guard invocation/decision,
+hold and event identity. `excludedFrom: per_event_acceptance_count` means only that
+the row cannot join an event's acceptance count; it does not remove uncertainty
+from the window. `preventsTrue` is true except for the existing native pre-scan
+unreachable exemption. An unestablished guard call still makes the verdict
+`UNREADABLE`, even if it wrote no claim. Keyed unclaimable or failed claims remain
+in `unjudgedInvocations`; malformed rows remain in `rowsUnreadable`.
 
 ### Limits
 
