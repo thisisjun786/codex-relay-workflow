@@ -1,0 +1,6 @@
+interface:
+  display_name: "crw-pabcd"
+  short_description: "PABCD phases, evidence, and explicit scope boundaries."
+  default_prompt: "Use $crw-pabcd to plan, audit, build, check and close this task within its authorized scope."
+policy:
+  allow_implicit_invocation: true

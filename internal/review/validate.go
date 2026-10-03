@@ -89,7 +89,9 @@ func walkShape(t reflect.Type, v any, p string, errs *ValidationError) {
 			switch {
 			case !present && opt != "omitempty":
 				add(join(name), "is required")
-			case present && child == nil && opt != "omitempty":
+			case present && child == nil && (opt != "omitempty" || name == "calls" || name == "needsContext" || name == "error"):
+				// New optional fields permit omission, not null. Preserve the legacy
+				// optional endLine/detail decoding behavior for existing artifacts.
 				add(join(name), "must not be null")
 			case present:
 				walkShape(t.Field(i).Type, child, join(name), errs)
@@ -180,6 +182,28 @@ func (a *Artifact) Validate(expectedHead string) error {
 		}
 		checkReviewers(p+".finding", f, returned, bad)
 	}
+	for i, c := range a.Calls {
+		p := fmt.Sprintf("calls[%d]", i)
+		if !slices.Contains([]string{"review", "group", "verify"}, c.Stage) {
+			bad(p+".stage", "unknown stage %q", c.Stage)
+		}
+		if !slices.Contains([]string{"normal", "invalid", "unavailable"}, c.Class) {
+			bad(p+".class", "unknown class %q", c.Class)
+		}
+		if c.Class == "normal" && c.Reason != "" || c.Class != "normal" && strings.TrimSpace(c.Reason) == "" {
+			bad(p+".reason", "must be empty exactly for a normal call")
+		}
+		if c.Reviewer < -1 || c.Chunk < -1 || c.ElapsedMillis < 0 || min(c.Tokens.Input, c.Tokens.Output, c.Tokens.Thinking, c.Tokens.CacheRead, c.Tokens.Total) < 0 {
+			bad(p, "invalid indexes or negative accounting")
+		}
+		if c.Stage == "review" && (c.Reviewer < 0 || c.Reviewer >= r.Run || c.Chunk < 0 || strings.TrimSpace(c.Perspective) == "") ||
+			c.Stage != "review" && c.Reviewer != -1 || c.Stage == "group" && c.Chunk != -1 || c.Stage == "verify" && c.Chunk < 0 {
+			bad(p, "indexes/perspective do not match stage")
+		}
+		if a.Status == StatusComplete && (c.Class != "normal" || c.Error != "") || a.Status == StatusUnavailable && c.Stage == "review" && c.Class == "normal" {
+			bad("status", "does not match recorded calls")
+		}
+	}
 	if len(errs) == 0 {
 		return nil
 	}
@@ -189,6 +213,9 @@ func (a *Artifact) Validate(expectedHead string) error {
 // checkReviewers checks the provenance every finding carries: strictly ascending reviewers, and a support equal to their count that
 // no more reviewers than returned a result can give.
 func checkReviewers(p string, f Finding, returned int, bad badFn) {
+	if f.NeedsContext && f.Verdict != VerdictUnverified {
+		bad(p+".needsContext", "requires an unverified verdict")
+	}
 	for i, id := range f.Reviewers {
 		if id < 0 || i > 0 && id <= f.Reviewers[i-1] {
 			bad(p+".reviewers", "must be non-negative and strictly ascending")

@@ -55,11 +55,15 @@ type Leg struct {
 func Legs() []Leg {
 	return []Leg{
 		{"session-start-bootstrapping-pabcd-state", "session-start", "session-start", Generic, false, false, true, nil},
-		{"session-start-advising-agent-thread-permissions", "session-start", "session-start-permission-advisory", Permission, false, false, false, nil},
+		{"session-start-advising-agent-thread-permissions", "session-start", "session-start-permission-advisory", Permission, false, false, false, func(c Call) string {
+			return pabcdhook.HandleAgentThreadSessionStartAdvisory(c.Raw, os.LookupEnv)
+		}},
 		{"user-prompt-submit-checking-pabcd-trigger", "user-prompt-submit", "user-prompt-submit", Generic, false, false, false, nil},
 		{"stop-checking-pabcd-continuation", "stop", "stop", Generic, false, false, true, nil},
 		{"pre-tool-use-guarding-goal-budget", "pre-tool-use", "pre-tool-use", FailClosed, false, false, false, nil},
-		{"permission-request-allowing-agent-thread", "permission-request", "permission-request", Permission, false, false, false, nil},
+		{"permission-request-allowing-agent-thread", "permission-request", "permission-request", Permission, false, false, false, func(c Call) string {
+			return pabcdhook.HandleAgentThreadPermissionRequest(c.Raw, os.LookupEnv)
+		}},
 		{"pre-tool-use-guarding-interview-in-goal", "pre-tool-use", "pre-tool-use", FailClosed, false, false, false, nil},
 		{"pre-tool-use-guarding-goal-complete", "pre-tool-use", "pre-tool-use", FailClosed, false, false, false, nil},
 		{"post-tool-use-capturing-interview-answers", "post-tool-use", "post-tool-use", Generic, false, false, true, nil},
@@ -81,8 +85,12 @@ func Legs() []Leg {
 			}
 			return ""
 		}},
-		{"session-start-detecting-managed-worktree", "session-start", "worktree-guard", Generic, false, false, false, nil},
-		{"user-prompt-submit-guiding-worktree-rename", "user-prompt-submit", "worktree-guard", Generic, false, false, false, nil},
+		{"session-start-detecting-managed-worktree", "session-start", "worktree-guard", Generic, false, false, false, func(c Call) string {
+			return ContextOutput(pabcdhook.HandleWorktreeGuard(c.Raw, os.LookupEnv))
+		}},
+		{"user-prompt-submit-guiding-worktree-rename", "user-prompt-submit", "worktree-guard", Generic, false, false, false, func(c Call) string {
+			return ContextOutput(pabcdhook.HandleWorktreeGuard(c.Raw, os.LookupEnv))
+		}},
 		{"pre-tool-use-guarding-managed-worktree-deletion", "pre-tool-use", "worktree-guard-pretool", Guard, true, false, false, nil},
 		{"pre-tool-use-guarding-memory-write", "pre-tool-use", "pre-tool-use-memory-write", Guard, true, false, false, nil},
 		{"pre-tool-use-guarding-automation-ownership", "pre-tool-use", "pre-tool-use-automation-ownership", Guard, false, false, false, nil},
