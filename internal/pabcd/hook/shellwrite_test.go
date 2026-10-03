@@ -190,6 +190,7 @@ func TestShellWriteLiteralReviewRegressions(t *testing.T) {
 		"cat <<''\n'\n\n: 2>target",
 		"cat <\\\n<EOF\n'\nEOF\n: 2>target",
 		"cat <<EOF\n'\nEO\\\nF\n: 2>target",
+		"cat <<EOF\n\\\\\nEOF\n: 2>target",
 	} {
 		t.Run(command, func(t *testing.T) {
 			if got := ShellWriteDestinations(command); !slices.Contains(got, "target") {
