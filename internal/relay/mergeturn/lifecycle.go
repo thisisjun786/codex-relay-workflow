@@ -136,11 +136,24 @@ func (s *Service) Release(ctx context.Context, turn, actor, disposition, reason,
 	return map[string]any{"released": released, "promoted": next, "ledger": released["ledger"]}, nil
 }
 
+// Ready is MergeTurn.declare_ready. Two rules about a restated head were written with the lane and
+// are kept on purpose; the answer says when either one meets the caller (headReset):
+//
+// A head that moved resets readiness. The flag is 1 only if ready && !moved, so a --ready given with
+// a new head is accepted and not recorded: without the reset a holder could restate its head and then
+// pass the currency check unchallenged (merge-turn-check refuses an undeclared head, check.go). The
+// relay reads no CI here; it reads the checks the holder restates at merge-turn-check.
+//
+// A head that moved on a holding turn is a new candidate, so it gets its own grant (cause
+// candidate_restated) to answer: the grant it holds names a head that no longer exists, and
+// unansweredGrant (refusals.go) stops merge-turn-check until the new one is acknowledged.
 func (s *Service) Ready(ctx context.Context, turn, actor string, ready bool, head, cause string) (map[string]any, error) {
 	at := s.now()
 	var blocked any
+	var reset *headReset
 	var refusal *registry.CoordinationRefusal
 	err := s.Store.Transaction(ctx, func(tx context.Context, _ *sql.Conn) error {
+		reset = nil
 		r, err := s.row(tx, turn)
 		if err != nil {
 			return err
@@ -167,6 +180,9 @@ func (s *Service) Ready(ctx context.Context, turn, actor string, ready bool, hea
 			head = r.CandidateHead
 		}
 		moved := head != r.CandidateHead
+		if moved {
+			reset = &headReset{from: r.CandidateHead, to: head, readyAsked: ready}
+		}
 		flag := int64(0)
 		if ready && !moved {
 			flag = 1
@@ -260,6 +276,9 @@ func (s *Service) Ready(ctx context.Context, turn, actor string, ready bool, hea
 		return nil, err
 	}
 	answer["blockedBy"] = blocked
+	if reset != nil {
+		answer["readinessReset"] = reset.answer(turn, actor, answer)
+	}
 	return answer, nil
 }
 
