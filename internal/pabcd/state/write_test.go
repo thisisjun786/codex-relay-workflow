@@ -111,7 +111,12 @@ func TestEnsureStateWhenTheHardLinkFails(t *testing.T) { // oracle 651, 666, 680
 	if created, err := ensureState(cwd, "fat32-race", at(), linkFails(syscall.ENOTSUP)); created || err != nil {
 		t.Fatalf("second: created %v, %v", created, err)
 	}
-	if _, err := ensureState(t.TempDir(), "x", at(), os.Link); err != nil || (func() bool { f := filepath.Join(t.TempDir(), "f"); _ = os.WriteFile(f, nil, 0o644); _, e := ensureState(f, "x", at(), os.Link); return !errors.Is(e, syscall.ENOTDIR) })() {
+	if _, err := ensureState(t.TempDir(), "x", at(), os.Link); err != nil || (func() bool {
+		f := filepath.Join(t.TempDir(), "f")
+		_ = os.WriteFile(f, nil, 0o644)
+		_, e := ensureState(f, "x", at(), os.Link)
+		return !errors.Is(e, syscall.ENOTDIR)
+	})() {
 		t.Fatal("a .crw that is a file must fail with ENOTDIR")
 	}
 }
@@ -157,13 +162,21 @@ func TestWriteStateThenReadStateRoundTrips(t *testing.T) {
 		{"loopArmSeen/idleEditNudges valid values roundtrip (407)", func(s *State) { s.LoopArmSeen, s.IdleEditNudges = true, 7 }, func(s State) bool { return s.LoopArmSeen && s.IdleEditNudges == 7 }},
 		{"injectedTurns roundtrips (454)", func(s *State) { s.InjectedTurns = []string{"t1", "t2"} }, func(s State) bool { return slices.Equal(s.InjectedTurns, []string{"t1", "t2"}) }},
 		{"lastInjectedPhase + orchestrationActive roundtrip (489)", func(s *State) { s.Phase, s.LastInjectedPhase, s.OrchestrationActive = PhaseB, &phaseB, true },
-			func(s State) bool { return s.LastInjectedPhase != nil && *s.LastInjectedPhase == PhaseB && s.OrchestrationActive }},
+			func(s State) bool {
+				return s.LastInjectedPhase != nil && *s.LastInjectedPhase == PhaseB && s.OrchestrationActive
+			}},
 		{"IDLE phase forces orchestrationActive false (523)", func(s *State) { idle := PhaseIdle; s.LastInjectedPhase, s.OrchestrationActive = &idle, true },
-			func(s State) bool { return s.Phase == PhaseIdle && s.LastInjectedPhase == nil && !s.OrchestrationActive }},
+			func(s State) bool {
+				return s.Phase == PhaseIdle && s.LastInjectedPhase == nil && !s.OrchestrationActive
+			}},
 		{"a valid D-close marker restores with its IDLE check epoch (707)", func(s *State) { s.CheckEpoch, s.DcloseRecovery = str("c-1"), marker(s.SessionID, "wp-2") },
-			func(s State) bool { return s.CheckEpoch != nil && *s.CheckEpoch == "c-1" && s.DcloseRecovery != nil && *s.DcloseRecovery.NextWorkPhaseID == "wp-2" && !s.DcloseRecovery.Legacy }},
+			func(s State) bool {
+				return s.CheckEpoch != nil && *s.CheckEpoch == "c-1" && s.DcloseRecovery != nil && *s.DcloseRecovery.NextWorkPhaseID == "wp-2" && !s.DcloseRecovery.Legacy
+			}},
 		{"an explicit null successor restores without the legacy flag (786)", func(s *State) { s.CheckEpoch, s.DcloseRecovery = str("c-1"), marker(s.SessionID, "") },
-			func(s State) bool { return s.DcloseRecovery != nil && s.DcloseRecovery.NextWorkPhaseID == nil && !s.DcloseRecovery.Legacy }},
+			func(s State) bool {
+				return s.DcloseRecovery != nil && s.DcloseRecovery.NextWorkPhaseID == nil && !s.DcloseRecovery.Legacy
+			}},
 		{"a foreign D-close marker is dropped and cannot retain an IDLE epoch (808)", func(s *State) { s.CheckEpoch, s.DcloseRecovery = str("c-1"), marker("other-session", "wp-2") },
 			func(s State) bool { return s.DcloseRecovery == nil && s.CheckEpoch == nil }},
 	} {

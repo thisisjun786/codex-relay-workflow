@@ -1,7 +1,7 @@
-// Package state is the PABCD session state model and its read path: the Go form of CXC v0.2.40 pabcd-state/src/state.ts
-// (commit 3c1459ac) from the top of the file to readStateStrict, with the session file at .crw/sessions/<id>.json
-// (name-substitution R26). It reads and rebuilds; it writes nothing. The state-writes issue owns writeState, the session lock,
-// the ledgers (LedgerEntry, LEDGER_FILE, appendLedger, the interview scan events) and ensureState, the exclusive create.
+// Package state is the PABCD session state: the Go form of CXC v0.2.40 pabcd-state/src/state.ts (commit 3c1459ac), with the
+// session file at .crw/sessions/<id>.json (name-substitution R26). state.go and restore.go are the model and the read path (the
+// top of the file to readStateStrict); write.go, lock.go and ledger.go the write path: ensureState, writeState, withSessionLock,
+// appendLedger, appendInterviewEvent and readInterviewEvents.
 //
 // Behaviour is ported as-is, oracle defects included. A file never becomes a State by decoding it into the struct:
 // ReadStateStrict rebuilds every field from known keys and defaults or drops what is malformed, so a hand-written or
@@ -14,7 +14,12 @@
 //
 // Not literal: a string holding a lone surrogate (an escape such as \ud800 in a file, or receiptClaimed cut inside an astral
 // character) cannot exist in Go and becomes U+FFFD, as does each invalid UTF-8 byte. Defaulted updatedAt values come from
-// time.Now; the writes issue stamps updatedAt itself and needs its own clock.
+// time.Now; WriteState stamps updatedAt from its clock.
+//
+// The write path differs from the oracle in ways no file shows: a temp file is named by the pid and a random UUID, where
+// writeState uses Date.now(), which two goroutines of one process could share; ReadInterviewEvents returns each row's text in
+// Raw beside typed fields (the oracle returns the parsed object), reads a key the row lacks as zero and does not read map; a
+// rename onto a directory fails with EEXIST from os.Rename where rename(2) and Node say EISDIR.
 package state
 
 import (
@@ -221,12 +226,15 @@ func MatchesDcloseRecovery(s State, closePhaseID string) bool {
 // Encode is JSON.stringify(s, null, 2) for a state ReadStateStrict or DefaultState built (a NaN or infinite counter, or a
 // negative zero, set by hand is an error or prints differently): the bytes the oracle publishes, without a trailing newline.
 // HTML is not escaped, and U+2028 and U+2029 are written literally.
-func Encode(s State) ([]byte, error) {
+func Encode(s State) ([]byte, error) { return stringify(s, "  ") }
+
+// stringify is JSON.stringify(v, null, indent) with an empty indent for the compact form, for any value the oracle prints.
+func stringify(v any, indent string) ([]byte, error) {
 	var b bytes.Buffer
 	enc := json.NewEncoder(&b)
 	enc.SetEscapeHTML(false)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(s); err != nil {
+	enc.SetIndent("", indent)
+	if err := enc.Encode(v); err != nil {
 		return nil, err
 	}
 	in, out := bytes.TrimSuffix(b.Bytes(), []byte("\n")), make([]byte, 0, b.Len())

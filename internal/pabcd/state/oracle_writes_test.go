@@ -63,7 +63,7 @@ func TestWritesMatchTheRecordedOracle(t *testing.T) {
 		"ledger_cli_dclose": closed(done, &CloseKey{str("c1"), str("wp1")}, "verified"), "ledger_cli_dclose_null_key": closed(done, &CloseKey{}, "verified"),
 		"ledger_hook_dclose_with_evidence": hook, "ledger_evidence_resolve": resolve, "ledger_chat_transition": chat, "ledger_chat_override": chatOverride,
 		"ledger_hook_dclose": func() LedgerEntry { e := done; e.Close = &CloseKey{str("c1"), str("wp1")}; return e }(),
-		"ledger_reset": row(ph(PhaseB), PhaseIdle, "reset"), "ledger_from_null": row(nil, PhaseA, "cli"),
+		"ledger_reset":       row(ph(PhaseB), PhaseIdle, "reset"), "ledger_from_null": row(nil, PhaseA, "cli"),
 	}
 	errno := map[string]syscall.Errno{"EPERM": syscall.EPERM, "ENOTSUP": syscall.ENOTSUP, "EXDEV": syscall.EXDEV, "EEXIST": syscall.EEXIST, "EIO": syscall.EIO, "EACCES": syscall.EACCES}
 	for _, c := range cases {
@@ -130,7 +130,9 @@ func TestWritesMatchTheRecordedOracle(t *testing.T) {
 			same("alias", []any{sessionFiles(cwd), string(ReadState(cwd, "a/b").Phase)}, []any{c.strs("listing"), c.str("phase")})
 		case id == "write_final_is_directory":
 			_ = os.MkdirAll(state, 0o777)
-			same("outcome", []any{errors.Is(WriteState(cwd, DefaultState("rec-s1", "")), syscall.EISDIR), sessionFiles(cwd)}, []any{c.str("threw") == "EISDIR", c.strs("listing")})
+			// os.Rename refuses a directory target itself, with EEXIST where rename(2) and Node say EISDIR; the failure, the removed temp
+			// file and the untouched directory are the same
+			same("outcome", []any{errors.Is(WriteState(cwd, DefaultState("rec-s1", "")), fs.ErrExist), sessionFiles(cwd)}, []any{c.str("threw") == "EISDIR", c.strs("listing")})
 		case id == "write_orphan_tmp_kept":
 			orphan := "rec-s1.json.12345.1767225600000.tmp"
 			putIn(t, cwd, "rec-s1", "garbage")
