@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -223,7 +224,8 @@ func TestWorkflow_parallel_legs_cover_the_whole_run(t *testing.T) {
 // parts name their packages and `rest` is every other package (`go list ./...` less TEST_PARTS), so
 // a package runs twice when two parts name it or TEST_PARTS misses a part, and a named path without
 // tests runs nothing. The numbered parts run without the dev tag and `rest` runs the dev-tagged
-// tests in its second pass, so a part cannot name one of those packages.
+// tests in its second pass, so a part cannot name one of those packages. A package is the cleaned
+// path of its directory, so `./internal/relay/cli/` and `./internal/relay/cli` are one package.
 func legProblems(makefile, root string) []string {
 	fields := func(name string) []string {
 		m := regexp.MustCompile(`(?m)^` + name + ` :=(.*)$`).FindStringSubmatch(makefile)
@@ -239,16 +241,17 @@ func legProblems(makefile, root string) []string {
 		n := m[1]
 		parts = append(parts, "$(TEST_PART_"+n+")")
 		for _, pkg := range fields("TEST_PART_" + n) {
-			if other, named := owner[pkg]; named {
+			dir := path.Clean(pkg)
+			if other, named := owner[dir]; named {
 				problems = append(problems, fmt.Sprintf("%s is named by part %s and by part %s", pkg, other, n))
 				continue
 			}
-			owner[pkg] = n
-			tests, _ := filepath.Glob(filepath.Join(root, filepath.FromSlash(pkg), "*_test.go"))
+			owner[dir] = n
+			tests, _ := filepath.Glob(filepath.Join(root, filepath.FromSlash(dir), "*_test.go"))
 			switch {
-			case !strings.HasPrefix(pkg, "./") || strings.Contains(pkg, "..."):
+			case !strings.HasPrefix(pkg, "./") || strings.Contains(pkg, "...") || dir == ".." || strings.HasPrefix(dir, "../"):
 				problems = append(problems, fmt.Sprintf("part %s names %q, which is not one package directory", n, pkg))
-			case strings.HasPrefix(pkg, "./cmd/crw-dev") || pkg == "./internal/dev" || strings.HasPrefix(pkg, "./internal/dev/"):
+			case strings.HasPrefix(dir, "cmd/crw-dev") || dir == "internal/dev" || strings.HasPrefix(dir, "internal/dev/"):
 				problems = append(problems, fmt.Sprintf("part %s names %s, whose tests need the dev tag and run in rest", n, pkg))
 			case len(tests) == 0:
 				problems = append(problems, fmt.Sprintf("part %s names %s, which has no tests", n, pkg))
@@ -279,11 +282,13 @@ func TestMakefile_leg_check_refuses_a_package_in_two_legs_or_none(t *testing.T) 
 		t.Fatalf("a sound Makefile is refused: %v", problems)
 	}
 	for name, mutated := range map[string]string{
-		"a package named by two parts":     strings.Replace(makefile, "./internal/relay/store", "./internal/relay/cli", 1),
-		"a part missing from TEST_PARTS":   strings.Replace(makefile, " $(TEST_PART_2)", "", 1),
-		"a path with no tests":             strings.Replace(makefile, "./internal/relay/store", "./internal/relay/nowhere", 1),
-		"a dev-tagged package":             strings.Replace(makefile, "./internal/relay/store", "./internal/dev/ci", 1),
-		"a pattern instead of one package": strings.Replace(makefile, "./internal/relay/store", "./internal/relay/...", 1),
+		"a package named by two parts":                  strings.Replace(makefile, "./internal/relay/store", "./internal/relay/cli", 1),
+		"a package named twice by equivalent spellings": strings.Replace(makefile, "./internal/relay/store", "./internal/relay/cli/", 1),
+		"a package named twice through a parent":        strings.Replace(makefile, "./internal/relay/store", "./internal/relay/../relay/cli", 1),
+		"a part missing from TEST_PARTS":                strings.Replace(makefile, " $(TEST_PART_2)", "", 1),
+		"a path with no tests":                          strings.Replace(makefile, "./internal/relay/store", "./internal/relay/nowhere", 1),
+		"a dev-tagged package":                          strings.Replace(makefile, "./internal/relay/store", "./internal/dev/ci", 1),
+		"a pattern instead of one package":              strings.Replace(makefile, "./internal/relay/store", "./internal/relay/...", 1),
 	} {
 		if len(legProblems(mutated, repoRoot())) == 0 {
 			t.Errorf("%s passes", name)
