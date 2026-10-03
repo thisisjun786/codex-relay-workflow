@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -58,6 +59,10 @@ func (l Leg) answer(c Call, swallow bool) (out string) {
 	return out
 }
 
+// Interrupted is the status of a hook cancelled before it answered: 128 and SIGINT, which is how a
+// shell reports the oracle's Node process, ended by SIGINT's default action at any point of its run.
+const Interrupted = 130
+
 // Hook is crw hook <event> --leg <name> for the legs given, in the order of cli.ts (337-523): an input
 // over the limit is answered before anything else (the oracle reads it as empty, so no record is
 // made); a Permission leg answers before the record; then the record is made, under the verb the
@@ -66,16 +71,37 @@ func (l Leg) answer(c Call, swallow bool) (out string) {
 // FailClosed or Generic leg answers. The exit status is 0 unless an oversize input has no answer, or
 // an error no stage swallows (exit 1, "crw cli failed", as the oracle's generic handler).
 //
+// The first interrupt of a crw process only cancels its run (cmd/crw serve), where Node's default
+// action ends the oracle at once, even while it waits for its input: so Hook answers Interrupted as
+// soon as ctx is done, whatever the run is waiting for, and anything it would have written is lost.
+//
 // Intentional change: arguments that name no leg of the table (an unknown leg, an event that is not the
 // leg's, no --leg) release the hook in silence, without reading its input and without a record. The
 // oracle dispatches on a verb and, for one it does not know, reads the input, records the verb and
 // exits 0; crw has no verb for a registration this build lacks, and an invocation it cannot attribute
 // to a pabcd-state leg is not recorded as one.
-func Hook(args []string, in io.Reader, stdout, stderr io.Writer, env host.LookupEnv, legs []Leg) (code int) {
+func Hook(ctx context.Context, args []string, in io.Reader, stdout, stderr io.Writer, env host.LookupEnv, legs []Leg) int {
 	leg, ok := find(legs, args)
 	if !ok {
 		return 0
 	}
+	done := make(chan int, 1)
+	go func() { done <- dispatch(leg, in, stdout, stderr, env) }()
+	select {
+	case code := <-done:
+		return code
+	case <-ctx.Done():
+		select {
+		case code := <-done: // answered at the same moment: the answer stands
+			return code
+		default:
+			return Interrupted
+		}
+	}
+}
+
+// dispatch runs one leg through the stages of Hook.
+func dispatch(leg Leg, in io.Reader, stdout, stderr io.Writer, env host.LookupEnv) (code int) {
 	defer func() {
 		if p := recover(); p != nil {
 			fmt.Fprintf(stderr, "crw cli failed: %v\n", p)

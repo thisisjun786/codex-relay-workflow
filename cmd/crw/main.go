@@ -153,7 +153,7 @@ func modes() []mode {
 		{"bridge", true, func(c invocation) int { return bridge(c.ctx, c.program, c.args) }},
 		{"hook", true, func(c invocation) int {
 			if harness.ClaimsHook(c.args) {
-				return harness.Hook(c.args, os.Stdin, c.stdout, c.stderr, os.LookupEnv, harness.Legs())
+				return harness.Hook(c.ctx, c.args, os.Stdin, c.stdout, c.stderr, os.LookupEnv, harness.Legs())
 			}
 			return hook.Run(c.ctx, c.args, os.Stdin, c.stdout, c.started)
 		}},

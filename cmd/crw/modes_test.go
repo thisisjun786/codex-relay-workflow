@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The modes the usage line and the invalid-choice message advertise are the table's listed rows,
@@ -61,5 +62,36 @@ func TestHookRoutesALegToTheHarnessAndTheRestToTheStopAdapter(t *testing.T) {
 		if code != 0 || out.String() != c.out || errOut.Len() != 0 {
 			t.Errorf("%v: %d %q %q, want 0 %q", c.args, code, out.String(), errOut.String(), c.out)
 		}
+	}
+}
+
+// A leg whose input stays open ends on the first interrupt, which cancels the run's context.
+func TestAnInterruptEndsAHookLegWaitingForItsInput(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", filepath.Join(home, "codex"))
+	in, hold, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer hold.Close()
+	defer in.Close()
+	stdin := os.Stdin
+	os.Stdin = in
+	t.Cleanup(func() { os.Stdin = stdin })
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(50*time.Millisecond, cancel)
+	got := make(chan int, 1)
+	var out, errOut strings.Builder
+	go func() {
+		got <- run(ctx, "crw", []string{"hook", "stop", "--leg", "stop-checking-pabcd-continuation"}, &out, &errOut)
+	}()
+	select {
+	case code := <-got:
+		if code != 130 || out.Len() != 0 || errOut.Len() != 0 {
+			t.Errorf("interrupted hook: %d %q %q", code, out.String(), errOut.String())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("an interrupted hook is still waiting for its input")
 	}
 }

@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // probe records which legs' handlers ran; every leg of the real table gets one.
@@ -37,7 +39,7 @@ func only(id string, handle Handler) []Leg {
 
 func hook(legs []Leg, args []string, stdin string, env map[string]string) (code int, out, errOut string) {
 	var o, e strings.Builder
-	code = Hook(args, strings.NewReader(stdin), &o, &e, lookup(env), legs)
+	code = Hook(context.Background(), args, strings.NewReader(stdin), &o, &e, lookup(env), legs)
 	return code, o.String(), e.String()
 }
 
@@ -229,6 +231,30 @@ func TestThePabcdCheckReadsTheCwdAsJSONParseDoes(t *testing.T) {
 	}
 }
 
+// Node's default SIGINT ends the oracle's hook at once, even while it waits for its input. crw's first
+// interrupt only cancels the run (cmd/crw serve), so a hook whose input stays open has to stop on it.
+func TestAnInterruptEndsAHookWaitingForItsInput(t *testing.T) {
+	env, home, _ := hookEnv(t)
+	in, hold := io.Pipe()
+	defer hold.Close()
+	p := &probe{}
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(50*time.Millisecond, cancel)
+	got := make(chan int, 1)
+	var out, errOut strings.Builder
+	go func() {
+		got <- Hook(ctx, []string{"stop", "--leg", "stop-checking-pabcd-continuation"}, in, &out, &errOut, lookup(env), p.legs("never"))
+	}()
+	select {
+	case code := <-got:
+		if code != Interrupted || out.Len() != 0 || errOut.Len() != 0 || len(p.ran) != 0 || len(records(t, home)) != 0 {
+			t.Errorf("interrupted: %d %q %q, ran %v", code, out.String(), errOut.String(), p.ran)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("an interrupted hook is still waiting for its input")
+	}
+}
+
 func TestOutputPassesThroughAndUnclaimedInvocationsReleaseInSilence(t *testing.T) {
 	env, home, _ := hookEnv(t)
 	p := &probe{}
@@ -240,7 +266,7 @@ func TestOutputPassesThroughAndUnclaimedInvocationsReleaseInSilence(t *testing.T
 	for _, args := range [][]string{nil, {"stop"}, {"stop", "--leg"}, {"stop", "--leg", "nope"}, {"stop", "--leg", "user-prompt-submit-checking-pabcd-trigger"},
 		{"nope", "--leg", "stop-checking-pabcd-continuation"}, {"stop", "--leg", "stop-checking-pabcd-continuation", "extra"}} {
 		var o, e strings.Builder
-		if code := Hook(args, unread, &o, &e, lookup(env), legs); code != 0 || o.Len() != 0 || e.Len() != 0 {
+		if code := Hook(context.Background(), args, unread, &o, &e, lookup(env), legs); code != 0 || o.Len() != 0 || e.Len() != 0 {
 			t.Errorf("%v: %d %q %q", args, code, o.String(), e.String())
 		}
 	}
