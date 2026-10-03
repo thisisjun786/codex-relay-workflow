@@ -17,6 +17,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/adapter"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
+	"github.com/thisisjun786/codex-relay-workflow/internal/review/command"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/buildinfo"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install"
@@ -172,6 +173,7 @@ func modes() []mode {
 			defer stop()
 			return install.Run(ctx, c.args, c.stdout, c.stderr)
 		}},
+		{"review", true, func(c invocation) int { return command.Run(c.ctx, c.args, c.stdout, c.stderr) }},
 		{"pabcd", false, func(c invocation) int { return harness.Pabcd(c.args, os.Stdin, c.stdout, c.stderr, harness.Verbs()) }},
 		{"help", true, help}, {"-h", false, help}, {"--help", false, help},
 		{"version", true, showVersion}, {"--version", false, showVersion},

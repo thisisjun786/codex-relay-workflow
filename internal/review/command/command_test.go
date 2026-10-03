@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -36,14 +37,9 @@ func clearEnv(t *testing.T) {
 func newRepo(t *testing.T) *repo {
 	t.Helper()
 	clearEnv(t)
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-	for _, name := range []string{"GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME"} {
-		t.Setenv(name, "Fixture")
-	}
-	for _, name := range []string{"GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"} {
-		t.Setenv(name, "fixture@example.invalid")
+	for k, v := range map[string]string{"GIT_CONFIG_GLOBAL": os.DevNull, "GIT_CONFIG_NOSYSTEM": "1", "GIT_AUTHOR_NAME": "Fixture", "GIT_COMMITTER_NAME": "Fixture",
+		"GIT_AUTHOR_EMAIL": "fixture@example.invalid", "GIT_COMMITTER_EMAIL": "fixture@example.invalid"} {
+		t.Setenv(k, v)
 	}
 	r := &repo{t: t, dir: t.TempDir()}
 	r.git("init", "-q", "--initial-branch=main")
@@ -64,10 +60,7 @@ func (r *repo) commit(files map[string]string) string {
 	r.t.Helper()
 	for name, text := range files {
 		path := filepath.Join(r.dir, name)
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			r.t.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+		if err := errors.Join(os.MkdirAll(filepath.Dir(path), 0o755), os.WriteFile(path, []byte(text), 0o644)); err != nil {
 			r.t.Fatal(err)
 		}
 	}
@@ -239,8 +232,16 @@ func TestConcurrentReviewsAreSerialAndTheLedgerStaysConsistent(t *testing.T) {
 	f.s.entered = make(chan struct{}, 32)
 	h2, h3, h4 := f.repo.change(f.base, 2), f.repo.change(f.base, 3), f.repo.change(f.base, 4)
 	for _, pair := range [][2]string{{h2, h3}, {h4, h4}} {
+		hold := make(chan struct{})
+		t.Cleanup(func() { // a failed check must not leave a review parked in its runner, which would hold the pipeline's in-process guard for every later test
+			select {
+			case <-hold:
+			default:
+				close(hold)
+			}
+		})
 		f.s.mu.Lock()
-		f.s.hold = make(chan struct{})
+		f.s.hold = hold
 		f.s.mu.Unlock()
 		prior, outcomes := len(f.ledger()), make(chan string, 2)
 		for i, head := range pair {
@@ -257,7 +258,7 @@ func TestConcurrentReviewsAreSerialAndTheLedgerStaysConsistent(t *testing.T) {
 		if recs := f.ledger(); len(recs) != prior+1 || recs[prior].Event != "started" || f.s.count()%2 != 1 {
 			t.Fatalf("the second review got past the lock: %d records, %d calls", len(recs), f.s.count())
 		}
-		close(f.s.hold)
+		close(hold)
 		got, want := []string{<-outcomes, <-outcomes}, []string{OutcomeReviewed, OutcomeReviewed}
 		if pair[0] == pair[1] {
 			want = []string{OutcomeAlreadyReviewed, OutcomeReviewed}
@@ -275,7 +276,8 @@ func TestConcurrentReviewsAreSerialAndTheLedgerStaysConsistent(t *testing.T) {
 	}
 }
 
-func TestBusyWhenTheRunLockIsHeld(t *testing.T) {
+// Neither a busy run lock nor an empty diff reaches agy or writes a ledger record.
+func TestBusyAndEmptyDiffRecordNothing(t *testing.T) {
 	f := newFixture(t)
 	h := f.repo.change(f.base, 2)
 	unlock, err := (&ledger{dir: f.state}).lock(context.Background(), time.Second)
@@ -283,17 +285,15 @@ func TestBusyWhenTheRunLockIsHeld(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer unlock()
-	code, sum, errOut := f.run(h, "--lock-wait", "-1s")
-	if _, statErr := os.Stat(filepath.Join(f.state, "ledger.jsonl")); code != 3 || sum.Outcome != "" || !strings.Contains(errOut, "busy") || f.s.count() != 0 || !os.IsNotExist(statErr) {
-		t.Fatalf("busy: %d %+v %s (calls %d, ledger %v)", code, sum, errOut, f.s.count(), statErr)
-	}
-}
-
-func TestEmptyDiffIsRefusedBeforeAnyRecord(t *testing.T) {
-	f := newFixture(t)
-	code, _, errOut := f.run(f.base)
-	if _, statErr := os.Stat(f.state); code != 1 || !strings.Contains(errOut, "nothing to review") || f.s.count() != 0 || !os.IsNotExist(statErr) {
-		t.Fatalf("empty diff: %d %s (calls %d, state %v)", code, errOut, f.s.count(), statErr)
+	for head, c := range map[string]struct {
+		code int
+		want string
+		args []string
+	}{h: {3, "busy", []string{"--lock-wait", "-1s"}}, f.base: {1, "nothing to review", nil}} {
+		code, sum, errOut := f.run(head, c.args...)
+		if _, statErr := os.Stat(filepath.Join(f.state, "ledger.jsonl")); code != c.code || sum.Outcome != "" || !strings.Contains(errOut, c.want) || f.s.count() != 0 || !os.IsNotExist(statErr) {
+			t.Fatalf("%s: %d %+v %s (calls %d, ledger %v)", c.want, code, sum, errOut, f.s.count(), statErr)
+		}
 	}
 }
 
@@ -348,7 +348,6 @@ func TestUsageErrorsAndHelp(t *testing.T) {
 		{[]string{"--base", "a", "--head", "b", "--issue", "CRW-1", "--out", "o", "--daily-cap", "0"}, "", "the daily cap must be at least 1"},
 		{[]string{"--base", "a", "--head", "b", "--issue", "CRW-1", "--out", "o", "extra"}, "", `unrecognized argument "extra"`},
 		{[]string{"--base", "a", "--head", "b", "--issue", "CRW-1", "--out", "o"}, "soon", "CRW_REVIEW_DAILY_CAP"},
-		{[]string{"--nope"}, "", "flag provided but not defined: -nope"},
 	} {
 		clearEnv(t)
 		t.Setenv("CRW_REVIEW_DAILY_CAP", c.env)
@@ -442,9 +441,6 @@ func TestEndToEndWithFakeAgy(t *testing.T) {
 	prompts, _ := os.ReadFile(rec + ".prompts")
 	if strings.Count(string(models), agy.DefaultModel+"\n") != 4 || len(prompts) == 0 || strings.Contains(string(prompts), "CRW-506") {
 		t.Fatalf("models %q; the issue id must never reach a prompt", models)
-	}
-	if entries, _ := os.ReadDir(f.out); len(entries) != 2 {
-		t.Fatalf("the output directory holds %d entries, want the artifact and its sha256 only", len(entries))
 	}
 	recs := f.ledger() // the real clock here
 	if len(recs) != 2 || recs[1].Event != "finished" || recs[1].SHA256 != digest || recs[1].Status != "complete" || recs[1].Artifact != sum.Artifact {

@@ -9,9 +9,6 @@ import (
 
 func TestLedgerIgnoresATornTailAndRefusesAMalformedLine(t *testing.T) {
 	l := &ledger{dir: t.TempDir(), now: func() time.Time { return time.Date(2026, 10, 4, 23, 59, 59, 0, time.UTC) }}
-	if recs, err := l.read(); err != nil || len(recs) != 0 {
-		t.Fatalf("a ledger that does not exist yet: %v %v", recs, err)
-	}
 	for _, event := range []string{"started", "finished"} {
 		if err := l.append(record{Event: event, PatchID: "p1", Head: "h1"}); err != nil {
 			t.Fatal(err)

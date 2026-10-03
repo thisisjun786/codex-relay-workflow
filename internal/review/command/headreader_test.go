@@ -35,7 +35,7 @@ func TestHeadReaderReadsCommittedObjectsOnly(t *testing.T) {
 			t.Errorf("ReadLines(%d, %d) must fail with something other than not-exist: %v", c[0], c[1], err)
 		}
 	}
-	for _, path := range []string{"missing.go", "dir", "", "a.go\x00"} {
+	for _, path := range []string{"missing.go", "dir", "", "a.go\x00", ":/a.go"} {
 		if _, err := g.Lines(path); !errors.Is(err, fs.ErrNotExist) {
 			t.Errorf("Lines(%q): %v, want fs.ErrNotExist", path, err)
 		}
