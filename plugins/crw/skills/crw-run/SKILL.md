@@ -730,6 +730,16 @@ meaningful negative cases, and relevant user-visible behavior. Reuse valid proof
 for the same revision and criteria; run missing checks or checks invalidated by
 integration. A completed turn may contain a failure or interruption.
 
+The parent shares the host with every child, so what it starts to verify or integrate follows the
+`Processes you start:` line of the [Launch packet](references/task-packet.md#launch-packet) as a
+child's runs do: a local build or test run records its pid when it starts or runs under `timeout`,
+and is stopped only by that pid, its own process group or the handle the execution tool returned
+for it, never by pattern or name. The relay's delivery service is not such a run: it stays the
+scope's service, and the parent that started it does not end it early
+([OPS-4.1](references/operations.md#ops-41-ownership-is-the-operating-scope-not-a-parent)).
+A process of a child's that looks hung is that child's to stop; the parent raises it with that
+child and does not stop it.
+
 Where a relay holds the assignment, verify the revision it reports as current. If a
 newer revision arrived while the review was in progress, the older result is not a
 completion: re-read the current revision and verify that one. Two competing
