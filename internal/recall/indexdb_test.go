@@ -294,3 +294,30 @@ func TestIndexReadFailures(t *testing.T) {
 		t.Fatal("closed status succeeded")
 	}
 }
+
+func TestIndexMigrationPreservesRows(t *testing.T) {
+	db, path := indexTestDB(t)
+	recallSQL(t, db, "INSERT INTO files(path,mtime_ms,size,source,date) VALUES('kept',1,1,'main','date'); INSERT INTO msgs(id,path,ord,ts,role,match_field,synthetic,text) VALUES(17,'kept',0,'ts','user','content',0,'quokka'); DROP INDEX idx_files_repo_key; ALTER TABLE files DROP COLUMN repo_key;")
+	if err := bumpHitCounts(db, []string{"thread:kept"}, "stamp"); err != nil {
+		t.Fatal(err)
+	}
+	before := indexRows(t, db, "SELECT id,path,text FROM msgs")
+	_ = db.Close()
+	db, err := openIndex(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if !filesHasColumn(db, "repo_key") {
+		t.Fatal("column not migrated")
+	}
+	if got := indexRows(t, db, "SELECT id,path,text FROM msgs"); !reflect.DeepEqual(got, before) {
+		t.Fatal("migration moved messages", got, before)
+	}
+	if row := recallRow(t, recallStmt(t, db, "SELECT repo_key FROM files WHERE path='kept'")); row["repo_key"] != nil {
+		t.Fatal("migration invented repo key", row)
+	}
+	if got := readHitCounts(db, []string{"thread:kept"}); got["thread:kept"] != 1 {
+		t.Fatal("migration erased history", got)
+	}
+}
