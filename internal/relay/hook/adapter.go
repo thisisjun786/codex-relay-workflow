@@ -10,6 +10,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -254,13 +255,23 @@ func runAdapter(parent context.Context, args []string, input io.Reader, output i
 			code = 0
 		}
 	}()
-	raw, err := readInput(work, input, started.Add(100*time.Millisecond))
+	var taken atomic.Int64
+	waitStarted := time.Since(started)
+	raw, err := readInput(work, input, started.Add(100*time.Millisecond), &taken)
+	waitEnded := time.Since(started)
 	if err != nil {
-		finish("stdin_unreadable", "the Stop payload could not be read from stdin", "")
+		cause := StdinReadError
+		var failure *readFailure
+		if errors.As(err, &failure) {
+			cause = failure.cause
+		}
+		record = record.Set("stdinRead", stdinReadRecord(cause, err, taken.Load(), waitStarted, waitEnded))
+		finish("stdin_unreadable", StdinUnreadableDetail, "")
 		return 0
 	}
 	if _, err := pyjson.DecodeUTF8(raw); err != nil {
-		finish("stdin_unreadable", "the Stop payload is not UTF-8: "+err.Error(), "")
+		record = record.Set("stdinRead", stdinReadRecord(StdinInvalidUTF8, err, int64(len(raw)), waitStarted, waitEnded))
+		finish("stdin_unreadable", StdinNotUTF8Prefix+err.Error(), "")
 		return 0
 	}
 	value, err := Decode(raw)

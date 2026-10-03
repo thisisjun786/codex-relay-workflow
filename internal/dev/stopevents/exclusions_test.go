@@ -215,6 +215,13 @@ func TestExcludedInvocationsExplainStdinReadFailures(t *testing.T) {
 			if len(rows) != 1 {
 				t.Fatalf("rows = %v", rows)
 			}
+			// A row this build wrote names its cause (CRW-504).
+			code, answer := verify(t, roots(h.journal)...)
+			expectVerdict(t, code, answer, 3, "UNREADABLE")
+			recorded := exclusionReports(t, answer, 1)[0].(map[string]any)["evidence"].(map[string]any)["stdinRead"].(map[string]any)
+			expectNamedRead(t, recorded, map[bool]string{false: "input_late", true: "read_error"}[closed])
+			// The same row without the key is a legacy one: its cause was discarded.
+			change(t, rows[0], pop("stdinRead"))
 			for _, elapsed := range []int{0, 100, 900} {
 				change(t, rows[0], set("elapsedMs", elapsed))
 				code, answer := verify(t, roots(h.journal)...)
@@ -244,6 +251,8 @@ func TestExcludedInvocationsStdinDiagnosticContract(t *testing.T) {
 			h := newHost(t, hook.Release)
 			h.run(h.settings, []byte{0xff})
 			path := h.rowPaths(h.journal)[0]
+			// The contract below is the legacy row's: three keys, as before CRW-504.
+			change(t, path, pop("stdinRead"))
 			if tc.detail != "" {
 				change(t, path, set("detail", tc.detail))
 			}
@@ -278,5 +287,137 @@ func TestExcludedInvocationsEmptyEOFHasNoStdinReadDiagnostic(t *testing.T) {
 	report := exclusionReports(t, answer, 1)[0].(map[string]any)
 	if report["reason"] != "no_event:stdin_not_json" || report["evidence"].(map[string]any)["stdinRead"] != nil {
 		t.Fatal(report)
+	}
+}
+
+// expectNamedRead is a stdinRead diagnostic of a row that recorded its cause: the case plus the
+// four recorded facts beside the detail and elapsedMs every diagnostic has.
+func expectNamedRead(t *testing.T, reading map[string]any, cause string) {
+	t.Helper()
+	if len(reading) != 7 || reading["case"] != cause {
+		t.Fatalf("stdinRead = %v, want case %s with seven keys", reading, cause)
+	}
+	if text, ok := reading["error"].(string); !ok || text == "" {
+		t.Fatalf("stdinRead = %v", reading)
+	}
+	for _, key := range []string{"bytesRead", "waitStartedMs", "waitEndedMs", "elapsedMs"} {
+		if _, ok := reading[key].(float64); !ok {
+			t.Fatalf("stdinRead.%s = %v", key, reading[key])
+		}
+	}
+	if _, ok := reading["detail"].(string); !ok {
+		t.Fatalf("stdinRead = %v", reading)
+	}
+}
+
+const genericReadDetail = "the Stop payload could not be read from stdin"
+
+func recordedRead(cause, text string, bytes int64) hook.Object {
+	return hook.Object{{Key: "cause", Value: cause}, {Key: "error", Value: text}, {Key: "bytesRead", Value: bytes}, {Key: "waitStartedMs", Value: int64(2)}, {Key: "waitEndedMs", Value: int64(101)}}
+}
+
+// stdinUnreadableRow is a real stdin_unreadable row to edit: invalid UTF-8 on stdin.
+func stdinUnreadableRow(t *testing.T) (*host, string) {
+	t.Helper()
+	h := newHost(t, hook.Release)
+	h.run(h.settings, []byte{0xff})
+	return h, h.rowPaths(h.journal)[0]
+}
+
+// Each recorded cause is the judge's case, whatever else the row says, and its facts are reported.
+func TestExcludedInvocationsNameTheRecordedStdinReadCause(t *testing.T) {
+	utf8Detail := "the Stop payload is not UTF-8: 'utf-8' codec can't decode byte 0xff in position 6: invalid start byte"
+	for _, c := range []struct {
+		name, detail string
+		reading      hook.Object
+	}{
+		{"input_late nothing written", genericReadDetail, recordedRead("input_late", "the Stop payload did not arrive within the input allocation", 0)},
+		{"input_late partial payload", genericReadDetail, recordedRead("input_late", "the Stop payload did not arrive within the input allocation", 18)},
+		{"work_ended", genericReadDetail, recordedRead("work_ended", "context deadline exceeded", 0)},
+		{"read_error", genericReadDetail, recordedRead("read_error", "read |0: is a directory", 0)},
+		{"invalid_utf8", utf8Detail, recordedRead("invalid_utf8", strings.TrimPrefix(utf8Detail, "the Stop payload is not UTF-8: "), 7)},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h, path := stdinUnreadableRow(t)
+			change(t, path, set("detail", c.detail))
+			change(t, path, set("stdinRead", c.reading))
+			code, answer := verify(t, roots(h.journal)...)
+			expectVerdict(t, code, answer, 3, "UNREADABLE")
+			report := exclusionReports(t, answer, 1)[0].(map[string]any)
+			reading := report["evidence"].(map[string]any)["stdinRead"].(map[string]any)
+			cause := c.reading.Get("cause").(string)
+			expectNamedRead(t, reading, cause)
+			if reading["error"] != c.reading.Get("error") || reading["detail"] != c.detail || reading["bytesRead"] != float64(c.reading.Get("bytesRead").(int64)) || reading["waitStartedMs"] != 2.0 || reading["waitEndedMs"] != 101.0 {
+				t.Fatalf("stdinRead = %v", reading)
+			}
+			if report["reason"] != "no_event:stdin_unreadable" || report["preventsTrue"] != true || answer["unjudgedInvocations"].(map[string]any)["no_event:stdin_unreadable"] != 1.0 || len(listed(answer, "rowsUnreadable")) != 0 {
+				t.Fatal(report, answer)
+			}
+		})
+	}
+}
+
+// A row whose stdinRead is not one this adapter writes cannot be vouched for.
+func TestMalformedStdinReadIsUnreadable(t *testing.T) {
+	utf8Detail := "the Stop payload is not UTF-8: x"
+	good := func() hook.Object { return recordedRead("read_error", "read |0: is a directory", 0) }
+	drop := func(key string) hook.Object { return setAt(good(), []string{key}, nil, true) }
+	for _, c := range []struct {
+		name    string
+		detail  string
+		reading any
+	}{
+		{"null", genericReadDetail, nil},
+		{"not an object", genericReadDetail, "read_error"},
+		{"an extra key", genericReadDetail, append(good(), hook.Object{{Key: "payload", Value: "x"}}...)},
+		{"missing cause", genericReadDetail, drop("cause")},
+		{"missing error", genericReadDetail, drop("error")},
+		{"missing bytesRead", genericReadDetail, drop("bytesRead")},
+		{"missing waitStartedMs", genericReadDetail, drop("waitStartedMs")},
+		{"missing waitEndedMs", genericReadDetail, drop("waitEndedMs")},
+		{"unknown cause", genericReadDetail, setAt(good(), []string{"cause"}, "timeout", false)},
+		{"error not a string", genericReadDetail, setAt(good(), []string{"error"}, int64(1), false)},
+		{"negative bytes", genericReadDetail, setAt(good(), []string{"bytesRead"}, int64(-1), false)},
+		{"bytes as text", genericReadDetail, setAt(good(), []string{"bytesRead"}, "3", false)},
+		{"bytes as bool", genericReadDetail, setAt(good(), []string{"bytesRead"}, true, false)},
+		{"negative wait start", genericReadDetail, setAt(good(), []string{"waitStartedMs"}, int64(-1), false)},
+		{"wait end as text", genericReadDetail, setAt(good(), []string{"waitEndedMs"}, "x", false)},
+		{"invalid_utf8 with the generic detail", genericReadDetail, recordedRead("invalid_utf8", "x", 1)},
+		{"invalid_utf8 with no bytes", utf8Detail, recordedRead("invalid_utf8", "x", 0)},
+		{"read_error with the UTF-8 detail", utf8Detail, good()},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h, path := stdinUnreadableRow(t)
+			change(t, path, set("detail", c.detail))
+			change(t, path, set("stdinRead", c.reading))
+			code, answer := verify(t, roots(h.journal)...)
+			expectVerdict(t, code, answer, 3, "UNREADABLE")
+			if len(listed(answer, "rowsUnreadable")) != 1 || answer["excludedInvocations"] != nil {
+				t.Fatal(answer)
+			}
+		})
+	}
+}
+
+// stdinRead belongs to stdin_unreadable rows alone.
+func TestStdinReadOnAnotherOutcomeIsUnreadable(t *testing.T) {
+	for _, outcome := range []string{"stdin_not_json", "guard_unreachable"} {
+		t.Run(outcome, func(t *testing.T) {
+			h := newHost(t, hook.Release)
+			if outcome == "guard_unreachable" {
+				if err := os.Remove(h.state + "/control.sock"); err != nil {
+					t.Fatal(err)
+				}
+				h.run(h.settings, looseStop)
+			} else {
+				h.run(h.settings, []byte("{"))
+			}
+			change(t, h.rowPaths(h.journal)[0], set("stdinRead", recordedRead("read_error", "read |0: is a directory", 0)))
+			code, answer := verify(t, roots(h.journal)...)
+			expectVerdict(t, code, answer, 3, "UNREADABLE")
+			if len(listed(answer, "rowsUnreadable")) != 1 || answer["excludedInvocations"] != nil {
+				t.Fatal(answer)
+			}
+		})
 	}
 }

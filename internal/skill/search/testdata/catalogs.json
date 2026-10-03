@@ -1,0 +1,92 @@
+{
+  "body": {
+    "jaw": "{\"skills\":{\"2\":{},\"10\":{},\"static-analysis\":{\"name\":\"Static Analysis\",\"description\":\"CodeQL workflows\",\"desc_ko\":\"정적 분석\",\"category\":\"devtools\",\"entry\":\"static-analysis/skills/codeql/SKILL.md\",\"requires\":{\"bins\":[\"codeql\"]}},\"tdd\":{\"name\":\"TDD\",\"description\":\"red-green loop\",\"superseded_by\":\"dev-testing\"},\"empty-fields\":{\"name\":\"\",\"description\":\"\",\"desc_ko\":\"\",\"category\":\"\",\"requires\":{\"bins\":[],\"env\":[1,\"ENV\"],\"system\":[\"Linux\",false]},\"status\":\"claude-specific\"}}}",
+    "hermes": "## apple\n\n| Skill | Description | Path |\n|-------|-------------|------|\n| [`apple-notes`](/docs/user-guide/x) | Manage Apple Notes via memo CLI. | `apple/apple-notes` |\n| not a row |\n",
+    "clawhub": "{\"results\":[{\"slug\":\"browser-automation-cdp\",\"displayName\":\"Browser Automation (CDP)\",\"summary\":\"CDP automation\"},{\"slug\":\"\",\"displayName\":\"bad row\"},{\"slug\":\"browser-automation-cdp\",\"displayName\":\"dup from other owner\",\"summary\":\"dup\"},{\"slug\":\"bsession\",\"displayName\":\"browser\",\"summary\":\"Browser automation\"}]}"
+  },
+  "expected": {
+    "jaw": [
+      {
+        "id": "2",
+        "source": "jaw",
+        "name": "2",
+        "description": "",
+        "rawUrl": "https://raw.githubusercontent.com/lidge-jun/cli-jaw-skills/main/2/SKILL.md"
+      },
+      {
+        "id": "10",
+        "source": "jaw",
+        "name": "10",
+        "description": "",
+        "rawUrl": "https://raw.githubusercontent.com/lidge-jun/cli-jaw-skills/main/10/SKILL.md"
+      },
+      {
+        "id": "static-analysis",
+        "source": "jaw",
+        "name": "Static Analysis",
+        "description": "CodeQL workflows",
+        "descriptionKo": "정적 분석",
+        "category": "devtools",
+        "rawUrl": "https://raw.githubusercontent.com/lidge-jun/cli-jaw-skills/main/static-analysis/skills/codeql/SKILL.md",
+        "requires": {
+          "bins": [
+            "codeql"
+          ]
+        }
+      },
+      {
+        "id": "tdd",
+        "source": "jaw",
+        "name": "TDD",
+        "description": "red-green loop",
+        "rawUrl": "https://raw.githubusercontent.com/lidge-jun/cli-jaw-skills/main/tdd/SKILL.md",
+        "supersededBy": "dev-testing"
+      },
+      {
+        "id": "empty-fields",
+        "source": "jaw",
+        "name": "",
+        "description": "",
+        "descriptionKo": "",
+        "category": "",
+        "rawUrl": "https://raw.githubusercontent.com/lidge-jun/cli-jaw-skills/main/empty-fields/SKILL.md",
+        "status": "claude-specific",
+        "requires": {
+          "bins": [],
+          "env": [
+            "ENV"
+          ],
+          "system": [
+            "Linux"
+          ]
+        }
+      }
+    ],
+    "hermes": [
+      {
+        "id": "apple-notes",
+        "source": "hermes",
+        "name": "apple-notes",
+        "description": "Manage Apple Notes via memo CLI.",
+        "category": "apple",
+        "rawUrl": "https://raw.githubusercontent.com/NousResearch/hermes-agent/main/skills/apple/apple-notes/SKILL.md"
+      }
+    ],
+    "clawhub": [
+      {
+        "id": "browser-automation-cdp",
+        "source": "clawhub",
+        "name": "Browser Automation (CDP)",
+        "description": "CDP automation",
+        "rawUrl": "https://clawhub.ai/api/v1/packages/browser-automation-cdp/file?path=SKILL.md"
+      },
+      {
+        "id": "bsession",
+        "source": "clawhub",
+        "name": "browser",
+        "description": "Browser automation",
+        "rawUrl": "https://clawhub.ai/api/v1/packages/bsession/file?path=SKILL.md"
+      }
+    ]
+  }
+}
