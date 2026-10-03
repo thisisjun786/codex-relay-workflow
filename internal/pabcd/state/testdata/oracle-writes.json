@@ -92,6 +92,11 @@
   ]
  },
  {
+  "id": "ensure_fallback_restamps",
+  "returned": true,
+  "file": "{\n  \"phase\": \"IDLE\",\n  \"sessionId\": \"rec-s1\",\n  \"slug\": \"\",\n  \"updatedAt\": \"2026-01-01T00:00:01.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": null,\n  \"planEpoch\": null,\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}"
+ },
+ {
   "id": "write_default",
   "state": {
    "phase": "IDLE",

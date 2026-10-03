@@ -50,17 +50,17 @@ func TestHelperProcess(t *testing.T) {
 		fmt.Print(created)
 	case "kill": // dies inside the rename step, between the temp write and the publication
 		err = writeState(cwd, s, at(), func(string, string) error { _ = syscall.Kill(os.Getpid(), syscall.SIGKILL); select {} })
-	case "hold": // owns the lock until the waiter has met it
+	case "hold": // owns the lock until the waiter has met it, and says when it has let go
 		err = WithSessionLock(cwd, "conc", func() error {
 			note("A-in")
 			waitFor("B-got-EEXIST")
-			time.Sleep(20 * time.Millisecond)
 			note("A-out")
 			return nil
 		})
-	case "wait": // tries only after the holder owns the lock; the sleep seam runs after a create that failed
+		note("A-released")
+	case "wait": // tries only after the holder owns the lock; the sleep seam runs after a create that failed and waits for the release, not for a time
 		waitFor("A-in")
-		err = withSessionLock(cwd, "conc", func() error { note("B-in"); return nil }, func(d time.Duration) { note("B-got-EEXIST"); time.Sleep(d) })
+		err = withSessionLock(cwd, "conc", func() error { note("B-in"); return nil }, func(time.Duration) { note("B-got-EEXIST"); waitFor("A-released") })
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -209,8 +209,9 @@ func TestLockIsHeldWithThePidAndReleasedAfterReturnErrorAndPanic(t *testing.T) {
 	cwd, lock, boom := t.TempDir(), "", errors.New("boom")
 	for name, fn := range map[string]func() error{"return": func() error { return nil }, "error": func() error { return boom }, "panic": func() error { panic(boom) }} {
 		lock = StatePath(cwd, "s") + ".lock"
+		var recovered any
 		err := func() (err error) {
-			defer func() { _ = recover() }()
+			defer func() { recovered = recover() }()
 			return WithSessionLock(cwd, "s", func() error {
 				if got := fileText(t, lock); got != fmt.Sprint(os.Getpid()) {
 					t.Errorf("%s: lock holds %q", name, got)
@@ -218,8 +219,8 @@ func TestLockIsHeldWithThePidAndReleasedAfterReturnErrorAndPanic(t *testing.T) {
 				return fn()
 			})
 		}()
-		if _, statErr := os.Stat(lock); !errors.Is(statErr, fs.ErrNotExist) || (name == "error") != (err == boom) {
-			t.Errorf("%s: lock still there or wrong error %v (%v)", name, err, statErr)
+		if _, statErr := os.Stat(lock); !errors.Is(statErr, fs.ErrNotExist) || (name == "error") != (err == boom) || (name == "panic") != (recovered == boom) {
+			t.Errorf("%s: lock still there, or wrong error %v or panic %v (%v)", name, err, recovered, statErr)
 		}
 	}
 }
@@ -233,7 +234,7 @@ func TestSecondProcessWaitsForTheHolderAndEntersAfterIt(t *testing.T) { // recor
 			order = append(order, line)
 		}
 	}
-	if !slices.Equal(order, []string{"A-in", "A-out", "B-in"}) || !strings.Contains(fileText(t, filepath.Join(cwd, "log")), "B-got-EEXIST") {
+	if !slices.Equal(order, []string{"A-in", "A-out", "A-released", "B-in"}) || !strings.Contains(fileText(t, filepath.Join(cwd, "log")), "B-got-EEXIST") {
 		t.Fatalf("%q", fileText(t, filepath.Join(cwd, "log")))
 	}
 	if _, err := os.Stat(StatePath(cwd, "conc") + ".lock"); !errors.Is(err, fs.ErrNotExist) {

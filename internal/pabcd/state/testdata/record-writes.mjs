@@ -13,8 +13,9 @@ import { performance } from "node:perf_hooks";
 
 const FROZEN = Date.parse("2026-01-01T00:00:00.000Z");
 const RealDate = Date;
+let tick = null; // set to 0, each new Date() reads one second after the one before
 globalThis.Date = class extends RealDate {
-  constructor(...a) { super(...(a.length ? a : [FROZEN])); }
+  constructor(...a) { super(...(a.length ? a : [FROZEN + (tick === null ? 0 : 1000 * tick++)])); }
   static now() { return FROZEN; }
 };
 const [oracleDist, workRoot] = process.argv.slice(2);
@@ -51,6 +52,14 @@ for (const code of ["EPERM", "ENOTSUP", "EXDEV", "EEXIST", "EIO", "EACCES"]) {
   const cwd = fresh();
   mkdirSync(join(sess(cwd), "rec-s1.json"), { recursive: true });
   rec("ensure_final_is_directory", { ...attempt(() => ensureState(cwd, "rec-s1")), listing: listing(sess(cwd)) });
+}
+{
+  // the fallback stringifies a second defaultState, so the file it publishes carries a later reading of the clock
+  const cwd = fresh();
+  tick = 0;
+  const r = attempt(() => ensureState(cwd, "rec-s1", thrower("EPERM")));
+  tick = null;
+  rec("ensure_fallback_restamps", { ...r, file: readIf(join(sess(cwd), "rec-s1.json")) });
 }
 
 // writeState

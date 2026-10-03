@@ -57,26 +57,31 @@ func TestWritesMatchTheRecordedOracle(t *testing.T) {
 		}
 		switch {
 		case id == "ensure_fresh":
-			first, _ := ensureState(cwd, "rec-s1", at(), os.Link)
+			first, _ := ensureState(cwd, "rec-s1", at, os.Link)
 			file := fileText(t, state)
-			second, _ := ensureState(cwd, "rec-s1", at(), os.Link)
+			second, _ := ensureState(cwd, "rec-s1", at, os.Link)
 			same("results", []any{first, second, file, fileText(t, state) == file, sessionFiles(cwd)}, []any{c["first"].(map[string]any)["returned"], c["second"].(map[string]any)["returned"], c.str("file"), true, c.strs("listing")})
 		case id == "ensure_noncanonical":
-			created, err := ensureState(cwd, c.str("sessionId"), at(), os.Link)
+			created, err := ensureState(cwd, c.str("sessionId"), at, os.Link)
 			_, statErr := os.Stat(filepath.Join(cwd, crwdir.DirName))
 			same("outcome", []any{created, errors.Is(err, ErrNonCanonicalSessionID), err.Error(), statErr == nil}, []any{false, true, c.str("message"), c["stateDirCreated"]})
 		case strings.HasPrefix(id, "ensure_link_"):
 			e := errno[strings.TrimPrefix(id, "ensure_link_")]
-			created, err := ensureState(cwd, "rec-s1", at(), linkFails(e))
+			created, err := ensureState(cwd, "rec-s1", at, linkFails(e))
 			want := []any{c["returned"] == true, c.str("threw") != ""}
 			if c.str("threw") == "" {
 				want = []any{c["returned"] == true, false}
 			}
 			same("outcome", []any{created, err != nil && errors.Is(err, e)}, []any{want[0], want[1]})
 			same("listing", sessionFiles(cwd), c.strs("listing"))
+		case id == "ensure_fallback_restamps": // the fallback file carries the clock's next reading, as the oracle's second defaultState does
+			n := 0
+			clock := func() time.Time { n++; return at().Add(time.Duration(n-1) * time.Second) }
+			created, err := ensureState(cwd, "rec-s1", clock, linkFails(syscall.EPERM))
+			same("outcome", []any{created, err, fileText(t, state)}, []any{true, nil, c.str("file")})
 		case id == "ensure_final_is_directory":
 			_ = os.MkdirAll(state, 0o777)
-			created, err := ensureState(cwd, "rec-s1", at(), os.Link)
+			created, err := ensureState(cwd, "rec-s1", at, os.Link)
 			same("outcome", []any{created, err, sessionFiles(cwd)}, []any{false, nil, c.strs("listing")})
 		case strings.HasPrefix(id, "ensure_tmp_replaced_by_directory_"):
 			// the link step swaps the temp file for a directory: the removal refuses it (ERR_FS_EISDIR) and its error replaces the result
@@ -91,7 +96,7 @@ func TestWritesMatchTheRecordedOracle(t *testing.T) {
 				}
 				return nil
 			}
-			created, err := ensureState(cwd, "rec-s1", at(), swap)
+			created, err := ensureState(cwd, "rec-s1", at, swap)
 			same("outcome", []any{created, errors.Is(err, syscall.EISDIR), c.str("threw"), len(sessionFiles(cwd)) - btoi(slices.Contains(sessionFiles(cwd), "rec-s1.json"))}, []any{false, true, "ERR_FS_EISDIR", int(c["tmpLeft"].(float64))})
 		case strings.HasPrefix(id, "write_") && c["state"] != nil:
 			var s State

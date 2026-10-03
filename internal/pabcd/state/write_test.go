@@ -98,7 +98,7 @@ func TestEnsureStateWhenTheHardLinkFails(t *testing.T) { // oracle 651, 666, 680
 		{"a non-link error still propagates", syscall.EIO, false, syscall.EIO, false},
 	} {
 		cwd := t.TempDir()
-		created, err := ensureState(cwd, "link-case", at(), linkFails(c.errno))
+		created, err := ensureState(cwd, "link-case", at, linkFails(c.errno))
 		if created != c.created || !errors.Is(err, c.err) || (err == nil) != (c.err == nil) || len(sessionFiles(cwd)) != map[bool]int{true: 1}[c.file] {
 			t.Errorf("%s: created %v, %v, files %v", c.name, created, err, sessionFiles(cwd))
 		}
@@ -107,13 +107,13 @@ func TestEnsureStateWhenTheHardLinkFails(t *testing.T) { // oracle 651, 666, 680
 	if created, err := EnsureState(cwd, "fat32-race"); !created || err != nil {
 		t.Fatal(created, err)
 	}
-	if created, err := ensureState(cwd, "fat32-race", at(), linkFails(syscall.ENOTSUP)); created || err != nil {
+	if created, err := ensureState(cwd, "fat32-race", at, linkFails(syscall.ENOTSUP)); created || err != nil {
 		t.Fatalf("second: created %v, %v", created, err)
 	}
-	if _, err := ensureState(t.TempDir(), "x", at(), os.Link); err != nil || (func() bool {
+	if _, err := ensureState(t.TempDir(), "x", at, os.Link); err != nil || (func() bool {
 		f := filepath.Join(t.TempDir(), "f")
 		_ = os.WriteFile(f, nil, 0o644)
-		_, e := ensureState(f, "x", at(), os.Link)
+		_, e := ensureState(f, "x", at, os.Link)
 		return !errors.Is(e, syscall.ENOTDIR)
 	})() {
 		t.Fatal("a .crw that is a file must fail with ENOTDIR")

@@ -29,17 +29,17 @@ const timestampLayout = "2006-01-02T15:04:05.000Z"
 // destination, so concurrent SessionStart hooks race safely and an existing file, valid or corrupt, is never touched. Where
 // hard links are unavailable (EPERM, ENOTSUP or EXDEV: FAT32, some shares) an exclusive create of the final path stands in.
 func EnsureState(cwd, sessionID string) (bool, error) {
-	return ensureState(cwd, sessionID, time.Now(), os.Link)
+	return ensureState(cwd, sessionID, time.Now, os.Link)
 }
 
-func ensureState(cwd, sessionID string, now time.Time, link func(existing, created string) error) (created bool, err error) {
+func ensureState(cwd, sessionID string, now func() time.Time, link func(existing, created string) error) (created bool, err error) {
 	if !IsCanonicalSessionID(sessionID) {
 		return false, ErrNonCanonicalSessionID
 	}
 	if err = makeSessionsDir(cwd); err != nil {
 		return false, err
 	}
-	body, err := Encode(defaultState(sessionID, "", now))
+	body, err := Encode(defaultState(sessionID, "", now()))
 	if err != nil {
 		return false, err
 	}
@@ -60,6 +60,10 @@ func ensureState(cwd, sessionID string, now time.Time, link func(existing, creat
 		return false, nil
 	case !errors.Is(err, syscall.EPERM) && !errors.Is(err, syscall.ENOTSUP) && !errors.Is(err, syscall.EXDEV):
 		return false, err // not fs.ErrPermission: it also matches EACCES, which the oracle rethrows
+	}
+	// the oracle stringifies a second defaultState for the fallback file, read from the clock again
+	if body, err = Encode(defaultState(sessionID, "", now())); err != nil {
+		return false, err
 	}
 	switch err = createExclusive(finalPath, string(body)); {
 	case err == nil:
