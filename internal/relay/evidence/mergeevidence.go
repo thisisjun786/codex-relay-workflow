@@ -28,7 +28,10 @@ const (
 	CandidateUnknown       = "candidate_unknown"
 )
 
-// ReviewFields is REVIEW_FIELDS.
+// ReviewFields is REVIEW_FIELDS: the five members the child's own record states. A review thread
+// that arrives after that record is not one of them. The coordinator's disposition of such a thread
+// is a separate input of the restatement (latedisposition.go), never a review field, so the child's
+// record keeps stating exactly these five and the coverage checks below read nothing else.
 var ReviewFields = []string{"hasNextPage", "pagesRead", "totalCount", "threadsSeen", "unresolved"}
 
 var counts = []string{"pagesRead", "totalCount", "unresolved"}
