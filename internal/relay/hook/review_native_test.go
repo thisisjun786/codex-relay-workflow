@@ -65,7 +65,7 @@ func reviewPython(t *testing.T, id string) {
 	// A snapshot that lists directories names the journal's day directory, the run's date: the
 	// golden spells it journal/<DAY>, so it holds on any day.
 	steps := journalDay.ReplaceAllString(pyjson.Dumps(r.steps, pyjson.Options{Indent: 2, SortKeys: true}), "journal/<DAY>")
-	golden.Check(t, id, []byte(steps+"\n"), golden.Substitute(base, "<BASE>"), golden.Substitute(testRoot, "<REPO>"))
+	golden.Check(t, id, []byte(steps+"\n"), golden.Substitute(base, "<BASE>"), golden.Substitute(testRoot, "<REPO>"), golden.Substitute(binary(t), "<runtime executable>"))
 }
 
 // reviewHome is review_parity.py setup(name): a home, its settings, a transcript and the Stop.
