@@ -148,7 +148,9 @@ type RegionDeclaration struct {
 	PlanID, NodeID string
 	Seq            int64
 	Replayed       bool
-	Regions        []Region
+	// Narrowed is set when the node already held its regions and the declaration replaced them with a narrowing of them (CRW-411).
+	Narrowed bool
+	Regions  []Region
 }
 
 // DeclareRegions records the edit regions of an implementation node before it is released (contract 7.2). A declaration replaces the node's earlier one
@@ -156,6 +158,10 @@ type RegionDeclaration struct {
 // said (foldedGrade); a hold of the whole repository is only what the caller states with Region.Exclusive. A grade is stored with every region: a mechanical one with its rule, and a shared contract surface as exclusive
 // whatever the caller said (grades.go). What the caller stated is stored with every region too (dag_node_region_holds), so a declaration made by this build reads back as it was made and one made before reads as
 // loadDeclarations says; the exclusive column of dag_node_regions keeps the value an older runtime reads as a hold (stated, or flagged by the classifier).
+//
+// Regions are held from release until the head lands (contract 7.2), so a node that holds them may declare again only to narrow them (narrowing.go): every new region inside a held one and
+// held at least as strictly, which frees the rest for the next pass. A declaration that widens them is refused disposition_conflict, naming the region. A node whose head is accepted keeps
+// what it holds, and one that never declared has nothing to narrow.
 func (s *Scheduler) DeclareRegions(ctx context.Context, plan, node, actor string, regions []Region) (RegionDeclaration, error) {
 	normal, err := normalizeRegions(regions)
 	if err != nil {
@@ -185,14 +191,22 @@ func (s *Scheduler) DeclareRegions(ctx context.Context, plan, node, actor string
 		latest, declared := current[node]
 		replay := declared && slices.Equal(latest, normal)
 		if !replay {
-			// regions are held until the node lands (contract 7.2): once a release or an execution holds them a different declaration, which could only free
-			// them for another node early, is refused. Declare before releasing.
+			// regions are held until the node lands (contract 7.2): once a release or an execution holds them a different declaration may only narrow them.
 			state, err := s.stateOf(txCtx, q, plan, snap, n)
 			if err != nil {
 				return err
 			}
 			if state.Holds {
-				return refuse(contract.RefusalDispositionConflict, "node %s is %s and holds its regions until its head lands; a declaration is made before the release", node, state.State)
+				switch {
+				case state.HasAcc:
+					return refuse(contract.RefusalDispositionConflict, "node %s is %s and its accepted head holds its regions until it lands: the declaration describes the pull request, so it is not narrowed", node, state.State)
+				case !declared:
+					return refuse(contract.RefusalDispositionConflict, "node %s is %s and holds regions it never declared, so there is nothing to narrow; a declaration is made before the release", node, state.State)
+				}
+				if why := widening(latest, normal); why != "" {
+					return refuse(contract.RefusalDispositionConflict, "node %s is %s and holds its regions until its head lands; a declaration may only narrow them: %s", node, state.State, why)
+				}
+				out.Narrowed = true
 			}
 		}
 		if replay {

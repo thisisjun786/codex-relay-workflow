@@ -35,6 +35,12 @@ func isRoutingVar(name string) bool {
 // maxBuffer: stdout and stderr share it, and going over it kills the child and returns at once, even if a
 // grandchild still holds the pipes.
 func run(cwd string, limit int, name string, args ...string) ([]byte, error) {
+	return Run(cwd, GitEnv(nil), limit, name, args...)
+}
+
+// Run is run for a caller that brings its own environment (the session source binding removes fewer routing variables than
+// GitEnv); nil is the process environment.
+func Run(cwd string, env []string, limit int, name string, args ...string) ([]byte, error) {
 	outR, outW, err := os.Pipe()
 	if err != nil {
 		return nil, err
@@ -46,7 +52,7 @@ func run(cwd string, limit int, name string, args ...string) ([]byte, error) {
 	}
 	defer func() { _, _ = outR.Close(), errR.Close() }()
 	cmd := exec.Command(name, args...)
-	cmd.Dir, cmd.Env, cmd.Stdout, cmd.Stderr = cwd, GitEnv(nil), outW, errW
+	cmd.Dir, cmd.Env, cmd.Stdout, cmd.Stderr = cwd, env, outW, errW
 	err = cmd.Start()
 	_, _ = outW.Close(), errW.Close() // the child holds its own copies
 	if err != nil {
@@ -132,6 +138,9 @@ func parseStatusZ(out []byte) []statusRecord {
 	}
 	return records
 }
+
+// DecodeUTF8 is decodeUTF8 for a caller that reads paths and git output the way Node does.
+func DecodeUTF8(b []byte) string { return decodeUTF8(b) }
 
 // decodeUTF8 decodes b as Node's Buffer.toString("utf8") does: each maximal invalid subpart becomes one U+FFFD
 // (the WHATWG rule), where Go's own conversion emits one per byte.
