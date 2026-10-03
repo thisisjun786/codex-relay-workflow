@@ -224,9 +224,10 @@ type ReviewLane struct {
 
 // ReviewRoundState is one review round: RoundID is r1, r2, ... increasing per plan, PlanPath the document under audit and
 // PlanSha256 its hash when the round opened (the caller computes it). OwnerSessionID, WorkPhaseID, PlanUnit, PlanEpoch and
-// PlanFiles bind the round to what it was opened against (REVIEW-BINDING-01); all are optional so older rounds still parse,
-// and the A to B gate reads a missing one as a refusal, so nothing is grandfathered into approval. PlanFiles are the exact
-// files the round names, hashed in path order into PlanSha256.
+// PlanFiles bind the round to what it was opened against (REVIEW-BINDING-01); all are optional so older rounds still parse.
+// The oracle's field comment says the A to B gate reads a missing one as a refusal, but the gate treats a round without them
+// as a pre-binding round and checks nothing for it (orchestrate-cli.ts:76-79). PlanFiles are the exact files the round names,
+// hashed in path order into PlanSha256.
 type ReviewRoundState struct {
 	RoundID        string            `json:"roundId"`
 	Purpose        ReviewPurpose     `json:"purpose"`

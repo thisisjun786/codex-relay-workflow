@@ -100,8 +100,8 @@ func reviveReviewRounds(raw any) []ReviewRoundState {
 		if !ok || id == "" || (purpose != string(PurposePlanAudit) && purpose != string(PurposeFinalGate)) || !hasPath || !hasSha || !isReviewStatus(status) || lane == nil {
 			continue
 		}
-		// The binding fields (REVIEW-BINDING-01) are kept only when well-formed and non-empty: the A to B gate reads a missing
-		// one as a refusal, and a half-parsed binding is worse than none.
+		// The binding fields (REVIEW-BINDING-01) are kept only when well-formed and non-empty: a half-parsed binding is worse
+		// than none. A round without them is a pre-binding round, which the A to B check skips.
 		owner, _ := text(r, "ownerSessionId")
 		workPhase, _ := text(r, "workPhaseId")
 		unit, _ := text(r, "planUnit")
@@ -128,9 +128,10 @@ func escapesWorkspace(p string) bool {
 
 // revivePlanFiles rebuilds the file list of a round: every entry must have a non-empty sha256 and a non-empty path that stays
 // inside the working directory, or the whole list is dropped, because a partial file set would silently narrow what the round
-// claims to have covered, and a round without its files is refused by the A to B gate rather than trusted. nil is absent, and
-// an empty list is absent too. The oracle keeps any non-empty path, so one naming a file outside the workspace is hashed on
-// every staleness check (a review finding of kind security, fixed here on purpose: known-defects.md, port: fixed).
+// claims to have covered. The round then reads as a pre-binding round, which nothing rehashes and the A to B check skips
+// (orchestrate-cli.ts:76-79). nil is absent, and an empty list is absent too. The oracle keeps any non-empty path, so one naming
+// a file outside the workspace is hashed on every staleness check (a review finding of kind security, fixed here on purpose:
+// known-defects.md, port: fixed).
 func revivePlanFiles(raw any) []PlanFileHash {
 	list, ok := raw.([]any)
 	if !ok || len(list) == 0 {
