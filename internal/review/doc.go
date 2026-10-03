@@ -4,7 +4,7 @@
 //
 // # Rules
 //
-// Rules.Apply tries these rules in order; the first that fires drops the finding, as received, into Result.Dropped with its reason.
+// Rules.Apply tries these rules in order; the first that fires drops the finding into Result.Dropped with its reason, as received except that an unrecognised verdict is stored as unverified.
 //
 //	non_finding       the title (the explanation, when there is no title) says there is nothing to report
 //	noise_file        a lock file, vendored, minified or generated file (NoiseFilter)
@@ -43,7 +43,7 @@
 //	                returned and no findings, reason required
 //	startedAt, finishedAt   RFC 3339, finishedAt not before startedAt
 //	findings        clean relative slash path, line >= 1, endLine 0 or >= line, title, explanation, perspective not blank, grade
-//	                P0 to P3, verdict not rejected, reviewers ascending and non-empty, support equal to their count and no more
+//	                P0 to P3, verdict that passes the confidence threshold, reviewers ascending and non-empty, support equal to their count and no more
 //	                than the reviewers that returned a result
-//	dropped         {finding, reason, detail}: the finding as received (grade P0 to P3 or empty, empty for unknown_grade)
+//	dropped         {finding, reason, detail}: the finding (grade P0 to P3 or empty, empty for unknown_grade)
 package review

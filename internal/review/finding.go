@@ -60,7 +60,7 @@ const (
 	ReasonBelowThreshold  DropReason = "below_confidence_threshold"
 )
 
-// Drop is a finding a rule removed, as received, with the reason and a short detail.
+// Drop is a finding a rule removed, as received (an unrecognised verdict is stored as unverified), with the reason and a short detail.
 type Drop struct {
 	Finding Finding    `json:"finding"`
 	Reason  DropReason `json:"reason"`

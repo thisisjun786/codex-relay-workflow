@@ -74,8 +74,9 @@ type Rules struct {
 
 // Apply runs the rules on each finding in order and the first that fires drops it with its reason: non-finding text, noise file,
 // location (invalid, not in the diff, missing at head, beyond the end of the file), unknown grade, then the confidence threshold.
-// A kept finding has its path cleaned and, if its verdict is not one of the four, the verdict unverified. A drop keeps the finding as
-// received. Apply returns an error, and no result, only when Head fails with an error other than not-exist.
+// Any finding, kept or dropped, has an unrecognised verdict stored as unverified (the artifact's verdict enum has no other value); a
+// kept finding has its path cleaned and a drop is otherwise as received. Apply returns an error, and no result, only when Head is nil
+// or fails with an error other than not-exist.
 func (r Rules) Apply(in []Finding) (Result, error) {
 	if r.Head == nil {
 		return Result{}, errors.New("review: Rules.Head is nil")
@@ -117,7 +118,7 @@ func (r Rules) classify(f Finding, noise *NoiseFilter) (DropReason, string, erro
 	if f.Grade == "" {
 		return ReasonUnknownGrade, fmt.Sprintf("reported severity %q", f.Severity), nil
 	}
-	if d := Decide(f.Verdict, f.Support, f.Security || f.Grade == P0 || f.Grade == P1); !d.Keep {
+	if d := Decide(f.Verdict, f.Support, isSevere(f)); !d.Keep {
 		return d.Reason, fmt.Sprintf("verdict %s, support %d", f.Verdict, f.Support), nil
 	}
 	return "", "", nil

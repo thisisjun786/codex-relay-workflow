@@ -3,6 +3,7 @@ package review
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"reflect"
 	"slices"
 	"strings"
@@ -74,6 +75,9 @@ func TestValidateRefuses(t *testing.T) {
 		{"upper-case base", func(a *Artifact) { a.Base = strings.ToUpper(a.Base) }, "base"},
 		{"failed above run", func(a *Artifact) { a.Reviewers.Failed = 4 }, "reviewers"},
 		{"timed out above failed", func(a *Artifact) { a.Reviewers.TimedOut = 2 }, "reviewers"},
+		{"counts that overflow a sum", func(a *Artifact) {
+			a.Reviewers = ReviewerCounts{Run: math.MaxInt, Failed: math.MaxInt, TimedOut: math.MaxInt, AuthFailed: 1}
+		}, "reviewers"},
 		{"status out of range", func(a *Artifact) { a.Status = "done" }, "status"},
 		{"partial without a reason", func(a *Artifact) { a.Reason = "" }, "reason"},
 		{"complete with a reason", func(a *Artifact) { a.Status, a.Reviewers = StatusComplete, ReviewerCounts{Run: 2} }, "reason"},
@@ -84,6 +88,10 @@ func TestValidateRefuses(t *testing.T) {
 		{"finished before started", func(a *Artifact) { a.FinishedAt = "2026-10-03T09:00:00Z" }, "finishedAt"},
 		{"grade out of range", func(a *Artifact) { a.Findings[0].Grade = "P4" }, "findings[0].grade"},
 		{"rejected finding kept", func(a *Artifact) { a.Findings[0].Verdict = VerdictRejected }, "findings[0].verdict"},
+		{"kept below the confidence threshold", func(a *Artifact) {
+			f := &a.Findings[0]
+			f.Verdict, f.Grade, f.Reviewers, f.Support = VerdictUncertain, P2, []int{0}, 1
+		}, "findings[0].verdict"},
 		{"support differs from reviewers", func(a *Artifact) { a.Findings[0].Support = 3 }, "findings[0].support"},
 		{"support above reviewers returned", func(a *Artifact) { a.Findings[0].Reviewers, a.Findings[0].Support = []int{0, 1, 2}, 3 }, "findings[0].support"},
 		{"reviewers not ascending", func(a *Artifact) { a.Findings[0].Reviewers = []int{1, 0} }, "findings[0].reviewers"},
@@ -115,6 +123,7 @@ func TestParseArtifactRefuses(t *testing.T) {
 		{"missing nested integer", func(m map[string]any) { delete(m["reviewers"].(map[string]any), "run") }, "reviewers.run"},
 		{"missing finding field", func(m map[string]any) { delete(first(m), "grade") }, "findings[0].grade"},
 		{"null findings", func(m map[string]any) { m["findings"] = nil }, "findings"},
+		{"null reviewer element", func(m map[string]any) { first(m)["reviewers"] = []any{nil, 1} }, "findings[0].reviewers[0]"},
 		{"unknown field", func(m map[string]any) { m["extra"] = 1 }, "extra"},
 		{"unknown nested field", func(m map[string]any) { first(m)["extra"] = 1 }, "findings[0].extra"},
 		{"case-variant key", func(m map[string]any) { first(m)["GRADE"] = "P0" }, "findings[0].GRADE"},

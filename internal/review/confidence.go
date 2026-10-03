@@ -10,6 +10,9 @@ type Decision struct {
 	Reason DropReason
 }
 
+// isSevere reports whether a finding is P0, P1 or flagged security: the findings the threshold keeps even when uncertain.
+func isSevere(f Finding) bool { return f.Security || f.Grade == P0 || f.Grade == P1 }
+
 // Decide is the confidence threshold. severe is true for a P0 or P1 finding or one flagged security. The table is in the package
 // documentation; verification that did not run or failed (unverified, or any unrecognised verdict) keeps the finding (fail-open).
 func Decide(v Verdict, support int, severe bool) Decision {

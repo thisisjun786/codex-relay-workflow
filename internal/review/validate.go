@@ -74,6 +74,10 @@ func walkShape(t reflect.Type, v any, p string, errs *ValidationError) {
 	case reflect.Slice:
 		items, _ := v.([]any)
 		for i, item := range items {
+			if item == nil {
+				add(fmt.Sprintf("%s[%d]", p, i), "must not be null")
+				continue
+			}
 			walkShape(t.Elem(), item, fmt.Sprintf("%s[%d]", p, i), errs)
 		}
 	case reflect.Struct:
@@ -131,7 +135,7 @@ func (a *Artifact) Validate(expectedHead string) error {
 	}
 	r := a.Reviewers
 	returned := r.Run - r.Failed // the reviewers that gave a result
-	if min(r.Run, r.Failed, r.TimedOut, r.AuthFailed) < 0 || r.Failed > r.Run || r.TimedOut+r.AuthFailed > r.Failed {
+	if min(r.Run, r.Failed, r.TimedOut, r.AuthFailed) < 0 || r.Failed > r.Run || r.TimedOut > r.Failed-r.AuthFailed {
 		bad("reviewers", "need 0 <= timedOut + authFailed <= failed <= run, have %+v", r)
 		returned = 0
 	}
@@ -217,8 +221,10 @@ func checkKept(p string, f Finding, returned int, bad badFn) {
 	if !slices.Contains(allGrades, f.Grade) {
 		bad(p+".grade", "is %q, want one of %v", f.Grade, allGrades)
 	}
-	if f.Verdict == VerdictRejected || !slices.Contains(allVerdicts, f.Verdict) {
-		bad(p+".verdict", "is %q, want confirmed, uncertain or unverified", f.Verdict)
+	if !slices.Contains(allVerdicts, f.Verdict) {
+		bad(p+".verdict", "is %q, want one of %v", f.Verdict, allVerdicts)
+	} else if d := Decide(f.Verdict, f.Support, isSevere(f)); !d.Keep {
+		bad(p+".verdict", "%s with support %d is dropped by the confidence threshold (%s), not kept", f.Verdict, f.Support, d.Reason)
 	}
 	if len(f.Reviewers) == 0 {
 		bad(p+".reviewers", "must not be empty")
