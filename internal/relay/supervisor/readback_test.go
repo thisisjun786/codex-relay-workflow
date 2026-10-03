@@ -24,6 +24,7 @@ func delivered24(t *testing.T) (*stageFixture, *sendHost, string, map[string]any
 	return f, h, id, sent
 }
 func Test24_SCH_11_SeparateQueues(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	_, stage := f.staged(t)
 	id := stage["messageId"].(string)
@@ -36,6 +37,7 @@ func Test24_SCH_11_SeparateQueues(t *testing.T) {
 	}
 }
 func Test24_SCH_12_EligibleOldestFirst(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	_, stage := f.staged(t)
 	rows, err := storeseed.EligibleSupervisorMessages(f.ctx, f.c.Store, 1_700_000_001, 4)
@@ -44,6 +46,7 @@ func Test24_SCH_12_EligibleOldestFirst(t *testing.T) {
 	}
 }
 func Test24_SCH_13_SendReadRoundtrip(t *testing.T) {
+	t.Parallel()
 	f, h, id, send := delivered24(t)
 	answer, err := f.c.ReadBack(f.ctx, id, "turn-supervisor-1", Proof(id, "turn-supervisor-1"), "", h, 1_700_000_002)
 	if err != nil {
@@ -58,6 +61,7 @@ func Test24_SCH_13_SendReadRoundtrip(t *testing.T) {
 	}
 }
 func Test24_SCH_14_DeliveredBytesCannotContainProof(t *testing.T) {
+	t.Parallel()
 	_, h, id, _ := delivered24(t)
 	bytes := h.sends[0]
 	if !strings.Contains(bytes, id) || strings.Contains(bytes, "turn-supervisor-1") || strings.Contains(bytes, Proof(id, "turn-supervisor-1")) {
@@ -65,6 +69,7 @@ func Test24_SCH_14_DeliveredBytesCannotContainProof(t *testing.T) {
 	}
 }
 func Test24_SCH_15_InvalidProofAndPreSendRefused(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	_, stage := f.staged(t)
 	id := stage["messageId"].(string)
@@ -88,6 +93,7 @@ func Test24_SCH_15_InvalidProofAndPreSendRefused(t *testing.T) {
 	}
 }
 func Test24_SCH_16_UnverifiedTurnsAndTranscript(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, turn           string
 		hostless, unreadable bool
@@ -120,6 +126,7 @@ func Test24_SCH_16_UnverifiedTurnsAndTranscript(t *testing.T) {
 	}
 }
 func Test24_SCH_17_TurnOrigin(t *testing.T) {
+	t.Parallel()
 	f, h, id, _ := delivered24(t)
 	answer, err := f.c.ReadBack(f.ctx, id, "turn-supervisor-1", Proof(id, "turn-supervisor-1"), "", h, 1_700_000_002)
 	if err != nil || answer["turnOrigin"] != "relay_opened" {
@@ -127,6 +134,7 @@ func Test24_SCH_17_TurnOrigin(t *testing.T) {
 	}
 }
 func Test24_SCH_18_SettledReadbackWins(t *testing.T) {
+	t.Parallel()
 	f, h, id, _ := delivered24(t)
 	first, err := f.c.ReadBack(f.ctx, id, "turn-supervisor-1", Proof(id, "turn-supervisor-1"), "", h, 1_700_000_002)
 	if err != nil {
@@ -142,6 +150,7 @@ func Test24_SCH_18_SettledReadbackWins(t *testing.T) {
 	}
 }
 func Test24_SCH_20_ShowWholeRecord(t *testing.T) {
+	t.Parallel()
 	f, h, id, _ := delivered24(t)
 	if _, err := f.c.ReadBack(f.ctx, id, "turn-supervisor-1", Proof(id, "turn-supervisor-1"), "", h, 1_700_000_002); err != nil {
 		t.Fatal(err)
@@ -155,6 +164,7 @@ func Test24_SCH_20_ShowWholeRecord(t *testing.T) {
 	}
 }
 func Test24_SCH_19_ReadDoesNotDischargeObligation(t *testing.T) {
+	t.Parallel()
 	f, h, id, _ := delivered24(t)
 	if _, err := f.c.ReadBack(f.ctx, id, "turn-supervisor-1", Proof(id, "turn-supervisor-1"), "", h, 1_700_000_002); err != nil {
 		t.Fatal(err)

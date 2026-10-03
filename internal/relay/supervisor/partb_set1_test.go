@@ -46,6 +46,7 @@ func (h *reportScriptHost) SendMessage(_ context.Context, id, thread, message st
 }
 
 func Test24_RC_13_LivePreview(t *testing.T) {
+	t.Parallel()
 	s, root := set1Fixture(t, "RC-13-preview")
 	var event string
 	if err := s.DB.QueryRow("SELECT event_id FROM events").Scan(&event); err != nil {

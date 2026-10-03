@@ -15,6 +15,7 @@ func compareReportCapture(t *testing.T, id string, got any) {
 	golden.CheckJSON(t, id, asJSON(t, got), golden.Substitute(repoRoot(t), "<repo>"))
 }
 func Test24_SR_11_UnusableReading(t *testing.T) {
+	t.Parallel()
 	base := map[string]any{"schema": "reporting-observation/1", "reportingState": "unreported", "relationshipId": "rel-0123456789abcdef", "selectors": map[string]any{"turn": "turn-7"}}
 	readings := []any{nil, "text", []any{}, map[string]any{"schema": "reporting-observation/1"},
 		map[string]any{"schema": base["schema"], "reportingState": base["reportingState"], "relationshipId": base["relationshipId"], "selectors": map[string]any{"turn": []any{"turn-7"}}},
@@ -28,6 +29,7 @@ func Test24_SR_11_UnusableReading(t *testing.T) {
 	compareReportCapture(t, "SR-11", map[string]any{"gaps": gaps})
 }
 func Test24_SR_2_BlockIdentity(t *testing.T) {
+	t.Parallel()
 	causes := []string{}
 	ids := []string{}
 	for _, pair := range [][2]string{{"waiting on API", "schema update"}, {"waiting on", "API schema update"}, {"waiting on API", "schema update"}} {
@@ -42,6 +44,7 @@ func Test24_SR_2_BlockIdentity(t *testing.T) {
 	compareReportCapture(t, "SR-2", map[string]any{"subjects": causes, "ids": ids})
 }
 func Test24_SR_8_ObservationOmission(t *testing.T) {
+	t.Parallel()
 	reading := map[string]any{"schema": "reporting-observation/1", "reportingState": "unreported", "reason": "terminal_without_report", "relationshipId": "rel-0123456789abcdef", "executionGeneration": float64(1), "selectors": map[string]any{"turn": "turn-7"}}
 	omission := ObservationObligation(reading)
 	settled := map[string]any{}

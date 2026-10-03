@@ -19,6 +19,7 @@ func (c routeClock) ISO() string { return string(c) }
 
 func routeReplay(t *testing.T, property string) {
 	t.Helper()
+	t.Parallel()
 	var records []struct {
 		Operation string
 		Args      []any

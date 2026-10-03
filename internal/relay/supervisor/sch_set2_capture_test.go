@@ -184,6 +184,7 @@ func (h *set2UnknownHost) SendMessage(_ context.Context, id, thread, message str
 }
 
 func Test24_SCH_35_Capture(t *testing.T) {
+	t.Parallel()
 	supervisorMirror(t, "WhatTheThirdReviewRoundFound.test_an_omission_is_refused_without_the_reading_that_found_it", "setup", func(c *Channel, s *store.Store) []any {
 		reading := map[string]any{"schema": "reporting-observation/1", "reportingState": "unreported", "relationshipId": captureRelationID(t, c), "reason": "the turn settled without a report", "selectors": map[string]any{"state": c.StoreDirectory(), "markerRoot": "/marker", "workspace": "/tmp/workspace", "assignment": "asg-1", "session": "01child-session", "turn": "turn-unreported-1"}}
 		o := ObservationObligation(reading)

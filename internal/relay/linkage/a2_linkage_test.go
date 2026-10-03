@@ -92,6 +92,7 @@ func (w *world) unreadable(answer contract.OrderedObject) {
 
 // Test26_LPR1: a peer link is one record whichever side registers it and across a handover.
 func Test26_LPR1_a_peer_link_is_one_record(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	w.twoProjects()
 	first := w.peer(project, parent, otherProject, otherParent).(contract.OrderedObject)
@@ -108,6 +109,7 @@ func Test26_LPR1_a_peer_link_is_one_record(t *testing.T) {
 
 // Test26_LPR2: a peer link adds no hierarchy level; each project keeps one execution owner.
 func Test26_LPR2_a_peer_link_adds_no_level(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	w.twoProjects()
 	w.executionEdges()
@@ -132,6 +134,7 @@ func Test26_LPR2_a_peer_link_adds_no_level(t *testing.T) {
 
 // Test26_LPR3: peer refusals (scope_cycle, scope_role_mismatch twice).
 func Test26_LPR3_peer_refusals(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	w.twoProjects()
 	w.peer(project, parent, project, parent)
@@ -147,6 +150,7 @@ func Test26_LPR3_peer_refusals(t *testing.T) {
 
 // Test26_LPR4: a linked counterpart answer carries the link revision and the real counterpart.
 func Test26_LPR4_a_linked_counterpart_answer(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	w.peered()
 	w.counterpart(parent, otherParent, registry.CounterpartQuery{})
@@ -163,6 +167,7 @@ func Test26_LPR4_a_linked_counterpart_answer(t *testing.T) {
 
 // Test26_LPR5: counterpart findings words.
 func Test26_LPR5_counterpart_findings(t *testing.T) {
+	t.Parallel()
 	has := func(t *testing.T, step map[string]any, word string) bool {
 		t.Helper()
 		for _, f := range step["ok"].(map[string]any)["findings"].([]any) {
@@ -213,6 +218,7 @@ func Test26_LPR5_counterpart_findings(t *testing.T) {
 
 // Test26_LPR6: an unregistered task is unlinked; an unreadable store is unreadable.
 func Test26_LPR6_unregistered_is_not_unreadable(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	w.peered()
 	w.counterpart(parent, "01nobody-at-all", registry.CounterpartQuery{})
@@ -231,6 +237,7 @@ func Test26_LPR6_unregistered_is_not_unreadable(t *testing.T) {
 
 // Test26_LQY1: three-level walks down and up, each level with its real task and host.
 func Test26_LQY1_three_level_walks(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	rid := w.scoped()
 	down := w.down("initiative", initiative)
@@ -262,6 +269,7 @@ func Test26_LQY1_three_level_walks(t *testing.T) {
 
 // Test26_LQY2: an unreadable store walks as unreadable with no levels or gaps.
 func Test26_LQY2_an_unreadable_store_walks_as_unreadable(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	w.scoped()
 	if err := w.s.DB.Close(); err != nil {
@@ -288,6 +296,7 @@ func gapWords(answer map[string]any) []any {
 
 // Test26_LQY3: gap words unscoped_assignment, project_without_parent, no_supervisor.
 func Test26_LQY3_gap_words(t *testing.T) {
+	t.Parallel()
 	t.Run("unscoped_assignment", func(t *testing.T) {
 		w := newWorld(t)
 		w.register()
@@ -321,6 +330,7 @@ func Test26_LQY3_gap_words(t *testing.T) {
 
 // Test26_LQY4: contention rows for a recorded conflict, an instruction pair and owner drift.
 func Test26_LQY4_contention_rows(t *testing.T) {
+	t.Parallel()
 	contention := func(step map[string]any) []any { return step["ok"].(map[string]any)["contention"].([]any) }
 	t.Run("recorded_conflict", func(t *testing.T) {
 		w := newWorld(t)
@@ -395,6 +405,7 @@ func (w *world) forIssue() contract.OrderedObject {
 
 // Test26_LQY5: the assignment view's project context: scoped, unscoped, unreadable.
 func Test26_LQY5_assignment_view_project_context(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	w.scoped()
 	w.forIssue()
@@ -500,6 +511,7 @@ func (w *world) runDDL(ddl []string) {
 // Test26_LRC1: an existing two-level store keeps every row across the linkage schema, and a
 // pre-scoping assignment can be attached afterwards.
 func Test26_LRC1_an_existing_store_keeps_what_it_had(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	rid := w.register()
 	if err := w.s.Transaction(w.ctx, func(ctx context.Context, conn *sql.Conn) error {
@@ -551,6 +563,7 @@ func (w *world) again(projectKey string) (registry.Relationship, error) {
 // Test26_LRC2: registering with a project writes the lower level; re-registering never
 // reinserts, records a project for an unscoped relationship, and refuses another project.
 func Test26_LRC2_registering_with_a_project(t *testing.T) {
+	t.Parallel()
 	t.Run("register_with_project", func(t *testing.T) {
 		w := newWorld(t)
 		w.superviseDefault()
@@ -595,6 +608,7 @@ func (w *world) issueState() {
 
 // Test26_LRC3: lifecycle propagation to the lower level.
 func Test26_LRC3_lifecycle_propagation(t *testing.T) {
+	t.Parallel()
 	status := func(step map[string]any) any { return step["ok"].(map[string]any)["status"] }
 	t.Run("archive", func(t *testing.T) {
 		w := newWorld(t)
@@ -652,6 +666,7 @@ var errInterrupted = errors.New("the writer stopped partway through")
 
 // Test26_LRC4: nothing partial survives a refusal or an interrupted transition.
 func Test26_LRC4_nothing_partial_survives(t *testing.T) {
+	t.Parallel()
 	t.Run("refused_supervision", func(t *testing.T) {
 		w := newWorld(t)
 		w.must(w.r.BindScopeAs(w.ctx, "child", "ISS-OTHER", parentEP(otherParent), "active"))
@@ -721,6 +736,7 @@ func Test26_LRC4_nothing_partial_survives(t *testing.T) {
 
 // Test26_LRC5: two concurrent attachments of one issue settle as one project.
 func Test26_LRC5_concurrent_attachment_settles_as_one_project(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	w.superviseDefault()
 	s := w.supervision()
