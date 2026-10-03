@@ -41,6 +41,10 @@ type ReleaseJudgement struct {
 	Overlaps OverlapCounts
 	Basis    []BasisRow // worst grade first, at most MaxBasisRows
 	Omitted  int        // rows left out of Basis
+	// HeldByPolicy is set when the release policy has switched local-optimistic release off and the candidate's worst overlap is local: the rule then reads defer (CRW-411, optimism.go). PolicyReason
+	// is the policy's reason, for the detail.
+	HeldByPolicy bool
+	PolicyReason string
 }
 
 func optionalOrNil(s string) any { return optionalText(s) }
@@ -72,7 +76,11 @@ func (j ReleaseJudgement) object() contract.OrderedObject {
 	for i, b := range j.Basis {
 		basis[i] = b.object()
 	}
-	return contract.OrderedObject{{Key: "rule", Value: j.Rule}, {Key: "overlaps", Value: j.Overlaps.object()}, {Key: "basis", Value: basis}, {Key: "basis_omitted", Value: j.Omitted}}
+	o := contract.OrderedObject{{Key: "rule", Value: j.Rule}, {Key: "overlaps", Value: j.Overlaps.object()}, {Key: "basis", Value: basis}, {Key: "basis_omitted", Value: j.Omitted}}
+	if j.HeldByPolicy {
+		o = append(o, contract.Field{Key: "held_by_policy", Value: true})
+	}
+	return o
 }
 
 // canonical is the judgement as a pass record and the reading's digest keep it: a map of plain values, absent where a field is empty.
@@ -81,13 +89,36 @@ func (j ReleaseJudgement) canonical() map[string]any {
 	for i, b := range j.Basis {
 		basis[i] = b.canonical()
 	}
-	return map[string]any{"rule": j.Rule, "basis": basis, "basis_omitted": j.Omitted,
+	m := map[string]any{"rule": j.Rule, "basis": basis, "basis_omitted": j.Omitted,
 		"overlaps": map[string]any{"mechanical": j.Overlaps.Mechanical, "local": j.Overlaps.Local, "exclusive": j.Overlaps.Exclusive}}
+	if j.HeldByPolicy {
+		m["held_by_policy"] = true
+	}
+	return m
+}
+
+// applyPolicy turns a local-optimistic judgement into a deferral while the release policy has local-optimistic release off (CRW-411): a local overlap then defers like an exclusive one. Every
+// other rule is left as judged (independent and mechanical releases overlap nothing that counts, and an exclusive overlap defers already), and a policy that is on, or no policy, changes nothing.
+func (j *ReleaseJudgement) applyPolicy(policy *OptimismState) {
+	if policy == nil || policy.On || j.Rule != RuleLocalOptimistic {
+		return
+	}
+	j.Rule, j.HeldByPolicy, j.PolicyReason = RuleDefer, true, policy.Reason
 }
 
 // deferDetail is the detail of a candidate the judgement cut: the sentence the reading always gave, then the rule, the row that decided it (the first exclusive one) and the counts.
 func (j ReleaseJudgement) deferDetail() string {
 	detail := "its edit regions overlap a node that is running or accepted and not yet landed, or a region is undeclared; release rule " + RuleDefer + ":"
+	if j.HeldByPolicy {
+		detail = "its edit regions overlap a node that is running or accepted and not yet landed; release rule " + RuleDefer + ": local-optimistic release is switched off by the release policy (" + j.PolicyReason + ");"
+		for _, b := range j.Basis {
+			if b.Grade == GradeLocal {
+				detail += " local overlap with " + b.Holder + " on " + b.Path + " (candidate " + describeGrade(b.CandidateGrade, b.CandidateRule) + ", holder " + describeGrade(b.HolderGrade, b.HolderRule) + ")"
+				break
+			}
+		}
+		return detail + "; overlaps: mechanical " + itoa64(int64(j.Overlaps.Mechanical)) + ", local " + itoa64(int64(j.Overlaps.Local)) + ", exclusive " + itoa64(int64(j.Overlaps.Exclusive))
+	}
 	for _, b := range j.Basis {
 		if b.Grade != GradeExclusive {
 			continue
