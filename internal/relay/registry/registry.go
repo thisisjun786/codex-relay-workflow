@@ -733,7 +733,10 @@ func (r *Registry) returningTenure(ctx context.Context, rid string, in Registrat
 		if err := link.applyRelationshipStatus(ctx, in.Supersedes, "archived", predStatus, now); err != nil {
 			return err
 		}
-		generation := fresh.Generation + 1
+		var generation int64
+		if generation, err = store.NextGeneration(ctx, q, rid); err != nil {
+			return err
+		}
 		if _, err := q.ExecContext(ctx, "UPDATE relationships SET status = ?, superseded_by = NULL, supersedes = ?,"+
 			" execution_generation = ?, parent_host_id = ?, parent_cwd = ?,"+
 			" parent_cxc_session = ?, child_host_id = ?, child_cwd = ?,"+
@@ -801,7 +804,8 @@ func (r *Registry) OpenGeneration(ctx context.Context, rid, dispatchRequest, rea
 	}
 	replay, err := scanGeneration(r.Store.Querier(ctx).QueryRowContext(ctx, "SELECT "+generationColumns+" FROM generations WHERE relationship_id = ? AND dispatch_request_id = ?", rid, dispatchRequest).Scan)
 	if err == nil {
-		return replay, nil
+		// a repeated open names the generation it opened, unless that one was withdrawn (CRW-446)
+		return replay, store.RefuseWithdrawn(ctx, r.Store.Querier(ctx), rid, replay.Number)
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return Generation{}, err
@@ -830,7 +834,7 @@ func (r *Registry) OpenGenerationIn(ctx context.Context, rid, dispatchRequest, r
 	var number int64
 	err := q.QueryRowContext(ctx, "SELECT execution_generation FROM generations WHERE relationship_id = ? AND dispatch_request_id = ?", rid, dispatchRequest).Scan(&number)
 	if err == nil {
-		return number, nil
+		return number, store.RefuseWithdrawn(ctx, q, rid, number)
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return 0, err
@@ -848,7 +852,9 @@ func (r *Registry) OpenGenerationIn(ctx context.Context, rid, dispatchRequest, r
 	if status != Active || supersededBy.String != "" {
 		return 0, refuse(contract.RefusalRelationshipNotActive, "relationship %s is not active", strconv.Quote(rid))
 	}
-	number = current + 1
+	if number, err = store.NextGeneration(ctx, q, rid); err != nil {
+		return 0, err
+	}
 	now := r.now()
 	anchor, bound := anchorFor(dispatchTurn, now)
 	if _, err := q.ExecContext(ctx, "INSERT INTO generations (relationship_id, execution_generation,"+
@@ -888,6 +894,9 @@ func (r *Registry) BindAnchor(ctx context.Context, rid string, number int64, tur
 	}
 	now := r.now()
 	err = r.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
+		if err := store.RefuseWithdrawn(ctx, r.Store.Querier(ctx), rid, number); err != nil {
+			return err
+		}
 		if _, err := r.Store.Querier(ctx).ExecContext(ctx, "UPDATE generations SET anchor_state = ?, dispatch_turn_id = ?, bound_at = ?"+
 			" WHERE relationship_id = ? AND execution_generation = ?", AnchorBound, turn, now, rid, number); err != nil {
 			return err
