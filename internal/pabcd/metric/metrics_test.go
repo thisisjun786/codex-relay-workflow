@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"math"
 	"os"
@@ -211,6 +212,21 @@ func TestWriteObjectiveKindLeavesANonRegularFileAloneInsteadOfBlockingOnIt(t *te
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("the write blocked on the FIFO")
+	}
+}
+
+func TestWriteObjectiveKindDoesNotFollowASymlinkAtItsTempName(t *testing.T) {
+	cwd, victim, now := t.TempDir(), filepath.Join(t.TempDir(), "victim"), time.UnixMilli(1_790_000_000_000)
+	metricsMust(t, os.WriteFile(victim, []byte("keep"), 0o666))
+	metricsMust(t, os.MkdirAll(objectiveKindDir(cwd), 0o777))
+	tmp := fmt.Sprintf("%s.%d.%d.tmp", objectiveKindPath(cwd, "s"), os.Getpid(), now.UnixMilli())
+	metricsMust(t, os.Symlink(victim, tmp))
+	err := writeObjectiveKind(cwd, "s", Maximize, now, crwdir.Rename)
+	if got, _ := os.ReadFile(victim); err == nil || string(got) != "keep" {
+		t.Errorf("write error %v, the file the link points at now holds %q", err, got)
+	}
+	if _, lerr := os.Lstat(tmp); lerr != nil {
+		t.Errorf("the entry that was already there was removed: %v", lerr)
 	}
 }
 

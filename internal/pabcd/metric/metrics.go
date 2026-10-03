@@ -332,11 +332,17 @@ func writeObjectiveKind(cwd, sessionID string, kind ObjectiveKind, now time.Time
 	if owner, named := ledgerDoc(string(raw))["sessionId"].(string); named && (owner != sessionID || strings.ContainsRune(owner, utf8.RuneError)) {
 		return fmt.Errorf("%s holds the objective kind of session %q, not %q", finalPath, owner, sessionID)
 	}
-	// The oracle's temp name, so a long id fails or fits as it does there; the lock keeps two writers from sharing it.
-	tmp := fmt.Sprintf("%s.%d.%d.tmp", finalPath, os.Getpid(), now.UnixMilli())
-	defer os.Remove(tmp) // best effort; gone after a rename
 	body := fmt.Sprintf("{\n  \"sessionId\": %s,\n  \"kind\": %s,\n  \"updatedAt\": %s\n}", rowQuote(sessionID), rowQuote(string(kind)), rowQuote(now.UTC().Format(timestampLayout)))
-	if err = os.WriteFile(tmp, []byte(body), 0o666); err != nil {
+	// The oracle's temp name, so a long id fails or fits as it does there; the lock keeps two writers from sharing it. It is created
+	// exclusively (the oracle's write follows a symlink at that name and truncates its target), so an entry already there is refused.
+	tmp := fmt.Sprintf("%s.%d.%d.tmp", finalPath, os.Getpid(), now.UnixMilli())
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o666)
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp) // best effort; gone after a rename
+	_, err = f.WriteString(body)
+	if err = errors.Join(err, f.Close()); err != nil {
 		return err
 	}
 	return rename(tmp, finalPath)
