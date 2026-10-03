@@ -1,0 +1,1592 @@
+[
+ {
+  "id": "ensure_fresh",
+  "first": {
+   "returned": true
+  },
+  "file": "{\n  \"phase\": \"IDLE\",\n  \"sessionId\": \"rec-s1\",\n  \"slug\": \"\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": null,\n  \"planEpoch\": null,\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+  "second": {
+   "returned": false
+  },
+  "unchanged": true,
+  "listing": [
+   "rec-s1.json"
+  ],
+  "ignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n"
+ },
+ {
+  "id": "ensure_noncanonical",
+  "sessionId": "  padded  ",
+  "threw": "TypeError",
+  "message": "sessionId must be a canonical state key",
+  "stateDirCreated": false
+ },
+ {
+  "id": "ensure_noncanonical",
+  "sessionId": "../unsafe/session",
+  "threw": "TypeError",
+  "message": "sessionId must be a canonical state key",
+  "stateDirCreated": false
+ },
+ {
+  "id": "ensure_noncanonical",
+  "sessionId": "세션",
+  "threw": "TypeError",
+  "message": "sessionId must be a canonical state key",
+  "stateDirCreated": false
+ },
+ {
+  "id": "ensure_noncanonical",
+  "sessionId": "",
+  "threw": "TypeError",
+  "message": "sessionId must be a canonical state key",
+  "stateDirCreated": false
+ },
+ {
+  "id": "ensure_link_EPERM",
+  "returned": true,
+  "file": "{\n  \"phase\": \"IDLE\",\n  \"sessionId\": \"rec-s1\",\n  \"slug\": \"\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": null,\n  \"planEpoch\": null,\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+  "listing": [
+   "rec-s1.json"
+  ]
+ },
+ {
+  "id": "ensure_link_ENOTSUP",
+  "returned": true,
+  "file": "{\n  \"phase\": \"IDLE\",\n  \"sessionId\": \"rec-s1\",\n  \"slug\": \"\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": null,\n  \"planEpoch\": null,\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+  "listing": [
+   "rec-s1.json"
+  ]
+ },
+ {
+  "id": "ensure_link_EXDEV",
+  "returned": true,
+  "file": "{\n  \"phase\": \"IDLE\",\n  \"sessionId\": \"rec-s1\",\n  \"slug\": \"\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": null,\n  \"planEpoch\": null,\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+  "listing": [
+   "rec-s1.json"
+  ]
+ },
+ {
+  "id": "ensure_link_EEXIST",
+  "returned": false,
+  "file": null,
+  "listing": []
+ },
+ {
+  "id": "ensure_link_EIO",
+  "threw": "EIO",
+  "file": null,
+  "listing": []
+ },
+ {
+  "id": "ensure_link_EACCES",
+  "threw": "EACCES",
+  "file": null,
+  "listing": []
+ },
+ {
+  "id": "ensure_final_is_directory",
+  "returned": false,
+  "listing": [
+   "rec-s1.json"
+  ]
+ },
+ {
+  "id": "ensure_fallback_restamps",
+  "returned": true,
+  "file": "{\n  \"phase\": \"IDLE\",\n  \"sessionId\": \"rec-s1\",\n  \"slug\": \"\",\n  \"updatedAt\": \"2026-01-01T00:00:01.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": null,\n  \"planEpoch\": null,\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}"
+ },
+ {
+  "id": "write_default",
+  "state": {
+   "phase": "IDLE",
+   "sessionId": "rec-s1",
+   "slug": "",
+   "updatedAt": "2026-01-01T00:00:00.000Z",
+   "flags": {
+    "interview": false,
+    "auditPassed": false,
+    "checkPassed": false
+   },
+   "supersededBy": null,
+   "injectedTurns": [],
+   "lastInjectedPhase": null,
+   "orchestrationActive": false,
+   "interview": null,
+   "stopBlockPhase": null,
+   "stopBlockCount": 0,
+   "stopBlockWorkPhaseId": null,
+   "stopMetricCursor": 0,
+   "stopBlockTotal": 0,
+   "stopBlockTurnId": null,
+   "stopBlockCapNotified": false,
+   "loopArmSeen": false,
+   "idleEditNudges": 0,
+   "memoryWriteRequested": false,
+   "memoryWriteTurn": null,
+   "memoryWriteGrant": false,
+   "unverifiedSubagents": [],
+   "unverifiedCorrupt": false,
+   "phaseEntrySource": null,
+   "planUnit": null,
+   "planEpoch": null,
+   "checkEpoch": null,
+   "dcloseRecovery": null
+  },
+  "listing": [
+   "rec-s1.json"
+  ],
+  "files": {
+   "rec-s1.json": "{\n  \"phase\": \"IDLE\",\n  \"sessionId\": \"rec-s1\",\n  \"slug\": \"\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": null,\n  \"planEpoch\": null,\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}"
+  }
+ },
+ {
+  "id": "write_phase_b",
+  "state": {
+   "phase": "B",
+   "sessionId": "rec-s1",
+   "slug": "my-slug",
+   "updatedAt": "2026-01-01T00:00:00.000Z",
+   "flags": {
+    "interview": false,
+    "auditPassed": true,
+    "checkPassed": false
+   },
+   "supersededBy": null,
+   "injectedTurns": [
+    "t1",
+    "t2"
+   ],
+   "lastInjectedPhase": "B",
+   "orchestrationActive": true,
+   "interview": null,
+   "stopBlockPhase": "B",
+   "stopBlockCount": 2,
+   "stopBlockWorkPhaseId": null,
+   "stopMetricCursor": 0,
+   "stopBlockTotal": 0,
+   "stopBlockTurnId": "turn-9",
+   "stopBlockCapNotified": true,
+   "loopArmSeen": true,
+   "idleEditNudges": 3,
+   "memoryWriteRequested": true,
+   "memoryWriteTurn": "t1",
+   "memoryWriteGrant": true,
+   "unverifiedSubagents": [
+    {
+     "agentId": "a1",
+     "turnId": "t1",
+     "agentType": "executor",
+     "attempts": 3,
+     "receiptClaimed": "r",
+     "recordedAt": "2026-01-01T00:00:00Z",
+     "resolvable": true
+    }
+   ],
+   "unverifiedCorrupt": false,
+   "phaseEntrySource": {
+    "kind": "resolved",
+    "commitSha": "abc",
+    "dirty": true,
+    "capturedAt": "2026-01-01T00:00:00Z",
+    "treeHash": "h",
+    "sourceRoot": "/ws"
+   },
+   "planUnit": "devlog/_plan/260101_x",
+   "planEpoch": "e1",
+   "checkEpoch": null,
+   "dcloseRecovery": null
+  },
+  "listing": [
+   "rec-s1.json"
+  ],
+  "files": {
+   "rec-s1.json": "{\n  \"phase\": \"B\",\n  \"sessionId\": \"rec-s1\",\n  \"slug\": \"my-slug\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": true,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [\n    \"t1\",\n    \"t2\"\n  ],\n  \"lastInjectedPhase\": \"B\",\n  \"orchestrationActive\": true,\n  \"interview\": null,\n  \"stopBlockPhase\": \"B\",\n  \"stopBlockCount\": 2,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": \"turn-9\",\n  \"stopBlockCapNotified\": true,\n  \"loopArmSeen\": true,\n  \"idleEditNudges\": 3,\n  \"memoryWriteRequested\": true,\n  \"memoryWriteTurn\": \"t1\",\n  \"memoryWriteGrant\": true,\n  \"unverifiedSubagents\": [\n    {\n      \"agentId\": \"a1\",\n      \"turnId\": \"t1\",\n      \"agentType\": \"executor\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"r\",\n      \"recordedAt\": \"2026-01-01T00:00:00Z\",\n      \"resolvable\": true\n    }\n  ],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": {\n    \"kind\": \"resolved\",\n    \"commitSha\": \"abc\",\n    \"dirty\": true,\n    \"capturedAt\": \"2026-01-01T00:00:00Z\",\n    \"treeHash\": \"h\",\n    \"sourceRoot\": \"/ws\"\n  },\n  \"planUnit\": \"devlog/_plan/260101_x\",\n  \"planEpoch\": \"e1\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}"
+  }
+ },
+ {
+  "id": "write_stale_updated_at",
+  "state": {
+   "phase": "P",
+   "sessionId": "rec-s1",
+   "slug": "",
+   "updatedAt": "1999-09-09T09:09:09.999Z",
+   "flags": {
+    "interview": false,
+    "auditPassed": false,
+    "checkPassed": false
+   },
+   "supersededBy": null,
+   "injectedTurns": [],
+   "lastInjectedPhase": null,
+   "orchestrationActive": true,
+   "interview": null,
+   "stopBlockPhase": null,
+   "stopBlockCount": 0,
+   "stopBlockWorkPhaseId": null,
+   "stopMetricCursor": 0,
+   "stopBlockTotal": 0,
+   "stopBlockTurnId": null,
+   "stopBlockCapNotified": false,
+   "loopArmSeen": false,
+   "idleEditNudges": 0,
+   "memoryWriteRequested": false,
+   "memoryWriteTurn": null,
+   "memoryWriteGrant": false,
+   "unverifiedSubagents": [],
+   "unverifiedCorrupt": false,
+   "phaseEntrySource": null,
+   "planUnit": null,
+   "planEpoch": null,
+   "checkEpoch": null,
+   "dcloseRecovery": null
+  },
+  "listing": [
+   "rec-s1.json"
+  ],
+  "files": {
+   "rec-s1.json": "{\n  \"phase\": \"P\",\n  \"sessionId\": \"rec-s1\",\n  \"slug\": \"\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": true,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": null,\n  \"planEpoch\": null,\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}"
+  }
+ },
+ {
+  "id": "write_markup",
+  "state": {
+   "phase": "IDLE",
+   "sessionId": "rec-s1",
+   "slug": "<script>a&b</script>     é 😀 \\u2028",
+   "updatedAt": "2026-01-01T00:00:00.000Z",
+   "flags": {
+    "interview": false,
+    "auditPassed": false,
+    "checkPassed": false
+   },
+   "supersededBy": null,
+   "injectedTurns": [],
+   "lastInjectedPhase": null,
+   "orchestrationActive": false,
+   "interview": null,
+   "stopBlockPhase": null,
+   "stopBlockCount": 0,
+   "stopBlockWorkPhaseId": null,
+   "stopMetricCursor": 0,
+   "stopBlockTotal": 0,
+   "stopBlockTurnId": null,
+   "stopBlockCapNotified": false,
+   "loopArmSeen": false,
+   "idleEditNudges": 0,
+   "memoryWriteRequested": false,
+   "memoryWriteTurn": null,
+   "memoryWriteGrant": false,
+   "unverifiedSubagents": [],
+   "unverifiedCorrupt": false,
+   "phaseEntrySource": null,
+   "planUnit": null,
+   "planEpoch": null,
+   "checkEpoch": null,
+   "dcloseRecovery": null
+  },
+  "listing": [
+   "rec-s1.json"
+  ],
+  "files": {
+   "rec-s1.json": "{\n  \"phase\": \"IDLE\",\n  \"sessionId\": \"rec-s1\",\n  \"slug\": \"<script>a&b</script>     é 😀 \\\\u2028\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": null,\n  \"planEpoch\": null,\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}"
+  }
+ },
+ {
+  "id": "write_tracker_over_cap",
+  "state": {
+   "phase": "I",
+   "sessionId": "rec-s1",
+   "slug": "",
+   "updatedAt": "2026-01-01T00:00:00.000Z",
+   "flags": {
+    "interview": false,
+    "auditPassed": false,
+    "checkPassed": false
+   },
+   "supersededBy": null,
+   "injectedTurns": [],
+   "lastInjectedPhase": null,
+   "orchestrationActive": false,
+   "interview": {
+    "roundId": 3,
+    "dimensions": {
+     "goal": {
+      "level": "mid",
+      "known": [
+       "k0",
+       "k1",
+       "k2",
+       "k3",
+       "k4",
+       "k5",
+       "k6",
+       "k7",
+       "k8",
+       "k9",
+       "k10",
+       "k11",
+       "k12",
+       "k13",
+       "k14",
+       "k15",
+       "k16",
+       "k17",
+       "k18",
+       "k19",
+       "k20",
+       "k21",
+       "k22",
+       "k23",
+       "k24",
+       "k25",
+       "k26",
+       "k27",
+       "k28",
+       "k29",
+       "k30",
+       "k31",
+       "k32",
+       "k33",
+       "k34",
+       "k35",
+       "k36",
+       "k37",
+       "k38",
+       "k39",
+       "k40",
+       "k41",
+       "k42",
+       "k43",
+       "k44",
+       "k45",
+       "k46",
+       "k47",
+       "k48",
+       "k49",
+       "k50",
+       "k51",
+       "k52",
+       "k53",
+       "k54",
+       "k55",
+       "k56",
+       "k57",
+       "k58",
+       "k59"
+      ],
+      "unknown": [
+       "u0",
+       "u1",
+       "u2",
+       "u3",
+       "u4",
+       "u5",
+       "u6",
+       "u7",
+       "u8",
+       "u9",
+       "u10",
+       "u11",
+       "u12",
+       "u13",
+       "u14",
+       "u15",
+       "u16",
+       "u17",
+       "u18",
+       "u19",
+       "u20",
+       "u21",
+       "u22",
+       "u23",
+       "u24",
+       "u25",
+       "u26",
+       "u27",
+       "u28",
+       "u29",
+       "u30",
+       "u31",
+       "u32",
+       "u33",
+       "u34",
+       "u35",
+       "u36",
+       "u37",
+       "u38",
+       "u39",
+       "u40",
+       "u41",
+       "u42",
+       "u43",
+       "u44",
+       "u45",
+       "u46",
+       "u47",
+       "u48",
+       "u49",
+       "u50",
+       "u51",
+       "u52",
+       "u53",
+       "u54",
+       "u55",
+       "u56",
+       "u57",
+       "u58",
+       "u59"
+      ],
+      "confidence": 0.5
+     },
+     "constraint": {
+      "level": "low",
+      "known": [],
+      "unknown": [],
+      "confidence": 0
+     },
+     "success": {
+      "level": "low",
+      "known": [],
+      "unknown": [],
+      "confidence": 0
+     },
+     "ontology": {
+      "level": "low",
+      "known": [],
+      "unknown": [],
+      "confidence": 0
+     }
+    },
+    "contradictions": [
+     {
+      "contradictionId": "c0",
+      "severity": "low",
+      "summary": "s0"
+     },
+     {
+      "contradictionId": "c1",
+      "severity": "low",
+      "summary": "s1"
+     },
+     {
+      "contradictionId": "c2",
+      "severity": "low",
+      "summary": "s2"
+     },
+     {
+      "contradictionId": "c3",
+      "severity": "low",
+      "summary": "s3"
+     },
+     {
+      "contradictionId": "c4",
+      "severity": "low",
+      "summary": "s4"
+     },
+     {
+      "contradictionId": "c5",
+      "severity": "low",
+      "summary": "s5"
+     },
+     {
+      "contradictionId": "c6",
+      "severity": "low",
+      "summary": "s6"
+     },
+     {
+      "contradictionId": "c7",
+      "severity": "low",
+      "summary": "s7"
+     },
+     {
+      "contradictionId": "c8",
+      "severity": "low",
+      "summary": "s8"
+     },
+     {
+      "contradictionId": "c9",
+      "severity": "low",
+      "summary": "s9"
+     },
+     {
+      "contradictionId": "c10",
+      "severity": "low",
+      "summary": "s10"
+     },
+     {
+      "contradictionId": "c11",
+      "severity": "low",
+      "summary": "s11"
+     },
+     {
+      "contradictionId": "c12",
+      "severity": "low",
+      "summary": "s12"
+     },
+     {
+      "contradictionId": "c13",
+      "severity": "low",
+      "summary": "s13"
+     },
+     {
+      "contradictionId": "c14",
+      "severity": "low",
+      "summary": "s14"
+     },
+     {
+      "contradictionId": "c15",
+      "severity": "low",
+      "summary": "s15"
+     },
+     {
+      "contradictionId": "c16",
+      "severity": "low",
+      "summary": "s16"
+     },
+     {
+      "contradictionId": "c17",
+      "severity": "low",
+      "summary": "s17"
+     },
+     {
+      "contradictionId": "c18",
+      "severity": "low",
+      "summary": "s18"
+     },
+     {
+      "contradictionId": "c19",
+      "severity": "low",
+      "summary": "s19"
+     },
+     {
+      "contradictionId": "c20",
+      "severity": "low",
+      "summary": "s20"
+     },
+     {
+      "contradictionId": "c21",
+      "severity": "low",
+      "summary": "s21"
+     },
+     {
+      "contradictionId": "c22",
+      "severity": "low",
+      "summary": "s22"
+     },
+     {
+      "contradictionId": "c23",
+      "severity": "low",
+      "summary": "s23"
+     },
+     {
+      "contradictionId": "c24",
+      "severity": "low",
+      "summary": "s24"
+     },
+     {
+      "contradictionId": "c25",
+      "severity": "low",
+      "summary": "s25"
+     },
+     {
+      "contradictionId": "c26",
+      "severity": "low",
+      "summary": "s26"
+     },
+     {
+      "contradictionId": "c27",
+      "severity": "low",
+      "summary": "s27"
+     },
+     {
+      "contradictionId": "c28",
+      "severity": "low",
+      "summary": "s28"
+     },
+     {
+      "contradictionId": "c29",
+      "severity": "low",
+      "summary": "s29"
+     },
+     {
+      "contradictionId": "c30",
+      "severity": "low",
+      "summary": "s30"
+     },
+     {
+      "contradictionId": "c31",
+      "severity": "low",
+      "summary": "s31"
+     },
+     {
+      "contradictionId": "c32",
+      "severity": "low",
+      "summary": "s32"
+     },
+     {
+      "contradictionId": "c33",
+      "severity": "low",
+      "summary": "s33"
+     },
+     {
+      "contradictionId": "c34",
+      "severity": "low",
+      "summary": "s34"
+     },
+     {
+      "contradictionId": "c35",
+      "severity": "low",
+      "summary": "s35"
+     },
+     {
+      "contradictionId": "c36",
+      "severity": "low",
+      "summary": "s36"
+     },
+     {
+      "contradictionId": "c37",
+      "severity": "low",
+      "summary": "s37"
+     },
+     {
+      "contradictionId": "c38",
+      "severity": "low",
+      "summary": "s38"
+     },
+     {
+      "contradictionId": "c39",
+      "severity": "low",
+      "summary": "s39"
+     },
+     {
+      "contradictionId": "c40",
+      "severity": "low",
+      "summary": "s40"
+     },
+     {
+      "contradictionId": "c41",
+      "severity": "low",
+      "summary": "s41"
+     },
+     {
+      "contradictionId": "c42",
+      "severity": "low",
+      "summary": "s42"
+     },
+     {
+      "contradictionId": "c43",
+      "severity": "low",
+      "summary": "s43"
+     },
+     {
+      "contradictionId": "c44",
+      "severity": "low",
+      "summary": "s44"
+     },
+     {
+      "contradictionId": "c45",
+      "severity": "low",
+      "summary": "s45"
+     },
+     {
+      "contradictionId": "c46",
+      "severity": "low",
+      "summary": "s46"
+     },
+     {
+      "contradictionId": "c47",
+      "severity": "low",
+      "summary": "s47"
+     },
+     {
+      "contradictionId": "c48",
+      "severity": "low",
+      "summary": "s48"
+     },
+     {
+      "contradictionId": "c49",
+      "severity": "low",
+      "summary": "s49"
+     },
+     {
+      "contradictionId": "c50",
+      "severity": "low",
+      "summary": "s50"
+     },
+     {
+      "contradictionId": "c51",
+      "severity": "low",
+      "summary": "s51"
+     },
+     {
+      "contradictionId": "c52",
+      "severity": "low",
+      "summary": "s52"
+     },
+     {
+      "contradictionId": "c53",
+      "severity": "low",
+      "summary": "s53"
+     },
+     {
+      "contradictionId": "c54",
+      "severity": "low",
+      "summary": "s54"
+     },
+     {
+      "contradictionId": "c55",
+      "severity": "low",
+      "summary": "s55"
+     },
+     {
+      "contradictionId": "c56",
+      "severity": "low",
+      "summary": "s56"
+     },
+     {
+      "contradictionId": "c57",
+      "severity": "low",
+      "summary": "s57"
+     },
+     {
+      "contradictionId": "c58",
+      "severity": "low",
+      "summary": "s58"
+     },
+     {
+      "contradictionId": "c59",
+      "severity": "low",
+      "summary": "s59"
+     }
+    ],
+    "assumptions": [
+     {
+      "id": "a0",
+      "text": "t0",
+      "recorded": true
+     },
+     {
+      "id": "a1",
+      "text": "t1",
+      "recorded": true
+     },
+     {
+      "id": "a2",
+      "text": "t2",
+      "recorded": true
+     },
+     {
+      "id": "a3",
+      "text": "t3",
+      "recorded": true
+     },
+     {
+      "id": "a4",
+      "text": "t4",
+      "recorded": true
+     },
+     {
+      "id": "a5",
+      "text": "t5",
+      "recorded": true
+     },
+     {
+      "id": "a6",
+      "text": "t6",
+      "recorded": true
+     },
+     {
+      "id": "a7",
+      "text": "t7",
+      "recorded": true
+     },
+     {
+      "id": "a8",
+      "text": "t8",
+      "recorded": true
+     },
+     {
+      "id": "a9",
+      "text": "t9",
+      "recorded": true
+     },
+     {
+      "id": "a10",
+      "text": "t10",
+      "recorded": true
+     },
+     {
+      "id": "a11",
+      "text": "t11",
+      "recorded": true
+     },
+     {
+      "id": "a12",
+      "text": "t12",
+      "recorded": true
+     },
+     {
+      "id": "a13",
+      "text": "t13",
+      "recorded": true
+     },
+     {
+      "id": "a14",
+      "text": "t14",
+      "recorded": true
+     },
+     {
+      "id": "a15",
+      "text": "t15",
+      "recorded": true
+     },
+     {
+      "id": "a16",
+      "text": "t16",
+      "recorded": true
+     },
+     {
+      "id": "a17",
+      "text": "t17",
+      "recorded": true
+     },
+     {
+      "id": "a18",
+      "text": "t18",
+      "recorded": true
+     },
+     {
+      "id": "a19",
+      "text": "t19",
+      "recorded": true
+     },
+     {
+      "id": "a20",
+      "text": "t20",
+      "recorded": true
+     },
+     {
+      "id": "a21",
+      "text": "t21",
+      "recorded": true
+     },
+     {
+      "id": "a22",
+      "text": "t22",
+      "recorded": true
+     },
+     {
+      "id": "a23",
+      "text": "t23",
+      "recorded": true
+     },
+     {
+      "id": "a24",
+      "text": "t24",
+      "recorded": true
+     },
+     {
+      "id": "a25",
+      "text": "t25",
+      "recorded": true
+     },
+     {
+      "id": "a26",
+      "text": "t26",
+      "recorded": true
+     },
+     {
+      "id": "a27",
+      "text": "t27",
+      "recorded": true
+     },
+     {
+      "id": "a28",
+      "text": "t28",
+      "recorded": true
+     },
+     {
+      "id": "a29",
+      "text": "t29",
+      "recorded": true
+     },
+     {
+      "id": "a30",
+      "text": "t30",
+      "recorded": true
+     },
+     {
+      "id": "a31",
+      "text": "t31",
+      "recorded": true
+     },
+     {
+      "id": "a32",
+      "text": "t32",
+      "recorded": true
+     },
+     {
+      "id": "a33",
+      "text": "t33",
+      "recorded": true
+     },
+     {
+      "id": "a34",
+      "text": "t34",
+      "recorded": true
+     },
+     {
+      "id": "a35",
+      "text": "t35",
+      "recorded": true
+     },
+     {
+      "id": "a36",
+      "text": "t36",
+      "recorded": true
+     },
+     {
+      "id": "a37",
+      "text": "t37",
+      "recorded": true
+     },
+     {
+      "id": "a38",
+      "text": "t38",
+      "recorded": true
+     },
+     {
+      "id": "a39",
+      "text": "t39",
+      "recorded": true
+     },
+     {
+      "id": "a40",
+      "text": "t40",
+      "recorded": true
+     },
+     {
+      "id": "a41",
+      "text": "t41",
+      "recorded": true
+     },
+     {
+      "id": "a42",
+      "text": "t42",
+      "recorded": true
+     },
+     {
+      "id": "a43",
+      "text": "t43",
+      "recorded": true
+     },
+     {
+      "id": "a44",
+      "text": "t44",
+      "recorded": true
+     },
+     {
+      "id": "a45",
+      "text": "t45",
+      "recorded": true
+     },
+     {
+      "id": "a46",
+      "text": "t46",
+      "recorded": true
+     },
+     {
+      "id": "a47",
+      "text": "t47",
+      "recorded": true
+     },
+     {
+      "id": "a48",
+      "text": "t48",
+      "recorded": true
+     },
+     {
+      "id": "a49",
+      "text": "t49",
+      "recorded": true
+     },
+     {
+      "id": "a50",
+      "text": "t50",
+      "recorded": true
+     },
+     {
+      "id": "a51",
+      "text": "t51",
+      "recorded": true
+     },
+     {
+      "id": "a52",
+      "text": "t52",
+      "recorded": true
+     },
+     {
+      "id": "a53",
+      "text": "t53",
+      "recorded": true
+     },
+     {
+      "id": "a54",
+      "text": "t54",
+      "recorded": true
+     },
+     {
+      "id": "a55",
+      "text": "t55",
+      "recorded": true
+     },
+     {
+      "id": "a56",
+      "text": "t56",
+      "recorded": true
+     },
+     {
+      "id": "a57",
+      "text": "t57",
+      "recorded": true
+     },
+     {
+      "id": "a58",
+      "text": "t58",
+      "recorded": true
+     },
+     {
+      "id": "a59",
+      "text": "t59",
+      "recorded": true
+     }
+    ],
+    "autoResolveCount": 0,
+    "consecutiveAutoResolves": 0,
+    "scanRounds": 2,
+    "lastScanRoundId": 1
+   },
+   "stopBlockPhase": null,
+   "stopBlockCount": 0,
+   "stopBlockWorkPhaseId": null,
+   "stopMetricCursor": 0,
+   "stopBlockTotal": 0,
+   "stopBlockTurnId": null,
+   "stopBlockCapNotified": false,
+   "loopArmSeen": false,
+   "idleEditNudges": 0,
+   "memoryWriteRequested": false,
+   "memoryWriteTurn": null,
+   "memoryWriteGrant": false,
+   "unverifiedSubagents": [],
+   "unverifiedCorrupt": false,
+   "phaseEntrySource": null,
+   "planUnit": null,
+   "planEpoch": null,
+   "checkEpoch": null,
+   "dcloseRecovery": null
+  },
+  "listing": [
+   "rec-s1.json"
+  ],
+  "files": {
+   "rec-s1.json": "{\n  \"phase\": \"I\",\n  \"sessionId\": \"rec-s1\",\n  \"slug\": \"\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": {\n    \"roundId\": 3,\n    \"dimensions\": {\n      \"goal\": {\n        \"level\": \"mid\",\n        \"known\": [\n          \"k10\",\n          \"k11\",\n          \"k12\",\n          \"k13\",\n          \"k14\",\n          \"k15\",\n          \"k16\",\n          \"k17\",\n          \"k18\",\n          \"k19\",\n          \"k20\",\n          \"k21\",\n          \"k22\",\n          \"k23\",\n          \"k24\",\n          \"k25\",\n          \"k26\",\n          \"k27\",\n          \"k28\",\n          \"k29\",\n          \"k30\",\n          \"k31\",\n          \"k32\",\n          \"k33\",\n          \"k34\",\n          \"k35\",\n          \"k36\",\n          \"k37\",\n          \"k38\",\n          \"k39\",\n          \"k40\",\n          \"k41\",\n          \"k42\",\n          \"k43\",\n          \"k44\",\n          \"k45\",\n          \"k46\",\n          \"k47\",\n          \"k48\",\n          \"k49\",\n          \"k50\",\n          \"k51\",\n          \"k52\",\n          \"k53\",\n          \"k54\",\n          \"k55\",\n          \"k56\",\n          \"k57\",\n          \"k58\",\n          \"k59\"\n        ],\n        \"unknown\": [\n          \"u10\",\n          \"u11\",\n          \"u12\",\n          \"u13\",\n          \"u14\",\n          \"u15\",\n          \"u16\",\n          \"u17\",\n          \"u18\",\n          \"u19\",\n          \"u20\",\n          \"u21\",\n          \"u22\",\n          \"u23\",\n          \"u24\",\n          \"u25\",\n          \"u26\",\n          \"u27\",\n          \"u28\",\n          \"u29\",\n          \"u30\",\n          \"u31\",\n          \"u32\",\n          \"u33\",\n          \"u34\",\n          \"u35\",\n          \"u36\",\n          \"u37\",\n          \"u38\",\n          \"u39\",\n          \"u40\",\n          \"u41\",\n          \"u42\",\n          \"u43\",\n          \"u44\",\n          \"u45\",\n          \"u46\",\n          \"u47\",\n          \"u48\",\n          \"u49\",\n          \"u50\",\n          \"u51\",\n          \"u52\",\n          \"u53\",\n          \"u54\",\n          \"u55\",\n          \"u56\",\n          \"u57\",\n          \"u58\",\n          \"u59\"\n        ],\n        \"confidence\": 0.5\n      },\n      \"constraint\": {\n        \"level\": \"low\",\n        \"known\": [],\n        \"unknown\": [],\n        \"confidence\": 0\n      },\n      \"success\": {\n        \"level\": \"low\",\n        \"known\": [],\n        \"unknown\": [],\n        \"confidence\": 0\n      },\n      \"ontology\": {\n        \"level\": \"low\",\n        \"known\": [],\n        \"unknown\": [],\n        \"confidence\": 0\n      }\n    },\n    \"contradictions\": [\n      {\n        \"contradictionId\": \"c10\",\n        \"severity\": \"low\",\n        \"summary\": \"s10\"\n      },\n      {\n        \"contradictionId\": \"c11\",\n        \"severity\": \"low\",\n        \"summary\": \"s11\"\n      },\n      {\n        \"contradictionId\": \"c12\",\n        \"severity\": \"low\",\n        \"summary\": \"s12\"\n      },\n      {\n        \"contradictionId\": \"c13\",\n        \"severity\": \"low\",\n        \"summary\": \"s13\"\n      },\n      {\n        \"contradictionId\": \"c14\",\n        \"severity\": \"low\",\n        \"summary\": \"s14\"\n      },\n      {\n        \"contradictionId\": \"c15\",\n        \"severity\": \"low\",\n        \"summary\": \"s15\"\n      },\n      {\n        \"contradictionId\": \"c16\",\n        \"severity\": \"low\",\n        \"summary\": \"s16\"\n      },\n      {\n        \"contradictionId\": \"c17\",\n        \"severity\": \"low\",\n        \"summary\": \"s17\"\n      },\n      {\n        \"contradictionId\": \"c18\",\n        \"severity\": \"low\",\n        \"summary\": \"s18\"\n      },\n      {\n        \"contradictionId\": \"c19\",\n        \"severity\": \"low\",\n        \"summary\": \"s19\"\n      },\n      {\n        \"contradictionId\": \"c20\",\n        \"severity\": \"low\",\n        \"summary\": \"s20\"\n      },\n      {\n        \"contradictionId\": \"c21\",\n        \"severity\": \"low\",\n        \"summary\": \"s21\"\n      },\n      {\n        \"contradictionId\": \"c22\",\n        \"severity\": \"low\",\n        \"summary\": \"s22\"\n      },\n      {\n        \"contradictionId\": \"c23\",\n        \"severity\": \"low\",\n        \"summary\": \"s23\"\n      },\n      {\n        \"contradictionId\": \"c24\",\n        \"severity\": \"low\",\n        \"summary\": \"s24\"\n      },\n      {\n        \"contradictionId\": \"c25\",\n        \"severity\": \"low\",\n        \"summary\": \"s25\"\n      },\n      {\n        \"contradictionId\": \"c26\",\n        \"severity\": \"low\",\n        \"summary\": \"s26\"\n      },\n      {\n        \"contradictionId\": \"c27\",\n        \"severity\": \"low\",\n        \"summary\": \"s27\"\n      },\n      {\n        \"contradictionId\": \"c28\",\n        \"severity\": \"low\",\n        \"summary\": \"s28\"\n      },\n      {\n        \"contradictionId\": \"c29\",\n        \"severity\": \"low\",\n        \"summary\": \"s29\"\n      },\n      {\n        \"contradictionId\": \"c30\",\n        \"severity\": \"low\",\n        \"summary\": \"s30\"\n      },\n      {\n        \"contradictionId\": \"c31\",\n        \"severity\": \"low\",\n        \"summary\": \"s31\"\n      },\n      {\n        \"contradictionId\": \"c32\",\n        \"severity\": \"low\",\n        \"summary\": \"s32\"\n      },\n      {\n        \"contradictionId\": \"c33\",\n        \"severity\": \"low\",\n        \"summary\": \"s33\"\n      },\n      {\n        \"contradictionId\": \"c34\",\n        \"severity\": \"low\",\n        \"summary\": \"s34\"\n      },\n      {\n        \"contradictionId\": \"c35\",\n        \"severity\": \"low\",\n        \"summary\": \"s35\"\n      },\n      {\n        \"contradictionId\": \"c36\",\n        \"severity\": \"low\",\n        \"summary\": \"s36\"\n      },\n      {\n        \"contradictionId\": \"c37\",\n        \"severity\": \"low\",\n        \"summary\": \"s37\"\n      },\n      {\n        \"contradictionId\": \"c38\",\n        \"severity\": \"low\",\n        \"summary\": \"s38\"\n      },\n      {\n        \"contradictionId\": \"c39\",\n        \"severity\": \"low\",\n        \"summary\": \"s39\"\n      },\n      {\n        \"contradictionId\": \"c40\",\n        \"severity\": \"low\",\n        \"summary\": \"s40\"\n      },\n      {\n        \"contradictionId\": \"c41\",\n        \"severity\": \"low\",\n        \"summary\": \"s41\"\n      },\n      {\n        \"contradictionId\": \"c42\",\n        \"severity\": \"low\",\n        \"summary\": \"s42\"\n      },\n      {\n        \"contradictionId\": \"c43\",\n        \"severity\": \"low\",\n        \"summary\": \"s43\"\n      },\n      {\n        \"contradictionId\": \"c44\",\n        \"severity\": \"low\",\n        \"summary\": \"s44\"\n      },\n      {\n        \"contradictionId\": \"c45\",\n        \"severity\": \"low\",\n        \"summary\": \"s45\"\n      },\n      {\n        \"contradictionId\": \"c46\",\n        \"severity\": \"low\",\n        \"summary\": \"s46\"\n      },\n      {\n        \"contradictionId\": \"c47\",\n        \"severity\": \"low\",\n        \"summary\": \"s47\"\n      },\n      {\n        \"contradictionId\": \"c48\",\n        \"severity\": \"low\",\n        \"summary\": \"s48\"\n      },\n      {\n        \"contradictionId\": \"c49\",\n        \"severity\": \"low\",\n        \"summary\": \"s49\"\n      },\n      {\n        \"contradictionId\": \"c50\",\n        \"severity\": \"low\",\n        \"summary\": \"s50\"\n      },\n      {\n        \"contradictionId\": \"c51\",\n        \"severity\": \"low\",\n        \"summary\": \"s51\"\n      },\n      {\n        \"contradictionId\": \"c52\",\n        \"severity\": \"low\",\n        \"summary\": \"s52\"\n      },\n      {\n        \"contradictionId\": \"c53\",\n        \"severity\": \"low\",\n        \"summary\": \"s53\"\n      },\n      {\n        \"contradictionId\": \"c54\",\n        \"severity\": \"low\",\n        \"summary\": \"s54\"\n      },\n      {\n        \"contradictionId\": \"c55\",\n        \"severity\": \"low\",\n        \"summary\": \"s55\"\n      },\n      {\n        \"contradictionId\": \"c56\",\n        \"severity\": \"low\",\n        \"summary\": \"s56\"\n      },\n      {\n        \"contradictionId\": \"c57\",\n        \"severity\": \"low\",\n        \"summary\": \"s57\"\n      },\n      {\n        \"contradictionId\": \"c58\",\n        \"severity\": \"low\",\n        \"summary\": \"s58\"\n      },\n      {\n        \"contradictionId\": \"c59\",\n        \"severity\": \"low\",\n        \"summary\": \"s59\"\n      }\n    ],\n    \"assumptions\": [\n      {\n        \"id\": \"a10\",\n        \"text\": \"t10\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a11\",\n        \"text\": \"t11\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a12\",\n        \"text\": \"t12\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a13\",\n        \"text\": \"t13\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a14\",\n        \"text\": \"t14\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a15\",\n        \"text\": \"t15\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a16\",\n        \"text\": \"t16\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a17\",\n        \"text\": \"t17\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a18\",\n        \"text\": \"t18\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a19\",\n        \"text\": \"t19\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a20\",\n        \"text\": \"t20\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a21\",\n        \"text\": \"t21\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a22\",\n        \"text\": \"t22\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a23\",\n        \"text\": \"t23\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a24\",\n        \"text\": \"t24\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a25\",\n        \"text\": \"t25\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a26\",\n        \"text\": \"t26\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a27\",\n        \"text\": \"t27\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a28\",\n        \"text\": \"t28\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a29\",\n        \"text\": \"t29\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a30\",\n        \"text\": \"t30\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a31\",\n        \"text\": \"t31\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a32\",\n        \"text\": \"t32\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a33\",\n        \"text\": \"t33\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a34\",\n        \"text\": \"t34\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a35\",\n        \"text\": \"t35\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a36\",\n        \"text\": \"t36\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a37\",\n        \"text\": \"t37\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a38\",\n        \"text\": \"t38\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a39\",\n        \"text\": \"t39\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a40\",\n        \"text\": \"t40\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a41\",\n        \"text\": \"t41\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a42\",\n        \"text\": \"t42\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a43\",\n        \"text\": \"t43\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a44\",\n        \"text\": \"t44\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a45\",\n        \"text\": \"t45\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a46\",\n        \"text\": \"t46\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a47\",\n        \"text\": \"t47\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a48\",\n        \"text\": \"t48\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a49\",\n        \"text\": \"t49\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a50\",\n        \"text\": \"t50\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a51\",\n        \"text\": \"t51\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a52\",\n        \"text\": \"t52\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a53\",\n        \"text\": \"t53\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a54\",\n        \"text\": \"t54\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a55\",\n        \"text\": \"t55\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a56\",\n        \"text\": \"t56\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a57\",\n        \"text\": \"t57\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a58\",\n        \"text\": \"t58\",\n        \"recorded\": true\n      },\n      {\n        \"id\": \"a59\",\n        \"text\": \"t59\",\n        \"recorded\": true\n      }\n    ],\n    \"autoResolveCount\": 0,\n    \"consecutiveAutoResolves\": 0,\n    \"scanRounds\": 2,\n    \"lastScanRoundId\": 1\n  },\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": null,\n  \"planEpoch\": null,\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}"
+  }
+ },
+ {
+  "id": "write_noncanonical_id",
+  "state": {
+   "phase": "IDLE",
+   "sessionId": "a/b",
+   "slug": "",
+   "updatedAt": "2026-01-01T00:00:00.000Z",
+   "flags": {
+    "interview": false,
+    "auditPassed": false,
+    "checkPassed": false
+   },
+   "supersededBy": null,
+   "injectedTurns": [],
+   "lastInjectedPhase": null,
+   "orchestrationActive": false,
+   "interview": null,
+   "stopBlockPhase": null,
+   "stopBlockCount": 0,
+   "stopBlockWorkPhaseId": null,
+   "stopMetricCursor": 0,
+   "stopBlockTotal": 0,
+   "stopBlockTurnId": null,
+   "stopBlockCapNotified": false,
+   "loopArmSeen": false,
+   "idleEditNudges": 0,
+   "memoryWriteRequested": false,
+   "memoryWriteTurn": null,
+   "memoryWriteGrant": false,
+   "unverifiedSubagents": [],
+   "unverifiedCorrupt": false,
+   "phaseEntrySource": null,
+   "planUnit": null,
+   "planEpoch": null,
+   "checkEpoch": null,
+   "dcloseRecovery": null
+  },
+  "listing": [
+   "a-b.json"
+  ],
+  "files": {
+   "a-b.json": "{\n  \"phase\": \"IDLE\",\n  \"sessionId\": \"a/b\",\n  \"slug\": \"\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": null,\n  \"planEpoch\": null,\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}"
+  }
+ },
+ {
+  "id": "write_alias_ids",
+  "listing": [
+   "a-b.json"
+  ],
+  "phase": "B",
+  "file": "{\n  \"phase\": \"B\",\n  \"sessionId\": \"a-b\",\n  \"slug\": \"\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": null,\n  \"planEpoch\": null,\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}"
+ },
+ {
+  "id": "write_final_is_directory",
+  "threw": "EISDIR",
+  "listing": [
+   "rec-s1.json"
+  ]
+ },
+ {
+  "id": "write_orphan_tmp_kept",
+  "listing": [
+   "rec-s1.json",
+   "rec-s1.json.12345.1767225600000.tmp"
+  ],
+  "orphan": "half",
+  "phase": "P"
+ },
+ {
+  "id": "write_state_dir_is_file",
+  "threw": "ENOTDIR",
+  "dir": "a file"
+ },
+ {
+  "id": "ledger_cli_transition",
+  "note": "orchestrate-cli.ts:1123",
+  "entry": {
+   "ts": "t1",
+   "sessionId": "rec-s1",
+   "from": "P",
+   "to": "A",
+   "reason": "cli",
+   "evidence": "planned <a&b>   é 😀"
+  },
+  "file": "{\"ts\":\"t1\",\"sessionId\":\"rec-s1\",\"from\":\"P\",\"to\":\"A\",\"reason\":\"cli\",\"evidence\":\"planned <a&b>   é 😀\"}\n"
+ },
+ {
+  "id": "ledger_no_evidence",
+  "note": "orchestrate-cli.ts:1123 without an attest",
+  "entry": {
+   "ts": "t1",
+   "sessionId": "rec-s1",
+   "from": "IDLE",
+   "to": "P",
+   "reason": "cli"
+  },
+  "file": "{\"ts\":\"t1\",\"sessionId\":\"rec-s1\",\"from\":\"IDLE\",\"to\":\"P\",\"reason\":\"cli\"}\n"
+ },
+ {
+  "id": "ledger_cli_override",
+  "note": "orchestrate-cli.ts:655",
+  "entry": {
+   "ts": "t1",
+   "sessionId": "rec-s1",
+   "from": "I",
+   "to": "P",
+   "reason": "cli",
+   "actor": "agent",
+   "override": true,
+   "scanEvidence": {
+    "scanRounds": 0,
+    "highContradictionCount": 0
+   },
+   "evidence": "skip"
+  },
+  "file": "{\"ts\":\"t1\",\"sessionId\":\"rec-s1\",\"from\":\"I\",\"to\":\"P\",\"reason\":\"cli\",\"actor\":\"agent\",\"override\":true,\"scanEvidence\":{\"scanRounds\":0,\"highContradictionCount\":0},\"evidence\":\"skip\"}\n"
+ },
+ {
+  "id": "ledger_cli_dclose",
+  "note": "orchestrate-cli.ts:1040",
+  "entry": {
+   "ts": "t1",
+   "sessionId": "rec-s1",
+   "from": "C",
+   "to": "IDLE",
+   "reason": "done",
+   "checkEpoch": "c1",
+   "closedWorkPhaseId": "wp1",
+   "evidence": "verified"
+  },
+  "file": "{\"ts\":\"t1\",\"sessionId\":\"rec-s1\",\"from\":\"C\",\"to\":\"IDLE\",\"reason\":\"done\",\"checkEpoch\":\"c1\",\"closedWorkPhaseId\":\"wp1\",\"evidence\":\"verified\"}\n"
+ },
+ {
+  "id": "ledger_cli_dclose_null_key",
+  "note": "orchestrate-cli.ts:899",
+  "entry": {
+   "ts": "t1",
+   "sessionId": "rec-s1",
+   "from": "C",
+   "to": "IDLE",
+   "reason": "done",
+   "checkEpoch": null,
+   "closedWorkPhaseId": null,
+   "evidence": "verified"
+  },
+  "file": "{\"ts\":\"t1\",\"sessionId\":\"rec-s1\",\"from\":\"C\",\"to\":\"IDLE\",\"reason\":\"done\",\"checkEpoch\":null,\"closedWorkPhaseId\":null,\"evidence\":\"verified\"}\n"
+ },
+ {
+  "id": "ledger_hook_dclose_with_evidence",
+  "note": "hook.ts:1147 (spreads the transition row)",
+  "entry": {
+   "ts": "t1",
+   "sessionId": "rec-s1",
+   "from": "C",
+   "to": "IDLE",
+   "reason": "done",
+   "evidence": "verified",
+   "checkEpoch": "c1",
+   "closedWorkPhaseId": null
+  },
+  "file": "{\"ts\":\"t1\",\"sessionId\":\"rec-s1\",\"from\":\"C\",\"to\":\"IDLE\",\"reason\":\"done\",\"evidence\":\"verified\",\"checkEpoch\":\"c1\",\"closedWorkPhaseId\":null}\n"
+ },
+ {
+  "id": "ledger_hook_dclose",
+  "note": "hook.ts:1335 without evidence",
+  "entry": {
+   "ts": "t1",
+   "sessionId": "rec-s1",
+   "from": "C",
+   "to": "IDLE",
+   "reason": "done",
+   "checkEpoch": "c1",
+   "closedWorkPhaseId": "wp1"
+  },
+  "file": "{\"ts\":\"t1\",\"sessionId\":\"rec-s1\",\"from\":\"C\",\"to\":\"IDLE\",\"reason\":\"done\",\"checkEpoch\":\"c1\",\"closedWorkPhaseId\":\"wp1\"}\n"
+ },
+ {
+  "id": "ledger_evidence_resolve",
+  "note": "evidence-cli.ts:88",
+  "entry": {
+   "ts": "t1",
+   "sessionId": "rec-s1",
+   "from": "B",
+   "to": "B",
+   "reason": "evidence resolve: agent=a1",
+   "evidence": "r.json",
+   "actor": "agent",
+   "override": false
+  },
+  "file": "{\"ts\":\"t1\",\"sessionId\":\"rec-s1\",\"from\":\"B\",\"to\":\"B\",\"reason\":\"evidence resolve: agent=a1\",\"evidence\":\"r.json\",\"actor\":\"agent\",\"override\":false}\n"
+ },
+ {
+  "id": "ledger_chat_transition",
+  "note": "orchestrate-apply.ts:189",
+  "entry": {
+   "ts": "t1",
+   "sessionId": "rec-s1",
+   "from": "P",
+   "to": "A",
+   "reason": "chat",
+   "actor": "human",
+   "evidence": "ok"
+  },
+  "file": "{\"ts\":\"t1\",\"sessionId\":\"rec-s1\",\"from\":\"P\",\"to\":\"A\",\"reason\":\"chat\",\"actor\":\"human\",\"evidence\":\"ok\"}\n"
+ },
+ {
+  "id": "ledger_chat_override",
+  "note": "orchestrate-apply.ts:150",
+  "entry": {
+   "ts": "t1",
+   "sessionId": "rec-s1",
+   "from": "I",
+   "to": "P",
+   "reason": "chat",
+   "actor": "human",
+   "override": true,
+   "scanEvidence": {
+    "scanRounds": 2,
+    "highContradictionCount": 1
+   },
+   "evidence": "go"
+  },
+  "file": "{\"ts\":\"t1\",\"sessionId\":\"rec-s1\",\"from\":\"I\",\"to\":\"P\",\"reason\":\"chat\",\"actor\":\"human\",\"override\":true,\"scanEvidence\":{\"scanRounds\":2,\"highContradictionCount\":1},\"evidence\":\"go\"}\n"
+ },
+ {
+  "id": "ledger_reset",
+  "note": "orchestrate-apply.ts:93",
+  "entry": {
+   "ts": "t1",
+   "sessionId": "rec-s1",
+   "from": "B",
+   "to": "IDLE",
+   "reason": "reset"
+  },
+  "file": "{\"ts\":\"t1\",\"sessionId\":\"rec-s1\",\"from\":\"B\",\"to\":\"IDLE\",\"reason\":\"reset\"}\n"
+ },
+ {
+  "id": "ledger_from_null",
+  "note": "LedgerEntry.from is Phase | null",
+  "entry": {
+   "ts": "t1",
+   "sessionId": "rec-s1",
+   "from": null,
+   "to": "A",
+   "reason": "cli"
+  },
+  "file": "{\"ts\":\"t1\",\"sessionId\":\"rec-s1\",\"from\":null,\"to\":\"A\",\"reason\":\"cli\"}\n"
+ },
+ {
+  "id": "ledger_two_rows",
+  "file": "{\"ts\":\"t1\",\"sessionId\":\"rec-s1\",\"from\":\"B\",\"to\":\"IDLE\",\"reason\":\"reset\"}\n{\"ts\":\"t1\",\"sessionId\":\"rec-s1\",\"from\":\"IDLE\",\"to\":\"P\",\"reason\":\"cli\"}\n"
+ },
+ {
+  "id": "interview_events",
+  "listing": [
+   "a-b.jsonl",
+   "rec-s1.jsonl"
+  ],
+  "file": "{\"ts\":\"t1\",\"sessionId\":\"rec-s1\",\"event\":\"scan_started\",\"roundId\":1,\"contradictionCount\":3,\"highContradictionCount\":1}\n{\"ts\":\"t1\",\"sessionId\":\"rec-s1\",\"event\":\"scan_completed\",\"roundId\":2,\"contradictionCount\":3,\"highContradictionCount\":1,\"map\":{\"q-b\":\"goal\",\"q-a\":\"constraint\"}}\n",
+  "aliasFile": "{\"ts\":\"t1\",\"sessionId\":\"a/b\",\"event\":\"rescan_completed\",\"roundId\":3,\"contradictionCount\":3,\"highContradictionCount\":1}\n",
+  "events": [
+   {
+    "ts": "t1",
+    "sessionId": "rec-s1",
+    "event": "scan_started",
+    "roundId": 1,
+    "contradictionCount": 3,
+    "highContradictionCount": 1
+   },
+   {
+    "ts": "t1",
+    "sessionId": "rec-s1",
+    "event": "scan_completed",
+    "roundId": 2,
+    "contradictionCount": 3,
+    "highContradictionCount": 1,
+    "map": {
+     "q-b": "goal",
+     "q-a": "constraint"
+    }
+   }
+  ]
+ },
+ {
+  "id": "interview_read_mixed",
+  "input": "{\"ts\":\"t1\",\"sessionId\":\"iv\",\"event\":\"scan_started\",\"roundId\":1,\"contradictionCount\":3,\"highContradictionCount\":1}\n{\"ts\":\"t2\",\"sessionId\":\"iv\",\"turnId\":\"t1\",\"event\":\"question_asked\",\"questionId\":\"q1\",\"eventId\":\"e1\",\"question\":\"Goal?\"}\nnot json\n  {\"ts\":\"t3\",\"sessionId\":\"iv\",\"event\":\"scan_completed\",\"roundId\":1,\"contradictionCount\":0}\n[]\n{\"event\":\"scan_completed\",\"roundId\":\"1\",\"contradictionCount\":0}\n{\"event\":\"scan_completed\",\"roundId\":2,\"contradictionCount\":\"0\"}\n{\"ts\":\"t4\",\"sessionId\":\"iv\",\"event\":\"rescan_completed\",\"roundId\":2,\"contradictionCount\":1,\"highContradictionCount\":0,\"extra\":true,\"map\":{\"q-b\":\"goal\",\"q-a\":\"constraint\"}}\r\n﻿{\"event\":\"scan_started\",\"roundId\":3,\"contradictionCount\":0,\"highContradictionCount\":0}\n{\"event\":\"scan_bogus\",\"roundId\":4,\"contradictionCount\":0}\n{\"event\":\"scan_started\",\"roundId\":5,\"contradictionCount\":0} {\"x\":1}\n\n{\"event\":\"answer_recorded\",\"roundId\":6,\"contradictionCount\":0}\n",
+  "events": [
+   {
+    "ts": "t1",
+    "sessionId": "iv",
+    "event": "scan_started",
+    "roundId": 1,
+    "contradictionCount": 3,
+    "highContradictionCount": 1
+   },
+   {
+    "ts": "t3",
+    "sessionId": "iv",
+    "event": "scan_completed",
+    "roundId": 1,
+    "contradictionCount": 0
+   },
+   {
+    "ts": "t4",
+    "sessionId": "iv",
+    "event": "rescan_completed",
+    "roundId": 2,
+    "contradictionCount": 1,
+    "highContradictionCount": 0,
+    "extra": true,
+    "map": {
+     "q-b": "goal",
+     "q-a": "constraint"
+    }
+   },
+   {
+    "event": "scan_started",
+    "roundId": 3,
+    "contradictionCount": 0,
+    "highContradictionCount": 0
+   }
+  ]
+ },
+ {
+  "id": "interview_read_missing",
+  "events": []
+ },
+ {
+  "id": "interview_read_directory",
+  "events": []
+ },
+ {
+  "id": "lock_runs_and_releases",
+  "returned": "result",
+  "holdsPid": true,
+  "lockAfter": false
+ },
+ {
+  "id": "lock_released_when_fn_throws",
+  "threw": "BOOM",
+  "lockAfter": false
+ },
+ {
+  "id": "lock_held_exhausts",
+  "threw": "EEXIST",
+  "entered": false,
+  "lockAfter": "424242",
+  "waitedAtLeast240ms": true,
+  "waitedUnder2s": true
+ },
+ {
+  "id": "lock_release_removes_a_foreign_lock",
+  "lockAfter": false
+ },
+ {
+  "id": "lock_key_is_sanitised",
+  "threw": "EEXIST",
+  "alias": {
+   "threw": "EEXIST"
+  }
+ },
+ {
+  "id": "modes_umask_022",
+  "ensure": "644",
+  "write": "644",
+  "ledger": "644",
+  "interview": "644",
+  "lock": "644"
+ },
+ {
+  "id": "modes_umask_077",
+  "ensure": "600",
+  "write": "600",
+  "ledger": "600",
+  "interview": "600",
+  "lock": "600"
+ },
+ {
+  "id": "ensure_tmp_replaced_by_directory_empty_link_ok",
+  "threw": "ERR_FS_EISDIR",
+  "tmpLeft": 1,
+  "final": false
+ },
+ {
+  "id": "ensure_tmp_replaced_by_directory_full_link_ok",
+  "threw": "ERR_FS_EISDIR",
+  "tmpLeft": 1,
+  "final": false
+ },
+ {
+  "id": "ensure_tmp_replaced_by_directory_empty_link_eexist",
+  "threw": "ERR_FS_EISDIR",
+  "tmpLeft": 1,
+  "final": false
+ },
+ {
+  "id": "ensure_tmp_replaced_by_directory_full_link_eexist",
+  "threw": "ERR_FS_EISDIR",
+  "tmpLeft": 1,
+  "final": false
+ },
+ {
+  "id": "lock_release_over_a_directory_empty",
+  "returned": "result",
+  "lockIsDirectory": true
+ },
+ {
+  "id": "lock_release_over_a_directory_full",
+  "returned": "result",
+  "lockIsDirectory": true
+ },
+ {
+  "id": "interview_map_key_order",
+  "file": "{\"ts\":\"t1\",\"sessionId\":\"rec-s1\",\"event\":\"scan_completed\",\"roundId\":1,\"contradictionCount\":0,\"highContradictionCount\":0,\"map\":{\"1\":\"d\",\"2\":\"b\",\"10\":\"a\",\"x\":\"c\",\"01\":\"e\",\"4294967295\":\"f\",\"y\":\"g\"}}\n",
+  "events": [
+   {
+    "ts": "t1",
+    "sessionId": "rec-s1",
+    "event": "scan_completed",
+    "roundId": 1,
+    "contradictionCount": 0,
+    "highContradictionCount": 0,
+    "map": {
+     "1": "d",
+     "2": "b",
+     "10": "a",
+     "x": "c",
+     "01": "e",
+     "4294967295": "f",
+     "y": "g"
+    }
+   }
+  ]
+ },
+ {
+  "id": "interview_read_map_key_order",
+  "input": "{\"event\":\"scan_started\",\"roundId\":1,\"contradictionCount\":0,\"map\":{\"10\":\"a\",\"2\":\"b\",\"x\":\"c\",\"1\":\"d\",\"x\":\"z\"}}\n",
+  "events": [
+   {
+    "event": "scan_started",
+    "roundId": 1,
+    "contradictionCount": 0,
+    "map": {
+     "1": "d",
+     "2": "b",
+     "10": "a",
+     "x": "z"
+    }
+   }
+  ]
+ },
+ {
+  "id": "concurrent_writers",
+  "rounds": 10,
+  "childErrors": 0,
+  "roundsWithOneCompleteDocument": 10,
+  "tmpLeft": 0
+ },
+ {
+  "id": "concurrent_ensure_state",
+  "createdPerRound": [
+   1,
+   1,
+   1,
+   1,
+   1
+  ]
+ },
+ {
+  "id": "lock_contention_between_processes",
+  "order": [
+   "A-in",
+   "A-out",
+   "B-in"
+  ],
+  "metEEXIST": true,
+  "metEEXISTBeforeAOut": true,
+  "exits": [
+   0,
+   0
+  ],
+  "lockAfter": false
+ },
+ {
+  "id": "killed_between_temp_write_and_rename",
+  "signal": "SIGKILL",
+  "listingCount": 2,
+  "tmpCount": 1,
+  "tmpHoldsNewDocument": true,
+  "phase": "B",
+  "afterNextWrite": {
+   "phase": "C",
+   "tmpCount": 1
+  }
+ }
+]
