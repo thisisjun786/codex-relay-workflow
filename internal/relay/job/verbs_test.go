@@ -1,6 +1,7 @@
 package job
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -172,5 +173,75 @@ func TestCLIRunDetached(t *testing.T) {
 				t.Error("quoting lost")
 			}
 		})
+	}
+}
+
+func TestCLIDrainBatchAndOtherSession(t *testing.T) {
+	ws := t.TempDir()
+	for _, id := range []string{"a", "b", "c", "d", "e", "f"} {
+		save(t, ws, finished(ws, id, "2026-09-09T00:01:00.000Z"))
+	}
+	other := finished(ws, "other", "2026-09-09T00:00:01.000Z")
+	other.SessionID = sp("S2")
+	save(t, ws, other)
+	cliResult(t, ws, "drain", "--session", "S1")
+	for _, id := range []string{"a", "b", "c", "d", "e"} {
+		if r, _ := ReadRecord(ws, id); r.DeliveredAt == nil {
+			t.Errorf("unstamped %s", id)
+		}
+	}
+	for _, id := range []string{"f", "other"} {
+		if r, _ := ReadRecord(ws, id); r.DeliveredAt != nil {
+			t.Errorf("unexpected stamp %s", id)
+		}
+	}
+	if got := cliResult(t, ws, "drain", "--session", "S1").Out.(string); !strings.Contains(got, "- f ") {
+		t.Errorf("remaining batch: %s", got)
+	}
+}
+
+func TestCLIRecordExtrasAndFault(t *testing.T) {
+	ws := t.TempDir()
+	r := finished(ws, "x", "2026-09-09T00:01:00.000Z")
+	r.Extra = []Member{{"extra", "kept"}}
+	save(t, ws, r)
+	items := cliResult(t, ws, "list", "--json").Out.([]any)
+	if items[0].(pyjson.Object).Get("extra") != "kept" {
+		t.Fatal("unknown record member lost")
+	}
+	if err := os.Mkdir(DisabledPath(ws), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RunCLI([]string{"off"}, ws, os.LookupEnv, time.Now); err == nil {
+		t.Fatal("write fault suppressed")
+	}
+	if got := cliResult(t, ws, "removal").Out; got != RemovalText() {
+		t.Fatal("removal delegate differs")
+	}
+}
+
+func TestCLIOnRetainsTheOffFlagWhenGateWriteFails(t *testing.T) {
+	ws := t.TempDir()
+	cliResult(t, ws, "off")
+	if err := os.Mkdir(EnabledAtPath(ws), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RunCLI([]string{"on"}, ws, os.LookupEnv, time.Now); err == nil {
+		t.Fatal("gate write unexpectedly succeeded")
+	}
+	if !ReadDisabledState(ws).Disabled {
+		t.Fatal("failed on lost the disabled state file")
+	}
+}
+
+func TestCLIJSONPreservesUnknownSurrogate(t *testing.T) {
+	ws := t.TempDir()
+	r := finished(ws, "surrogate", "2026-09-09T00:01:00.000Z")
+	r.Extra = []Member{{"extra", json.RawMessage(`"\ud800"`)}}
+	save(t, ws, r)
+	items := cliResult(t, ws, "list", "--json").Out.([]any)
+	b, err := pyjson.Encode(items[0], pyjson.Options{})
+	if err != nil || !strings.Contains(string(b), `"extra": "\ud800"`) {
+		t.Fatalf("surrogate lost: %s %v", b, err)
 	}
 }

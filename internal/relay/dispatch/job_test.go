@@ -7,7 +7,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/job"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 )
@@ -37,6 +41,40 @@ func TestJobCLIContract(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestJobParsedNoteKeepsCommandBoundary(t *testing.T) {
+	ws := t.TempDir()
+	t.Chdir(ws)
+	var out, stderr bytes.Buffer
+	code := Execute(context.Background(), "crw relay", []string{"job", "run", "--json", "--note=--", "--", "printf", "hello"}, &out, &stderr)
+	var result struct {
+		Out struct {
+			ID      string   `json:"id"`
+			PID     *int     `json:"pid"`
+			Note    string   `json:"note"`
+			Command []string `json:"command"`
+		} `json:"out"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Out.PID != nil {
+		pid := *result.Out.PID
+		t.Cleanup(func() {
+			if job.PidAlive(pid) {
+				_ = syscall.Kill(-pid, syscall.SIGKILL)
+			}
+			for deadline := time.Now().Add(5 * time.Second); job.PidAlive(pid); time.Sleep(time.Millisecond) {
+				if time.Now().After(deadline) {
+					t.Fatal("owned process survived")
+				}
+			}
+		})
+	}
+	if code != 0 || result.Out.Note != "--" || strings.Join(result.Out.Command, " ") != "printf hello" {
+		t.Fatalf("corrupted input: %d %s %s", code, out.String(), stderr.String())
 	}
 }
 
