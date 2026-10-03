@@ -326,6 +326,21 @@ func TestNoticeSubset_StageClockReadOrder(t *testing.T) {
 	w.stage(t, steps, nsID, "first stage on an advancing clock")
 }
 
+// The evidence line of a packet names the program and the state directory, which can hold any character.
+// The packet is stored with non-ASCII kept as it is and a byte that is not UTF-8 read as U+FFFD.
+func TestNoticeSubset_StageProgramPathEncoding(t *testing.T) {
+	for _, c := range []struct{ name, program string }{
+		{"a program path that is not ASCII", "/opt/r\u00e9lay/codex-session-relay"},
+		{"a program path with a byte that is not UTF-8", "/opt/\xff/codex-session-relay"},
+	} {
+		w := newNoticeWorld(t)
+		steps := &nsSteps{t: t, w: w}
+		w.c.Program = c.program
+		w.seed(t, nsSeed{signature: nsProjectSig, scope: nsProjectScope})
+		w.stage(t, steps, nsID, c.name)
+	}
+}
+
 func TestNoticeSubset_Refresh(t *testing.T) {
 	sending := "UPDATE supervisor_messages SET state='sending', lease_owner='daemon', lease_until=1700000300, attempt_count=1 WHERE message_id=?"
 	changed := func(t *testing.T, w *noticeWorld, _ string) {
