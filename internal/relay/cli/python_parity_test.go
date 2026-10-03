@@ -204,7 +204,7 @@ func TestDoctor_expect_inode_mismatch_refuses_with_python_reason(t *testing.T) {
 // 31).
 func asPythonReport(t *testing.T, stdout, pythonSawOwner string) string {
 	t.Helper()
-	report := withoutKey(t, stdout, "runtime")
+	report := withoutKey(t, withoutKey(t, stdout, "runtime"), "writeProbe")
 	report = regexp.MustCompile(`\n    "owner": "[a-z]+",\n`).ReplaceAllString(report, "\n    \"owner\": \""+pythonSawOwner+"\",\n")
 	return regexp.MustCompile(`"runtime_build": "[^"]*"`).ReplaceAllString(report, `"runtime_build": "`+ownership.CompatibilityBuild+`"`)
 }

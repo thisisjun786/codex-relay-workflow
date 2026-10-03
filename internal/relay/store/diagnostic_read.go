@@ -62,7 +62,7 @@ func ReadOnlyRows(ctx context.Context, selection StateSelection, query string, a
 	if moved := relocation(file, expected); moved != "" {
 		return RowsRead{Detail: moved}
 	}
-	conn, err := openHeld(ctx, file, "ro")
+	conn, err := openHeldRead(ctx, file, expected, sidecarFreeReads(ctx))
 	if err != nil {
 		return RowsRead{Detail: err.Error()}
 	}
@@ -121,7 +121,7 @@ func NonceLookup(ctx context.Context, selection StateSelection, nonce string) No
 	if moved := relocation(file, expected); moved != "" {
 		return unreadable(moved)
 	}
-	conn, err := openHeld(ctx, file, "ro")
+	conn, err := openHeldRead(ctx, file, expected, sidecarFreeReads(ctx))
 	if err != nil {
 		return unreadable(err.Error())
 	}

@@ -83,7 +83,10 @@ func zoneRawDB(t *testing.T, path string) *sql.DB {
 }
 
 // preDAGStore is a go-owned store built from the frozen v1 fixture (no dag_ object) and seeded with
-// rows in several v1 tables, closed and checkpointed so the file alone holds it.
+// rows in several v1 tables, closed and checkpointed so the file alone holds it. It is a store of this
+// version without the zone, so it holds the history indexes (testsupport.Create adds them): these tests
+// are about the zone. The upgrade of a store that lacks the indexes is tested from
+// testsupport.CreatePreviousVersion (history_index_test.go).
 func zonePreDAGStore(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "relay.sqlite3")
@@ -188,8 +191,15 @@ func TestDAGZonePreDAGStoreOpensAndKeepsItsRows(t *testing.T) {
 		t.Fatalf("zone tables after open = %v, want %v", got, want)
 	}
 	after := testsupport.TableRows(t, zoneRawDB(t, path), "name NOT LIKE 'dag\\_%' ESCAPE '\\'")
-	if !reflect.DeepEqual(after, before) {
-		t.Fatalf("v1 rows changed by the open:\n before %v\n after  %v", before, after)
+	// The one row the open adds to a store from before the marker is the marker of the settlements
+	// backfill (the open ran it, and a store without observations has nothing to fill).
+	want1 := map[string][]map[string]any{}
+	for table, rows := range before {
+		want1[table] = rows
+	}
+	want1["schema_meta"] = append(append([]map[string]any(nil), before["schema_meta"]...), map[string]any{"key": "backfill:assignment_settlements", "value": "1"})
+	if !reflect.DeepEqual(after, want1) {
+		t.Fatalf("v1 rows changed by the open beyond the backfill marker:\n before %v\n after  %v", before, after)
 	}
 	v1After := zoneCatalog(t, path, "name NOT LIKE 'dag\\_%' ESCAPE '\\' AND tbl_name NOT LIKE 'dag\\_%' ESCAPE '\\'")
 	if !reflect.DeepEqual(v1After, v1Before) {

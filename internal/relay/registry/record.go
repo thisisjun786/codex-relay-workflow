@@ -68,6 +68,13 @@ func (r *Registry) RecordSettings(ctx context.Context, task string, settings con
 			if carried != nil && role == "" {
 				settings = settings.Set("citedRole", carried)
 			}
+			// The MCP profile a child was recorded under is carried the way its role is: a record that states
+			// none (a host observation after a transition) would otherwise resume the child under every server.
+			if profile, stated := previous.Lookup("mcpProfile"); stated {
+				if _, restated := settings.Lookup("mcpProfile"); !restated {
+					settings = settings.Set("mcpProfile", profile)
+				}
+			}
 		}
 		bound, contested, err := boundRole(ctx, r.Store, task)
 		if err != nil {

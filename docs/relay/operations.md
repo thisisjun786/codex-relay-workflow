@@ -263,7 +263,7 @@ the original inode while the rows came out of the interloper.
 So the diagnostic reads hold the database open. The identity is `fstat`-ed from that
 descriptor, every connection is opened through `/proc/self/fd/N`, and the descriptor is
 required to still name this store - asked again immediately before each connection, because
-`doctor` opens a read connection and a write probe through one descriptor. A read that cannot
+`doctor` opens a read connection, and with `--probe-write` a write probe, through one descriptor. A read that cannot
 establish this is refused rather than answered: it returns no rows, no identity and a detail,
 and `compare_store` grades that as unproven, never as absence.
 
@@ -284,8 +284,22 @@ Nothing that could create a file runs first. The first statement that touches th
 log beside whichever name SQLite opened, so a query or transaction on a moved name leaves a stray
 `-wal` behind even when the answer is refused, and on the older builds measured (SQLite 3.34.1,
 3.37.2 and 3.38.5) so does `PRAGMA database_list` itself. So every connection, including
-`doctor`'s write probe, asks the descriptor again as soon as it is open - a readlink, which
+the write connection of `doctor --probe-write`, asks the descriptor again as soon as it is open - a readlink, which
 creates nothing - and asks SQLite which file it opened before any query or transaction.
+
+`doctor` reads by default. It creates no `.probe-` file, makes no read-write connection and never opens
+`write-gate.lock`, and it reads the store without creating a SQLite sidecar where SQLite allows: beside a
+live writer on that writer's `-wal` and `-shm` (`mode=ro`), and `immutable=1` where no write-ahead log
+holds a frame, since every commit is then in the database file. A log with frames and no index (an
+unclean shutdown) is read as it always was, which may build the index. A writer that starts between
+the sidecar examination and the connect can make an immutable read stale, the window the Stop path's
+read accepts. What it may write is judged, not tried: the write gate must be one the lock would take (judged from its own metadata, never opened), the durable stamp must
+name this runtime, and the file and its directory must permit writing; `writeProbe` says so. `--probe-write`
+measures it instead: a temporary file in the state directory, then the write gate shared and a write
+transaction begun and rolled back. That shared lock coexists with the shared lock every writer holds
+for its connection's lifetime, so it neither waits for nor delays a writer; it can only delay the
+socket binding's exclusive take, which waits at most 30 seconds, and it meets that exclusive lock while
+the gate is being placed, when it reports not writable for that moment.
 
 Two limits remain. One no check on this side can observe: a different file swapped ONTO the
 expected pathname inside SQLite's own resolve-then-open. The other is a rename landing after the
@@ -508,6 +522,17 @@ assignment settled it first. `assignment_settlements` carries the per-assignment
 what the observation scheduler and this health block ask. Without it every other assignment
 on a shared turn looked permanently unsettled, was re-polled on every round and spent
 observation budget forever.
+
+A store from before that table gains it with the backfill an open runs: every observation that
+names an assignment is given its settlement. A writable open records that it ran in `schema_meta`,
+under the key `backfill:assignment_settlements` (value `1`), in the transaction of the backfill. A
+read-only command records nothing: it leaves the store's rows as it found them, so on a store
+without the key it backfills as it always did, on each open, until the first writable open records
+the key. A store the relay creates carries the key from its first moment, and an open that finds it
+runs the backfill no more: with the identity rows and the indexes there as well it writes nothing,
+so a read-only command neither waits for the write lock nor holds it. The daemon writes a
+settlement in the transaction of the observation it belongs to, so no observation the backfill
+would cover arrives after the key.
 
 So is the work itself. Staged claims are selected and settled per assignment, because a child
 thread can serve several and a claim on one of its turns belongs to exactly one of them.

@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
@@ -41,12 +42,20 @@ var gitEnv = []string{
 	"GIT_COMMITTER_NAME=fixture", "GIT_COMMITTER_EMAIL=fixture@example.invalid", "GIT_COMMITTER_DATE=2026-01-01T00:00:00Z",
 }
 
+// caseGitConfig is the case's global git configuration (GIT_CONFIG_GLOBAL). Automatic maintenance is
+// off: after a commit git otherwise starts a detached `git maintenance run --auto`, which creates and
+// removes files under .git (objects/maintenance.lock) while the case is stamped, run and removed.
+const caseGitConfig = "[user]\n\tname = fixture\n\temail = fixture@example.invalid\n[init]\n\tdefaultBranch = main\n" +
+	"[maintenance]\n\tauto = false\n[gc]\n\tauto = 0\n"
+
 // Case is one scenario's isolated tree: its root, the environment every process of the case starts
 // with, and the placeholder paths the runtime bound for it.
 type Case struct {
 	Root string
 	Env  []string
 	bind []Binding
+	// waited is the stem of the file the last wait step found (nil before any wait); later steps name it as ${WAITED}.
+	waited *string
 }
 
 // Bindings are the placeholder paths of the case root itself; a runtime adds its own (the plugin
@@ -71,6 +80,9 @@ func (c *Case) Expand(text string) string {
 	for _, b := range c.bind {
 		pairs = append(pairs, b.Placeholder, b.Path)
 	}
+	if c.waited != nil {
+		pairs = append(pairs, "${WAITED}", *c.waited)
+	}
 	return strings.NewReplacer(pairs...).Replace(text)
 }
 
@@ -94,7 +106,7 @@ func NewCase(scratch, homeVar string, g Given) (*Case, error) {
 			return c, err
 		}
 	}
-	if err := writeFile(filepath.Join(root, "gitconfig"), []byte("[user]\n\tname = fixture\n\temail = fixture@example.invalid\n[init]\n\tdefaultBranch = main\n")); err != nil {
+	if err := writeFile(filepath.Join(root, "gitconfig"), []byte(caseGitConfig)); err != nil {
 		return c, err
 	}
 	if len(g.Fetch) > 0 {
@@ -264,9 +276,12 @@ func RunScenario(rt Runtime, o RunOptions, s Scenario) (expect Expect, err error
 			if step.Hook != "" || step.CLI != nil || step.Node != nil || step.MCP != nil || step.Write != nil {
 				return Expect{}, fmt.Errorf("%s: step %d: a wait step runs nothing else", s.ID, i)
 			}
-			if err := waitFor(c, step.Wait, o.Timeout); err != nil {
+			found, err := waitFor(c, step.Wait, o.Timeout)
+			if err != nil {
 				return Expect{}, fmt.Errorf("%s: step %d: %w", s.ID, i, err)
 			}
+			stem := strings.TrimSuffix(filepath.Base(found), filepath.Ext(found))
+			c.waited = &stem
 			results = append(results, StepResult{Action: "wait", StdoutForm: "empty"})
 			continue
 		}
@@ -311,18 +326,19 @@ func RunScenario(rt Runtime, o RunOptions, s Scenario) (expect Expect, err error
 	return Expect{Exit: exit, Steps: results, Tree: tree, Calls: calls}, nil
 }
 
-// waitFor polls for a file the case-path glob names, which a detached process of an earlier step writes after that step returned.
-func waitFor(c *Case, pattern string, limit time.Duration) error {
+// waitFor polls for a file the case-path glob names, which a detached process of an earlier step writes after that step returned, and
+// returns the first match.
+func waitFor(c *Case, pattern string, limit time.Duration) (string, error) {
 	path, err := casePath(c, pattern)
 	for deadline := time.Now().Add(limit); err == nil; time.Sleep(50 * time.Millisecond) {
 		if hits, _ := filepath.Glob(path); len(hits) > 0 {
-			return nil
+			return hits[0], nil
 		}
 		if time.Now().After(deadline) {
 			err = fmt.Errorf("no file matches %s after %s", pattern, limit)
 		}
 	}
-	return err
+	return "", err
 }
 
 // command is one step's process: the runtime says what to run, the engine expands the placeholders
@@ -507,14 +523,7 @@ func setUp(c *Case, g Given, rt Runtime) error {
 	}
 	// Every given entry carries the frozen clock's time, so age and staleness readings agree
 	// with the oracle's Date.
-	epoch := Epoch()
-	err := filepath.WalkDir(c.Root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.Type()&fs.ModeSymlink != 0 {
-			return err
-		}
-		return os.Chtimes(path, epoch, epoch)
-	})
-	if err != nil {
+	if err := freezeTimes(c.Root, Epoch(), os.Chtimes); err != nil {
 		return err
 	}
 	for _, rel := range sortedKeys(g.Mtimes) {
@@ -531,6 +540,29 @@ func setUp(c *Case, g Given, rt Runtime) error {
 		}
 	}
 	return nil
+}
+
+// freezeTimes gives every entry under root, symlinks apart, the time when through set (os.Chtimes
+// in a run; a test passes a set that makes an entry vanish first). A walk or set error fails it,
+// except an entry that is gone by the time the walk reaches it when it lies inside a .git
+// directory: git's own processes create and remove files there at any moment. A missing given is
+// not that (it is stamped or chmod-ed by name elsewhere in setUp and fails there).
+func freezeTimes(root string, when time.Time, set func(path string, atime, mtime time.Time) error) error {
+	return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err == nil && d.Type()&fs.ModeSymlink == 0 {
+			err = set(path, when, when)
+		}
+		if errors.Is(err, fs.ErrNotExist) && inGitDir(root, path) {
+			return nil
+		}
+		return err
+	})
+}
+
+// inGitDir reports whether path lies inside a directory named .git below root.
+func inGitDir(root, path string) bool {
+	rel, err := filepath.Rel(root, filepath.Dir(path))
+	return err == nil && slices.Contains(strings.Split(rel, string(filepath.Separator)), ".git")
 }
 
 // rawResult is one step before normalisation.

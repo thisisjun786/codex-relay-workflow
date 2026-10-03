@@ -23,7 +23,7 @@ follows is about what is read before anything moves and what is put back when it
 | `crw install register-mcp [--owner plugin]` | Write the bridge record the plugin's declared server reads | OPS-2.2 |
 | `crw install hook [--owner plugin]` | Write the Stop settings the plugin's declared hook reads | OPS-6.3 |
 | `crw install register-service [--remove]` | Write and enable the one systemd user unit that starts the relay service when the user manager starts; with `--remove`, disable and delete it | OPS-4.1, OPS-6.1 |
-| `crw install status`, `crw doctor` | Read the installation, classify it and report the six check results; write nothing | OPS-2.1, OPS-2.2, OPS-6.1 |
+| `crw install status`, `crw doctor` | Read the installation, classify it and report the six check results; write nothing (the relay readings behind them are the relay's `doctor` without `--probe-write`, which creates no file of its own and never opens its write gate; what it still does is named under [Installing the runtime](#installing-the-runtime)) | OPS-2.1, OPS-2.2, OPS-6.1 |
 | `crw-dev skills link --check` or `--apply` | Skill links into Codex, from a checkout | OPS-2.3 |
 
 Every `crw install` and `crw doctor` command prints one JSON document. Runtime installation is never
@@ -148,8 +148,17 @@ and the pointer where it was ([what a failed update restores](#what-a-failed-upd
 Nothing here removes, moves or recreates the store: update failure and store loss are different
 accidents and the recovery for one must not cause the other.
 
-The exercise and the swap gate read the store without opening it, through the relay's `doctor`
-and `service status` and a catalog read that takes no lock. The runtime opens it afterwards, for
+The exercise and the swap gate read the store through the relay's `doctor` and `service status` and a
+catalog read that takes no lock. They run `doctor` with no option, so it only reads: it opens the
+database read-only, creates no `.probe-` file and no SQLite sidecar where SQLite allows, makes no
+read-write connection and never opens `write-gate.lock`; `doctor --probe-write`, which writes a
+temporary file and begins and rolls back a write transaction, is not what they run
+([decision 76](port/decisions.md#76-the-relays-doctor-reads-by-default-and-measures-writability-only-on-request-crw-399)).
+The ownership reading copies the database into the temporary directory, the worker-policy reading
+takes the daemon lock for an instant when a worker record exists, and a store left after an unclean
+shutdown is read the plain way, which may create SQLite's `-shm` index beside it; none of these writes
+the store's data. The
+runtime opens it afterwards, for
 the relay commands the skills run and for the Stop hook's guard whenever it has to read the store,
 in the relay's default state directory with no variable set. Until todo 43 the Go build refused
 that directory unless `CRW_ALLOW_LIVE_STATE=1` was set, so an install left a runtime that could
@@ -352,6 +361,20 @@ through. The Go and Python runtimes execute the same schema statements
 The one release that changes the schema is the one that adds the DAG zone ([DAG plans](relay/dag-plans.md#the-store), decision 74): its
 `dag_*` tables are created by the first write-open and are declared by that build. That decision is made (D-01), so the gate has an answer of
 its own for the zone and, below, for ordinary indexes, and for nothing else, and the supported install command has a route through both.
+
+**The history indexes (CRW-301).** A second change reaches the frozen v1 schema script itself: six `CREATE INDEX IF NOT EXISTS` statements
+for the tables that only grow (`attempts`, `supervisor_attempts`, `acks`, `sync_outbox`, `supervisor_messages`,
+`managed_start_requests`; the list and the reason for each are in `contract/schema/relay-sqlite-history-indexes.json`). They are not zone
+objects. Each is an ordinary index, non-unique and without a SQL function (the partial index on `acks` compares a column with a literal), on a table
+both sides declare, so the gate gives them the answers of the paragraph on ordinary indexes below (pull request #397). A candidate that declares
+them over a store that lacks them reads `EXTENDS_INDEX`, which refuses without `--backup-state-to` and passes with it; a store that holds them
+against a candidate that does not declare them reads `NARROWS_INDEX`, which is allowed. The ratchet test
+`TestEveryNonUniqueIndexOfTheShippedSchemaIsOrdinaryButOne` keeps the six ordinary. A store that lacks the zone as well, meeting a build that
+brings the zone and these indexes together, is the case that paragraph leaves out: the zone beside an index is a plain `EXTENDS`, and
+`--backup-state-to` does not release it. The build itself creates the indexes: the schema script runs on every write-open, so the first command to
+open a store of the previous version builds them, one index in a transaction of its own, and a command that declares itself read-only builds them
+too, since it tries the writable open first (a read that opens nothing for writing builds nothing). The swap gate tests
+`TestTheHistoryIndexesArriveAsAnIndexExtendsAndLeaveAsAnIndexNarrows` and `TestTheHistoryIndexesAgainstRealStores` pin this reading.
 
 **The zone arrives (`EXTENDS_ZONE`).** Installing a build that declares the zone onto a store that has none (every store there is) refuses,
 and the refusal names the route: `crw install update --from ... --backup-state-to DIR` (the same flag is on `install` and `rollback`). The flag is the
@@ -1134,6 +1157,17 @@ records' own `YYYY-MM-DDTHH:MM:SSZ` format, `--journal-root` repeats for every r
 registrations write to, and `--codex-home` adds a host whose ledger no claim names yet. The
 invocations it cannot judge, whose identity was not established or that had no owner, are counted by
 reason and never read as answered.
+
+When the window contains readable version-2 rows with no event key, the optional
+`excludedInvocations` list names each row, timestamp, session and turn, and its
+`unestablished:<reason>` or `no_event:<outcome>` reason. `evidence` holds the recorded
+acceptance, event key, accepted path, adapter outcome, guard invocation/decision,
+hold and event identity. `excludedFrom: per_event_acceptance_count` means only that
+the row cannot join an event's acceptance count; it does not remove uncertainty
+from the window. `preventsTrue` is true except for the existing native pre-scan
+unreachable exemption. An unestablished guard call still makes the verdict
+`UNREADABLE`, even if it wrote no claim. Keyed unclaimable or failed claims remain
+in `unjudgedInvocations`; malformed rows remain in `rowsUnreadable`.
 
 ### Limits
 

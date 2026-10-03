@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -33,8 +34,9 @@ func checkSQLiteContract(t *testing.T) {
 		if err != nil || !bytes.Equal(frozen, embedded) {
 			t.Fatalf("embedded DDL differs from frozen Python contract: %v", err)
 		}
-		// The schema the Python store created, as the committed fixture holds it: a copy is read,
-		// because opening the fixture in place would leave WAL sidecars in the corpus.
+		// The schema the previous version created, as the committed fixture holds it: a copy is read,
+		// because opening the fixture in place would leave WAL sidecars in the corpus. This version's
+		// schema is that and the indexes CRW-301 added (the golden delta), nothing else.
 		python := filepath.Join(root, "python", "relay.sqlite3")
 		copySQLiteFixture(t, python)
 		goPath := filepath.Join(root, "go", "relay.sqlite3")
@@ -43,8 +45,8 @@ func checkSQLiteContract(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer s.Close()
-		if got, want := sqliteMaster(t, goPath), sqliteMaster(t, python); !reflect.DeepEqual(got, want) {
-			t.Fatalf("sqlite_master differs from the Python store's: Go %v, Python %v", got, want)
+		if got, want := sqliteMaster(t, goPath), withHistoryIndexes(t, sqliteMaster(t, python)); !reflect.DeepEqual(got, want) {
+			t.Fatalf("sqlite_master differs from the previous version's plus the history indexes: Go %v, want %v", got, want)
 		}
 	})
 	t.Run("fixture", func(t *testing.T) {
@@ -58,11 +60,25 @@ func checkSQLiteContract(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer s.Close()
-		if !reflect.DeepEqual(before, sqliteMaster(t, path)) {
-			t.Fatal("Python fixture sqlite_master changed")
+		// The upgrade: opening a store of the previous version gains exactly the history indexes and
+		// changes no other object, and opening it again changes nothing (CRW-301).
+		upgraded := sqliteMaster(t, path)
+		if want := withHistoryIndexes(t, before); !reflect.DeepEqual(upgraded, want) {
+			t.Fatalf("opening the previous version's store: sqlite_master is %v, want the previous one plus the history indexes %v", upgraded, want)
+		}
+		if err := s.Close(); err != nil {
+			t.Fatal(err)
+		}
+		again, err := store.Open(context.Background(), path, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer again.Close()
+		if !reflect.DeepEqual(upgraded, sqliteMaster(t, path)) {
+			t.Fatal("a second open changed sqlite_master")
 		}
 		var integrity string
-		if err := s.DB.QueryRow("PRAGMA integrity_check").Scan(&integrity); err != nil || integrity != "ok" {
+		if err := again.DB.QueryRow("PRAGMA integrity_check").Scan(&integrity); err != nil || integrity != "ok" {
 			t.Fatalf("integrity=%q: %v", integrity, err)
 		}
 	})
@@ -342,4 +358,20 @@ func sqliteMaster(t *testing.T, path string) []string {
 		t.Fatal(err)
 	}
 	return values
+}
+
+// withHistoryIndexes is a catalog in sqliteMaster's form with the indexes CRW-301 added (the golden delta,
+// contract/schema/relay-sqlite-history-indexes.json) put where they sort.
+func withHistoryIndexes(t *testing.T, catalog []string) []string {
+	t.Helper()
+	indexes, err := testsupport.HistoryIndexes()
+	if err != nil || len(indexes) == 0 {
+		t.Fatalf("the golden delta: %d indexes: %v", len(indexes), err)
+	}
+	out := append([]string(nil), catalog...)
+	for _, index := range indexes {
+		out = append(out, "index\x00"+index.Name+"\x00"+index.Table+"\x00"+strings.Join(strings.Fields(index.SQL), " "))
+	}
+	sort.Strings(out)
+	return out
 }

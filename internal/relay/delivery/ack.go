@@ -711,6 +711,13 @@ func (a *Ack) pendingFingerprint(ctx context.Context, eventID string, delivery R
 	return hex.EncodeToString(sum[:]), nil
 }
 
+// pendingAcksSQL is the read VerifyPendingAcks makes, on every daemon tick: the acknowledgements still waiting for
+// their turn to be verified, the ones due a look first. It takes now, DeliveryUnconfirmed, Dispatched, InboxOnly and
+// the limit. Almost every acknowledgement is verified, so the statement reaches the few that are through the partial
+// index acks_unverified (CRW-301), which SQLite can use only because the statement spells 'unverified_turn' as a
+// literal: do not bind it.
+const pendingAcksSQL = "SELECT a.event_id, a.ack_turn_id, a.ack_at, a.accepted, COALESCE(e.attempts, 0) AS attempts, e.last_reason, e.fingerprint, e.next_check_at FROM acks a LEFT JOIN ack_evidence e ON e.event_id = a.event_id LEFT JOIN deliveries d ON d.event_id = a.event_id WHERE a.verified = 'unverified_turn' AND (e.next_check_at IS NULL OR e.next_check_at <= ? OR (e.last_reason = ? AND d.state IN (?, ?))) ORDER BY COALESCE(e.next_check_at, 0), a.event_id LIMIT ?"
+
 // VerifyPendingAcks is verify_pending_acks: complete acknowledgements authored without a host,
 // re-checking disposition as acknowledge does.
 func (a *Ack) VerifyPendingAcks(ctx context.Context, adapter Adapter, limit int, nowp *float64) ([]any, error) {
@@ -721,8 +728,7 @@ func (a *Ack) VerifyPendingAcks(ctx context.Context, adapter Adapter, limit int,
 	if limit == 0 {
 		limit = 8
 	}
-	pending, err := all(ctx, a.Store, "SELECT a.event_id, a.ack_turn_id, a.ack_at, a.accepted, COALESCE(e.attempts, 0) AS attempts, e.last_reason, e.fingerprint, e.next_check_at FROM acks a LEFT JOIN ack_evidence e ON e.event_id = a.event_id LEFT JOIN deliveries d ON d.event_id = a.event_id WHERE a.verified = 'unverified_turn' AND (e.next_check_at IS NULL OR e.next_check_at <= ? OR (e.last_reason = ? AND d.state IN (?, ?))) ORDER BY COALESCE(e.next_check_at, 0), a.event_id LIMIT ?",
-		now, DeliveryUnconfirmed, Dispatched, InboxOnly, limit)
+	pending, err := all(ctx, a.Store, pendingAcksSQL, now, DeliveryUnconfirmed, Dispatched, InboxOnly, limit)
 	if err != nil {
 		return nil, err
 	}
