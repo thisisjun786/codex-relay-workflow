@@ -437,6 +437,63 @@ No new oracle defect was identified in the directive text and assembly of `pabcd
 - A payload nested deeper than Go's limit of 10,000 levels, in a field the hook never reads, is not JSON for `parseRaw`, so the hook stays silent where the oracle's `JSON.parse` reads it and injects the context (source `worktree-guard.ts:505`; `TestHandleWorktreeGuardIgnoresWhatItCannotRead`, nesting row; checked with Node 24); port: kept as a platform difference, on the silent side.
 - `findCheckoutRoot` joins and cleans the path at every level on its way up, which is quadratic in the length of the cwd, so a cwd of tens of thousands of missing levels (about 65 KB of input, far under the hook input limit) holds the hook for seconds (source `worktree-guard.ts:87-100`; checked with Node 24: 8,192 levels took 1.0 s and 32,768 levels 14.8 s; `TestDetectManagedWorktree`, the 65,000 missing levels case); port: fixed with the same answers (no stat of a path over 4,096 bytes can succeed, so the ancestors that long are skipped).
 
+## Found by the map and compact affordance port
+
+- The cxc-ops hook ingress reads stdin without a size bound, unlike the PABCD and background-completion components, so a large input can consume unbounded memory; the shared invocation observation refuses input above its own bound while the affordance handler still runs (source `plugins/codexclaw/components/cxc-ops/src/cli.ts:19-25,116-133`; `TestIngressOwnUnboundedPolicyAndObservationName`); port: kept.
+- Recovery checks `.codexclaw` and `affordance-recovery` with `lstat`, then creates or removes the marker by pathname, so a concurrent local directory swap can race the static symlink checks (source `plugins/codexclaw/components/cxc-ops/src/map-affordance.ts:242-255,263,274-276`; static symlink refusal is pinned by `TestRecoveryPathScopeSymlinksAndNonfiles`, not race-proof confinement); port: kept.
+- SessionStart accepts an unbounded, unvalidated session ID and interpolates it into its binding text, so embedded newlines/backticks can alter the guidance and a long ID grows the envelope without truncation (source `plugins/codexclaw/components/cxc-ops/src/map-affordance.ts:158-169,306-308,320`; `TestSessionStartThresholdFallbackAndPointers` and the escaped binding golden); port: kept.
+
+## Found by the CRW-502 recall repository-key port
+
+- Local-looking colon paths such as `C:\repo` are accepted as scp remotes and identify `c/repo`, rather than falling back to cwd scope (source `recall/src/repo-key.ts:38-41`; recorded base oracle); port: kept.
+- Decoding `%2F` before packing collapses an encoded path separator with a literal separator, so `a%2Fb` and `a/b` share a key (source `recall/src/repo-key.ts:46,56`; recorded base oracle); port: kept.
+- Platform difference: the bounded URL host parser does not NFC-normalize decomposed Unicode labels before RFC3492 encoding (source `recall/src/repo-key.ts:44` delegates to Node WHATWG URL; recorded NFC grid); port: kept.
+- Platform difference: UTS46 compatibility mappings, including long s and fullwidth letters, are not reproduced by lowercase plus RFC3492 (source `recall/src/repo-key.ts:44`; recorded compatibility grid); port: kept.
+- Platform difference: UTS46 disallowed-code-point checks beyond the URL forbidden-domain set and strict UTF-8 decoding are not reproduced (source `recall/src/repo-key.ts:44`; recorded disallowed grid); port: kept.
+- Platform difference: UTS46 Bidi checks are not reproduced (source `recall/src/repo-key.ts:44`; recorded Bidi grid); port: kept.
+- Platform difference: UTS46 ContextJ joiner checks are not reproduced (source `recall/src/repo-key.ts:44`; recorded ContextJ grid); port: kept.
+- Platform difference: existing `xn--` labels are passed through rather than decoded and re-validated; the recorded malformed ACE label is also passed through by this Node build, so this declared limit is latent in that row (source `recall/src/repo-key.ts:44`; recorded ACE grid); port: kept.
+
+## Found by the agent-thread permission hook port (CRW-494)
+
+- The config containment check treats project children whose names begin with `..` as outside the project, letting a project-controlled opt-in or full-access config grant permission (source `plugins/codexclaw/components/pabcd-state/src/agent-thread-permissions.ts:98-99`; reproduced for both config readers, regression `TestAgentThreadBoundaries/intentionally-changed_project_child_starting_with_two_dots`); port: fixed (security: compare path components, preserving the literal default-at-home exception; oracle cases intentionally-changed).
+
+## CRW-496 — skill-search CLI
+
+- Unknown options (including `--help`) and dangling flags become query/id text rather than help or a flag error (`skill-search/src/cli.ts:32-43` at v0.2.40); port: kept.
+- Catalog cache keys retain only the first 24 base64url URL characters, discarding the remainder of the URL identity (`skill-search/src/cli.ts:63-67` at v0.2.40); port: kept.
+- Search source, gh launch/auth and malformed-gh-JSON failures can produce empty results with exit 0 (`skill-search/src/cli.ts:101-135,170-194` at v0.2.40); port: kept.
+- `show --source gh` searches jaw, hermes and clawhub instead of GitHub, while unsupported show sources fall through to a no-skill message (`skill-search/src/cli.ts:204-229` at v0.2.40); port: kept.
+- Show suppresses catalog errors, but a matching row's body-fetch failure stops fallback; fetched skill bodies have no size cap (`skill-search/src/cli.ts:209-220` at v0.2.40); port: kept.
+- The default fetch transport reports only `fetch failed` for a network failure, discarding its cause (`skill-search/src/cli.ts:46` at v0.2.40, Node fetch transport); port: kept.
+
+## Found by the config-guard deactivation and marker port (CRW-497)
+
+- Managed-key restoration writes settings in place and an interrupted write can truncate them (source `config-guard/src/deactivate.ts:155`; `TestDeactivatePublicationFailureKeepsWholeSettings`); port: fixed (data loss: reuse protected fsynced temporary-file publication; failure leaves old settings whole and does not reach the feature CLI).
+- With a null post-activation hash, an unreadable config is skipped and the later feature-disable CLI can overwrite settings that were never read (source `deactivate.ts:58-65,131-133,184`; intentionally-changed recorded cases `unreadable_config` and `unreadable_config_no_table_keys` in `testdata/deactivation-changes.json`, driven by `TestDeactivateUnreadableSettingsRefusedBeforeCLI`); port: fixed (data loss: refuse unreadable settings before any CLI call, including manifests without managed table keys).
+- An unreadable self-heal marker is treated as absent and opt-out overwrites its healed-key consent and cache fields (source `config-guard/src/self-heal.ts:263-287`; intentionally-changed recorded case `unreadable_marker` in `testdata/deactivation-changes.json`, driven by `TestSelfHealMarkerUnreadablePreservesConsent`); port: fixed (data loss: direct marker functions return the read refusal and leave the record untouched).
+- Marker publication uses a shared fixed .tmp name without fsync, so competing writes can overwrite staging records and interrupted publication can lose consent data (source `self-heal.ts:272-277`; `TestSelfHealMarkerAtomicPublication`); port: fixed (data loss: reuse the exclusive, fsynced temporary-file publisher; it preserves permission bits and follows existing links as the shared writer specifies, with no lock or directory-fsync guarantee).
+- Manifest and backup read failures are reported as absent or unverifiable, without the read error (source `deactivate.ts:58-65,117-120,134-139`; `TestDeactivateEarlyReturnsAndV1`, `TestDeactivateOverrideMissingConfigAndBackup`); port: kept (neither record is overwritten).
+- A failed feature-disable exit is omitted from disabled without a failure field, and marker failure is swallowed even on early uninstall returns (source `deactivate.ts:99-103,184-185`; `TestDeactivateFlagPathsAndOrdering`, `TestSelfHealMarkerUnreadablePreservesConsent`); port: kept.
+
+## Found by the CRW-344 provider detection and map launcher port
+
+- The provider dispatcher ignores every argument, including help and unknown verbs, and still probes status (source `bin/codexclaw.mjs:256-260,606-608`; `TestProviderMapCommandIngress` and the provider-help corpus cases); port: kept (this completes the earlier pending provider argument finding).
+- A whitespace-only Python override is skipped by the preferred rung but is reused as a literal command by the fallback, and its truthiness suppresses bootstrap (source `bin/codexclaw.mjs:338,357,386`; `TestRepoMapLadderFromBin/blank-bare`, `TestRepoMapBootstrapWithFakesOnly/blank-suppresses-bootstrap`); port: kept.
+- Explicit bootstrap can create a venv and invoke pip even for help, before help bypasses uv/the venv in selection (source `bin/codexclaw.mjs:386-406`; `TestRepoMapBootstrapWithFakesOnly/help-still-bootstraps`); port: kept.
+- A failed pip run removes the whole rebuildable venv directory, including pre-existing partial cache contents when its interpreter was absent (source `bin/codexclaw.mjs:383,386,397-399`; `TestRepoMapBootstrapWithFakesOnly/pip-fails`); port: kept (the cache is disposable; no settings, state or record path is written by the launcher).
+- The uv availability probe always runs, even for help or an explicit Python override, and has no timeout (source `bin/codexclaw.mjs:404-406`; the map ladder/ingress tests and replayed calls); port: kept.
+- Any numeric listen.port is accepted, including negative/fractional values and overflow to Infinity, which renders as null; no valid-port range is checked (source `provider-bridge/src/detect.ts:54`; Node-recorded `testdata/oracle.jsonl`, `TestDetectNodeRecordedStatusCases`); port: kept.
+
+## CRW-501 — Helper role live catalog
+
+- Cache validation does not validate `state`, accepts blank entry IDs/labels and arbitrary string effort values, and echoes unknown members (source `subagent-config/src/live-catalog.ts:64-68,112`; `TestLiveCatalogValidation`); port: kept.
+- The source key omits the resolved native home, so changing `HOME` with an explicit unchanged catalog home and absent `CODEX_HOME` can reuse a list from the old native home (source `live-catalog.ts:55-58,86-93`; `TestLiveCatalogSourceIdentityAndClock`); port: kept.
+- The 30-second TTL only limits fresh reuse; a validated last-success list is returned stale without an age limit while discovery keeps failing (source `live-catalog.ts:92-93,110-113`; `TestLiveCatalogCache`); port: kept.
+- `fetchedAt` is declared a string but cache validation coerces truthy numbers through `Date.parse`, which also normalizes February days 30/31 and `24:00` (source `live-catalog.ts:15,65`; `TestLiveCatalogValidation/numeric-date` and `TestLiveCatalogOracleDates`); port: kept.
+
+The pinned oracle already publishes through an exclusive 0600 temporary file and rename (`live-catalog.ts:71-79`). This port preserves that invariant: the forced-rename failure case retains the previous bytes and removes its own temporary file. No new truncation defect or intentionally-changed fix is claimed.
+
 ## CRW-336: remaining staged skill assets
 
 - The upstream RepoMapper assets contain 158 trailing-whitespace lines and two extra final blank lines across 11 files (`skills/repo-map/scripts/importance.py:44-52`, `repomap.py:21-232`, `repomap_class.py:45-615`, `scm.py:47-58`, `utils.py:23-29` and the vendored query files). The tool-staged copies retain them: full-range `git diff --check` reports 160 findings, while the recorded manual edits are clean; port: kept.
