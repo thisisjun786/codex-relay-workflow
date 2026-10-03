@@ -26,7 +26,7 @@ func pagesCall(t *testing.T, pages ...[]any) (func(string, Obj) (Obj, error), *[
 		}
 		calls = append(calls, append(Obj(nil), params...))
 		index := 0
-		if c, ok := get(params, "cursor"); ok && c != nil {
+		if c, ok := params.Lookup("cursor"); ok && c != nil {
 			fmt.Sscan(c.(string), &index)
 		}
 		var next any
@@ -166,7 +166,7 @@ func Test21_HLT28_the_bridge_adapter_looks_back_only_to_the_send(t *testing.T) {
 		mirror(t, hlt, cls+"test_a_failure_reading_on_after_a_match_keeps_the_match", func(h *hl) {
 			first := []any{turnEntry("newer", at1(30), "completed"), turnEntry("wanted", at1(1), "completed")}
 			call := func(method string, params Obj) (Obj, error) {
-				if c, _ := get(params, "cursor"); truthy(c) {
+				if c, _ := params.Lookup("cursor"); truthy(c) {
 					return nil, &HostError{Kind: "HostUnavailable", Message: "the next page could not be read"}
 				}
 				return Obj{{Key: "data", Value: first}, {Key: "nextCursor", Value: "1"}}, nil

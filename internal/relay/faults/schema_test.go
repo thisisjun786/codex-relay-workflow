@@ -31,7 +31,7 @@ func Test22_FLT_17_PreexistingStoreAcquiresFaultTables(t *testing.T) {
 	if len(rows) != 18 {
 		var names []string
 		for _, r := range rows {
-			names = append(names, text(r, "name"))
+			names = append(names, r.Text("name"))
 		}
 		t.Fatalf("got %d fault tables: %s", len(rows), strings.Join(names, ","))
 	}

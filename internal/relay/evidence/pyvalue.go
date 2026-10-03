@@ -41,22 +41,6 @@ func Object(v any) (contract.OrderedObject, bool) {
 	return nil, false
 }
 
-// Get is dict.get(key).
-func Get(o contract.OrderedObject, key string) any {
-	v, _ := Lookup(o, key)
-	return v
-}
-
-// Lookup is dict lookup: the value and whether the key is present.
-func Lookup(o contract.OrderedObject, key string) (any, bool) {
-	for _, f := range o {
-		if f.Key == key {
-			return f.Value, true
-		}
-	}
-	return nil, false
-}
-
 // List reads a decoded JSON list.
 func List(v any) ([]any, bool) {
 	switch l := v.(type) {

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 func Test_test_launch_preserves_trailing_whitespace_in_paths(t *testing.T) {
@@ -36,7 +37,7 @@ func Test_test_launch_preserves_trailing_whitespace_in_paths(t *testing.T) {
 				worktreeHost(host, input.Destination)
 				input.Prompt = "READY"
 				receipt, err := b.CreateWorktreeThread(context.Background(), input)
-				if err != nil || receipt["status"] != "accepted" || object(receipt["worktree"])["sourceRepository"] != input.Source || object(receipt["worktree"])["checkout"] != input.Destination || object(receipt["creation"])["cwd"] != input.Destination || object(receipt["checkoutBeforeDispatch"])["checkout"] != input.Destination {
+				if err != nil || receipt["status"] != "accepted" || pyjson.Map(receipt["worktree"])["sourceRepository"] != input.Source || pyjson.Map(receipt["worktree"])["checkout"] != input.Destination || pyjson.Map(receipt["creation"])["cwd"] != input.Destination || pyjson.Map(receipt["checkoutBeforeDispatch"])["checkout"] != input.Destination {
 					t.Fatalf("receipt=%v err=%v", receipt, err)
 				}
 				if data, err := os.ReadFile(filepath.Join(input.Destination, "tracked")); err != nil || string(data) != "base\n" {
@@ -48,11 +49,11 @@ func Test_test_launch_preserves_trailing_whitespace_in_paths(t *testing.T) {
 				host.Respond("thread/read", fakehost.Reply{Result: map[string]any{"thread": map[string]any{"id": "thread-1"}}})
 				host.Respond("thread/turns/list", fakehost.Reply{Result: map[string]any{"data": []any{map[string]any{"id": "turn-1", "items": []any{map[string]any{"text": "READY"}}}}}})
 				host.Respond("thread/items/list", fakehost.Reply{Result: map[string]any{"data": []any{map[string]any{"text": "READY"}}}})
-				if sent := hostParams(t, host, "turn/start"); host.Count("turn/start") != 1 || object(sent["input"].([]any)[0])["text"] != "READY" {
+				if sent := hostParams(t, host, "turn/start"); host.Count("turn/start") != 1 || pyjson.Map(sent["input"].([]any)[0])["text"] != "READY" {
 					t.Fatalf("turn/start=%v", host.Requests())
 				}
-				read, err := b.ReadThread(context.Background(), text(receipt["threadId"]), 20, nil, 4000)
-				if err != nil || len(object(read["turnsPage"])["data"].([]any)) != 1 || object(firstTurn(t, read)["items"].([]any)[0])["text"] != "READY" {
+				read, err := b.ReadThread(context.Background(), pyjson.Text(receipt["threadId"]), 20, nil, 4000)
+				if err != nil || len(pyjson.Map(read["turnsPage"])["data"].([]any)) != 1 || pyjson.Map(firstTurn(t, read)["items"].([]any)[0])["text"] != "READY" {
 					t.Fatalf("read=%v err=%v", read, err)
 				}
 				replay, err := b.CreateWorktreeThread(context.Background(), input)

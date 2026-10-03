@@ -60,8 +60,8 @@ func TestParkNotice_parks_only_a_notice_nothing_of_which_has_gone(t *testing.T) 
 			if err != nil {
 				t.Fatal(err)
 			}
-			if parked := noticeText(r, "hold_reason") == store.SupervisorHoldSuperseded; parked != tc.parked || (parkInteger(journal, "n") == 1) != tc.parked {
-				t.Fatalf("hold %q, journal rows %d, want parked=%v", noticeText(r, "hold_reason"), parkInteger(journal, "n"), tc.parked)
+			if parked := r.Text("hold_reason") == store.SupervisorHoldSuperseded; parked != tc.parked || (parkInteger(journal, "n") == 1) != tc.parked {
+				t.Fatalf("hold %q, journal rows %d, want parked=%v", r.Text("hold_reason"), parkInteger(journal, "n"), tc.parked)
 			}
 		})
 	}

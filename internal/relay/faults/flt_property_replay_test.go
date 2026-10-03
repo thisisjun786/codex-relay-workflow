@@ -135,7 +135,7 @@ func flt17Rows(t *testing.T, ctx context.Context, dir string) map[string][]strin
 			return err
 		}
 		for _, name := range names {
-			key := text(name, "name")
+			key := name.Text("name")
 			rows, err := s.All(ctx, "SELECT * FROM "+testsupport.QuoteIdent(key)+" ORDER BY rowid")
 			if err != nil {
 				return err

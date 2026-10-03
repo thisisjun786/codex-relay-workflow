@@ -36,10 +36,10 @@ func (noticeContacts) Contactable(ctx context.Context, s *store.Store, parent st
 		if lifecycle == nil {
 			contact = map[string]any{"contactable": nil, "reason": "the host has not been observed for this task, so deliverability is unmeasured rather than allowed"}
 		} else {
-			deliverable, observed := noticeText(lifecycle, "deliverable"), noticeText(lifecycle, "observed_at")
+			deliverable, observed := lifecycle.Text("deliverable"), lifecycle.Text("observed_at")
 			contact = map[string]any{"deliverable": deliverable, "observedAt": observed}
 			if deliverable != "yes" {
-				reason := noticeText(lifecycle, "withhold_reason")
+				reason := lifecycle.Text("withhold_reason")
 				if reason == "" {
 					reason = deliverable
 				}

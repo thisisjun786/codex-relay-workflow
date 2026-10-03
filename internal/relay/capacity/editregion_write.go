@@ -40,25 +40,25 @@ func (e *EditRegions) realOwnedSide(ctx context.Context, low, high, actor string
 // actingSide is EditRegions._acting_side: "left_project" or "right_project", or a refusal.
 func (e *EditRegions) actingSide(ctx context.Context, r row, actor, subject string) (string, *refusal, error) {
 	for _, side := range []string{"left_project", "right_project"} {
-		parents, err := owners(ctx, e.Store, scopeProject, text(r, side), roleParent)
+		parents, err := owners(ctx, e.Store, scopeProject, r.Text(side), roleParent)
 		if err != nil {
 			return "", nil, err
 		}
 		if len(parents) != 1 || parents[0] != actor {
 			continue
 		}
-		link, err := e.one(ctx, "SELECT * FROM scope_links WHERE link_id = ?", text(r, "peer_link_id"))
+		link, err := e.one(ctx, "SELECT * FROM scope_links WHERE link_id = ?", r.Text("peer_link_id"))
 		if err != nil {
 			return "", nil, err
 		}
-		if link == nil || !isLive(text(link, "status")) || text(link, "superseded_by") != "" {
-			return "", &refusal{contract.RefusalUnregisteredScope, "peer link " + pyvalue.StrRepr(text(r, "peer_link_id")) +
+		if link == nil || !isLive(link.Text("status")) || link.Text("superseded_by") != "" {
+			return "", &refusal{contract.RefusalUnregisteredScope, "peer link " + pyvalue.StrRepr(r.Text("peer_link_id")) +
 				" is not live, so these two projects are not registered peers", domainEditRegion, subject, "", actor}, nil
 		}
 		return side, nil, nil
 	}
 	return "", &refusal{contract.RefusalScopeRoleMismatch, "task " + pyvalue.StrRepr(actor) + " is the registered parent of neither " +
-		pyvalue.StrRepr(text(r, "left_project")) + " nor " + pyvalue.StrRepr(text(r, "right_project")), domainEditRegion, subject, "", actor}, nil
+		pyvalue.StrRepr(r.Text("left_project")) + " nor " + pyvalue.StrRepr(r.Text("right_project")), domainEditRegion, subject, "", actor}, nil
 }
 
 // Proposal is EditRegions.propose's keyword arguments; invalid NullStrings are None.
@@ -165,7 +165,7 @@ func (e *EditRegions) Propose(ctx context.Context, in Proposal) (contract.Ordere
 		switch {
 		case decided != nil:
 		case previous != nil && predecessor != nil:
-			decided = standingRefusal(text(previous, "agreement_id"), text(predecessor, "agreement_id"), in.BaseRevision, in.Repository, in.ProposerTaskID)
+			decided = standingRefusal(previous.Text("agreement_id"), predecessor.Text("agreement_id"), in.BaseRevision, in.Repository, in.ProposerTaskID)
 		case previous != nil:
 			replay = previous
 		default:
@@ -263,8 +263,8 @@ func persisted(r row) regionPlace {
 	if v, ok := r.Get("regenerate_from").(string); ok {
 		from = sql.NullString{String: v, Valid: true}
 	}
-	return regionPlace{id: text(r, "region_id"), repository: text(r, "repository"), baseRevision: text(r, "base_revision"),
-		path: text(r, "path"), kind: text(r, "region_kind"), key: text(r, "region_key"), class: text(r, "region_class"),
+	return regionPlace{id: r.Text("region_id"), repository: r.Text("repository"), baseRevision: r.Text("base_revision"),
+		path: r.Text("path"), kind: r.Text("region_kind"), key: r.Text("region_key"), class: r.Text("region_class"),
 		regenerateFrom: from}
 }
 
@@ -306,20 +306,20 @@ func (e *EditRegions) overlapRefusal(ctx context.Context, region regionPlace, lo
 		return nil, err
 	}
 	for _, r := range rows {
-		if text(r, "region_class") == classGenerated {
+		if r.Text("region_class") == classGenerated {
 			continue
 		}
-		if text(r, "left_project") == low && text(r, "right_project") == high {
+		if r.Text("left_project") == low && r.Text("right_project") == high {
 			continue
 		}
-		other := place{regionID: text(r, "region_id"), repository: text(r, "repository"), path: text(r, "path"),
-			kind: text(r, "region_kind"), key: text(r, "region_key")}
+		other := place{regionID: r.Text("region_id"), repository: r.Text("repository"), path: r.Text("path"),
+			kind: r.Text("region_kind"), key: r.Text("region_key")}
 		if overlap(region.place(), other) == overlapDisjoint {
 			continue
 		}
-		return &refusal{contract.RefusalRegionOverlap, "agreement " + pyvalue.StrRepr(text(r, "agreement_id")) + " between " +
-			pyvalue.StrRepr(text(r, "left_project")) + " and " + pyvalue.StrRepr(text(r, "right_project")) + " already covers " + text(r, "region_kind") +
-			" " + pyvalue.StrRepr(text(r, "path")) + ", which overlaps this region", domainEditRegion, region.repository, text(r, "agreement_id"), actor}, nil
+		return &refusal{contract.RefusalRegionOverlap, "agreement " + pyvalue.StrRepr(r.Text("agreement_id")) + " between " +
+			pyvalue.StrRepr(r.Text("left_project")) + " and " + pyvalue.StrRepr(r.Text("right_project")) + " already covers " + r.Text("region_kind") +
+			" " + pyvalue.StrRepr(r.Text("path")) + ", which overlaps this region", domainEditRegion, region.repository, r.Text("agreement_id"), actor}, nil
 	}
 	return nil, nil
 }
@@ -330,11 +330,11 @@ func (e *EditRegions) peerRefusal(ctx context.Context, low, high, link, actor, s
 	if err != nil {
 		return nil, err
 	}
-	if r == nil || text(r, "link_kind") != peerKind || !isLive(text(r, "status")) || text(r, "superseded_by") != "" {
+	if r == nil || r.Text("link_kind") != peerKind || !isLive(r.Text("status")) || r.Text("superseded_by") != "" {
 		return &refusal{contract.RefusalUnregisteredScope, "link " + pyvalue.StrRepr(link) + " is not a live peer link, and an agreement" +
 			" joins two projects that registered as peers", domainEditRegion, subject, "", actor}, nil
 	}
-	a, b := sortedPair(text(r, "upper_key"), text(r, "lower_key"))
+	a, b := sortedPair(r.Text("upper_key"), r.Text("lower_key"))
 	if a != low || b != high {
 		return &refusal{contract.RefusalUnregisteredScope, "peer link " + pyvalue.StrRepr(link) + " joins [" + pyvalue.StrRepr(a) + ", " + pyvalue.StrRepr(b) +
 			"], not [" + pyvalue.StrRepr(low) + ", " + pyvalue.StrRepr(high) + "]", domainEditRegion, subject, "", actor}, nil
@@ -353,9 +353,9 @@ func (e *EditRegions) carryCheck(ctx context.Context, carry *Carry, destination 
 		return nil, &refusal{contract.RefusalUnregisteredScope, "no agreement " + pyvalue.StrRepr(carry.Predecessor) + " to carry",
 			domainEditRegion, subject, carry.Predecessor, actor}, nil
 	}
-	identifier := text(predecessor, "agreement_id")
+	identifier := predecessor.Text("agreement_id")
 	for _, field := range carriedPlace {
-		if destination[field] != text(predecessor, field) {
+		if destination[field] != predecessor.Text(field) {
 			return nil, &refusal{contract.RefusalUnregisteredScope, "a carry of " + pyvalue.StrRepr(identifier) + " lands on its own place, pair and" +
 				" link; " + field + " " + reprText(destination[field], field == "regenerate_from") + " is not its " +
 				reprValue(predecessor.Get(field)), domainEditRegion, subject, identifier, actor}, nil
@@ -365,25 +365,25 @@ func (e *EditRegions) carryCheck(ctx context.Context, carry *Carry, destination 
 		return nil, &refusal{contract.RefusalUnregisteredScope, "a carry of " + pyvalue.StrRepr(identifier) + " supersedes it, not " +
 			reprNullable(supersedes), domainEditRegion, subject, identifier, actor}, nil
 	}
-	state := text(predecessor, "state")
-	if !slices.Contains(liveStates, state) || text(predecessor, "superseded_by") != "" {
+	state := predecessor.Text("state")
+	if !slices.Contains(liveStates, state) || predecessor.Text("superseded_by") != "" {
 		by := ""
-		if s := text(predecessor, "superseded_by"); s != "" {
+		if s := predecessor.Text("superseded_by"); s != "" {
 			by = ", superseded by " + pyvalue.StrRepr(s)
 		}
 		return nil, &refusal{contract.RefusalAgreementNotOpen, "agreement " + pyvalue.StrRepr(identifier) + " is " + state + by +
 			"; it was settled or carried while this carry was being decided, so there is nothing left to carry",
 			domainEditRegion, subject, state, actor}, nil
 	}
-	chain, err := e.chainFrom(ctx, subject, text(predecessor, "base_revision"))
+	chain, err := e.chainFrom(ctx, subject, predecessor.Text("base_revision"))
 	if err != nil {
 		return nil, nil, err
 	}
 	if len(chain) == 0 {
-		return nil, unmovedRefusal(identifier, text(predecessor, "base_revision"), subject, actor), nil
+		return nil, unmovedRefusal(identifier, predecessor.Text("base_revision"), subject, actor), nil
 	}
 	if end := chain[len(chain)-1]; end != revision {
-		return nil, &refusal{contract.RefusalAgreementRevisionStale, "the recorded chain from " + pyvalue.StrRepr(text(predecessor, "base_revision")) +
+		return nil, &refusal{contract.RefusalAgreementRevisionStale, "the recorded chain from " + pyvalue.StrRepr(predecessor.Text("base_revision")) +
 			" now ends at " + pyvalue.StrRepr(end) + ", not " + pyvalue.StrRepr(revision) + ": the base moved again while this was being carried. Reaffirm it onto " +
 			pyvalue.StrRepr(end), domainEditRegion, subject, end, revision}, nil
 	}
@@ -439,31 +439,31 @@ func valid(s string) sql.NullString { return sql.NullString{String: s, Valid: tr
 
 // carriedTerms is EditRegions._carried_terms: what a successor inherits, with revisions.
 func (e *EditRegions) carriedTerms(ctx context.Context, predecessor row, owned, low, high string, restated sql.NullString, revision string) (carriedTerms, error) {
-	earlier, err := e.one(ctx, "SELECT * FROM edit_reaffirmations WHERE agreement_id = ?", text(predecessor, "agreement_id"))
+	earlier, err := e.one(ctx, "SELECT * FROM edit_reaffirmations WHERE agreement_id = ?", predecessor.Text("agreement_id"))
 	if err != nil {
 		return carriedTerms{}, err
 	}
-	before := text(predecessor, "base_revision")
+	before := predecessor.Text("base_revision")
 	conditions := map[string]sql.NullString{low: nullText(predecessor, "left_condition"), high: nullText(predecessor, "right_condition")}
 	revisions := map[string]sql.NullString{}
-	proposer := text(predecessor, "proposer_task_id")
+	proposer := predecessor.Text("proposer_task_id")
 	var constraintRevision sql.NullString
 	switch {
 	case earlier != nil:
 		revisions[low], revisions[high] = nullText(earlier, "left_condition_revision"), nullText(earlier, "right_condition_revision")
 		constraintRevision = nullText(earlier, "constraint_revision")
-	case text(predecessor, "supersedes") != "":
-		lineageRows, err := e.all(ctx, lineageQuery, text(predecessor, "repository"))
+	case predecessor.Text("supersedes") != "":
+		lineageRows, err := e.all(ctx, lineageQuery, predecessor.Text("repository"))
 		if err != nil {
 			return carriedTerms{}, err
 		}
-		carryRows, err := e.all(ctx, carriesQuery, text(predecessor, "repository"))
+		carryRows, err := e.all(ctx, carriesQuery, predecessor.Text("repository"))
 		if err != nil {
 			return carriedTerms{}, err
 		}
 		lineage, carries := byID(lineageRows), byID(carryRows)
-		origin := originOf(text(predecessor, "agreement_id"), lineage, carries)
-		source, sourced := carries[text(origin, "agreement_id")]
+		origin := originOf(predecessor.Text("agreement_id"), lineage, carries)
+		source, sourced := carries[origin.Text("agreement_id")]
 		for _, side := range [][2]string{{low, "left_condition"}, {high, "right_condition"}} {
 			if conditions[side[0]].Valid {
 				revisions[side[0]] = valid(before)
@@ -477,8 +477,8 @@ func (e *EditRegions) carriedTerms(ctx context.Context, predecessor row, owned, 
 				revisions[side[0]] = nullText(origin, "base_revision")
 			}
 		}
-		proposer = text(origin, "proposer_task_id")
-		if v, ok := writtenOn(text(predecessor, "agreement_id"), lineage, carries).(string); ok {
+		proposer = origin.Text("proposer_task_id")
+		if v, ok := writtenOn(predecessor.Text("agreement_id"), lineage, carries).(string); ok {
 			constraintRevision = valid(v)
 		}
 	default:
@@ -500,27 +500,27 @@ func (e *EditRegions) carriedTerms(ctx context.Context, predecessor row, owned, 
 	if err != nil {
 		return carriedTerms{}, err
 	}
-	return carriedTerms{proposer: proposer, constraint: text(predecessor, "constraint_text"), issue: nullText(predecessor, "issue_key"),
+	return carriedTerms{proposer: proposer, constraint: predecessor.Text("constraint_text"), issue: nullText(predecessor, "issue_key"),
 		nextOwner: sql.NullString{String: next, Valid: next != ""}, conditions: conditions, revisions: revisions,
 		constraintRevision: constraintRevision}, nil
 }
 
 // retireCarried is EditRegions._retire_carried.
 func (e *EditRegions) retireCarried(ctx context.Context, predecessor row, successor, actor, owned string, terms carriedTerms, revision, now string) error {
-	identifier := text(predecessor, "agreement_id")
+	identifier := predecessor.Text("agreement_id")
 	if err := e.Store.SupersedeEditAgreement(ctx, identifier, stateReleased, "reaffirmed onto "+revision, successor, now); err != nil {
 		return err
 	}
-	low, high := text(predecessor, "left_project"), text(predecessor, "right_project")
+	low, high := predecessor.Text("left_project"), predecessor.Text("right_project")
 	if err := e.Store.RecordEditReaffirmation(ctx, store.EditReaffirmationsRow{AgreementID: successor, PredecessorID: identifier,
-		Actor: actor, ActorProject: owned, FromRevision: text(predecessor, "base_revision"), ToRevision: revision,
+		Actor: actor, ActorProject: owned, FromRevision: predecessor.Text("base_revision"), ToRevision: revision,
 		ConstraintRevision: terms.constraintRevision.String, LeftConditionRevision: terms.revisions[low],
 		RightConditionRevision: terms.revisions[high], RecordedAt: now}); err != nil {
 		return err
 	}
 	return journal(ctx, e.Store, "edit_region_reaffirmed", successor, contract.OrderedObject{
 		{Key: "predecessor", Value: identifier}, {Key: "actor", Value: actor},
-		{Key: "from", Value: text(predecessor, "base_revision")}, {Key: "to", Value: revision},
+		{Key: "from", Value: predecessor.Text("base_revision")}, {Key: "to", Value: revision},
 	}, now)
 }
 
@@ -544,7 +544,7 @@ func (e *EditRegions) Settle(ctx context.Context, identifier, actor, disposition
 		if r == nil {
 			return refuse(contract.RefusalUnregisteredScope, "no agreement "+strconv.Quote(identifier))
 		}
-		repository, state := text(r, "repository"), text(r, "state")
+		repository, state := r.Text("repository"), r.Text("state")
 		side, acting, err := e.actingSide(ctx, r, actor, repository)
 		if err != nil {
 			return err
@@ -555,28 +555,28 @@ func (e *EditRegions) Settle(ctx context.Context, identifier, actor, disposition
 				", which admits no further settlement; a new proposal supersedes it", domainEditRegion, repository, state, actor}
 		}
 		if decided == nil {
-			superseded, err := e.one(ctx, "SELECT * FROM edit_revision_marks  WHERE repository = ? AND from_revision = ?", repository, text(r, "base_revision"))
+			superseded, err := e.one(ctx, "SELECT * FROM edit_revision_marks  WHERE repository = ? AND from_revision = ?", repository, r.Text("base_revision"))
 			if err != nil {
 				return err
 			}
 			if superseded != nil {
-				chain, err := e.chainFrom(ctx, repository, text(r, "base_revision"))
+				chain, err := e.chainFrom(ctx, repository, r.Text("base_revision"))
 				if err != nil {
 					return err
 				}
-				end := text(superseded, "to_revision")
+				end := superseded.Text("to_revision")
 				if len(chain) > 0 {
 					end = chain[len(chain)-1]
 				}
-				decided = &refusal{contract.RefusalAgreementRevisionStale, "this agreement stands on " + pyvalue.StrRepr(text(r, "base_revision")) +
-					", which was restated to " + pyvalue.StrRepr(text(superseded, "to_revision")) + "; the recorded chain from it ends at " + pyvalue.StrRepr(end) +
+				decided = &refusal{contract.RefusalAgreementRevisionStale, "this agreement stands on " + pyvalue.StrRepr(r.Text("base_revision")) +
+					", which was restated to " + pyvalue.StrRepr(superseded.Text("to_revision")) + "; the recorded chain from it ends at " + pyvalue.StrRepr(end) +
 					". Reaffirm it on the current revision before settling it: " + commandLine("region-reaffirm", "--agreement", identifier,
-					"--actor", actor, "--revision", end), domainEditRegion, repository, text(r, "base_revision"), actor}
+					"--actor", actor, "--revision", end), domainEditRegion, repository, r.Text("base_revision"), actor}
 			}
 		}
-		if decided == nil && disposition == stateWithdrawn && text(r, "proposer_task_id") != actor {
-			decided = &refusal{contract.RefusalScopeRoleMismatch, "only " + pyvalue.StrRepr(text(r, "proposer_task_id")) +
-				" can withdraw its own proposal; the other side declines instead", domainEditRegion, repository, text(r, "proposer_task_id"), actor}
+		if decided == nil && disposition == stateWithdrawn && r.Text("proposer_task_id") != actor {
+			decided = &refusal{contract.RefusalScopeRoleMismatch, "only " + pyvalue.StrRepr(r.Text("proposer_task_id")) +
+				" can withdraw its own proposal; the other side declines instead", domainEditRegion, repository, r.Text("proposer_task_id"), actor}
 		}
 		if decided != nil {
 			return recordIn(ctx, e.Store, decided, now)
@@ -593,7 +593,7 @@ func (e *EditRegions) Settle(ctx context.Context, identifier, actor, disposition
 }
 
 func (e *EditRegions) applySettlement(ctx context.Context, r row, side, disposition string, condition, reason sql.NullString, now string) error {
-	identifier := text(r, "agreement_id")
+	identifier := r.Text("agreement_id")
 	left := side == "left_project"
 	switch disposition {
 	case "accepted":
@@ -608,7 +608,7 @@ func (e *EditRegions) applySettlement(ctx context.Context, r row, side, disposit
 		if err != nil {
 			return err
 		}
-		if text(both, "left_accepted_at") != "" && text(both, "right_accepted_at") != "" {
+		if both.Text("left_accepted_at") != "" && both.Text("right_accepted_at") != "" {
 			if err := e.Store.SetEditAgreementState(ctx, identifier, stateAgreed, now); err != nil {
 				return err
 			}
@@ -626,7 +626,7 @@ func (e *EditRegions) applySettlement(ctx context.Context, r row, side, disposit
 		}
 		stated := sql.NullString{}
 		if condition.Valid {
-			stated = valid(text(r, "base_revision"))
+			stated = valid(r.Text("base_revision"))
 		}
 		if _, err := q.ExecContext(ctx, "UPDATE edit_reaffirmations SET "+column+"_revision = ?"+
 			" WHERE agreement_id = ?", stated, identifier); err != nil {

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/faults"
@@ -23,7 +24,7 @@ func registerDeclarations() {
 		if err := faults.RegisterKind("project_create", faults.KindPolicy{Creates: true, Target: "team", Evidence: "block", Validate: ValidateProjectPayload, Confirm: ConfirmProject, PreIssue: func(input map[string]any) any {
 			ctx := input["context"].(context.Context)
 			s := input["store"].(*store.Store)
-			problems, err := issuable(ctx, s, object(input["fault"]), object(input["publication"])["payload"])
+			problems, err := issuable(ctx, s, pyjson.Map(input["fault"]), pyjson.Map(input["publication"])["payload"])
 			if err != nil {
 				return err
 			}
@@ -40,7 +41,7 @@ func issuable(ctx context.Context, s *store.Store, fault Object, value any) ([]s
 	if problems := ValidateProjectPayload(value); len(problems) > 0 {
 		return problems, nil
 	}
-	payload := object(value)
+	payload := pyjson.Map(value)
 	signature, err := readStored(fault["signature"])
 	if err != nil {
 		return nil, err
@@ -100,27 +101,27 @@ func (r *Router) evaluateProjects(ctx context.Context, product string) (Object, 
 				return err
 			}
 			for _, v := range list(page["routes"]) {
-				route := object(v)
-				if object(route["target"])["hold"] != "no_project" {
+				route := pyjson.Map(v)
+				if pyjson.Map(route["target"])["hold"] != "no_project" {
 					continue
 				}
-				latest, err := latestIncident(ctx, r.Store, text(route["fault_id"]))
+				latest, err := latestIncident(ctx, r.Store, pyjson.Text(route["fault_id"]))
 				if err != nil {
 					return err
 				}
-				goal := object(latest["goal"])
-				if text(goal["key"]) == "" || text(goal["criteria"]) == "" {
+				goal := pyjson.Map(latest["goal"])
+				if pyjson.Text(goal["key"]) == "" || pyjson.Text(goal["criteria"]) == "" {
 					continue
 				}
-				key := text(goal["key"])
-				group := object(groups[key])
+				key := pyjson.Text(goal["key"])
+				group := pyjson.Map(groups[key])
 				if group == nil {
 					group = Object{"criteria": Object{}, "members": Object{}, "components": Object{}, "workspace": route["workspace"]}
 					groups[key] = group
 				}
-				object(group["criteria"])[text(goal["criteria"])] = true
-				object(group["members"])[text(route["fault_id"])] = true
-				object(group["components"])[text(latest["component"])] = true
+				pyjson.Map(group["criteria"])[pyjson.Text(goal["criteria"])] = true
+				pyjson.Map(group["members"])[pyjson.Text(route["fault_id"])] = true
+				pyjson.Map(group["components"])[pyjson.Text(latest["component"])] = true
 			}
 			after = page["next"]
 			if after == nil {
@@ -129,13 +130,13 @@ func (r *Router) evaluateProjects(ctx context.Context, product string) (Object, 
 		}
 		queued, skipped := []any{}, []any{}
 		for _, goal := range sortedKeys(groups) {
-			group := object(groups[goal])
-			criteria := sortedKeys(object(group["criteria"]))
+			group := pyjson.Map(groups[goal])
+			criteria := sortedKeys(pyjson.Map(group["criteria"]))
 			if len(criteria) > 1 {
 				skipped = append(skipped, Object{"goal": goal, "reasons": []any{fmt.Sprintf("the held defects under %s declare different completion criteria %s; a project needs one", goal, pyvalue.Repr(criteria))}})
 				continue
 			}
-			payload := Object{"product": product, "workspace": group["workspace"], "team": registry["team"], "familyLabel": registry["familyLabel"], "goal": goal, "criteria": criteria[0], "name": fmt.Sprintf("%s · %s", registry["familyLabel"], goal), "members": sortedKeys(object(group["members"])), "components": sortedKeys(object(group["components"]))}
+			payload := Object{"product": product, "workspace": group["workspace"], "team": registry["team"], "familyLabel": registry["familyLabel"], "goal": goal, "criteria": criteria[0], "name": fmt.Sprintf("%s · %s", registry["familyLabel"], goal), "members": sortedKeys(pyjson.Map(group["members"])), "components": sortedKeys(pyjson.Map(group["components"]))}
 			problems, err := ProjectEligibility(ctx, r.Store, payload)
 			if err != nil {
 				return err
@@ -144,7 +145,7 @@ func (r *Router) evaluateProjects(ctx context.Context, product string) (Object, 
 				skipped = append(skipped, Object{"goal": goal, "reasons": problems})
 				continue
 			}
-			id, err := r.Ledger.CanonicalID(ctx, product, "project_needed", Object{"goal": goal}, text(group["workspace"]))
+			id, err := r.Ledger.CanonicalID(ctx, product, "project_needed", Object{"goal": goal}, pyjson.Text(group["workspace"]))
 			if err != nil {
 				return err
 			}
@@ -155,12 +156,12 @@ func (r *Router) evaluateProjects(ctx context.Context, product string) (Object, 
 			live := []Object{}
 			revisable, changed := true, false
 			for _, v := range rows {
-				row := object(v)
+				row := pyjson.Map(v)
 				if row["state"] == "cancelled" {
 					continue
 				}
 				live = append(live, row)
-				revisable = revisable && slices.Contains([]string{"pending", "failed", "claimed"}, text(row["state"]))
+				revisable = revisable && slices.Contains([]string{"pending", "failed", "claimed"}, pyjson.Text(row["state"]))
 				changed = changed || !equal(row["payload"], payload)
 			}
 			if len(live) > 0 && !(revisable && changed) {
@@ -169,14 +170,14 @@ func (r *Router) evaluateProjects(ctx context.Context, product string) (Object, 
 			}
 			trigger := "need:" + goal
 			for _, row := range live {
-				if _, err = r.Ledger.Cancel(ctx, text(row["publication_id"]), "the goal's members changed; queued again with them"); err != nil {
+				if _, err = r.Ledger.Cancel(ctx, pyjson.Text(row["publication_id"]), "the goal's members changed; queued again with them"); err != nil {
 					return err
 				}
 			}
-			if _, err = r.Ledger.SetWorkspaceTarget(ctx, product, text(group["workspace"]), ProjectsScope, text(registry["team"]), ""); err != nil {
+			if _, err = r.Ledger.SetWorkspaceTarget(ctx, product, pyjson.Text(group["workspace"]), ProjectsScope, pyjson.Text(registry["team"]), ""); err != nil {
 				return err
 			}
-			o := faults.Observation{Product: product, FaultClass: "project_needed", Severity: "notice", Signature: Object{"goal": goal}, OccurrenceKey: trigger, Scope: scope(text(group["workspace"]), ProjectsScope), Detail: fmt.Sprintf("%d independent fixes share %s: {%s}", len(list(payload["members"])), goal, pyvalue.Repr(criteria[0]))}
+			o := faults.Observation{Product: product, FaultClass: "project_needed", Severity: "notice", Signature: Object{"goal": goal}, OccurrenceKey: trigger, Scope: scope(pyjson.Text(group["workspace"]), ProjectsScope), Detail: fmt.Sprintf("%d independent fixes share %s: {%s}", len(list(payload["members"])), goal, pyvalue.Repr(criteria[0]))}
 			if _, err = r.Ledger.RecordObservation(ctx, o, nil); err != nil {
 				return err
 			}
@@ -206,8 +207,8 @@ func (r *Router) withdrawProjects(ctx context.Context, product string) ([]any, e
 			return nil, err
 		}
 		for _, v := range list(page["routes"]) {
-			route := object(v)
-			id := text(route["fault_id"])
+			route := pyjson.Map(v)
+			id := pyjson.Text(route["fault_id"])
 			fault, err := r.Ledger.Get(ctx, id)
 			if err != nil {
 				return nil, err
@@ -217,8 +218,8 @@ func (r *Router) withdrawProjects(ctx context.Context, product string) ([]any, e
 				return nil, err
 			}
 			for _, v := range rows {
-				row := object(v)
-				if !slices.Contains([]string{"pending", "failed", "claimed"}, text(row["state"])) {
+				row := pyjson.Map(v)
+				if !slices.Contains([]string{"pending", "failed", "claimed"}, pyjson.Text(row["state"])) {
 					continue
 				}
 				problems, err := issuable(ctx, r.Store, fault, row["payload"])
@@ -226,7 +227,7 @@ func (r *Router) withdrawProjects(ctx context.Context, product string) ([]any, e
 					return nil, err
 				}
 				if len(problems) > 0 {
-					if _, err = r.Ledger.Cancel(ctx, text(row["publication_id"]), strings.Join(problems, "; ")); err != nil {
+					if _, err = r.Ledger.Cancel(ctx, pyjson.Text(row["publication_id"]), strings.Join(problems, "; ")); err != nil {
 						return nil, err
 					}
 					cancelled = append(cancelled, Object{"faultId": id, "publicationId": row["publication_id"], "reasons": problems})
@@ -238,7 +239,7 @@ func (r *Router) withdrawProjects(ctx context.Context, product string) ([]any, e
 			}
 			all := len(rows) > 0
 			for _, v := range fresh {
-				all = all && object(v)["state"] == "cancelled"
+				all = all && pyjson.Map(v)["state"] == "cancelled"
 			}
 			if all {
 				if err = r.Store.SettleIncidentRoute(ctx, id, "observed", "every create it queued was cancelled before issue", r.Clock.ISO()); err != nil {
@@ -253,7 +254,7 @@ func (r *Router) withdrawProjects(ctx context.Context, product string) ([]any, e
 	}
 }
 func (r *Router) bindConfirmed(ctx context.Context, route Object) ([]any, error) {
-	id, product := text(route["fault_id"]), text(route["product_key"])
+	id, product := pyjson.Text(route["fault_id"]), pyjson.Text(route["product_key"])
 	rows, err := r.Ledger.Publications(ctx, id, "project_create", nil, 100, nil)
 	if err != nil {
 		return nil, err
@@ -266,9 +267,9 @@ func (r *Router) bindConfirmed(ctx context.Context, route Object) ([]any, error)
 	for _, b := range bindings {
 		if b["kind"] == "project" {
 			if b["test"] == true {
-				tested[text(b["ref"])] = true
+				tested[pyjson.Text(b["ref"])] = true
 			} else {
-				bound[text(b["ref"])] = true
+				bound[pyjson.Text(b["ref"])] = true
 			}
 		}
 	}
@@ -276,14 +277,14 @@ func (r *Router) bindConfirmed(ctx context.Context, route Object) ([]any, error)
 	if err != nil {
 		return nil, err
 	}
-	tested[text(object(registry["testTarget"])["project"])] = true
+	tested[pyjson.Text(pyjson.Map(registry["testTarget"])["project"])] = true
 	made := []any{}
 	stranded, testTarget := false, false
 	for _, v := range rows {
-		row := object(v)
-		ref := text(row["external_ref"])
-		payload := object(row["payload"])
-		if row["state"] != "confirmed" || ref == "" || (bound[ref] == true && object(route["target"])["project"] == ref) {
+		row := pyjson.Map(v)
+		ref := pyjson.Text(row["external_ref"])
+		payload := pyjson.Map(row["payload"])
+		if row["state"] != "confirmed" || ref == "" || (bound[ref] == true && pyjson.Map(route["target"])["project"] == ref) {
 			continue
 		}
 		if bound[ref] != true && tested[ref] == true {
@@ -305,7 +306,7 @@ func (r *Router) bindConfirmed(ctx context.Context, route Object) ([]any, error)
 				}
 				made = append(made, ref)
 			}
-			destination := clone(object(route["target"]))
+			destination := clone(pyjson.Map(route["target"]))
 			destination["project"], destination["hold"] = ref, nil
 			return r.setTarget(ctx, id, destination)
 		})
@@ -314,7 +315,7 @@ func (r *Router) bindConfirmed(ctx context.Context, route Object) ([]any, error)
 		}
 	}
 	if testTarget || stranded {
-		destination := clone(object(route["target"]))
+		destination := clone(pyjson.Map(route["target"]))
 		destination["hold"] = "project_team_changed"
 		if testTarget {
 			destination["hold"] = "project_is_test_target"
@@ -324,10 +325,10 @@ func (r *Router) bindConfirmed(ctx context.Context, route Object) ([]any, error)
 	all := len(rows) > 0
 	created := []string{}
 	for _, v := range rows {
-		row := object(v)
+		row := pyjson.Map(v)
 		all = all && (row["state"] == "confirmed" || row["state"] == "cancelled")
 		if row["state"] == "confirmed" && row["external_ref"] != nil {
-			created = append(created, text(row["external_ref"]))
+			created = append(created, pyjson.Text(row["external_ref"]))
 		}
 	}
 	if all {

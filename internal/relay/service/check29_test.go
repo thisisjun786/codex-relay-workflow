@@ -53,7 +53,7 @@ var pythonPlainStops = map[capture]bool{
 
 func plainStopShape(result capture) capture {
 	answer, err := parse([]byte(result.Out))
-	if err == nil && (get(answer, "worker") == "gone" || get(answer, "worker") == "exited") {
+	if err == nil && (answer.Get("worker") == "gone" || answer.Get("worker") == "exited") {
 		answer = set(answer, "worker", "gone-or-exited")
 		if raw, err := encoded(answer); err == nil {
 			result.Out = string(raw)
@@ -65,13 +65,13 @@ func plainStopShape(result capture) capture {
 
 func plainStopProblem(pythonOK bool, result capture, oracle map[capture]bool) error {
 	answer, err := parse([]byte(result.Out))
-	if err != nil || (get(answer, "worker") != "gone" && get(answer, "worker") != "exited") {
+	if err != nil || (answer.Get("worker") != "gone" && answer.Get("worker") != "exited") {
 		return fmt.Errorf("Go worker is outside {gone,exited}: %+v", result)
 	}
 	if !pythonOK {
 		return nil
 	}
-	if result.Code != 0 || get(answer, "ok") != true {
+	if result.Code != 0 || answer.Get("ok") != true {
 		return fmt.Errorf("Go non-ok stop after Python ok: %+v", result)
 	}
 	if !oracle[plainStopShape(result)] {
@@ -136,14 +136,14 @@ func Test29D2DeclaredRoleOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	policy, _ := get(receipt, "policy").(Object)
+	policy, _ := receipt.Get("policy").(Object)
 	encodedPolicy, err := encoded(policy)
 	if err != nil {
 		t.Fatal(err)
 	}
 	doctor := runtimeObject(t, invoke(t, home, "--socket", home+"/socket", "doctor"))
-	observed, _ := get(doctor, "workerPolicy").(Object)
-	doctorPolicy, _ := get(observed, "policy").(Object)
+	observed, _ := doctor.Get("workerPolicy").(Object)
+	doctorPolicy, _ := observed.Get("policy").(Object)
 	encodedDoctor, err := encoded(doctorPolicy)
 	if err != nil {
 		t.Fatal(err)
@@ -217,19 +217,19 @@ func Test29D3LaunchSnapshotTwenty(t *testing.T) {
 				}
 				answer := runtimeObject(t, result)
 				if action == "restart" {
-					answer, _ = get(answer, "start").(Object)
+					answer, _ = answer.Get("start").(Object)
 				}
-				supervisor := process(t, num(get(answer, "pid")))
+				supervisor := process(t, num(answer.Get("pid")))
 				// Subscribe before starting; wait only AFTER recording the
 				// response snapshot, never to manufacture its readiness.
 				var record Object
 				watch.until(t, func() bool {
 					record = read(filepath.Join(home, "state", "daemon.json"))
 					receipt := read(filepath.Join(home, "state", "worker-policy.json"))
-					run, _ := get(receipt, "service").(Object)
-					return equal(get(run, "pid"), supervisor.PID)
+					run, _ := receipt.Get("service").(Object)
+					return equal(run.Get("pid"), supervisor.PID)
 				})
-				process(t, num(get(record, "workerPid")))
+				process(t, num(record.Get("workerPid")))
 			}
 			// pidfd cleanup completes before the next iteration starts.
 		})
@@ -254,18 +254,18 @@ func launchSnapshotShape(action string, result capture) (capture, bool) {
 	answer, err := parse([]byte(result.Out))
 	launch := answer
 	if action == "restart" {
-		launch, _ = get(answer, "start").(Object)
+		launch, _ = answer.Get("start").(Object)
 	}
-	ok := err == nil && result.Code == 0 && get(answer, "ok") == true && get(launch, "ok") == true
+	ok := err == nil && result.Code == 0 && answer.Get("ok") == true && launch.Get("ok") == true
 	if !ok {
 		result.Out = normalize(result.Out)
 		return result, false
 	}
-	status, _ := get(launch, "status").(Object)
-	policy, _ := get(status, "launchPolicy").(Object)
-	shape := obj("ok", get(answer, "ok"), "reason", get(answer, "reason"),
-		"launchOK", get(launch, "ok"), "launchReason", get(launch, "reason"),
-		"runningDigest", get(policy, "runningDigest"), "matchesRunning", get(policy, "matchesRunning"))
+	status, _ := launch.Get("status").(Object)
+	policy, _ := status.Get("launchPolicy").(Object)
+	shape := obj("ok", answer.Get("ok"), "reason", answer.Get("reason"),
+		"launchOK", launch.Get("ok"), "launchReason", launch.Get("reason"),
+		"runningDigest", policy.Get("runningDigest"), "matchesRunning", policy.Get("matchesRunning"))
 	raw, err := encoded(shape)
 	if err != nil {
 		return result, false

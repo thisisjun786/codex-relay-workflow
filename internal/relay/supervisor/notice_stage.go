@@ -69,14 +69,14 @@ func (n NoticeChannel) StageNotice(ctx context.Context, notice map[string]any) (
 			}
 			return finish(result == 1, "", false)
 		}
-		id = noticeText(r, "message_id")
+		id = r.Text("message_id")
 		moving := !faults.NoticeAddressed(r, live)
-		moved := moving || noticeText(r, "relationship_id") != relation
-		same := noticeDumps(packet) == noticeText(r, "packet")
+		moved := moving || r.Text("relationship_id") != relation
+		same := noticeDumps(packet) == r.Text("packet")
 		if same && !moved && r.Get("hold_reason") == nil {
 			return finish(false, "this notification is already staged; one notification is one message", false)
 		}
-		released := (noticeText(r, "hold_reason") == store.SupervisorHoldSuperseded || noticeText(r, "hold_reason") == store.SupervisorHoldUnaddressed) && !moving
+		released := (r.Text("hold_reason") == store.SupervisorHoldSuperseded || r.Text("hold_reason") == store.SupervisorHoldUnaddressed) && !moving
 		bounds := " hold_reason=CASE WHEN hold_reason IN (?,?) THEN NULL ELSE hold_reason END,"
 		args := []any{noticeDumps(packet), relation, live["sender"], live["recipient"], live["projectKey"]}
 		if moving {
@@ -153,16 +153,6 @@ func (n NoticeChannel) journal(ctx context.Context, kind, id string, detail map[
 }
 
 func noticeString(m map[string]any, key string) string { s, _ := m[key].(string); return s }
-
-func noticeText(r store.Row, name string) string {
-	switch v := r.Get(name).(type) {
-	case string:
-		return v
-	case []byte:
-		return string(v)
-	}
-	return ""
-}
 
 // noticeDumps is the encoding a notice's packet and journal detail are stored in: sorted keys,
 // non-ASCII kept, a byte that is not UTF-8 read as U+FFFD (the options the fault ledger hashes with).

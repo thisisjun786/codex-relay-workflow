@@ -112,7 +112,7 @@ func (l *Ledger) CanonicalID(ctx context.Context, product, class string, signatu
 		return "", err
 	}
 	if alias != nil {
-		return text(alias, "fault_id"), nil
+		return alias.Text("fault_id"), nil
 	}
 	if workspace != "" {
 		legacy := FaultID(product, class, signature)
@@ -120,7 +120,7 @@ func (l *Ledger) CanonicalID(ctx context.Context, product, class string, signatu
 		if err != nil {
 			return "", err
 		}
-		if old != nil && loadsMap(text(old, "scope"))["workspace"] == workspace {
+		if old != nil && loadsMap(old.Text("scope"))["workspace"] == workspace {
 			return legacy, nil
 		}
 	}
@@ -137,7 +137,7 @@ func (l *Ledger) Get(ctx context.Context, id string) (map[string]any, error) {
 	out["linkState"], out["linkedProject"] = "none", nil
 	if named(r.Get("external_ref")) {
 		out["linkState"] = "unlinked"
-		link, err := l.one(ctx, "SELECT * FROM fault_links WHERE fault_id=?", text(r, "fault_id"))
+		link, err := l.one(ctx, "SELECT * FROM fault_links WHERE fault_id=?", r.Text("fault_id"))
 		if err != nil {
 			return nil, err
 		}
@@ -173,7 +173,7 @@ func (l *Ledger) RecordObservation(ctx context.Context, o Observation, adoption 
 		}
 		states := map[string]string{}
 		for _, r := range before {
-			states[text(r, "publication_id")] = text(r, "state")
+			states[r.Text("publication_id")] = r.Text("state")
 		}
 		recorded, err := l.record(ctx, o, adoption)
 		if err != nil {
@@ -201,12 +201,12 @@ func (l *Ledger) RecordObservation(ctx context.Context, o Observation, adoption 
 			return err
 		}
 		for _, r := range rows {
-			pid := text(r, "publication_id")
+			pid := r.Text("publication_id")
 			prior, existed := states[pid]
 			if existed && prior != "cancelled" {
 				continue
 			}
-			if text(r, "kind") == "update_record" {
+			if r.Text("kind") == "update_record" {
 				continue
 			}
 			published, err = l.publicationReceipt(ctx, r, existed)
@@ -221,9 +221,9 @@ func (l *Ledger) RecordObservation(ctx context.Context, o Observation, adoption 
 	return answer, err
 }
 func (l *Ledger) publicationReceipt(ctx context.Context, r row, revived bool) (map[string]any, error) {
-	kind := text(r, "kind")
+	kind := r.Text("kind")
 	spec := kinds[kind]
-	fault, err := cFault(ctx, l, text(r, "fault_id"))
+	fault, err := cFault(ctx, l, r.Text("fault_id"))
 	if err != nil {
 		return nil, err
 	}
@@ -241,9 +241,9 @@ func (l *Ledger) publicationReceipt(ctx context.Context, r row, revived bool) (m
 		reason = "revived"
 	}
 	if awaiting {
-		reason += fmt.Sprintf("; no target owned by %s for %s (%s), so it waits rather than being filed somewhere guessed", text(fault, "product"), text(fault, "scope_key"), why)
+		reason += fmt.Sprintf("; no target owned by %s for %s (%s), so it waits rather than being filed somewhere guessed", fault.Text("product"), fault.Text("scope_key"), why)
 	}
-	return map[string]any{"publicationId": text(r, "publication_id"), "kind": kind, "trigger": text(r, "trigger_key"), "queued": true, "awaitingTarget": awaiting, "awaitingRecord": spec.RequiresIssue && !named(fault.Get("external_ref")), "reason": reason}, nil
+	return map[string]any{"publicationId": r.Text("publication_id"), "kind": kind, "trigger": r.Text("trigger_key"), "queued": true, "awaitingTarget": awaiting, "awaitingRecord": spec.RequiresIssue && !named(fault.Get("external_ref")), "reason": reason}, nil
 }
 
 func (l *Ledger) Adopt(ctx context.Context, id, reference string, scope map[string]any) (any, error) {
@@ -281,7 +281,7 @@ func (l *Ledger) Publications(ctx context.Context, id string, kind, state any, l
 		return nil, err
 	}
 	if alias != nil {
-		id = text(alias, "fault_id")
+		id = alias.Text("fault_id")
 	}
 	rows, err := l.Store.All(ctx, "SELECT publication_id FROM fault_publications WHERE fault_id=? AND (? IS NULL OR kind=?) AND (? IS NULL OR state=?) AND rowid>? ORDER BY rowid LIMIT ?", id, kind, kind, state, state, after, bound)
 	if err != nil {
@@ -289,7 +289,7 @@ func (l *Ledger) Publications(ctx context.Context, id string, kind, state any, l
 	}
 	out := []any{}
 	for _, r := range rows {
-		v, err := l.Publication(ctx, text(r, "publication_id"))
+		v, err := l.Publication(ctx, r.Text("publication_id"))
 		if err != nil {
 			return nil, err
 		}
@@ -351,7 +351,7 @@ func (l *Ledger) ExpireLeases(ctx context.Context) (map[string]any, error) {
 		answer["more"] = len(rows) > 100
 		for _, row := range rows[:min(len(rows), 100)] {
 			key := "released"
-			if text(row, "state") == "issued" {
+			if row.Text("state") == "issued" {
 				key = "uncertain"
 			}
 			answer[key] = answer[key].(int) + 1
@@ -415,7 +415,7 @@ func (l *Ledger) RecordRemediation(ctx context.Context, id, kind, ref, method, o
 		if err != nil {
 			return err
 		}
-		id = text(canonical, "fault_id")
+		id = canonical.Text("fault_id")
 		rid, recorded, err := l.Remediate(ctx, id, kind, ref, method, outcome)
 		if err != nil {
 			return err
@@ -471,7 +471,7 @@ func (l *Ledger) ResolveRecord(ctx context.Context, id string) (map[string]any, 
 		if err != nil {
 			return err
 		}
-		id = text(r, "fault_id")
+		id = r.Text("fault_id")
 		resolved, err := l.Resolve(ctx, id)
 		if err != nil {
 			return err

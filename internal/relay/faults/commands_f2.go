@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 )
 
 var f2Names = []string{"fault-fail", "fault-adopt", "fault-move", "fault-update"}
@@ -35,11 +35,11 @@ func f2Fail(ctx context.Context, l *Ledger, a map[string]string) (any, error) {
 		if r == nil {
 			return fmt.Errorf("fault_unknown: no publication '%s'", id)
 		}
-		state = text(r, "state")
+		state = r.Text("state")
 		if state != "claimed" && state != "issued" {
 			return fmt.Errorf("fault_not_claimable: only a claimed or issued publication fails; this one is %s", state)
 		}
-		if text(r, "claim_token") != a["--claim-token"] {
+		if r.Text("claim_token") != a["--claim-token"] {
 			return fmt.Errorf("fault_claim_stale: this claim token is not the current one")
 		}
 		if state == "issued" {
@@ -97,7 +97,7 @@ func f2Write(ctx context.Context, l *Ledger, name string, a map[string]string) (
 	if name == "fault-update" {
 		op := a["--op"]
 		if op != "set_project" && op != "reopen" && op != "add_relation" && op != "add_label" {
-			return nil, fmt.Errorf("fault_observation_malformed: op '%s' is not one of ('set_project', 'reopen', 'add_relation', 'add_label')", op)
+			return nil, fmt.Errorf("fault_observation_malformed: op %s is not one of set_project, reopen, add_relation, add_label", quote.Value(op))
 		}
 		if raw, ok := a["--value"]; ok {
 			var e error
@@ -169,7 +169,7 @@ func f2Write(ctx context.Context, l *Ledger, name string, a map[string]string) (
 			return e
 		}
 		if alias != nil {
-			id = text(alias, "fault_id")
+			id = alias.Text("fault_id")
 		}
 		fault, e := l.one(ctx, "SELECT * FROM fault_ledger WHERE fault_id=?", id)
 		if e != nil {
@@ -201,34 +201,22 @@ func f2JSON(raw, label string) (any, error) {
 	}
 	v, e := loads(raw)
 	if e != nil {
-		message := "Expecting value: line 1 column 1 (char 0)"
-		if syntax, ok := e.(*json.SyntaxError); ok {
-			start := int(syntax.Offset) - 2
-			if start < 0 {
-				start = 0
-			}
-			prefix := raw[:min(start, len(raw))]
-			position := utf8.RuneCountInString(prefix)
-			line := strings.Count(prefix, "\n") + 1
-			column := utf8.RuneCountInString(prefix[strings.LastIndex(prefix, "\n")+1:]) + 1
-			message = fmt.Sprintf("Expecting value: line %d column %d (char %d)", line, column, position)
-		}
-		return nil, fmt.Errorf("fault_observation_malformed: the %s is not readable JSON: %s", label, message)
+		return nil, fmt.Errorf("fault_observation_malformed: the %s is not readable JSON: %v", label, e)
 	}
 	return v, nil
 }
 func f2Move(ctx context.Context, l *Ledger, f row, scope map[string]any, stamp string) (any, error) {
-	id := text(f, "fault_id")
-	old := loadsMap(text(f, "scope"))
+	id := f.Text("fault_id")
+	old := loadsMap(f.Text("scope"))
 	current, _ := old["workspace"].(string)
 	wanted, _ := scope["workspace"].(string)
 	var alias any
 	if wanted != current {
 		if current != "unassigned" || wanted == "" || wanted == "unassigned" {
-			return nil, fmt.Errorf("fault_scope_conflict: a fault moves inside its workspace, or out of unassigned; this one is in %s and was asked to move to %s", f2Repr(old["workspace"]), f2Repr(scope["workspace"]))
+			return nil, fmt.Errorf("fault_scope_conflict: a fault moves inside its workspace, or out of unassigned; this one is in %s and was asked to move to %s", quote.Value(old["workspace"]), quote.Value(scope["workspace"]))
 		}
-		signature := loadsMap(text(f, "signature"))
-		candidate := FaultIDInWorkspace(text(f, "product"), text(f, "fault_class"), signature, wanted)
+		signature := loadsMap(f.Text("signature"))
+		candidate := FaultIDInWorkspace(f.Text("product"), f.Text("fault_class"), signature, wanted)
 		alias = candidate
 		existing, e := l.one(ctx, "SELECT fault_id FROM fault_aliases WHERE alias_id=?", candidate)
 		if e != nil {
@@ -236,7 +224,7 @@ func f2Move(ctx context.Context, l *Ledger, f row, scope map[string]any, stamp s
 		}
 		resolved := candidate
 		if existing != nil {
-			resolved = text(existing, "fault_id")
+			resolved = existing.Text("fault_id")
 		}
 		other, e := l.one(ctx, "SELECT 1 FROM fault_ledger WHERE fault_id=?", resolved)
 		if e != nil {
@@ -270,19 +258,13 @@ func f2Move(ctx context.Context, l *Ledger, f row, scope map[string]any, stamp s
 	if e != nil {
 		return nil, e
 	}
-	return map[string]any{"faultId": id, "scopeKey": text(fresh, "scope_key"), "moved": changed, "repointed": repointed, "repointPending": integer(pending, "n"), "alias": alias}, nil
-}
-func f2Repr(v any) string {
-	if v == nil {
-		return "None"
-	}
-	return fmt.Sprintf("'%v'", v)
+	return map[string]any{"faultId": id, "scopeKey": fresh.Text("scope_key"), "moved": changed, "repointed": repointed, "repointPending": integer(pending, "n"), "alias": alias}, nil
 }
 func f2Adopt(ctx context.Context, l *Ledger, f row, ref string, scope map[string]any, stamp string) (any, error) {
-	id := text(f, "fault_id")
+	id := f.Text("fault_id")
 	if f.Get("external_ref") != nil {
-		if text(f, "external_ref") != ref {
-			return nil, fmt.Errorf("fault_adopt_conflict: this fault already owns '%s'", text(f, "external_ref"))
+		if f.Text("external_ref") != ref {
+			return nil, fmt.Errorf("fault_adopt_conflict: this fault already owns '%s'", f.Text("external_ref"))
 		}
 		return f2AdoptionAnswer(ctx, l, id, ref, nil)
 	}
@@ -290,34 +272,34 @@ func f2Adopt(ctx context.Context, l *Ledger, f row, ref string, scope map[string
 	if e != nil {
 		return nil, e
 	}
-	if stored != nil && text(stored, "external_ref") != ref {
-		return nil, fmt.Errorf("fault_adopt_conflict: this fault already adopts '%s'", text(stored, "external_ref"))
+	if stored != nil && stored.Text("external_ref") != ref {
+		return nil, fmt.Errorf("fault_adopt_conflict: this fault already adopts '%s'", stored.Text("external_ref"))
 	}
 	create, e := l.one(ctx, "SELECT * FROM fault_publications WHERE fault_id=? AND kind='open_record'", id)
 	if e != nil {
 		return nil, e
 	}
 	if create != nil {
-		switch text(create, "state") {
+		switch create.Text("state") {
 		case "issued", "uncertain", "confirmed":
-			return nil, fmt.Errorf("fault_adopt_conflict: this fault's create is %s; reconcile it first, or two records would stand for one fault", text(create, "state"))
+			return nil, fmt.Errorf("fault_adopt_conflict: this fault's create is %s; reconcile it first, or two records would stand for one fault", create.Text("state"))
 		}
 	}
 	if _, e = f2Move(ctx, l, f, scope, stamp); e != nil {
 		return nil, e
 	}
 	if create != nil {
-		switch text(create, "state") {
+		switch create.Text("state") {
 		case "pending", "failed", "claimed":
 			attempts := integer(create, "attempts")
-			if text(create, "state") == "claimed" {
-				attempt, e := l.one(ctx, "SELECT attempt_id FROM fault_publication_attempts WHERE publication_id=? ORDER BY attempt_id DESC LIMIT 1", text(create, "publication_id"))
+			if create.Text("state") == "claimed" {
+				attempt, e := l.one(ctx, "SELECT attempt_id FROM fault_publication_attempts WHERE publication_id=? ORDER BY attempt_id DESC LIMIT 1", create.Text("publication_id"))
 				if e != nil {
 					return nil, e
 				}
 				if attempt != nil {
-					refKey := fmt.Sprintf("%s:%d", text(create, "publication_id"), integer(attempt, "attempt_id"))
-					if _, e = l.exec(ctx, "DELETE FROM fault_budget_uses WHERE product=? AND kind=? AND ref=?", text(f, "product"), openRecord, refKey); e != nil {
+					refKey := fmt.Sprintf("%s:%d", create.Text("publication_id"), integer(attempt, "attempt_id"))
+					if _, e = l.exec(ctx, "DELETE FROM fault_budget_uses WHERE product=? AND kind=? AND ref=?", f.Text("product"), openRecord, refKey); e != nil {
 						return nil, e
 					}
 					if _, e = l.exec(ctx, "UPDATE fault_publication_attempts SET outcome='cancelled',ended=1,ended_at=? WHERE attempt_id=?", stamp, integer(attempt, "attempt_id")); e != nil {
@@ -326,7 +308,7 @@ func f2Adopt(ctx context.Context, l *Ledger, f row, ref string, scope map[string
 				}
 				attempts--
 			}
-			if _, e = l.exec(ctx, "UPDATE fault_publications SET state='cancelled',claim_token=NULL,lease_owner=NULL,lease_until=NULL,last_error=?,updated_at=?,attempts=? WHERE publication_id=?", "adopted "+ref, stamp, attempts, text(create, "publication_id")); e != nil {
+			if _, e = l.exec(ctx, "UPDATE fault_publications SET state='cancelled',claim_token=NULL,lease_owner=NULL,lease_until=NULL,last_error=?,updated_at=?,attempts=? WHERE publication_id=?", "adopted "+ref, stamp, attempts, create.Text("publication_id")); e != nil {
 				return nil, e
 			}
 		}
@@ -335,7 +317,7 @@ func f2Adopt(ctx context.Context, l *Ledger, f row, ref string, scope map[string
 		return nil, e
 	}
 	var publication any
-	if text(f, "state") == Open || create != nil {
+	if f.Text("state") == Open || create != nil {
 		if _, e = l.exec(ctx, "UPDATE fault_ledger SET external_ref=?,updated_at=? WHERE fault_id=? AND external_ref IS NULL", ref, stamp, id); e != nil {
 			return nil, e
 		}
@@ -350,14 +332,14 @@ func f2Adopt(ctx context.Context, l *Ledger, f row, ref string, scope map[string
 		if e != nil {
 			return nil, e
 		}
-		target, e := l.one(ctx, "SELECT project_ref FROM fault_target_projects WHERE scope_key=? AND product=?", text(fresh, "scope_key"), text(fresh, "product"))
+		target, e := l.one(ctx, "SELECT project_ref FROM fault_target_projects WHERE scope_key=? AND product=?", fresh.Text("scope_key"), fresh.Text("product"))
 		if e != nil {
 			return nil, e
 		}
 		if target == nil || target.Get("project_ref") == nil {
 			e = dUnlinkOne(ctx, l, id, stamp)
 		} else {
-			e = dRelinkOne(ctx, l, id, text(target, "project_ref"), stamp)
+			e = dRelinkOne(ctx, l, id, target.Text("project_ref"), stamp)
 		}
 		if e != nil {
 			return nil, e
@@ -384,17 +366,17 @@ func f2AdoptionAnswer(ctx context.Context, l *Ledger, id, ref string, publicatio
 	}
 	cancelled := []any{}
 	for _, r := range rows {
-		cancelled = append(cancelled, text(r, "publication_id"))
+		cancelled = append(cancelled, r.Text("publication_id"))
 	}
 	if f.Get("external_ref") != nil {
-		ref = text(f, "external_ref")
+		ref = f.Text("external_ref")
 	}
 	return map[string]any{"faultId": id, "externalRef": ref, "state": state, "cancelled": cancelled, "publication": publication}, nil
 }
 func f2Update(ctx context.Context, l *Ledger, f row, op string, value any, stamp string) (any, error) {
-	id := text(f, "fault_id")
+	id := f.Text("fault_id")
 	if op == "set_project" {
-		target, e := l.one(ctx, "SELECT p.project_ref FROM fault_target_projects p WHERE p.scope_key=? AND p.product=?", text(f, "scope_key"), text(f, "product"))
+		target, e := l.one(ctx, "SELECT p.project_ref FROM fault_target_projects p WHERE p.scope_key=? AND p.product=?", f.Text("scope_key"), f.Text("product"))
 		if e != nil {
 			return nil, e
 		}
@@ -403,7 +385,7 @@ func f2Update(ctx context.Context, l *Ledger, f row, op string, value any, stamp
 			wanted = target.Get("project_ref")
 		}
 		if value != wanted {
-			detail := f2Repr(wanted)
+			detail := quote.Value(wanted)
 			if target == nil {
 				detail += ": awaiting_target"
 			}
@@ -423,8 +405,8 @@ func f2Update(ctx context.Context, l *Ledger, f row, op string, value any, stamp
 		if e != nil {
 			return nil, e
 		}
-		if r != nil && text(r, "state") == pending && (before == nil || text(before, "publication_id") != text(r, "publication_id")) {
-			return map[string]any{"publicationId": text(r, "publication_id"), "kind": "update_record", "trigger": text(r, "trigger_key"), "queued": true, "awaitingTarget": false, "awaitingRecord": false, "reason": "queued"}, nil
+		if r != nil && r.Text("state") == pending && (before == nil || before.Text("publication_id") != r.Text("publication_id")) {
+			return map[string]any{"publicationId": r.Text("publication_id"), "kind": "update_record", "trigger": r.Text("trigger_key"), "queued": true, "awaitingTarget": false, "awaitingRecord": false, "reason": "queued"}, nil
 		}
 		link, e := l.one(ctx, "SELECT state FROM fault_links WHERE fault_id=?", id)
 		if e != nil {
@@ -432,7 +414,7 @@ func f2Update(ctx context.Context, l *Ledger, f row, op string, value any, stamp
 		}
 		state := "unlinked"
 		if link != nil {
-			state = text(link, "state")
+			state = link.Text("state")
 		}
 		return map[string]any{"publicationId": nil, "kind": "update_record", "trigger": nil, "queued": false, "linkState": state, "reason": "nothing new was queued: the issue already reads back in that project, or a write to another project may still land and its readback decides"}, nil
 	}
@@ -445,7 +427,7 @@ func f2Update(ctx context.Context, l *Ledger, f row, op string, value any, stamp
 	if e != nil {
 		return nil, e
 	}
-	if prior != nil && text(prior, "state") != "cancelled" {
+	if prior != nil && prior.Text("state") != "cancelled" {
 		return map[string]any{"publicationId": publication, "kind": "update_record", "trigger": trigger, "queued": false, "awaitingTarget": false, "awaitingRecord": false, "reason": "this reason was already queued"}, nil
 	}
 	if e = l.insertPublication(ctx, id, "update_record", trigger, stamp, ""); e != nil {
@@ -462,13 +444,13 @@ func f2Update(ctx context.Context, l *Ledger, f row, op string, value any, stamp
 	return map[string]any{"publicationId": publication, "kind": "update_record", "trigger": trigger, "queued": true, "awaitingTarget": false, "awaitingRecord": false, "reason": reason}, nil
 }
 func f2Notify(ctx context.Context, l *Ledger, r row, state, stamp string) error {
-	id := text(r, "fault_id")
+	id := r.Text("fault_id")
 	fault, e := l.one(ctx, "SELECT product FROM fault_ledger WHERE fault_id=?", id)
 	if e != nil {
 		return e
 	}
-	reason := fmt.Sprintf("write:%s:%s", text(r, "publication_id"), state)
+	reason := fmt.Sprintf("write:%s:%s", r.Text("publication_id"), state)
 	notification := pyvalue.SHA256Hex(fmt.Sprintf("%s|decision|%s", id, reason))[:idWidth]
-	_, e = l.exec(ctx, "INSERT INTO fault_notifications(notification_id,fault_id,product,kind,reason,cycle,ref,state,created_at,updated_at) VALUES(?,?,?,'decision',?,?,NULL,'pending',?,?) ON CONFLICT(notification_id) DO UPDATE SET state=excluded.state,last_error=NULL,updated_at=excluded.updated_at WHERE fault_notifications.state='withdrawn'", notification, id, text(fault, "product"), reason, integer(r, "cycle"), stamp, stamp)
+	_, e = l.exec(ctx, "INSERT INTO fault_notifications(notification_id,fault_id,product,kind,reason,cycle,ref,state,created_at,updated_at) VALUES(?,?,?,'decision',?,?,NULL,'pending',?,?) ON CONFLICT(notification_id) DO UPDATE SET state=excluded.state,last_error=NULL,updated_at=excluded.updated_at WHERE fault_notifications.state='withdrawn'", notification, id, fault.Text("product"), reason, integer(r, "cycle"), stamp, stamp)
 	return e
 }

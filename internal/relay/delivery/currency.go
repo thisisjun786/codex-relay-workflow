@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -188,14 +189,14 @@ func Currency(ctx context.Context, s *store.Store, relationship, event Row) (Obj
 	if err != nil {
 		return nil, err
 	}
-	if slices.Contains(ambiguousEvidence, str(head, "evidence")) {
-		competitors, _ := get(head, "competitors")
-		return Obj{{Key: "current", Value: false}, {Key: "reason", Value: RevisionAmbiguous}, {Key: "evidence", Value: str(head, "evidence")}, {Key: "headEventId", Value: nil}, {Key: "headRevisionHash", Value: nil}, {Key: "detail", Value: str(head, "detail")}, {Key: "competitors", Value: competitors}}, nil
+	if slices.Contains(ambiguousEvidence, pyjson.Text(head.Get("evidence"))) {
+		competitors, _ := head.Lookup("competitors")
+		return Obj{{Key: "current", Value: false}, {Key: "reason", Value: RevisionAmbiguous}, {Key: "evidence", Value: pyjson.Text(head.Get("evidence"))}, {Key: "headEventId", Value: nil}, {Key: "headRevisionHash", Value: nil}, {Key: "detail", Value: pyjson.Text(head.Get("detail"))}, {Key: "competitors", Value: competitors}}, nil
 	}
-	headID, _ := get(head, "eventId")
-	headHash, _ := get(head, "revisionHash")
+	headID, _ := head.Lookup("eventId")
+	headHash, _ := head.Lookup("revisionHash")
 	if headID != event.S("event_id") {
-		return Obj{{Key: "current", Value: false}, {Key: "reason", Value: SupersededRevision}, {Key: "evidence", Value: str(head, "evidence")}, {Key: "headEventId", Value: headID}, {Key: "headRevisionHash", Value: headHash}, {Key: "detail", Value: fmt.Sprintf("the current revision of generation %d is %v", generation, headID)}}, nil
+		return Obj{{Key: "current", Value: false}, {Key: "reason", Value: SupersededRevision}, {Key: "evidence", Value: pyjson.Text(head.Get("evidence"))}, {Key: "headEventId", Value: headID}, {Key: "headRevisionHash", Value: headHash}, {Key: "detail", Value: fmt.Sprintf("the current revision of generation %d is %v", generation, headID)}}, nil
 	}
-	return Obj{{Key: "current", Value: true}, {Key: "reason", Value: nil}, {Key: "evidence", Value: str(head, "evidence")}, {Key: "headEventId", Value: headID}, {Key: "headRevisionHash", Value: headHash}, {Key: "detail", Value: ""}}, nil
+	return Obj{{Key: "current", Value: true}, {Key: "reason", Value: nil}, {Key: "evidence", Value: pyjson.Text(head.Get("evidence"))}, {Key: "headEventId", Value: headID}, {Key: "headRevisionHash", Value: headHash}, {Key: "detail", Value: ""}}, nil
 }

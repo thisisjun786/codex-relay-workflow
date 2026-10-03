@@ -101,7 +101,7 @@ func Test30IsolatedScopeRootMatchesPython(t *testing.T) {
 		if err = unix.Stat(lock, &st); err != nil || unix.Stat(resolved+".lock", &kernel) != nil || st.Ino != kernel.Ino {
 			t.Fatalf("Go K.lock %q is not %s.lock: %v", lock, resolved, err)
 		}
-		if get(scope.Read(socket), "storeId") == nil || get(read(resolved+".json"), "storeId") != get(scope.Read(socket), "storeId") {
+		if scope.Read(socket).Get("storeId") == nil || read(resolved+".json").Get("storeId") != scope.Read(socket).Get("storeId") {
 			t.Fatalf("the registration is not at the kernel's spelling: %v", scope.Read(socket))
 		}
 		if _, err = os.Stat(filepath.Join(base, "scopes")); !errors.Is(err, os.ErrNotExist) {

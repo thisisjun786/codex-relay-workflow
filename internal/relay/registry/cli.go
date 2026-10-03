@@ -89,6 +89,12 @@ var commands = []command{
 		x, err := r.Resume(ctx, p.text("relationship"), p.integer("expect-generation"), p.values["expect-artifact-root"], p.values["expect-allowed-recipient"], p.text("actor"))
 		return x.ContractRecord(), err
 	}},
+	// relationship-close-merged is read-only unless --apply is given, as dag-ready is until --record: a dry run never
+	// creates a store and writes no relationship, link or journal row.
+	{Command: dispatch.Command{Name: "relationship-close-merged", ReadOnlyWhen: func(args dispatch.Args) bool { return !args.Bool("apply") }},
+		run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
+			return r.CloseMerged(ctx, p.text("project"), p.set["all"], p.text("actor"), p.set["apply"])
+		}},
 	{Command: dispatch.Command{Name: "assignment-show", ReadOnly: true}, run: cmdAssignmentShow},
 	{Command: dispatch.Command{Name: "assignment-find", ReadOnly: true}, run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
 		return assignmentView(r).ForIssue(ctx, p.text("issue"))
@@ -129,7 +135,7 @@ func cmdDispositionsShow(ctx context.Context, selection store.StateSelection, p 
 	if err != nil {
 		return nil, err
 	}
-	if readable, _ := getField(report, "readable"); readable != true {
+	if readable, _ := report.Lookup("readable"); readable != true {
 		return nil, &DispositionsExit{report}
 	}
 	return report, nil
@@ -297,7 +303,7 @@ func (r *Registry) RegisterWithSettings(ctx context.Context, in Registration, wr
 			if _, err := r.RecordSettings(ctx, w.task, w.values, "creation_result", w.role, citation); err != nil {
 				return err
 			}
-			recorded = setField(recorded, w.task, "recorded")
+			recorded = recorded.Set(w.task, "recorded")
 		}
 		return nil
 	})
@@ -322,9 +328,9 @@ func (r *Registry) refuseRoleDisagreement(ctx context.Context, writes []settings
 		if w.role == "" {
 			continue
 		}
-		settings = setField(settings, "citedRole", w.role)
+		settings = settings.Set("citedRole", w.role)
 		if w.exception.Valid {
-			settings = setField(settings, "citedException", w.exception.String)
+			settings = settings.Set("citedException", w.exception.String)
 		}
 		bound, contested, err := boundRole(ctx, r.Store, w.task)
 		if err != nil {

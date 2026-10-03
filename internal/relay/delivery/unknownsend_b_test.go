@@ -8,6 +8,7 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/faults"
 )
 
@@ -49,7 +50,7 @@ func Test21_USL13_a_revision_request_left_without_trace_is_held_not_resent(t *te
 		h.eq(h.row(correction).S("state"))
 		h.host.threads[child].status = "notLoaded"
 		h.clock.Advance(120)
-		outcome := h.reconcile(str(record, "requestId"), h.host)
+		outcome := h.reconcile(pyjson.Text(record.Get("requestId")), h.host)
 		h.eq(field(outcome, "nextExpectedAction"))
 		h.eq(argvTail(field(sub(outcome, "recovery"), "command")))
 		row := h.row(correction)
@@ -229,7 +230,7 @@ func Test21_USL17_a_cap_of_zero_names_the_operator(t *testing.T) {
 			policy.MaxSendsPerRelationshipPerHour = 0
 			p := policy.Pacing(h.clock.Now(), 0, nil)
 			h.eq([]any{field(p, "reason"), field(p, "reopensAt")})
-			h.eq(regexp.MustCompile("changed policy").MatchString(str(p, "detail")))
+			h.eq(regexp.MustCompile("changed policy").MatchString(pyjson.Text(p.Get("detail"))))
 		})
 	})
 	t.Run("completion", func(t *testing.T) {
@@ -396,7 +397,7 @@ func Test21_USL20_a_hold_reaches_its_fault_whatever_the_sweep_saw_first(t *testi
 			h.hostLoses(turn, true)
 			h.ticks(1, 120)
 			second := h.attemptsFor(event)[1]
-			h.hostLoses(str(loadsObj(second.S("record")), "turnId"), true)
+			h.hostLoses(pyjson.Text(loadsObj(second.S("record")).Get("turnId")), true)
 			h.ticks(4, 120)
 			h.eq(h.row(event).Opt("hold_reason"))
 			h.faultStates()
@@ -525,7 +526,7 @@ func Test21_USL22_a_superseded_hold_names_the_supersession(t *testing.T) {
 			openGenerationTwo(h)
 			outcome := h.reconcile(first, h.host)
 			h.eq([]any{field(outcome, "nextExpectedAction"), field(outcome, "reason")})
-			_, has := get(outcome, "recovery")
+			_, has := outcome.Lookup("recovery")
 			h.eq(has)
 			h.eq(h.statusPair(event))
 			h.ticks(3, 700)
@@ -540,7 +541,7 @@ func Test21_USL22_a_superseded_hold_names_the_supersession(t *testing.T) {
 			h.eq(h.statusPair(event))
 			outcome := h.reconcile(first, h.host)
 			h.eq([]any{field(outcome, "nextExpectedAction"), field(outcome, "reason")})
-			_, has := get(outcome, "recovery")
+			_, has := outcome.Lookup("recovery")
 			h.eq(has)
 			h.eq(h.sendsTo(parent))
 		})
@@ -553,7 +554,7 @@ func Test21_USL22_a_superseded_hold_names_the_supersession(t *testing.T) {
 		record := h.attemptOn(correction, h.host, nil)
 		h.host.threads[child].status = "notLoaded"
 		h.clock.Advance(120)
-		h.reconcile(str(record, "requestId"), h.host)
+		h.reconcile(pyjson.Text(record.Get("requestId")), h.host)
 		row := h.row(correction)
 		h.eq([]any{row.S("state"), row.Opt("hold_reason")})
 		h.host.startTurn(child, "child-late", "failed", "")
@@ -562,16 +563,16 @@ func Test21_USL22_a_superseded_hold_names_the_supersession(t *testing.T) {
 		payload := h.executionPayload(h.rid, 2, "failed", 1, turnRef{child, "child-late", "failed"})
 		_, err = h.accept(payload, storeAcceptNone)
 		mustDo(h.t, err)
-		_, err = h.delivery.Enqueue(h.ctx, str(payload, "eventId"), "", "")
+		_, err = h.delivery.Enqueue(h.ctx, pyjson.Text(payload.Get("eventId")), "", "")
 		mustDo(h.t, err)
-		return correction, str(record, "requestId")
+		return correction, pyjson.Text(record.Get("requestId"))
 	}
 	t.Run("an answered correction", func(t *testing.T) {
 		mirror(t, usl, cls+"test_a_held_correction_its_generation_answered_names_the_child_disposition", func(h *hl) {
 			_, request := answered(h)
 			outcome := h.reconcile(request, h.host)
 			h.eq([]any{field(outcome, "nextExpectedAction"), field(outcome, "reason")})
-			_, has := get(outcome, "recovery")
+			_, has := outcome.Lookup("recovery")
 			h.eq(has)
 			h.eq(h.sendsTo(child))
 		})
@@ -583,7 +584,7 @@ func Test21_USL22_a_superseded_hold_names_the_supersession(t *testing.T) {
 			h.openGeneration("dispatch-3", "needs_changes_revision", "turn-dispatch-3")
 			outcome := h.reconcile(request, h.host)
 			h.eq([]any{field(outcome, "nextExpectedAction"), field(outcome, "reason")})
-			_, has := get(outcome, "recovery")
+			_, has := outcome.Lookup("recovery")
 			h.eq(has)
 			h.eq(h.statusPair(correction))
 		})

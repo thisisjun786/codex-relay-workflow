@@ -117,9 +117,9 @@ func startUnderPermissionProfile(t *testing.T, requested, created, resumed any) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := profileStart{state: field(result, "state").(string)}
-	got.stage, _ = field(result, "stage").(string)
-	got.reason, _ = field(result, "reason").(string)
+	got := profileStart{state: result.Get("state").(string)}
+	got.stage, _ = result.Get("stage").(string)
+	got.reason, _ = result.Get("reason").(string)
 	mu.Lock()
 	got.turns = turns
 	mu.Unlock()

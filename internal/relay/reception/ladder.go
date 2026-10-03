@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -74,7 +75,7 @@ func Ladder(ctx context.Context, s *store.Store, rid, subject string, observatio
 		}
 		judged, accepted := Stage("no", "verdicts", "no verdict"), Stage("no", "verdicts", "no verdict")
 		if verdict != nil {
-			detail := "verdict " + str(verdict.Get("verdict"))
+			detail := "verdict " + pyjson.Text(verdict.Get("verdict"))
 			judged = Stage("yes", "verdicts", detail)
 			state := "no"
 			if verdict.Get("verdict") == "verified" {
@@ -100,9 +101,9 @@ func Ladder(ctx context.Context, s *store.Store, rid, subject string, observatio
 				if turn.Get("state") != "landed" {
 					continue
 				}
-				heads = append(heads, str(turn.Get("candidate_head")))
+				heads = append(heads, pyjson.Text(turn.Get("candidate_head")))
 				if equal(turn.Get("candidate_head"), Get(observation, "headSha")) {
-					landing = Stage("yes", "merge_turns", "turn "+str(turn.Get("turn_id"))+" landed the observed head")
+					landing = Stage("yes", "merge_turns", "turn "+pyjson.Text(turn.Get("turn_id"))+" landed the observed head")
 					break
 				}
 			}

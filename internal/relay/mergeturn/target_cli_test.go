@@ -16,7 +16,7 @@ func Test26_MTG_8_malformed_review_keeps_store_unchanged(t *testing.T) {
 		key    string
 		value  any
 		detail string
-	}{{"threadsSeen", json.Number("1"), "threadsSeen is a list of thread identifiers, not a int"}, {"unresolved", []any{}, "unresolved is a whole number, not a list"}} {
+	}{{"threadsSeen", json.Number("1"), "threadsSeen is a list of thread identifiers, not a number"}, {"unresolved", []any{}, "unresolved is a whole number, not an array"}} {
 		b := defaults()
 		b.review = review("hasNextPage", false, "pagesRead", json.Number("1"), "totalCount", json.Number("1"), "threadsSeen", []any{"thread-1"}, "unresolved", json.Number("0"))
 		stated := b.review.(contract.OrderedObject)

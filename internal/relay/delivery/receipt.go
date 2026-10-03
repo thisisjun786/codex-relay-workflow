@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -184,7 +185,7 @@ func readFailure(err error) (*receiptHead, Obj, bool, error) {
 func readReceiptHead(ctx context.Context, q store.Querier, want ReceiptQuery, afterHead func()) (*receiptHead, Obj, bool, error) {
 	relationship, _ := want.Relationship.(string)
 	answer := func(evidence string, extra ...F) (*receiptHead, Obj, bool, error) {
-		return nil, append(set(want.base(), "evidence", evidence), extra...), true, nil
+		return nil, append(want.base().Set("evidence", evidence), extra...), true, nil
 	}
 	var status, roots string
 	var superseded sql.NullString
@@ -222,10 +223,10 @@ func readReceiptHead(ctx context.Context, q store.Querier, want ReceiptQuery, af
 	if afterHead != nil {
 		afterHead()
 	}
-	if slices.Contains(ambiguousEvidence, str(head, "evidence")) {
-		return answer("head_" + str(head, "evidence"))
+	if slices.Contains(ambiguousEvidence, pyjson.Text(head.Get("evidence"))) {
+		return answer("head_" + pyjson.Text(head.Get("evidence")))
 	}
-	eventID := str(head, "eventId")
+	eventID := pyjson.Text(head.Get("eventId"))
 	if eventID == "" {
 		return answer("no_reviewable_revision")
 	}
@@ -247,7 +248,7 @@ func readReceiptHead(ctx context.Context, q store.Querier, want ReceiptQuery, af
 func judgeReceiptHead(ctx context.Context, want ReceiptQuery, head *receiptHead) (Obj, bool, error) {
 	base := want.base()
 	answer := func(evidence string, extra ...F) (Obj, bool, error) {
-		return append(set(base, "evidence", evidence), extra...), true, nil
+		return append(base.Set("evidence", evidence), extra...), true, nil
 	}
 	if head.producer != "child" || (head.stage != "staged" && head.stage != "final") {
 		return answer("head_is_not_a_child_receipt")
@@ -265,10 +266,10 @@ func judgeReceiptHead(ctx context.Context, want ReceiptQuery, head *receiptHead)
 	}
 	switch state {
 	case store.DeliverableUnverifiable:
-		return append(set(base, "evidence", "deliverable_unverifiable"), F{Key: "detail", Value: nullable(detail)}), false, nil
+		return append(base.Set("evidence", "deliverable_unverifiable"), F{Key: "detail", Value: nullable(detail)}), false, nil
 	case store.DeliverableChanged:
 		return answer("artifacts_changed_since_receipt", F{Key: "detail", Value: nullable(detail)}, F{Key: "eventId", Value: head.id}, F{Key: "revisionHash", Value: nullable(head.revision.String)})
 	}
-	base = set(base, "atCurrentHead", true)
+	base = base.Set("atCurrentHead", true)
 	return answer("at_head", F{Key: "eventId", Value: head.id}, F{Key: "revisionHash", Value: nullable(head.revision.String)}, F{Key: "stage", Value: head.stage}, F{Key: "deliverableBinding", Value: binding})
 }

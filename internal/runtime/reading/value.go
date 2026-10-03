@@ -3,26 +3,12 @@ package reading
 import (
 	"strings"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 )
 
-// JSONKind is a decoded JSON value's kind, as a message names it.
-func JSONKind(v any) string {
-	switch v.(type) {
-	case nil:
-		return "null"
-	case bool:
-		return "a boolean"
-	case string:
-		return "a string"
-	case []any:
-		return "an array"
-	case contract.OrderedObject, map[string]any:
-		return "an object"
-	}
-	return "a number"
-}
+// JSONKind is a decoded JSON value's kind, as a message names it (quote.Kind).
+func JSONKind(v any) string { return quote.Kind(v) }
 
 // Show is a decoded value as a message names it: its JSON text.
 func Show(v any) string { return pyjson.Dumps(v, pyjson.Options{}) }

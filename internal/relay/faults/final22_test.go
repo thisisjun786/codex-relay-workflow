@@ -78,8 +78,8 @@ func Test22_FaultTargetUnchangedWholeOutput(t *testing.T) {
 			var guards, drops []string
 			for _, r := range names {
 				for _, verb := range []string{"INSERT", "UPDATE", "DELETE"} {
-					name := "no_write_" + text(r, "name") + "_" + verb
-					guards = append(guards, "CREATE TRIGGER "+name+" BEFORE "+verb+" ON "+text(r, "name")+" BEGIN SELECT RAISE(ABORT,'unchanged target wrote'); END")
+					name := "no_write_" + r.Text("name") + "_" + verb
+					guards = append(guards, "CREATE TRIGGER "+name+" BEFORE "+verb+" ON "+r.Text("name")+" BEGIN SELECT RAISE(ABORT,'unchanged target wrote'); END")
 					drops = append(drops, "DROP TRIGGER "+name)
 				}
 			}

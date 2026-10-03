@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"context"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"os"
 	"path/filepath"
 	"testing"
@@ -60,7 +61,7 @@ func Test_round3_a_base_that_is_also_a_branch_name_is_checked_out_detached(t *te
 	if err != nil {
 		t.Fatalf("receipt=%v err=%v", receipt, err)
 	}
-	sameJSON(t, "status and detached", map[string]any{"status": receipt["status"], "detached": object(receipt["worktree"])["detached"]})
+	sameJSON(t, "status and detached", map[string]any{"status": receipt["status"], "detached": pyjson.Map(receipt["worktree"])["detached"]})
 	if head := gitAt(t, input.Destination, "rev-parse", "--abbrev-ref", "HEAD"); head != "HEAD" {
 		t.Fatalf("checkout is on %q, not detached", head)
 	}

@@ -114,11 +114,11 @@ func TestPrecheckScope_RefusalsAreRegistersRefusals(t *testing.T) {
 					t.Fatalf("conflict row %T", rows[0])
 				}
 				for key, want := range map[string]string{"reason": c.reason, "detail": c.detail, "challenger": c.challenger, "scopeKind": c.conflictKind, "scopeKey": c.conflictKey} {
-					if got, _ := getField(row, key); got != want {
+					if got, _ := row.Lookup(key); got != want {
 						t.Fatalf("conflict row %s is %v, want %q", key, got, want)
 					}
 				}
-				if got, _ := getField(row, "incumbent"); (c.incumbent == "") != (got == nil) || (c.incumbent != "" && got != c.incumbent) {
+				if got, _ := row.Lookup("incumbent"); (c.incumbent == "") != (got == nil) || (c.incumbent != "" && got != c.incumbent) {
 					t.Fatalf("conflict row incumbent is %v, want %q", got, c.incumbent)
 				}
 			}

@@ -73,7 +73,7 @@ func countingControl(t *testing.T, home string) (stop func() int) {
 				return
 			}
 			_ = conn.SetDeadline(time.Now().Add(8 * time.Second))
-			if request, err := readFrame(conn); err == nil && get(request, "method") == "guard-evaluate" {
+			if request, err := readFrame(conn); err == nil && request.Get("method") == "guard-evaluate" {
 				mu.Lock()
 				requests++
 				mu.Unlock()
@@ -132,11 +132,11 @@ func withOwner(t *testing.T, home string, owner any) {
 	}
 	config := object(value)
 	if owner != nil {
-		config = set(config, "owner", owner)
+		config = config.Set("owner", owner)
 	}
 	if owner == "plugin" {
-		config = set(config, "adapterInterpreter", filepath.Join(home, "never-run"))
-		config = set(config, "adapterEntryPoint", filepath.Join(home, "never-run"))
+		config = config.Set("adapterInterpreter", filepath.Join(home, "never-run"))
+		config = config.Set("adapterEntryPoint", filepath.Join(home, "never-run"))
 	}
 	writeTest(t, filepath.Join(home, ConfigName), []byte(pyjson.Dumps(config, pyjson.Options{})))
 }

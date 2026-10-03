@@ -145,9 +145,7 @@ func absent(value, fallback any) any {
 	}
 	return value
 }
-func object(value any) Object { m, _ := value.(map[string]any); return m }
-func text(value any) string   { s, _ := value.(string); return s }
-func list(value any) []any    { l, _ := evidence.List(value); return l }
+func list(value any) []any { l, _ := evidence.List(value); return l }
 func contains(value any, item any) bool {
 	for _, v := range list(value) {
 		if v == item {
@@ -218,7 +216,7 @@ func ReadRegistry(value any) (Object, error) {
 		watched[surface] = Object{"method": v.text(spec["method"], "surfaces."+surface+".method", false, 600), "active": v.flag(spec["active"], "surfaces."+surface+".active", nil)}
 	}
 	out := Object{"schema": "product-registry/1", "product": product, "workspace": v.key(r["workspace"], "workspace", false), "team": v.text(r["team"], "team", false, 600), "familyLabel": v.text(r["familyLabel"], "familyLabel", false, 600), "repositories": v.keys(r["repositories"], "repositories"), "surfaces": watched, "triageProject": v.project(r["triageProject"], "triageProject", true), "testTarget": v.target(r["testTarget"], "testTarget")}
-	if target := object(out["testTarget"]); target != nil && out["triageProject"] == target["project"] {
+	if target := pyjson.Map(out["testTarget"]); target != nil && out["triageProject"] == target["project"] {
 		v.fail(fmt.Sprintf("the test target project %s is also the triage project; a simulated record and a real one would share one project's target", quote.Value(target["project"])))
 	}
 	return out, v.err
@@ -227,9 +225,9 @@ func ReadRegistry(value any) (Object, error) {
 // Coverage distinguishes disconnected collection from a watched surface without incidents.
 func Coverage(registry Object) Object {
 	answer := Object{}
-	surfaces := object(registry["surfaces"])
+	surfaces := pyjson.Map(registry["surfaces"])
 	for _, surface := range Surfaces {
-		spec := object(surfaces[surface])
+		spec := pyjson.Map(surfaces[surface])
 		switch {
 		case spec != nil && spec["active"] == true:
 			answer[surface] = Object{"state": "watched", "method": spec["method"]}
@@ -273,7 +271,9 @@ func (v *validator) followUps(value any) []any {
 		slices.Sort(names)
 		answer = append(answer, Object{"issue": issue, "checks": names})
 	}
-	slices.SortStableFunc(answer, func(a, b any) int { return strings.Compare(text(object(a)["issue"]), text(object(b)["issue"])) })
+	slices.SortStableFunc(answer, func(a, b any) int {
+		return strings.Compare(pyjson.Text(pyjson.Map(a)["issue"]), pyjson.Text(pyjson.Map(b)["issue"]))
+	})
 	return answer
 }
 
@@ -308,7 +308,7 @@ func ReadBinding(value any, registry Object) (Object, error) {
 		if registry["product"] != out["product"] {
 			v.fail(fmt.Sprintf("this binding names %s, not %s", out["product"], registry["product"]))
 		}
-		target := object(registry["testTarget"])
+		target := pyjson.Map(registry["testTarget"])
 		where := out["project"]
 		if kind == "project" {
 			where = out["ref"]
@@ -320,7 +320,7 @@ func ReadBinding(value any, registry Object) (Object, error) {
 				if where != target["project"] {
 					v.fail(fmt.Sprintf("a test binding sits on the test target project %s, not %s", quote.Value(target["project"]), quote.Value(where)))
 				}
-				if kind == "issue" && strings.Split(text(out["ref"]), "-")[0] != target["team"] {
+				if kind == "issue" && strings.Split(pyjson.Text(out["ref"]), "-")[0] != target["team"] {
 					v.fail(fmt.Sprintf("a test issue belongs to the test target team %s", quote.Value(target["team"])))
 				}
 			}
@@ -505,7 +505,7 @@ func ReadClassification(value any) (Object, error) {
 		goal = Object{"key": v.key(g["key"], "goal.key", false), "criteria": v.text(g["criteria"], "goal.criteria", true, 600)}
 	}
 	by := v.text(r["by"], "by", false, 128)
-	if by != "operator" && !strings.HasPrefix(text(by), "llm:") {
+	if by != "operator" && !strings.HasPrefix(pyjson.Text(by), "llm:") {
 		v.fail("by is operator or llm:<model>")
 	}
 	return Object{"product": v.product(r["product"], "product", false), "component": v.key(r["component"], "component", true), "symptom": v.key(r["symptom"], "symptom", true), "goal": goal, "by": by}, v.err

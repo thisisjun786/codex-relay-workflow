@@ -101,7 +101,7 @@ func (d *NoticeDeliverer) mayHaveSent(ctx context.Context, id string) (bool, err
 // hierarchy live names. The deliverer asks it before it trusts the message's hold, and the
 // channel asks it when it stages, so both read one definition.
 func NoticeAddressed(r store.Row, live map[string]any) bool {
-	return text(r, "sender_task_id") == live["sender"] && text(r, "recipient_task_id") == live["recipient"] && text(r, "project_key") == live["projectKey"]
+	return r.Text("sender_task_id") == live["sender"] && r.Text("recipient_task_id") == live["recipient"] && r.Text("project_key") == live["projectKey"]
 }
 
 // WaitingFor is read-only and can be called inside the reservation write.
@@ -122,11 +122,11 @@ func (d *NoticeDeliverer) waitingFor(ctx context.Context, one map[string]any, no
 		return "", err
 	}
 	if r != nil {
-		if noticeSent(text(r, "state")) {
+		if noticeSent(r.Text("state")) {
 			return "", nil
 		}
-		if !store.SupervisorUnsent(text(r, "state")) {
-			return "its message " + text(r, "message_id") + " is " + text(r, "state") + ": a send may be under way, and it is settled from that send's answer", nil
+		if !store.SupervisorUnsent(r.Text("state")) {
+			return "its message " + r.Text("message_id") + " is " + r.Text("state") + ": a send may be under way, and it is settled from that send's answer", nil
 		}
 	}
 	relation := noticeString(notice, "anchor")
@@ -147,12 +147,12 @@ func (d *NoticeDeliverer) waitingFor(ctx context.Context, one map[string]any, no
 		return "the " + unfit + " the linkage names is not a plain identifier, so no notice can carry it; fault-show has the fault", nil
 	}
 	if r != nil && NoticeAddressed(r, live) {
-		hold := text(r, "hold_reason")
+		hold := r.Text("hold_reason")
 		if hold != "" && hold != store.SupervisorHoldSuperseded && hold != store.SupervisorHoldUnaddressed {
-			return "its message " + text(r, "message_id") + " is held by the supervisor channel: " + hold, nil
+			return "its message " + r.Text("message_id") + " is held by the supervisor channel: " + hold, nil
 		}
 		if next, ok := r.Get("next_eligible_at").(float64); ok && next > now {
-			because, err := d.because(ctx, text(r, "message_id"))
+			because, err := d.because(ctx, r.Text("message_id"))
 			return "the supervisor channel rechecks the level above at " + noticeAt(next) + because, err
 		}
 	}
@@ -167,7 +167,7 @@ func (d *NoticeDeliverer) waitingFor(ctx context.Context, one map[string]any, no
 		return "", err
 	}
 	if ahead != nil {
-		return "an earlier report to " + noticeString(live, "recipient") + " goes first: message " + text(ahead, "message_id"), nil
+		return "an earlier report to " + noticeString(live, "recipient") + " goes first: message " + ahead.Text("message_id"), nil
 	}
 	return "", nil
 }
@@ -306,14 +306,14 @@ func (d *NoticeDeliverer) deliver(ctx context.Context, one map[string]any, answe
 		return err
 	}
 	var attemptErr error
-	if store.SupervisorUnsent(text(r, "state")) {
+	if store.SupervisorUnsent(r.Text("state")) {
 		attemptErr = d.Channel.Attempt(ctx, message, now, d.Owner)
 	}
 	r, err = d.get(ctx, message)
 	if err != nil {
 		return err
 	}
-	if noticeSent(text(r, "state")) {
+	if noticeSent(r.Text("state")) {
 		ref, err := d.ref(ctx, r)
 		if err != nil {
 			return err
@@ -324,7 +324,7 @@ func (d *NoticeDeliverer) deliver(ctx context.Context, one map[string]any, answe
 	if err != nil {
 		return err
 	}
-	if store.SupervisorUnsent(text(r, "state")) && !sent {
+	if store.SupervisorUnsent(r.Text("state")) && !sent {
 		why, err := d.why(ctx, r, attemptErr)
 		if err != nil {
 			return err
@@ -348,8 +348,8 @@ func (d *NoticeDeliverer) reconcile(ctx context.Context, answer *NoticeAnswer, n
 		if err != nil {
 			return err
 		}
-		if r != nil && text(r, "state") == "sending" {
-			if err = d.Channel.Recover(ctx, text(r, "message_id"), now); err != nil {
+		if r != nil && r.Text("state") == "sending" {
+			if err = d.Channel.Recover(ctx, r.Text("message_id"), now); err != nil {
 				return err
 			}
 			r, err = d.message(ctx, id)
@@ -362,15 +362,15 @@ func (d *NoticeDeliverer) reconcile(ctx context.Context, answer *NoticeAnswer, n
 		park := ""
 		if r == nil {
 			why = "no message was ever staged for it, so nothing was sent"
-		} else if noticeSent(text(r, "state")) {
+		} else if noticeSent(r.Text("state")) {
 			delivered = true
 			why, err = d.ref(ctx, r)
-		} else if store.SupervisorUnsent(text(r, "state")) {
+		} else if store.SupervisorUnsent(r.Text("state")) {
 			var sent bool
-			sent, err = d.mayHaveSent(ctx, text(r, "message_id"))
+			sent, err = d.mayHaveSent(ctx, r.Text("message_id"))
 			if err == nil && !sent {
 				why, err = d.why(ctx, r, nil)
-				park = text(r, "message_id")
+				park = r.Text("message_id")
 			}
 		}
 		if err != nil {
@@ -395,23 +395,23 @@ func (d *NoticeDeliverer) reconcile(ctx context.Context, answer *NoticeAnswer, n
 	return nil
 }
 func (d *NoticeDeliverer) ref(ctx context.Context, r row) (string, error) {
-	id := text(r, "message_id")
+	id := r.Text("message_id")
 	attempt, err := d.Ledger.one(ctx, "SELECT request_id FROM supervisor_attempts WHERE message_id=? ORDER BY attempt_no DESC LIMIT 1", id)
-	ref := "supervisor message " + id + " " + text(r, "state")
+	ref := "supervisor message " + id + " " + r.Text("state")
 	if attempt != nil {
-		ref += ", attempt " + text(attempt, "request_id")
+		ref += ", attempt " + attempt.Text("request_id")
 	}
 	return ref, err
 }
 func (d *NoticeDeliverer) why(ctx context.Context, r row, failure error) (string, error) {
-	parts := []string{"nothing was sent: its message " + text(r, "message_id") + " is " + text(r, "state")}
+	parts := []string{"nothing was sent: its message " + r.Text("message_id") + " is " + r.Text("state")}
 	if next, ok := r.Get("next_eligible_at").(float64); ok {
 		parts = append(parts, "rechecked at "+noticeAt(next))
 	}
 	if failure != nil {
 		parts = append(parts, failure.Error())
 	}
-	because, err := d.because(ctx, text(r, "message_id"))
+	because, err := d.because(ctx, r.Text("message_id"))
 	return strings.Join(parts, ", ") + because, err
 }
 func (d *NoticeDeliverer) because(ctx context.Context, id string) (string, error) {
@@ -419,7 +419,7 @@ func (d *NoticeDeliverer) because(ctx context.Context, id string) (string, error
 	if err != nil || r == nil {
 		return "", err
 	}
-	detail := loadsMap(text(r, "detail"))
+	detail := loadsMap(r.Text("detail"))
 	reason := detail["reason"]
 	if reason == nil || reason == "" {
 		reason = detail["detail"]
@@ -431,5 +431,5 @@ func (d *NoticeDeliverer) because(ctx context.Context, id string) (string, error
 	if reason != nil && reason != "" {
 		suffix = ": " + fmt.Sprint(reason)
 	}
-	return " (" + text(r, "kind") + suffix + ")", nil
+	return " (" + r.Text("kind") + suffix + ")", nil
 }
