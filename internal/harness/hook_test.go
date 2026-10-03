@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -231,10 +232,35 @@ func TestThePabcdCheckReadsTheCwdAsJSONParseDoes(t *testing.T) {
 	}
 }
 
+// eofSignal runs signal once, when the reader it wraps has delivered its last byte.
+type eofSignal struct {
+	io.Reader
+	signal func()
+}
+
+func (r eofSignal) Read(p []byte) (int, error) {
+	n, err := r.Reader.Read(p)
+	if err == io.EOF {
+		r.signal()
+	}
+	return n, err
+}
+
 // Node's default SIGINT ends the oracle's hook at once, even while it waits for its input. crw's first
-// interrupt only cancels the run (cmd/crw serve), so a hook whose input stays open has to stop on it.
+// interrupt only cancels the run (cmd/crw serve), so a hook whose input stays open has to stop on it,
+// and input that arrives afterwards must find a hook that has already answered.
 func TestAnInterruptEndsAHookWaitingForItsInput(t *testing.T) {
 	env, home, _ := hookEnv(t)
+	look := lookup(env)
+	reached, eof := make(chan struct{}), make(chan struct{})
+	var recorded, read sync.Once
+	// Making a record looks up PLUGIN_ROOT: a hook that went on to record would show here.
+	watch := func(k string) (string, bool) {
+		if k == "PLUGIN_ROOT" {
+			recorded.Do(func() { close(reached) })
+		}
+		return look(k)
+	}
 	in, hold := io.Pipe()
 	defer hold.Close()
 	p := &probe{}
@@ -243,7 +269,7 @@ func TestAnInterruptEndsAHookWaitingForItsInput(t *testing.T) {
 	got := make(chan int, 1)
 	var out, errOut strings.Builder
 	go func() {
-		got <- Hook(ctx, []string{"stop", "--leg", "stop-checking-pabcd-continuation"}, in, &out, &errOut, lookup(env), p.legs("never"))
+		got <- Hook(ctx, []string{"stop", "--leg", "stop-checking-pabcd-continuation"}, eofSignal{in, func() { read.Do(func() { close(eof) }) }}, &out, &errOut, watch, p.legs("never"))
 	}()
 	select {
 	case code := <-got:
@@ -253,15 +279,25 @@ func TestAnInterruptEndsAHookWaitingForItsInput(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("an interrupted hook is still waiting for its input")
 	}
-	// Input that arrives after the interrupt finds a hook that has already answered: dispatch reads it,
-	// sees the finished context, and neither records it, runs a handler nor writes.
-	ended, stop := context.WithCancel(context.Background())
-	stop()
-	late := only("stop-checking-pabcd-continuation", func(Call) string { p.ran = append(p.ran, "late"); return "never" })[0]
-	var lateOut, lateErr strings.Builder
-	if code := dispatch(ended, late, strings.NewReader(payload("Stop", t.TempDir(), "")), &lateOut, &lateErr, lookup(env)); code != Interrupted ||
-		lateOut.Len() != 0 || lateErr.Len() != 0 || len(p.ran) != 0 || len(records(t, home)) != 0 {
-		t.Errorf("input after the interrupt: %d %q %q, ran %v, %d records", code, lateOut.String(), lateErr.String(), p.ran, len(records(t, home)))
+	// Input that arrives after the interrupt: the blocked read ends, and the leg is neither recorded,
+	// run nor written.
+	late := payload("Stop", t.TempDir(), "")
+	go func() {
+		hold.Write([]byte(late))
+		hold.Close()
+	}()
+	select {
+	case <-eof:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the blocked read did not end with its input")
+	}
+	select {
+	case <-reached:
+		t.Error("input after the interrupt was recorded")
+	case <-time.After(500 * time.Millisecond):
+	}
+	if out.Len() != 0 || errOut.Len() != 0 || len(p.ran) != 0 || len(records(t, home)) != 0 {
+		t.Errorf("input after the interrupt: %q %q, ran %v, %d records", out.String(), errOut.String(), p.ran, len(records(t, home)))
 	}
 }
 
