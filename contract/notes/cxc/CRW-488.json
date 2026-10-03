@@ -1,0 +1,11 @@
+{
+  "issue": "CRW-488",
+  "identical": [
+    "hook__post-tool-use-tracking-render-observations__apply_patch_records_render_artifacts",
+    "hook__post-tool-use-tracking-render-observations__baseline_empty_workspace",
+    "hook__post-tool-use-tracking-render-observations__computer_use_native_row",
+    "hook__post-tool-use-tracking-render-observations__declared_screenshot_native_row",
+    "hook__post-tool-use-tracking-render-observations__ignored_and_disabled",
+    "hook__post-tool-use-tracking-render-observations__observation_tools_append_rows"
+  ]
+}
