@@ -184,11 +184,18 @@ func (in ReceiptIntake) checkDeliverable(ctx context.Context, claim ReceiptClaim
 // tier, and a frozen copy establishes no live binding, so it can only meet best-effort.
 func (in ReceiptIntake) verifyBytes(ctx context.Context, entries []ManifestEntry, roots []string, manifestRef *string) (PathBinding, error) {
 	problems, mode := verifyAgainstDisk(ctx, entries, roots, in.Minimum == LeaseEnforced)
+	if err := ctx.Err(); err != nil {
+		// The reads a stop ended report as problems; that is no evidence about the bytes.
+		return "", err
+	}
 	if len(problems) > 0 && manifestRef != nil {
 		// A frozen copy that is not a manifest raises in the fence, as it does here: a refusal
 		// only when it is one (a relative path in it), otherwise the host error it is.
 		frozen, err := VerifyFrozen(ctx, *manifestRef, entries)
 		if err != nil {
+			return "", err
+		}
+		if err := ctx.Err(); err != nil {
 			return "", err
 		}
 		if len(frozen) == 0 {

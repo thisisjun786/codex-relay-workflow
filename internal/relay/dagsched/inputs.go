@@ -116,12 +116,8 @@ func (s *Scheduler) checkArtifacts(ctx context.Context, q store.Querier, accepta
 		for i, e := range entries {
 			declared[i] = store.ManifestEntry{Path: e.Path, SHA256: e.SHA256, Bytes: e.Bytes}
 		}
-		_, problems, _, err := store.VerifyFrozenDetailed(ctx, ref, declared)
-		switch {
-		case err != nil:
-			return &BlockedFinding{"B-17", BlockedInputMissing, "the frozen copy of the manifest, " + ref + ", cannot be read: " + err.Error()}, nil, nil
-		case len(problems) > 0:
-			return &BlockedFinding{"B-17", BlockedInputMissing, "the frozen copy of the manifest, " + ref + ", does not hold what the receipt declared: " + problems[0]}, nil, nil
+		if finding, err := frozenFinding(ctx, ref, declared); err != nil || finding != nil {
+			return finding, nil, err
 		}
 	}
 	var hashes []string
@@ -138,6 +134,23 @@ func (s *Scheduler) checkArtifacts(ctx context.Context, q store.Querier, accepta
 		}
 	}
 	return checkRevision(entries, a), hashes, nil
+}
+
+// frozenFinding reads the frozen copy of a manifest and answers B-17 when it is not one the successor can rely on. A context that ended
+// during the read ended the blob reads it reports as problems, so that is the stop and no evidence about the copy: it answers the context's error,
+// as hashEntry does for the files.
+func frozenFinding(ctx context.Context, ref string, declared []store.ManifestEntry) (*BlockedFinding, error) {
+	_, problems, _, err := store.VerifyFrozenDetailed(ctx, ref, declared)
+	if stopped := ctx.Err(); stopped != nil {
+		return nil, stopped
+	}
+	switch {
+	case err != nil:
+		return &BlockedFinding{"B-17", BlockedInputMissing, "the frozen copy of the manifest, " + ref + ", cannot be read: " + err.Error()}, nil
+	case len(problems) > 0:
+		return &BlockedFinding{"B-17", BlockedInputMissing, "the frozen copy of the manifest, " + ref + ", does not hold what the receipt declared: " + problems[0]}, nil
+	}
+	return nil, nil
 }
 
 // hashEntry reads one declared artifact again: through the roots, hashed, compared with what was declared. A finding names the violated path of contract 4.4; digest
