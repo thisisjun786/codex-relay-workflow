@@ -17,13 +17,20 @@ import (
 var errInputLate = errors.New("the Stop payload did not arrive within the input allocation")
 
 // readFailure is a failed read of the Stop payload with the cause it was given where it arose
-// (one of StdinReadCauses). It changes nothing about the error: Unwrap keeps errors.Is working.
+// (one of StdinReadCauses). err is what the read returned and stays what errors.Is sees; said, when
+// set, is the better words for the row (the input context's cause instead of its bare deadline error).
 type readFailure struct {
 	cause string
 	err   error
+	said  string
 }
 
-func (f *readFailure) Error() string { return f.err.Error() }
+func (f *readFailure) Error() string {
+	if f.said != "" {
+		return f.said
+	}
+	return f.err.Error()
+}
 func (f *readFailure) Unwrap() error { return f.err }
 
 // named gives a failure readInput returns its cause. One a read closure raised already has it. What
@@ -37,11 +44,11 @@ func named(err error, watched context.Context) error {
 		return err
 	case errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled):
 		if cause := context.Cause(watched); errors.Is(cause, errInputLate) {
-			return &readFailure{StdinInputLate, cause} // the same words the descriptor path says
+			return &readFailure{cause: StdinInputLate, err: err, said: cause.Error()} // the descriptor path's words
 		}
-		return &readFailure{StdinWorkEnded, err}
+		return &readFailure{cause: StdinWorkEnded, err: err}
 	}
-	return &readFailure{StdinReadError, err}
+	return &readFailure{cause: StdinReadError, err: err}
 }
 
 // counted tallies what the reads beneath it report, before their error is looked at.
@@ -80,9 +87,9 @@ func readInput(work context.Context, input io.Reader, deadline time.Time, taken 
 		result, err := bounded(work, func() (polled, error) {
 			raw, used, err := pollInput(file, deadline, taken)
 			if errors.Is(err, errInputLate) {
-				err = &readFailure{StdinInputLate, err}
+				err = &readFailure{cause: StdinInputLate, err: err}
 			} else if err != nil {
-				err = &readFailure{StdinReadError, err}
+				err = &readFailure{cause: StdinReadError, err: err}
 			}
 			return polled{raw, used}, err
 		})
@@ -95,7 +102,7 @@ func readInput(work context.Context, input io.Reader, deadline time.Time, taken 
 	raw, err := bounded(inputCtx, func() ([]byte, error) {
 		raw, err := io.ReadAll(counted{input, taken})
 		if err != nil {
-			err = &readFailure{StdinReadError, err}
+			err = &readFailure{cause: StdinReadError, err: err}
 		}
 		return raw, err
 	})
@@ -107,10 +114,13 @@ func readInput(work context.Context, input io.Reader, deadline time.Time, taken 
 // It holds no payload: an error text is the OS's or a context's, about the descriptor, and a
 // recovered panic is named by its Go type because its value could be anything.
 func stdinReadRecord(cause string, err error, bytes int64, waitStarted, waitEnded time.Duration) Object {
-	text := err.Error()
+	var text string
 	var panicked *recoveredPanic
 	if errors.As(err, &panicked) {
+		// Never Error() a panic: its value's methods are the reader's, and could say or do anything.
 		text = fmt.Sprintf("panic in the stdin reader: %T", panicked.value)
+	} else {
+		text = err.Error()
 	}
 	return Object{{Key: "cause", Value: cause}, {Key: "error", Value: text}, {Key: "bytesRead", Value: bytes}, {Key: "waitStartedMs", Value: waitStarted.Milliseconds()}, {Key: "waitEndedMs", Value: waitEnded.Milliseconds()}}
 }

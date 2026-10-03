@@ -219,6 +219,22 @@ func TestStdinReadPanicIsRecordedByTypeNotValue(t *testing.T) {
 	}
 }
 
+// loudPanic is a panic value whose methods misbehave: recording the panic must never call them.
+type loudPanic struct{}
+
+func (loudPanic) Error() string  { panic("hunter2 from Error") }
+func (loudPanic) As(any) bool    { panic("hunter2 from As") }
+func (loudPanic) String() string { panic("hunter2 from String") }
+
+func TestStdinReadPanicValueMethodsAreNeverCalled(t *testing.T) {
+	reader := &scriptedReader{steps: []func() (int, []byte, error){func() (int, []byte, error) { panic(loudPanic{}) }}}
+	row, journal := stdinRun(t, 5, reader)
+	expectCause(t, stdinReadOf(t, row), "read_error", "panic in the stdin reader: hook.loudPanic", 0)
+	if strings.Contains(journal, "hunter2") {
+		t.Fatalf("the journal holds a panic value's words: %s", journal)
+	}
+}
+
 // Every byte arrived but they are not UTF-8: the bytes are counted, the secret before them is not recorded.
 func TestStdinReadInvalidUTF8(t *testing.T) {
 	payload := []byte(`{"secret":"hunter2-`)

@@ -3,6 +3,7 @@ package hook
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -82,7 +83,7 @@ func TestNamedKeepsTheContextThatEndedFirst(t *testing.T) {
 	t.Run("a failure that already has its cause keeps it", func(t *testing.T) {
 		work, endWork := context.WithCancel(context.Background())
 		endWork()
-		tagged := &readFailure{StdinReadError, context.DeadlineExceeded}
+		tagged := &readFailure{cause: StdinReadError, err: context.DeadlineExceeded}
 		if got := named(tagged, work); got != error(tagged) {
 			t.Fatalf("retagged: %v", got)
 		}
@@ -98,4 +99,17 @@ func TestNamedKeepsTheContextThatEndedFirst(t *testing.T) {
 			t.Fatal("no error stays none")
 		}
 	})
+}
+
+// What readInput returns keeps the identity it always had: a fallback that ran out of allocation is
+// still a deadline error to errors.Is, and says what the descriptor path says.
+func TestReadInputKeepsTheErrorsIdentity(t *testing.T) {
+	var taken atomic.Int64
+	release := make(chan struct{})
+	defer close(release)
+	_, err := readInput(context.Background(), holdingReader{release}, time.Now().Add(20*time.Millisecond), &taken)
+	var failure *readFailure
+	if !errors.As(err, &failure) || failure.cause != StdinInputLate || !errors.Is(err, context.DeadlineExceeded) || err.Error() != errInputLate.Error() {
+		t.Fatalf("err = %v (%T)", err, err)
+	}
 }
