@@ -22,6 +22,7 @@ const StateStale = "stale"
 const (
 	DeferNoCapacity          = "defer:no_capacity"
 	DeferCapacityUnmeasured  = "defer:capacity_unmeasured"
+	DeferHostMemory          = "defer:host_memory"
 	DeferEditOverlap         = "defer:edit_overlap"
 	DeferMergeWindow         = "defer:merge_window"
 	DeferOwnershipUnverified = "defer:ownership_unverified"
@@ -84,7 +85,7 @@ func StaleEdge(edgeID string) string { return StaleEdgePrefix + edgeID }
 
 // emittedReasons are the fixed members of the closed set; ReservedReasons are named in the contract but never emitted here.
 var emittedReasons = []string{
-	DeferNoCapacity, DeferCapacityUnmeasured, DeferEditOverlap, DeferMergeWindow, DeferOwnershipUnverified, DeferAuthorityPending,
+	DeferNoCapacity, DeferCapacityUnmeasured, DeferHostMemory, DeferEditOverlap, DeferMergeWindow, DeferOwnershipUnverified, DeferAuthorityPending,
 	SkipAlreadyOwned,
 	BlockedManifestIncomplete, BlockedManifestTampered, BlockedInputMissing, BlockedInputHashMismatch, BlockedInputOutOfScope,
 	BlockedInputUnaccepted, BlockedAcceptanceTampered, BlockedAcceptanceIncomplete, BlockedStaleHead, BlockedStaleCriteria,

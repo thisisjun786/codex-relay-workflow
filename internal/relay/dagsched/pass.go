@@ -35,15 +35,34 @@ func (s *Scheduler) RecordPass(ctx context.Context, plan, actor string, opts Rea
 		_, err = q.ExecContext(txCtx, "INSERT INTO dag_passes (plan_id, pass_seq, plan_revision, input_digest, ready_count, free_slots, ceiling, held, deciding_limit,"+
 			" order_json, dispositions_json, recorded_by, recorded_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
 			plan, seq, reading.PlanRevision, reading.InputDigest, reading.Pass.ReadyCount, reading.Pass.FreeSlots, reading.Pass.Ceiling, reading.Pass.Held,
-			reading.Pass.DecidingLimit, reading.orderJSON(), reading.dispositionsJSON(), actor, s.now())
-		if err != nil || reading.ReleasePolicy == nil {
+			storedLimit(reading.Pass.DecidingLimit), reading.orderJSON(), reading.dispositionsJSON(), actor, s.now())
+		if err != nil {
 			return err
+		}
+		// the host the pass saw (CRW-468): the verdict, the values and the limit the reading decided by, which dag_passes cannot hold when it is the host's
+		if h := reading.Pass.HostMemory; h != nil {
+			if _, err = q.ExecContext(txCtx, "INSERT INTO dag_pass_host_memory (plan_id, pass_seq, state, reading_limit, host_json) VALUES (?,?,?,?,?)",
+				plan, seq, h.State, reading.Pass.DecidingLimit, dag.Canonical(h.object())); err != nil {
+				return err
+			}
+		}
+		if reading.ReleasePolicy == nil {
+			return nil
 		}
 		// the policy state this pass saw: the switch and its basis ride with the pass (CRW-411). A plan with no policy leaves the pass row alone.
 		_, err = q.ExecContext(txCtx, "INSERT INTO dag_pass_release_policy (plan_id, pass_seq, policy_json) VALUES (?,?,?)", plan, seq, dag.Canonical(reading.ReleasePolicy.canonical()))
 		return err
 	})
 	return reading, seq, err
+}
+
+// storedLimit is the limit dag_passes keeps for a reading's: its deciding_limit has a shipped closed set of four, so a pass the host memory bound cut is stored as the capacity cut it is and
+// dag_pass_host_memory.reading_limit keeps the reading's own.
+func storedLimit(limit string) string {
+	if limit == LimitHostMemory {
+		return LimitNoCapacity
+	}
+	return limit
 }
 
 // orderJSON is the ready node ids in release order.

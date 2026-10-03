@@ -11,10 +11,12 @@ import (
 )
 
 // FrozenStorePath is the frozen empty relay store the contract keeps
-// (contract/fixtures/sqlite-ddl/python-store.sqlite3): the schema every relay store has, in WAL
+// (contract/fixtures/sqlite-ddl/python-store.sqlite3): the schema the relay's first release left, in WAL
 // mode, holding only the schema_meta rows version, store_id, store_created_at and socket_path and
-// none of the ownership stamp. Tests start a store from it (Create, a fixture restored row by row)
-// instead of running either runtime's initializer.
+// none of the ownership stamp. It is the store of the version before CRW-301, which added the
+// indexes of HistoryIndexes: a test of the upgrade starts from it, and Create adds them to a copy
+// so a test that needs a store of this version does not meet them as news. Tests start a store from it
+// (Create, a fixture restored row by row) instead of running either runtime's initializer.
 func FrozenStorePath() string {
 	root, err := moduleRoot()
 	if err != nil {

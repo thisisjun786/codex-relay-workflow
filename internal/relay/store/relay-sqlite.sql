@@ -1522,6 +1522,34 @@ CREATE TABLE IF NOT EXISTS route_incidents (
     recorded_seq INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS route_incidents_fault ON route_incidents (fault_id, recorded_seq);
+-- Indexes on the tables that only grow (CRW-301). Each one is here because a read that runs on every
+-- daemon tick or supervisor visit scanned the whole table, and each was measured on a synthetic store of
+-- 80,000 events (160,000 attempts) before it was added: a scan became a probe, with no ANALYZE ever run (the
+-- relay never runs it, so SQLite plans from its defaults and an index that merely ties with another one for a
+-- statement can win it). They are plain CREATE INDEX IF NOT EXISTS statements like every index above, so a
+-- store that predates them gains them the first time any command opens it for writing (a read-only command
+-- tries the writable open first), each in a transaction of its own: the write lock is held for the build of
+-- one index, never for the whole script. Appended as one block at the END of the script, before the guard
+-- indexes, for the reason the coordination block above gives. The swap gate reads them as objects arriving
+-- (EXTENDS) and leaving (NARROWS); docs/runtime-install.md says what that means for an install.
+--
+-- The hourly send budget (store.RelationshipSpentSQL, read by every eligibility pass) counts the attempts
+-- whose sent_at falls inside one hour window: a range probe here instead of a scan of every attempt made.
+CREATE INDEX IF NOT EXISTS attempts_sent_at ON attempts (sent_at);
+-- The other arm of the same count, by the stamp of the transport's start.
+CREATE INDEX IF NOT EXISTS supervisor_attempts_transport_started ON supervisor_attempts (transport_started_at);
+-- The acknowledgements still waiting for their turn to be verified (the daemon reads them on every tick) are
+-- a handful among every acknowledgement ever recorded. Only a statement that spells 'unverified_turn' as a
+-- literal can use a partial index, so delivery's pendingAcksSQL keeps it one.
+CREATE INDEX IF NOT EXISTS acks_unverified ON acks (event_id) WHERE verified = 'unverified_turn';
+-- A verdict's Linear write is looked up by its relationship and event (supervisor selection and the
+-- obligation readers, the reception ladder).
+CREATE INDEX IF NOT EXISTS sync_outbox_relationship_event ON sync_outbox (relationship_id, event_id);
+-- The newest message of an obligation (autosend). staged_at comes last so ORDER BY staged_at DESC LIMIT 1 needs
+-- no sort. supervisor_messages_one_notice covers fault notifications only and cannot answer this.
+CREATE INDEX IF NOT EXISTS supervisor_messages_obligation ON supervisor_messages (obligation_id, staged_at);
+-- A generation's managed start is found by its dispatch request (the omission context, the managed readings).
+CREATE INDEX IF NOT EXISTS managed_start_requests_dispatch ON managed_start_requests (dispatch_request_id);
 -- GUARD_INDEXES executed separately after the DDL
 CREATE UNIQUE INDEX IF NOT EXISTS scope_bindings_one_live_owner ON scope_bindings (scope_kind, scope_key, role) WHERE status IN ('active','paused') AND superseded_by IS NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS scope_links_one_live_edge ON scope_links (link_kind, upper_kind, upper_key, lower_kind, lower_key) WHERE status IN ('active','paused') AND superseded_by IS NULL;
