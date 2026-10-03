@@ -90,7 +90,11 @@ func (s *Scheduler) describeOpening(ctx context.Context, q store.Querier, plan, 
 // statement: the relay does not read the child's thread, so unlike the ruling route (which compares the restoration note with the instruction line) nothing here compares the dispatching message with the
 // line; the child checks the manifest file against the digest and hash the line names and answers blocked_needs_input on a mismatch.
 func (s *Scheduler) recordHandOpened(ctx context.Context, q store.Querier, plan string, snap dag.Snapshot, n dag.SnapNode, rel relRow, suppliedDigest string, out *CorrectionResult) error {
-	notRuled := fmt.Sprintf("no needs_changes ruling on generation %d of %s opened generation %d", rel.Generation-1, rel.ID, rel.Generation)
+	before, err := store.LiveGenerationBefore(ctx, q, rel.ID, rel.Generation)
+	if err != nil {
+		return err
+	}
+	notRuled := fmt.Sprintf("no needs_changes ruling on generation %d of %s opened generation %d", before, rel.ID, rel.Generation)
 	st, err := s.staleOf(ctx, q, plan, snap, n)
 	if err != nil {
 		return err
@@ -113,9 +117,9 @@ func (s *Scheduler) recordHandOpened(ctx context.Context, q store.Querier, plan 
 		if err != nil {
 			return err
 		}
-		if stand.Generation != rel.Generation-1 {
+		if stand.Generation != before {
 			return refuse(contract.RefusalDispositionConflict, "%s, and the accepted result of %s stands on generation %d, so a correction of it is already open (generation %d is recorded for it): report this refusal and open no further generation, because opening one moved the relationship past the generation that correction is accepted on",
-				notRuled, n.NodeID, stand.Generation, rel.Generation-1)
+				notRuled, n.NodeID, stand.Generation, before)
 		}
 	}
 	if suppliedDigest == "" {
@@ -356,8 +360,12 @@ func (s *Scheduler) routeOf(ctx context.Context, q store.Querier, plan string, s
 			ruling = "the relay's review of the accepted head is open (the criteria registered for the relationship are not the set it was ruled under), so a needs_changes ruling opens the next generation; a generation opened by hand with the id dag-correct --prepare prints works as well"
 		}
 	}
+	next, err := store.NextGeneration(ctx, q, rel.ID)
+	if err != nil {
+		return "", "", err
+	}
 	return ActionCorrect, fmt.Sprintf("the output of %s must be reworked (%s). It goes to the same child as generation %d of relationship %s: dag-correct --prepare, then a needs_changes ruling carrying its instruction as the restoration "+
-		"finding or a generation opened by hand, then dag-correct; accept the reworked result with dag-accept --supersedes %s. %s", n.NodeID, why, rel.Generation+1, short(rel.ID), short(acc.AcceptanceID), ruling), nil
+		"finding or a generation opened by hand, then dag-correct; accept the reworked result with dag-accept --supersedes %s. %s", n.NodeID, why, next, short(rel.ID), short(acc.AcceptanceID), ruling), nil
 }
 
 // withRoute is the stale reading with its route: a copy, because the verdict the memo holds is shared by every question asked of one pass.

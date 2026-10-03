@@ -147,8 +147,13 @@ func (s *Scheduler) PrepareCorrection(ctx context.Context, plan, node, actor str
 	}
 	out.ManifestDigest = digest
 	out.FrozenPath = path
-	out.Instruction = CorrectionInstruction(n.IssueKey, rel.Generation+1, digest, path, shaOf(canonical))
-	out.DispatchRequestID = CorrectionRequestID(plan, node, digest, rel.Generation+1)
+	// the number the relay gives the next generation of the relationship: one past the highest it ever held, which a withdrawn generation (dag-generation-withdraw) keeps
+	next, err := store.NextGeneration(ctx, q, rel.ID)
+	if err != nil {
+		return out, err
+	}
+	out.Instruction = CorrectionInstruction(n.IssueKey, next, digest, path, shaOf(canonical))
+	out.DispatchRequestID = CorrectionRequestID(plan, node, digest, next)
 	return out, nil
 }
 
@@ -235,8 +240,13 @@ func (s *Scheduler) RecordCorrection(ctx context.Context, plan, node, actor, sup
 				chain = stand.Generation
 			}
 		}
-		if !recorded.Valid || chain != rel.Generation-1 {
-			return refuse(contract.RefusalDispositionConflict, "generation %d of %s follows generation %d, and the last recorded execution of %s is %d", rel.Generation, rel.ID, rel.Generation-1, node, chain)
+		// the generation this one follows: the one before it, or the nearest one that was not withdrawn
+		before, err := store.LiveGenerationBefore(txCtx, tx, rel.ID, rel.Generation)
+		if err != nil {
+			return err
+		}
+		if !recorded.Valid || chain != before {
+			return refuse(contract.RefusalDispositionConflict, "generation %d of %s follows generation %d, and the last recorded execution of %s is %d", rel.Generation, rel.ID, before, node, chain)
 		}
 		var reason sql.NullString
 		if _, err := queryOne(txCtx, tx, "SELECT reason FROM generations WHERE relationship_id = ? AND execution_generation = ?", []any{rel.ID, rel.Generation}, &reason); err != nil {
@@ -249,7 +259,7 @@ func (s *Scheduler) RecordCorrection(ctx context.Context, plan, node, actor, sup
 		var findings sql.NullString
 		var next sql.NullInt64
 		ruled, err := queryOne(txCtx, tx, "SELECT v.next_generation, c.findings FROM verdicts v JOIN events e ON e.event_id = v.event_id JOIN verdict_context c ON c.event_id = v.event_id"+
-			" WHERE e.relationship_id = ? AND e.execution_generation = ? AND v.verdict = 'needs_changes' AND v.next_generation = ? ORDER BY v.decided_at DESC LIMIT 1", []any{rel.ID, rel.Generation - 1, rel.Generation}, &next, &findings)
+			" WHERE e.relationship_id = ? AND e.execution_generation = ? AND v.verdict = 'needs_changes' AND v.next_generation = ? ORDER BY v.decided_at DESC LIMIT 1", []any{rel.ID, before, rel.Generation}, &next, &findings)
 		if err != nil {
 			return err
 		}
