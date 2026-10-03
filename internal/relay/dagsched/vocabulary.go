@@ -22,6 +22,7 @@ const StateStale = "stale"
 const (
 	DeferNoCapacity          = "defer:no_capacity"
 	DeferCapacityUnmeasured  = "defer:capacity_unmeasured"
+	DeferHostMemory          = "defer:host_memory"
 	DeferEditOverlap         = "defer:edit_overlap"
 	DeferMergeWindow         = "defer:merge_window"
 	DeferOwnershipUnverified = "defer:ownership_unverified"
