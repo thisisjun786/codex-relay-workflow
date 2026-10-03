@@ -29,7 +29,7 @@ func arg[T any](t *testing.T, c oracleCase, i int) T {
 	return v
 }
 
-// canon reads v through JSON, treating a null and an empty list alike (a Go nil slice is the oracle's []).
+// canon reads v through JSON, so that a Go nil slice (null) differs from the oracle's [].
 func canon(t *testing.T, v any) any {
 	t.Helper()
 	b, err := json.Marshal(v)
@@ -40,24 +40,7 @@ func canon(t *testing.T, v any) any {
 	if err := json.Unmarshal(b, &out); err != nil {
 		t.Fatal(err)
 	}
-	return trim(out)
-}
-
-func trim(v any) any {
-	switch v := v.(type) {
-	case []any:
-		for i := range v {
-			v[i] = trim(v[i])
-		}
-		if len(v) == 0 {
-			return nil
-		}
-	case map[string]any:
-		for k := range v {
-			v[k] = trim(v[k])
-		}
-	}
-	return v
+	return out
 }
 
 // utf16Index is the oracle's index of the byte offset at in s.
@@ -167,8 +150,8 @@ func TestOracle(t *testing.T) {
 		if err := json.Unmarshal(c.Out, &want); err != nil {
 			t.Fatal(err)
 		}
-		if g, w := canon(t, got), trim(want); !reflect.DeepEqual(g, w) {
-			t.Errorf("%s%s: got %v, oracle %v", c.Fn, c.In, g, w)
+		if g := canon(t, got); !reflect.DeepEqual(g, want) {
+			t.Errorf("%s%s: got %v, oracle %v", c.Fn, c.In, g, want)
 		}
 	}
 	if len(seen) != 18 || len(cases) < 3000 {

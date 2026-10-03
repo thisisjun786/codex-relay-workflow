@@ -7,6 +7,8 @@
 // the \s white space and toLowerCase (Lower). Only well-formed UTF-8 text is in the parity domain (a lone UTF-16 surrogate has no Go
 // string form) and the Unicode tables are Go's, which can differ from the oracle's runtime on a recently assigned character.
 //
+// Slices the oracle returns as arrays are never nil, so a serialized plan or group list keeps the oracle's [] shape.
+//
 // Offsets are byte offsets where the oracle's are UTF-16 code units: they agree on ASCII text and differ behind any other character.
 // The boundary test reads single bytes as the oracle reads single units: a byte of 0x80 or more is no token character, as no
 // non-ASCII unit is.
@@ -248,9 +250,9 @@ func DropStopwords(rawWords []string) []string {
 // stopword removal; rawWords is index-aligned with groups, since the shape judgment needs the word as typed.
 func CompileMatchPlan(groups []QueryGroup, rawWords []string, anyMode, relax bool) MatchPlan {
 	if anyMode || !relax {
-		return MatchPlan{Required: groups, AnyMode: anyMode}
+		return MatchPlan{Required: groups, Optional: []QueryGroup{}, AnyMode: anyMode}
 	}
-	var plan MatchPlan
+	plan := MatchPlan{Required: []QueryGroup{}, Optional: []QueryGroup{}}
 	for i, g := range groups {
 		raw := ""
 		if i < len(rawWords) {
