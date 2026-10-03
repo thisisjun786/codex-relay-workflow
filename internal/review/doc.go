@@ -46,4 +46,17 @@
 //	                P0 to P3, verdict that passes the confidence threshold, reviewers ascending and non-empty, support equal to their count and no more
 //	                than the reviewers that returned a result
 //	dropped         {finding, reason, detail}: the finding (grade P0 to P3 or empty, empty for unknown_grade)
+//
+// Calls is optional for compatibility with earlier schema-v1 artifacts. When
+// present it records actual review/group/verify calls in order, including served
+// model (empty when unknown), class/reason, elapsed milliseconds and all token
+// counters. Error is an optional host error independent of the result class:
+// valid output plus cleanup failure is partial, with its output preserved.
+// Indexes are zero-based; auxiliary reviewer and grouping chunk use -1. Counts
+// describe distinct reviewers, not chunk calls; a reviewer returned if at least
+// one chunk produced valid output. NeedsContext is optional and can only accompany
+// unverified, in both kept and dropped findings. It uses the fail-open confidence
+// rule and stays distinct from confirmed findings. Omitted extensions validate;
+// explicit null for these new fields does not. Legacy optional endLine/detail
+// null decoding and duplicate-key last-wins behavior remain unchanged.
 package review
