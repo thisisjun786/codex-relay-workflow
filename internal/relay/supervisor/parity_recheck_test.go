@@ -15,6 +15,7 @@ import (
 )
 
 func Test24_AutoFaultJournalBytes(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	_, staged := f.staged(t)
 	id := staged["messageId"].(string)
@@ -30,6 +31,7 @@ func Test24_AutoFaultJournalBytes(t *testing.T) {
 }
 
 func Test24_ObligationHTMLBuiltBinaryBytes(t *testing.T) {
+	t.Parallel()
 	root := supervisorFixture(t, "TheRoundtrip.test_the_whole_record_reads_back_as_one_answer")
 	state := filepath.Join(root, "tree", "state")
 	path := filepath.Join(state, "relay.sqlite3")

@@ -12,6 +12,7 @@ func turn(id, holder, state, requested string, tenure int64, ready int64) MergeT
 }
 
 func TestMergeTurnReaders_answer_occupancy_claims_and_tenure(t *testing.T) {
+	t.Parallel()
 	// Given: a holder, two waiters (one ready) and a closed tenure of the first waiter.
 	s := recordStore(t)
 	ctx := context.Background()
@@ -53,6 +54,7 @@ func TestMergeTurnReaders_answer_occupancy_claims_and_tenure(t *testing.T) {
 }
 
 func TestMergeTurnTransitions_record_what_python_writes(t *testing.T) {
+	t.Parallel()
 	// Given: a holding turn that lands, and a waiter.
 	s := recordStore(t)
 	ctx := context.Background()
@@ -78,6 +80,7 @@ func TestMergeTurnTransitions_record_what_python_writes(t *testing.T) {
 }
 
 func TestMergeLedger_records_one_fact_per_idempotency_key_in_order(t *testing.T) {
+	t.Parallel()
 	// Given: two entries, the second written twice with different evidence.
 	s := recordStore(t)
 	ctx := context.Background()
@@ -98,6 +101,7 @@ func TestMergeLedger_records_one_fact_per_idempotency_key_in_order(t *testing.T)
 }
 
 func TestMergeChecks_converge_on_the_check_id_and_read_newest_first(t *testing.T) {
+	t.Parallel()
 	// Given: one check restated with a new result, and an older one.
 	s := recordStore(t)
 	ctx := context.Background()
@@ -120,6 +124,7 @@ func slot(id, subject, parent, project string, tenure int64) ExecutionSlotsRow {
 }
 
 func TestExecutionSlots_count_held_runs_per_scope_and_keep_every_tenure(t *testing.T) {
+	t.Parallel()
 	// Given: S1 held and released, S1 held again, S2 held under another project.
 	s := recordStore(t)
 	ctx := context.Background()
@@ -158,6 +163,7 @@ func TestExecutionSlots_count_held_runs_per_scope_and_keep_every_tenure(t *testi
 }
 
 func TestReleaseExecutionSlot_releases_once(t *testing.T) {
+	t.Parallel()
 	// Given: one held slot.
 	s := recordStore(t)
 	ctx := context.Background()
@@ -176,6 +182,7 @@ func TestReleaseExecutionSlot_releases_once(t *testing.T) {
 }
 
 func TestExecutionLimits_update_in_place_and_list_by_dimension(t *testing.T) {
+	t.Parallel()
 	// Given: two ceilings on one scope, one declared twice, one not enforced.
 	s := recordStore(t)
 	ctx := context.Background()
@@ -201,6 +208,7 @@ func TestExecutionLimits_update_in_place_and_list_by_dimension(t *testing.T) {
 }
 
 func TestExecutionUsage_keeps_the_latest_observation(t *testing.T) {
+	t.Parallel()
 	// Given: a dimension observed twice.
 	s := recordStore(t)
 	ctx := context.Background()
@@ -221,6 +229,7 @@ func agreement(id, region, left, right, state string, tenure int64) EditAgreemen
 }
 
 func TestEditRegion_is_classified_once(t *testing.T) {
+	t.Parallel()
 	// Given: a region recorded as source.
 	s := recordStore(t)
 	ctx := context.Background()
@@ -237,6 +246,7 @@ func TestEditRegion_is_classified_once(t *testing.T) {
 }
 
 func TestEditAgreements_lifecycle_updates_as_python_writes_them(t *testing.T) {
+	t.Parallel()
 	// Given: a region with a proposed agreement between A and B.
 	s := recordStore(t)
 	ctx := context.Background()
@@ -266,6 +276,7 @@ func TestEditAgreements_lifecycle_updates_as_python_writes_them(t *testing.T) {
 }
 
 func TestEditAgreements_reopen_only_open_agreements_on_the_superseded_revision(t *testing.T) {
+	t.Parallel()
 	// Given: agreements on rev1 in proposed, agreed and withdrawn states.
 	s := recordStore(t)
 	ctx := context.Background()
@@ -285,6 +296,7 @@ func TestEditAgreements_reopen_only_open_agreements_on_the_superseded_revision(t
 }
 
 func TestRegionAgreements_join_each_agreement_to_its_place_in_proposal_order(t *testing.T) {
+	t.Parallel()
 	// Given: two regions with an agreement each, proposed in the opposite order to their ids.
 	s := recordStore(t)
 	ctx := context.Background()
@@ -303,6 +315,7 @@ func TestRegionAgreements_join_each_agreement_to_its_place_in_proposal_order(t *
 }
 
 func TestEditFollowups_converge_and_move_through_acceptance_and_settlement(t *testing.T) {
+	t.Parallel()
 	// Given: a follow-up recorded twice, and a second one.
 	s := recordStore(t)
 	ctx := context.Background()
@@ -330,6 +343,7 @@ func TestEditFollowups_converge_and_move_through_acceptance_and_settlement(t *te
 }
 
 func TestEditRevisionMarks_hold_one_successor_per_revision(t *testing.T) {
+	t.Parallel()
 	// Given: rev1 marked as superseded by rev2.
 	s := recordStore(t)
 	ctx := context.Background()
@@ -347,6 +361,7 @@ func TestEditRevisionMarks_hold_one_successor_per_revision(t *testing.T) {
 }
 
 func TestEditReaffirmation_records_the_carry_of_an_agreement(t *testing.T) {
+	t.Parallel()
 	// Given/When: a carry recorded with one side's condition revision absent.
 	s := recordStore(t)
 	ctx := context.Background()

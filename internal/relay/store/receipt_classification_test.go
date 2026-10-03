@@ -5,6 +5,7 @@ import (
 )
 
 func TestClassifyObservation_python_five_endings(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name, status string
 		claim        *ChildClaim
@@ -39,6 +40,7 @@ func TestClassifyObservation_python_five_endings(t *testing.T) {
 // Every (turn status, claim) pair classified by Go, as Python's classify_observation classified
 // it (the golden): a refusal is "refused:" and its reason.
 func TestClassifyObservation_for_every_pair(t *testing.T) {
+	t.Parallel()
 	var rows []any
 	for _, status := range []string{"completed", "failed", "interrupted", "inProgress", "bogus"} {
 		claims := []*ChildClaim{nil}

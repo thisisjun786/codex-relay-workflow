@@ -417,8 +417,11 @@ func Test21_RRD08_a_re_review_cannot_replace_a_certification_with_no_state(t *te
 }
 
 func Test21_RRD09_the_protections_that_must_survive(t *testing.T) {
-	t.Run("unchanged set replays", func(t *testing.T) {
-		rrMirror(t, "ProtectionsThatMustSurvive.test_an_unchanged_criteria_set_still_replays", func(h *hl) {
+	t.Run("unchanged set, a different ruling", func(t *testing.T) {
+		// an unchanged criteria set opens no re-review, and the verdict writer no longer answers a different
+		// verdict with the recorded one: needs_changes after verified, with nothing accepted, replaces the
+		// ruling (rulingchange_test.go states the whole contract)
+		rrMirror(t, "ProtectionsThatMustSurvive.test_an_unchanged_criteria_set_replaces_a_verified_ruling_by_needs_changes", func(h *hl) {
 			event := h.managedVerified()
 			again := h.mustRule(event, "needs_changes", "v2", rrFinding("needs_changes", "on reflection, no"), nil, nil)
 			h.eq(replayed(again))
@@ -440,7 +443,8 @@ func Test21_RRD09_the_protections_that_must_survive(t *testing.T) {
 			h.openGeneration("later", "needs_changes_revision", "later-turn")
 			h.editCriteria()
 			h.eq(h.claim(event, "re-review-turn"))
-			again := h.mustRule(event, "unverified", "v2", rrFinding("unverified", "could not reach it"), nil, nil)
+			// the same verdict again: a replay of the ruling the generation left behind, not a re-review
+			again := h.mustRule(event, "verified", "v2", rrPassing, nil, h.setDigest())
 			h.eq(replayed(again))
 			h.eq(field(again, "verdict"))
 		})
@@ -451,9 +455,9 @@ func Test21_RRD09_the_protections_that_must_survive(t *testing.T) {
 			h.mustRule(event, "unverified", "v1", rrFinding("unverified", "no access"), nil, nil)
 			h.editCriteria()
 			h.eq(h.claim(event, "re-review-turn"))
-			again := h.mustRule(event, "verified", "v2", rrPassing, nil, h.setDigest())
-			h.eq(replayed(again))
-			h.eq(field(again, "verdict"))
+			// a re-review would have recorded verified; an unverified ruling is final, so the different verdict is refused
+			h.refusal(h.rule(event, "verified", "v2", rrPassing, nil, h.setDigest()))
+			h.eq(h.one("SELECT verdict FROM verdicts WHERE event_id = ?", event).S("verdict"))
 		})
 	})
 	t.Run("prior needs_changes", func(t *testing.T) {
@@ -469,8 +473,9 @@ func Test21_RRD09_the_protections_that_must_survive(t *testing.T) {
 			h.mustRule(event, "needs_changes", "v1", rrFinding("needs_changes", "fix it"), nil, nil)
 			h.editCriteria()
 			h.eq(h.claim(event, "re-review-turn"))
-			again := h.mustRule(event, "verified", "v2", rrPassing, nil, nil)
-			h.eq(replayed(again))
+			// the ruling opened generation 2 and is not withdrawn by a criteria edit: the different verdict is refused
+			h.refusal(h.rule(event, "verified", "v2", rrPassing, nil, nil))
+			h.eq(h.one("SELECT verdict FROM verdicts WHERE event_id = ?", event).S("verdict"))
 		})
 	})
 	t.Run("paused", func(t *testing.T) {

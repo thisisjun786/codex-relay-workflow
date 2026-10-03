@@ -77,6 +77,7 @@ func wantRefusal(t *testing.T, err error) Refusal {
 }
 
 func TestAttempt_an_older_claimable_message_refuses_before_any_host_work(t *testing.T) {
+	t.Parallel()
 	// Given: an older message to the same recipient that can be sent now, and the fixture's own message.
 	f := fixture24(t)
 	f.c.Settings = &delivery.TaskSettings{}
@@ -105,6 +106,7 @@ func TestAttempt_an_older_claimable_message_refuses_before_any_host_work(t *test
 }
 
 func TestClaim_an_older_message_made_claimable_after_the_pre_check_is_refused_under_the_lock(t *testing.T) {
+	t.Parallel()
 	// Given: an older message that is held, so the attempt's check lets the newer one through, and a writer
 	// that releases the hold between that check and the claim's read.
 	f := fixture24(t)
@@ -136,6 +138,7 @@ func TestClaim_an_older_message_made_claimable_after_the_pre_check_is_refused_un
 }
 
 func TestClaim_a_hold_on_an_older_message_that_became_in_flight_does_not_block_under_the_lock(t *testing.T) {
+	t.Parallel()
 	// Characterization, not endorsement: under the claim's lock a hold excludes a message whatever its state,
 	// while the attempt's check ignores a hold on a message in flight (store.SupervisorAheadInClaimSQL and
 	// store.SupervisorAheadSQL). Which form the claim should use is a decision for the owner; this pins the
@@ -162,6 +165,7 @@ func TestClaim_a_hold_on_an_older_message_that_became_in_flight_does_not_block_u
 }
 
 func TestAutoHeads_pages_one_head_per_recipient_whatever_kind_of_older_message_stands_in_front(t *testing.T) {
+	t.Parallel()
 	// Given: pairs of messages to separate recipients, each pair's older message of a different kind.
 	f := fixture24(t)
 	at := func(n int) string { return fmt.Sprintf("2023-11-14T22:13:%02d.000000+00:00", n) }
@@ -216,6 +220,7 @@ func TestAutoHeads_pages_one_head_per_recipient_whatever_kind_of_older_message_s
 }
 
 func TestEligibleSupervisorMessages_lists_what_can_be_claimed_in_staging_order(t *testing.T) {
+	t.Parallel()
 	// Given: messages that can be claimed now, and messages held, not yet due, sending or sent.
 	f := fixture24(t)
 	at := func(n int) string { return fmt.Sprintf("2023-11-14T22:13:%02d.000000+00:00", n) }
@@ -242,6 +247,7 @@ func TestEligibleSupervisorMessages_lists_what_can_be_claimed_in_staging_order(t
 }
 
 func TestHoldUnaddressed_holds_only_a_message_that_has_not_been_sent(t *testing.T) {
+	t.Parallel()
 	// Given: one message per state the channel records.
 	f := fixture24(t)
 	states := []string{"queued", "deferred_busy", "withheld_pre_send", "sending", "held_uncertain", "dispatched", "read"}
@@ -269,6 +275,7 @@ func TestHoldUnaddressed_holds_only_a_message_that_has_not_been_sent(t *testing.
 }
 
 func TestSupervisorUnsentStatesAreTheStatesThatQueueADelivery(t *testing.T) {
+	t.Parallel()
 	// The supervisor_messages states and the delivery states share their spelling; the condition lists them once.
 	for _, state := range []string{delivery.Queued, delivery.DeferredBusy, delivery.WithheldPreSend} {
 		if !store.SupervisorUnsent(state) {
@@ -283,6 +290,7 @@ func TestSupervisorUnsentStatesAreTheStatesThatQueueADelivery(t *testing.T) {
 }
 
 func TestAttempt_leaves_a_message_that_is_held_or_not_yet_due_alone(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name        string
 		assignments []string
@@ -333,6 +341,7 @@ func TestAttempt_leaves_a_message_that_is_held_or_not_yet_due_alone(t *testing.T
 }
 
 func TestDeferAutoFault_moves_only_an_unheld_unsent_message(t *testing.T) {
+	t.Parallel()
 	// Given: one message per state, and one held message.
 	f := fixture24(t)
 	states := []string{"queued", "deferred_busy", "withheld_pre_send", "sending", "held_uncertain", "dispatched", "read"}
@@ -359,6 +368,7 @@ func TestDeferAutoFault_moves_only_an_unheld_unsent_message(t *testing.T) {
 }
 
 func TestStage_restates_only_a_message_nothing_of_which_has_gone(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name, state, attempt string
 		restated             bool
@@ -402,6 +412,7 @@ func TestStage_restates_only_a_message_nothing_of_which_has_gone(t *testing.T) {
 }
 
 func TestAttempt_releases_a_derived_hold_only_from_an_unsent_message(t *testing.T) {
+	t.Parallel()
 	for _, hold := range []string{"hierarchy_unresolved", "superseded_by_report"} {
 		for _, state := range []string{"queued", "deferred_busy", "withheld_pre_send", "held_uncertain", "dispatched"} {
 			t.Run(hold+"/"+state, func(t *testing.T) {
@@ -441,6 +452,7 @@ func TestAttempt_releases_a_derived_hold_only_from_an_unsent_message(t *testing.
 const stalePacket = "{\"stale\":true}"
 
 func TestStage_releases_a_hierarchy_hold_only_from_an_unsent_message(t *testing.T) {
+	t.Parallel()
 	for _, state := range []string{"queued", "deferred_busy", "withheld_pre_send", "held_uncertain", "dispatched"} {
 		t.Run(state, func(t *testing.T) {
 			// Given: a staged message holding a hierarchy hold that the live hierarchy no longer justifies.

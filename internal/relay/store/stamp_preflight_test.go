@@ -11,6 +11,7 @@ import (
 // does, so a marker-only command never passes a store no write could then use: a store that still
 // says owner=go but lost another ownership key is refused by both.
 func TestThePreflightJudgesTheWholeStampAsTheWritableOpenDoes(t *testing.T) {
+	t.Parallel()
 	for _, key := range []string{"writer_protocol", "owner_epoch", "python_compatibility_build", "rollback_allowed"} {
 		t.Run(key, func(t *testing.T) {
 			path := filepath.Join(stateDir(t), "relay.sqlite3")

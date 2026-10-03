@@ -6,6 +6,7 @@ import (
 )
 
 func Test24_SR_13_ConfirmedOmissionNotStanding(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	reading := map[string]any{"schema": "reporting-observation/1", "reportingState": "unreported", "reason": "terminal_without_report", "relationshipId": "rel-1", "executionGeneration": float64(1), "selectors": map[string]any{"turn": "turn-7"}}
 	for _, query := range []string{
@@ -33,6 +34,7 @@ func Test24_SR_13_ConfirmedOmissionNotStanding(t *testing.T) {
 	}
 }
 func Test24_SR_12_StandingCountsFactsNotReadings(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	good := map[string]any{"schema": "reporting-observation/1", "reportingState": "unreported", "reason": "terminal_without_report", "relationshipId": "rel-1", "executionGeneration": float64(1), "selectors": map[string]any{"turn": "turn-7"}}
 	bad := map[string]any{"schema": "reporting-observation/1", "reportingState": "something", "relationshipId": "rel-1", "selectors": map[string]any{"turn": "turn-7"}}

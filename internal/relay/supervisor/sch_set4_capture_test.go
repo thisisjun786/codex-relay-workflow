@@ -119,6 +119,7 @@ func Test24_SCH_66_LiveCancelledBudget(t *testing.T) {
 	})
 }
 func Test24_SCH_62_LiveFrozenOmissionReading(t *testing.T) {
+	t.Parallel()
 	supervisorMirror(t, "EveryLineSelectsTheStoreItWasWrittenFrom.test_an_omission_points_at_the_reading_it_froze_not_at_a_reread", "setup", func(c *Channel, s *store.Store) []any {
 		ctx := context.Background()
 		reading := map[string]any{"schema": "reporting-observation/1", "reportingState": "unreported", "relationshipId": captureRelationID(t, c), "reason": "the turn settled without a report", "selectors": map[string]any{"state": c.StoreDirectory(), "markerRoot": "/marker", "workspace": filepath.Join(filepath.Dir(c.StoreDirectory()), "work"), "assignment": "asg-1", "session": "01child-session", "turn": "turn-unreported-1"}}

@@ -16,6 +16,7 @@ import (
 )
 
 func TestOpen_matches_python_schema_when_fresh(t *testing.T) {
+	t.Parallel()
 	// Given: a temporary state directory.
 	ctx := context.Background()
 	root := t.TempDir()
@@ -30,6 +31,7 @@ func TestOpen_matches_python_schema_when_fresh(t *testing.T) {
 	checkJSON(t, "sqlite_master", master(t, goDB))
 }
 func TestOpen_preserves_python_database_when_reopened(t *testing.T) {
+	t.Parallel()
 	// Given: a committed database made by the real Python Store.
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "relay.sqlite3")
@@ -59,6 +61,7 @@ func TestOpen_preserves_python_database_when_reopened(t *testing.T) {
 	}
 }
 func TestOpen_enforces_foreign_keys_on_every_connection(t *testing.T) {
+	t.Parallel()
 	// Given: a store whose pool holds one connection (decisions.md section 4), and that
 	// connection discarded so the pool must dial a fresh one each round.
 	ctx := context.Background()
@@ -106,6 +109,7 @@ func TestOpen_enforces_foreign_keys_on_every_connection(t *testing.T) {
 	}
 }
 func TestDiscoverStateDir_adopts_legacy_noncanonical_sibling(t *testing.T) {
+	// Serial: sets process environment variables, which every other running test would see.
 	// Given: an old spelling's existing store and a canonical directory without a database.
 	root := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", root)
@@ -131,6 +135,7 @@ func TestDiscoverStateDir_adopts_legacy_noncanonical_sibling(t *testing.T) {
 // test isolation only (decisions.md 46). Both live roots are opened, the home default and
 // $XDG_STATE_HOME's, each made a temporary directory here.
 func TestOpen_opens_the_live_state_by_default(t *testing.T) {
+	// Serial: sets process environment variables, which every other running test would see.
 	for _, location := range []struct {
 		name string
 		path func(home, xdg string) string
@@ -177,6 +182,7 @@ func TestOpen_opens_the_live_state_by_default(t *testing.T) {
 // Under test isolation (CRW_REFUSE_LIVE_STATE=1, which testsupport sets in this binary) the same
 // open is refused, before the database exists.
 func TestOpen_refuses_live_state_under_test_isolation(t *testing.T) {
+	// Serial: sets process environment variables, which every other running test would see.
 	// Given: a test-specific live state root.
 	root := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", root)
@@ -231,6 +237,7 @@ func repositoryRoot(t *testing.T) string {
 }
 
 func TestOpen_refuses_both_live_state_locations_when_xdg_state_home_is_set(t *testing.T) {
+	// Serial: sets process environment variables, which every other running test would see.
 	for _, location := range []struct {
 		name string
 		path func(home, xdg string) string

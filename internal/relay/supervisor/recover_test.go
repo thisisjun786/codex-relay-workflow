@@ -11,6 +11,7 @@ import (
 )
 
 func Test24_SCH_21_RecoverClaimBeforeTransport(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	_, stage := f.staged(t)
 	id := stage["messageId"].(string)
@@ -41,6 +42,7 @@ func Test24_SCH_21_RecoverClaimBeforeTransport(t *testing.T) {
 	}
 }
 func Test24_SCH_22_OlderClaimableBlocksNamedNewer(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	f.c.Settings = &delivery.TaskSettings{}
 	_, first := f.staged(t)
@@ -71,6 +73,7 @@ func Test24_SCH_22_OlderClaimableBlocksNamedNewer(t *testing.T) {
 	}
 }
 func Test24_SCH_23_HeldOrStrandedOlderDoesNotBlock(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	f.c.Settings = &delivery.TaskSettings{}
 	_, first := f.staged(t)

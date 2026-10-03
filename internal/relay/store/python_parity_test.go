@@ -225,34 +225,42 @@ func runParity(t *testing.T, group string, tables []string) {
 }
 
 func TestPythonParity_linkage(t *testing.T) {
+	t.Parallel()
 	runParity(t, "linkage", []string{"scope_bindings", "scope_links", "scope_directives", "linkage_conflicts", "relationship_scope", "coordination_conflicts"})
 }
 
 func TestPythonParity_merge_turn(t *testing.T) {
+	t.Parallel()
 	runParity(t, "merge-turn", []string{"merge_turns", "merge_turn_ledger", "merge_turn_checks"})
 }
 
 func TestPythonParity_capacity(t *testing.T) {
+	t.Parallel()
 	runParity(t, "capacity", []string{"execution_slots", "execution_limits", "execution_usage"})
 }
 
 func TestPythonParity_supervisor(t *testing.T) {
+	t.Parallel()
 	runParity(t, "supervisor", []string{"supervisor_messages", "supervisor_attempts", "supervisor_readbacks"})
 }
 
 func TestPythonParity_product_routing(t *testing.T) {
+	t.Parallel()
 	runParity(t, "product-routing", []string{"product_registry", "product_bindings", "routing_policy", "incident_routes", "route_incidents"})
 }
 
 func TestPythonParity_sync(t *testing.T) {
+	t.Parallel()
 	runParity(t, "sync", []string{"sync_targets", "sync_outbox"})
 }
 
 func TestPythonParity_managed(t *testing.T) {
+	t.Parallel()
 	runParity(t, "managed", []string{"managed_start_requests"})
 }
 
 func TestPythonParity_remaining(t *testing.T) {
+	t.Parallel()
 	runParity(t, "remaining", []string{"recipient_rate", "recipient_lifecycle", "poll_observations", "delivery_intent", "authorized_settings",
 		"attempt_settings_violations", "canonical_criteria", "verification_mode", "claim_context", "verdict_context",
 		"assignment_marks", "reporting_sessions", "turn_declarations"})

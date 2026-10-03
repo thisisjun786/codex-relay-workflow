@@ -18,11 +18,6 @@ import (
 func recordStore(t *testing.T) *Store {
 	t.Helper()
 	root := t.TempDir()
-	t.Setenv("HOME", root)
-	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
-	t.Setenv("XDG_DATA_HOME", filepath.Join(root, "data"))
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
-	t.Setenv("CODEX_HOME", filepath.Join(root, "codex"))
 	store, err := fixtureOpen(context.Background(), filepath.Join(root, "db", "relay.sqlite3"), "")
 	if err != nil {
 		t.Fatal(err)
@@ -113,6 +108,7 @@ func dieInsideTransaction(t *testing.T, store *Store, write func(context.Context
 }
 
 func TestTransaction_rolls_back_when_process_dies_before_commit(t *testing.T) {
+	t.Parallel()
 	// Given: a fresh durable store.
 	store := recordStore(t)
 	// When: a process dies inside Store.Transaction after its write and before COMMIT.
@@ -137,6 +133,7 @@ func TestTransaction_rolls_back_when_process_dies_before_commit(t *testing.T) {
 }
 
 func TestTransaction_rolls_back_when_body_fails(t *testing.T) {
+	t.Parallel()
 	// Given: a fresh durable store.
 	store := recordStore(t)
 	ctx := context.Background()
@@ -161,6 +158,7 @@ func TestTransaction_rolls_back_when_body_fails(t *testing.T) {
 // test_a_failing_commit_leaves_the_store_usable: COMMIT itself is refused (a deferred
 // foreign key is checked only there), and the store must stay usable afterwards.
 func TestTransaction_rolls_back_when_commit_fails(t *testing.T) {
+	t.Parallel()
 	t.Run("test_a_failing_commit_leaves_the_store_usable", testFailingCommitLeavesTheStoreUsable)
 }
 
@@ -213,6 +211,7 @@ func testFailingCommitLeavesTheStoreUsable(t *testing.T) {
 }
 
 func TestChallenge_reads_python_compatible_row(t *testing.T) {
+	t.Parallel()
 	// Given: a fresh database.
 	store := recordStore(t)
 	ctx := context.Background()
@@ -229,6 +228,7 @@ func TestChallenge_reads_python_compatible_row(t *testing.T) {
 }
 
 func TestJournal_preserves_payload_bytes_when_written(t *testing.T) {
+	t.Parallel()
 	// Given: a JSON payload whose field order is significant.
 	store := recordStore(t)
 	ctx := context.Background()
@@ -245,6 +245,7 @@ func TestJournal_preserves_payload_bytes_when_written(t *testing.T) {
 }
 
 func TestRelationship_reads_python_compatible_row(t *testing.T) {
+	t.Parallel()
 	// Given: a relationship as inserted by Python's registry.
 	store := recordStore(t)
 	ctx := context.Background()
@@ -261,6 +262,7 @@ func TestRelationship_reads_python_compatible_row(t *testing.T) {
 }
 
 func TestOpen_does_not_write_host_state_when_record_queries_run(t *testing.T) {
+	t.Parallel()
 	// Given: a confined test home and state directory.
 	store := recordStore(t)
 	// When: a missing event is queried.

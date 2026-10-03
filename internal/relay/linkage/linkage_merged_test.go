@@ -212,6 +212,7 @@ func (w *world) handoverParent(acknowledged []string) (contract.OrderedObject, e
 
 // Test_CRW288_handover_beside_a_merged_relationship: c1.
 func Test_CRW288_handover_beside_a_merged_relationship(t *testing.T) {
+	t.Parallel()
 	t.Run("a merged relationship does not block the handover and is closed by it", func(t *testing.T) {
 		w := newWorld(t)
 		w.superviseDefault()
@@ -392,6 +393,7 @@ func (w *world) closeMerged(args ...string) (int, map[string]any) {
 
 // Test_CRW288_close_merged_command: c2.
 func Test_CRW288_close_merged_command(t *testing.T) {
+	t.Parallel()
 	// a project with one of each kind of live assignment, and one merged assignment with no project.
 	build := func(t *testing.T) (w *world, ids map[string]string) {
 		w = newWorld(t)
@@ -543,6 +545,7 @@ func Test_CRW288_close_merged_command(t *testing.T) {
 
 // Test_CRW288_settled_boundaries: what keeps a merged relationship open, whichever command asks.
 func Test_CRW288_settled_boundaries(t *testing.T) {
+	t.Parallel()
 	type setup func(w *world, rid string)
 	cases := []struct {
 		name     string
@@ -670,6 +673,7 @@ func Test_CRW288_settled_boundaries(t *testing.T) {
 
 // Test_CRW288_reopen: a closed merged relationship comes back only through relationship-resume.
 func Test_CRW288_reopen(t *testing.T) {
+	t.Parallel()
 	t.Run("resume restores the merged reading and generation-open reopens it", func(t *testing.T) {
 		w := newWorld(t)
 		w.superviseDefault()
@@ -720,6 +724,7 @@ func Test_CRW288_reopen(t *testing.T) {
 
 // Test_CRW288_completion_reading_after_close: linkage-completion keeps reading complete_candidate until the closer runs.
 func Test_CRW288_completion_reading_after_close(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	w.superviseDefault()
 	rid := w.assign(1, true)
