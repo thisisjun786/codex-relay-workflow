@@ -743,6 +743,12 @@ scope's service, and the parent that started it does not end it early
 A process of a child's that looks hung is that child's to stop; the parent raises it with that
 child and does not stop it.
 
+What the parent runs locally to verify also follows the launch packet's `Go build resources:` line: the
+shared build cache, `GOFLAGS=-p=4`, the packages the change touches and a memory-limited scope for
+anything heavy. The whole test suite is the hosted CI of the head under verification and is not
+repeated locally
+([The three gates](references/merge-readiness.md#the-three-gates)).
+
 Where a relay holds the assignment, verify the revision it reports as current. If a
 newer revision arrived while the review was in progress, the older result is not a
 completion: re-read the current revision and verify that one. Two competing
@@ -787,7 +793,8 @@ the counts against the record. That is a mechanical check, not a review. Where t
 return the candidate to the same child fail-closed rather than fixing it here. A late review
 thread on the record's head that the coordinator has itself dispositioned with
 `merge-evidence --restate <record> --late-dispositions <file>` is not a disagreement
-([how](references/merge-readiness.md#a-late-thread-the-parent-dispositions-itself)).
+([how](references/merge-readiness.md#a-late-thread-the-parent-dispositions-itself)). Where the installed relay
+lacks that option, [Late review threads](references/merge-readiness.md#late-review-threads) has the temporary procedure.
 
 Report **verified**, **needs changes**, or **unverified**, with concrete evidence,
 and distinguish implementation, merge, and deployment. Start a successor
