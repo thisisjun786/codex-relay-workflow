@@ -25,7 +25,10 @@ A rule belongs to a mechanical region and is required: a mechanical region witho
 the same rule; with two rules the overlap is `local`, because neither rule covers the other side's change.
 
 Two lists are applied whatever grade is declared. A rename, a delete and the hotspots (lockfiles, `.github/`, a Makefile or Dockerfile, `.sql` files, a `schema` or `migrations`
-directory) hold the whole repository. The shared contract surfaces (`contract/schema`, `contract/golden`, `contract/fixtures`, any `testdata/golden` directory and the CLI spec
+directory) are `exclusive` at their own place and nowhere else: they hold the same path (whatever kind or symbol the other region names), the trees that cover it and, for a tree they delete or rename, what lies under it. Two nodes on the
+same `.sql` file or the same deleted path run one after the other; a node that deletes a file, one that adds a `.sql` file and one that changes a workflow file are released together with each other and with every node that does not share their place.
+A rename is held at the path it leaves, so declare the destination as a region of its own when another node could write it. Only a region declared with `"exclusive": true` holds the whole repository (a repository-wide rename, say): state it
+where the work needs it. The shared contract surfaces (`contract/schema`, `contract/golden`, `contract/fixtures`, any `testdata/golden` directory and the CLI spec
 `internal/relay/argparse/specs.json`) are `exclusive` on their own place: a command of the CLI spec is the CLI spec, and an overlap whose common place is a tree that holds one of them is
 exclusive. Two trees above the CLI spec, or two `testdata` directories, are one such overlap, while a tree and an unlisted file under it keep their own grades. The scheduler reads declarations and not
 the repository, so a tree above a package (which may hold a `testdata/golden`) is not looked into: it claims everything under it. Declare a tree that stops short of those paths, or list the files,

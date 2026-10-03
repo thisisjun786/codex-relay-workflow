@@ -70,7 +70,7 @@ func cPublication(ctx context.Context, l *Ledger, id string) (map[string]any, er
 		return nil, e
 	}
 	if r == nil {
-		return nil, fmt.Errorf("fault_unknown: no publication '%s'", id)
+		return nil, fmt.Errorf("fault_unknown: no publication %q", id)
 	}
 	out := cView(r)
 	extra, e := l.one(ctx, "SELECT * FROM fault_publication_payloads WHERE publication_id=?", id)

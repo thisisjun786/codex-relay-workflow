@@ -262,7 +262,7 @@ func dRaise(ctx context.Context, l *Ledger, a map[string]string) (any, error) {
 			return e
 		}
 		if r == nil {
-			return fmt.Errorf("fault_unknown: no fault '%s'", id)
+			return fmt.Errorf("fault_unknown: no fault %q", id)
 		}
 		notice = pyvalue.SHA256Hex(id + "|decision|raised:" + reason)[:idWidth]
 		_, e = l.exec(ctx, "INSERT INTO fault_notifications(notification_id,fault_id,product,kind,reason,cycle,ref,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(notification_id) DO UPDATE SET state=excluded.state,last_error=NULL,updated_at=excluded.updated_at WHERE fault_notifications.state='withdrawn'", notice, id, r.Text("product"), "decision", "raised:"+reason, integer(r, "cycle"), nilIfEmpty(a["--ref"]), "pending", l.Clock.ISO(), l.Clock.ISO())
@@ -301,7 +301,7 @@ func dReserveRows(ctx context.Context, l *Ledger, a map[string]string, deliverab
 		return nil, fmt.Errorf("fault_observation_malformed: a reservation has an owner")
 	}
 	if owner == "relay-daemon" && deliverable == nil {
-		return nil, fmt.Errorf("fault_observation_malformed: owner 'relay-daemon' is the relay daemon's notification deliverer's: its reservations are settled from the supervisor channel's records, so a reserver with a transport of its own names itself")
+		return nil, fmt.Errorf("fault_observation_malformed: owner \"relay-daemon\" is the relay daemon's notification deliverer's: its reservations are settled from the supervisor channel's records, so a reserver with a transport of its own names itself")
 	}
 	limit, e := dBound(ctx, a["--limit"], "--limit", 20, 1000)
 	if e != nil {
