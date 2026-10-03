@@ -78,7 +78,7 @@ The release workflow is manual and owner-controlled.
 
 | Evidence | What it establishes |
 | --- | --- |
-| Skill metadata, local links and the syntax of the Python developer tools left | Repository structure and readable source |
+| Skill metadata, local links and the absence of Python files | Repository structure, and that no Python enters the repository |
 | Installer and skill-linker tests in temporary destinations (Go) | Idempotence and preservation of conflicting files, directories and links |
 | CI-control negative tests | Missing, malformed, failed, cancelled or skipped prerequisites cannot pass the gate; main-target PRs and invalid release sources are rejected |
 | Go lint, the Go test suite with the contract corpus, static release binaries and the isolated-home install | The Go runtime builds, passes its tests and installs and wires from this checkout |
@@ -94,14 +94,12 @@ applicable. A structural test does not prove the workflow's meaning, and a fixtu
 replay does not prove an actual Codex hook, relay delivery or Desktop behavior.
 
 The Go checks need only the Go toolchain `go.mod` names and temporary synthetic
-data; the port checkers, developer tools listed in
-`scripts/dev/ALLOWED_PYTHON.txt` until todo 48, use Python's standard library. Pin any
+data; CI installs no Python. Pin any
 downloaded tooling by version, commit and checksum, and keep fixtures synthetic
 and local. Ordinary CI does not need a
 contributor's Codex, CXC, Paperthin, Linear account, App Server socket or user
 skill installation. `crw-dev skills link` in the development binary links a checkout's skills
-(its Python predecessor, `scripts/install.py`, left in todo 44). While Python files
-remain, the validate job checks their syntax on the documented minimum Python version; cross-platform
+(its Python predecessor, `scripts/install.py`, left in todo 44). Cross-platform
 symlink behavior and actual host compatibility need their own evidence before claiming support.
 
 Use hosted Linux runners, pinned Action commits, bounded timeouts and a

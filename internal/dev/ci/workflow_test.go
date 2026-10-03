@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -155,6 +156,18 @@ func TestWorkflow_each_check_runs_once(t *testing.T) {
 	}
 }
 
+// CI installs no Python: the checks are Go only, so no job needs an interpreter set up.
+func TestWorkflow_installs_no_python(t *testing.T) {
+	jobs, _ := workflowJobs(t)
+	for name, body := range jobs {
+		for _, word := range []string{"setup-python", "python-version"} {
+			if strings.Contains(body, word) {
+				t.Errorf("%s job still names %q", name, word)
+			}
+		}
+	}
+}
+
 // matrixValues reads a one-line `key: [a, b]` matrix entry from a job body.
 func matrixValues(t *testing.T, body, key string) []string {
 	t.Helper()
@@ -216,6 +229,82 @@ func TestWorkflow_parallel_legs_cover_the_whole_run(t *testing.T) {
 	}
 	if want := `CRW_TEST_BINARY="$PWD/dist/crw_linux_amd64/crw" go test -trimpath -tags integration -count=1 ./internal/runtime/integration/...`; steps[index[wired][0]]["run"] != want {
 		t.Errorf("%q runs %q, want %q", wired, steps[index[wired][0]]["run"], want)
+	}
+}
+
+// legProblems lists what would make a package run in two legs, or a leg run nothing. The numbered
+// parts name their packages and `rest` is every other package (`go list ./...` less TEST_PARTS), so
+// a package runs twice when two parts name it or TEST_PARTS misses a part, and a named path without
+// tests runs nothing. The numbered parts run without the dev tag and `rest` runs the dev-tagged
+// tests in its second pass, so a part cannot name one of those packages. A package is the cleaned
+// path of its directory, so `./internal/relay/cli/` and `./internal/relay/cli` are one package.
+func legProblems(makefile, root string) []string {
+	fields := func(name string) []string {
+		m := regexp.MustCompile(`(?m)^` + name + ` :=(.*)$`).FindStringSubmatch(makefile)
+		if m == nil {
+			return nil
+		}
+		return strings.Fields(m[1])
+	}
+	var problems []string
+	var parts []string
+	owner := map[string]string{}
+	for _, m := range regexp.MustCompile(`(?m)^TEST_PART_(\d+) :=`).FindAllStringSubmatch(makefile, -1) {
+		n := m[1]
+		parts = append(parts, "$(TEST_PART_"+n+")")
+		for _, pkg := range fields("TEST_PART_" + n) {
+			dir := path.Clean(pkg)
+			if other, named := owner[dir]; named {
+				problems = append(problems, fmt.Sprintf("%s is named by part %s and by part %s", pkg, other, n))
+				continue
+			}
+			owner[dir] = n
+			tests, _ := filepath.Glob(filepath.Join(root, filepath.FromSlash(dir), "*_test.go"))
+			switch {
+			case !strings.HasPrefix(pkg, "./") || strings.Contains(pkg, "...") || dir == ".." || strings.HasPrefix(dir, "../"):
+				problems = append(problems, fmt.Sprintf("part %s names %q, which is not one package directory", n, pkg))
+			case strings.HasPrefix(dir, "cmd/crw-dev") || dir == "internal/dev" || strings.HasPrefix(dir, "internal/dev/"):
+				problems = append(problems, fmt.Sprintf("part %s names %s, whose tests need the dev tag and run in rest", n, pkg))
+			case len(tests) == 0:
+				problems = append(problems, fmt.Sprintf("part %s names %s, which has no tests", n, pkg))
+			}
+		}
+	}
+	if got := fields("TEST_PARTS"); !slices.Equal(got, parts) {
+		problems = append(problems, fmt.Sprintf("TEST_PARTS is %v, want the numbered parts %v", got, parts))
+	}
+	return problems
+}
+
+// Every package runs in exactly one leg: the one part that names it, or `rest`.
+func TestMakefile_every_package_runs_in_exactly_one_leg(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repoRoot(), "Makefile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if problems := legProblems(string(data), repoRoot()); len(problems) > 0 {
+		t.Errorf("the legs do not run every package exactly once:\n%s", strings.Join(problems, "\n"))
+	}
+}
+
+// The check refuses each way a package would run twice or a leg would run nothing.
+func TestMakefile_leg_check_refuses_a_package_in_two_legs_or_none(t *testing.T) {
+	makefile := "TEST_PART_1 := ./internal/relay/cli ./internal/relay/hook\nTEST_PART_2 := ./internal/relay/store\nTEST_PARTS := $(TEST_PART_1) $(TEST_PART_2)\n"
+	if problems := legProblems(makefile, repoRoot()); len(problems) != 0 {
+		t.Fatalf("a sound Makefile is refused: %v", problems)
+	}
+	for name, mutated := range map[string]string{
+		"a package named by two parts":                  strings.Replace(makefile, "./internal/relay/store", "./internal/relay/cli", 1),
+		"a package named twice by equivalent spellings": strings.Replace(makefile, "./internal/relay/store", "./internal/relay/cli/", 1),
+		"a package named twice through a parent":        strings.Replace(makefile, "./internal/relay/store", "./internal/relay/../relay/cli", 1),
+		"a part missing from TEST_PARTS":                strings.Replace(makefile, " $(TEST_PART_2)", "", 1),
+		"a path with no tests":                          strings.Replace(makefile, "./internal/relay/store", "./internal/relay/nowhere", 1),
+		"a dev-tagged package":                          strings.Replace(makefile, "./internal/relay/store", "./internal/dev/ci", 1),
+		"a pattern instead of one package":              strings.Replace(makefile, "./internal/relay/store", "./internal/relay/...", 1),
+	} {
+		if len(legProblems(mutated, repoRoot())) == 0 {
+			t.Errorf("%s passes", name)
+		}
 	}
 }
 
