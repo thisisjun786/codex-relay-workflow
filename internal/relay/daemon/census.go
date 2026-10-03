@@ -53,6 +53,14 @@ type pending struct {
 // The three reasons a turn is pending, and the reads already made. The latest read is the latest valid one: a stamp
 // from before a clock set-back must not hide a valid stamp written under another generation.
 const (
+	// This association is permanent: the original managed standby stays inert
+	// even after its business turn ends or the relationship opens a new generation.
+	managedStandby = `SELECT 1 FROM managed_start_requests m
+WHERE m.state='attached' AND m.receipt_status='accepted'
+  AND m.relationship_id=r.relationship_id AND m.child_task_id=r.child_task_id
+  AND m.execution_generation=g.execution_generation AND m.dispatch_request_id=g.dispatch_request_id
+  AND m.standby_turn_id=g.dispatch_turn_id`
+
 	stagedTurns = `SELECT r.relationship_id AS rid, e.turn_id AS turn, e.first_seen_at AS since, 0 AS current
 FROM relationships r JOIN events e ON e.relationship_id=r.relationship_id AND e.turn_thread_id=r.child_task_id
 WHERE r.status='active' AND r.superseded_by IS NULL AND e.stage='staged'
@@ -63,6 +71,7 @@ ORDER BY r.relationship_id, e.first_seen_at, e.event_id`
 FROM relationships r JOIN generations g ON g.relationship_id=r.relationship_id
 WHERE r.status='active' AND r.superseded_by IS NULL AND g.dispatch_turn_id IS NOT NULL AND g.dispatch_turn_id<>''
   AND NOT EXISTS (SELECT 1 FROM assignment_settlements s WHERE s.relationship_id=r.relationship_id AND s.thread_id=r.child_task_id AND s.turn_id=g.dispatch_turn_id)
+	AND NOT EXISTS (` + managedStandby + `)
 ORDER BY r.relationship_id, g.execution_generation`
 
 	// What makes a generation_turns row an admission is the store's own predicate (see laterReceiptQuery).
