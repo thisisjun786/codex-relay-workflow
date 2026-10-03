@@ -18,9 +18,9 @@ func nullable(value string) any {
 }
 
 type CreateThread struct {
-	RequestID, CWD, Prompt, Title, Sandbox, Model, ProjectID, Effort, Exception, Role string
-	Roots                                                                             []string
-	Policy                                                                            map[string]any
+	RequestID, CWD, Prompt, Title, Sandbox, Model, ProjectID, Effort, Exception, Role, MCPProfile string
+	Roots                                                                                         []string
+	Policy                                                                                        map[string]any
 }
 
 func (b *Bridge) CreateThread(ctx context.Context, in CreateThread) (ledger.Receipt, error) {

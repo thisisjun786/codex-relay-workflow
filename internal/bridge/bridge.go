@@ -26,6 +26,7 @@ type RPC interface {
 type ExecutionPolicy interface {
 	Authorize(execution.Input) (execution.Authorized, error)
 	Summary() map[string]any
+	Role(name string) (execution.Role, bool)
 }
 
 type Bridge struct {

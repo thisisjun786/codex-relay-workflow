@@ -31,6 +31,8 @@ type RolePair struct{ Model, Effort string }
 type Role struct {
 	Pairs       []RolePair
 	Expectation string
+	// MCP is the role's MCP profiles; nil when the role declares none.
+	MCP *MCPProfiles
 }
 
 // Allows is whether a request stating model and effort is one of the role's pairs.

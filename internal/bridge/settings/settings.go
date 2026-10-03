@@ -49,6 +49,8 @@ type Contract struct {
 	CWD, Sandbox, Model, ReasoningEffort, ApprovalPolicy string
 	Roots                                                []string
 	ExpectedPolicy                                       map[string]any
+	// MCP is what the role's MCP profile resolved to; nil when the thread has no profile.
+	MCP *MCPExpectation
 }
 
 var defaults = map[string]map[string]any{
