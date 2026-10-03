@@ -150,10 +150,14 @@ func tomlFindHeader(lines []string, inString []bool, header string) int {
 	return -1
 }
 
+// tomlBodyStart is the index of the first line after headerIdx, kept within [0, len(lines)+1] without overflowing: a headerIdx below -1
+// reads as -1 (the oracle's lines[i] is undefined there and matches nothing) and one at or past the last line leaves no body.
+func tomlBodyStart(lines []string, headerIdx int) int { return min(max(headerIdx, -1), len(lines)) + 1 }
+
 // tomlBodyEnd is the exclusive end of a table body that starts after headerIdx: the next table start (a line whose first non-space
-// character is [) outside a string. A headerIdx below -1 reads as -1, where the oracle's lines[i] is undefined and matches nothing.
+// character is [) outside a string.
 func tomlBodyEnd(lines []string, inString []bool, headerIdx int) int {
-	for i := max(headerIdx+1, 0); i < len(lines); i++ {
+	for i := tomlBodyStart(lines, headerIdx); i < len(lines); i++ {
 		if !inString[i] && strings.HasPrefix(tomlTrimStart(lines[i]), "[") {
 			return i
 		}
@@ -213,7 +217,7 @@ func tomlFindKey(lines []string, inString []bool, headerIdx int, key string) (Ke
 	if err != nil {
 		return KeyLine{}, TomlKeyAbsent
 	}
-	for i, end := max(headerIdx+1, 0), tomlBodyEnd(lines, inString, headerIdx); i < end; i++ {
+	for i, end := tomlBodyStart(lines, headerIdx), tomlBodyEnd(lines, inString, headerIdx); i < end; i++ {
 		if inString[i] {
 			continue
 		}

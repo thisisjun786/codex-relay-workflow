@@ -2,6 +2,7 @@ package configguard
 
 import (
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -182,6 +183,20 @@ func TestBranches(t *testing.T) {
 		{"restore unsupported-value", restore("[t]\nk = '''x'''\n", nil), tomlWant{"[t]\nk = '''x'''\n", nil, false, TomlUnsupportedValue}},
 	} {
 		t.Run(c.name, func(t *testing.T) { tomlCheck(t, c.run(), c.want) })
+	}
+}
+
+// TestHeaderIndexOutOfRange: FindKeyLine takes the header's index from the caller; an index outside the lines must never wrap around or
+// panic. Below -1 the scan starts at the first line, as the oracle's does; at or past the last line there is no body.
+func TestHeaderIndexOutOfRange(t *testing.T) {
+	lines := []string{"k = 1", "x = 2"}
+	for _, c := range []struct {
+		at    int
+		found bool
+	}{{math.MinInt, true}, {-2, true}, {-1, true}, {0, false}, {1, false}, {2, false}, {math.MaxInt - 1, false}, {math.MaxInt, false}} {
+		if keyLine, lookup := FindKeyLine(lines, c.at, "k"); (lookup == TomlKeyFound) != c.found || keyLine.Index != 0 && c.found {
+			t.Errorf("FindKeyLine(headerIdx %d) = %+v, %v; want found %v", c.at, keyLine, lookup, c.found)
+		}
 	}
 }
 
