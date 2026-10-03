@@ -743,6 +743,12 @@ scope's service, and the parent that started it does not end it early
 A process of a child's that looks hung is that child's to stop; the parent raises it with that
 child and does not stop it.
 
+What the parent runs locally to verify also follows the launch packet's `Go build resources:` line: the
+shared build cache, `GOFLAGS=-p=4`, the packages the change touches and a memory-limited scope for
+anything heavy. The whole test suite is the hosted CI of the head under verification and is not
+repeated locally
+([The three gates](references/merge-readiness.md#the-three-gates)).
+
 Where a relay holds the assignment, verify the revision it reports as current. If a
 newer revision arrived while the review was in progress, the older result is not a
 completion: re-read the current revision and verify that one. Two competing
