@@ -54,6 +54,25 @@ func deactivationDeps(home string, run CodexRunner) DeactivateDeps {
 	return DeactivateDeps{Run: run, CodexHome: home, Now: func() string { return "fixed" }}
 }
 
+func deactivationLossOriginal(t *testing.T, id string) string {
+	t.Helper()
+	var rows []struct{ ID, Classification, Reason, Original string }
+	b, err := os.ReadFile("testdata/deactivation-changes.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = json.Unmarshal(b, &rows); err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range rows {
+		if row.ID == id && row.Classification == "intentionally-changed" && row.Reason != "" {
+			return row.Original
+		}
+	}
+	t.Fatalf("unclassified loss recording %q", id)
+	return ""
+}
+
 func TestDeactivateRecordedDecisionTable(t *testing.T) {
 	var data struct {
 		Decisions []struct {
@@ -250,7 +269,8 @@ func TestDeactivateUnreadableSettingsRefusedBeforeCLI(t *testing.T) {
 		t.Run(map[bool]string{false: "unreadable_config_no_table_keys", true: "unreadable_config"}[withKey], func(t *testing.T) {
 			home := activationHome(t)
 			path := filepath.Join(home, "config.toml")
-			activationWrite(t, path, deactivationConfig)
+			original := deactivationLossOriginal(t, map[bool]string{false: "unreadable_config_no_table_keys", true: "unreadable_config"}[withKey])
+			activationWrite(t, path, original)
 			keys := map[string]TableKeyRecord{}
 			if withKey {
 				keys["memories.dedicated_tools"] = deactivationKey(nil)
@@ -271,10 +291,66 @@ func TestDeactivateUnreadableSettingsRefusedBeforeCLI(t *testing.T) {
 				t.Fatalf("unreadable settings reached CLI: error=%v calls=%d", err, calls)
 			}
 			_ = os.Chmod(path, 0600)
-			if activationRead(t, path) != deactivationConfig {
+			if activationRead(t, path) != original {
 				t.Fatal("settings lost")
 			}
 		})
+	}
+}
+
+func TestDeactivateOverrideMissingConfigAndBackup(t *testing.T) {
+	for _, backupKind := range []string{"absent", "unreadable", "dangling"} {
+		t.Run(backupKind, func(t *testing.T) {
+			home := activationHome(t)
+			path := filepath.Join(home, "config.toml")
+			activationWrite(t, path, deactivationConfig)
+			m := deactivationManifest(t, home, map[string]TableKeyRecord{"memories.dedicated_tools": deactivationKey(nil)}, nil)
+			backup := path + ".bak"
+			m.BackupPath = &backup
+			deactivationSaveManifest(t, home, m)
+			if backupKind == "unreadable" {
+				if err := os.Mkdir(backup, 0700); err != nil {
+					t.Fatal(err)
+				}
+			} else if backupKind == "dangling" {
+				if err := os.Symlink("missing-backup", backup); err != nil {
+					t.Fatal(err)
+				}
+			}
+			override := path + ".override"
+			original := "# foreign edit\n" + deactivationConfig
+			activationWrite(t, override, original)
+			deps := deactivationDeps(home, func([]string) CodexRunResult { return CodexRunResult{} })
+			deps.ConfigPath = override
+			r, err := Deactivate(deps)
+			if err != nil || !r.FileDrifted || !reflect.DeepEqual(r.SkippedExternal, []SkippedExternal{{"memories.dedicated_tools", SkipUnverifiable}}) || activationRead(t, override) != original || activationRead(t, path) != deactivationConfig {
+				t.Fatalf("result=%+v error=%v", r, err)
+			}
+			// An absent config skips table restoration but still handles manifest flags.
+			deps.ConfigPath = path + ".absent"
+			r, err = Deactivate(deps)
+			if err != nil || !r.FileDrifted || len(r.SkippedExternal) != 0 || len(r.RestoredKeys) != 0 {
+				t.Fatalf("absent result=%+v error=%v", r, err)
+			}
+		})
+	}
+}
+
+func TestDeactivateNoHashNoopAndDefaultClock(t *testing.T) {
+	home := activationHome(t)
+	path := filepath.Join(home, "config.toml")
+	activationWrite(t, path, deactivationConfig)
+	prior := "true"
+	m := deactivationManifest(t, home, map[string]TableKeyRecord{"memories.dedicated_tools": deactivationKey(&prior)}, nil)
+	m.PostActivateHash = nil
+	deactivationSaveManifest(t, home, m)
+	r, err := Deactivate(DeactivateDeps{CodexHome: home, Run: func([]string) CodexRunResult { return CodexRunResult{} }})
+	if err != nil || r.FileDrifted || !reflect.DeepEqual(r.RestoredKeys, []string{"memories.dedicated_tools"}) || activationRead(t, path) != deactivationConfig {
+		t.Fatalf("noop result=%+v error=%v", r, err)
+	}
+	marker, err := ReadSelfHealMarkerFile(home)
+	if err != nil || marker == nil || marker.OptedOutAt == nil || !strings.HasSuffix(*marker.OptedOutAt, "Z") || len(*marker.OptedOutAt) != 24 {
+		t.Fatalf("clock marker=%+v error=%v", marker, err)
 	}
 }
 

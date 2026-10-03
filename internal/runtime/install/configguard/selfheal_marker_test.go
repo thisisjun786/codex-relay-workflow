@@ -90,7 +90,7 @@ func TestSelfHealMarkerAbsentMalformedAndNewHome(t *testing.T) {
 func TestSelfHealMarkerUnreadablePreservesConsent(t *testing.T) {
 	home := activationHome(t)
 	path := SelfHealMarkerPath(home)
-	original := "{\"healedKeys\":[\"goals\"],\"checkedAt\":\"keep\"}\n"
+	original := deactivationLossOriginal(t, "unreadable_marker")
 	activationWrite(t, path, original)
 	if err := os.Chmod(path, 0200); err != nil {
 		t.Fatal(err)
