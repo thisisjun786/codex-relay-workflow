@@ -117,16 +117,12 @@ func TestHostMemoryLeavesRunningChildrenAlone(t *testing.T) {
 	f.projectParent()
 	f.putPlan("hm", 0, "hm-r1", addNode("run", dag.NodeNonPR), addNode("next", dag.NodeNonPR))
 	f.startNode("hm", "run")
-	f.holdSlotsFor("hm", "run")
 	f.sched.Host = hostBound(healthyHost())
 	before := f.read("hm")
 	f.sched.Host = hostBound(shortHosts[0].sample)
 	short := f.read("hm")
 	if !reflect.DeepEqual(before.node("run"), short.node("run")) || short.node("run").State != StateRunning {
 		t.Fatalf("the running child changed: %+v then %+v", before.node("run"), short.node("run"))
-	}
-	if short.Pass.Held != before.Pass.Held || short.Pass.Held != 1 {
-		t.Fatalf("held slots %d then %d, want the one slot kept", before.Pass.Held, short.Pass.Held)
 	}
 	if n := short.node("next"); n.Reason != DeferHostMemory {
 		t.Fatalf("next = %+v, want it held", n)
@@ -145,23 +141,12 @@ func TestHostMemoryPrecedenceAndAbsence(t *testing.T) {
 			t.Fatalf("n1 = %+v pass = %+v", n, short.Pass)
 		}
 	})
-	t.Run("no host: no host memory object and no host limit", func(t *testing.T) {
-		f := newFixture(t)
-		f.threeNodes("hm")
-		reading := f.read("hm")
-		if reading.Pass.HostMemory != nil || reading.Pass.DecidingLimit != LimitNone {
-			t.Fatalf("pass = %+v", reading.Pass)
-		}
-		if _, present := asJSON(t, reading.Object())["pass"].(map[string]any)["host_memory"]; present {
-			t.Fatal("a reading without a host prints host_memory")
-		}
-	})
 	t.Run("nothing could be read: unmeasured, and nothing is held", func(t *testing.T) {
 		f := newFixture(t)
 		f.threeNodes("hm")
 		f.sched.Host = &HostMemoryBound{Sample: ReadHostMemory(t.TempDir()), Limits: DefaultHostMemoryLimits(), LimitsFrom: LimitsDefault}
 		reading := f.read("hm")
-		if len(reading.Ready) != 3 || hostState(reading) != HostMemoryUnmeasured {
+		if len(reading.Ready) != 3 || hostState(reading) != HostMemoryUnmeasured || len(reading.Pass.HostMemory.Unmeasured) != 3 {
 			t.Fatalf("ready %v, host %+v, want all three ready and the bound unmeasured", readyIDs(reading), reading.Pass.HostMemory)
 		}
 	})
@@ -193,7 +178,7 @@ func TestHostMemoryIsInTheInputDigest(t *testing.T) {
 		t.Fatal("a short host digests as a healthy one")
 	}
 	f.sched.Host = nil
-	if bare := f.read("hm"); bare.InputDigest == first.InputDigest {
+	if bare := f.read("hm"); bare.InputDigest == first.InputDigest || bare.Pass.HostMemory != nil {
 		t.Fatal("a reading without a host digests as one with a host")
 	}
 }

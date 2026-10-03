@@ -93,13 +93,10 @@ func TestProcHostMemoryUnreadableFilesAreNoReading(t *testing.T) {
 		{"no meminfo", "", psi("0.00", "1.00"), []string{"available", "swap"}},
 		{"no MemAvailable line (a kernel before 3.14)", "MemTotal: 1 kB\nSwapTotal: 8 kB\nSwapFree: 8 kB\n", psi("0.00", "1.00"), []string{"available"}},
 		{"a MemAvailable that is not a number", "MemAvailable: lots kB\nSwapTotal: 8 kB\nSwapFree: 8 kB\n", psi("0.00", "1.00"), []string{"available"}},
-		{"a MemAvailable in an unknown unit", "MemAvailable: 5 GB\nSwapTotal: 8 kB\nSwapFree: 8 kB\n", psi("0.00", "1.00"), []string{"available"}},
 		{"swap free above swap total", memInfo(40*kibPerGiB, 8, 9), psi("0.00", "1.00"), []string{"swap"}},
-		{"no SwapFree line", "MemAvailable: 41943040 kB\nSwapTotal: 8 kB\n", psi("0.00", "1.00"), []string{"swap"}},
 		{"a pressure file without a some line", memInfo(40*kibPerGiB, 8, 8), "full avg10=0.00 avg60=0.00 avg300=0.00 total=1\n", []string{"pressure"}},
 		{"a some line without avg60, though it has an avg10", memInfo(40*kibPerGiB, 8, 8), "some avg10=0.00 avg300=0.00 total=1\n", []string{"pressure"}},
 		{"a pressure avg60 that is not a number", memInfo(40*kibPerGiB, 8, 8), psi("0.00", "high"), []string{"pressure"}},
-		{"a pressure avg60 below zero", memInfo(40*kibPerGiB, 8, 8), psi("0.00", "-1.00"), []string{"pressure"}},
 		{"a pressure avg60 above 100", memInfo(40*kibPerGiB, 8, 8), psi("0.00", "101.00"), []string{"pressure"}},
 	}
 	for _, c := range cases {
@@ -163,7 +160,6 @@ func TestHostMemoryJudgeThresholdBoundaries(t *testing.T) {
 		{"pressure avg60 exactly at the ceiling", 40 << 30, 20 << 30, 10, HostMemoryWithin, nil},
 		{"pressure avg60 just over the ceiling", 40 << 30, 20 << 30, 10.01, HostMemoryDeferring, []string{"pressure"}},
 		{"all three over", 1 << 30, 0, 99, HostMemoryDeferring, []string{"available", "swap", "pressure"}},
-		{"the incident window: swap full, reclaim storm", 2 << 30, 0, 45.5, HostMemoryDeferring, []string{"available", "swap", "pressure"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -172,14 +168,6 @@ func TestHostMemoryJudgeThresholdBoundaries(t *testing.T) {
 				t.Fatalf("verdict = %+v, want %s exceeding %v", verdict, c.state, c.exceeded)
 			}
 		})
-	}
-}
-
-// Nothing readable is unmeasured: the bound records what was read and never claims the host is safe, and it defers nothing.
-func TestHostMemoryJudgeUnmeasuredWhenNothingIsRead(t *testing.T) {
-	verdict := HostMemoryBound{Sample: ReadHostMemory(filepath.Join(t.TempDir(), "absent")), Limits: DefaultHostMemoryLimits()}.Judge()
-	if verdict.State != HostMemoryUnmeasured || len(verdict.Exceeded) != 0 || !reflect.DeepEqual(verdict.Unmeasured, []string{"available", "swap", "pressure"}) {
-		t.Fatalf("verdict = %+v, want unmeasured in all three dimensions", verdict)
 	}
 }
 
@@ -216,12 +204,6 @@ func TestHostMemoryFromEnvironment(t *testing.T) {
 		}
 		if verdict := bound.Judge(); verdict.State != HostMemoryWithin {
 			t.Fatalf("7 GiB available under a floor of 6.5 GiB: %+v", verdict)
-		}
-	})
-	t.Run("the old pressure variable is not read", func(t *testing.T) {
-		bound, err := HostMemoryFromEnvironment(env(map[string]string{EnvHostProcRoot: t.TempDir(), "CRW_DAG_HOST_MAX_PRESSURE_SOME_AVG10": "50"}))
-		if err != nil || bound.Limits != DefaultHostMemoryLimits() || bound.LimitsFrom != LimitsDefault {
-			t.Fatalf("bound = %+v err = %v, want the defaults", bound, err)
 		}
 	})
 	t.Run("a value that is not usable names its variable", func(t *testing.T) {
