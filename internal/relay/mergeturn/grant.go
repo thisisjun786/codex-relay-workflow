@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
@@ -57,12 +58,37 @@ func GrantSupersessionFor(ctx context.Context, s *store.Store, receipt string) (
 	if envelope == nil {
 		return GrantUnreadable, nil
 	}
+	// A return request notice travels the grant channel but is no grant: it never reads as
+	// answered by an acknowledgement or regranted, only as current or closed with its turn.
+	if kind, _ := envelope["kind"].(string); kind == ReturnRequestKind {
+		turn, ok := envelope["turnId"].(string)
+		if !ok || turn == "" {
+			return GrantUnreadable, nil
+		}
+		return returnRequestSupersessionIn(ctx, s, turn)
+	}
 	turn, turnOK := envelope["turnId"].(string)
 	grant, grantOK := envelope["grantId"].(string)
 	if !turnOK || turn == "" || !grantOK || grant == "" {
 		return GrantUnreadable, nil
 	}
 	return GrantSupersessionIn(ctx, s, turn, grant)
+}
+
+// returnRequestSupersessionIn is the reading of a return request notice: current while its turn
+// still occupies the target, closed once it does not.
+func returnRequestSupersessionIn(ctx context.Context, s *store.Store, turn string) (string, error) {
+	row, err := s.One(ctx, "SELECT state FROM merge_turns WHERE turn_id = ?", turn)
+	if err != nil {
+		return "", err
+	}
+	if row == nil {
+		return Absent, nil
+	}
+	if !slices.Contains(occupying, row.Text("state")) {
+		return Closed, nil
+	}
+	return "", nil
 }
 
 // GrantSupersessionIn is grant_supersession_in, read on ctx's querier.

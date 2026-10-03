@@ -142,8 +142,15 @@ func init() {
 		})
 	add("merge-turn-request-return",
 		func(ctx context.Context, r *registry.Registry, p registry.Parsed) (any, error) {
-			actor := p.Text("actor")
-			return answer(service(r).Attest(ctx, p.Text("turn"), "return_requested", "return_requested:"+actor, actor, p.Text("evidence")))
+			return answer(service(r).RequestReturn(ctx, p.Text("turn"), p.Text("actor"), p.Text("evidence")))
+		})
+	add("merge-turn-progress",
+		func(ctx context.Context, r *registry.Registry, p registry.Parsed) (any, error) {
+			return answer(service(r).Progress(ctx, p.Text("turn"), p.Text("actor"), p.Text("step"), p.Text("evidence")))
+		})
+	add("merge-turn-pass",
+		func(ctx context.Context, r *registry.Registry, p registry.Parsed) (any, error) {
+			return answer(service(r).Pass(ctx, p.Text("turn"), p.Text("actor"), p.Text("evidence")))
 		})
 	add("merge-turn-check",
 		func(ctx context.Context, r *registry.Registry, p registry.Parsed) (any, error) {
