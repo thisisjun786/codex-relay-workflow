@@ -86,7 +86,7 @@ func newManagedCLI(t *testing.T) *managedCLI {
 		}
 		return fakehost.Reply{Result: map[string]any{"data": data, "nextCursor": nil}}
 	})
-	s, err := store.Open(context.Background(), filepath.Join(c.state, "relay.sqlite3"), c.host.SocketPath)
+	s, err := openStore(context.Background(), filepath.Join(c.state, "relay.sqlite3"), c.host.SocketPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +132,7 @@ func (c *managedCLI) start(raw []byte) (stdout, stderr string, code int) {
 // withStore runs f over the CLI's store, closed again before the next command.
 func (c *managedCLI) withStore(f func(*store.Store)) {
 	c.t.Helper()
-	s, err := store.Open(context.Background(), filepath.Join(c.state, "relay.sqlite3"), c.host.SocketPath)
+	s, err := openStore(context.Background(), filepath.Join(c.state, "relay.sqlite3"), c.host.SocketPath)
 	if err != nil {
 		c.t.Fatal(err)
 	}

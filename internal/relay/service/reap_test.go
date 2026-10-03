@@ -234,6 +234,7 @@ func installationForBinary(t *testing.T, home string) string {
 }
 
 func Test29D1TerminationCadence(t *testing.T) {
+	t.Parallel()
 	now := time.Unix(1000, 0)
 	reads := 0
 	pauses := []time.Duration{}

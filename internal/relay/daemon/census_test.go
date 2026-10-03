@@ -46,6 +46,7 @@ func pollRow(t *testing.T, s *store.Store, i, generation int, turn, at string) {
 // turns by key and not for the relationship's whole history. The plan is checked on the statement the census
 // runs: a search by relationship, generation and turn, never by relationship alone.
 func TestThePollRowsOfAPendingTurnAreReadByKey(t *testing.T) {
+	t.Parallel()
 	ctx, s := throughputStore(t)
 	steps := planOf(t, ctx, s, attemptsOfPendingTurns, "rel-00", `["turn"]`)
 	found := false
@@ -66,6 +67,7 @@ func TestThePollRowsOfAPendingTurnAreReadByKey(t *testing.T) {
 // c1: with a long settled history, the statement returns the rows of the pending turns and nothing else, and the
 // census puts each stamp on its own turn, whatever characters a turn id has (the ids travel as one JSON array).
 func TestThePollHistoryOfPendingTurnsIsReadWhateverTheirIds(t *testing.T) {
+	t.Parallel()
 	ctx, s := throughputStore(t)
 	seedIndexed(t, s, 0)
 	for k := range 300 {
@@ -124,6 +126,7 @@ func TestThePollHistoryOfPendingTurnsIsReadWhateverTheirIds(t *testing.T) {
 // than the other turn's admission. A guard for the poll statement's generation filter; it holds on the old
 // statement too.
 func TestAPendingTurnKeepsItsPollHistoryFromEveryGenerationOfItsRelationship(t *testing.T) {
+	t.Parallel()
 	ctx, s := throughputStore(t)
 	seedIndexed(t, s, 0)
 	exec(t, s, "INSERT INTO generations(relationship_id,execution_generation,dispatch_request_id,anchor_state,dispatch_turn_id,reason,opened_at,bound_at) VALUES('rel-00',2,'dispatch-2','bound','anchor-02','revision','2023-11-14T22:13:20Z','2023-11-14T22:13:20Z')")
@@ -159,6 +162,7 @@ func readsOf(host *observationHost, turns ...string) []string {
 // come first. Both turns hold a staged claim, so they are ranked against each other. Judging the earliest stamp by
 // its text first would rank x by its valid stamp and read y first.
 func TestATurnWithARegressedStampAndANormalOneRanksByTheRegressedOne(t *testing.T) {
+	t.Parallel()
 	const (
 		regressed = "2100-01-01T00:00:00.000000+00:00"
 		older     = "2023-11-14T01:00:00.000000+00:00"
@@ -182,6 +186,7 @@ func TestATurnWithARegressedStampAndANormalOneRanksByTheRegressedOne(t *testing.
 		}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			ctx, s := throughputStore(t)
 			seedIndexed(t, s, 0)
 			stageClaimAt(t, s, 0, "y-staged", "y", older)
@@ -203,6 +208,7 @@ func TestATurnWithARegressedStampAndANormalOneRanksByTheRegressedOne(t *testing.
 // each of their generations. Planned the other way round it scans generation_turns whole, the admissions of every
 // relationship there ever was, archived ones included.
 func TestTheAdmissionsScanStartsFromActiveRelationships(t *testing.T) {
+	t.Parallel()
 	ctx, s := throughputStore(t)
 	steps := planOf(t, ctx, s, unsettledAdmissions)
 	reached := false
@@ -226,6 +232,7 @@ func TestTheAdmissionsScanStartsFromActiveRelationships(t *testing.T) {
 // generation's own anchor, in relationship and admission order, and nothing else. A guard for the rewritten
 // statement; it holds on the old one.
 func TestTheAdmissionsScanListsExactlyTheUnsettledAdmissionsOfActiveRelationships(t *testing.T) {
+	t.Parallel()
 	ctx, s := throughputStore(t)
 	for i := range 5 {
 		seedIndexed(t, s, i)

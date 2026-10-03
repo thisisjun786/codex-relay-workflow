@@ -34,6 +34,7 @@ func revision(turn string, owed bool) []string {
 // the relationship must still be active on the generation it stands on now. Anything else matches nothing, so the observation path decides as it
 // did before, and still refuses a turn the relay never admitted as unassigned.
 func TestLaterReceiptIsFoundOnlyForTurnsTheStoreAdmits(t *testing.T) {
+	t.Parallel()
 	const bound = "explicit_admission_bound:anchor"
 	owed := lateClaim{"continuation", "child", "final", owedQueued}
 	for _, c := range []struct {
@@ -66,6 +67,7 @@ func TestLaterReceiptIsFoundOnlyForTurnsTheStoreAdmits(t *testing.T) {
 		}, owed, "business", "", ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			ctx, s := lateStore(t)
 			for _, statement := range c.setup {
 				if _, err := s.DB.Exec(statement); err != nil {
@@ -92,6 +94,7 @@ func TestLaterReceiptIsFoundOnlyForTurnsTheStoreAdmits(t *testing.T) {
 
 // A lookup that fails settles nothing, so the turn is read again on a later visit rather than lost.
 func TestSettleKeepsATurnWhenTheLaterReceiptLookupFails(t *testing.T) {
+	t.Parallel()
 	ctx, s := lateStore(t)
 	lateClaim{"continuation", "child", "final", owedQueued}.insert(t, s)
 	d := New(s, &observationHost{}, &delivery.FakeClock{T: 1700000000}, nil)

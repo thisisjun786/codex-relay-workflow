@@ -16,6 +16,7 @@ import (
 // The real binary's host-only commands must reach the host's socket, not an injected CLI
 // replacement or a bridge subprocess.
 func Test28_BuiltBinaryHostRoundTrips(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	binary, alias := suiteBinary, suiteAlias
 	host := fakehost.Start(t)
@@ -93,6 +94,7 @@ func Test28_BuiltBinaryHostRoundTrips(t *testing.T) {
 // deliver and verify-acks read a given --limit, not only their int64 default: a given limit is
 // served, and one past int64 is the parser's usage error, exit 2 (decision R3C-2), never a panic.
 func TestHostCommandsReadAGivenLimit(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	host := fakehost.Start(t)
 	for _, c := range []struct {

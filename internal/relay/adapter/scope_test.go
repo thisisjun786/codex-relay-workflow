@@ -53,6 +53,7 @@ func entriesRecord(entries []Entry) []any {
 	return out
 }
 func Test28_MSC_1_CanonicalManifest(t *testing.T) {
+	t.Parallel()
 	for _, entries := range [][]Entry{{{Path: "/b/two", SHA256: strings.Repeat("b", 64)}, {Path: "/a/one", SHA256: strings.Repeat("a", 64)}}, {{Path: "/a", SHA256: strings.Repeat("a", 64)}}, {}, {{Path: "/a/b", SHA256: strings.Repeat("1", 64)}, {Path: "/a/B", SHA256: strings.Repeat("2", 64)}, {Path: "/a/-", SHA256: strings.Repeat("3", 64)}}} {
 		payload, err := CanonicalPayload(entries)
 		if err != nil {
@@ -69,6 +70,7 @@ func Test28_MSC_1_CanonicalManifest(t *testing.T) {
 // A digest is its 64 lowercase hex characters and nothing after them: Python's '$' also matched
 // just before a final newline, so the fence's canonical form took '<hex>\n' where Go's refused it.
 func Test28_MSC_1b_DigestEndingInANewlineIsRefused(t *testing.T) {
+	t.Parallel()
 	entries := []Entry{{Path: "/a", SHA256: strings.Repeat("a", 64) + "\n"}}
 	_, err := CanonicalPayload(entries)
 	if err == nil {
@@ -77,6 +79,7 @@ func Test28_MSC_1b_DigestEndingInANewlineIsRefused(t *testing.T) {
 	scopeCapture(t, map[string]any{"op": "canonical", "entries": entriesRecord(entries)}, map[string]any{"error": err.Error()})
 }
 func Test28_MSC_2_NormalizedAbsolutePaths(t *testing.T) {
+	t.Parallel()
 	for _, path := range []string{"relative/path", "/a/../b", "/a/b/", "/a/./b", "~/a"} {
 		_, err := NormalizeDeclaredPath(path)
 		if err == nil {
@@ -86,6 +89,7 @@ func Test28_MSC_2_NormalizedAbsolutePaths(t *testing.T) {
 	}
 }
 func Test28_MSC_3_ComponentContainment(t *testing.T) {
+	t.Parallel()
 	for _, pair := range [][2]string{{"/a/b", "/a/b"}, {"/a/b", "/a/b/c"}, {"/a/b", "/a/bc"}, {"/a/b", "/a/bc/d"}, {"/a/b", "/a"}, {"/", "/a/b"}, {"/", "a/b"}} {
 		scopeCapture(t, map[string]any{"op": "within", "root": pair[0], "path": pair[1]}, IsWithin(pair[0], pair[1]))
 	}
@@ -102,6 +106,7 @@ func hashCapture(t *testing.T, path string, roots []string, lease bool) {
 	scopeCapture(t, map[string]any{"op": "hash", "path": path, "roots": roots, "lease": lease}, result)
 }
 func Test28_MSC_4_PinnedTraversal(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	real := filepath.Join(root, "real")
 	if err := os.Mkdir(real, 0700); err != nil {
@@ -136,6 +141,7 @@ func verifyCapture(t *testing.T, entries []Entry, roots []string) {
 	scopeCapture(t, map[string]any{"op": "verify", "entries": entriesRecord(entries), "roots": roots}, map[string]any{"problems": problems, "bindings": records, "unreadable": unreadable})
 }
 func Test28_MSC_7_VerifyAgainstDisk(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	path := filepath.Join(root, "a.txt")
 	if err := os.WriteFile(path, []byte("the full contents"), 0600); err != nil {
@@ -186,6 +192,7 @@ func frozenFixture(t *testing.T) (string, string, []Entry) {
 	return file, ref, entries
 }
 func Test28_MSC_8_FrozenCopySurvivesRelocation(t *testing.T) {
+	t.Parallel()
 	file, reference, entries := frozenFixture(t)
 	if err := os.WriteFile(file, []byte("a later revision"), 0600); err != nil {
 		t.Fatal(err)
@@ -232,9 +239,11 @@ func frozenRaisedCapture(t *testing.T, reference string, entries []Entry) {
 // whose '..' the kernel resolves. Go answers the same revision, problems and access failures, or
 // raises the same exception, with the caller's entries and without them.
 func Test28_MSC_8b_FrozenCopyIsReadAsTheFenceReadsIt(t *testing.T) {
+	t.Parallel()
 	shareGoldens(t)
 	for _, manifest := range testsupport.FrozenManifests() {
 		t.Run(manifest.Name, func(t *testing.T) {
+			t.Parallel()
 			file, reference, entries := frozenFixture(t)
 			if err := os.WriteFile(filepath.Join(reference, "MANIFEST.json"), []byte(manifest.Document(file, entries[0].SHA256)), 0o600); err != nil {
 				t.Fatal(err)
@@ -244,6 +253,7 @@ func Test28_MSC_8b_FrozenCopyIsReadAsTheFenceReadsIt(t *testing.T) {
 		})
 	}
 	t.Run("parent-steps", func(t *testing.T) {
+		t.Parallel()
 		file, _, entries := frozenFixture(t)
 		base := filepath.Dir(file)
 		frozenRaisedCapture(t, base+"/missing/../frozen", entries)
@@ -280,6 +290,7 @@ func Test28_MSC_8b_FrozenCopyIsReadAsTheFenceReadsIt(t *testing.T) {
 }
 
 func Test28_MSC_9_AccessFailureIsNotDisagreement(t *testing.T) {
+	t.Parallel()
 	file, reference, entries := frozenFixture(t)
 	// A declared component that exists but cannot be opened is unreadable,
 	// not contrary evidence about the artifact's contents.

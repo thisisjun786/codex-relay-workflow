@@ -154,6 +154,7 @@ func normalizedManaged(v any) any {
 // MEX-1..3: the one instructed execution-cli sequence covers them all: the instructed
 // sequence, the restart from a marker (receipt 8) and the duplicate child (receipts 9 and 10).
 func Test27_MEX_1_PythonInstructedSequenceWholeOutput(t *testing.T) {
+	t.Parallel()
 	compareExecutionCLI(t)
 }
 
@@ -325,27 +326,35 @@ func Test27_MST_9_PythonMissingSelectorsWholeOutputAndRows(t *testing.T) {
 	compareManaged(t, "cli-missing-selectors", 4)
 }
 func Test27_MRS_1_PythonReservationReplayWholeOutputAndRows(t *testing.T) {
+	t.Parallel()
 	compareReservation(t, "reservation-replay")
 }
 func Test27_MRS_1_PythonCheckpointReplayWholeOutputAndRows(t *testing.T) {
+	t.Parallel()
 	compareReservation(t, "reservation-checkpoint")
 }
 func Test27_MRS_2_PythonReservationContentionWholeOutputAndRows(t *testing.T) {
+	t.Parallel()
 	compareReservation(t, "reservation-contention")
 }
 func Test27_MRS_2_PythonActiveOwnerWholeOutputAndRows(t *testing.T) {
+	t.Parallel()
 	compareReservation(t, "reservation-active-owner")
 }
 func Test27_MRS_2_PythonRawRegisterWholeOutputAndRows(t *testing.T) {
+	t.Parallel()
 	compareReservation(t, "reservation-raw-register")
 }
 func Test27_MRS_2_PythonUniqueIndexWholeOutputAndRows(t *testing.T) {
+	t.Parallel()
 	compareReservation(t, "reservation-index")
 }
 func Test27_MRS_2_PythonResumeBlockedWholeOutputAndRows(t *testing.T) {
+	t.Parallel()
 	compareReservation(t, "reservation-resume")
 }
 func Test27_MRS_2_PythonTwoConnectionsWholeOutputAndRows(t *testing.T) {
+	t.Parallel()
 	root := managedTree(t)
 	ctx := context.Background()
 	s, err := store.Open(ctx, filepath.Join(root, "gostate", "relay.sqlite3"), "")
@@ -425,18 +434,23 @@ func raceWinnerFirst(t *testing.T, outcomes []any, winner string) any {
 	return out
 }
 func Test27_MRS_3_PythonReservationReceiptsWholeOutputAndRows(t *testing.T) {
+	t.Parallel()
 	compareReservation(t, "reservation-receipts")
 }
 func Test27_MRS_3_PythonReservationAttachWholeOutputAndRows(t *testing.T) {
+	t.Parallel()
 	compareReservation(t, "reservation-attach")
 }
 func Test27_MRS_3_PythonAttachConflictWholeOutputAndRows(t *testing.T) {
+	t.Parallel()
 	compareReservation(t, "reservation-attach-conflict")
 }
 func Test27_MRS_4_PythonReservationReleaseWholeOutputAndRows(t *testing.T) {
+	t.Parallel()
 	compareReservation(t, "reservation-release")
 }
 func Test27_MRS_4_PythonArmReleaseRaceWholeOutputAndRows(t *testing.T) {
+	t.Parallel()
 	root := managedTree(t)
 	ctx := context.Background()
 	s, err := store.Open(ctx, filepath.Join(root, "gostate", "relay.sqlite3"), "")
@@ -529,6 +543,7 @@ func raceRow(row map[string]any) map[string]any {
 	return out
 }
 func Test27_MRS_5_PythonEnsureSettingsWholeOutputAndRows(t *testing.T) {
+	t.Parallel()
 	root := managedTree(t)
 	ctx := context.Background()
 	s, err := store.Open(ctx, filepath.Join(root, "gostate", "relay.sqlite3"), "")
@@ -948,8 +963,10 @@ func Test27_MST_7_PythonFakePolicyRestorationWholeReceiptAndRows(t *testing.T) {
 }
 func Test27_MST_7_PythonFakePauseWholeReceiptAndRows(t *testing.T) { compareManaged(t, "paused", 1) }
 func Test27_MST_8_PythonHostReadyRefusalsWholeOutput(t *testing.T) {
+	t.Parallel()
 	for _, code := range []string{"recipient_archived", "lifecycle_unknown", "recipient_paused", "recipient_cannot_accept_input", "recipient_not_idle"} {
 		t.Run(code, func(t *testing.T) {
+			t.Parallel()
 			host := &managedFake{hostScenario: code}
 			gotCode, err := hostReady(context.Background(), host, "child-new")
 			if err != nil {
@@ -988,8 +1005,10 @@ func Test27_MST_8_PythonHostReadyRefusalsWholeOutput(t *testing.T) {
 	}
 }
 func Test27_MST_8_PythonGuardCaptureAndGoScopeGuard(t *testing.T) {
+	t.Parallel()
 	for _, scenario := range []string{"guard-pause", "guard-budget", "guard-drift-parent", "guard-drift-host", "guard-drift-roots", "guard-drift-recipients"} {
 		t.Run(scenario, func(t *testing.T) {
+			t.Parallel()
 			if scenario == "guard-budget" {
 				ctx := context.Background()
 				state := filepath.Join(t.TempDir(), "state")

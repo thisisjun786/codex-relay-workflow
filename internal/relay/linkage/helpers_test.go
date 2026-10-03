@@ -270,10 +270,10 @@ func reasonOf(err error) string {
 func nullString() sql.NullString { return sql.NullString{} }
 
 // runCLI runs one relay command in-process against the world's store, as
-// `codex-session-relay --state <dir> <argv...>`.
+// `codex-session-relay --state <dir> <argv...>`. The execution-policy variable is cleared for the
+// whole run by TestMain, so this needs no environment of its own and parallel tests may call it.
 func runCLI(t *testing.T, w *world, argv ...string) (int, string, string) {
 	t.Helper()
-	t.Setenv("CODEX_THREAD_BRIDGE_EXECUTION_POLICY", "")
 	var stdout, stderr bytes.Buffer
 	code := dispatch.Execute(w.ctx, "codex-session-relay", append([]string{"--state", filepath.Dir(w.path)}, argv...), &stdout, &stderr)
 	return code, stdout.String(), stderr.String()

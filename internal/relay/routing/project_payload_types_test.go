@@ -14,6 +14,7 @@ import (
 // its members or components, to a value of the wrong type and checks the problems the queue and
 // pre-issue validator reports.
 func Test23ProjectPayloadWrongTypesMatchTheGolden(t *testing.T) {
+	t.Parallel()
 	var cases []struct {
 		Field string
 		Value any
