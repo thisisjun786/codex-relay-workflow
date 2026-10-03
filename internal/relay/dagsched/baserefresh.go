@@ -175,13 +175,9 @@ func refusedProof(r *refreshRefusal) error {
 func (s *Scheduler) RecordBaseRefresh(ctx context.Context, plan, node, actor string, in RefreshInput) (RefreshResult, error) {
 	out := RefreshResult{PlanID: plan, NodeID: node}
 	q := s.Store.Q(ctx)
-	snap, _, err := dag.SnapshotAt(ctx, q, plan, 0)
+	snap, n, err := liveNode(ctx, q, plan, node)
 	if err != nil {
 		return out, err
-	}
-	n, ok := nodeOf(snap, node)
-	if !ok {
-		return out, refuse(contract.RefusalUnregisteredScope, "plan %s has no live node %s", plan, node)
 	}
 	if n.Kind != dag.NodeImplementation {
 		return out, refuse(contract.RefusalDispositionConflict, "node %s is a %s node: it has no head to refresh", node, n.Kind)

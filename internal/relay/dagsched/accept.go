@@ -209,13 +209,9 @@ func (s *Scheduler) accept(ctx context.Context, plan, node, actor string, in Acc
 	}
 	ruleJSON := dag.Canonical(map[string]any{"skills_digest": rule.SkillsDigest, "model": rule.Model, "effort": rule.Effort})
 	q := s.Store.Q(ctx)
-	snap, _, err := dag.SnapshotAt(ctx, q, plan, 0)
+	snap, n, err := liveNode(ctx, q, plan, node)
 	if err != nil {
 		return out, err
-	}
-	n, ok := nodeOf(snap, node)
-	if !ok {
-		return out, refuse(contract.RefusalUnregisteredScope, "plan %s has no live node %s", plan, node)
 	}
 	// the plan's hold is read before the forge is (a node the plan paused or ended is not accepted); the transaction below reads it again
 	if err := lifecycleRefusal(snap, n, "accepting its result", false); err != nil {

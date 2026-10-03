@@ -173,13 +173,9 @@ func (s *Scheduler) DeclareRegions(ctx context.Context, plan, node, actor string
 		if err := s.fence(txCtx, q, plan, actor); err != nil {
 			return err
 		}
-		snap, _, err := dag.SnapshotAt(txCtx, q, plan, 0)
+		snap, n, err := liveNode(txCtx, q, plan, node)
 		if err != nil {
 			return err
-		}
-		n, ok := nodeOf(snap, node)
-		if !ok {
-			return refuse(contract.RefusalUnregisteredScope, "plan %s has no live node %s", plan, node)
 		}
 		if n.Kind != dag.NodeImplementation {
 			return refuse(contract.RefusalDispositionConflict, "node %s is a %s node: it edits no repository, so it has no regions to declare", node, n.Kind)

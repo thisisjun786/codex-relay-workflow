@@ -75,13 +75,9 @@ func mergeable(ctx context.Context, q store.Querier, acc Acceptance, actor strin
 func (s *Scheduler) Judge(ctx context.Context, plan, node, actor string, in JudgeInput) (JudgeResult, error) {
 	out := JudgeResult{PlanID: plan, NodeID: node}
 	q := s.Store.Q(ctx)
-	snap, _, err := dag.SnapshotAt(ctx, q, plan, 0)
+	_, n, err := liveNode(ctx, q, plan, node)
 	if err != nil {
 		return out, err
-	}
-	n, ok := nodeOf(snap, node)
-	if !ok {
-		return out, refuse(contract.RefusalUnregisteredScope, "plan %s has no live node %s", plan, node)
 	}
 	if n.Kind != dag.NodeImplementation {
 		return out, refuse(contract.RefusalDispositionConflict, "node %s is a %s node: it has no pull request to merge", node, n.Kind)
@@ -157,13 +153,9 @@ func (s *Scheduler) Judge(ctx context.Context, plan, node, actor string, in Judg
 		if err := s.fence(txCtx, tx, plan, actor); err != nil {
 			return err
 		}
-		current, _, err := dag.SnapshotAt(txCtx, tx, plan, 0)
+		current, cn, err := stillLive(txCtx, tx, plan, node)
 		if err != nil {
 			return err
-		}
-		cn, ok := nodeOf(current, node)
-		if !ok {
-			return refuse(contract.RefusalUnregisteredScope, "plan %s no longer has the live node %s", plan, node)
 		}
 		still, found, err := loadActiveAcceptance(txCtx, tx, plan, node)
 		if err != nil {
@@ -342,13 +334,9 @@ func (s *Scheduler) RequestMergeTurn(ctx context.Context, plan, node, actor stri
 		if err := s.fence(txCtx, tx, plan, actor); err != nil {
 			return err
 		}
-		current, _, err := dag.SnapshotAt(txCtx, tx, plan, 0)
+		current, cn, err := stillLive(txCtx, tx, plan, node)
 		if err != nil {
 			return err
-		}
-		cn, ok := nodeOf(current, node)
-		if !ok {
-			return refuse(contract.RefusalUnregisteredScope, "plan %s no longer has the live node %s", plan, node)
 		}
 		acc, found, err := loadActiveAcceptance(txCtx, tx, plan, node)
 		if err != nil {

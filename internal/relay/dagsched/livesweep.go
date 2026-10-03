@@ -171,15 +171,16 @@ func (s *Scheduler) ObserveLive(ctx context.Context, plan, actor string, in Swee
 		return res, err
 	}
 	if in.TriggerNode != "" {
-		if _, ok := nodeOf(snap, in.TriggerNode); !ok {
-			return res, refuse(contract.RefusalUnregisteredScope, "plan %s has no live node %s", plan, in.TriggerNode)
+		if _, err := requireNode(snap, plan, in.TriggerNode); err != nil {
+			return res, err
 		}
 	}
 	for node, head := range in.Heads {
-		n, ok := nodeOf(snap, node)
+		n, err := requireNode(snap, plan, node)
+		if err != nil {
+			return res, err
+		}
 		switch {
-		case !ok:
-			return res, refuse(contract.RefusalUnregisteredScope, "plan %s has no live node %s", plan, node)
 		case n.Kind != dag.NodeImplementation:
 			return res, refuse(contract.RefusalDispositionConflict, "node %s is a %s node: it has no branch to measure", node, n.Kind)
 		case !commitPattern.MatchString(head):
@@ -298,8 +299,8 @@ func (s *Scheduler) recordSweep(ctx context.Context, plan, actor string, res *Sw
 				if id == "" {
 					continue
 				}
-				if _, ok := nodeOf(current, id); !ok {
-					return refuse(contract.RefusalUnregisteredScope, "plan %s no longer has the live node %s", plan, id)
+				if _, err := requireStillNode(current, plan, id); err != nil {
+					return err
 				}
 			}
 		}

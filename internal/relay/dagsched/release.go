@@ -165,13 +165,9 @@ func (s *Scheduler) Release(ctx context.Context, plan, node, actor string, req R
 		return s.replay(ctx, plan, node, actor, row)
 	}
 	// 2. a new release, judged on plain reads
-	snap, _, err := dag.SnapshotAt(ctx, q, plan, 0)
+	snap, n, err := liveNode(ctx, q, plan, node)
 	if err != nil {
 		return out, err
-	}
-	n, ok := nodeOf(snap, node)
-	if !ok {
-		return out, refuse(contract.RefusalUnregisteredScope, "plan %s has no live node %s", plan, node)
 	}
 	var base *BaseRef
 	if n.Kind == dag.NodeImplementation {

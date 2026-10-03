@@ -40,13 +40,9 @@ type IntegrationResult struct {
 func (s *Scheduler) ObserveIntegration(ctx context.Context, plan, node, actor string, explicit []Target) (IntegrationResult, error) {
 	out := IntegrationResult{PlanID: plan, NodeID: node}
 	q := s.Store.Q(ctx)
-	snap, _, err := dag.SnapshotAt(ctx, q, plan, 0)
+	snap, n, err := liveNode(ctx, q, plan, node)
 	if err != nil {
 		return out, err
-	}
-	n, ok := nodeOf(snap, node)
-	if !ok {
-		return out, refuse(contract.RefusalUnregisteredScope, "plan %s has no live node %s", plan, node)
 	}
 	if n.Kind != dag.NodeImplementation {
 		return out, refuse(contract.RefusalDispositionConflict, "node %s is a %s node: it has no head to observe", node, n.Kind)
@@ -108,12 +104,9 @@ func (s *Scheduler) ObserveIntegration(ctx context.Context, plan, node, actor st
 			return err
 		}
 		// the targets are judged against the plan as it is now: an edge added while the tips were being read adds a target nobody has observed
-		now, _, err := dag.SnapshotAt(txCtx, tx, plan, 0)
+		now, _, err := stillLive(txCtx, tx, plan, node)
 		if err != nil {
 			return err
-		}
-		if _, ok := nodeOf(now, node); !ok {
-			return refuse(contract.RefusalUnregisteredScope, "plan %s no longer has the live node %s", plan, node)
 		}
 		current, found, err := loadActiveAcceptance(txCtx, tx, plan, node)
 		if err != nil {
