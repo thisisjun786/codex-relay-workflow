@@ -70,7 +70,7 @@ func TestModelComesFromTheConfig(t *testing.T) {
 
 func TestEnvironmentIsScrubbed(t *testing.T) {
 	for k, v := range map[string]string{"GH_TOKEN": "t", "GITHUB_TOKEN": "t", "SSH_AUTH_SOCK": "/sock", "AWS_SECRET_ACCESS_KEY": "t", "ANTHROPIC_API_KEY": "t",
-		"MY_SERVICE_PASSWORD": "t", "XDG_SESSION_TOKEN": "t", "HOME": "/home/test", "XDG_CONFIG_HOME": "/xdg/config", "XDG_DATA_HOME": "/xdg/data", "LC_ALL": "C"} {
+		"MY_SERVICE_PASSWORD": "t", "XDG_SESSION_TOKEN": "t", "HOME": "/users/test", "XDG_CONFIG_HOME": "/xdg/config", "XDG_DATA_HOME": "/xdg/data", "LC_ALL": "C"} {
 		t.Setenv(k, v)
 	}
 	cfg, rec := fakeCfg(t, fakeSpec{Stdout: `{"status":"SUCCESS","response":"PONG"}`})
@@ -85,7 +85,7 @@ func TestEnvironmentIsScrubbed(t *testing.T) {
 			t.Errorf("%s reached agy", k)
 		}
 	}
-	for k, v := range map[string]string{"HOME": "/home/test", "XDG_CONFIG_HOME": "/xdg/config", "XDG_DATA_HOME": "/xdg/data", "LC_ALL": "C", "PATH": os.Getenv("PATH")} {
+	for k, v := range map[string]string{"HOME": "/users/test", "XDG_CONFIG_HOME": "/xdg/config", "XDG_DATA_HOME": "/xdg/data", "LC_ALL": "C", "PATH": os.Getenv("PATH")} {
 		if seen[k] != v {
 			t.Errorf("%s = %q, want %q: agy finds its login through it", k, seen[k], v)
 		}
