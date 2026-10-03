@@ -35,12 +35,19 @@ test-binary:
 # Parts 1-4 name the slowest packages; `rest` is every other package plus the dev-tagged
 # tests, so the parts are disjoint, together equal `make test`, and a new package always
 # lands in `rest`. A renamed package makes its part fail in `go list`, never skip.
-# Balanced on wave R1's times on four CPUs, a part's packages running together: delivery
-# (190-235 s) sets the critical path with cli beside it; supervisor and registry (110-170 s)
-# share a runner; part 3's six packages take 25-165 s. The Stop-hook package has wall-clock
-# budgets, so it shares its runner only with light packages (part 4).
-TEST_PART_1 := ./internal/relay/delivery ./internal/relay/cli
-TEST_PART_2 := ./internal/relay/supervisor ./internal/relay/registry
+# Balanced on hosted CI times after the slow packages' tests ran in parallel (docs/CI.md has
+# the table). A runner spends about 50 s before its tests (checkout, toolchain, the one crw
+# build) and then runs a few packages at a time, so a leg takes about that plus its slowest
+# package or its packages' total over four CPUs, whichever is longer. runtime/install
+# (100-150 s) and relay/dagsched (100-130 s) are by far the slowest packages; left in rest
+# beside its fifty others they made it the longest leg, about 285 s against 95-170 s for
+# the numbered parts. install now leads part 2 with supervisor and registry, and dagsched
+# leads part 1 with delivery and cli, each listed first. The leg that holds install is now
+# the longest, about 215 s, and no split goes under it while install's own tests take about
+# 140 s. Part 3 is unchanged. The Stop-hook package has wall-clock budgets, so it shares
+# its runner only with light packages (part 4).
+TEST_PART_1 := ./internal/relay/dagsched ./internal/relay/delivery ./internal/relay/cli
+TEST_PART_2 := ./internal/runtime/install ./internal/relay/supervisor ./internal/relay/registry
 TEST_PART_3 := ./internal/contracttest ./internal/relay/store ./internal/relay/mergeturn ./internal/relay/service ./internal/relay/sync ./internal/relay/faults
 TEST_PART_4 := ./internal/relay/hook ./internal/relay/linkage ./internal/relay/evidence ./internal/relay/managed
 TEST_PARTS := $(TEST_PART_1) $(TEST_PART_2) $(TEST_PART_3) $(TEST_PART_4)

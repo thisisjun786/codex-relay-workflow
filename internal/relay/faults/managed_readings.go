@@ -23,8 +23,9 @@ type ManagedReadingRequest struct {
 	Now        string `json:"now"`
 }
 
-// ManagedReadingObserver is the read-only reporting projection owned by todo 24.
-// An observer returns a reporting-observation/1 object or an error carrying its
+// ManagedReadingObserver is the read-only reporting projection the sweep reads each settled managed turn
+// through. The relay daemon installs supervisor.OmissionObserver, delivery's omission judgment; this package
+// cannot import delivery. An observer returns a reporting-observation/1 object or an error carrying its
 // Python-compatible exception type and message (for example OSError: ...).
 type ManagedReadingObserver interface {
 	Observe(context.Context, ManagedReadingRequest) (any, error)
