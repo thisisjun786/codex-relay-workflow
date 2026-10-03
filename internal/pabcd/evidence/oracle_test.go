@@ -405,7 +405,10 @@ func TestTombstone(t *testing.T) {
 			}
 		}
 		markers := []marked{}
-		marker := func(_, sessionID, agentID string) error {
+		marker := func(dir, sessionID, agentID string) error {
+			if dir != cwd {
+				t.Errorf("%s: marker called for %s, want %s", k.ID, dir, cwd)
+			}
 			markers = append(markers, marked{sessionID, agentID})
 			return nil
 		}

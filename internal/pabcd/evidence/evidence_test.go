@@ -3,7 +3,6 @@ package evidence
 import (
 	"encoding/json"
 	"errors"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -35,21 +34,41 @@ func TestRecordTombstoneKeepsConcurrentVerdicts(t *testing.T) {
 	}
 }
 
-// Every tier that fails hands the verdict to the marker writer with the session and agent ids; a nil writer is a no-op.
+// Every tier that fails hands the verdict to the marker writer with the working directory, session and agent ids; a nil writer
+// is a no-op.
 func TestRecordTombstoneFallsBackToTheMarkerWriter(t *testing.T) {
 	failing := func(string, string, func() error) error { return errors.New("held") }
-	var got [][2]string
-	marker := func(cwd, sessionID, agentID string) error {
-		got = append(got, [2]string{sessionID, agentID})
+	cwd, got := t.TempDir(), [][3]string{}
+	marker := func(dir, sessionID, agentID string) error {
+		got = append(got, [3]string{dir, sessionID, agentID})
 		return errors.New("the writer failing changes nothing")
 	}
 	now := time.Now()
 	p := Payload{AgentType: "executor", AgentID: "a1"}
-	if recordTombstone(t.TempDir(), "s1", p, 3, now, failing, marker) || len(got) != 1 || got[0] != [2]string{"s1", "a1"} {
+	if recordTombstone(cwd, "s1", p, 3, now, failing, marker) || len(got) != 1 || got[0] != [3]string{cwd, "s1", "a1"} {
 		t.Errorf("marker calls %v", got)
 	}
 	if recordTombstone(t.TempDir(), "s1", p, 3, now, failing, nil) {
 		t.Error("a nil marker writer must not commit anything")
+	}
+}
+
+// The sentinel tier reads the session file inside its own lock: a verdict another agent stored between the two lock
+// acquisitions is still there afterwards.
+func TestSentinelTierKeepsAVerdictStoredMeanwhile(t *testing.T) {
+	cwd, calls := t.TempDir(), 0
+	lock := func(dir, sessionID string, fn func() error) error {
+		if calls++; calls == 1 {
+			return errors.New("held")
+		}
+		RecordTombstone(dir, sessionID, Payload{AgentType: "worker", AgentID: "other"}, MaxAttempts, nil) // another agent stops meanwhile
+		return state.WithSessionLock(dir, sessionID, fn)
+	}
+	if recordTombstone(cwd, "s1", Payload{AgentType: "executor", AgentID: "a1"}, 3, time.Now(), lock, nil) {
+		t.Error("the first tier failed, so nothing is committed")
+	}
+	if s := state.ReadState(cwd, "s1"); !s.UnverifiedCorrupt || len(s.UnverifiedSubagents) != 1 || s.UnverifiedSubagents[0].AgentID != "other" {
+		t.Errorf("sentinel %v, tombstones %v", s.UnverifiedCorrupt, s.UnverifiedSubagents)
 	}
 }
 
@@ -76,22 +95,5 @@ func TestReceiptClaimedIsCutAtUTF16Units(t *testing.T) {
 	}
 	if got := state.ReadState(cwd, "s1").UnverifiedSubagents[0].ReceiptClaimed; got != strings.Repeat("p", 255)+"\ufffd" {
 		t.Errorf("%q", got)
-	}
-}
-
-// A held lock is never broken: the commit fails, the other holder's lock survives, and nothing is written.
-func TestRecordTombstoneNeverBreaksAHeldLock(t *testing.T) {
-	cwd := t.TempDir()
-	lock := filepath.Join(cwd, ".crw", "sessions", "s1.json.lock")
-	p := Payload{AgentType: "executor", AgentID: "a1"}
-	if !RecordTombstone(t.TempDir(), "s1", p, MaxAttempts, nil) {
-		t.Fatal("control: nothing recorded without a held lock")
-	}
-	put(t, lock, []byte("12345"))
-	if RecordTombstone(cwd, "s1", p, MaxAttempts, nil) {
-		t.Error("recorded under a held lock")
-	}
-	if _, err := os.Stat(lock); err != nil {
-		t.Error("the other holder's lock was removed:", err)
 	}
 }

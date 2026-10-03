@@ -114,4 +114,3 @@ for (const k of cases.tombstone) {
   }
 }
 process.stdout.write(JSON.stringify(out, null, 1) + "\n");
-
