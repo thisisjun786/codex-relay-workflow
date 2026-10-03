@@ -33,8 +33,6 @@ type RolePolicy struct {
 	digest       string
 }
 
-type roleExpectation struct{ Expectation, Model, Effort string }
-
 // ResolveRolePolicy is rolepolicy._resolve over one environment: the configured value
 // str.strip()ped, read through the bridge's parser as from_file reads Path(value), and a
 // document nested deeper than that parser descends answered as rolepolicy's RecursionError
@@ -109,8 +107,18 @@ func (p RolePolicy) Summary() contract.OrderedObject {
 	ordered := contract.OrderedObject{}
 	for _, name := range p.policy.RoleOrder() {
 		entry, _ := roles[name].(map[string]any)
-		ordered = append(ordered, contract.Field{Key: name, Value: contract.OrderedObject{{Key: "role", Value: entry["role"]},
-			{Key: "expectation", Value: entry["expectation"]}, {Key: "model", Value: entry["model"]}, {Key: "reasoningEffort", Value: entry["reasoningEffort"]}}})
+		fields := contract.OrderedObject{{Key: "role", Value: entry["role"]},
+			{Key: "expectation", Value: entry["expectation"]}, {Key: "model", Value: entry["model"]}, {Key: "reasoningEffort", Value: entry["reasoningEffort"]}}
+		if pairs, listed := entry["pairs"].([]any); listed {
+			// Only a role with several pairs lists them; a role with one is described as it always was.
+			values := make([]any, len(pairs))
+			for i, item := range pairs {
+				pair, _ := item.(map[string]any)
+				values[i] = pairObject(pair["model"], pair["reasoningEffort"])
+			}
+			fields = append(fields, contract.Field{Key: "pairs", Value: values})
+		}
+		ordered = append(ordered, contract.Field{Key: name, Value: fields})
 	}
 	return contract.OrderedObject{{Key: "state", Value: "declared"}, {Key: "digest", Value: p.digest}, {Key: "roles", Value: ordered}, {Key: "detail", Value: nil}}
 }
@@ -130,20 +138,67 @@ func (p RolePolicy) digestValue() any {
 	return p.digest
 }
 
-func (p RolePolicy) expectation(role string) (roleExpectation, bool) {
+// expectation is what the policy declares for role: its expectation and the pairs it may run on.
+func (p RolePolicy) expectation(role string) (execution.Role, bool) {
 	if !p.Declared || role == "" {
-		return roleExpectation{}, false
+		return execution.Role{}, false
 	}
-	roles, _ := p.policy.Summary()["roles"].(map[string]any)
-	entry, ok := roles[role].(map[string]any)
-	if !ok {
-		return roleExpectation{}, false
+	return p.policy.Role(role)
+}
+
+// allows is whether a recorded or requested pair is one of the role's pairs. A value that is not
+// text is no pair of any role.
+func allows(role execution.Role, model, effort any) bool {
+	m, modelOK := model.(string)
+	e, effortOK := effort.(string)
+	return modelOK && effortOK && role.Allows(m, e)
+}
+
+// expectedPairs is how a finding names what the role runs: the pair, as an object, for a role with
+// one, and a list of pair objects for a role with several.
+func expectedPairs(role execution.Role) any {
+	if len(role.Pairs) == 1 {
+		return pairObject(role.Pairs[0].Model, role.Pairs[0].Effort)
 	}
-	out := roleExpectation{}
-	out.Expectation, _ = entry["expectation"].(string)
-	out.Model, _ = entry["model"].(string)
-	out.Effort, _ = entry["reasoningEffort"].(string)
-	return out, true
+	pairs := make([]any, len(role.Pairs))
+	for i, pair := range role.Pairs {
+		pairs[i] = pairObject(pair.Model, pair.Effort)
+	}
+	return pairs
+}
+
+// SummaryAllowsPair is whether a role entry of a policy summary declares the pair: a member of its
+// pairs list, or the model and reasoningEffort it states when it lists none. The entry is read the
+// way RolePolicy.Summary spells it or the way a worker's receipt of it was decoded.
+func SummaryAllowsPair(entry any, model, effort any) bool {
+	wantModel, modelOK := model.(string)
+	wantEffort, effortOK := effort.(string)
+	if !modelOK || !effortOK {
+		return false
+	}
+	read := func(from any, key string) any {
+		switch v := from.(type) {
+		case contract.OrderedObject:
+			return v.Get(key)
+		case map[string]any:
+			return v[key]
+		}
+		return nil
+	}
+	matches := func(pair any) bool {
+		m, mOK := read(pair, "model").(string)
+		e, eOK := read(pair, "reasoningEffort").(string)
+		return mOK && eOK && m == wantModel && e == wantEffort
+	}
+	if listed, ok := read(entry, "pairs").([]any); ok {
+		for _, pair := range listed {
+			if matches(pair) {
+				return true
+			}
+		}
+		return false
+	}
+	return matches(entry)
 }
 
 // exceptionCovers is ExecutionPolicy.exception_covers, decided by the bridge's own Authorize.
@@ -182,13 +237,14 @@ func authorizedByException(settings contract.OrderedObject, role string, policy 
 	return policy.exceptionCovers(citedException(settings), role, model, effort, cwd)
 }
 
-// declaredPairFor is rolepolicy.declared_pair_for; ok=false is None.
-func declaredPairFor(role string, policy RolePolicy) (string, string, bool) {
+// declaredRoleFor is rolepolicy.declared_pair_for: the role's declaration when it expects a pair;
+// ok=false is None.
+func declaredRoleFor(role string, policy RolePolicy) (execution.Role, bool) {
 	expectation, ok := policy.expectation(role)
 	if !ok || expectation.Expectation != "pair" {
-		return "", "", false
+		return execution.Role{}, false
 	}
-	return expectation.Model, expectation.Effort, true
+	return expectation, true
 }
 
 func pairObject(model, effort any) contract.OrderedObject {
@@ -234,7 +290,7 @@ func CheckRecord(settings contract.OrderedObject, role string, policy RolePolicy
 		return nil
 	}
 	model, effort := pairOf(settings)
-	if model == expectation.Model && effort == expectation.Effort {
+	if allows(expectation, model, effort) {
 		return nil
 	}
 	if authorizedByException(settings, role, policy) {
@@ -244,7 +300,7 @@ func CheckRecord(settings contract.OrderedObject, role string, policy RolePolicy
 		{Key: "code", Value: string(contract.RefusalSettingsRecordStaleForRole)},
 		{Key: "role", Value: role},
 		{Key: "recorded", Value: pairObject(model, effort)},
-		{Key: "expected", Value: pairObject(expectation.Model, expectation.Effort)},
+		{Key: "expected", Value: expectedPairs(expectation)},
 		{Key: "digest", Value: policy.digest},
 		{Key: "recovery", Value: RoleRecovery},
 	}
@@ -289,7 +345,7 @@ func CheckBinding(cited any, bound string, settings contract.OrderedObject, poli
 		return nil
 	}
 	model, effort := pairOf(settings)
-	if model == expectation.Model && effort == expectation.Effort {
+	if allows(expectation, model, effort) {
 		return nil
 	}
 	if authorizedByException(settings, bound, policy) {
@@ -300,7 +356,7 @@ func CheckBinding(cited any, bound string, settings contract.OrderedObject, poli
 		{Key: "citedRole", Value: cited},
 		{Key: "boundRole", Value: bound},
 		{Key: "recorded", Value: pairObject(model, effort)},
-		{Key: "expected", Value: pairObject(expectation.Model, expectation.Effort)},
+		{Key: "expected", Value: expectedPairs(expectation)},
 		{Key: "digest", Value: policy.digest},
 		{Key: "detail", Value: "this task's recorded pair is not the pair role " + pyvalue.StrRepr(bound) + " runs on, and it is being " +
 			"bound to that role now rather than having drifted afterwards"},
