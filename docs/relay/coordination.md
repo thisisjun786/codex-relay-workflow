@@ -387,6 +387,68 @@ without a word (CRW-124 G3).
 An acceptance takes no condition. One given to `region-settle` used to vanish; it is now refused,
 as `bad_invocation` at the command line.
 
+## A review thread that arrives after the child's record
+
+A child's handoff record lists the review threads it saw in `reviewCoverage.threadsSeen` and judges
+each one. A review that lands afterwards on the same head is not in that list.
+`merge-evidence --restate <record>` reads the pull request again and reports every such thread as
+a `late_finding`, resolved or not, because the record did not see it and no longer describes the
+candidate. The record then went back to the child, which could only answer with a receipt that
+named the thread.
+
+When the coordinator can judge a late thread itself it records that judgement in a file and passes
+the file to the same command:
+
+    codex-session-relay merge-evidence --repository <owner/name> --pull-request <N> \
+      --restate <record.json> --late-dispositions <dispositions.json>
+
+The file is a JSON object whose `lateDispositions` member lists one entry per thread:
+
+    {"lateDispositions": [
+      {"threadId": "PRRT_kwDOExample", "disposition": "backlog",
+       "evidenceUrl": "https://github.com/<owner>/<name>/issues/123",
+       "head": "<the head the record is about>", "grade": "P2"}]}
+
+Every member is a string and none may be blank. `threadId` is the thread's identifier as the
+reading's `findings` and a record's `threadsSeen` give it. `disposition` is `answered` (replied on
+the thread, no change needed), `backlog` (deferred; the evidence is the follow-up), `resolved` (the
+concern is already gone; the evidence shows it) or `refuted` (the finding does not apply; the evidence
+is the code that shows it). `evidenceUrl` is an http or https URL a reader can open. `head` is the full
+commit sha. `grade` is whatever grade the coordinator gave, such as `P2` or `yellow`: the relay
+records it as written and never reads it. Values are kept and matched exactly as written, and a
+duplicate key keeps its last value.
+
+These words are the coordinator's. They cover threads outside `threadsSeen` and never stand in for
+the child's own `threadDispositions`, whose vocabulary differs (`backlog` is roughly the child's
+`accepted`, `refuted` its `disputed`). Only review threads can be disposed of; a review summary or
+a pull request comment is never exempted.
+
+- **What an entry does.** A thread leaves `late_finding` when the file holds an entry for it whose
+  `head` is exactly the head the record is about (`--restate-head` when given) and the record's
+  `threadsSeen` does not list the thread. An entry for another head has no effect, and neither
+  does one for a thread the record already lists or one the reading does not show.
+- **It is not a resolve.** The fresh reading still grades the forge's own state, so an unresolved
+  thread keeps `review_incomplete` in the reading and the restatement whatever is recorded. The
+  coordinator resolves the thread on the forge, then records the judgement.
+- **A malformed document is refused whole.** In a file that is a JSON object, a missing or non-list
+  `lateDispositions`, a non-object entry, a missing, non-string or blank member, a disposition
+  outside the set, an evidence URL that is not http or https, a head that is not a sha, or one
+  thread twice on one head is `malformed_evidence` and no entry takes effect. A file that cannot be
+  read, is not JSON or is not a JSON object, and `--late-dispositions` without `--restate`, are
+  usage errors (exit 4) before anything is read from the forge or graded. An empty value counts as
+  no flag.
+- **What the payload says.** With the flag, `restatement.lateDispositions` lists the entries in file
+  order, each with its five members and `effect` `applied` or `ignored`. An ignored entry carries a
+  `reason`: `other_head`, else `unknown_thread` (no review thread of that id), else `not_late` (the
+  record lists it). The list is empty when the document was rejected or the record could not be
+  graded. Without the flag the payload is exactly what it was. No problem code, refusal reason or
+  exit code was added.
+- **What the relay does not decide.** Whether a thread is minor enough to judge here is the
+  coordinator's decision. A P0, P1 or security finding goes back to the child as before, and
+  nothing in the relay stops an entry that records another grade. The file is unauthenticated,
+  like `--required` and `--actor`; the payload carries each entry so the merge record keeps the
+  grade and the evidence that were given.
+
 ## What this is not
 - **`reaffirm` spans two transactions, and that is a choice with a stated reason.** The first
   validates and records its refusals - ownership, an open agreement, a revision that actually
