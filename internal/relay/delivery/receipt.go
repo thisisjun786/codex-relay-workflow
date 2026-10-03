@@ -16,6 +16,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -29,7 +30,8 @@ type ReceiptQuery struct {
 	Relationship, Session, Turn any
 	// Generation is the generation the assignment registered. nil means the marker carries no stamp,
 	// which is compared against nothing; any other value is compared with the relationship's
-	// current generation as Python's != compares them.
+	// current generation as Python's != compares them, unless relay-owned corrections continue
+	// that registration and its claimed dispatch.
 	Generation any
 	// Dispatch is the dispatch request id this session claimed. nil means it claimed none, and the
 	// generations table is not consulted.
@@ -200,10 +202,17 @@ func readReceiptHead(ctx context.Context, q store.Querier, want ReceiptQuery, af
 	if status != "active" || (superseded.Valid && superseded.String != "") {
 		return answer("relationship_not_active")
 	}
+	continued := false
 	if want.Generation != nil && !pyvalue.Equal(want.Generation, current) {
-		return answer("registration_generation_mismatch", F{Key: "detail", Value: "the assignment registered generation " + pyvalue.Str(want.Generation) + " and the relationship now stands on generation " + strconv.FormatInt(current, 10)})
+		continued, err = registrationContinues(ctx, q, want, current)
+		if err != nil {
+			return readFailure(err)
+		}
+		if !continued {
+			return answer("registration_generation_mismatch", F{Key: "detail", Value: "the assignment registered generation " + pyvalue.Str(want.Generation) + " and the relationship now stands on generation " + strconv.FormatInt(current, 10)})
+		}
 	}
-	if want.Dispatch != nil {
+	if want.Dispatch != nil && !continued {
 		var opened sql.NullString
 		err = q.QueryRowContext(ctx, "SELECT dispatch_request_id FROM generations WHERE relationship_id = ? AND execution_generation = ?", relationship, current).Scan(&opened)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -239,6 +248,41 @@ func readReceiptHead(ctx context.Context, q store.Querier, want ReceiptQuery, af
 		return readFailure(err)
 	}
 	return &found, nil, false, nil
+}
+
+// registrationContinues keeps the create-once registration valid across the relay's corrections,
+// not across a new assignment. Each live link must name its own final relay request; a generation
+// opened by hand with the same reason is not enough. All reads share the head lookup's snapshot.
+func registrationContinues(ctx context.Context, q store.Querier, want ReceiptQuery, current int64) (bool, error) {
+	registered, ok := evidence.IntOf(want.Generation)
+	if !ok || !pyvalue.Equal(want.Generation, registered) || registered < 1 || registered >= current || !Named(want.Dispatch) {
+		return false, nil
+	}
+	var dispatch sql.NullString
+	err := q.QueryRowContext(ctx, "SELECT dispatch_request_id FROM generations WHERE relationship_id = ? AND execution_generation = ?", want.Relationship, registered).Scan(&dispatch)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil || !SameIdentity(dispatch.String, want.Dispatch) {
+		return false, err
+	}
+	for current > registered {
+		var links int
+		err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM generations g JOIN events e
+ON e.relationship_id = g.relationship_id AND e.execution_generation = g.execution_generation
+AND ((g.reason = 'needs_changes_revision' AND e.outcome = 'revision_request' AND g.dispatch_request_id = 'revision-' || e.event_id)
+ OR (g.reason = 'decision_reply' AND e.outcome = 'decision_reply' AND g.dispatch_request_id = 'decision-' || e.event_id))
+WHERE g.relationship_id = ? AND g.execution_generation = ? AND e.producer = 'relay'
+AND e.stage = 'final' AND e.suppressed_reason IS NULL`, want.Relationship, current).Scan(&links)
+		if err != nil || links != 1 {
+			return false, err
+		}
+		current, err = store.LiveGenerationBefore(ctx, q, want.Relationship.(string), current)
+		if err != nil {
+			return false, err
+		}
+	}
+	return current == registered, nil
 }
 
 // judgeReceiptHead is what lookup_receipt does with the head event once its snapshot is closed:
