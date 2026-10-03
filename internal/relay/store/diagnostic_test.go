@@ -47,12 +47,15 @@ func TestProbe_python_properties(t *testing.T) {
 			_ = file.Close()
 			_ = os.Remove(file.Name())
 		}
-		report := Probe(ctx, StateSelection{Path: locked})
-		if report.Access.DirectoryWritable != reallyWritable || !report.Access.DBReadable {
-			t.Fatalf("really writable %v report %+v", reallyWritable, report)
-		}
-		if !reallyWritable && report.Access.Detail == "" {
-			t.Fatal("an unwritable directory must say why")
+		// Judged by the default probe and measured by the write probe, the same answer.
+		for _, opts := range []ProbeOptions{{}, {Write: true}} {
+			report := ProbeWith(ctx, StateSelection{Path: locked}, opts)
+			if report.Access.DirectoryWritable != reallyWritable || !report.Access.DBReadable || report.Access.Measured != opts.Write {
+				t.Fatalf("really writable %v report %+v (write probe %v)", reallyWritable, report, opts.Write)
+			}
+			if !reallyWritable && report.Access.Detail == "" {
+				t.Fatalf("an unwritable directory must say why (write probe %v)", opts.Write)
+			}
 		}
 	})
 }
