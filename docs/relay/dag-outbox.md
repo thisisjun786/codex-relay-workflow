@@ -94,7 +94,7 @@ as the relay states it. A second claim of the same entry is allowed at once (the
 
 | Outcome | The document holds | `repair` | The parent |
 | --- | --- | --- | --- |
-| `already_written` | this entry's block, and nothing else in the plan's container | `none` | confirms with `complete`; writes nothing |
+| `already_written` | this entry's block (with or without the blank line a Linear save adds before its end marker, see [what a save does to a block](#what-a-linear-save-does-to-a-block)), and nothing else in the plan's container | `none` | confirms with `complete`; writes nothing |
 | `absent` | no block of this plan | `initialize` when there is no container, else `replace_container` | writes |
 | `stale` | the plan's one block, but another entry's (`relation` older: replace it; newer: this entry must not be written), or this entry's with other text, or a container with more than the block | `replace_container`, or `none` for `relation: newer` | writes, or takes the newest entry |
 | `duplicate` | more than one block of this plan, all inside the plan's one container | `replace_container` | replaces the container's text |
@@ -104,7 +104,7 @@ as the relay states it. A second claim of the same entry is allowed at once (the
 and the empty container. `writable` says whether the entry is open (pending or claimed): an entry that is superseded or confirmed is not written, and its `repair` is `none` whatever the document holds. `again` is true when the
 entry is confirmed and the document no longer carries it.
 
-**Complete** takes the whole document as read back. It confirms only if reconcile would say `already_written`; otherwise it refuses with `readback_mismatch`, keeps the problem in `last_error` and leaves the entry claimed. Completing a
+**Complete** takes the whole document as read back. It confirms only if reconcile would say `already_written`; otherwise it refuses with `readback_mismatch`, keeps the problem in `last_error` and leaves the entry claimed. The `readback` kept on a confirmed entry is the block as the document held it. Completing a
 confirmed entry answers its record (`replayed: true`) and checks nothing more: a confirmation is monotonic.
 
 **Fail** and **retry** are the recovery of one entry. A failed write goes back to pending and the next claim is the same entry again (only the newest open entry can be claimed, so nothing else is retried). The eighth failure
@@ -116,7 +116,7 @@ The text is a function of the progress document and holds no clock: equal progre
 denominator, the denominator's last change, what the revisions took out of the plan, every stage with its nodes, the blocked nodes with their closed reasons, and every live node with its issue key, kind, stage, reason, the
 plan's lifecycle for it and its pull request.
 
-It is written as a block inside a container, plain text that a connector keeps byte for byte (HTML comments around a fenced body: the grammar the relationship outbox relies on, which JUN-92 measured for Linear):
+It is written as a block inside a container: HTML comments around a fenced body, the grammar the relationship outbox relies on (JUN-92 measured it for Linear). A connector keeps it as written, with one change that a real Linear save makes ([below](#what-a-linear-save-does-to-a-block)):
 
     <!-- relay-dag-summary-container:PLAN -->
     <!-- relay-dag-summary:SUMMARY_ID -->
@@ -138,8 +138,28 @@ It is written as a block inside a container, plain text that a connector keeps b
     <!-- /relay-dag-summary-container:PLAN -->
 
 There is one container per plan, so two plans of a project may write one document; a container holds one block. The fence is longer than any run of backticks in the text. A readback is compared after the
-line endings are made `\n` and the blanks at the end of each line are cut, so a connector that normalises them does not make a written block read as another one. The relay judges a document by parsing these markers and
+line endings are made `\n` and the blanks at the end of each line are cut, so a connector that normalises them does not make a written block read as another one, and with the blank lines that stand directly before the block's end marker dropped ([below](#what-a-linear-save-does-to-a-block)). The relay judges a document by parsing these markers and
 the headers, never by looking for words.
+
+## What a Linear save does to a block
+
+A real Linear save of a written block (CRW-513) read back as the container that was written, except for **one blank line between the block's closing code fence and its end marker comment** (`<!-- /relay-dag-summary:SUMMARY_ID -->`). The container markers next to the block markers, the headers, the blank line before the opening fence, the fenced summary, an empty container and the rest of the document came back as written. So the readback of an unchanged block did not equal the bytes written, and the
+confirmation was refused. This change did not write to Linear: the shape is taken from that readback and the tests reproduce it.
+
+The relay therefore compares a block found in a document with the entry's block (in `dag-summary-reconcile` and, through it, `dag-summary-complete`) after the line-ending and trailing-blank normalisation above and with **the blank lines that stand directly before the
+block's end marker dropped on both sides**. Nothing else is ignored:
+
+* The line before the end marker of the written block is its closing fence. A block that lost the fence, or has any text between the fence and the end marker, is another block; only blank lines there are tolerated, one or more.
+* A blank line anywhere else is a difference: after the start marker, among the headers, missing or extra between the headers and the opening fence, or inside the fenced summary (whose lines are compared one by one,
+  and whose digest the header states). So is any text between the block and the container's end marker, since the container holds the block and nothing else.
+* The refusal is the one it was: `readback_mismatch` for `complete`, with the problem in `last_error` and the entry still claimed. No reason is added.
+
+The text the relay tells the parent to write (`block`, `container`) is unchanged, so the parent writes the same bytes as before and a block that a Linear save has already changed needs no rewrite. A document read back with the blank line is
+`already_written`: `complete` confirms the entry, `previous_block` and the stored `readback` hold the block as the document held it (blank line included), and a confirmed entry that the document still carries is not `again`.
+
+A different change made by a Linear save, elsewhere in the block or in another construct, is not tolerated until it has been measured: the readback is not `already_written` and `complete` refuses it. Other readback comparisons (the relationship outbox's
+`sync-complete`, the fault readback) are separate and are not changed here. A new block format that avoids the blank line was not chosen: it would have to be saved to Linear to show that Linear leaves it alone, and blocks already in
+documents would read as stale against it.
 
 ## The parent's flow
 
