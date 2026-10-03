@@ -4,10 +4,12 @@ Every non-test `.py` file under `packages/`, `scripts/`, `plugins/crw/wiring/` a
 `plugins/crw/skills/*/scripts/`, mapped to the P-CRW-58 issue that owns its Go replacement.
 Measured on `dev` at `4b4cb46351f712ac1c35b64405c34370021cc691`.
 
-`scripts/port/check_inventory.py` keeps this table honest: it fails when the path column and
-`find packages scripts plugins -name '*.py' -not -path '*/tests/*' -not -path '*/__pycache__/*'`
-differ, when a line count differs from `wc -l`, when an owning issue is missing, or when a
-`retire-with-evidence` row lacks its consumer search or removal trigger.
+Todo 48 removed `scripts/port/check_inventory.py`, which kept this table honest: it compared the path
+column with `find packages scripts plugins -name '*.py' -not -path '*/tests/*' -not -path '*/__pycache__/*'`,
+each line count with `wc -l`, and required an owning issue per row and a consumer search and removal
+trigger per `retire-with-evidence` row. This document is now a record of the port: no check reads it.
+What it accounted for holds without it, because the tracked tree has no Python file and
+`crw-dev ci validate` refuses any `.py` file or python-shebang script (decision 75).
 
 ## Columns
 
@@ -24,22 +26,16 @@ differ, when a line count differs from `wc -l`, when an owning issue is missing,
   equivalent; removed only when the trigger holds), `keep-as-data` (stays as data; none today).
   Todo 44 resolves every row: `ported` (the Go equivalent exists) and `retired-with-evidence` (the
   consumer search and the trigger are recorded). A row whose file is gone moves to "Files deleted
-  with evidence"; a row still in the table is a developer tool listed in
-  `scripts/dev/ALLOWED_PYTHON.txt`, which todo 48 removes. `python3 scripts/port/check_inventory.py
-  --final` requires exactly that.
+  with evidence"; todo 48 moved the last three rows there, so the table of files that exist is empty.
 - **consumer_search**: for retire rows, the search boundary used to find every consumer, and the
   consumers it found. A grep miss alone never retires a file.
 - **removal_trigger**: for retire rows, the observable condition after which the file may go.
 
 ## Files
 
-Total non-test lines: 540
+Total non-test lines: 0
 
-| path | lines | invoked | runs | owner | disposition | consumer_search | removal_trigger |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `scripts/port/check_inventory.py` | 182 | dev CLI `python3 scripts/port/check_inventory.py` (this document's check, todo 1) | dev/CI | CRW-160 | retired-with-evidence | `grep -rn check_inventory` over scripts/, docs/, .github/ (consumers: this document only; no CI job runs it yet) | the Python inventory is obsolete once todo 44 (CRW-141) deletes the product Python; deleted with the remaining dev Python in todo 48 |
-| `scripts/port/check_cutover_doc.py` | 149 | dev CLI `python3 scripts/port/check_cutover_doc.py` (todo 5) | dev/CI | CRW-160 | retired-with-evidence | `grep -rn check_cutover_doc` over scripts/, docs/, .github/ (consumer: todo 5 cutover-document validation; no CI job runs it yet) | todo 48 retires the Python cutover checker with the remaining dev Python |
-| `scripts/port/check_test_map.py` | 209 | dev CLI `python3 scripts/port/check_test_map.py` (todo 3) | dev/CI | CRW-160 | retired-with-evidence | `grep -rn check_test_map` over scripts/, docs/, .github/ (consumer: todo 3 test-map validation; no CI job runs it yet) | todo 48 retires the Python test-map checker with the remaining dev Python |
+None. The three files that were left, the port checkers, moved to "Files deleted with evidence" below (todo 48).
 
 ### Files deleted with evidence
 
@@ -172,6 +168,9 @@ Deleted files leave the table above, which lists only files that exist. Their ev
 | `packages/codex-thread-bridge/src/codex_thread_bridge/server.py` | 429 | console script `codex-thread-bridge` (server:main); MCP stdio server exec'd by plugins/crw/wiring/crw_bridge_mcp.py (mcp.json) until todo 34, a launcher retired from the package in todo 43 | CRW-151 | `git grep -n codex_thread_bridge` at the deletion (recordings and docs aside): no product path imports or runs it. The relay package that depended on it left in C4-C5, the CI `packages` job in C2a, and the host runs the Go bridge (`crw bridge`, the `codex-thread-bridge` link) since the cutover; the Go tests replay its recorded answers, and the capture closures that name it run only when a recording is retaken. The module-by-module Go home is in packages/codex-thread-bridge/PROVENANCE.md | todo 44 step C6, which keeps the bridge's LICENSE and adds its PROVENANCE.md |
 | `packages/codex-thread-bridge/src/codex_thread_bridge/settings.py` | 574 | imported by bridge; relay assignment, bridge_adapter, cli, fakehost, faultsweep, managed, packets, receiver, registry | CRW-151 | `git grep -n codex_thread_bridge` at the deletion (recordings and docs aside): no product path imports or runs it. The relay package that depended on it left in C4-C5, the CI `packages` job in C2a, and the host runs the Go bridge (`crw bridge`, the `codex-thread-bridge` link) since the cutover; the Go tests replay its recorded answers, and the capture closures that name it run only when a recording is retaken. The module-by-module Go home is in packages/codex-thread-bridge/PROVENANCE.md | todo 44 step C6, which keeps the bridge's LICENSE and adds its PROVENANCE.md |
 | `packages/codex-thread-bridge/src/codex_thread_bridge/worktrees.py` | 177 | imported by bridge; spawns `git` (:20) | CRW-151 | `git grep -n codex_thread_bridge` at the deletion (recordings and docs aside): no product path imports or runs it. The relay package that depended on it left in C4-C5, the CI `packages` job in C2a, and the host runs the Go bridge (`crw bridge`, the `codex-thread-bridge` link) since the cutover; the Go tests replay its recorded answers, and the capture closures that name it run only when a recording is retaken. The module-by-module Go home is in packages/codex-thread-bridge/PROVENANCE.md | todo 44 step C6, which keeps the bridge's LICENSE and adds its PROVENANCE.md |
+| `scripts/port/check_inventory.py` | 182 | dev CLI `python3 scripts/port/check_inventory.py` (this document's check, todo 1; each port step ran it, with `--final` at todo 44) | CRW-160 | `git grep -n -e check_inventory -e check_test_map -e check_cutover_doc -e ALLOWED_PYTHON` at the deletion: no CI job, workflow, Makefile target or test ran it (`crw-dev ci validate` only compiled it); what remains is history in docs/port (decision R3R-1, the g1, g3 and g4 reports' verification lists, this document) | todo 48, with the other two port checkers, `scripts/dev/ALLOWED_PYTHON.txt` and the validate job's `actions/setup-python` step. Dropped, not ported: the set of files it compared the table with is empty, and `crw-dev ci validate` refuses any `.py` file or python-shebang script (decision 75) |
+| `scripts/port/check_cutover_doc.py` | 149 | dev CLI `python3 scripts/port/check_cutover_doc.py` (todo 5) | CRW-160 | same search: no consumer but the history above | todo 48. Dropped, not ported (decision 75): it linted the prose of the finished cutover specification (`docs/port/cutover.md`, todos 5 to 43) and the heading numbers of `docs/port/control-group.md`, the replay list of todos 42 and 45: required `##` sections, a clause-level negation check of the words ttl and heartbeat, and `### CRW-116-<n>` and `### CRW-124-<n>` headings each followed by `Pass when:`. The Go ownership code (`internal/relay/store/ownership.go`) has no timer to guard, the control group's criteria are Linear's, and the one residue, the cutover page's section names that other pages link to, needs fragment-aware link checking, which decision 75 proposes as a follow-up |
+| `scripts/port/check_test_map.py` | 209 | dev CLI `python3 scripts/port/check_test_map.py` (todo 3; each port step ran it, with `--final` at todo 44) | CRW-160 | same search: no consumer but the history above | todo 48. Dropped, except one property that moved to Go (decision 75): it compared `docs/port/test-map.md` with the test files at the map's recorded revision (fixed history), with the classes and totals, and, with `--final`, required each `corpus:` destination to be a `contract/fixtures` domain and each `go-test:` destination a directory of the checkout. `TestCorpusKeepsItsDomains` (`internal/contracttest`) now holds that the corpus keeps its nine domains; the `go-test:` pointers are history and may name packages a later refactor moved |
 
 ## Process-spawn graph
 

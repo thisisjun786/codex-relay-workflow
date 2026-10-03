@@ -3700,6 +3700,8 @@ checkers (`scripts/port/*.py`) remain, so CI's validate job keeps its Python set
 step's verification runs the first two with `--final`, and they keep docs/port honest until todo
 48.
 
+(Reversed by [decision 75](#75-the-port-checkers-the-python-allow-list-and-cis-python-setup-are-gone-todo-48-crw-316): todo 48 removed the checkers, the allow-list and CI's Python setup.)
+
 Evidence: internal/dev/ci/{common.go,json.go,plugin.go,validate.go,operations.go};
 internal/dev/ci/plugin_test.go (`Test47_PLG_11_DigestIsFramedAndCoversMode`,
 `Test47_PLG_18_JSONReport`), validate_test.go, ci_test.go (`TestACheckListsItsFlags`);
@@ -4748,3 +4750,44 @@ Where: internal/relay/store/dag_zone.go, store.go (`open`); internal/runtime/swa
 `ZoneArrivalOnly`, `DecideWithRelease`); internal/runtime/install/zone.go (the route and the backup), cli.go (`--backup-state-to`), install.go
 (`gateCells`); internal/relay/dag; tests internal/relay/store/dag_zone_test.go, internal/runtime/swapgate/dag_zone_test.go,
 internal/runtime/install/zone_test.go, internal/relay/dag/*_test.go.
+
+## 75. The port checkers, the Python allow-list and CI's Python setup are gone (todo 48, CRW-316)
+
+Decision: `scripts/port/check_inventory.py`, `check_test_map.py`, `check_cutover_doc.py`, `scripts/dev/ALLOWED_PYTHON.txt` and the validate
+job's `actions/setup-python` step are deleted, and the repository tracks no Python file. `crw-dev ci validate` refuses any `.py` file and any regular
+file whose first line is a python shebang (`#!` and the word python), whether git tracks it or not (it lists tracked files and untracked files git does
+not ignore), with no exemption. `internal/dev/ci`'s `TestNoPythonIsTracked` holds the same over the tracked files in `make test`, and
+`TestWorkflow_installs_no_python` keeps a Python setup out of every job. This reverses what R3R-1 kept while the checkers remained: `validate`'s
+Python syntax check and CI's Python setup.
+
+Why: the port is finished. Todo 44 deleted the Python implementation and its tests, so the Python-to-Go correspondence the checkers guarded is no
+longer updated. They were the last Python in the tree, run by hand at the end of a port step, and the only reason CI installed an interpreter: the
+syntax check of their sources.
+
+Invariants, each judged:
+
+- `check_inventory.py` is dropped. It compared a table with the non-test `.py` files under `packages/`, `scripts/` and `plugins/`. That set is
+  empty, and the refusal above keeps it so.
+- `check_test_map.py` is dropped, except one property. Its comparison of rows with files read the files at a recorded old revision (fixed history), and
+  its classes and totals describe a finished plan. The live part of its `--final` mode was that a mapped `corpus:` domain exists under
+  `contract/fixtures`. `internal/contracttest` replays the domains that exist, so a deleted domain would leave it green over a smaller corpus;
+  `TestCorpusKeepsItsDomains` now requires the nine domains by name (a new domain needs no edit, and dropping one is a visible edit of the list). The
+  `go-test:` pointers are not kept alive: the map is a record, and a check that fails when a Go package moves would tax the refactoring the Go code now
+  gets.
+- `check_cutover_doc.py` is dropped. It linted the prose of the cutover specification, which todos 5 to 43 carried out, and the heading numbers of the
+  control group's replay list (todos 42 and 45; its criteria belong to Linear). Its ttl and heartbeat clause check guarded one sentence ("No TTL and no
+  heartbeat authorizes takeover", `docs/port/cutover.md`). The Go ownership code (`internal/relay/store/ownership.go`) names neither, and a wording
+  lint over prose is not the evidence for that property.
+
+What stays open: the `##` section names of `docs/port/cutover.md` are link targets of other pages (`#retention`, `#retention-scan-surface`, the step 0
+anchor in `docs/runtime-install.md`) that no check resolves, because `LinkErrors` ignores `#fragments`. A fragment-aware link check in
+`crw-dev ci validate` would cover every page instead of one document's heading list; it is proposed as a follow-up and not built here.
+`docs/port/inventory.md` and `docs/port/test-map.md` are records that no check reads, and the g1, g3 and g4 oracle reports keep the commands their
+steps ran.
+
+Bypass: a Python program stored without a `.py` name and without a python shebang, a `.pyw` or `.pyi` file, and a file git ignores are not named. Nothing
+runs Python in the product or in CI, so the refusal is a hygiene guard and not a security boundary.
+
+Evidence: internal/dev/ci/validate.go (`pythonFileErrors`, `pythonShebang`); internal/dev/ci/validate_test.go (`Test47_VAL_3_PythonFilesAreRefused`),
+nopython_test.go, workflow_test.go (`TestWorkflow_installs_no_python`); internal/contracttest/contract_test.go (`TestCorpusKeepsItsDomains`);
+.github/workflows/ci.yml; docs/port/inventory.md (Files deleted with evidence).
