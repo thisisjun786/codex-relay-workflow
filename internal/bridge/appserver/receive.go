@@ -40,6 +40,9 @@ func (c *Client) receive(ws *websocket.Conn) {
 			if len(msg.ID) > 0 {
 				c.serverRequest(ws, msg)
 			} else {
+				if msg.Method == "turn/completed" && c.subscriptions != nil {
+					c.subscriptions.terminal(ws, msg.Params)
+				}
 				select {
 				case c.notifications <- Notification{msg.Method, msg.Params}:
 				default:
@@ -57,6 +60,9 @@ func (c *Client) receive(ws *websocket.Conn) {
 		waiter, ok := c.pending[key]
 		c.mu.Unlock()
 		if ok && waiter.conn == ws {
+			if c.subscriptions != nil {
+				c.subscriptions.reply(waiter, msg.Result, msg.Error)
+			}
 			select {
 			case waiter.done <- outcome{response: response{msg.Result, msg.Error}}:
 			default:
@@ -112,6 +118,9 @@ func (c *Client) failReader(ws *websocket.Conn, failure error) {
 		}
 	}
 	c.mu.Unlock()
+	if c.subscriptions != nil {
+		c.subscriptions.lost(ws)
+	}
 }
 
 func (c *Client) serverRequest(ws *websocket.Conn, msg incoming) {
