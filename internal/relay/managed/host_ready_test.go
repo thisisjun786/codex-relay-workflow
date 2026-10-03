@@ -115,21 +115,29 @@ func TestHostReadySameRequestReadsUnlistedChild(t *testing.T) {
 }
 
 func TestHostReadyArchiveBoundaryRecordsReasonAndRecovers(t *testing.T) {
-	k := newReconcileKit(t)
-	h := &readinessApp{Adapter: k.host}
-	k.start.Adapter = h
-	k.host.standby = "inProgress"
-	k.expect(k.run(), "incomplete", "standby_incomplete", "")
-	k.host.standby = "interrupted"
-	h.archived = 201
-	got := k.run()
-	if got["state"] != "incomplete" || got["stage"] != "business" || got["reason"] != "archived_listing_incomplete" {
-		t.Fatalf("archive uncertainty reason not recorded: %v", got)
+	for _, scenario := range []string{"bound", "malformed_item"} {
+		t.Run(scenario, func(t *testing.T) {
+			k := newReconcileKit(t)
+			h := &readinessApp{Adapter: k.host}
+			k.start.Adapter = h
+			k.host.standby = "inProgress"
+			k.expect(k.run(), "incomplete", "standby_incomplete", "")
+			k.host.standby = "interrupted"
+			if scenario == "bound" {
+				h.archived = 201
+			} else {
+				h.archiveReply = map[string]any{"data": []any{map[string]any{}}}
+			}
+			got := k.run()
+			if got["state"] != "incomplete" || got["stage"] != "business" || got["reason"] != "archived_listing_incomplete" {
+				t.Fatalf("archive uncertainty reason not recorded: %v", got)
+			}
+			k.effects(1, 0)
+			h.archived, h.archiveReply = 0, nil
+			k.expect(k.run(), "admitted", "", "")
+			k.effects(1, 1)
+		})
 	}
-	k.effects(1, 0)
-	h.archived = 0
-	k.expect(k.run(), "admitted", "", "")
-	k.effects(1, 1)
 }
 
 func TestHostReadyArchiveBoundaryAndReadJudgment(t *testing.T) {
@@ -147,6 +155,14 @@ func TestHostReadyArchiveBoundaryAndReadJudgment(t *testing.T) {
 		{"archive_at_200_with_more", "archived_listing_incomplete", func(h *readinessApp, _ *appThread) { h.archived = 200; h.archiveMore = true; h.unarchived = 1 }},
 		{"archive_at_200_complete", "", func(h *readinessApp, _ *appThread) { h.archived = 200 }},
 		{"malformed_archive_data", "archived_listing_incomplete", func(h *readinessApp, _ *appThread) { h.archiveReply = map[string]any{"data": "unreadable"} }},
+		{"malformed_archive_item", "archived_listing_incomplete", func(h *readinessApp, _ *appThread) { h.archiveReply = map[string]any{"data": []any{"unreadable"}} }},
+		{"missing_archive_id", "archived_listing_incomplete", func(h *readinessApp, _ *appThread) { h.archiveReply = map[string]any{"data": []any{map[string]any{}}} }},
+		{"nonstring_archive_id", "archived_listing_incomplete", func(h *readinessApp, _ *appThread) {
+			h.archiveReply = map[string]any{"data": []any{map[string]any{"id": 1}}}
+		}},
+		{"empty_archive_id", "archived_listing_incomplete", func(h *readinessApp, _ *appThread) {
+			h.archiveReply = map[string]any{"data": []any{map[string]any{"id": ""}}}
+		}},
 		{"malformed_archive_cursor", "archived_listing_incomplete", func(h *readinessApp, _ *appThread) { h.archiveReply = map[string]any{"data": []any{}, "nextCursor": 1} }},
 		{"missing_thread", "lifecycle_unknown", func(h *readinessApp, _ *appThread) { h.readReply = map[string]any{} }},
 		{"malformed_thread", "lifecycle_unknown", func(h *readinessApp, _ *appThread) { h.readReply = map[string]any{"thread": "unknown"} }},
@@ -215,8 +231,14 @@ func TestHostReadyBudgetAndTransportErrors(t *testing.T) {
 }
 
 func TestHostReadyFinalGuardRechecksArchiveAndStatus(t *testing.T) {
-	for _, code := range []string{"recipient_archived", "archived_listing_incomplete", "recipient_not_idle"} {
-		t.Run(code, func(t *testing.T) {
+	for _, scenario := range []struct{ name, code string }{
+		{"archived", "recipient_archived"},
+		{"archive_bound", "archived_listing_incomplete"},
+		{"malformed_archive_item", "archived_listing_incomplete"},
+		{"active", "recipient_not_idle"},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			code := scenario.code
 			k := newReconcileKit(t)
 			h := &readinessApp{Adapter: k.host}
 			k.start.Adapter = h
@@ -226,12 +248,14 @@ func TestHostReadyFinalGuardRechecksArchiveAndStatus(t *testing.T) {
 			k.host.threads["t-1"].status = "notLoaded"
 			var verdict map[string]any
 			k.host.beforeSend = func(in SendRequest) {
-				switch code {
-				case "recipient_archived":
+				switch scenario.name {
+				case "archived":
 					h.archived, h.archiveChild = 1, true
-				case "archived_listing_incomplete":
+				case "archive_bound":
 					h.archived = 201
-				case "recipient_not_idle":
+				case "malformed_archive_item":
+					h.archiveReply = map[string]any{"data": []any{map[string]any{}}}
+				case "active":
 					k.host.threads["t-1"].status = "active"
 				}
 				var err error

@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 )
 
 // hostReady requires a complete archived scan; a listing miss uses thread/read for existence.
@@ -26,6 +27,9 @@ func hostReady(ctx context.Context, rpc HostRPC, task string) (string, error) {
 			}
 			if ok {
 				for _, item := range data {
+					if filter && !delivery.ValidSegment(pyjson.Map(item)["id"]) {
+						return "archived_listing_incomplete", nil
+					}
 					if pyjson.Map(item)["id"] == task {
 						found, archived = true, filter
 						break
