@@ -415,7 +415,7 @@ func TestBaseRefreshRowsAreTrustedOnlyWhenTheyDigestToTheirId(t *testing.T) {
 }
 
 // An edge that waits for the node's verified result (artifact_verified) reads the generation the acceptance stands on (CRW-447): while the relationship is at the later generation and no record says the
-// acceptance stands on it, the edge reads blocked:stale_head, and once the record is made it is satisfied (CRW-430 left it reading the accepted generation).
+// acceptance stands on it, the edge reads blocked:stale_head, and once the record is made it is satisfied (the record alone used to leave it reading the accepted generation).
 func TestBaseRefreshMovesTheGenerationAnArtifactEdgeReads(t *testing.T) {
 	s := newRefreshScenario(t)
 	if st := s.status("g", "ia"); !st.Satisfied {
