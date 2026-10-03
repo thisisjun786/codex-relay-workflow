@@ -49,7 +49,12 @@ func (l *Ledger) NoticeFacts(ctx context.Context, id string) (map[string]any, er
 	return map[string]any{"notificationId": id, "deliveryKey": "relay-notification:" + id, "faultId": r.Text("fault_id"), "kind": r.Text("kind"), "reason": reason, "cycle": r.Get("cycle"), "state": r.Text("state"), "leaseUntil": r.Get("lease_until"), "attempts": r.Get("attempts"), "product": r.Text("fault_product"), "faultClass": r.Text("fault_class"), "severity": r.Text("severity"), "faultState": r.Text("fault_state"), "externalRef": external, "issuePublished": ref != "", "anchor": where, "issueKey": issue}, nil
 }
 
-func unfitNotice(n map[string]any) string {
+// IsNoticeIssue reports whether s is an issue key a notice may name: TEAM-123 or a UUID.
+func IsNoticeIssue(s string) bool { return noticeIssue.MatchString(s) }
+
+// UnfitNotice names the first fact of a notice that is not a value the ledger writes, or "" when each
+// is. The deliverer asks it before it waits on a notice and the channel asks it before it composes one.
+func UnfitNotice(n map[string]any) string {
 	for _, key := range []string{"faultClass", "product", "severity", "faultState", "kind", "faultId"} {
 		value, ok := n[key].(string)
 		valid := ok
@@ -73,7 +78,10 @@ func unfitNotice(n map[string]any) string {
 	}
 	return ""
 }
-func unfitNoticeHierarchy(r map[string]any) string {
+
+// UnfitNoticeHierarchy names the first of the project, sender and recipient a linkage reading names that
+// is not a plain identifier, or "" when each is.
+func UnfitNoticeHierarchy(r map[string]any) string {
 	for _, key := range []string{"projectKey", "sender", "recipient"} {
 		value, ok := r[key].(string)
 		if !ok || !noticeIdentifier.MatchString(value) {

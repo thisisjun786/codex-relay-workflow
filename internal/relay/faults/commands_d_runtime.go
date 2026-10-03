@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 )
 
 func dAttention(ctx context.Context, l *Ledger) (any, error) {
@@ -197,14 +196,11 @@ func dNotifications(ctx context.Context, l *Ledger, a map[string]string) (any, e
 	}
 	after := int64(0)
 	if a["--after"] != "" {
-		n := integerArg(ctx, "--after", a["--after"])
-		if n == nil {
+		n, ok := integerArg(ctx, "--after", a["--after"])
+		if !ok {
 			return nil, fmt.Errorf("usage: invalid after cursor")
 		}
-		after, e = argparse.SQLiteInteger(n)
-		if e != nil {
-			return nil, e
-		}
+		after = n
 	}
 	state := a["--notification-state"]
 	if state == "" {

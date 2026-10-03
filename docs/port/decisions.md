@@ -4036,6 +4036,15 @@ internal/relay/faults/cli.go (`answerObject`); the contracttest goldens `TestMer
 and the routing and fault goldens (key order only). The fault ledger's stored journal JSON
 (`noticeJournal`'s fixed key order) is unchanged.
 
+CRW-306 extends this to the supervisor commands (`supervisor-*`) and `merge-evidence`: `supervisorOrdered` and its
+presence-keyed table `supervisorObjectKeys` (about 170 lines) are deleted, and these answers print their maps' keys
+sorted. `answerValue` (internal/relay/cli/supervisor.go) keeps what is not order: a nil map is JSON null (an absent
+record, not an empty one), and an obligation and a stage result are the plain maps they stand for. A stored document an
+answer echoes keeps its stored order: the prior report's detail, a frozen reading, the readback detail, a packet, and
+merge-evidence's `requiredProviders`. Consumers checked: the skills, `docs/relay` and the product's own readers
+(`--restate`, the DAG scheduler) read these answers by field; none reads their order. Evidence: the golden diff moves key
+order only.
+
 ## Decision R3D-3. `--kind-module`'s module model is the relay CLI's; the domain packages keep none (refactor R3)
 
 Decision: the fault package no longer models Python's import for `--kind-module`
@@ -4158,7 +4167,7 @@ fixtures read (`invalid choice`, `the following arguments are required: <flags>`
 `unrecognized arguments: <words>`, `expected one argument`, `not allowed with argument`); a
 value that looks like a negative number or holds a space is a value (`--session -1`,
 `--evidence "- merged by hand"`); global options before the command. The parsed result keeps its
-shape for the handlers (values by flag, an int as `*big.Int`, a float as `float64`), and the
+shape for the handlers (values by flag, an int as `*big.Int` (an `int64` since CRW-306, decision R3C-2), a float as `float64`), and the
 capacity and edit-region commands' help is still their usage line alone
 (`dispatch.Command.UsageHelp`). `argparse.ParseInt`/`ParseFloat` (Python's int()/float() of a
 text) stay for the packages that read stored or forge text with them; the parser does not use
@@ -4200,7 +4209,13 @@ before any handler runs. `Args.Number` answered a given int as that `*big.Int` w
 was an `int64`, which is how the host adapter's `deliver --limit`/`verify-acks --limit` came to
 panic; R3S5 fixed the adapter (`hostLimit`, `TestHostCommandsReadAGivenLimit`, whose out-of-range
 rows now expect this refusal), and `Number` now hands every caller one type. The parsed value
-stays a `*big.Int` in `Result.Numbers` for the handlers that read it there.
+stayed a `*big.Int` in `Result.Numbers` for the handlers that read it there; CRW-306 made it the `int64`
+itself (`Args.Integer` returns `int64`) and deleted what could no longer be reached: `argparse.IntegerValue`,
+`SQLiteInteger` and the `IntegerOverflow` alias, their call sites in the registry, delivery, managed,
+merge-turn, evidence and fault commands, the fault commands' `--keep` overflow branch, the registry family's
+host detail for it and the Python `int()` reading of a fault command's numeric text (the ledger's own
+callers hand a limit or a cursor over as decimal text, read as Go reads an integer). `store.IntegerOverflow` and
+receipt intake's big claim fields stay: stored and hashed.
 
 Consumer check: no skill, doc, fixture or product call passes an integer beyond int64 to a relay
 option; the numeric downstream test holds the extremes the parser accepts and one it refuses.
