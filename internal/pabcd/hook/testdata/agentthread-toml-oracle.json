@@ -1,0 +1,3427 @@
+{
+  "oracle": "CXC v0.2.40 (3c1459ac)",
+  "source": "plugins/codexclaw/components/pabcd-state/src/agent-thread-permissions.ts",
+  "fingerprint": [
+    "025423bc",
+    "f27b7787",
+    "987b87fe",
+    "ec0d803a",
+    "0eaf2f71",
+    "304347d2",
+    "75b2ec66",
+    "eff8d1e6"
+  ],
+  "node": "v24.20.0",
+  "cases": [
+    {
+      "unit": "finiteNumber",
+      "input": "0",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "+0",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "-0",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "1_000",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "9007199254740993",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "9223372036854775807",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "9223372036854775808",
+      "answer": false
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "-9223372036854775808",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "-9223372036854775809",
+      "answer": false
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "+9223372036854775808",
+      "answer": false
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "9999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999",
+      "answer": false
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "0x7fff_ffff_ffff_ffff",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "0x8000000000000000",
+      "answer": false
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "0Xf",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "0o777",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "0b101",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "0xA_B",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "0o7_1",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "0b1_0",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "+0xf",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "-0xf",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "+0xe",
+      "answer": false
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "-0xe",
+      "answer": false
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "012",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "123x",
+      "error": "SyntaxError"
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "0x",
+      "error": "SyntaxError"
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "0b2",
+      "error": "SyntaxError"
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "0x-1",
+      "error": "SyntaxError"
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "0x+1",
+      "error": "SyntaxError"
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "0o-1",
+      "error": "SyntaxError"
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "0b+1",
+      "error": "SyntaxError"
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "1e300",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "1e309",
+      "answer": false
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "1e9999",
+      "answer": false
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "-1e9999",
+      "answer": false
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "1e-400",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "0.000",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "1_000.2_50e+1_0",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "1.",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": ".1",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "1e",
+      "answer": false
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "1e+",
+      "answer": false
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "1_",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "1__2",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "1._2",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "1.2__3",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "1e_2",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "1e2_",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "0x_1",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "0x1__2",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "0o7_",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "0b1__0",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "inf",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "+inf",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "-inf",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "nan",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "-nan",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "NaN",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "true",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "false",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "1 ",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "1﻿",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "1e2 ",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "2000-02-29",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "1900-02-29",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "2024-02-29",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "2023-02-29",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "0000-02-29",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "0004-02-29",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "0099-02-28",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "0100-02-29",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "2026-02-30",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "2026-00-01",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "2026-13-01",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "2026-01-00",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "2026-04-31",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "9999-12-31",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "2026-01-01T23:59:60Z",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "2026-01-01t00:00:00z",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "2026-01-01T24:00:00Z",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "2026-01-01T00:60:00Z",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "2026-01-01T00:00:61Z",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "2026-01-01T00:00:00+23:59",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "2026-01-01T00:00:00+24:00",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "2026-01-01T00:00:00-00:60",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "12:00:60",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "24:00:00",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "00:60:00",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "00:00:61",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "00:00:00.001",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "1979-05-27 07:32:00Z",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "12:61:00\n",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "2000-02-30tail",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "not-a-date",
+      "answer": true
+    },
+    {
+      "unit": "finiteNumber",
+      "input": "2026-1-1",
+      "answer": true
+    },
+    {
+      "unit": "validDateTime",
+      "input": "2000-02-29",
+      "answer": true
+    },
+    {
+      "unit": "validDateTime",
+      "input": "1900-02-29",
+      "answer": false
+    },
+    {
+      "unit": "validDateTime",
+      "input": "2024-02-29",
+      "answer": true
+    },
+    {
+      "unit": "validDateTime",
+      "input": "2023-02-29",
+      "answer": false
+    },
+    {
+      "unit": "validDateTime",
+      "input": "0000-02-29",
+      "answer": false
+    },
+    {
+      "unit": "validDateTime",
+      "input": "0004-02-29",
+      "answer": true
+    },
+    {
+      "unit": "validDateTime",
+      "input": "0099-02-28",
+      "answer": true
+    },
+    {
+      "unit": "validDateTime",
+      "input": "0100-02-29",
+      "answer": false
+    },
+    {
+      "unit": "validDateTime",
+      "input": "2026-02-30",
+      "answer": false
+    },
+    {
+      "unit": "validDateTime",
+      "input": "2026-00-01",
+      "answer": false
+    },
+    {
+      "unit": "validDateTime",
+      "input": "2026-13-01",
+      "answer": false
+    },
+    {
+      "unit": "validDateTime",
+      "input": "2026-01-00",
+      "answer": false
+    },
+    {
+      "unit": "validDateTime",
+      "input": "2026-04-31",
+      "answer": false
+    },
+    {
+      "unit": "validDateTime",
+      "input": "9999-12-31",
+      "answer": true
+    },
+    {
+      "unit": "validDateTime",
+      "input": "2026-01-01T23:59:60Z",
+      "answer": true
+    },
+    {
+      "unit": "validDateTime",
+      "input": "2026-01-01t00:00:00z",
+      "answer": true
+    },
+    {
+      "unit": "validDateTime",
+      "input": "2026-01-01T24:00:00Z",
+      "answer": false
+    },
+    {
+      "unit": "validDateTime",
+      "input": "2026-01-01T00:60:00Z",
+      "answer": false
+    },
+    {
+      "unit": "validDateTime",
+      "input": "2026-01-01T00:00:61Z",
+      "answer": false
+    },
+    {
+      "unit": "validDateTime",
+      "input": "2026-01-01T00:00:00+23:59",
+      "answer": true
+    },
+    {
+      "unit": "validDateTime",
+      "input": "2026-01-01T00:00:00+24:00",
+      "answer": false
+    },
+    {
+      "unit": "validDateTime",
+      "input": "2026-01-01T00:00:00-00:60",
+      "answer": false
+    },
+    {
+      "unit": "validDateTime",
+      "input": "12:00:60",
+      "answer": true
+    },
+    {
+      "unit": "validDateTime",
+      "input": "24:00:00",
+      "answer": false
+    },
+    {
+      "unit": "validDateTime",
+      "input": "00:60:00",
+      "answer": false
+    },
+    {
+      "unit": "validDateTime",
+      "input": "00:00:61",
+      "answer": false
+    },
+    {
+      "unit": "validDateTime",
+      "input": "00:00:00.001",
+      "answer": true
+    },
+    {
+      "unit": "validDateTime",
+      "input": "1979-05-27 07:32:00Z",
+      "answer": true
+    },
+    {
+      "unit": "validDateTime",
+      "input": "12:61:00\n",
+      "answer": true
+    },
+    {
+      "unit": "validDateTime",
+      "input": "2000-02-30tail",
+      "answer": false
+    },
+    {
+      "unit": "validDateTime",
+      "input": "not-a-date",
+      "answer": true
+    },
+    {
+      "unit": "validDateTime",
+      "input": "2026-1-1",
+      "answer": true
+    },
+    {
+      "unit": "validDateTime",
+      "input": "true",
+      "answer": true
+    },
+    {
+      "unit": "validDateTime",
+      "input": "1e9999",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "0",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "+0",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "-0",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "1_000",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "9007199254740993",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "9223372036854775807",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "9223372036854775808",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "-9223372036854775808",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "-9223372036854775809",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "+9223372036854775808",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "9999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "0x7fff_ffff_ffff_ffff",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "0x8000000000000000",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "0Xf",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "0o777",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "0b101",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "0xA_B",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "0o7_1",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "0b1_0",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "+0xf",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "-0xf",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "+0xe",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "-0xe",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "012",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "123x",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "0x",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "0b2",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "0x-1",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "0x+1",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "0o-1",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "0b+1",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "1e300",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "1e309",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "1e9999",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "-1e9999",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "1e-400",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "0.000",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "1_000.2_50e+1_0",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "1.",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": ".1",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "1e",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "1e+",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "1_",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "1__2",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "1._2",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "1.2__3",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "1e_2",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "1e2_",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "0x_1",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "0x1__2",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "0o7_",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "0b1__0",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "inf",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "+inf",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "-inf",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "nan",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "-nan",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "NaN",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "true",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "false",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "1 ",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "1﻿",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "1e2 ",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "2000-02-29",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "1900-02-29",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "2024-02-29",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "2023-02-29",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "0000-02-29",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "0004-02-29",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "0099-02-28",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "0100-02-29",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "2026-02-30",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "2026-00-01",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "2026-13-01",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "2026-01-00",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "2026-04-31",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "9999-12-31",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "2026-01-01T23:59:60Z",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "2026-01-01t00:00:00z",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "2026-01-01T24:00:00Z",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "2026-01-01T00:60:00Z",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "2026-01-01T00:00:61Z",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "2026-01-01T00:00:00+23:59",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "2026-01-01T00:00:00+24:00",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "2026-01-01T00:00:00-00:60",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "12:00:60",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "24:00:00",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "00:60:00",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "00:00:61",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "00:00:00.001",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "1979-05-27 07:32:00Z",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "12:61:00\n",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "2000-02-30tail",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "not-a-date",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "2026-1-1",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "\"\"",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "''",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "\"hello\"",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "'hello'",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "\"\"\"hello\nworld\"\"\"",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "'''one\ntwo'''",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "\"unterminated",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "\"a\nb\"",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "'a\rb'",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "\"\"\"a\rb\"\"\"",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "'''a\rb'''",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "'\f'",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "\"\"\"\f\"\"\"",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "'''\f'''",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "\"\\b\\t\\n\\f\\r\\\"\\\\\"",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "\"\\q\"",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "\"\"\"\\q\"\"\"",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "'\\q'",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "\"\\u0000\\u00e9\\U0001F600\"",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "\"\\uD800\"",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "\"\\uDFFF\"",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "\"\\U00110000\"",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "\"\\uZZZZ\"",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "\"\\u123\"",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "\"\\U0000000\"",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "\"\u0000\"",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "\"\t\"",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "\"\f\"",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "\"\u000b\"",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "\"\"",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "\"\"\"one\\\n  two\"\"\"",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "\"\"\"one\\ \t\r\ntwo\"\"\"",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "\"\"\"one\\ \rtwo\"\"\"",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "\"\"\"one\\\n  \n two\"\"\"",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "\"\"\"x\"\"\"\"",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "'''x''''",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "\"\"\"x\"\"\"\"\"",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "'''x'''''",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "\"a b\"",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "\"😀\"",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "[",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "[1 2]",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "[1,2,]",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "[1,# comment\n2]",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "[# comment\n]",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "[true, [1], {a = 2}]",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "{",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "{a = 1 b = 2}",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "{a=1,}",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "{}",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "{\n}",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "{a=1,\nb=2}",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "{a=1,a=2}",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "{a=1,\"a\"=2}",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "{a.b=1,a.c=2}",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "{a=1,a.b=2}",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "{a.b=1,a=2}",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "{a = \"\"\"one\ntwo\"\"\"}",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "{a = '''one\ntwo'''}",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "{a=\"\\\r\"}",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "{a=\"\\ \"}",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "{a=\"\\ \"}",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "{a=1# comment\n}",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "true false",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "true# comment",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "[\"/tmp\",\n\"/tmp/roots\",]",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "{enabled=true,retries=2}",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "[\t1\t]",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "[\n1\n]",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "[\u000b1\u000b]",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "[\f1\f]",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "[\r1\r]",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "[ 1 ]",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "[ 1 ]",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "[ 1 ]",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "[ 1 ]",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "[ 1 ]",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "[ 1 ]",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "[ 1 ]",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "[ 1 ]",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "[ 1 ]",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "[　1　]",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "[﻿1﻿]",
+      "answer": true
+    },
+    {
+      "unit": "validValue",
+      "input": "[1]",
+      "answer": false
+    },
+    {
+      "unit": "validValue",
+      "input": "[​1​]",
+      "answer": false
+    },
+    {
+      "unit": "keyPath",
+      "input": "",
+      "start": 0,
+      "answer": null
+    },
+    {
+      "unit": "keyPath",
+      "input": " ",
+      "start": 0,
+      "answer": null
+    },
+    {
+      "unit": "keyPath",
+      "input": "bare",
+      "start": 0,
+      "answer": {
+        "parts": [
+          "bare"
+        ],
+        "end": 4
+      }
+    },
+    {
+      "unit": "keyPath",
+      "input": "123_- = 1",
+      "start": 0,
+      "answer": {
+        "parts": [
+          "123_-"
+        ],
+        "end": 6
+      }
+    },
+    {
+      "unit": "keyPath",
+      "input": " alpha . 'beta gamma' = 2",
+      "start": 0,
+      "answer": {
+        "parts": [
+          "alpha",
+          "beta gamma"
+        ],
+        "end": 22
+      }
+    },
+    {
+      "unit": "keyPath",
+      "input": "\"\" = 1",
+      "start": 0,
+      "answer": {
+        "parts": [
+          ""
+        ],
+        "end": 3
+      }
+    },
+    {
+      "unit": "keyPath",
+      "input": "'' = 1",
+      "start": 0,
+      "answer": {
+        "parts": [
+          ""
+        ],
+        "end": 3
+      }
+    },
+    {
+      "unit": "keyPath",
+      "input": "\"foo\"",
+      "start": 0,
+      "answer": {
+        "parts": [
+          "foo"
+        ],
+        "end": 5
+      }
+    },
+    {
+      "unit": "keyPath",
+      "input": "'raw key'",
+      "start": 0,
+      "answer": {
+        "parts": [
+          "raw key"
+        ],
+        "end": 9
+      }
+    },
+    {
+      "unit": "keyPath",
+      "input": "a.b.c",
+      "start": 0,
+      "answer": {
+        "parts": [
+          "a",
+          "b",
+          "c"
+        ],
+        "end": 5
+      }
+    },
+    {
+      "unit": "keyPath",
+      "input": "a.",
+      "start": 0,
+      "answer": null
+    },
+    {
+      "unit": "keyPath",
+      "input": "a. ",
+      "start": 0,
+      "answer": null
+    },
+    {
+      "unit": "keyPath",
+      "input": "a..b",
+      "start": 0,
+      "answer": null
+    },
+    {
+      "unit": "keyPath",
+      "input": "a.\nb",
+      "start": 0,
+      "answer": null
+    },
+    {
+      "unit": "keyPath",
+      "input": "bad key",
+      "start": 0,
+      "answer": {
+        "parts": [
+          "bad"
+        ],
+        "end": 4
+      }
+    },
+    {
+      "unit": "keyPath",
+      "input": "x. bad key",
+      "start": 0,
+      "answer": {
+        "parts": [
+          "x",
+          "bad"
+        ],
+        "end": 7
+      }
+    },
+    {
+      "unit": "keyPath",
+      "input": "\"unterminated",
+      "start": 0,
+      "answer": null
+    },
+    {
+      "unit": "keyPath",
+      "input": "\"\\q\"",
+      "start": 0,
+      "answer": null
+    },
+    {
+      "unit": "keyPath",
+      "input": "\"\n\"",
+      "start": 0,
+      "answer": null
+    },
+    {
+      "unit": "keyPath",
+      "input": "\"\\b\\t\\n\\f\\r\\\"\\\\\"",
+      "start": 0,
+      "answer": {
+        "parts": [
+          "\b\t\n\f\r\"\\"
+        ],
+        "end": 16
+      }
+    },
+    {
+      "unit": "keyPath",
+      "input": "\"\\u0061\"",
+      "start": 0,
+      "answer": {
+        "parts": [
+          "a"
+        ],
+        "end": 8
+      }
+    },
+    {
+      "unit": "keyPath",
+      "input": "\"\\U0001F600\"",
+      "start": 0,
+      "answer": {
+        "parts": [
+          "😀"
+        ],
+        "end": 12
+      }
+    },
+    {
+      "unit": "keyPath",
+      "input": "\"😀\" = 1",
+      "start": 0,
+      "answer": {
+        "parts": [
+          "😀"
+        ],
+        "end": 7
+      }
+    },
+    {
+      "unit": "keyPath",
+      "input": "\"\\uD800\"",
+      "start": 0,
+      "answer": null
+    },
+    {
+      "unit": "keyPath",
+      "input": "\"\\uDFFF\"",
+      "start": 0,
+      "answer": null
+    },
+    {
+      "unit": "keyPath",
+      "input": "\"\\U00110000\"",
+      "start": 0,
+      "answer": null
+    },
+    {
+      "unit": "keyPath",
+      "input": "\"\\uZZZZ\"",
+      "start": 0,
+      "answer": null
+    },
+    {
+      "unit": "keyPath",
+      "input": "\"\\u123\"",
+      "start": 0,
+      "answer": null
+    },
+    {
+      "unit": "keyPath",
+      "input": "\"\"",
+      "start": 0,
+      "answer": null
+    },
+    {
+      "unit": "keyPath",
+      "input": "é",
+      "start": 0,
+      "answer": null
+    },
+    {
+      "unit": "keyPath",
+      "input": "aé",
+      "start": 0,
+      "answer": {
+        "parts": [
+          "a"
+        ],
+        "end": 1
+      }
+    },
+    {
+      "unit": "keyPath",
+      "input": "'\\q'",
+      "start": 0,
+      "answer": {
+        "parts": [
+          "\\q"
+        ],
+        "end": 4
+      }
+    },
+    {
+      "unit": "keyPath",
+      "input": "\"\t\"",
+      "start": 0,
+      "answer": null
+    },
+    {
+      "unit": "keyPath",
+      "input": "prefix: alpha . \"😀\" = 1",
+      "start": 8,
+      "answer": {
+        "parts": [
+          "alpha",
+          "😀"
+        ],
+        "end": 23
+      }
+    },
+    {
+      "unit": "keyPath",
+      "input": "😀: alpha = 1",
+      "start": 6,
+      "answer": {
+        "parts": [
+          "alpha"
+        ],
+        "end": 12
+      }
+    },
+    {
+      "unit": "structure",
+      "ops": [],
+      "answer": [
+        {
+          "ok": true,
+          "root": {
+            "kind": "table",
+            "children": {}
+          },
+          "current": {
+            "kind": "table",
+            "children": {}
+          }
+        }
+      ]
+    },
+    {
+      "unit": "structure",
+      "ops": [
+        {
+          "op": "assign",
+          "parts": []
+        },
+        {
+          "op": "enter",
+          "parts": [],
+          "array": false
+        }
+      ],
+      "answer": [
+        {
+          "ok": true,
+          "root": {
+            "kind": "table",
+            "children": {}
+          },
+          "current": {
+            "kind": "table",
+            "children": {}
+          }
+        },
+        {
+          "ok": false,
+          "root": {
+            "kind": "table",
+            "children": {}
+          },
+          "current": {
+            "kind": "table",
+            "children": {}
+          }
+        },
+        {
+          "ok": true,
+          "root": {
+            "kind": "table",
+            "children": {}
+          },
+          "current": {
+            "kind": "table",
+            "children": {}
+          }
+        }
+      ]
+    },
+    {
+      "unit": "structure",
+      "ops": [
+        {
+          "op": "assign",
+          "parts": [
+            "a"
+          ]
+        },
+        {
+          "op": "assign",
+          "parts": [
+            "a"
+          ]
+        },
+        {
+          "op": "assign",
+          "parts": [
+            "a",
+            "b"
+          ]
+        }
+      ],
+      "answer": [
+        {
+          "ok": true,
+          "root": {
+            "kind": "table",
+            "children": {}
+          },
+          "current": {
+            "kind": "table",
+            "children": {}
+          }
+        },
+        {
+          "ok": true,
+          "root": {
+            "kind": "table",
+            "children": {
+              "a": {
+                "kind": "scalar"
+              }
+            }
+          },
+          "current": {
+            "kind": "table",
+            "children": {
+              "a": {
+                "kind": "scalar"
+              }
+            }
+          }
+        },
+        {
+          "ok": false,
+          "root": {
+            "kind": "table",
+            "children": {
+              "a": {
+                "kind": "scalar"
+              }
+            }
+          },
+          "current": {
+            "kind": "table",
+            "children": {
+              "a": {
+                "kind": "scalar"
+              }
+            }
+          }
+        },
+        {
+          "ok": false,
+          "root": {
+            "kind": "table",
+            "children": {
+              "a": {
+                "kind": "scalar"
+              }
+            }
+          },
+          "current": {
+            "kind": "table",
+            "children": {
+              "a": {
+                "kind": "scalar"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "unit": "structure",
+      "ops": [
+        {
+          "op": "assign",
+          "parts": [
+            "a",
+            "b"
+          ]
+        },
+        {
+          "op": "assign",
+          "parts": [
+            "a",
+            "c"
+          ]
+        },
+        {
+          "op": "assign",
+          "parts": [
+            "a"
+          ]
+        },
+        {
+          "op": "enter",
+          "parts": [
+            "a"
+          ],
+          "array": false
+        },
+        {
+          "op": "enter",
+          "parts": [
+            "a"
+          ],
+          "array": false
+        }
+      ],
+      "answer": [
+        {
+          "ok": true,
+          "root": {
+            "kind": "table",
+            "children": {}
+          },
+          "current": {
+            "kind": "table",
+            "children": {}
+          }
+        },
+        {
+          "ok": true,
+          "root": {
+            "kind": "table",
+            "children": {
+              "a": {
+                "kind": "table",
+                "children": {
+                  "b": {
+                    "kind": "scalar"
+                  }
+                }
+              }
+            }
+          },
+          "current": {
+            "kind": "table",
+            "children": {
+              "a": {
+                "kind": "table",
+                "children": {
+                  "b": {
+                    "kind": "scalar"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "ok": true,
+          "root": {
+            "kind": "table",
+            "children": {
+              "a": {
+                "kind": "table",
+                "children": {
+                  "b": {
+                    "kind": "scalar"
+                  },
+                  "c": {
+                    "kind": "scalar"
+                  }
+                }
+              }
+            }
+          },
+          "current": {
+            "kind": "table",
+            "children": {
+              "a": {
+                "kind": "table",
+                "children": {
+                  "b": {
+                    "kind": "scalar"
+                  },
+                  "c": {
+                    "kind": "scalar"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "ok": false,
+          "root": {
+            "kind": "table",
+            "children": {
+              "a": {
+                "kind": "table",
+                "children": {
+                  "b": {
+                    "kind": "scalar"
+                  },
+                  "c": {
+                    "kind": "scalar"
+                  }
+                }
+              }
+            }
+          },
+          "current": {
+            "kind": "table",
+            "children": {
+              "a": {
+                "kind": "table",
+                "children": {
+                  "b": {
+                    "kind": "scalar"
+                  },
+                  "c": {
+                    "kind": "scalar"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "ok": true,
+          "root": {
+            "kind": "table",
+            "children": {
+              "a": {
+                "kind": "table",
+                "children": {
+                  "b": {
+                    "kind": "scalar"
+                  },
+                  "c": {
+                    "kind": "scalar"
+                  }
+                },
+                "declared": true
+              }
+            }
+          },
+          "current": {
+            "kind": "table",
+            "children": {
+              "b": {
+                "kind": "scalar"
+              },
+              "c": {
+                "kind": "scalar"
+              }
+            },
+            "declared": true
+          }
+        },
+        {
+          "ok": false,
+          "root": {
+            "kind": "table",
+            "children": {
+              "a": {
+                "kind": "table",
+                "children": {
+                  "b": {
+                    "kind": "scalar"
+                  },
+                  "c": {
+                    "kind": "scalar"
+                  }
+                },
+                "declared": true
+              }
+            }
+          },
+          "current": {
+            "kind": "table",
+            "children": {
+              "b": {
+                "kind": "scalar"
+              },
+              "c": {
+                "kind": "scalar"
+              }
+            },
+            "declared": true
+          }
+        }
+      ]
+    },
+    {
+      "unit": "structure",
+      "ops": [
+        {
+          "op": "enter",
+          "parts": [
+            "x"
+          ],
+          "array": false
+        },
+        {
+          "op": "assign",
+          "parts": [
+            "a"
+          ]
+        },
+        {
+          "op": "assign",
+          "parts": [
+            "a"
+          ]
+        },
+        {
+          "op": "enter",
+          "parts": [
+            "x"
+          ],
+          "array": false
+        }
+      ],
+      "answer": [
+        {
+          "ok": true,
+          "root": {
+            "kind": "table",
+            "children": {}
+          },
+          "current": {
+            "kind": "table",
+            "children": {}
+          }
+        },
+        {
+          "ok": true,
+          "root": {
+            "kind": "table",
+            "children": {
+              "x": {
+                "kind": "table",
+                "children": {},
+                "declared": true
+              }
+            }
+          },
+          "current": {
+            "kind": "table",
+            "children": {},
+            "declared": true
+          }
+        },
+        {
+          "ok": true,
+          "root": {
+            "kind": "table",
+            "children": {
+              "x": {
+                "kind": "table",
+                "children": {
+                  "a": {
+                    "kind": "scalar"
+                  }
+                },
+                "declared": true
+              }
+            }
+          },
+          "current": {
+            "kind": "table",
+            "children": {
+              "a": {
+                "kind": "scalar"
+              }
+            },
+            "declared": true
+          }
+        },
+        {
+          "ok": false,
+          "root": {
+            "kind": "table",
+            "children": {
+              "x": {
+                "kind": "table",
+                "children": {
+                  "a": {
+                    "kind": "scalar"
+                  }
+                },
+                "declared": true
+              }
+            }
+          },
+          "current": {
+            "kind": "table",
+            "children": {
+              "a": {
+                "kind": "scalar"
+              }
+            },
+            "declared": true
+          }
+        },
+        {
+          "ok": false,
+          "root": {
+            "kind": "table",
+            "children": {
+              "x": {
+                "kind": "table",
+                "children": {
+                  "a": {
+                    "kind": "scalar"
+                  }
+                },
+                "declared": true
+              }
+            }
+          },
+          "current": {
+            "kind": "table",
+            "children": {
+              "a": {
+                "kind": "scalar"
+              }
+            },
+            "declared": true
+          }
+        }
+      ]
+    },
+    {
+      "unit": "structure",
+      "ops": [
+        {
+          "op": "enter",
+          "parts": [
+            "x"
+          ],
+          "array": true,
+          "save": "first"
+        },
+        {
+          "op": "assign",
+          "parts": [
+            "key"
+          ]
+        },
+        {
+          "op": "enter",
+          "parts": [
+            "x"
+          ],
+          "array": true
+        },
+        {
+          "op": "assign",
+          "parts": [
+            "key"
+          ]
+        },
+        {
+          "op": "assign",
+          "parts": [
+            "old"
+          ],
+          "scope": "first"
+        }
+      ],
+      "answer": [
+        {
+          "ok": true,
+          "root": {
+            "kind": "table",
+            "children": {}
+          },
+          "current": {
+            "kind": "table",
+            "children": {}
+          }
+        },
+        {
+          "ok": true,
+          "root": {
+            "kind": "table",
+            "children": {
+              "x": {
+                "kind": "array",
+                "latest": {
+                  "kind": "table",
+                  "children": {}
+                }
+              }
+            }
+          },
+          "current": {
+            "kind": "table",
+            "children": {}
+          }
+        },
+        {
+          "ok": true,
+          "root": {
+            "kind": "table",
+            "children": {
+              "x": {
+                "kind": "array",
+                "latest": {
+                  "kind": "table",
+                  "children": {
+                    "key": {
+                      "kind": "scalar"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "current": {
+            "kind": "table",
+            "children": {
+              "key": {
+                "kind": "scalar"
+              }
+            }
+          }
+        },
+        {
+          "ok": true,
+          "root": {
+            "kind": "table",
+            "children": {
+              "x": {
+                "kind": "array",
+                "latest": {
+                  "kind": "table",
+                  "children": {}
+                }
+              }
+            }
+          },
+          "current": {
+            "kind": "table",
+            "children": {}
+          }
+        },
+        {
+          "ok": true,
+          "root": {
+            "kind": "table",
+            "children": {
+              "x": {
+                "kind": "array",
+                "latest": {
+                  "kind": "table",
+                  "children": {
+                    "key": {
+                      "kind": "scalar"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "current": {
+            "kind": "table",
+            "children": {
+              "key": {
+                "kind": "scalar"
+              }
+            }
+          }
+        },
+        {
+          "ok": true,
+          "root": {
+            "kind": "table",
+            "children": {
+              "x": {
+                "kind": "array",
+                "latest": {
+                  "kind": "table",
+                  "children": {
+                    "key": {
+                      "kind": "scalar"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "current": {
+            "kind": "table",
+            "children": {
+              "key": {
+                "kind": "scalar"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "unit": "structure",
+      "ops": [
+        {
+          "op": "enter",
+          "parts": [
+            "x"
+          ],
+          "array": true
+        },
+        {
+          "op": "enter",
+          "parts": [
+            "x",
+            "nested"
+          ],
+          "array": false
+        },
+        {
+          "op": "assign",
+          "parts": [
+            "a"
+          ]
+        },
+        {
+          "op": "enter",
+          "parts": [
+            "x"
+          ],
+          "array": true
+        },
+        {
+          "op": "enter",
+          "parts": [
+            "x",
+            "nested"
+          ],
+          "array": false
+        }
+      ],
+      "answer": [
+        {
+          "ok": true,
+          "root": {
+            "kind": "table",
+            "children": {}
+          },
+          "current": {
+            "kind": "table",
+            "children": {}
+          }
+        },
+        {
+          "ok": true,
+          "root": {
+            "kind": "table",
+            "children": {
+              "x": {
+                "kind": "array",
+                "latest": {
+                  "kind": "table",
+                  "children": {}
+                }
+              }
+            }
+          },
+          "current": {
+            "kind": "table",
+            "children": {}
+          }
+        },
+        {
+          "ok": true,
+          "root": {
+            "kind": "table",
+            "children": {
+              "x": {
+                "kind": "array",
+                "latest": {
+                  "kind": "table",
+                  "children": {
+                    "nested": {
+                      "kind": "table",
+                      "children": {},
+                      "declared": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "current": {
+            "kind": "table",
+            "children": {},
+            "declared": true
+          }
+        },
+        {
+          "ok": true,
+          "root": {
+            "kind": "table",
+            "children": {
+              "x": {
+                "kind": "array",
+                "latest": {
+                  "kind": "table",
+                  "children": {
+                    "nested": {
+                      "kind": "table",
+                      "children": {
+                        "a": {
+                          "kind": "scalar"
+                        }
+                      },
+                      "declared": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "current": {
+            "kind": "table",
+            "children": {
+              "a": {
+                "kind": "scalar"
+              }
+            },
+            "declared": true
+          }
+        },
+        {
+          "ok": true,
+          "root": {
+            "kind": "table",
+            "children": {
+              "x": {
+                "kind": "array",
+                "latest": {
+                  "kind": "table",
+                  "children": {}
+                }
+              }
+            }
+          },
+          "current": {
+            "kind": "table",
+            "children": {}
+          }
+        },
+        {
+          "ok": true,
+          "root": {
+            "kind": "table",
+            "children": {
+              "x": {
+                "kind": "array",
+                "latest": {
+                  "kind": "table",
+                  "children": {
+                    "nested": {
+                      "kind": "table",
+                      "children": {},
+                      "declared": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "current": {
+            "kind": "table",
+            "children": {},
+            "declared": true
+          }
+        }
+      ]
+    },
+    {
+      "unit": "structure",
+      "ops": [
+        {
+          "op": "enter",
+          "parts": [
+            "x"
+          ],
+          "array": false
+        },
+        {
+          "op": "enter",
+          "parts": [
+            "x"
+          ],
+          "array": true
+        }
+      ],
+      "answer": [
+        {
+          "ok": true,
+          "root": {
+            "kind": "table",
+            "children": {}
+          },
+          "current": {
+            "kind": "table",
+            "children": {}
+          }
+        },
+        {
+          "ok": true,
+          "root": {
+            "kind": "table",
+            "children": {
+              "x": {
+                "kind": "table",
+                "children": {},
+                "declared": true
+              }
+            }
+          },
+          "current": {
+            "kind": "table",
+            "children": {},
+            "declared": true
+          }
+        },
+        {
+          "ok": false,
+          "root": {
+            "kind": "table",
+            "children": {
+              "x": {
+                "kind": "table",
+                "children": {},
+                "declared": true
+              }
+            }
+          },
+          "current": {
+            "kind": "table",
+            "children": {},
+            "declared": true
+          }
+        }
+      ]
+    },
+    {
+      "unit": "structure",
+      "ops": [
+        {
+          "op": "enter",
+          "parts": [
+            "x"
+          ],
+          "array": true
+        },
+        {
+          "op": "enter",
+          "parts": [
+            "x"
+          ],
+          "array": false
+        }
+      ],
+      "answer": [
+        {
+          "ok": true,
+          "root": {
+            "kind": "table",
+            "children": {}
+          },
+          "current": {
+            "kind": "table",
+            "children": {}
+          }
+        },
+        {
+          "ok": true,
+          "root": {
+            "kind": "table",
+            "children": {
+              "x": {
+                "kind": "array",
+                "latest": {
+                  "kind": "table",
+                  "children": {}
+                }
+              }
+            }
+          },
+          "current": {
+            "kind": "table",
+            "children": {}
+          }
+        },
+        {
+          "ok": true,
+          "root": {
+            "kind": "table",
+            "children": {
+              "x": {
+                "kind": "array",
+                "latest": {
+                  "kind": "table",
+                  "children": {}
+                }
+              }
+            }
+          },
+          "current": {
+            "kind": "table",
+            "children": {}
+          }
+        }
+      ]
+    },
+    {
+      "unit": "structure",
+      "ops": [
+        {
+          "op": "assign",
+          "parts": [
+            "x"
+          ]
+        },
+        {
+          "op": "enter",
+          "parts": [
+            "x"
+          ],
+          "array": false
+        },
+        {
+          "op": "enter",
+          "parts": [
+            "x"
+          ],
+          "array": true
+        }
+      ],
+      "answer": [
+        {
+          "ok": true,
+          "root": {
+            "kind": "table",
+            "children": {}
+          },
+          "current": {
+            "kind": "table",
+            "children": {}
+          }
+        },
+        {
+          "ok": true,
+          "root": {
+            "kind": "table",
+            "children": {
+              "x": {
+                "kind": "scalar"
+              }
+            }
+          },
+          "current": {
+            "kind": "table",
+            "children": {
+              "x": {
+                "kind": "scalar"
+              }
+            }
+          }
+        },
+        {
+          "ok": false,
+          "root": {
+            "kind": "table",
+            "children": {
+              "x": {
+                "kind": "scalar"
+              }
+            }
+          },
+          "current": {
+            "kind": "table",
+            "children": {
+              "x": {
+                "kind": "scalar"
+              }
+            }
+          }
+        },
+        {
+          "ok": false,
+          "root": {
+            "kind": "table",
+            "children": {
+              "x": {
+                "kind": "scalar"
+              }
+            }
+          },
+          "current": {
+            "kind": "table",
+            "children": {
+              "x": {
+                "kind": "scalar"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "unit": "structure",
+      "ops": [
+        {
+          "op": "enter",
+          "parts": [
+            "a",
+            "b"
+          ],
+          "array": false
+        },
+        {
+          "op": "enter",
+          "parts": [
+            "a"
+          ],
+          "array": false
+        },
+        {
+          "op": "enter",
+          "parts": [
+            "a",
+            "b"
+          ],
+          "array": false
+        }
+      ],
+      "answer": [
+        {
+          "ok": true,
+          "root": {
+            "kind": "table",
+            "children": {}
+          },
+          "current": {
+            "kind": "table",
+            "children": {}
+          }
+        },
+        {
+          "ok": true,
+          "root": {
+            "kind": "table",
+            "children": {
+              "a": {
+                "kind": "table",
+                "children": {
+                  "b": {
+                    "kind": "table",
+                    "children": {},
+                    "declared": true
+                  }
+                }
+              }
+            }
+          },
+          "current": {
+            "kind": "table",
+            "children": {},
+            "declared": true
+          }
+        },
+        {
+          "ok": true,
+          "root": {
+            "kind": "table",
+            "children": {
+              "a": {
+                "kind": "table",
+                "children": {
+                  "b": {
+                    "kind": "table",
+                    "children": {},
+                    "declared": true
+                  }
+                },
+                "declared": true
+              }
+            }
+          },
+          "current": {
+            "kind": "table",
+            "children": {
+              "b": {
+                "kind": "table",
+                "children": {},
+                "declared": true
+              }
+            },
+            "declared": true
+          }
+        },
+        {
+          "ok": false,
+          "root": {
+            "kind": "table",
+            "children": {
+              "a": {
+                "kind": "table",
+                "children": {
+                  "b": {
+                    "kind": "table",
+                    "children": {},
+                    "declared": true
+                  }
+                },
+                "declared": true
+              }
+            }
+          },
+          "current": {
+            "kind": "table",
+            "children": {
+              "b": {
+                "kind": "table",
+                "children": {},
+                "declared": true
+              }
+            },
+            "declared": true
+          }
+        }
+      ]
+    },
+    {
+      "unit": "structure",
+      "ops": [
+        {
+          "op": "assign",
+          "parts": [
+            "a"
+          ]
+        },
+        {
+          "op": "enter",
+          "parts": [
+            "partial",
+            "a"
+          ],
+          "array": false
+        },
+        {
+          "op": "assign",
+          "parts": [
+            "a"
+          ]
+        },
+        {
+          "op": "assign",
+          "parts": [
+            "a",
+            "b"
+          ]
+        }
+      ],
+      "answer": [
+        {
+          "ok": true,
+          "root": {
+            "kind": "table",
+            "children": {}
+          },
+          "current": {
+            "kind": "table",
+            "children": {}
+          }
+        },
+        {
+          "ok": true,
+          "root": {
+            "kind": "table",
+            "children": {
+              "a": {
+                "kind": "scalar"
+              }
+            }
+          },
+          "current": {
+            "kind": "table",
+            "children": {
+              "a": {
+                "kind": "scalar"
+              }
+            }
+          }
+        },
+        {
+          "ok": true,
+          "root": {
+            "kind": "table",
+            "children": {
+              "a": {
+                "kind": "scalar"
+              },
+              "partial": {
+                "kind": "table",
+                "children": {
+                  "a": {
+                    "kind": "table",
+                    "children": {},
+                    "declared": true
+                  }
+                }
+              }
+            }
+          },
+          "current": {
+            "kind": "table",
+            "children": {},
+            "declared": true
+          }
+        },
+        {
+          "ok": true,
+          "root": {
+            "kind": "table",
+            "children": {
+              "a": {
+                "kind": "scalar"
+              },
+              "partial": {
+                "kind": "table",
+                "children": {
+                  "a": {
+                    "kind": "table",
+                    "children": {
+                      "a": {
+                        "kind": "scalar"
+                      }
+                    },
+                    "declared": true
+                  }
+                }
+              }
+            }
+          },
+          "current": {
+            "kind": "table",
+            "children": {
+              "a": {
+                "kind": "scalar"
+              }
+            },
+            "declared": true
+          }
+        },
+        {
+          "ok": false,
+          "root": {
+            "kind": "table",
+            "children": {
+              "a": {
+                "kind": "scalar"
+              },
+              "partial": {
+                "kind": "table",
+                "children": {
+                  "a": {
+                    "kind": "table",
+                    "children": {
+                      "a": {
+                        "kind": "scalar"
+                      }
+                    },
+                    "declared": true
+                  }
+                }
+              }
+            }
+          },
+          "current": {
+            "kind": "table",
+            "children": {
+              "a": {
+                "kind": "scalar"
+              }
+            },
+            "declared": true
+          }
+        }
+      ]
+    },
+    {
+      "unit": "structure",
+      "ops": [
+        {
+          "op": "assign",
+          "parts": [
+            ""
+          ]
+        },
+        {
+          "op": "assign",
+          "parts": [
+            ""
+          ]
+        },
+        {
+          "op": "enter",
+          "parts": [
+            "__proto__"
+          ],
+          "array": false
+        },
+        {
+          "op": "assign",
+          "parts": [
+            "constructor"
+          ]
+        }
+      ],
+      "answer": [
+        {
+          "ok": true,
+          "root": {
+            "kind": "table",
+            "children": {}
+          },
+          "current": {
+            "kind": "table",
+            "children": {}
+          }
+        },
+        {
+          "ok": true,
+          "root": {
+            "kind": "table",
+            "children": {
+              "": {
+                "kind": "scalar"
+              }
+            }
+          },
+          "current": {
+            "kind": "table",
+            "children": {
+              "": {
+                "kind": "scalar"
+              }
+            }
+          }
+        },
+        {
+          "ok": false,
+          "root": {
+            "kind": "table",
+            "children": {
+              "": {
+                "kind": "scalar"
+              }
+            }
+          },
+          "current": {
+            "kind": "table",
+            "children": {
+              "": {
+                "kind": "scalar"
+              }
+            }
+          }
+        },
+        {
+          "ok": true,
+          "root": {
+            "kind": "table",
+            "children": {
+              "": {
+                "kind": "scalar"
+              },
+              "__proto__": {
+                "kind": "table",
+                "children": {},
+                "declared": true
+              }
+            }
+          },
+          "current": {
+            "kind": "table",
+            "children": {},
+            "declared": true
+          }
+        },
+        {
+          "ok": true,
+          "root": {
+            "kind": "table",
+            "children": {
+              "": {
+                "kind": "scalar"
+              },
+              "__proto__": {
+                "kind": "table",
+                "children": {
+                  "constructor": {
+                    "kind": "scalar"
+                  }
+                },
+                "declared": true
+              }
+            }
+          },
+          "current": {
+            "kind": "table",
+            "children": {
+              "constructor": {
+                "kind": "scalar"
+              }
+            },
+            "declared": true
+          }
+        }
+      ]
+    }
+  ]
+}

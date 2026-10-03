@@ -395,3 +395,13 @@ No new oracle defect was identified in the directive text and assembly of `pabcd
 - node:sqlite accepts the minimum signed 64-bit INTEGER as a rounded JavaScript number, while neighboring unsafe integers throw, consistent with an absolute-value overflow in its range check (recorded Node case; recall/src/sqlite.ts:29-36 delegates to DatabaseSync; TestRecallSQLiteMinimumIntegerOracleOverflow); port: kept.
 - An ambiguous bare named-parameter map throws on its first construction but leaves a partial per-statement alias cache, so repeating Get/All/Run can bind the first alias while the other remains NULL (recorded Node case; recall/src/sqlite.ts delegates to DatabaseSync; TestRecallSQLiteNamedOrderAndCachedAmbiguity); port: kept.
 - Named SQLite binding keys containing NUL resolve by the prefix before NUL, while unknown-name diagnostics retain the original key (recorded Node case; recall/src/sqlite.ts delegates to DatabaseSync; TestRecallSQLiteNamedOrderAndCachedAmbiguity); port: kept.
+
+## Found by the agent-thread TOML scanner port (CRW-343)
+
+- A space-separated date-time is rejected by the bare-token scan despite being in the scalar grammar (source `plugins/codexclaw/components/pabcd-state/src/agent-thread-permissions.ts:227,306-308`; recorded spaced date-time); port: kept.
+- Year 0000 uses Date.UTC's year-1900 calendar, rejecting its leap day (source `agent-thread-permissions.ts:79`; recorded `0000-02-29`); port: kept.
+- Second 60 is accepted at any minute and date, without checking whether a leap second occurred (source `agent-thread-permissions.ts:83`; recorded `12:00:60`); port: kept.
+- Raw form feed passes all four string scanners, and raw carriage return passes the multiline forms (source `agent-thread-permissions.ts:246-247`; recorded control-character strings); port: kept.
+- The first triple closing mark ends a string, so the TOML four/five-quote closing forms are rejected (source `agent-thread-permissions.ts:245`; recorded adjacent closing quotes); port: kept.
+- JavaScript whitespace such as vertical tab, form feed and non-ASCII spaces is accepted between value tokens although TOML whitespace is narrower (source `agent-thread-permissions.ts:230`; recorded whitespace arrays); port: kept.
+- A table implicitly created by a dotted assignment may later be explicitly declared, which TOML forbids (source `agent-thread-permissions.ts:182-188,212-216`; recorded dotted-assignment/table sequence); port: kept.
