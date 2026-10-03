@@ -1,0 +1,2160 @@
+{
+ "asciiOrder": "\u0001\u0002\u0003\u0004\u0005\u0006\u0007\b\u000e\u000f\u0010\u0011\u0012\u0013\u0014\u0015\u0016\u0017\u0018\u0019\u001a\u001b\u001c\u001d\u001e\u001f\t\n\u000b\f\r _-,;:!?.'\"()[]{}@*/\\&#%`^+<=>|~$0123456789aAbBcCdDeEfFgGhHiIjJkKlLmMnNoOpPqQrRsStTuUvVwWxXyYzZ",
+ "matrix": {
+  "strings": [
+   "a",
+   "A",
+   "b",
+   "B",
+   "_",
+   "-",
+   ".",
+   "/",
+   "0",
+   "9",
+   "10",
+   "a.md",
+   "A.md",
+   "a_b.md",
+   "aB.md",
+   "a-b.md",
+   "ab.md",
+   "a b.md",
+   "a/b.md",
+   "a.b",
+   "000_plan.md",
+   "010_phase.md",
+   "000-plan.md",
+   "Z.md",
+   "z.md",
+   "~",
+   "$",
+   "\t",
+   "",
+   "a\u0001b",
+   "ab"
+  ],
+  "rows": [
+   "=<<<>>>>>>><<<<<<<<<>>><<>>>><<",
+   ">=<<>>>>>>><<<<<<<<<>>><<>>>><<",
+   ">>=<>>>>>>>>>>>>>>>>>>><<>>>>>>",
+   ">>>=>>>>>>>>>>>>>>>>>>><<>>>>>>",
+   "<<<<=<<<<<<<<<<<<<<<<<<<<<<>><<",
+   "<<<<>=<<<<<<<<<<<<<<<<<<<<<>><<",
+   "<<<<>>=<<<<<<<<<<<<<<<<<<<<>><<",
+   "<<<<>>>=<<<<<<<<<<<<<<<<<<<>><<",
+   "<<<<>>>>=<<<<<<<<<<<<<<<<>>>><<",
+   "<<<<>>>>>=><<<<<<<<<>>><<>>>><<",
+   "<<<<>>>>><=<<<<<<<<<>>><<>>>><<",
+   ">><<>>>>>>>=<><><><>>>><<>>>><<",
+   ">><<>>>>>>>>=><><><>>>><<>>>><<",
+   ">><<>>>>>>><<=<<<><<>>><<>>>><<",
+   ">><<>>>>>>>>>>=>>>>>>>><<>>>>>>",
+   ">><<>>>>>>><<><=<><<>>><<>>>><<",
+   ">><<>>>>>>>>>><>=>>>>>><<>>>>>>",
+   ">><<>>>>>>><<<<<<=<<>>><<>>>><<",
+   ">><<>>>>>>>>>><><>=>>>><<>>>><<",
+   ">><<>>>>>>><<><><><=>>><<>>>><<",
+   "<<<<>>>>><<<<<<<<<<<=<<<<>>>><<",
+   "<<<<>>>>><<<<<<<<<<<>=><<>>>><<",
+   "<<<<>>>>><<<<<<<<<<<><=<<>>>><<",
+   ">>>>>>>>>>>>>>>>>>>>>>>=>>>>>>>",
+   ">>>>>>>>>>>>>>>>>>>>>>><=>>>>>>",
+   "<<<<>>>><<<<<<<<<<<<<<<<<=<>><<",
+   "<<<<>>>><<<<<<<<<<<<<<<<<>=>><<",
+   "<<<<<<<<<<<<<<<<<<<<<<<<<<<=><<",
+   "<<<<<<<<<<<<<<<<<<<<<<<<<<<<=<<",
+   ">><<>>>>>>>>>><><>>>>>><<>>>>==",
+   ">><<>>>>>>>>>><><>>>>>><<>>>>=="
+  ]
+ },
+ "sets": [
+  {
+   "files": [
+    {
+     "path": "b.md",
+     "sha256": "a84616c04241dbe966261d1884023eb2a8f6027ce3ae84d270a624437e2bcb79"
+    },
+    {
+     "path": "a.md",
+     "sha256": "72ab349cd33800732e82f6784b2835bd31d8378ba7dc4aa7ebf9e1313321361f"
+    },
+    {
+     "path": "B.md",
+     "sha256": "86bbcba43848c1325548adbd7a16b1a5d3af58b73ef03c85e7b5ce383a7c16bf"
+    },
+    {
+     "path": "A.md",
+     "sha256": "b9fe0c1b4b8b10480f9c9ddaee9c5f00466a9d4ae57bd7dc3c6988834bd56161"
+    },
+    {
+     "path": "a_b.md",
+     "sha256": "a4bea7c9ee506de348c0bdc6b3f185ff54ba2c3bfcf1f8531f9648eb939da8ba"
+    },
+    {
+     "path": "aB.md",
+     "sha256": "4f016248d348f21f382741db90b521071f41967e7c833971a2211d514ffd63a1"
+    },
+    {
+     "path": "a-b.md",
+     "sha256": "2948abe2ba912aebe3be22b1a8a45a511242882befecd0e7842e06162621a9b1"
+    },
+    {
+     "path": "ab.md",
+     "sha256": "fbe9ae75001610e600fb1e8fbdccd91cf6388f9818f0ec191198775a9c683d59"
+    },
+    {
+     "path": "a b.md",
+     "sha256": "bb2625812f98be96bc9baca3ae4bfb53dbd69157bbd040b2ebc0df46abd9fc96"
+    },
+    {
+     "path": "a.b",
+     "sha256": "8feefdb54f2b7d819b160eea56813fc32f9c7b8322d9a68f905760395a6f0d0b"
+    },
+    {
+     "path": "_x.md",
+     "sha256": "2696d41aa1a41447d19cb485feb53ed1cbdd86ccee409f120fd8e4b14d14cbef"
+    },
+    {
+     "path": "-y.md",
+     "sha256": "9613cbe6fd938257a523801c51287c61be895abcd4ea3108aa70bdcb17a05604"
+    },
+    {
+     "path": "10.md",
+     "sha256": "b2413848b72577595ecc8b172cc33c1bc4a7706da75e478102ce6aa75f3995f5"
+    },
+    {
+     "path": "9.md",
+     "sha256": "d113f0182947f78c5e4c204b81cd4a179b8509e712976b5738927384e6822509"
+    },
+    {
+     "path": "sub/x.md",
+     "sha256": "efa6fb3a2b34b9711b2ede0817c6bf882440d7c00e55f82dc575299831763610"
+    },
+    {
+     "path": "sub.md",
+     "sha256": "3ab8ac7e2ab0a3aca16ce89b1ed97f1b544fe8ee9af84522e3f29d8e93fc16b6"
+    },
+    {
+     "path": "sub-x.md",
+     "sha256": "731ad8b9134110836ba3e65234a743cb0b81e841119479b405e6c1f4fd8a3f1b"
+    },
+    {
+     "path": "Sub/y.md",
+     "sha256": "94d76cb196837b81f4c7780c2b79dfd795476f560379b0ec09bbb3aab8ee9c88"
+    }
+   ],
+   "sorted": [
+    "_x.md",
+    "-y.md",
+    "10.md",
+    "9.md",
+    "a b.md",
+    "a_b.md",
+    "a-b.md",
+    "a.b",
+    "a.md",
+    "A.md",
+    "ab.md",
+    "aB.md",
+    "b.md",
+    "B.md",
+    "sub-x.md",
+    "sub.md",
+    "sub/x.md",
+    "Sub/y.md"
+   ],
+   "planHash": "3a4b91fe1fbc5a38dc906ab2dd3127d896cea6408163b9d2b13bf49b58ada7d5",
+   "hash": "3a4b91fe1fbc5a38dc906ab2dd3127d896cea6408163b9d2b13bf49b58ada7d5"
+  },
+  {
+   "files": [
+    {
+     "path": "000_plan.md",
+     "sha256": "198791865ab538525bcf5c717f0f8a777972635e1acfedb3adee8b10268da9ae"
+    },
+    {
+     "path": "010_phase.md",
+     "sha256": "5ad10eeaee63446b9828d8c8b5a95b34bce3d952bef17594202068f487d987c7"
+    },
+    {
+     "path": "000-plan.md",
+     "sha256": "5186e2cf5e946855ef591c42a7ea6ac2ee05a0d84ca79108511240c8d17fd28b"
+    },
+    {
+     "path": "000_Plan.md",
+     "sha256": "869339756ffd490d1c2c50b8c2b7a65b1826c931cbf4962b3b37e816eda3e55d"
+    },
+    {
+     "path": "0.md",
+     "sha256": "cb22c170cedd46a33c0bd72b12d0bb6a9f2a999f49a5d7e7648cbc96d47ed24a"
+    },
+    {
+     "path": "00.md",
+     "sha256": "0a45495ed06bf0e9a3d4d064e17d9c3100f94224fe5877ad5aff5bb8589ec87e"
+    },
+    {
+     "path": "references/a.md",
+     "sha256": "046beed841ddac60f5eb47d105ce93e1085e79d8842ad8240462d19e6f4868b5"
+    },
+    {
+     "path": "references/B.md",
+     "sha256": "f669a12b695459814990f26052e1517fa069a17c9df6ff5547a84055eeecaaf7"
+    },
+    {
+     "path": "references.md",
+     "sha256": "07bee5df303a31f7d5a2f1f4c5688e67a57ac2115814b50ab2808bd791ba821c"
+    }
+   ],
+   "sorted": [
+    "0.md",
+    "00.md",
+    "000_plan.md",
+    "000_Plan.md",
+    "000-plan.md",
+    "010_phase.md",
+    "references.md",
+    "references/a.md",
+    "references/B.md"
+   ],
+   "planHash": "038ee436544248b6318401e32f7a40270f6f455f7d5a0b2c6b9704fdf4570715",
+   "hash": "038ee436544248b6318401e32f7a40270f6f455f7d5a0b2c6b9704fdf4570715"
+  },
+  {
+   "files": [
+    {
+     "path": "z",
+     "sha256": "1cf6485cbd85a9967c282b8dac4e9635146165ee91cb8a3e455ef02c4adf291f"
+    },
+    {
+     "path": "Z",
+     "sha256": "91b30e6a9fead8157a9ef31cbdc4a80148cabcb106a5073be52bbde6cf9470ab"
+    },
+    {
+     "path": "y",
+     "sha256": "dda485ca0a05dfa4cfe0494c7ba61cfba7006fc7839b035dcd83283e7757dff2"
+    },
+    {
+     "path": "Y",
+     "sha256": "5ce32f4de9a9a996e37c575bbaa6df0bd4965b17559e32ee698a588254a0fb54"
+    },
+    {
+     "path": "~",
+     "sha256": "c28a10dcaa4820989d8b13b41804215964b0cc61c257dab044a979e4b587a49d"
+    },
+    {
+     "path": "$",
+     "sha256": "e7c4b24b56099077180f4dd42911fa08ca841c4b425717ccd761437293650d48"
+    },
+    {
+     "path": "^",
+     "sha256": "02a7c71c4a6f560ceed235c7eaa49fb96ec54ea209705dc4e4cd0168d1c5d1cb"
+    },
+    {
+     "path": "`",
+     "sha256": "4eb044b21b158b92fe21ec46b4d433d614a3238a0cf7a3856b8987cd146adfc8"
+    },
+    {
+     "path": "[",
+     "sha256": "930372fbc118bb79d15c2df2d6d48f3598e3e4ff018696ec2d8a5938f4d941a3"
+    },
+    {
+     "path": "]",
+     "sha256": "93094f317b4fdc31311414ea7c18c47d6c5777f2b8cbd053747bc5af7d15e7c9"
+    },
+    {
+     "path": "{",
+     "sha256": "ad822077b079a57f97a3ca354b7dc7726635a343cdb600a54d81b09781d10139"
+    },
+    {
+     "path": "}",
+     "sha256": "552c21d0cdebeb30e3d6708a044e61a35f2e4e1abc8c64eacd61501d0d48674e"
+    },
+    {
+     "path": "|",
+     "sha256": "469380d5c12ed67d53d0646f12aaf6dc1f5323d7d679670d4fff955f9b904144"
+    },
+    {
+     "path": "\\",
+     "sha256": "548e408933d0e265d08e1086cdc568695a6f7ae8dd409d83f3a6668f2b336bf4"
+    },
+    {
+     "path": "<",
+     "sha256": "b484cba221e554178839c38dbf98f58d9a777dfbb9d27f9b6ac05ae22480eaac"
+    },
+    {
+     "path": ">",
+     "sha256": "e4aa6be7828d0f465622e12df2ed55c4ed06db6c41c684b85966c51bef4d0985"
+    },
+    {
+     "path": "=",
+     "sha256": "b1509f57c34c33457fc2c2251b765d434d32f72529e5fe6e3364869768e67988"
+    },
+    {
+     "path": "+",
+     "sha256": "093524780fb220f596bd56611aecd6f34f999c9a0657e12b2c6dfc693edff58a"
+    },
+    {
+     "path": "&",
+     "sha256": "aa6b871d6b93916273ecb4e8e6c6f0f856ad261e970c6a88483e26883e8eeb25"
+    },
+    {
+     "path": "%",
+     "sha256": "6be340fa9625f690d986d6580f597c57556ecc83ace3b026da0a51d3c9c0c04a"
+    },
+    {
+     "path": "#",
+     "sha256": "3612ddaf46e149a4f583faf0face846585148f59e0ce2645594df83b5dc807e8"
+    },
+    {
+     "path": "@",
+     "sha256": "0e332dc6d6c545d9b249056afe514fe8236ed2875723247a1b7a0a0665f786a0"
+    },
+    {
+     "path": "*",
+     "sha256": "14da0a4e24c2d317d2136e3eb06ecc58d811460d258868c85d782e431a301b4d"
+    },
+    {
+     "path": "!",
+     "sha256": "233d26e97f6469a0a7e0369bfb9ff2504cc5e0037df310c7600d18d62deebce4"
+    },
+    {
+     "path": "?",
+     "sha256": "545f940d19fadff4ad456f917a684de2d3501cb71e4b6618a2246e7fd769ee7d"
+    },
+    {
+     "path": ",",
+     "sha256": "764a19099e2eda74a26ece036f57f4182d6976705d30798fcd24155521747d8b"
+    },
+    {
+     "path": ";",
+     "sha256": "ac817b5431709db7f640e91a79692b652f2982e3fd3fcd57e38d06065eb2fca1"
+    },
+    {
+     "path": ":",
+     "sha256": "ab5ca0cdf4d9d1b66f42073e3c307903209f672ec1a223ada954ee44595ec515"
+    },
+    {
+     "path": "'",
+     "sha256": "eb9edacc27df097ac1a7f36280e0aa5ef0a7ae8ed0aa8951e2c6275b388c0867"
+    },
+    {
+     "path": "\"",
+     "sha256": "ef77c35257a4932a038a1e24ad4399f0f7b1d3597732ea6102857796e562d1c4"
+    },
+    {
+     "path": "(",
+     "sha256": "0c3dee3d177b69cadf1a3048ff9a899a235978356ef27470acb339c482158786"
+    },
+    {
+     "path": ")",
+     "sha256": "6eff6b3b314bc9255ee8513388bcf7e83b1c5bc4ace82de826cfb65f2ec83a66"
+    }
+   ],
+   "sorted": [
+    ",",
+    ";",
+    ":",
+    "!",
+    "?",
+    "'",
+    "\"",
+    "(",
+    ")",
+    "[",
+    "]",
+    "{",
+    "}",
+    "@",
+    "*",
+    "\\",
+    "&",
+    "#",
+    "%",
+    "`",
+    "^",
+    "+",
+    "<",
+    "=",
+    ">",
+    "|",
+    "~",
+    "$",
+    "y",
+    "Y",
+    "z",
+    "Z"
+   ],
+   "planHash": "b97d467917b1902a8397977f211b49cb16ff239f862cb21667b9f5a27fccbafa",
+   "hash": "b97d467917b1902a8397977f211b49cb16ff239f862cb21667b9f5a27fccbafa"
+  },
+  {
+   "files": [
+    {
+     "path": "010_계획.md",
+     "sha256": "cd17d3c7c6777b61cf2996c1685fbdf97d1e6de5d457d3d94ff152ea7ad95fa7"
+    },
+    {
+     "path": "000_plan.md",
+     "sha256": "198791865ab538525bcf5c717f0f8a777972635e1acfedb3adee8b10268da9ae"
+    },
+    {
+     "path": "a.md",
+     "sha256": "72ab349cd33800732e82f6784b2835bd31d8378ba7dc4aa7ebf9e1313321361f"
+    },
+    {
+     "path": "Z.md",
+     "sha256": "8263fe0e75b0d27066841210a7545835f44080ddab0571dfcc5d766d05e4c05e"
+    },
+    {
+     "path": "가.md",
+     "sha256": "a18e796e1766371c0c6b674e79bd281cd9d0c8681d9586f9d0f36af617d78ad0"
+    }
+   ],
+   "sorted": [
+    "000_plan.md",
+    "010_계획.md",
+    "a.md",
+    "Z.md",
+    "가.md"
+   ],
+   "planHash": "57035146ff93e9a22ffdf4f088667e7111da8548c6c84e2a3c9507a30cae2744",
+   "hash": "57035146ff93e9a22ffdf4f088667e7111da8548c6c84e2a3c9507a30cae2744"
+  }
+ ],
+ "slugs": [
+  {
+   "objective": "",
+   "slug": "interview"
+  },
+  {
+   "objective": "  Hello, World!!  ",
+   "slug": "hello-world"
+  },
+  {
+   "objective": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "slug": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  {
+   "objective": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-b",
+   "slug": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  {
+   "objective": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa--b",
+   "slug": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  {
+   "objective": "***",
+   "slug": "interview"
+  },
+  {
+   "objective": "İstanbul Plan",
+   "slug": "i-stanbul-plan"
+  },
+  {
+   "objective": "Kelvin K plan",
+   "slug": "kelvin-k-plan"
+  },
+  {
+   "objective": "한글 only",
+   "slug": "only"
+  },
+  {
+   "objective": "Mixed 한글 abc",
+   "slug": "mixed-abc"
+  },
+  {
+   "objective": "-----x",
+   "slug": "x"
+  },
+  {
+   "objective": "UPPER_snake-CASE 99",
+   "slug": "upper-snake-case-99"
+  },
+  {
+   "objective": "tab\tnew\nline",
+   "slug": "tab-new-line"
+  },
+  {
+   "objective": "ßΣ",
+   "slug": "interview"
+  },
+  {
+   "objective": "İ",
+   "slug": "i"
+  },
+  {
+   "objective": "xİy",
+   "slug": "xi-y"
+  },
+  {
+   "objective": "Build the Thing!",
+   "slug": "build-the-thing"
+  },
+  {
+   "objective": "a--b",
+   "slug": "a-b"
+  },
+  {
+   "objective": "1 2 3",
+   "slug": "1-2-3"
+  }
+ ],
+ "stale": [
+  {
+   "name": "same",
+   "manifest": {
+    "frozenAt": "T",
+    "planFiles": [
+     {
+      "path": "a.md",
+      "sha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b"
+     },
+     {
+      "path": "b.md",
+      "sha256": "d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35"
+     },
+     {
+      "path": "sub/c.md",
+      "sha256": "4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce"
+     }
+    ],
+    "planHash": "37b739850c210ed5bf75eb0803169d39e1b8e827a692f14b598872598406536b",
+    "objective": "o",
+    "slug": "o",
+    "evidenceBundle": {}
+   },
+   "current": [
+    {
+     "path": "a.md",
+     "sha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b"
+    },
+    {
+     "path": "b.md",
+     "sha256": "d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35"
+    },
+    {
+     "path": "sub/c.md",
+     "sha256": "4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce"
+    }
+   ],
+   "result": {
+    "stale": false,
+    "changedFiles": [],
+    "reason": "frozen manifest matches current plan"
+   }
+  },
+  {
+   "name": "changed",
+   "manifest": {
+    "frozenAt": "T",
+    "planFiles": [
+     {
+      "path": "a.md",
+      "sha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b"
+     },
+     {
+      "path": "b.md",
+      "sha256": "d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35"
+     },
+     {
+      "path": "sub/c.md",
+      "sha256": "4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce"
+     }
+    ],
+    "planHash": "37b739850c210ed5bf75eb0803169d39e1b8e827a692f14b598872598406536b",
+    "objective": "o",
+    "slug": "o",
+    "evidenceBundle": {}
+   },
+   "current": [
+    {
+     "path": "a.md",
+     "sha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b"
+    },
+    {
+     "path": "b.md",
+     "sha256": "4b68ab3847feda7d6c62c1fbcbeebfa35eab7351ed5e78f4ddadea5df64b8015"
+    },
+    {
+     "path": "sub/c.md",
+     "sha256": "4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce"
+    }
+   ],
+   "result": {
+    "stale": true,
+    "changedFiles": [
+     "b.md"
+    ],
+    "reason": "plan changed since freeze (1 file(s), planHash differs); re-freeze before goal start — stale execution refused"
+   }
+  },
+  {
+   "name": "missing",
+   "manifest": {
+    "frozenAt": "T",
+    "planFiles": [
+     {
+      "path": "a.md",
+      "sha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b"
+     },
+     {
+      "path": "b.md",
+      "sha256": "d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35"
+     },
+     {
+      "path": "sub/c.md",
+      "sha256": "4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce"
+     }
+    ],
+    "planHash": "37b739850c210ed5bf75eb0803169d39e1b8e827a692f14b598872598406536b",
+    "objective": "o",
+    "slug": "o",
+    "evidenceBundle": {}
+   },
+   "current": [
+    {
+     "path": "a.md",
+     "sha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b"
+    }
+   ],
+   "result": {
+    "stale": true,
+    "changedFiles": [
+     "b.md",
+     "sub/c.md"
+    ],
+    "reason": "plan changed since freeze (2 file(s), planHash differs); re-freeze before goal start — stale execution refused"
+   }
+  },
+  {
+   "name": "new",
+   "manifest": {
+    "frozenAt": "T",
+    "planFiles": [
+     {
+      "path": "a.md",
+      "sha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b"
+     },
+     {
+      "path": "b.md",
+      "sha256": "d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35"
+     },
+     {
+      "path": "sub/c.md",
+      "sha256": "4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce"
+     }
+    ],
+    "planHash": "37b739850c210ed5bf75eb0803169d39e1b8e827a692f14b598872598406536b",
+    "objective": "o",
+    "slug": "o",
+    "evidenceBundle": {}
+   },
+   "current": [
+    {
+     "path": "a.md",
+     "sha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b"
+    },
+    {
+     "path": "b.md",
+     "sha256": "d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35"
+    },
+    {
+     "path": "sub/c.md",
+     "sha256": "4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce"
+    },
+    {
+     "path": "new.md",
+     "sha256": "19581e27de7ced00ff1ce50b2047e7a567c76b1cbaebabe5ef03f7c3017bb5b7"
+    }
+   ],
+   "result": {
+    "stale": true,
+    "changedFiles": [
+     "new.md"
+    ],
+    "reason": "plan changed since freeze (1 file(s), planHash differs); re-freeze before goal start — stale execution refused"
+   }
+  },
+  {
+   "name": "all_three",
+   "manifest": {
+    "frozenAt": "T",
+    "planFiles": [
+     {
+      "path": "a.md",
+      "sha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b"
+     },
+     {
+      "path": "b.md",
+      "sha256": "d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35"
+     },
+     {
+      "path": "sub/c.md",
+      "sha256": "4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce"
+     }
+    ],
+    "planHash": "37b739850c210ed5bf75eb0803169d39e1b8e827a692f14b598872598406536b",
+    "objective": "o",
+    "slug": "o",
+    "evidenceBundle": {}
+   },
+   "current": [
+    {
+     "path": "b.md",
+     "sha256": "4b68ab3847feda7d6c62c1fbcbeebfa35eab7351ed5e78f4ddadea5df64b8015"
+    },
+    {
+     "path": "z.md",
+     "sha256": "19581e27de7ced00ff1ce50b2047e7a567c76b1cbaebabe5ef03f7c3017bb5b7"
+    }
+   ],
+   "result": {
+    "stale": true,
+    "changedFiles": [
+     "a.md",
+     "b.md",
+     "sub/c.md",
+     "z.md"
+    ],
+    "reason": "plan changed since freeze (4 file(s), planHash differs); re-freeze before goal start — stale execution refused"
+   }
+  },
+  {
+   "name": "hash_only",
+   "manifest": {
+    "frozenAt": "T",
+    "planFiles": [
+     {
+      "path": "a.md",
+      "sha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b"
+     },
+     {
+      "path": "b.md",
+      "sha256": "d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35"
+     },
+     {
+      "path": "sub/c.md",
+      "sha256": "4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce"
+     }
+    ],
+    "planHash": "0000000000000000000000000000000000000000000000000000000000000000",
+    "objective": "o",
+    "slug": "o",
+    "evidenceBundle": {}
+   },
+   "current": [
+    {
+     "path": "a.md",
+     "sha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b"
+    },
+    {
+     "path": "b.md",
+     "sha256": "d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35"
+    },
+    {
+     "path": "sub/c.md",
+     "sha256": "4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce"
+    }
+   ],
+   "result": {
+    "stale": true,
+    "changedFiles": [],
+    "reason": "plan changed since freeze (0 file(s), planHash differs); re-freeze before goal start — stale execution refused"
+   }
+  },
+  {
+   "name": "empty_both",
+   "manifest": {
+    "frozenAt": "T",
+    "planFiles": [],
+    "planHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "objective": "o",
+    "slug": "o",
+    "evidenceBundle": {}
+   },
+   "current": [],
+   "result": {
+    "stale": false,
+    "changedFiles": [],
+    "reason": "frozen manifest matches current plan"
+   }
+  },
+  {
+   "name": "utf16_order",
+   "manifest": {
+    "frozenAt": "T",
+    "planFiles": [
+     {
+      "path": "a.md",
+      "sha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b"
+     }
+    ],
+    "planHash": "e0bc614e4fd035a488619799853b075143deea596c477b8dc077e309c0fe42e9",
+    "objective": "o",
+    "slug": "o",
+    "evidenceBundle": {}
+   },
+   "current": [
+    {
+     "path": ".md",
+     "sha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b"
+    },
+    {
+     "path": "😀.md",
+     "sha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b"
+    },
+    {
+     "path": "a.md",
+     "sha256": "d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35"
+    }
+   ],
+   "result": {
+    "stale": true,
+    "changedFiles": [
+     "a.md",
+     "😀.md",
+     ".md"
+    ],
+    "reason": "plan changed since freeze (3 file(s), planHash differs); re-freeze before goal start — stale execution refused"
+   }
+  }
+ ],
+ "argv": [
+  {
+   "argv": [],
+   "cwd": null,
+   "sessionId": "default",
+   "dryRun": false,
+   "help": true
+  },
+  {
+   "argv": [
+    "help"
+   ],
+   "cwd": null,
+   "sessionId": "default",
+   "dryRun": false,
+   "help": true
+  },
+  {
+   "argv": [
+    "--help"
+   ],
+   "cwd": null,
+   "sessionId": "default",
+   "dryRun": false,
+   "help": true
+  },
+  {
+   "argv": [
+    "-h"
+   ],
+   "cwd": null,
+   "sessionId": "default",
+   "dryRun": false,
+   "help": true
+  },
+  {
+   "argv": [
+    "--cwd"
+   ],
+   "cwd": null,
+   "sessionId": "default",
+   "dryRun": false,
+   "help": false
+  },
+  {
+   "argv": [
+    "--cwd",
+    "/x"
+   ],
+   "cwd": "/x",
+   "sessionId": "default",
+   "dryRun": false,
+   "help": false
+  },
+  {
+   "argv": [
+    "--session",
+    "a",
+    "--dry-run"
+   ],
+   "cwd": null,
+   "sessionId": "a",
+   "dryRun": true,
+   "help": false
+  },
+  {
+   "argv": [
+    "--session",
+    "--dry-run"
+   ],
+   "cwd": null,
+   "sessionId": "--dry-run",
+   "dryRun": true,
+   "help": false
+  },
+  {
+   "argv": [
+    "--session"
+   ],
+   "cwd": null,
+   "sessionId": "default",
+   "dryRun": false,
+   "help": false
+  },
+  {
+   "argv": [
+    "--dry-run"
+   ],
+   "cwd": null,
+   "sessionId": "default",
+   "dryRun": true,
+   "help": false
+  },
+  {
+   "argv": [
+    "--cwd",
+    "--help"
+   ],
+   "cwd": "--help",
+   "sessionId": "default",
+   "dryRun": false,
+   "help": true
+  },
+  {
+   "argv": [
+    "--session",
+    "help"
+   ],
+   "cwd": null,
+   "sessionId": "help",
+   "dryRun": false,
+   "help": true
+  },
+  {
+   "argv": [
+    "--cwd",
+    "a",
+    "--cwd",
+    "b"
+   ],
+   "cwd": "a",
+   "sessionId": "default",
+   "dryRun": false,
+   "help": false
+  },
+  {
+   "argv": [
+    "x"
+   ],
+   "cwd": null,
+   "sessionId": "default",
+   "dryRun": false,
+   "help": false
+  },
+  {
+   "argv": [
+    "--cwd=/x"
+   ],
+   "cwd": null,
+   "sessionId": "default",
+   "dryRun": false,
+   "help": false
+  },
+  {
+   "argv": [
+    "--session",
+    "s",
+    "--cwd",
+    "d",
+    "extra"
+   ],
+   "cwd": "d",
+   "sessionId": "s",
+   "dryRun": false,
+   "help": false
+  }
+ ],
+ "scenarios": {
+  "empty_default": {
+   "files": [],
+   "steps": [
+    {
+     "session": "default",
+     "dryRun": false,
+     "edits": [],
+     "output": "[codexclaw freeze]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: default\nplanFiles: 0\nplanHash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\ninterviewReady: false\nopenAssumptions: 0\nstale-check: no prior manifest",
+     "error": false,
+     "manifest": "{\n  \"frozenAt\": \"<TS>\",\n  \"planFiles\": [],\n  \"planHash\": \"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\n  \"objective\": \"default\",\n  \"slug\": \"default\",\n  \"evidenceBundle\": {\n    \"dimensions\": null,\n    \"openAssumptions\": [],\n    \"contradictions\": [],\n    \"acceptanceCriteria\": [],\n    \"researchReportRef\": null\n  }\n}",
+     "tree": [
+      "${STATE}/",
+      "${STATE}/.gitignore",
+      "${STATE}/interview/",
+      "${STATE}/interview/freeze.json"
+     ]
+    },
+    {
+     "session": "default",
+     "dryRun": false,
+     "edits": [],
+     "output": "[codexclaw freeze]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: default\nplanFiles: 0\nplanHash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\ninterviewReady: false\nopenAssumptions: 0\nstale-check: fresh — frozen manifest matches current plan",
+     "error": false,
+     "manifest": "{\n  \"frozenAt\": \"<TS>\",\n  \"planFiles\": [],\n  \"planHash\": \"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\n  \"objective\": \"default\",\n  \"slug\": \"default\",\n  \"evidenceBundle\": {\n    \"dimensions\": null,\n    \"openAssumptions\": [],\n    \"contradictions\": [],\n    \"acceptanceCriteria\": [],\n    \"researchReportRef\": null\n  }\n}",
+     "tree": [
+      "${STATE}/",
+      "${STATE}/.gitignore",
+      "${STATE}/interview/",
+      "${STATE}/interview/freeze.json"
+     ]
+    }
+   ]
+  },
+  "dry_run_absent_dir": {
+   "files": [],
+   "steps": [
+    {
+     "session": "default",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: default\nplanFiles: 0\nplanHash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\ninterviewReady: false\nopenAssumptions: 0\nstale-check: no prior manifest",
+     "error": false,
+     "manifest": null,
+     "tree": []
+    }
+   ]
+  },
+  "nested_hidden": {
+   "files": [
+    {
+     "path": "plan/demo/000_plan.md",
+     "text": "# plan\n"
+    },
+    {
+     "path": "plan/demo/010_phase.md",
+     "text": "# phase\n"
+    },
+    {
+     "path": "plan/demo/sub/020_x.md",
+     "text": "x"
+    },
+    {
+     "path": "plan/demo/sub/deep/030.md",
+     "text": "y"
+    },
+    {
+     "path": "plan/demo/.hidden.md",
+     "text": "h"
+    },
+    {
+     "path": "plan/demo/.hd/z.md",
+     "text": "z"
+    },
+    {
+     "path": "plan/demo/sub/.h",
+     "text": "q"
+    },
+    {
+     "path": "plan/demo/empty",
+     "dir": true
+    },
+    {
+     "path": "sessions/s1.json",
+     "text": "{\"phase\":\"I\",\"slug\":\"demo\",\"flags\":{\"interview\":true,\"auditPassed\":false,\"checkPassed\":false},\"orchestrationActive\":false,\"lastInjectedPhase\":null,\"injectedTurns\":[],\"stopBlockPhase\":null,\"stopBlockCount\":0,\"interview\":null}"
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": false,
+     "edits": [],
+     "output": "[codexclaw freeze]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 4\nplanHash: 193219c919f0f6e9f995b7e6e130075a742a4eab39f409f2c674b680367d10ff\ninterviewReady: false\nopenAssumptions: 0\nstale-check: no prior manifest",
+     "error": false,
+     "manifest": "{\n  \"frozenAt\": \"<TS>\",\n  \"planFiles\": [\n    {\n      \"path\": \"000_plan.md\",\n      \"sha256\": \"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"\n    },\n    {\n      \"path\": \"010_phase.md\",\n      \"sha256\": \"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"\n    },\n    {\n      \"path\": \"sub/020_x.md\",\n      \"sha256\": \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    },\n    {\n      \"path\": \"sub/deep/030.md\",\n      \"sha256\": \"a1fce4363854ff888cff4b8e7875d600c2682390412a8cf79b37d0b11148b0fa\"\n    }\n  ],\n  \"planHash\": \"193219c919f0f6e9f995b7e6e130075a742a4eab39f409f2c674b680367d10ff\",\n  \"objective\": \"demo\",\n  \"slug\": \"demo\",\n  \"evidenceBundle\": {\n    \"dimensions\": null,\n    \"openAssumptions\": [],\n    \"contradictions\": [],\n    \"acceptanceCriteria\": [],\n    \"researchReportRef\": null\n  }\n}",
+     "tree": [
+      "${STATE}/",
+      "${STATE}/interview/",
+      "${STATE}/interview/freeze.json",
+      "${STATE}/plan/",
+      "${STATE}/plan/demo/",
+      "${STATE}/plan/demo/.hd/",
+      "${STATE}/plan/demo/.hd/z.md",
+      "${STATE}/plan/demo/.hidden.md",
+      "${STATE}/plan/demo/000_plan.md",
+      "${STATE}/plan/demo/010_phase.md",
+      "${STATE}/plan/demo/empty/",
+      "${STATE}/plan/demo/sub/",
+      "${STATE}/plan/demo/sub/.h",
+      "${STATE}/plan/demo/sub/020_x.md",
+      "${STATE}/plan/demo/sub/deep/",
+      "${STATE}/plan/demo/sub/deep/030.md",
+      "${STATE}/sessions/",
+      "${STATE}/sessions/s1.json"
+     ]
+    }
+   ]
+  },
+  "case_and_punct": {
+   "files": [
+    {
+     "path": "plan/default/a.md",
+     "text": "a.md"
+    },
+    {
+     "path": "plan/default/B.md",
+     "text": "B.md"
+    },
+    {
+     "path": "plan/default/_x.md",
+     "text": "_x.md"
+    },
+    {
+     "path": "plan/default/-y.md",
+     "text": "-y.md"
+    },
+    {
+     "path": "plan/default/a_b.md",
+     "text": "a_b.md"
+    },
+    {
+     "path": "plan/default/aB.md",
+     "text": "aB.md"
+    },
+    {
+     "path": "plan/default/a-b.md",
+     "text": "a-b.md"
+    },
+    {
+     "path": "plan/default/10.md",
+     "text": "10.md"
+    },
+    {
+     "path": "plan/default/9.md",
+     "text": "9.md"
+    },
+    {
+     "path": "plan/default/A.md",
+     "text": "A.md"
+    },
+    {
+     "path": "plan/default/a b.md",
+     "text": "a b.md"
+    },
+    {
+     "path": "plan/default/Z.md",
+     "text": "Z.md"
+    },
+    {
+     "path": "plan/default/sub/x.md",
+     "text": "sub/x.md"
+    },
+    {
+     "path": "plan/default/sub.md",
+     "text": "sub.md"
+    }
+   ],
+   "steps": [
+    {
+     "session": "default",
+     "dryRun": false,
+     "edits": [],
+     "output": "[codexclaw freeze]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: default\nplanFiles: 14\nplanHash: f977eaa5b05878c34023a3971358eeb74d0a4dfbd7587449da94f17a381852d4\ninterviewReady: false\nopenAssumptions: 0\nstale-check: no prior manifest",
+     "error": false,
+     "manifest": "{\n  \"frozenAt\": \"<TS>\",\n  \"planFiles\": [\n    {\n      \"path\": \"_x.md\",\n      \"sha256\": \"7328f56faedfc4b50cd6f1f3ca47dcb627b8db775cb8f62d9c39d3e725dbb1b3\"\n    },\n    {\n      \"path\": \"-y.md\",\n      \"sha256\": \"5aecacb3e03ca8d1e5d78efe531886f0c490315c2f795c0f678ca307b5a5597e\"\n    },\n    {\n      \"path\": \"10.md\",\n      \"sha256\": \"52881ea58e573b050f04f0c84216f2a532abb8cad10dbcd3b06375f364349448\"\n    },\n    {\n      \"path\": \"9.md\",\n      \"sha256\": \"e4968e1f6ea78b5c635e76287d8ebae7b1e9ba952f8e31bf93e181493420e15c\"\n    },\n    {\n      \"path\": \"a b.md\",\n      \"sha256\": \"10ad72d813cafad8a8fd52cbe4889a65efb15e86ed3db47a16c08dae82c583c8\"\n    },\n    {\n      \"path\": \"a_b.md\",\n      \"sha256\": \"0ec49a6ca2d22ac1ac2ff11063690877a9156f54f367c52e281141ab919b4432\"\n    },\n    {\n      \"path\": \"a-b.md\",\n      \"sha256\": \"d8f2f1c51b63a483ee318b482bb124ea321ab5fde5fa516c65945743048ac462\"\n    },\n    {\n      \"path\": \"a.md\",\n      \"sha256\": \"fecccc97532467adbf93017b357c8b17e0c75527df76a143de5cfecc2613f615\"\n    },\n    {\n      \"path\": \"A.md\",\n      \"sha256\": \"2d63174e212b2fdb12116ac35d5d0f51ea3884e312c93aba6a7d6b1e12fa5f48\"\n    },\n    {\n      \"path\": \"aB.md\",\n      \"sha256\": \"6f326a7242778be7b675efe5eae43048a7aafd3922787239ecbf054652b89a52\"\n    },\n    {\n      \"path\": \"B.md\",\n      \"sha256\": \"b5038c9fd9be6c6ff3bbd1f4e7c22823aadcc1eeb7457b3ea66a58b2ac0b7a93\"\n    },\n    {\n      \"path\": \"sub.md\",\n      \"sha256\": \"62157d1fb479f34bf310513c5038c0173e09f397391b3526cd02609591ff6cc5\"\n    },\n    {\n      \"path\": \"sub/x.md\",\n      \"sha256\": \"1b91ac13180df68b6e763ddd3c494537eef168772297ebc1898b184af7a4b648\"\n    },\n    {\n      \"path\": \"Z.md\",\n      \"sha256\": \"0475585e1d385374213fd510022a2b508b5678624655b7ddf5a073dcd054f147\"\n    }\n  ],\n  \"planHash\": \"f977eaa5b05878c34023a3971358eeb74d0a4dfbd7587449da94f17a381852d4\",\n  \"objective\": \"default\",\n  \"slug\": \"default\",\n  \"evidenceBundle\": {\n    \"dimensions\": null,\n    \"openAssumptions\": [],\n    \"contradictions\": [],\n    \"acceptanceCriteria\": [],\n    \"researchReportRef\": null\n  }\n}",
+     "tree": [
+      "${STATE}/",
+      "${STATE}/interview/",
+      "${STATE}/interview/freeze.json",
+      "${STATE}/plan/",
+      "${STATE}/plan/default/",
+      "${STATE}/plan/default/-y.md",
+      "${STATE}/plan/default/10.md",
+      "${STATE}/plan/default/9.md",
+      "${STATE}/plan/default/A.md",
+      "${STATE}/plan/default/B.md",
+      "${STATE}/plan/default/Z.md",
+      "${STATE}/plan/default/_x.md",
+      "${STATE}/plan/default/a b.md",
+      "${STATE}/plan/default/a-b.md",
+      "${STATE}/plan/default/a.md",
+      "${STATE}/plan/default/aB.md",
+      "${STATE}/plan/default/a_b.md",
+      "${STATE}/plan/default/sub/",
+      "${STATE}/plan/default/sub/x.md",
+      "${STATE}/plan/default/sub.md"
+     ]
+    }
+   ]
+  },
+  "invalid_utf8_and_bom": {
+   "files": [
+    {
+     "path": "plan/default/bad.md",
+     "b64": "Yf/+Yg=="
+    },
+    {
+     "path": "plan/default/trunc.md",
+     "b64": "4oI="
+    },
+    {
+     "path": "plan/default/bom.md",
+     "b64": "77u/eA=="
+    },
+    {
+     "path": "plan/default/surr.md",
+     "b64": "7aCA"
+    },
+    {
+     "path": "plan/default/ok.md",
+     "b64": "b2s="
+    }
+   ],
+   "steps": [
+    {
+     "session": "default",
+     "dryRun": false,
+     "edits": [],
+     "output": "[codexclaw freeze]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: default\nplanFiles: 5\nplanHash: 09a54a13a8d844040be36e9c6367584e432923079b5f341da403a98bbd176e12\ninterviewReady: false\nopenAssumptions: 0\nstale-check: no prior manifest",
+     "error": false,
+     "manifest": "{\n  \"frozenAt\": \"<TS>\",\n  \"planFiles\": [\n    {\n      \"path\": \"bad.md\",\n      \"sha256\": \"df6bc292638d56dc79730424c8c70e0b90271d0ee49a96462e3b1c2fbc37b810\"\n    },\n    {\n      \"path\": \"bom.md\",\n      \"sha256\": \"84144a41283d6dc344addf4e83189d83fdd656439675abf54e6f44ccb73b4eb6\"\n    },\n    {\n      \"path\": \"ok.md\",\n      \"sha256\": \"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\"\n    },\n    {\n      \"path\": \"surr.md\",\n      \"sha256\": \"a73f4cb996ceb6ee097888d897ae1004c9b1faab6c97629214139b9639aaf1af\"\n    },\n    {\n      \"path\": \"trunc.md\",\n      \"sha256\": \"83d544ccc223c057d2bf80d3f2a32982c32c3c0db8e2674820da5064783fb097\"\n    }\n  ],\n  \"planHash\": \"09a54a13a8d844040be36e9c6367584e432923079b5f341da403a98bbd176e12\",\n  \"objective\": \"default\",\n  \"slug\": \"default\",\n  \"evidenceBundle\": {\n    \"dimensions\": null,\n    \"openAssumptions\": [],\n    \"contradictions\": [],\n    \"acceptanceCriteria\": [],\n    \"researchReportRef\": null\n  }\n}",
+     "tree": [
+      "${STATE}/",
+      "${STATE}/interview/",
+      "${STATE}/interview/freeze.json",
+      "${STATE}/plan/",
+      "${STATE}/plan/default/",
+      "${STATE}/plan/default/bad.md",
+      "${STATE}/plan/default/bom.md",
+      "${STATE}/plan/default/ok.md",
+      "${STATE}/plan/default/surr.md",
+      "${STATE}/plan/default/trunc.md"
+     ]
+    }
+   ]
+  },
+  "hangul_names": {
+   "files": [
+    {
+     "path": "plan/default/010_계획.md",
+     "text": "010_계획.md"
+    },
+    {
+     "path": "plan/default/000_plan.md",
+     "text": "000_plan.md"
+    },
+    {
+     "path": "plan/default/a.md",
+     "text": "a.md"
+    },
+    {
+     "path": "plan/default/가.md",
+     "text": "가.md"
+    }
+   ],
+   "steps": [
+    {
+     "session": "default",
+     "dryRun": false,
+     "edits": [],
+     "output": "[codexclaw freeze]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: default\nplanFiles: 4\nplanHash: b7476e18e043b323a44cf3b52e7a738878d80cdd96ac79a60b13722abed25168\ninterviewReady: false\nopenAssumptions: 0\nstale-check: no prior manifest",
+     "error": false,
+     "manifest": "{\n  \"frozenAt\": \"<TS>\",\n  \"planFiles\": [\n    {\n      \"path\": \"000_plan.md\",\n      \"sha256\": \"631204e3bbee417431c0d5f05518f61a5c5475137dca8487bc69f703f66b2610\"\n    },\n    {\n      \"path\": \"010_계획.md\",\n      \"sha256\": \"975b01627aa49fe7636e4e43b80b7b785ac9a4b3607a48109d99eaaa0edc298f\"\n    },\n    {\n      \"path\": \"a.md\",\n      \"sha256\": \"fecccc97532467adbf93017b357c8b17e0c75527df76a143de5cfecc2613f615\"\n    },\n    {\n      \"path\": \"가.md\",\n      \"sha256\": \"7491806e25aed3d556298ca7cc994713eac4b8b0078bb1a26e4024d1a17222c5\"\n    }\n  ],\n  \"planHash\": \"b7476e18e043b323a44cf3b52e7a738878d80cdd96ac79a60b13722abed25168\",\n  \"objective\": \"default\",\n  \"slug\": \"default\",\n  \"evidenceBundle\": {\n    \"dimensions\": null,\n    \"openAssumptions\": [],\n    \"contradictions\": [],\n    \"acceptanceCriteria\": [],\n    \"researchReportRef\": null\n  }\n}",
+     "tree": [
+      "${STATE}/",
+      "${STATE}/interview/",
+      "${STATE}/interview/freeze.json",
+      "${STATE}/plan/",
+      "${STATE}/plan/default/",
+      "${STATE}/plan/default/000_plan.md",
+      "${STATE}/plan/default/010_계획.md",
+      "${STATE}/plan/default/a.md",
+      "${STATE}/plan/default/가.md"
+     ]
+    }
+   ]
+  },
+  "symlinks": {
+   "files": [
+    {
+     "path": "plan/demo/000_plan.md",
+     "text": "# plan\n"
+    },
+    {
+     "path": "plan/demo/010_phase.md",
+     "text": "# phase\n"
+    },
+    {
+     "path": "plan/demo/link.md",
+     "link": "000_plan.md"
+    },
+    {
+     "path": "plan/demo/linkdir",
+     "link": "sub"
+    },
+    {
+     "path": "plan/demo/sub/x.md",
+     "text": "x"
+    },
+    {
+     "path": "sessions/s1.json",
+     "text": "{\"phase\":\"I\",\"slug\":\"demo\",\"flags\":{\"interview\":true,\"auditPassed\":false,\"checkPassed\":false},\"orchestrationActive\":false,\"lastInjectedPhase\":null,\"injectedTurns\":[],\"stopBlockPhase\":null,\"stopBlockCount\":0,\"interview\":null}"
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": false,
+     "edits": [],
+     "output": "[codexclaw freeze]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 5\nplanHash: b66dcc77354b4aa46ea11edcd4b1d8f2ea0094e861b37d4c3980f75eca270fff\ninterviewReady: false\nopenAssumptions: 0\nstale-check: no prior manifest",
+     "error": false,
+     "manifest": "{\n  \"frozenAt\": \"<TS>\",\n  \"planFiles\": [\n    {\n      \"path\": \"000_plan.md\",\n      \"sha256\": \"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"\n    },\n    {\n      \"path\": \"010_phase.md\",\n      \"sha256\": \"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"\n    },\n    {\n      \"path\": \"link.md\",\n      \"sha256\": \"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"\n    },\n    {\n      \"path\": \"linkdir/x.md\",\n      \"sha256\": \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    },\n    {\n      \"path\": \"sub/x.md\",\n      \"sha256\": \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    }\n  ],\n  \"planHash\": \"b66dcc77354b4aa46ea11edcd4b1d8f2ea0094e861b37d4c3980f75eca270fff\",\n  \"objective\": \"demo\",\n  \"slug\": \"demo\",\n  \"evidenceBundle\": {\n    \"dimensions\": null,\n    \"openAssumptions\": [],\n    \"contradictions\": [],\n    \"acceptanceCriteria\": [],\n    \"researchReportRef\": null\n  }\n}",
+     "tree": [
+      "${STATE}/",
+      "${STATE}/interview/",
+      "${STATE}/interview/freeze.json",
+      "${STATE}/plan/",
+      "${STATE}/plan/demo/",
+      "${STATE}/plan/demo/000_plan.md",
+      "${STATE}/plan/demo/010_phase.md",
+      "${STATE}/plan/demo/link.md",
+      "${STATE}/plan/demo/linkdir",
+      "${STATE}/plan/demo/sub/",
+      "${STATE}/plan/demo/sub/x.md",
+      "${STATE}/sessions/",
+      "${STATE}/sessions/s1.json"
+     ]
+    }
+   ]
+  },
+  "broken_symlink": {
+   "files": [
+    {
+     "path": "plan/demo/000_plan.md",
+     "text": "# plan\n"
+    },
+    {
+     "path": "plan/demo/010_phase.md",
+     "text": "# phase\n"
+    },
+    {
+     "path": "plan/demo/gone.md",
+     "link": "nowhere"
+    },
+    {
+     "path": "sessions/s1.json",
+     "text": "{\"phase\":\"I\",\"slug\":\"demo\",\"flags\":{\"interview\":true,\"auditPassed\":false,\"checkPassed\":false},\"orchestrationActive\":false,\"lastInjectedPhase\":null,\"injectedTurns\":[],\"stopBlockPhase\":null,\"stopBlockCount\":0,\"interview\":null}"
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": false,
+     "edits": [],
+     "output": null,
+     "error": true,
+     "manifest": null,
+     "tree": [
+      "${STATE}/",
+      "${STATE}/plan/",
+      "${STATE}/plan/demo/",
+      "${STATE}/plan/demo/000_plan.md",
+      "${STATE}/plan/demo/010_phase.md",
+      "${STATE}/plan/demo/gone.md",
+      "${STATE}/sessions/",
+      "${STATE}/sessions/s1.json"
+     ]
+    }
+   ]
+  },
+  "stale_changed": {
+   "files": [
+    {
+     "path": "plan/demo/000_plan.md",
+     "text": "# plan\n"
+    },
+    {
+     "path": "plan/demo/010_phase.md",
+     "text": "# phase\n"
+    },
+    {
+     "path": "sessions/s1.json",
+     "text": "{\"phase\":\"I\",\"slug\":\"demo\",\"flags\":{\"interview\":true,\"auditPassed\":false,\"checkPassed\":false},\"orchestrationActive\":false,\"lastInjectedPhase\":null,\"injectedTurns\":[],\"stopBlockPhase\":null,\"stopBlockCount\":0,\"interview\":null}"
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": false,
+     "edits": [],
+     "output": "[codexclaw freeze]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: no prior manifest",
+     "error": false,
+     "manifest": "{\n  \"frozenAt\": \"<TS>\",\n  \"planFiles\": [\n    {\n      \"path\": \"000_plan.md\",\n      \"sha256\": \"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"\n    },\n    {\n      \"path\": \"010_phase.md\",\n      \"sha256\": \"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"\n    }\n  ],\n  \"planHash\": \"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\",\n  \"objective\": \"demo\",\n  \"slug\": \"demo\",\n  \"evidenceBundle\": {\n    \"dimensions\": null,\n    \"openAssumptions\": [],\n    \"contradictions\": [],\n    \"acceptanceCriteria\": [],\n    \"researchReportRef\": null\n  }\n}",
+     "tree": [
+      "${STATE}/",
+      "${STATE}/interview/",
+      "${STATE}/interview/freeze.json",
+      "${STATE}/plan/",
+      "${STATE}/plan/demo/",
+      "${STATE}/plan/demo/000_plan.md",
+      "${STATE}/plan/demo/010_phase.md",
+      "${STATE}/sessions/",
+      "${STATE}/sessions/s1.json"
+     ]
+    },
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: fresh — frozen manifest matches current plan",
+     "error": false,
+     "manifest": "{\n  \"frozenAt\": \"<TS>\",\n  \"planFiles\": [\n    {\n      \"path\": \"000_plan.md\",\n      \"sha256\": \"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"\n    },\n    {\n      \"path\": \"010_phase.md\",\n      \"sha256\": \"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"\n    }\n  ],\n  \"planHash\": \"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\",\n  \"objective\": \"demo\",\n  \"slug\": \"demo\",\n  \"evidenceBundle\": {\n    \"dimensions\": null,\n    \"openAssumptions\": [],\n    \"contradictions\": [],\n    \"acceptanceCriteria\": [],\n    \"researchReportRef\": null\n  }\n}",
+     "tree": [
+      "${STATE}/",
+      "${STATE}/interview/",
+      "${STATE}/interview/freeze.json",
+      "${STATE}/plan/",
+      "${STATE}/plan/demo/",
+      "${STATE}/plan/demo/000_plan.md",
+      "${STATE}/plan/demo/010_phase.md",
+      "${STATE}/sessions/",
+      "${STATE}/sessions/s1.json"
+     ]
+    },
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [
+      {
+       "path": "plan/demo/000_plan.md",
+       "text": "# changed\n"
+      },
+      {
+       "path": "plan/demo/new.md",
+       "text": "n"
+      },
+      {
+       "path": "plan/demo/010_phase.md",
+       "remove": true
+      }
+     ],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6ce1d881bfa7d3e91d40363fad1fc9975ce578c3bd63874712246b62eab724f7\ninterviewReady: false\nopenAssumptions: 0\nstale-check: STALE — plan changed since freeze (3 file(s), planHash differs); re-freeze before goal start — stale execution refused",
+     "error": false,
+     "manifest": "{\n  \"frozenAt\": \"<TS>\",\n  \"planFiles\": [\n    {\n      \"path\": \"000_plan.md\",\n      \"sha256\": \"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"\n    },\n    {\n      \"path\": \"010_phase.md\",\n      \"sha256\": \"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"\n    }\n  ],\n  \"planHash\": \"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\",\n  \"objective\": \"demo\",\n  \"slug\": \"demo\",\n  \"evidenceBundle\": {\n    \"dimensions\": null,\n    \"openAssumptions\": [],\n    \"contradictions\": [],\n    \"acceptanceCriteria\": [],\n    \"researchReportRef\": null\n  }\n}",
+     "tree": [
+      "${STATE}/",
+      "${STATE}/interview/",
+      "${STATE}/interview/freeze.json",
+      "${STATE}/plan/",
+      "${STATE}/plan/demo/",
+      "${STATE}/plan/demo/000_plan.md",
+      "${STATE}/plan/demo/new.md",
+      "${STATE}/sessions/",
+      "${STATE}/sessions/s1.json"
+     ]
+    },
+    {
+     "session": "s1",
+     "dryRun": false,
+     "edits": [],
+     "output": "[codexclaw freeze]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6ce1d881bfa7d3e91d40363fad1fc9975ce578c3bd63874712246b62eab724f7\ninterviewReady: false\nopenAssumptions: 0\nstale-check: STALE — plan changed since freeze (3 file(s), planHash differs); re-freeze before goal start — stale execution refused",
+     "error": false,
+     "manifest": "{\n  \"frozenAt\": \"<TS>\",\n  \"planFiles\": [\n    {\n      \"path\": \"000_plan.md\",\n      \"sha256\": \"8ff88919a6004572b4249e0f72b28ed9945e61bdd0e2e7d79ddb9c5b1248674f\"\n    },\n    {\n      \"path\": \"new.md\",\n      \"sha256\": \"1b16b1df538ba12dc3f97edbb85caa7050d46c148134290feba80f8236c83db9\"\n    }\n  ],\n  \"planHash\": \"6ce1d881bfa7d3e91d40363fad1fc9975ce578c3bd63874712246b62eab724f7\",\n  \"objective\": \"demo\",\n  \"slug\": \"demo\",\n  \"evidenceBundle\": {\n    \"dimensions\": null,\n    \"openAssumptions\": [],\n    \"contradictions\": [],\n    \"acceptanceCriteria\": [],\n    \"researchReportRef\": null\n  }\n}",
+     "tree": [
+      "${STATE}/",
+      "${STATE}/interview/",
+      "${STATE}/interview/freeze.json",
+      "${STATE}/plan/",
+      "${STATE}/plan/demo/",
+      "${STATE}/plan/demo/000_plan.md",
+      "${STATE}/plan/demo/new.md",
+      "${STATE}/sessions/",
+      "${STATE}/sessions/s1.json"
+     ]
+    },
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6ce1d881bfa7d3e91d40363fad1fc9975ce578c3bd63874712246b62eab724f7\ninterviewReady: false\nopenAssumptions: 0\nstale-check: fresh — frozen manifest matches current plan",
+     "error": false,
+     "manifest": "{\n  \"frozenAt\": \"<TS>\",\n  \"planFiles\": [\n    {\n      \"path\": \"000_plan.md\",\n      \"sha256\": \"8ff88919a6004572b4249e0f72b28ed9945e61bdd0e2e7d79ddb9c5b1248674f\"\n    },\n    {\n      \"path\": \"new.md\",\n      \"sha256\": \"1b16b1df538ba12dc3f97edbb85caa7050d46c148134290feba80f8236c83db9\"\n    }\n  ],\n  \"planHash\": \"6ce1d881bfa7d3e91d40363fad1fc9975ce578c3bd63874712246b62eab724f7\",\n  \"objective\": \"demo\",\n  \"slug\": \"demo\",\n  \"evidenceBundle\": {\n    \"dimensions\": null,\n    \"openAssumptions\": [],\n    \"contradictions\": [],\n    \"acceptanceCriteria\": [],\n    \"researchReportRef\": null\n  }\n}",
+     "tree": [
+      "${STATE}/",
+      "${STATE}/interview/",
+      "${STATE}/interview/freeze.json",
+      "${STATE}/plan/",
+      "${STATE}/plan/demo/",
+      "${STATE}/plan/demo/000_plan.md",
+      "${STATE}/plan/demo/new.md",
+      "${STATE}/sessions/",
+      "${STATE}/sessions/s1.json"
+     ]
+    }
+   ]
+  },
+  "ready_interview": {
+   "files": [
+    {
+     "path": "plan/demo/000_plan.md",
+     "text": "# plan\n"
+    },
+    {
+     "path": "plan/demo/010_phase.md",
+     "text": "# phase\n"
+    },
+    {
+     "path": "sessions/s1.json",
+     "text": "{\"phase\":\"I\",\"slug\":\"demo\",\"flags\":{\"interview\":true,\"auditPassed\":false,\"checkPassed\":false},\"orchestrationActive\":false,\"lastInjectedPhase\":null,\"injectedTurns\":[],\"stopBlockPhase\":null,\"stopBlockCount\":0,\"interview\":{\"dimensions\":{\"goal\":{\"level\":\"max\",\"known\":[\"k\"],\"unknown\":[],\"confidence\":1},\"constraint\":{\"level\":\"max\",\"known\":[\"k\"],\"unknown\":[],\"confidence\":1},\"success\":{\"level\":\"max\",\"known\":[\"k\"],\"unknown\":[],\"confidence\":1},\"ontology\":{\"level\":\"max\",\"known\":[\"k\"],\"unknown\":[],\"confidence\":1}},\"contradictions\":[],\"assumptions\":[{\"text\":\"Assume X\",\"recorded\":true}],\"scanRounds\":1}}"
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: true\nopenAssumptions: 1\nstale-check: no prior manifest\n\n[codexclaw: FREEZE -> goal handoff]\nInterview is ready and the plan is frozen. To start execution under a native goal:\n1. Call get_goal to confirm no goal is already active for this thread.\n2. Call create_goal with objective ONLY (no token_budget — the L3 gate denies budgeted goals).\n3. Verify a goal row was actually created (codex owns goal lifecycle in goals_1.sqlite).\nThe frozen plan under .codexclaw/plan/ is the READ-ONLY spec the goal consumes; do not reopen\nInterview once the goal is active (L11 hard-deny). If create_goal fails, report that goal mode\ndid not start — do not proceed as if it did. On goal start, recompute planHash and compare to\n.codexclaw/interview/freeze.json; on mismatch, re-freeze the current plan before proceeding.",
+     "error": false,
+     "manifest": null,
+     "tree": [
+      "${STATE}/",
+      "${STATE}/plan/",
+      "${STATE}/plan/demo/",
+      "${STATE}/plan/demo/000_plan.md",
+      "${STATE}/plan/demo/010_phase.md",
+      "${STATE}/sessions/",
+      "${STATE}/sessions/s1.json"
+     ]
+    }
+   ]
+  },
+  "rich_tracker": {
+   "files": [
+    {
+     "path": "plan/demo/000_plan.md",
+     "text": "# plan\n"
+    },
+    {
+     "path": "plan/demo/010_phase.md",
+     "text": "# phase\n"
+    },
+    {
+     "path": "sessions/s1.json",
+     "text": "{\"phase\":\"I\",\"slug\":\"demo\",\"flags\":{\"interview\":true,\"auditPassed\":false,\"checkPassed\":false},\"orchestrationActive\":false,\"lastInjectedPhase\":null,\"injectedTurns\":[],\"stopBlockPhase\":null,\"stopBlockCount\":0,\"interview\":{\"dimensions\":{\"goal\":{\"level\":\"high\",\"known\":[\"k\"],\"unknown\":[],\"confidence\":1},\"constraint\":{\"level\":\"mid\",\"known\":[\"a\",\"b\"],\"unknown\":[\"c\"],\"confidence\":0.3333333333333333},\"success\":{\"level\":\"max\",\"known\":[\"k\"],\"unknown\":[],\"confidence\":1},\"ontology\":{\"level\":\"low\",\"known\":[],\"unknown\":[],\"confidence\":0.5}},\"contradictions\":[{\"contradictionId\":\"c1\",\"severity\":\"high\",\"summary\":\"A <b> &   ü\"}],\"assumptions\":[{\"text\":\"A <1>\",\"recorded\":true},{\"text\":\"B\",\"recorded\":false},{\"text\":\"C \",\"recorded\":true}],\"scanRounds\":2}}"
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": false,
+     "edits": [],
+     "output": "[codexclaw freeze]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 2\nstale-check: no prior manifest",
+     "error": false,
+     "manifest": "{\n  \"frozenAt\": \"<TS>\",\n  \"planFiles\": [\n    {\n      \"path\": \"000_plan.md\",\n      \"sha256\": \"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"\n    },\n    {\n      \"path\": \"010_phase.md\",\n      \"sha256\": \"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"\n    }\n  ],\n  \"planHash\": \"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\",\n  \"objective\": \"demo\",\n  \"slug\": \"demo\",\n  \"evidenceBundle\": {\n    \"dimensions\": {\n      \"goal\": {\n        \"level\": \"high\",\n        \"known\": [\n          \"k\"\n        ],\n        \"unknown\": [],\n        \"confidence\": 1\n      },\n      \"constraint\": {\n        \"level\": \"mid\",\n        \"known\": [\n          \"a\",\n          \"b\"\n        ],\n        \"unknown\": [\n          \"c\"\n        ],\n        \"confidence\": 0.3333333333333333\n      },\n      \"success\": {\n        \"level\": \"max\",\n        \"known\": [\n          \"k\"\n        ],\n        \"unknown\": [],\n        \"confidence\": 1\n      },\n      \"ontology\": {\n        \"level\": \"low\",\n        \"known\": [],\n        \"unknown\": [],\n        \"confidence\": 0.5\n      }\n    },\n    \"openAssumptions\": [\n      \"- A <1>\",\n      \"- C \"\n    ],\n    \"contradictions\": [\n      {\n        \"contradictionId\": \"c1\",\n        \"severity\": \"high\",\n        \"summary\": \"A <b> &   ü\"\n      }\n    ],\n    \"acceptanceCriteria\": [],\n    \"researchReportRef\": null\n  }\n}",
+     "tree": [
+      "${STATE}/",
+      "${STATE}/interview/",
+      "${STATE}/interview/freeze.json",
+      "${STATE}/plan/",
+      "${STATE}/plan/demo/",
+      "${STATE}/plan/demo/000_plan.md",
+      "${STATE}/plan/demo/010_phase.md",
+      "${STATE}/sessions/",
+      "${STATE}/sessions/s1.json"
+     ]
+    }
+   ]
+  },
+  "session_id_objective": {
+   "files": [
+    {
+     "path": "plan/my-session/000_plan.md",
+     "text": "p"
+    }
+   ],
+   "steps": [
+    {
+     "session": "My Session!",
+     "dryRun": false,
+     "edits": [],
+     "output": "[codexclaw freeze]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: my-session\nplanFiles: 1\nplanHash: 8f9644de0487338e6b422a44eaafc1844374e471b4b8bc832674cc10fab12917\ninterviewReady: false\nopenAssumptions: 0\nstale-check: no prior manifest",
+     "error": false,
+     "manifest": "{\n  \"frozenAt\": \"<TS>\",\n  \"planFiles\": [\n    {\n      \"path\": \"000_plan.md\",\n      \"sha256\": \"148de9c5a7a44d19e56cd9ae1a554bf67847afb0c58f6e12fa29ac7ddfca9940\"\n    }\n  ],\n  \"planHash\": \"8f9644de0487338e6b422a44eaafc1844374e471b4b8bc832674cc10fab12917\",\n  \"objective\": \"My Session!\",\n  \"slug\": \"my-session\",\n  \"evidenceBundle\": {\n    \"dimensions\": null,\n    \"openAssumptions\": [],\n    \"contradictions\": [],\n    \"acceptanceCriteria\": [],\n    \"researchReportRef\": null\n  }\n}",
+     "tree": [
+      "${STATE}/",
+      "${STATE}/interview/",
+      "${STATE}/interview/freeze.json",
+      "${STATE}/plan/",
+      "${STATE}/plan/my-session/",
+      "${STATE}/plan/my-session/000_plan.md"
+     ]
+    }
+   ]
+  },
+  "state_slug_wins": {
+   "files": [
+    {
+     "path": "plan/other-name/000_plan.md",
+     "text": "p"
+    },
+    {
+     "path": "sessions/s1.json",
+     "text": "{\"phase\":\"I\",\"slug\":\"Other Name!\",\"flags\":{\"interview\":true,\"auditPassed\":false,\"checkPassed\":false},\"orchestrationActive\":false,\"lastInjectedPhase\":null,\"injectedTurns\":[],\"stopBlockPhase\":null,\"stopBlockCount\":0,\"interview\":null}"
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: other-name\nplanFiles: 1\nplanHash: 8f9644de0487338e6b422a44eaafc1844374e471b4b8bc832674cc10fab12917\ninterviewReady: false\nopenAssumptions: 0\nstale-check: no prior manifest",
+     "error": false,
+     "manifest": null,
+     "tree": [
+      "${STATE}/",
+      "${STATE}/plan/",
+      "${STATE}/plan/other-name/",
+      "${STATE}/plan/other-name/000_plan.md",
+      "${STATE}/sessions/",
+      "${STATE}/sessions/s1.json"
+     ]
+    }
+   ]
+  },
+  "interview_is_file": {
+   "files": [
+    {
+     "path": "interview",
+     "text": "x"
+    }
+   ],
+   "steps": [
+    {
+     "session": "default",
+     "dryRun": false,
+     "edits": [],
+     "output": null,
+     "error": true,
+     "manifest": null,
+     "tree": [
+      "${STATE}/",
+      "${STATE}/interview"
+     ]
+    }
+   ]
+  },
+  "manifest_is_dir": {
+   "files": [
+    {
+     "path": "plan/demo/000_plan.md",
+     "text": "# plan\n"
+    },
+    {
+     "path": "plan/demo/010_phase.md",
+     "text": "# phase\n"
+    },
+    {
+     "path": "sessions/s1.json",
+     "text": "{\"phase\":\"I\",\"slug\":\"demo\",\"flags\":{\"interview\":true,\"auditPassed\":false,\"checkPassed\":false},\"orchestrationActive\":false,\"lastInjectedPhase\":null,\"injectedTurns\":[],\"stopBlockPhase\":null,\"stopBlockCount\":0,\"interview\":null}"
+    },
+    {
+     "path": "interview/freeze.json/keep",
+     "text": "k"
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: prior manifest unreadable (will re-freeze)",
+     "error": false,
+     "manifest": null,
+     "tree": [
+      "${STATE}/",
+      "${STATE}/interview/",
+      "${STATE}/interview/freeze.json/",
+      "${STATE}/interview/freeze.json/keep",
+      "${STATE}/plan/",
+      "${STATE}/plan/demo/",
+      "${STATE}/plan/demo/000_plan.md",
+      "${STATE}/plan/demo/010_phase.md",
+      "${STATE}/sessions/",
+      "${STATE}/sessions/s1.json"
+     ]
+    },
+    {
+     "session": "s1",
+     "dryRun": false,
+     "edits": [],
+     "output": null,
+     "error": true,
+     "manifest": null,
+     "tree": [
+      "${STATE}/",
+      "${STATE}/interview/",
+      "${STATE}/interview/freeze.json/",
+      "${STATE}/interview/freeze.json/keep",
+      "${STATE}/plan/",
+      "${STATE}/plan/demo/",
+      "${STATE}/plan/demo/000_plan.md",
+      "${STATE}/plan/demo/010_phase.md",
+      "${STATE}/sessions/",
+      "${STATE}/sessions/s1.json"
+     ]
+    }
+   ]
+  },
+  "prior_garbage": {
+   "files": [
+    {
+     "path": "plan/demo/000_plan.md",
+     "text": "# plan\n"
+    },
+    {
+     "path": "plan/demo/010_phase.md",
+     "text": "# phase\n"
+    },
+    {
+     "path": "sessions/s1.json",
+     "text": "{\"phase\":\"I\",\"slug\":\"demo\",\"flags\":{\"interview\":true,\"auditPassed\":false,\"checkPassed\":false},\"orchestrationActive\":false,\"lastInjectedPhase\":null,\"injectedTurns\":[],\"stopBlockPhase\":null,\"stopBlockCount\":0,\"interview\":null}"
+    },
+    {
+     "path": "interview/freeze.json",
+     "text": "{not json"
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: prior manifest unreadable (will re-freeze)",
+     "error": false,
+     "manifest": "{not json",
+     "tree": [
+      "${STATE}/",
+      "${STATE}/interview/",
+      "${STATE}/interview/freeze.json",
+      "${STATE}/plan/",
+      "${STATE}/plan/demo/",
+      "${STATE}/plan/demo/000_plan.md",
+      "${STATE}/plan/demo/010_phase.md",
+      "${STATE}/sessions/",
+      "${STATE}/sessions/s1.json"
+     ]
+    }
+   ]
+  },
+  "prior_null": {
+   "files": [
+    {
+     "path": "plan/demo/000_plan.md",
+     "text": "# plan\n"
+    },
+    {
+     "path": "plan/demo/010_phase.md",
+     "text": "# phase\n"
+    },
+    {
+     "path": "sessions/s1.json",
+     "text": "{\"phase\":\"I\",\"slug\":\"demo\",\"flags\":{\"interview\":true,\"auditPassed\":false,\"checkPassed\":false},\"orchestrationActive\":false,\"lastInjectedPhase\":null,\"injectedTurns\":[],\"stopBlockPhase\":null,\"stopBlockCount\":0,\"interview\":null}"
+    },
+    {
+     "path": "interview/freeze.json",
+     "text": "null"
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: prior manifest unreadable (will re-freeze)",
+     "error": false,
+     "manifest": "null",
+     "tree": [
+      "${STATE}/",
+      "${STATE}/interview/",
+      "${STATE}/interview/freeze.json",
+      "${STATE}/plan/",
+      "${STATE}/plan/demo/",
+      "${STATE}/plan/demo/000_plan.md",
+      "${STATE}/plan/demo/010_phase.md",
+      "${STATE}/sessions/",
+      "${STATE}/sessions/s1.json"
+     ]
+    }
+   ]
+  },
+  "prior_array": {
+   "files": [
+    {
+     "path": "plan/demo/000_plan.md",
+     "text": "# plan\n"
+    },
+    {
+     "path": "plan/demo/010_phase.md",
+     "text": "# phase\n"
+    },
+    {
+     "path": "sessions/s1.json",
+     "text": "{\"phase\":\"I\",\"slug\":\"demo\",\"flags\":{\"interview\":true,\"auditPassed\":false,\"checkPassed\":false},\"orchestrationActive\":false,\"lastInjectedPhase\":null,\"injectedTurns\":[],\"stopBlockPhase\":null,\"stopBlockCount\":0,\"interview\":null}"
+    },
+    {
+     "path": "interview/freeze.json",
+     "text": "[]"
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: prior manifest unreadable (will re-freeze)",
+     "error": false,
+     "manifest": "[]",
+     "tree": [
+      "${STATE}/",
+      "${STATE}/interview/",
+      "${STATE}/interview/freeze.json",
+      "${STATE}/plan/",
+      "${STATE}/plan/demo/",
+      "${STATE}/plan/demo/000_plan.md",
+      "${STATE}/plan/demo/010_phase.md",
+      "${STATE}/sessions/",
+      "${STATE}/sessions/s1.json"
+     ]
+    }
+   ]
+  },
+  "prior_number": {
+   "files": [
+    {
+     "path": "plan/demo/000_plan.md",
+     "text": "# plan\n"
+    },
+    {
+     "path": "plan/demo/010_phase.md",
+     "text": "# phase\n"
+    },
+    {
+     "path": "sessions/s1.json",
+     "text": "{\"phase\":\"I\",\"slug\":\"demo\",\"flags\":{\"interview\":true,\"auditPassed\":false,\"checkPassed\":false},\"orchestrationActive\":false,\"lastInjectedPhase\":null,\"injectedTurns\":[],\"stopBlockPhase\":null,\"stopBlockCount\":0,\"interview\":null}"
+    },
+    {
+     "path": "interview/freeze.json",
+     "text": "42"
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: prior manifest unreadable (will re-freeze)",
+     "error": false,
+     "manifest": "42",
+     "tree": [
+      "${STATE}/",
+      "${STATE}/interview/",
+      "${STATE}/interview/freeze.json",
+      "${STATE}/plan/",
+      "${STATE}/plan/demo/",
+      "${STATE}/plan/demo/000_plan.md",
+      "${STATE}/plan/demo/010_phase.md",
+      "${STATE}/sessions/",
+      "${STATE}/sessions/s1.json"
+     ]
+    }
+   ]
+  },
+  "prior_empty_object": {
+   "files": [
+    {
+     "path": "plan/demo/000_plan.md",
+     "text": "# plan\n"
+    },
+    {
+     "path": "plan/demo/010_phase.md",
+     "text": "# phase\n"
+    },
+    {
+     "path": "sessions/s1.json",
+     "text": "{\"phase\":\"I\",\"slug\":\"demo\",\"flags\":{\"interview\":true,\"auditPassed\":false,\"checkPassed\":false},\"orchestrationActive\":false,\"lastInjectedPhase\":null,\"injectedTurns\":[],\"stopBlockPhase\":null,\"stopBlockCount\":0,\"interview\":null}"
+    },
+    {
+     "path": "interview/freeze.json",
+     "text": "{}"
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: prior manifest unreadable (will re-freeze)",
+     "error": false,
+     "manifest": "{}",
+     "tree": [
+      "${STATE}/",
+      "${STATE}/interview/",
+      "${STATE}/interview/freeze.json",
+      "${STATE}/plan/",
+      "${STATE}/plan/demo/",
+      "${STATE}/plan/demo/000_plan.md",
+      "${STATE}/plan/demo/010_phase.md",
+      "${STATE}/sessions/",
+      "${STATE}/sessions/s1.json"
+     ]
+    }
+   ]
+  },
+  "prior_plan_files_string": {
+   "files": [
+    {
+     "path": "plan/demo/000_plan.md",
+     "text": "# plan\n"
+    },
+    {
+     "path": "plan/demo/010_phase.md",
+     "text": "# phase\n"
+    },
+    {
+     "path": "sessions/s1.json",
+     "text": "{\"phase\":\"I\",\"slug\":\"demo\",\"flags\":{\"interview\":true,\"auditPassed\":false,\"checkPassed\":false},\"orchestrationActive\":false,\"lastInjectedPhase\":null,\"injectedTurns\":[],\"stopBlockPhase\":null,\"stopBlockCount\":0,\"interview\":null}"
+    },
+    {
+     "path": "interview/freeze.json",
+     "text": "{\"planFiles\":\"abc\"}"
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: prior manifest unreadable (will re-freeze)",
+     "error": false,
+     "manifest": "{\"planFiles\":\"abc\"}",
+     "tree": [
+      "${STATE}/",
+      "${STATE}/interview/",
+      "${STATE}/interview/freeze.json",
+      "${STATE}/plan/",
+      "${STATE}/plan/demo/",
+      "${STATE}/plan/demo/000_plan.md",
+      "${STATE}/plan/demo/010_phase.md",
+      "${STATE}/sessions/",
+      "${STATE}/sessions/s1.json"
+     ]
+    }
+   ]
+  },
+  "prior_null_entry": {
+   "files": [
+    {
+     "path": "plan/demo/000_plan.md",
+     "text": "# plan\n"
+    },
+    {
+     "path": "plan/demo/010_phase.md",
+     "text": "# phase\n"
+    },
+    {
+     "path": "sessions/s1.json",
+     "text": "{\"phase\":\"I\",\"slug\":\"demo\",\"flags\":{\"interview\":true,\"auditPassed\":false,\"checkPassed\":false},\"orchestrationActive\":false,\"lastInjectedPhase\":null,\"injectedTurns\":[],\"stopBlockPhase\":null,\"stopBlockCount\":0,\"interview\":null}"
+    },
+    {
+     "path": "interview/freeze.json",
+     "text": "{\"planFiles\":[null]}"
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: prior manifest unreadable (will re-freeze)",
+     "error": false,
+     "manifest": "{\"planFiles\":[null]}",
+     "tree": [
+      "${STATE}/",
+      "${STATE}/interview/",
+      "${STATE}/interview/freeze.json",
+      "${STATE}/plan/",
+      "${STATE}/plan/demo/",
+      "${STATE}/plan/demo/000_plan.md",
+      "${STATE}/plan/demo/010_phase.md",
+      "${STATE}/sessions/",
+      "${STATE}/sessions/s1.json"
+     ]
+    }
+   ]
+  },
+  "prior_empty_files": {
+   "files": [
+    {
+     "path": "plan/demo/000_plan.md",
+     "text": "# plan\n"
+    },
+    {
+     "path": "plan/demo/010_phase.md",
+     "text": "# phase\n"
+    },
+    {
+     "path": "sessions/s1.json",
+     "text": "{\"phase\":\"I\",\"slug\":\"demo\",\"flags\":{\"interview\":true,\"auditPassed\":false,\"checkPassed\":false},\"orchestrationActive\":false,\"lastInjectedPhase\":null,\"injectedTurns\":[],\"stopBlockPhase\":null,\"stopBlockCount\":0,\"interview\":null}"
+    },
+    {
+     "path": "interview/freeze.json",
+     "text": "{\"planFiles\":[]}"
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: STALE — plan changed since freeze (2 file(s), planHash differs); re-freeze before goal start — stale execution refused",
+     "error": false,
+     "manifest": "{\"planFiles\":[]}",
+     "tree": [
+      "${STATE}/",
+      "${STATE}/interview/",
+      "${STATE}/interview/freeze.json",
+      "${STATE}/plan/",
+      "${STATE}/plan/demo/",
+      "${STATE}/plan/demo/000_plan.md",
+      "${STATE}/plan/demo/010_phase.md",
+      "${STATE}/sessions/",
+      "${STATE}/sessions/s1.json"
+     ]
+    }
+   ]
+  },
+  "prior_no_hash": {
+   "files": [
+    {
+     "path": "plan/demo/000_plan.md",
+     "text": "# plan\n"
+    },
+    {
+     "path": "plan/demo/010_phase.md",
+     "text": "# phase\n"
+    },
+    {
+     "path": "sessions/s1.json",
+     "text": "{\"phase\":\"I\",\"slug\":\"demo\",\"flags\":{\"interview\":true,\"auditPassed\":false,\"checkPassed\":false},\"orchestrationActive\":false,\"lastInjectedPhase\":null,\"injectedTurns\":[],\"stopBlockPhase\":null,\"stopBlockCount\":0,\"interview\":null}"
+    },
+    {
+     "path": "interview/freeze.json",
+     "text": "{\"planFiles\":[{\"path\":\"000_plan.md\",\"sha256\":\"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"},{\"path\":\"010_phase.md\",\"sha256\":\"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"}]}"
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: STALE — plan changed since freeze (0 file(s), planHash differs); re-freeze before goal start — stale execution refused",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":\"000_plan.md\",\"sha256\":\"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"},{\"path\":\"010_phase.md\",\"sha256\":\"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"}]}",
+     "tree": [
+      "${STATE}/",
+      "${STATE}/interview/",
+      "${STATE}/interview/freeze.json",
+      "${STATE}/plan/",
+      "${STATE}/plan/demo/",
+      "${STATE}/plan/demo/000_plan.md",
+      "${STATE}/plan/demo/010_phase.md",
+      "${STATE}/sessions/",
+      "${STATE}/sessions/s1.json"
+     ]
+    }
+   ]
+  },
+  "prior_good": {
+   "files": [
+    {
+     "path": "plan/demo/000_plan.md",
+     "text": "# plan\n"
+    },
+    {
+     "path": "plan/demo/010_phase.md",
+     "text": "# phase\n"
+    },
+    {
+     "path": "sessions/s1.json",
+     "text": "{\"phase\":\"I\",\"slug\":\"demo\",\"flags\":{\"interview\":true,\"auditPassed\":false,\"checkPassed\":false},\"orchestrationActive\":false,\"lastInjectedPhase\":null,\"injectedTurns\":[],\"stopBlockPhase\":null,\"stopBlockCount\":0,\"interview\":null}"
+    },
+    {
+     "path": "interview/freeze.json",
+     "text": "{\"planFiles\":[{\"path\":\"000_plan.md\",\"sha256\":\"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"},{\"path\":\"010_phase.md\",\"sha256\":\"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"}],\"planHash\":\"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\"}"
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: fresh — frozen manifest matches current plan",
+     "error": false,
+     "manifest": "{\"planFiles\":[{\"path\":\"000_plan.md\",\"sha256\":\"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"},{\"path\":\"010_phase.md\",\"sha256\":\"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"}],\"planHash\":\"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\"}",
+     "tree": [
+      "${STATE}/",
+      "${STATE}/interview/",
+      "${STATE}/interview/freeze.json",
+      "${STATE}/plan/",
+      "${STATE}/plan/demo/",
+      "${STATE}/plan/demo/000_plan.md",
+      "${STATE}/plan/demo/010_phase.md",
+      "${STATE}/sessions/",
+      "${STATE}/sessions/s1.json"
+     ]
+    }
+   ]
+  },
+  "prior_good_pretty_extra": {
+   "files": [
+    {
+     "path": "plan/demo/000_plan.md",
+     "text": "# plan\n"
+    },
+    {
+     "path": "plan/demo/010_phase.md",
+     "text": "# phase\n"
+    },
+    {
+     "path": "sessions/s1.json",
+     "text": "{\"phase\":\"I\",\"slug\":\"demo\",\"flags\":{\"interview\":true,\"auditPassed\":false,\"checkPassed\":false},\"orchestrationActive\":false,\"lastInjectedPhase\":null,\"injectedTurns\":[],\"stopBlockPhase\":null,\"stopBlockCount\":0,\"interview\":null}"
+    },
+    {
+     "path": "interview/freeze.json",
+     "text": "{\n  \"planFiles\": [\n    {\n      \"path\": \"000_plan.md\",\n      \"sha256\": \"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"\n    },\n    {\n      \"path\": \"010_phase.md\",\n      \"sha256\": \"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"\n    }\n  ],\n  \"planHash\": \"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\",\n  \"extra\": 1,\n  \"objective\": \"demo\"\n}"
+    }
+   ],
+   "steps": [
+    {
+     "session": "s1",
+     "dryRun": true,
+     "edits": [],
+     "output": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: fresh — frozen manifest matches current plan",
+     "error": false,
+     "manifest": "{\n  \"planFiles\": [\n    {\n      \"path\": \"000_plan.md\",\n      \"sha256\": \"98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844\"\n    },\n    {\n      \"path\": \"010_phase.md\",\n      \"sha256\": \"635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c\"\n    }\n  ],\n  \"planHash\": \"6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\",\n  \"extra\": 1,\n  \"objective\": \"demo\"\n}",
+     "tree": [
+      "${STATE}/",
+      "${STATE}/interview/",
+      "${STATE}/interview/freeze.json",
+      "${STATE}/plan/",
+      "${STATE}/plan/demo/",
+      "${STATE}/plan/demo/000_plan.md",
+      "${STATE}/plan/demo/010_phase.md",
+      "${STATE}/sessions/",
+      "${STATE}/sessions/s1.json"
+     ]
+    }
+   ]
+  }
+ }
+}
