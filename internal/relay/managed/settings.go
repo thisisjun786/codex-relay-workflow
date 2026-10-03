@@ -11,9 +11,14 @@ import (
 )
 
 func validateSettings(value any, at string) error {
-	m, err := object(value, registry.Required, []string{"expectedPermissionProfile"}, at)
+	m, err := object(value, registry.Required, []string{"expectedPermissionProfile", "mcpProfile"}, at)
 	if err != nil {
 		return err
+	}
+	if profile, stated := m["mcpProfile"]; stated {
+		if err := text(profile, at+".mcpProfile", 128); err != nil {
+			return err
+		}
 	}
 	for _, name := range []string{"model", "reasoningEffort"} {
 		if err := text(m[name], at+"."+name, 500); err != nil {

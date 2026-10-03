@@ -90,7 +90,9 @@ counterpart of the Python-recorded scenarios beside it in `contract/fixtures/` (
   A `write` step runs nothing: the recorder writes those files between invocations, standing in
   for an agent's edit, and records the step with `"action": "write"`.
   A `wait` step runs nothing either: it polls, up to the step deadline, for a file a detached process of an earlier
-  step writes (a case-path glob such as `ws/.codexclaw/bg/*.exit`) and is recorded with `"action": "wait"`.
+  step writes (a case-path glob such as `ws/.codexclaw/bg/*.exit`) and is recorded with `"action": "wait"`. It also binds
+  `${WAITED}` to the stem of the file it found (the name without its last extension), so a later step's argv, stdin and write text can
+  name what a detached process made, such as a background job's id (`bg cancel ${WAITED}`); recorded output is not rewritten back to it.
 - `observe` lists the roots or subtrees to record afterwards; the default is all five roots
   without `codex/codexclaw/hook-observations`, the diagnostic record every hook invocation
   writes. Naming that path observes it too.
