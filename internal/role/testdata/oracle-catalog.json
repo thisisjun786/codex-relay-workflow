@@ -587,6 +587,11 @@
           ]
         }
       ]
+    },
+    {
+      "name": "non-json-whitespace",
+      "input": " [\"x\"]",
+      "expected": null
     }
   ]
 }

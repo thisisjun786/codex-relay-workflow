@@ -86,9 +86,8 @@ func NativeCatalogPath(env host.LookupEnv) string {
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return ""
 	}
-	for _, line := range strings.Split(string(b), "\n") {
-		line = text.Trim(line)
-		if strings.HasPrefix(line, "[") {
+	for _, line := range strings.Split(strings.ReplaceAll(string(b), "\r\n", "\n"), "\n") {
+		if strings.HasPrefix(text.Trim(line), "[") {
 			break
 		}
 		key, value, ok := strings.Cut(line, "=")
@@ -99,6 +98,7 @@ func NativeCatalogPath(env host.LookupEnv) string {
 		if key != "model_catalog_json" && key != "\"model_catalog_json\"" && key != "'model_catalog_json'" {
 			continue
 		}
+		originalValue := value
 		value = text.Trim(value)
 		if len(value) < 2 || (value[0] != '\'' && value[0] != '"') {
 			return ""
@@ -116,9 +116,13 @@ func NativeCatalogPath(env host.LookupEnv) string {
 		if end >= len(value) {
 			return ""
 		}
-		tail := text.Trim(value[end+1:])
+		tailRaw := originalValue[strings.Index(originalValue, value)+end+1:]
+		tail := text.Trim(tailRaw)
 		if tail != "" && tail[0] != '#' {
 			return ""
+		}
+		if tail != "" && strings.ContainsAny(tailRaw[strings.Index(tailRaw, "#")+1:], "\r\u2028\u2029") {
+			return "" // JavaScript's comment .* does not consume these line terminators.
 		}
 		var selected string
 		if value[0] == '\'' {
@@ -130,11 +134,15 @@ func NativeCatalogPath(env host.LookupEnv) string {
 			return ""
 		}
 		if strings.HasPrefix(selected, "~/") || strings.HasPrefix(selected, "~\\") {
+			trailingSlash := strings.HasSuffix(selected, "/")
 			h, e := host.Home(env)
 			if e != nil {
 				return ""
 			}
 			selected = filepath.Join(h, selected[2:])
+			if trailingSlash && !strings.HasSuffix(selected, "/") {
+				selected += "/"
+			}
 		}
 		if !filepath.IsAbs(selected) {
 			selected = filepath.Join(home, selected)
@@ -183,7 +191,7 @@ func ReadNativeCatalog(env host.LookupEnv) []CatalogEntry {
 	if err != nil {
 		return nil
 	}
-	b = bytes.TrimSpace(b)
+	b = bytes.Trim(b, " \t\r\n") // JSON.parse accepts JSON whitespace, not all Unicode space.
 	if len(b) == 0 {
 		return nil
 	}
