@@ -71,6 +71,7 @@ func (s *Scheduler) Ready(ctx context.Context, q store.Querier, plan string, opt
 
 	readings := make(map[string]*NodeReading, len(nodes))
 	var holders []holder
+	var live []orderHolder
 	var candidates []candidate
 	var hashes []string
 	for i, n := range nodes {
@@ -98,6 +99,10 @@ func (s *Scheduler) Ready(ctx context.Context, q store.Querier, plan string, opt
 			if state.Holds && n.Kind == dag.NodeImplementation {
 				regions, declared := declarations[n.NodeID]
 				holders = append(holders, holder{NodeID: n.NodeID, Regions: regions, Unknown: !declared})
+				// what the execution records say of the node (not the plan's overlay on it) decides its lane, and the plan's hold decides whether it can merge at all: a paused or cancelled node, or a paused plan,
+				// cannot; an archived node's accepted pull request may still land (lifecycleRefusal), so it keeps its place
+				live = append(live, orderHolder{NodeID: n.NodeID, State: state.State, Disp: state.Disp, Acc: state.Acc, HasAcc: state.HasAcc,
+					Held: life.planPaused || life.node == dag.LifePaused || life.node == dag.LifeCancelled})
 			}
 			continue
 		}
@@ -215,6 +220,15 @@ func (s *Scheduler) Ready(ctx context.Context, q store.Querier, plan string, opt
 		ready = append(ready, *reading)
 	}
 	pass.ReadyCount = selected
+	// the merge order (CRW-410, mergeorder_derive.go): the live holders only, from stored measurements. A reading, not a decision: no disposition, reason or detail changes, and nothing here stops a child.
+	orders, constrained, err := s.orderConstraints(ctx, q, plan, live, declarations)
+	if err != nil {
+		return Reading{}, err
+	}
+	for id, order := range orders {
+		readings[id].MergeOrder = order
+	}
+	pass.OrderConstraints = constrained
 
 	out := Reading{PlanID: plan, PlanRevision: snap.Revision, StateDigest: snap.StateDigest, Pass: pass, Ready: ready, PlanState: snap.PlanState}
 	for _, n := range nodes {
@@ -325,6 +339,10 @@ func inputDigest(r Reading, c Capacity, hashes []string) string {
 			// the rule depends on declarations that nothing else in the digest carries
 			nodes[i].(map[string]any)["release"] = n.Release.canonical()
 		}
+		if n.MergeOrder != nil {
+			// the constraint depends on measurements that nothing else in the digest carries
+			nodes[i].(map[string]any)["merge_order"] = n.MergeOrder.canonical()
+		}
 	}
 	order := make([]any, len(r.Ready))
 	for i, n := range r.Ready {
@@ -335,8 +353,13 @@ func inputDigest(r Reading, c Capacity, hashes []string) string {
 		files[i] = h
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].(string) < files[j].(string) })
-	return digestOf(map[string]any{
+	digest := map[string]any{
 		"plan_id": r.PlanID, "plan_revision": r.PlanRevision, "state_digest": r.StateDigest, "nodes": nodes, "order": order, "files": files,
 		"free": c.Free, "ceiling": c.Ceiling, "held": c.Held, "source": c.Source, "unmeasured": c.Unmeasured, "deciding_limit": r.Pass.DecidingLimit,
-	})
+	}
+	if r.Pass.OrderConstraints > 0 {
+		// absent when there is none, so a reading of a plan without a constraint digests as it did
+		digest["order_constraints"] = r.Pass.OrderConstraints
+	}
+	return digestOf(digest)
 }

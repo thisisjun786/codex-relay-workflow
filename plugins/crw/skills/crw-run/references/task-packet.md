@@ -1051,7 +1051,7 @@ The kinds of base refresh, and what reruns for each, which is all that a refresh
 | Kind | The entry shows | What reruns, and nothing more |
 |---|---|---|
 | `clean` | the merge's expected and actual trees: the tree of `git merge-tree --write-tree <previous> <merged>` and the tree of the merge commit, which are equal | the gates: the repository's local checks for the paths now in the branch and a digest re-record where the merge touched the plugin, then every required job, the `Devin Review` status and the threads on the final head, which [OPS-9.4](operations.md#ops-94-a-new-head-invalidates-the-review-it-outran) reads again on any new head. No review of the change and no audit of the plan |
-| `mechanical` | each resolved hunk with the rule the assignment names for that overlap (its wording or identifier), its path and lines, and the command that reproduces the resolution with the result of comparing it | the gates, and the deterministic checks that read those hunks: the reproduction and its comparison, the repository's validators and link check, the digest re-record, `git diff --check`. No model review |
+| `mechanical` | each resolved hunk with the rule the assignment names for that overlap (its wording or identifier), its path and lines, and the check that reproduces it with its output (for a union or a regeneration, `crw skill base-refresh mechanical` run on the merge) | the gates, and the deterministic checks that read those hunks: that check, the repository's validators and link check, the digest re-record, `git diff --check`. No model review |
 | `manual` | each hand-resolved hunk with its path and lines, and the independent check of those hunks | the gates, and an independent check of the hand-resolved hunks only, run by the child's own independent reviewer on those hunks and what they merge. The rest of the diff is not reviewed again |
 
 A named rule is one the assignment or the restoration block states for that overlap, such as keeping
@@ -1066,10 +1066,12 @@ a failing gate means: a job that fails on the final head is a defect like any ot
 The parent refreshes a candidate itself when only the base moved ([Refresh the base yourself when
 only the base moved](merge-readiness.md#refresh-the-base-yourself-when-only-the-base-moved)), and a
 refresh the parent made is `clean` by the same measure, so the two rules draw one line: a merge of
-the base with no conflict and no hand-resolved hunk reruns the gates, whoever merged it. What still
-goes back to the child, a conflict, a base that moved after `dag-accept`, or an installed runtime
-without the helper, arrives as a correction for the refresh alone, and the child's own merge of the
-base before a handoff is the same act.
+the base with no conflict and no hand-resolved hunk reruns the gates, whoever merged it. A refresh the parent made by
+settling a conflict with a declared mechanical rule is `mechanical` in the same way: it carries the output of `crw skill
+base-refresh mechanical` ([Resolve a mechanical conflict
+yourself](merge-readiness.md#resolve-a-mechanical-conflict-yourself)). What still goes back to the child, a conflict the
+parent does not settle by such a rule, a base that moved after `dag-accept`, or an installed runtime without the helper,
+arrives as a correction for the refresh alone, and the child's own merge of the base before a handoff is the same act.
 
 ## Restoration block
 
