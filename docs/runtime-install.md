@@ -355,15 +355,16 @@ its own for the zone and, below, for ordinary indexes, and for nothing else, and
 **The history indexes (CRW-301).** A second change reaches the frozen v1 schema script itself: six `CREATE INDEX IF NOT EXISTS` statements
 for the tables that only grow (`attempts`, `supervisor_attempts`, `acks`, `sync_outbox`, `supervisor_messages`,
 `managed_start_requests`; the list and the reason for each are in `contract/schema/relay-sqlite-history-indexes.json`). They are not zone
-objects, so the gate has no answer of its own for them. A candidate that declares them over a store that lacks them reads `EXTENDS` and refuses,
-and it refuses whether or not the zone arrives with them, which is the case of every store there is: the arrival is no longer the zone alone, so
-`--backup-state-to` does not release it (`ZoneArrivalOnly` is false). The reverse, a store that holds them against a candidate that does
-not declare them, reads `NARROWS` and refuses, although an older runtime opens such a store and maintains the indexes without reading them.
-Neither direction has a route today; one needs its own decision in the way D-01 gave the zone one, with the OPS-4.5 backup taken by the route. Until
-then an install over an existing store waits on that decision. The build itself creates the indexes: the schema script runs on every write-open, so the
-first command to open a store of the previous version builds them, one index in a transaction of its own, and a command that declares itself
-read-only builds them too, since it tries the writable open first (a read that opens nothing for writing builds nothing). The swap gate test
-`TestTheHistoryIndexesArriveAsAPlainExtendsAndLeaveAsAPlainNarrows` pins this reading.
+objects. Each is an ordinary index, non-unique and without a SQL function (the partial index on `acks` compares a column with a literal), on a table
+both sides declare, so the gate gives them the answers of the paragraph on ordinary indexes below (pull request #397). A candidate that declares
+them over a store that lacks them reads `EXTENDS_INDEX`, which refuses without `--backup-state-to` and passes with it; a store that holds them
+against a candidate that does not declare them reads `NARROWS_INDEX`, which is allowed. The ratchet test
+`TestEveryNonUniqueIndexOfTheShippedSchemaIsOrdinaryButOne` keeps the six ordinary. A store that lacks the zone as well, meeting a build that
+brings the zone and these indexes together, is the case that paragraph leaves out: the zone beside an index is a plain `EXTENDS`, and
+`--backup-state-to` does not release it. The build itself creates the indexes: the schema script runs on every write-open, so the first command to
+open a store of the previous version builds them, one index in a transaction of its own, and a command that declares itself read-only builds them
+too, since it tries the writable open first (a read that opens nothing for writing builds nothing). The swap gate tests
+`TestTheHistoryIndexesArriveAsAnIndexExtendsAndLeaveAsAnIndexNarrows` and `TestTheHistoryIndexesAgainstRealStores` pin this reading.
 
 **The zone arrives (`EXTENDS_ZONE`).** Installing a build that declares the zone onto a store that has none (every store there is) refuses,
 and the refusal names the route: `crw install update --from ... --backup-state-to DIR` (the same flag is on `install` and `rollback`). The flag is the
