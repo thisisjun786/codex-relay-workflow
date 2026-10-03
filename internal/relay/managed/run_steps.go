@@ -161,7 +161,7 @@ func (r *startRun) reserve(ctx context.Context) (contract.OrderedObject, error) 
 // declareIntent publishes the intent that exists before the child does; the same dispatch with other
 // terms is refused.
 func (r *startRun) declareIntent(ctx context.Context) (contract.OrderedObject, error) {
-	declared, err := delivery.DeclareIntent(r.identity.MarkerRoot, delivery.IntentDeclaration{Workspace: r.identity.Workspace, DispatchRequestID: r.identity.DispatchRequestID, IssueKey: r.identity.IssueKey, DeclaredAt: r.m.now(), CriteriaSource: r.req["criteriaSource"], BaselineRevision: r.req["baselineRevision"], AuthorizedSettings: deliveryValue(pyjson.Map(pyjson.Map(r.req["child"])["settings"])), DBPath: r.m.Store.Path})
+	declared, err := delivery.DeclareIntent(ctx, r.identity.MarkerRoot, delivery.IntentDeclaration{Workspace: r.identity.Workspace, DispatchRequestID: r.identity.DispatchRequestID, IssueKey: r.identity.IssueKey, DeclaredAt: r.m.now(), CriteriaSource: r.req["criteriaSource"], BaselineRevision: r.req["baselineRevision"], AuthorizedSettings: deliveryValue(pyjson.Map(pyjson.Map(r.req["child"])["settings"])), DBPath: r.m.Store.Path})
 	if err != nil {
 		return nil, err
 	}
@@ -240,7 +240,9 @@ func (r *startRun) incompleteCreation(ctx context.Context) (contract.OrderedObje
 	if receipt != nil {
 		attemptedTask = receipt["threadId"]
 	}
-	if _, err := delivery.RecordAttempt(r.identity.MarkerRoot, r.identity.Workspace, r.assignment, outcome, r.m.now(), attemptedTask); err != nil {
+	// The attempt marker records the retained thread for the retry, and is written when the creation ended
+	// unknown or failed, which includes a creation the caller cancelled: it does not end with that context.
+	if _, err := delivery.RecordAttempt(context.WithoutCancel(ctx), r.identity.MarkerRoot, r.identity.Workspace, r.assignment, outcome, r.m.now(), attemptedTask); err != nil {
 		return nil, err
 	}
 	incomplete := r.result()
@@ -279,7 +281,7 @@ func (r *startRun) verifyCreation(ctx context.Context) (contract.OrderedObject, 
 
 // bindMarker binds the assignment's marker to the child; a marker bound to another task refuses it.
 func (r *startRun) bindMarker(ctx context.Context) (contract.OrderedObject, error) {
-	bound, err := delivery.BindIdentity(r.identity.MarkerRoot, r.identity.Workspace, r.assignment, r.task, r.task, r.m.now())
+	bound, err := delivery.BindIdentity(ctx, r.identity.MarkerRoot, r.identity.Workspace, r.assignment, r.task, r.task, r.m.now())
 	if err != nil {
 		return nil, err
 	}

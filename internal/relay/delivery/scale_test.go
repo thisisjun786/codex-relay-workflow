@@ -1,6 +1,7 @@
 package delivery
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"os"
@@ -70,7 +71,7 @@ func (w *scaleWorld) create(i int) string {
 	r.emitted++
 	path := filepath.Join(r.root, fmt.Sprintf("out-%d.txt", r.emitted))
 	mustDo(w.t, os.WriteFile(path, []byte(fmt.Sprintf("%s-%d", r.child, r.emitted)), 0o644))
-	entries, err := store.BuildManifest([]string{path}, []string{r.root})
+	entries, err := store.BuildManifest(context.Background(), []string{path}, []string{r.root})
 	mustDo(w.t, err)
 	revision, err := store.ManifestRevision(entries)
 	mustDo(w.t, err)

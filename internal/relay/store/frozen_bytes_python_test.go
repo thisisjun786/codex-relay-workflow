@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -49,7 +50,7 @@ func Test28FrozenByteCountExactPythonParity(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(ref, "MANIFEST.json"), []byte(manifest), 0600); err != nil {
 				t.Fatal(err)
 			}
-			result, problems, unreadable, goErr := VerifyFrozenDetailed(ref, nil)
+			result, problems, unreadable, goErr := VerifyFrozenDetailed(context.Background(), ref, nil)
 			got := map[string]any{}
 			if goErr != nil {
 				got["error"], got["detail"] = "Exception", goErr.Error()

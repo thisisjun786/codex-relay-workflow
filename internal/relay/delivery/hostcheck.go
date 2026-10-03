@@ -26,7 +26,7 @@ func (rc *Reconciler) settleConfirmed(ctx context.Context, attempt, delivery Row
 	if !truthy(turnID) {
 		turnID = delivery.Opt("dispatch_turn_id")
 	}
-	reading := ReadRecipientTurn(adapter, rc.Clock, attempt, delivery, turnID)
+	reading := ReadRecipientTurn(ctx, adapter, rc.Clock, attempt, delivery, turnID)
 	out := Obj{{Key: "evidence", Value: TurnFound}, {Key: "state", Value: attempt.Opt("state")}, {Key: "operationObservation", Value: observation}, {Key: "record", Value: record},
 		{Key: "recipientTurn", Value: reading}, {Key: "detail", Value: "already confirmed from its token in the recipient's items; not scanned again"}}
 	return rc.afterReading(ctx, out, attempt, delivery, reading, observation)
@@ -76,7 +76,7 @@ func (rc *Reconciler) CheckDispatchedTurn(ctx context.Context, requestID string,
 	if !truthy(turnID) {
 		turnID = delivery.Opt("dispatch_turn_id")
 	}
-	reading := ReadRecipientTurn(adapter, rc.Clock, attempt, delivery, turnID)
+	reading := ReadRecipientTurn(ctx, adapter, rc.Clock, attempt, delivery, turnID)
 	out := Obj{{Key: "eventId", Value: attempt.S("event_id")}, {Key: "requestId", Value: requestID}, {Key: "state", Value: attempt.Opt("state")}, {Key: "recipientTurn", Value: reading}}
 	if pyjson.Text(reading.Get("finding")) == HostLostTurn {
 		loss, err := SettleLoss(ctx, rc.Store, rc.Clock, requestID, reading, nil)
@@ -133,7 +133,7 @@ func (rc *Reconciler) ConfirmDelivery(ctx context.Context, eventID string, adapt
 	if delivery == nil || delivery.S("state") != HeldUncertain || delivery.I("attempt_count") != attempt.I("attempt_no") || attempt.S("internal_state") != "settled" || attempt.S("state") != HeldUncertain {
 		return out, nil
 	}
-	scan, err := adapter.FindTokenInTurn(delivery.S("recipient_thread_id"), requestID, turnID, InTurnItemsMax)
+	scan, err := adapter.FindTokenInTurn(ctx, delivery.S("recipient_thread_id"), requestID, turnID, InTurnItemsMax)
 	if err != nil {
 		return append(out, F{Key: "turnRead", Value: "unreadable: " + errorLabel(err)}), nil
 	}

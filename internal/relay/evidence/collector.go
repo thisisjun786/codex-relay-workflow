@@ -26,7 +26,7 @@ type Runner func(argv []string, timeout time.Duration) (code int, stdout, stderr
 type Forge struct {
 	Run                              Runner
 	Command                          []string
-	PageSize, PageBudget, CallBudget any
+	PageSize, PageBudget, CallBudget int64
 	Timeout                          time.Duration
 	TimeoutSeconds                   string // exact CLI integer for timeout diagnostics
 	Calls                            []map[string]any

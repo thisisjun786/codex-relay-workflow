@@ -71,7 +71,7 @@ func cmdIntentDeclare(c *cliRun) (any, error) {
 	if c.args["--no-db-path"] != true {
 		db = c.dbPath()
 	}
-	return DeclareIntent(root, IntentDeclaration{Workspace: c.s("--workspace"), DispatchRequestID: c.s("--dispatch-request-id"), IssueKey: c.s("--issue"), DeclaredAt: declaredAt,
+	return DeclareIntent(c.ctx, root, IntentDeclaration{Workspace: c.s("--workspace"), DispatchRequestID: c.s("--dispatch-request-id"), IssueKey: c.s("--issue"), DeclaredAt: declaredAt,
 		CriteriaSource: c.opt("--criteria-source"), BaselineRevision: c.opt("--baseline-revision"), AuthorizedSettings: settings, DBPath: db})
 }
 
@@ -80,7 +80,7 @@ func cmdIntentAttempt(c *cliRun) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return RecordAttempt(root, c.s("--workspace"), c.s("--assignment"), c.s("--outcome"), c.clock.ISO(), c.opt("--task-id"))
+	return RecordAttempt(c.ctx, root, c.s("--workspace"), c.s("--assignment"), c.s("--outcome"), c.clock.ISO(), c.opt("--task-id"))
 }
 
 func cmdIntentBind(c *cliRun) (any, error) {
@@ -88,7 +88,7 @@ func cmdIntentBind(c *cliRun) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return BindIdentity(root, c.s("--workspace"), c.s("--assignment"), c.s("--session"), c.s("--task-id"), c.clock.ISO())
+	return BindIdentity(c.ctx, root, c.s("--workspace"), c.s("--assignment"), c.s("--session"), c.s("--task-id"), c.clock.ISO())
 }
 
 func cmdIntentRegister(c *cliRun) (any, error) {
@@ -125,7 +125,7 @@ func cmdIntentResolve(c *cliRun) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return PublishResolution(root, c.s("--workspace"), c.s("--assignment"), c.s("--chosen-task"), c.s("--chosen-session"), c.s("--reason"), c.clock.ISO(), entries)
+	return PublishResolution(c.ctx, root, c.s("--workspace"), c.s("--assignment"), c.s("--chosen-task"), c.s("--chosen-session"), c.s("--reason"), c.clock.ISO(), entries)
 }
 
 // orEmptyList is `value or []`.
@@ -157,13 +157,13 @@ func cmdIntentShow(c *cliRun) (any, error) {
 		if directory, err = AssignmentDir(root, workspace, assignment); err != nil {
 			return nil, err
 		}
-		facts, unreadable = ReadAssignment(directory)
+		facts, unreadable = ReadAssignment(c.ctx, directory)
 		if _, has := facts.Lookup("intent"); len(unreadable) == 0 && !has {
 			return Obj{{Key: "markerRoot", Value: root}, {Key: "workspace", Value: workspace}, {Key: "managed", Value: false}, {Key: "assignmentId", Value: filepath.Base(directory)},
 				{Key: "assignmentDir", Value: directory}, {Key: "unreadable", Value: []any{}}, {Key: "detail", Value: "no intent is published for this assignment"}}, nil
 		}
 	} else {
-		if directory, facts, unreadable, err = SelectAssignment(root, workspace, c.opt("--session")); err != nil {
+		if directory, facts, unreadable, err = SelectAssignment(c.ctx, root, workspace, c.opt("--session")); err != nil {
 			return nil, err
 		}
 		if directory == "" {
@@ -208,7 +208,7 @@ func cmdIntentClaim(c *cliRun) (any, error) {
 	// marker this cannot read names no store here.
 	var before Obj
 	if directory, err := AssignmentDir(root, workspace, assignment); err == nil {
-		before, _ = ReadAssignment(directory)
+		before, _ = ReadAssignment(c.ctx, directory)
 	}
 	if target := storeOf(before); target != nil {
 		path, err := expandedStore(target)
@@ -219,7 +219,7 @@ func cmdIntentClaim(c *cliRun) (any, error) {
 			return nil, err
 		}
 	}
-	published, err := PublishClaim(root, workspace, assignment, c.s("--session"), dispatch, c.opt("--first-turn"), c.clock.ISO())
+	published, err := PublishClaim(c.ctx, root, workspace, assignment, c.s("--session"), dispatch, c.opt("--first-turn"), c.clock.ISO())
 	if err != nil {
 		return nil, err
 	}
@@ -227,7 +227,11 @@ func cmdIntentClaim(c *cliRun) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	facts, unreadable := ReadAssignment(directory)
+	facts, unreadable := ReadAssignment(c.ctx, directory)
+	if err := c.ctx.Err(); err != nil {
+		// A marker a stop left unread is not a marker that cannot be read whole: the claim is not reported as recorded or not.
+		return nil, err
+	}
 	session := fieldOf(published, "sessionId")
 	var standing Obj
 	claims, _ := fieldOf(facts, "claims").([]any)
@@ -290,14 +294,14 @@ func cmdIntentDisposition(c *cliRun) (any, error) {
 	var unreadableBefore []string
 	directory, err := AssignmentDir(root, workspace, assignment)
 	if err == nil {
-		before, unreadableBefore = ReadAssignment(directory)
+		before, unreadableBefore = ReadAssignment(c.ctx, directory)
 	} else {
 		directory = ""
 	}
 	var published, record Obj
 	body := func(ctx context.Context, held *store.Store, heldPath string, problem Obj) error {
 		var err error
-		published, err = PublishDisposition(root, workspace, assignment, c.s("--session"), c.s("--turn"), c.s("--outcome"), c.clock.ISO())
+		published, err = PublishDisposition(c.ctx, root, workspace, assignment, c.s("--session"), c.s("--turn"), c.s("--outcome"), c.clock.ISO())
 		if err != nil {
 			return err
 		}
@@ -306,8 +310,11 @@ func cmdIntentDisposition(c *cliRun) (any, error) {
 				return err
 			}
 		}
-		facts, unreadable := ReadAssignment(directory)
-		standingValue, readable := ReadDisposition(directory, fieldOf(published, "sessionId"), fieldOf(published, "turnId"))
+		facts, unreadable := ReadAssignment(c.ctx, directory)
+		standingValue, readable := ReadDisposition(c.ctx, directory, fieldOf(published, "sessionId"), fieldOf(published, "turnId"))
+		if err := c.ctx.Err(); err != nil {
+			return err
+		}
 		standing, _ := standingValue.(Obj)
 		switch {
 		case slices.Contains(unreadable, "intent") || slices.Contains(unreadableBefore, "intent") || !readable || !truthy(standingValue) || malformedDisposition(standingValue) != "":
