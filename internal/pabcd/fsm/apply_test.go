@@ -196,6 +196,17 @@ func TestUnlockedFlag(t *testing.T) {
 	}
 }
 
+// The oracle's spread shares what it does not change with its input, and so does the port (package doc): a caller that persists the
+// result must not see a copy of the tracker or the slices.
+func TestResultsShareSlicesAndPointersWithTheInput(t *testing.T) {
+	s := at(pP, state.Flags{})
+	s.InjectedTurns, s.Interview = []string{"x"}, readyTracker()
+	for _, got := range []state.State{ClearedIdle(s), *apply(s, VerbA, nil).State} {
+		eq(t, &got.InjectedTurns[0], &s.InjectedTurns[0], "injectedTurns shared")
+		eq(t, got.Interview, s.Interview, "interview shared")
+	}
+}
+
 func TestApplyHumanTransitionStampsTheLedgerWithTheCurrentTime(t *testing.T) {
 	r := ApplyHumanTransition(at(pP, state.Flags{}), VerbA, nil)
 	if r.Ledger == nil {
