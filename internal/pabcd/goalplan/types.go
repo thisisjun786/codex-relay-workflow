@@ -1,6 +1,6 @@
 // Package goalplan is the Go form of the goalplan record of CXC v0.2.40 pabcd-state/src/goalplan.ts (commit 3c1459ac): the
 // plan a loop keeps at .crw/goalplans/<slug>/goalplan.json beside its ledger. types.go holds the record types and constants
-// (goalplan.ts:34-291); revive.go the strict revival of the sub-records of a stored plan (:333-467): review rounds, their
+// (goalplan.ts:42-291); revive.go the strict revival of the sub-records of a stored plan (:333-467): review rounds, their
 // lanes and plan-file lists, source identities and the final gate. The slug rules, the plan revival that calls these
 // functions, reads, writes, locks and the rest of the file belong to later issues.
 //
@@ -17,7 +17,7 @@ package goalplan
 
 import "github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 
-// The files of a plan under .crw/goalplans/<slug>/ (goalplan.ts:40-44; the directory is crwdir.DirName/GoalplansSubdir/<slug>).
+// The files of a plan under .crw/goalplans/<slug>/ (goalplan.ts:42-46; the directory is crwdir.DirName/GoalplansSubdir/<slug>).
 const (
 	GoalplansSubdir       = "goalplans"
 	GoalplanFile          = "goalplan.json"
@@ -319,12 +319,12 @@ const (
 )
 
 // GoalplanLedgerEntry is one row of the append-only ledger. RoundID and LaunchID say which round a row is about, so a reader
-// filters by round rather than parsing Detail; they are absent on a row that is not about a round.
+// filters by round rather than parsing Detail; they are absent (nil) on a row that is not about a round, and an empty text is kept.
 type GoalplanLedgerEntry struct {
 	Ts       string              `json:"ts"`
 	Slug     string              `json:"slug"`
 	Event    GoalplanLedgerEvent `json:"event"`
 	Detail   string              `json:"detail"`
-	RoundID  string              `json:"roundId,omitempty"`
-	LaunchID string              `json:"launchId,omitempty"`
+	RoundID  *string             `json:"roundId,omitempty"`
+	LaunchID *string             `json:"launchId,omitempty"`
 }
