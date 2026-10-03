@@ -818,6 +818,20 @@ In a DAG-managed project the node is accepted (`dag-ready` reads it `done:accept
 
 **A node found already in this state** (the pull request merged and the mark on the later generation, `dag-integration-observe` answering `is_ancestor` true, `integrated` false, `mark_present` false, the node holding its slot) needs only steps 4 and 6. Check the commits first: `git -C <checkout> fetch origin`, then call step 4 without `--resolved`; the refusal, if the chain has a hand resolution, names the files to read. The relay's own settling then closes the relationship (`relationship-close-merged`), as it does for any merged relationship whose plan node has an acceptance of the marked head, which a recorded refresh gives it.
 
+### A generation opened by hand and never sent
+
+The verdict `verified` was given, the base moved before `dag-accept`, and the parent opened the next generation by hand for the child to merge it, then refreshed the branch itself ([above](#refresh-the-base-yourself-when-only-the-base-moved)) and never sent the instruction line. The relationship now stands on a generation that holds nothing, and no route takes the node: `dag-accept` refuses `stale_generation` ("generation N of R is not recorded as an execution of the node"), `dag-correct` says the result is not stale, a second ruling is refused because the event is not the head of the current generation, `dag-base-refresh` needs an acceptance, and `assignment-mark --expected-event` the event you ruled is refused `revision_ambiguous` because the current generation has no report. `dag-generation-withdraw` closes the generation, puts the relationship back on the one before it, and the node goes on as if it had not been opened. The rule and its refusals are in `docs/relay/dag-scheduler.md`, "A generation opened by hand and never sent".
+
+1. **Check the premise.** `assignment-show --relationship <rel>` shows the relationship on generation N with no report in it, and the event you ruled `verified` is in generation N-1. The instruction line for generation N reached the child in no message, and no turn was bound with `generation-bind`. If the child may have been told, do not withdraw: bind the turn that carried the instruction and take the child's report in that generation, because a withdrawn generation can never be bound and a report in it is refused.
+2. **Withdraw it.** From the parent that owns the node:
+
+       codex-session-relay --state "$RELAY_STATE" dag-generation-withdraw --plan <plan> --node <node> \
+         --actor <the parent's task id> --generation <N> --reason '<why it was opened and why it was never sent>' --expect-epoch <the epoch you hold>
+
+   The answer carries `withdrawn_generation`, `restored_generation` (N-1 unless an earlier generation was withdrawn too), `dispatch_request_id` and `replayed`. A refusal `disposition_conflict` names what the relay found: the generation is bound to a dispatch turn, carries an event, had a turn admitted, was opened by a `needs_changes` ruling or was recorded as an execution of the node; it was used, and nothing was written. `stale_generation` says N is not the generation the relationship stands on. Calling again with the same facts is a replay. The generation's number is spent: the next generation takes N+1, never N.
+3. **Read it back.** `assignment-show --relationship <rel>` names generation N-1 and the event you ruled as the head, `verified` again.
+4. **Go on as for any verified report:** if the branch still has to take the base, refresh it yourself as above; `dag-accept` (it reads the pull request at the head the branch has now); `dag-merge-request` and the merge lane; `assignment-mark --mark merged --expected-event <the event of generation N-1>`; `dag-integration-observe`, which reads the node integrated and returns its slot. A node accepted before the generation was opened takes step 2 and keeps its acceptance.
+
 ## Hold the turn only while you can use it
 
 Parents under one supervision land on the same base ref, so the turn on that target

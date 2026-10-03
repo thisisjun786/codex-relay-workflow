@@ -140,7 +140,7 @@ func TestAnUnsentGenerationLeavesNoRouteButTheWithdrawal(t *testing.T) {
 	rows := k.rows()
 	ctx := context.Background()
 
-	if _, err := k.accept(); refusalReason(err) != "stale_generation" || !strings.Contains(err.Error(), "is not recorded as an execution of I") {
+	if _, err := k.accept(); refusalReason(err) != "stale_generation" || !strings.Contains(err.Error(), "is not recorded as an execution of I") || !strings.Contains(err.Error(), "dag-generation-withdraw") {
 		t.Fatalf("dag-accept = %v, want stale_generation: generation 2 is not recorded as an execution", err)
 	}
 	if _, err := k.sched.RecordCorrection(ctx, "g", "I", "parent", ""); refusalReason(err) != "disposition_conflict" || !strings.Contains(err.Error(), "is not stale") {
