@@ -141,7 +141,7 @@ func (s *Service) unansweredGrant(ctx context.Context, r store.MergeTurnsRow, ac
 	if !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
-	return coordination(r, contract.RefusalMergeTurnNotHeld, "turn "+pyvalue.StrRepr(r.TurnID)+" was granted "+pyvalue.StrRepr(current)+" and has not acknowledged it, so nothing records that this candidate was re-checked against the store rather than against what its holder remembers. Acknowledge the grant, then merge", current, actor), nil
+	return coordination(r, contract.RefusalMergeTurnNotHeld, "turn "+pyvalue.StrRepr(r.TurnID)+" was granted "+pyvalue.StrRepr(current)+" and has not acknowledged it, so nothing records that this candidate was re-checked against the store rather than against what its holder remembers. Acknowledge the grant with merge-turn-acknowledge --turn "+r.TurnID+" --actor "+actor+" --grant "+current+" --evidence <what you read>, then check again", current, actor), nil
 }
 
 // latestLanding is MergeTurn._latest_landing_in: the landed turn whose recorded base the next
