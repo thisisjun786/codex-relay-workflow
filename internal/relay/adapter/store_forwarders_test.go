@@ -10,10 +10,10 @@ import (
 // earlier forwarders; the product calls the store directly (decision 52).
 
 func VerifyFrozenDetailed(reference string, entries []Entry) (string, []string, []string, error) {
-	return store.VerifyFrozenDetailed(reference, entries)
+	return store.VerifyFrozenDetailed(context.Background(), reference, entries)
 }
 func VerifyFrozen(reference string, entries []Entry) (string, []string, error) {
-	digest, problems, _, err := store.VerifyFrozenDetailed(reference, entries)
+	digest, problems, _, err := store.VerifyFrozenDetailed(context.Background(), reference, entries)
 	return digest, problems, err
 }
 

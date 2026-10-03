@@ -91,7 +91,7 @@ func TestFreezeAndVerifyResolveTheDestinationAsTheFenceDoes(t *testing.T) {
 		if err := FreezeManifest(entries, reference); err != nil {
 			t.Fatalf("freeze through a symlinked directory: %v", err)
 		}
-		if problems, err := VerifyFrozen(reference, entries); err != nil || len(problems) != 0 {
+		if problems, err := VerifyFrozen(context.Background(), reference, entries); err != nil || len(problems) != 0 {
 			t.Fatalf("verify through a symlinked directory: %v %v", problems, err)
 		}
 	})
@@ -100,7 +100,7 @@ func TestFreezeAndVerifyResolveTheDestinationAsTheFenceDoes(t *testing.T) {
 		if err := FreezeManifest(entries, "frozenrel"); err != nil {
 			t.Fatalf("freeze to a relative destination: %v", err)
 		}
-		if problems, err := VerifyFrozen("frozenrel", entries); err != nil || len(problems) != 0 {
+		if problems, err := VerifyFrozen(context.Background(), "frozenrel", entries); err != nil || len(problems) != 0 {
 			t.Fatalf("verify a relative reference: %v %v", problems, err)
 		}
 	})
@@ -124,11 +124,11 @@ func TestFreezeAndVerifyResolveTheDestinationAsTheFenceDoes(t *testing.T) {
 		if _, err := os.Lstat(filepath.Join(base, "frozen")); !os.IsNotExist(err) {
 			t.Fatalf("a frozen copy was written at the lexical parent: %v", err)
 		}
-		if problems, err := VerifyFrozen(reference, entries); err != nil || len(problems) != 0 {
+		if problems, err := VerifyFrozen(context.Background(), reference, entries); err != nil || len(problems) != 0 {
 			t.Fatalf("verify through a symlink's parent: %v %v", problems, err)
 		}
 		// The copy the lexical parent would name is not the one verified.
-		if problems, err := VerifyFrozen(base+"/elsewhere/../frozen", entries); err != nil || len(problems) != 1 || !strings.HasSuffix(problems[0], ": no MANIFEST.json in the frozen copy") {
+		if problems, err := VerifyFrozen(context.Background(), base+"/elsewhere/../frozen", entries); err != nil || len(problems) != 1 || !strings.HasSuffix(problems[0], ": no MANIFEST.json in the frozen copy") {
 			t.Fatalf("verify through a missing directory's parent: %v %v", problems, err)
 		}
 	})

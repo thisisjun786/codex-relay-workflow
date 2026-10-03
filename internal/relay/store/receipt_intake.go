@@ -187,7 +187,7 @@ func (in ReceiptIntake) verifyBytes(ctx context.Context, entries []ManifestEntry
 	if len(problems) > 0 && manifestRef != nil {
 		// A frozen copy that is not a manifest raises in the fence, as it does here: a refusal
 		// only when it is one (a relative path in it), otherwise the host error it is.
-		frozen, err := VerifyFrozen(*manifestRef, entries)
+		frozen, err := VerifyFrozen(ctx, *manifestRef, entries)
 		if err != nil {
 			return "", err
 		}

@@ -129,11 +129,11 @@ func TestWP1_python_non_regular_and_frozen_artifacts(t *testing.T) {
 		if err := FreezeManifest(entries, reference); err != nil {
 			t.Fatal(err)
 		}
-		if problems, err := VerifyFrozen(reference, entries); err != nil || len(problems) != 0 {
+		if problems, err := VerifyFrozen(context.Background(), reference, entries); err != nil || len(problems) != 0 {
 			t.Fatalf("honest sizes refused: %v %v", problems, err)
 		}
 		wrong := *entries[0].Bytes + 5
-		if problems, err := VerifyFrozen(reference, []ManifestEntry{{Path: entries[0].Path, SHA256: entries[0].SHA256, Bytes: &wrong}}); err != nil || len(problems) == 0 {
+		if problems, err := VerifyFrozen(context.Background(), reference, []ManifestEntry{{Path: entries[0].Path, SHA256: entries[0].SHA256, Bytes: &wrong}}); err != nil || len(problems) == 0 {
 			t.Fatalf("a wrong byte count verified: %v", err)
 		}
 	})

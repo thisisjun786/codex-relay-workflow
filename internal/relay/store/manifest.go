@@ -171,7 +171,7 @@ func ReadFrozenBlob(ctx context.Context, reference, digest string) (string, int6
 // so every branch answers as the fence's two-value form does, including the exception it raises
 // for a frozen copy that was reached and is not a manifest (ManifestException, or a RefusedError
 // for the ScopeError of a frozen record revision_hash will not hash).
-func VerifyFrozen(reference string, entries []ManifestEntry) ([]string, error) {
-	_, problems, _, err := VerifyFrozenDetailed(reference, entries)
+func VerifyFrozen(ctx context.Context, reference string, entries []ManifestEntry) ([]string, error) {
+	_, problems, _, err := VerifyFrozenDetailed(ctx, reference, entries)
 	return problems, err
 }

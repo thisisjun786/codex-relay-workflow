@@ -116,7 +116,7 @@ func (s *Scheduler) checkArtifacts(ctx context.Context, q store.Querier, accepta
 		for i, e := range entries {
 			declared[i] = store.ManifestEntry{Path: e.Path, SHA256: e.SHA256, Bytes: e.Bytes}
 		}
-		_, problems, _, err := store.VerifyFrozenDetailed(ref, declared)
+		_, problems, _, err := store.VerifyFrozenDetailed(ctx, ref, declared)
 		switch {
 		case err != nil:
 			return &BlockedFinding{"B-17", BlockedInputMissing, "the frozen copy of the manifest, " + ref + ", cannot be read: " + err.Error()}, nil, nil

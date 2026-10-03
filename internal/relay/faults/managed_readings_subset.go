@@ -377,7 +377,7 @@ func managedReceipt(ctx context.Context, db *store.ReadOnly, rid string, generat
 		return true, true, nil
 	}
 	if head.frozen.Valid {
-		if problems, err := store.VerifyFrozen(head.frozen.String, payload.Manifest); err == nil && len(problems) == 0 {
+		if problems, err := store.VerifyFrozen(ctx, head.frozen.String, payload.Manifest); err == nil && len(problems) == 0 {
 			return true, true, nil
 		}
 	}
