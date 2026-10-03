@@ -207,6 +207,8 @@ func (w badHookWriter) Write([]byte) (int, error) {
 }
 
 func TestBgRunHookThresholdFallbackAndErrors(t *testing.T) {
+	base := `{"session_id":"X","x":""}`
+	atAstral := `{"session_id":"X","x":"` + strings.Repeat("😀", (MaxHookUnits-len(base))/2) + `"}`
 	for _, c := range []struct {
 		name  string
 		in    io.Reader
@@ -216,6 +218,7 @@ func TestBgRunHookThresholdFallbackAndErrors(t *testing.T) {
 		{"over-ascii", strings.NewReader(strings.Repeat(" ", 1<<20) + `{"session_id":"X"}`), true},
 		{"bmp", strings.NewReader(`{"cwd":"` + strings.Repeat("한", 1<<19) + `","session_id":"X"}`), false},
 		{"astral-over", strings.NewReader(`{"cwd":"` + strings.Repeat("😀", 1<<19) + `","session_id":"X"}`), true},
+		{"astral-at", strings.NewReader(atAstral), false},
 		{"harness-over", strings.NewReader(strings.Repeat("x", harness.MaxStdinBytes+1)), true},
 		{"read-error", badHookReader{}, true}, {"panic-reader", badHookReader{true}, false},
 	} {
@@ -245,6 +248,65 @@ func TestBgRunHookThresholdFallbackAndErrors(t *testing.T) {
 	hookDone(t, ws, "clock", "S1")
 	if HandleStop(HookPayload{SessionID: "S1"}, ws, hookEnv(nil), func() time.Time { panic("clock") }) != "" || HandleSessionStart(HookPayload{}, ws, func(string) string { panic("env") }, noon) != "" {
 		t.Fatal("handler panic escaped")
+	}
+}
+
+// The CLI corpus has no frozen clock. This drives the same recorded exit case
+// through RunHook's clock seam, without changing the recorded fixture or runtime.
+func TestBgRunHookRecordedReconciliationWithDrivenClock(t *testing.T) {
+	var fixture struct {
+		Given struct {
+			JSON  map[string]json.RawMessage `json:"json"`
+			Files map[string]string          `json:"files"`
+		}
+		Expect struct {
+			Steps []struct {
+				Output map[string]any `json:"stdout_json"`
+			}
+		}
+	}
+	raw := get(t, "../../../contract/fixtures/cxc/hook__stop-waking-on-background-completion__running_record_reconciled_from_exit_file.json")
+	if err := json.Unmarshal([]byte(raw), &fixture); err != nil {
+		t.Fatal(err)
+	}
+	ws := workspace(t)
+	for p, raw := range fixture.Given.JSON {
+		put(t, filepath.Join(ws, ".crw", strings.TrimPrefix(p, "ws/.codexclaw/")), strings.ReplaceAll(string(raw), "${WS}", ws))
+	}
+	for p, body := range fixture.Given.Files {
+		put(t, filepath.Join(ws, ".crw", strings.TrimPrefix(p, "ws/.codexclaw/")), body)
+	}
+	var out strings.Builder
+	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
+	lookup := func(string) (string, bool) { return "", false }
+	if RunHook(context.Background(), "stop", strings.NewReader(`{"session_id":"rec-s1"}`), &out, lookup, ws, clock) != 0 {
+		t.Fatal("hook failed")
+	}
+	want := fixture.Expect.Steps[0].Output["reason"].(string)
+	want = strings.ReplaceAll(strings.ReplaceAll(want, "[codexclaw bg]", "[crw bg]"), "cxc bg", "crw relay job")
+	if got := hookJSON(t, out.String())["reason"]; got != want {
+		t.Fatalf("recorded reason %q want %q", got, want)
+	}
+	if r, ok := ReadRecord(ws, "build2"); !ok || r.Status != StatusFailed || r.ExitCode == nil || *r.ExitCode != 3 || r.EndedAt == nil || *r.EndedAt != "2026-01-01T00:00:00.000Z" || r.DeliveredAt == nil {
+		t.Fatalf("recorded transition: %+v", r)
+	}
+}
+
+func TestBgHookRegistryWriteFailureDoesNotFailClosed(t *testing.T) {
+	ws := workspace(t)
+	hookDone(t, ws, "unwritable", "GONE")
+	if err := os.Chmod(BGDir(ws), 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(BGDir(ws), 0o755) })
+	if out := HandleSessionStart(HookPayload{SessionID: "S2"}, ws, hookEnv(nil), noon); out != "" {
+		t.Fatal("failed adoption injected context")
+	}
+	if out := HandleStop(HookPayload{SessionID: "GONE"}, ws, hookEnv(nil), noon); !strings.Contains(out, "unwritable") {
+		t.Fatal("failed stamp hid the selected completion")
+	}
+	if r, _ := ReadRecord(ws, "unwritable"); r.AdoptedBy != nil || r.DeliveredAt != nil {
+		t.Fatal("failed write changed record")
 	}
 }
 

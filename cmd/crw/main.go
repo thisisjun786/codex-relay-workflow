@@ -153,6 +153,9 @@ func modes() []mode {
 		{"relay", true, func(c invocation) int { return relay(c.ctx, "crw relay", c.args, c.stdout, c.stderr) }},
 		{"bridge", true, func(c invocation) int { return bridge(c.ctx, c.program, c.args) }},
 		{"hook", true, func(c invocation) int {
+			if claimed, code := runComponentHook(c, os.Stdin, componentHooks()); claimed {
+				return code
+			}
 			if harness.ClaimsHook(c.args) {
 				return harness.Hook(c.ctx, c.args, os.Stdin, c.stdout, c.stderr, os.LookupEnv, harness.Legs())
 			}
