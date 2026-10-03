@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -55,7 +56,10 @@ func parseFlockRows(raw string) []lockRow {
 	return rows
 }
 
-// flockRows reads one snapshot of the system's flocks.
+// flockRows reads one snapshot of the system's flocks. The snapshot is not atomic: /proc/locks is produced a
+// page at a time and every read(2) resumes at a position in the kernel's lock list, so a lock taken or released
+// anywhere on the machine between two reads makes a line appear twice or not at all. What a snapshot shows is
+// therefore read by observeSidecar, and looked at again by awaitBlockedWaiter, never trusted once.
 func flockRows() ([]lockRow, error) {
 	raw, err := os.ReadFile("/proc/locks")
 	if err != nil {
@@ -66,14 +70,17 @@ func flockRows() ([]lockRow, error) {
 
 // sidecarView is what one snapshot shows about the flock this process holds on the sidecar.
 type sidecarView struct {
-	held    []string  // the files with the sidecar's inode number that this process holds a flock on, as /proc/locks names them, one per row
+	held    []string  // the distinct files with the sidecar's inode number that this process holds a flock on, as /proc/locks names them
 	blocked bool      // a request of this process is blocked behind the lock it holds on the only such file
 	own     []lockRow // every flock row of this process in the snapshot, for failure messages
 }
 
 // observeSidecar reads what rows show about the lock pid holds on the file with inode number ino. The inode
 // and the process pick the holder's line out of the system's locks, and the name it prints, device included,
-// is what the waiter's line must match, so a request blocked on another file never counts.
+// is what the waiter's line must match, so a request blocked on another file never counts. A line printed
+// twice names the same file and counts once. Two different files with that inode number held by this process
+// (possible only on two devices) leave the waiter unattributed: this process holds no other flock while the
+// test runs, so the case is refused rather than guessed.
 func observeSidecar(rows []lockRow, pid string, ino uint64) sidecarView {
 	suffix := ":" + strconv.FormatUint(ino, 10)
 	var view sidecarView
@@ -82,7 +89,7 @@ func observeSidecar(rows []lockRow, pid string, ino uint64) sidecarView {
 			continue
 		}
 		view.own = append(view.own, row)
-		if !row.blocked && strings.HasSuffix(row.file, suffix) {
+		if !row.blocked && strings.HasSuffix(row.file, suffix) && !slices.Contains(view.held, row.file) {
 			view.held = append(view.held, row.file)
 		}
 	}
@@ -102,36 +109,50 @@ func errWaiterReturned(e error) error {
 	return fmt.Errorf("WithLedgerLock returned (%v) while another holder still held the sidecar lock", e)
 }
 
+// rowsText prints flock rows for failure messages.
+func rowsText(rows []lockRow) string {
+	var parts []string
+	for _, row := range rows {
+		arrow := ""
+		if row.blocked {
+			arrow = "-> "
+		}
+		parts = append(parts, arrow+row.file)
+	}
+	return "[" + strings.Join(parts, " ") + "]"
+}
+
 // awaitBlockedWaiter returns nil once a snapshot shows the waiter blocked behind the holder's lock on the file
 // with inode number ino, and an error when the waiter returns first, when snapshot fails, or when bound passes
-// without that sight. The first snapshot must list the holder.
+// without that sight. A snapshot may be torn (see flockRows), so one that lacks the holder or the waiter only
+// means "not seen yet": the loop asks again every tick, and a blocked request seen in any snapshot is proof,
+// because it stays blocked until the test's holder lets go.
 func awaitBlockedWaiter(snapshot func() ([]lockRow, error), pid string, ino uint64, bound, tick time.Duration, done <-chan error) error {
-	rows, err := snapshot()
-	if err != nil {
-		return fmt.Errorf("cannot observe the waiter: %w", err)
-	}
-	view := observeSidecar(rows, pid, ino)
-	if len(view.held) != 1 {
-		return fmt.Errorf("cannot observe the waiter: /proc/locks lists %d flocks held by pid %s on inode %d, want the holder's one", len(view.held), pid, ino)
-	}
 	deadline := time.NewTimer(bound)
 	defer deadline.Stop()
 	poll := time.NewTicker(tick)
 	defer poll.Stop()
+	var last sidecarView
+	holderListed := false
 	for {
+		rows, err := snapshot()
+		if err != nil {
+			return fmt.Errorf("cannot observe the waiter: %w", err)
+		}
+		last = observeSidecar(rows, pid, ino)
+		holderListed = holderListed || len(last.held) > 0
+		if last.blocked {
+			return nil
+		}
 		select {
 		case e := <-done:
 			return errWaiterReturned(e)
 		case <-deadline.C:
-			return fmt.Errorf("no request blocked behind the sidecar lock (%s) was listed in /proc/locks within %v: WithLedgerLock did not wait for its holder", view.held[0], bound)
+			if !holderListed {
+				return fmt.Errorf("cannot observe the waiter: /proc/locks never listed a flock held by pid %s on inode %d within %v (this process's flock rows in the last snapshot: %s)", pid, ino, bound, rowsText(last.own))
+			}
+			return fmt.Errorf("no request blocked behind the sidecar lock was listed in /proc/locks within %v: WithLedgerLock did not wait for its holder, or never ran (held %v; this process's flock rows in the last snapshot: %s)", bound, last.held, rowsText(last.own))
 		case <-poll.C:
-			rows, err := snapshot()
-			if err != nil {
-				return fmt.Errorf("cannot observe the waiter: %w", err)
-			}
-			if observeSidecar(rows, pid, ino).blocked {
-				return nil
-			}
 		}
 	}
 }

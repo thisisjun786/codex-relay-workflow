@@ -60,6 +60,12 @@ func TestObserveSidecar(t *testing.T) {
 		{"two held files of that inode number, the waiter behind the second", snapshotOf(
 			flockLine(1, false, thisPid, sidecarFile), flockLine(2, false, thisPid, otherDevice), flockLine(2, true, thisPid, otherDevice)),
 			[]string{sidecarFile, otherDevice}, false},
+		// One snapshot of the unmodified test's failure run: a read that resumed at a shifted list position
+		// printed the holder's line, and the waiter behind it, twice.
+		{"the holder's line repeated by a torn read", snapshotOf(
+			flockLine(46, false, thisPid, sidecarFile), flockLine(46, true, thisPid, sidecarFile),
+			flockLine(47, false, thisPid, sidecarFile), flockLine(47, true, thisPid, sidecarFile)),
+			[]string{sidecarFile}, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -98,6 +104,20 @@ func TestAwaitBlockedWaiter(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
+	t.Run("a holder's line repeated by a torn read is not a failure", func(t *testing.T) {
+		torn := snapshotOf(
+			flockLine(46, false, thisPid, sidecarFile), flockLine(46, true, thisPid, sidecarFile),
+			flockLine(47, false, thisPid, sidecarFile), flockLine(47, true, thisPid, sidecarFile))
+		if err := await(procSequence(torn), 5*time.Second, nil); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("a holder's line missing from one snapshot is looked for again", func(t *testing.T) {
+		skipped := snapshotOf(flockLine(1, false, otherPid, "fc:00:99"))
+		if err := await(procSequence(skipped, skipped, holderAndWaiter), 5*time.Second, nil); err != nil {
+			t.Fatal(err)
+		}
+	})
 	t.Run("the waiter is seen blocked on a later snapshot", func(t *testing.T) {
 		if err := await(procSequence(holderOnly, holderOnly, holderAndWaiter), 5*time.Second, nil); err != nil {
 			t.Fatal(err)
@@ -110,6 +130,10 @@ func TestAwaitBlockedWaiter(t *testing.T) {
 	})
 	t.Run("no waiter in time fails", func(t *testing.T) {
 		failure(t, await(procSequence(holderOnly), 30*time.Millisecond, nil), "no request blocked behind the sidecar lock")
+	})
+	t.Run("a holder never listed fails and says so", func(t *testing.T) {
+		skipped := snapshotOf(flockLine(1, false, otherPid, "fc:00:99"))
+		failure(t, await(procSequence(skipped), 30*time.Millisecond, nil), "never listed a flock held by pid 4242 on inode 2518176")
 	})
 	t.Run("an unreadable /proc/locks fails", func(t *testing.T) {
 		unreadable := func() ([]lockRow, error) { return nil, errors.New("read failed") }
