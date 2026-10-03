@@ -31,6 +31,7 @@ func init() {
 		dispatch.Command{Name: "dag-accept", Run: runAccept},
 		dispatch.Command{Name: "dag-integration-observe", Run: runObserve},
 		dispatch.Command{Name: "dag-base-refresh", Run: runBaseRefresh},
+		dispatch.Command{Name: "dag-generation-withdraw", Run: runWithdraw},
 		dispatch.Command{Name: "dag-decision-record", Run: runDecision},
 		dispatch.Command{Name: "dag-correct", Run: runCorrect},
 		dispatch.Command{Name: "dag-merge-judge", Run: runMergeJudge},
@@ -329,6 +330,21 @@ func runBaseRefresh(ctx context.Context, services dispatch.Services, args dispat
 		{Key: "acceptance_id", Value: result.AcceptanceID}, {Key: "refresh_id", Value: result.RefreshID}, {Key: "refresh_seq", Value: result.Seq}, {Key: "relationship_id", Value: result.RelationshipID},
 		{Key: "execution_generation", Value: result.Generation}, {Key: "event_id", Value: result.EventID}, {Key: "head_sha", Value: result.HeadSHA}, {Key: "base_repository", Value: result.BaseRepository},
 		{Key: "base_ref", Value: result.BaseRef}, {Key: "base_tip_sha", Value: result.BaseTipSHA}, {Key: "steps", Value: steps}, {Key: "resolved_paths", Value: paths}, {Key: "replayed", Value: result.Replayed}}, nil
+}
+
+func runWithdraw(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
+	sched, closeStore, err := openScheduler(ctx, services, args)
+	if err != nil {
+		return nil, err
+	}
+	defer closeStore()
+	result, err := sched.WithdrawGeneration(ctx, args.Text("plan"), args.Text("node"), args.Text("actor"), WithdrawInput{Relationship: args.Text("relationship"), Generation: args.Integer("generation"), Reason: args.Text("reason")})
+	if err != nil {
+		return nil, hostFailure(err)
+	}
+	return contract.OrderedObject{{Key: "ok", Value: true}, {Key: "schema", Value: SchemaWithdraw}, {Key: "plan_id", Value: result.PlanID}, {Key: "node_id", Value: result.NodeID},
+		{Key: "relationship_id", Value: result.RelationshipID}, {Key: "withdrawn_generation", Value: result.Generation}, {Key: "restored_generation", Value: result.RestoredGeneration},
+		{Key: "dispatch_request_id", Value: result.DispatchRequestID}, {Key: "reason", Value: result.Reason}, {Key: "replayed", Value: result.Replayed}}, nil
 }
 
 func runDecision(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {

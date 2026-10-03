@@ -676,7 +676,27 @@ BEGIN SELECT RAISE(ABORT, 'dag_base_refreshes rows are append-only: never delete
     PRIMARY KEY (plan_id, pass_seq),
     FOREIGN KEY (plan_id, pass_seq) REFERENCES dag_passes (plan_id, pass_seq)
 )`,
-
+	// CRW-446: the withdrawal of a generation the coordinator opened by hand and never bound or sent to the child. The generations row stays (a number is never reused: the next generation takes the number
+	// after the highest one the relationship ever held); this record says the generation is closed and which generation the relationship stands on again. It is append-only, one row per withdrawn generation.
+	`CREATE TABLE IF NOT EXISTS dag_generation_withdrawals (
+    relationship_id      TEXT NOT NULL CHECK (relationship_id <> ''),
+    execution_generation INTEGER NOT NULL CHECK (execution_generation >= 2),
+    plan_id              TEXT NOT NULL REFERENCES dag_plans (plan_id),
+    node_id              TEXT NOT NULL CHECK (node_id <> ''),
+    dispatch_request_id  TEXT NOT NULL CHECK (dispatch_request_id <> ''),
+    opened_reason        TEXT NOT NULL,
+    restored_generation  INTEGER NOT NULL CHECK (restored_generation >= 1),
+    reason               TEXT NOT NULL CHECK (reason <> ''),
+    withdrawn_by_task_id TEXT NOT NULL CHECK (withdrawn_by_task_id <> ''),
+    coordinator_epoch    INTEGER NOT NULL DEFAULT 0 CHECK (coordinator_epoch >= 0),
+    withdrawn_at         TEXT NOT NULL,
+    PRIMARY KEY (relationship_id, execution_generation),
+    CHECK (restored_generation < execution_generation)
+)`,
+	`CREATE TRIGGER IF NOT EXISTS dag_generation_withdrawals_no_update BEFORE UPDATE ON dag_generation_withdrawals
+BEGIN SELECT RAISE(ABORT, 'dag_generation_withdrawals rows are append-only: never updated'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_generation_withdrawals_no_delete BEFORE DELETE ON dag_generation_withdrawals
+BEGIN SELECT RAISE(ABORT, 'dag_generation_withdrawals rows are append-only: never deleted'); END`,
 	// CRW-468: the host memory bound a recorded pass saw (dag-ready --record), a side table because a shipped statement is never edited and dag_passes.deciding_limit has a CHECK of four values: state is the
 	// verdict (within, deferring, unmeasured), reading_limit the limit the reading decided by (host_memory among the five), host_json the object pass.host_memory prints (the sample, the limits and where they
 	// came from). A row exists for every recorded pass of a scheduler that carried the bound.
