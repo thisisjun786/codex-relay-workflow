@@ -653,14 +653,15 @@ Language: English for everything you write (messages, commits, pull request titl
 
 DELIVERABLE
 - <the pull request: non-draft, English title ISSUE-ID: <short English summary>, a non-empty body>
-- <the handoff record and the completion receipt over it>
+- <the handoff record and the completion receipt over it, and a final return that states what `Return:` lists: task id, baseline and
+  final head, model and effort as observed, goal ids, per-criterion evidence, remaining defects>
 - <the criteria, numbered, each the thing the pull request must show>
 
 SCOPE
 - <the edit surfaces, what is out of scope, shared contracts>
-- <baseline commit, worktree, branch, evidence root, prerequisites>
+- <baseline commit, worktree, branch, evidence root, prerequisites; the project instructions and source to read first>
 - <host values: a short TMPDIR with the socket limit stated, build cache, load limits, relay ids, which reviewers apply>
-- <the delivery contract by id: OPS-5.5 and OPS-9 in operations.md>
+- <the publication scope (push the task branch and open the pull request, or none) and the delivery contract by id: OPS-5.5 and OPS-9 in operations.md>
 
 VERIFY
 - <commands confirmed to exist at the baseline, the acceptance example, the data boundary>
@@ -685,7 +686,7 @@ Each of the twelve fields of [First full assignment required fields](#first-full
 | Issue scope: `Task:`, `Issue/PR mapping:`, `Outcome and scope:` | TASK, and SCOPE for the surfaces and exclusions |
 | Verification boundary: `Verification:` | VERIFY, including the rule that every named command was confirmed at the baseline |
 | Handoff and completion boundary: `Return:`, the delivery contract | DELIVERABLE and STOP WHEN Done |
-| Publication scope: `Delivery:` and the publication bullet | DELIVERABLE and invariant 4 |
+| Publication scope: `Delivery:` and the publication bullet | SCOPE and invariant 4 |
 | Escalation route: the `blocked_needs_input` bullet | STOP WHEN Blocked |
 | Model and effort: `Effective model/effort:` | TASK `Model/effort:` |
 | Language: `Language:` | TASK `Language:` |
@@ -710,7 +711,7 @@ host values filled in.
    Source: `Workspace ownership:` (`Existing resources at dispatch`, `Your resources`, `Write capability`), the `Execution:` bullet
    "Work in the assigned existing worktree; preserve unrelated changes", and `Runtime/test data access:`.
 2. **Size.** Keep the change to about 1,035 lines or fewer, counting implementation, tests and docs and not testdata or
-   generated files, measured against the baseline commit with uncommitted work included (`git diff --numstat <baseline>`). If it
+   generated files, measured against the baseline commit with uncommitted work and new files included (`git add -N` them, then `git diff --numstat <baseline>`). If it
    will pass that, stop before going further and propose a split in a blocked handoff (what would land first, what would follow,
    and why); do not open a larger pull request.
 
@@ -727,13 +728,14 @@ host values filled in.
    Source: `Language:`, `Title:` and `Issue/PR mapping:` (one issue, one pull request), [Child task titles](#child-task-titles), and the
    pull request lines of `Return:`. The ban on other ids is new here: Linear's GitHub integration acts on any issue id it reads in
    this text, and a project id of the form P-<TEAM>-<number> contains one.
-4. **Delivery and base.** You own the commits, the push, the pull request (opened ready for review, not as a draft) and its review
-   cycle; the coordinator merges. Push your task branch only: no merge, force-push, rebase or tag, no push to the integration
+4. **Delivery and base.** Where SCOPE grants publication, you own the commits, the push, the pull request (opened ready for review,
+   not as a draft) and its review cycle, and the coordinator merges; where it does not, commit locally or return the frozen diff and say
+   which publication you did not perform. Push your task branch only: no merge, force-push, rebase or tag, no push to the integration
    branch, and no release, installation, service restart, Linear write or change to global settings. Do not chase the integration
    branch: merge it into your branch with a merge commit only when GitHub reports a conflict (record what you resolved), or when
    the coordinator's correction asks for a base refresh, which arrives as a new generation.
 
-   Source: the publication bullet of `Execution:` ("push your task branch and open the pull request ... never merge; no force-push,
+   Source: the `Delivery:` line and the publication bullet of `Execution:` ("push your task branch and open the pull request ... never merge; no force-push,
    no tag, no push to `dev` or `main`"), OPS-9.1 and OPS-9.3 in [Operations contract](operations.md), and the `Execution:` bullet
    on a correction that asks only for the base ([Refresh the base yourself when only the base moved](merge-readiness.md#refresh-the-base-yourself-when-only-the-base-moved)
    says why the coordinator refreshes only the candidate about to merge). The exception for a reported conflict is new here.
@@ -766,9 +768,10 @@ host values filled in.
    emit, with the anchor read from the relay's `status` for the relationship; if the emit is refused `unassigned_turn`, re-emit once with
    the anchor its detail names. Before re-emitting inside the same generation read the current revision (`revision-head` or
    `assignment-show`) and name it with `--supersedes-revision`; the first receipt of a new generation names none; every head gets a
-   new handoff file. Any other refusal: stop and report the receipt UNEMITTED with the exact refusal. Before acting on a correction or
-   resume packet, check it with `packet-check` and act only on an accepted answer whose `act` is true; once you have acted, record it
-   with `--applied`. Never message or steer the parent: the relay is the only route.
+   new handoff file. Any other refusal: stop and report the receipt UNEMITTED with the exact refusal. If the issue
+   lookup names a different owner, report that conflict and write nothing into that relationship. Before acting on the assignment, a
+   correction or a resume that arrives with a typed packet file, check it with `packet-check` (with your own `--observation` when the packet
+   names an artifact) and act only on an accepted answer whose `act` is true; once you have acted, record it with `--applied`. Never message or steer the parent: the relay is the only route.
 
    Source: the relay bullets of `Execution:` (`packet-check`, "emit your completion receipt", "know which turn your receipt is emitted
    from", the UNEMITTED and other-owner bullets, the `blocked_needs_input` bullet), [Completing on a later turn of the same
@@ -777,7 +780,8 @@ host values filled in.
    [codex-session-relay](relay.md) says what they record.
 7. **Processes and host load.** Stop only a process you started: by the pid you recorded, by a process group you created or through
    the handle the execution tool returned; never pick a target by pattern or name (no `pkill`, `killall` or `fuser -k`, no pid taken from
-   a `pgrep`, `ps` or `lsof` lookup). Record the pid of every long command or run it under `timeout`. A process you did not start is
+   a `pgrep`, `ps` or `lsof` lookup). Record the pid of every long command or run it under `timeout`, and confirm a recorded pid is still your process before you signal it,
+   because a pid is reused after its process exits. A process you did not start is
    reported with its pid and working directory and left running. Run heavy commands (the race detector, a large `-count`, a load
    reproduction) one at a time and only inside the host limits SCOPE states, with the build cache and the short `TMPDIR` it names.
 
@@ -797,9 +801,11 @@ STOP WHEN carries five principles in place of the Launch packet's longer rules a
 - After three failed attempts at the same thing, revert your own changes for it to the last good state and report it as blocked.
 - A stop condition you declared yourself, in your plan or your goal, binds you: acting beyond it is a defect.
 
-The first pairs with the escalation route and the publication sentence of `Execution:`. The other four have no counterpart in the
-Launch packet; they are the principles GPT-family agent prompts state plainly (the oh-my-openagent project's prompts for these
-models carry them), and they are why this form is short.
+The first three restate Launch packet rules in fewer words: the escalation route and the publication sentence of `Execution:`, its
+"own the delivery end to end" bullet (report once the head's checks and reviews have finished, not when the code is written), and "Do not
+absorb another issue into this task or PR" with "preserve unrelated changes". The last two, the revert after three failed attempts and the
+binding self-declared stop condition, have no counterpart in the Launch packet. All five are principles GPT-family agent prompts state
+plainly (the oh-my-openagent project's prompts for these models carry them), and they are why this form is short.
 
 ### Shared by both formats
 
@@ -847,7 +853,8 @@ SCOPE
 - Baseline <commit>; worktree <path> (already created); evidence root <path>; prerequisites none.
 - Host values: `TMPDIR=<short path>` (a Unix socket path stays under 108 bytes on Linux and 104 on macOS, and a test adds its own
   names); Go build cache <path>; heavy runs only with <the host limits>; reviewers: Devin and GitHub Codex.
-- Delivery contract: OPS-5.5 and OPS-9 in crw-run's `operations.md`; invariants 3 to 6 are their short form.
+- Publication: push the task branch and open the pull request; the coordinator merges. Delivery contract: OPS-5.5 and OPS-9 in crw-run's
+  `operations.md`; invariants 3 to 6 are their short form.
 
 VERIFY
 - `go test -count=1 -v ./internal/testsupport/storeseed/ ./internal/relay/adapter/` (the seed's only caller), `make lint`, `go vet ./...`,
@@ -860,7 +867,7 @@ STOP WHEN
 - Blocked: the size passes about 1,035 lines, an input mismatch, or anything you cannot clear under this assignment. Write the
   blocked file, emit blocked_needs_input and end the turn.
 - Do not stop to ask for permission or at a partial fix. No refactor or feature the TASK did not ask for. After three failed attempts at
-  the same thing, revert to the last good state and report. A stop condition you declared yourself is binding.
+  the same thing, revert your own changes for it to the last good state and report. A stop condition you declared yourself is binding.
 
 HARD INVARIANTS
 1 to 7, as listed above, with the host values of SCOPE filled in.
