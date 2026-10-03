@@ -110,7 +110,7 @@ func dSetPolicy(ctx context.Context, l *Ledger, a map[string]string) (any, error
 		return nil, e
 	}
 	if _, ok := classLookup(c); !ok || !dPythonClass(c) {
-		return nil, fmt.Errorf("fault_class_unregistered: '%s' is not a registered fault class, so nothing declares what would clear it", c)
+		return nil, fmt.Errorf("fault_class_unregistered: %q is not a registered fault class, so nothing declares what would clear it", c)
 	}
 	if s != Notice && s != Degraded && s != Broken {
 		return nil, fmt.Errorf("fault_observation_malformed: severity %s is not one of notice, degraded, broken", quote.Value(s))

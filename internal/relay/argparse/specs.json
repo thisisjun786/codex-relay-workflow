@@ -812,7 +812,7 @@
 {"name":"dag-summary-retry","summary":"reopens a failed summary entry (parked by its eighth failure): back to pending with its attempts at zero. It touches only the entry it names; a confirmed or superseded entry is final and is refused","options":[
   {"flag":"--summary","required":true},
   {"flag":"--actor","required":true}]},
-{"name":"dag-region-declare","summary":"declares the edit regions of an implementation node before it is released: repository, path, kind (tree, file, symbol), change (edit, rename, delete) and grade (independent, the default; mechanical, which names its rule: union, renumber or regenerate:<command>; local; exclusive) for 1 to 64 regions. A node with no declaration counts as overlapping everything; renames, deletes, hotspots and the shared contract paths are exclusive whatever grade is declared. An identical declaration is a replay","options":[
+{"name":"dag-region-declare","summary":"declares the edit regions of an implementation node before it is released: repository, path, kind (tree, file, symbol), change (edit, rename, delete) and grade (independent, the default; mechanical, which names its rule: union, renumber or regenerate:<command>; local; exclusive) for 1 to 64 regions. A node with no declaration counts as overlapping everything; renames, deletes, hotspots and the shared contract paths are exclusive whatever grade is declared, at their own place (the same path and the trees that cover it) and not across the repository; only a region declared with exclusive: true holds the whole repository. An identical declaration is a replay","options":[
   {"flag":"--plan","required":true},
   {"flag":"--node","required":true},
   {"flag":"--actor","required":true},

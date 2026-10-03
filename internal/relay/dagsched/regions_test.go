@@ -86,8 +86,11 @@ func TestEditRegionOverlapFixture(t *testing.T) {
 	scenario("one file twice", map[string][]Region{"p": {region("a.go", "file", "")}, "q": {region("a.go", "file", "")}}, "p")
 	scenario("a tree against a file inside it", map[string][]Region{"p": {region("internal", "tree", "")}, "q": {region("internal/x.go", "file", "")}}, "p")
 	scenario("symbols of one file do not conflict", map[string][]Region{"p": {region("a.go", "symbol", "Foo")}, "q": {region("a.go", "symbol", "Bar")}}, "p,q")
-	scenario("a hotspot conflicts with an unrelated file", map[string][]Region{"p": {region("go.mod", "file", "")}, "q": {region("b.go", "file", "")}}, "p")
-	scenario("a rename conflicts with an unrelated file", map[string][]Region{"p": {{Repository: "owner/repo", Path: "a.go", Kind: "file", Change: "rename"}}, "q": {region("b.go", "file", "")}}, "p")
+	// CRW-431: a hotspot, a rename and a delete hold their own place and not the repository (narrow_exclusivity_test.go has the rest of the rows)
+	scenario("a hotspot leaves an unrelated file alone", map[string][]Region{"p": {region("go.mod", "file", "")}, "q": {region("b.go", "file", "")}}, "p,q")
+	scenario("a hotspot conflicts with the same file", map[string][]Region{"p": {region("go.mod", "file", "")}, "q": {region("go.mod", "file", "")}}, "p")
+	scenario("a rename leaves an unrelated file alone", map[string][]Region{"p": {{Repository: "owner/repo", Path: "a.go", Kind: "file", Change: "rename"}}, "q": {region("b.go", "file", "")}}, "p,q")
+	scenario("a rename conflicts with an edit of the same file", map[string][]Region{"p": {{Repository: "owner/repo", Path: "a.go", Kind: "file", Change: "rename"}}, "q": {region("a.go", "file", "")}}, "p")
 }
 
 // Contract 7.1: a node with no declaration counts as overlapping every other node. Each row is one way the rule can be wrong.
@@ -178,10 +181,10 @@ func TestDeclareRegionsReplay(t *testing.T) {
 	if f.count("SELECT COUNT(*) FROM dag_node_regions") != 3 {
 		t.Fatal("the earlier declaration was not kept")
 	}
-	// the classifier cannot be talked down: a caller's exclusive=false on go.mod is still exclusive.
+	// the classifier cannot be talked down: a caller's exclusive=false on go.mod is still exclusive at its place (and holds nothing outside it, since only the declarer's word holds the repository).
 	hot, err := f.sched.DeclareRegions(context.Background(), "d", "impl", "parent", []Region{{Repository: "owner/repo", Path: "go.mod", Kind: "file", Change: "edit"}})
-	if err != nil || !hot.Regions[0].Exclusive {
-		t.Fatalf("go.mod = %+v, %v, want it stored exclusive", hot, err)
+	if err != nil || hot.Regions[0].Exclusive || hot.Regions[0].Grade != GradeExclusive {
+		t.Fatalf("go.mod = %+v, %v, want the exclusive grade and no whole-repository hold", hot, err)
 	}
 }
 

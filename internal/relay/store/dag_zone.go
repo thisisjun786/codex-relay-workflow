@@ -594,6 +594,22 @@ BEGIN SELECT RAISE(ABORT, 'dag_summary_outbox entries are never deleted'); END`,
     PRIMARY KEY (plan_id, sweep_seq, member_seq),
     FOREIGN KEY (plan_id, sweep_seq) REFERENCES dag_conflict_sweeps (plan_id, sweep_seq)
 )`,
+
+	// CRW-431: whether the declarer stated that a declared edit region holds the whole repository. A side table of dag_node_regions like dag_node_region_grades, appended because a shipped statement is never
+	// edited: dag_node_regions.exclusive is set for a rename, a delete and a hotspot as well as for the declarer's word, so it cannot say which. Every region of a declaration made since this table has a row, stated
+	// 1 when the declarer said it and 0 when not; a declaration made before has none, which is how the scheduler tells the two apart (dagsched.loadDeclarations).
+	`CREATE TABLE IF NOT EXISTS dag_node_region_holds (
+    plan_id         TEXT NOT NULL,
+    node_id         TEXT NOT NULL,
+    declaration_seq INTEGER NOT NULL CHECK (declaration_seq >= 1),
+    repository      TEXT NOT NULL,
+    path            TEXT NOT NULL,
+    region_kind     TEXT NOT NULL,
+    region_key      TEXT NOT NULL DEFAULT '',
+    stated          INTEGER NOT NULL CHECK (stated IN (0,1)),
+    PRIMARY KEY (plan_id, node_id, declaration_seq, repository, path, region_kind, region_key),
+    FOREIGN KEY (plan_id, node_id, declaration_seq, repository, path, region_kind, region_key) REFERENCES dag_node_regions (plan_id, node_id, declaration_seq, repository, path, region_kind, region_key)
+)`,
 	// CRW-430: a base refresh of an accepted node. The acceptance stays as it is (its id is the digest of its head, generation, event and revision, and every node that consumed it names that id), and this
 	// record says the same acceptance also stands on a LATER generation of its relationship whose head the relay proved to differ from the accepted head only by merges of the base branch (proof_json: the
 	// chain of merge commits, each with the tree git merges from its parents, and the files a hand resolved conflict touched). Integration is judged on the newest valid record's head and generation; the table is
