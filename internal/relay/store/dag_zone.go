@@ -594,4 +594,40 @@ BEGIN SELECT RAISE(ABORT, 'dag_summary_outbox entries are never deleted'); END`,
     PRIMARY KEY (plan_id, sweep_seq, member_seq),
     FOREIGN KEY (plan_id, sweep_seq) REFERENCES dag_conflict_sweeps (plan_id, sweep_seq)
 )`,
+
+	// CRW-411: the release policy of a plan, the results the parent records for landed and discarded work, and the policy a recorded pass kept. All three are side tables, appended because a shipped statement is never
+	// edited. dag_release_policy is the ledger of the values the scheduler reads when it decides whether local-optimistic release stays on (the last window_size landings, a landing is slow above handling_seconds, red_merges
+	// red or reverted landings in the window switch it off, clean_run clean landings in a row switch it on again); the latest policy_seq of a plan is in force and a plan with no row has no policy. dag_landing_results
+	// holds what the parent states about a node's pull request after the fact (dev_green, dev_red, reverted) or about the work itself (duplicate, discarded); the id is a digest of what is stated, so the same statement
+	// again is one row. dag_pass_release_policy is the policy state a recorded pass saw, written only for a plan that has a policy.
+	`CREATE TABLE IF NOT EXISTS dag_release_policy (
+    plan_id          TEXT NOT NULL REFERENCES dag_plans (plan_id),
+    policy_seq       INTEGER NOT NULL CHECK (policy_seq >= 1),
+    window_size      INTEGER NOT NULL CHECK (window_size BETWEEN 1 AND 64),
+    handling_seconds INTEGER NOT NULL CHECK (handling_seconds >= 1),
+    red_merges       INTEGER NOT NULL CHECK (red_merges >= 1),
+    clean_run        INTEGER NOT NULL CHECK (clean_run >= 1),
+    recorded_by      TEXT NOT NULL CHECK (recorded_by <> ''),
+    recorded_at      TEXT NOT NULL,
+    CHECK (red_merges <= window_size AND clean_run <= window_size),
+    PRIMARY KEY (plan_id, policy_seq)
+)`,
+	`CREATE TABLE IF NOT EXISTS dag_landing_results (
+    result_id   TEXT PRIMARY KEY,
+    plan_id     TEXT NOT NULL REFERENCES dag_plans (plan_id),
+    node_id     TEXT NOT NULL CHECK (node_id <> ''),
+    kind        TEXT NOT NULL CHECK (kind IN ('dev_green','dev_red','reverted','duplicate','discarded')),
+    commit_sha  TEXT NOT NULL DEFAULT '',
+    evidence    TEXT NOT NULL CHECK (evidence <> ''),
+    recorded_by TEXT NOT NULL CHECK (recorded_by <> ''),
+    recorded_at TEXT NOT NULL
+)`,
+	`CREATE INDEX IF NOT EXISTS dag_landing_results_node ON dag_landing_results (plan_id, node_id)`,
+	`CREATE TABLE IF NOT EXISTS dag_pass_release_policy (
+    plan_id     TEXT NOT NULL,
+    pass_seq    INTEGER NOT NULL,
+    policy_json TEXT NOT NULL,
+    PRIMARY KEY (plan_id, pass_seq),
+    FOREIGN KEY (plan_id, pass_seq) REFERENCES dag_passes (plan_id, pass_seq)
+)`,
 }
