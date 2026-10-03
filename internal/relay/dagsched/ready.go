@@ -99,7 +99,10 @@ func (s *Scheduler) Ready(ctx context.Context, q store.Querier, plan string, opt
 			if state.Holds && n.Kind == dag.NodeImplementation {
 				regions, declared := declarations[n.NodeID]
 				holders = append(holders, holder{NodeID: n.NodeID, Regions: regions, Unknown: !declared})
-				live = append(live, orderHolder{NodeID: n.NodeID, Acc: state.Acc, HasAcc: state.HasAcc, Held: !life.active()})
+				// what the execution records say of the node (not the plan's overlay on it) decides its lane, and the plan's hold decides whether it can merge at all: a paused or cancelled node, or a paused plan,
+				// cannot; an archived node's accepted pull request may still land (lifecycleRefusal), so it keeps its place
+				live = append(live, orderHolder{NodeID: n.NodeID, State: state.State, Disp: state.Disp, Acc: state.Acc, HasAcc: state.HasAcc,
+					Held: life.planPaused || life.node == dag.LifePaused || life.node == dag.LifeCancelled})
 			}
 			continue
 		}
@@ -217,11 +220,7 @@ func (s *Scheduler) Ready(ctx context.Context, q store.Querier, plan string, opt
 		ready = append(ready, *reading)
 	}
 	pass.ReadyCount = selected
-	// the merge order (CRW-410, mergeorder_derive.go): the live holders only, as the readings now stand (the plan's own hold on a node is in them), from stored measurements. A reading, not a decision: no
-	// disposition, reason or detail changes, and nothing here stops a child.
-	for i := range live {
-		live[i].State, live[i].Disp = readings[live[i].NodeID].State, readings[live[i].NodeID].Disposition
-	}
+	// the merge order (CRW-410, mergeorder_derive.go): the live holders only, from stored measurements. A reading, not a decision: no disposition, reason or detail changes, and nothing here stops a child.
 	orders, constrained, err := s.orderConstraints(ctx, q, plan, live, declarations)
 	if err != nil {
 		return Reading{}, err

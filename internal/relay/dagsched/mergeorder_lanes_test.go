@@ -148,6 +148,38 @@ func TestMergeOrderFollowsTheMergeLane(t *testing.T) {
 			t.Fatalf("a paused plan: E = %+v", e.MergeOrder)
 		}
 	})
+	t.Run("an archived node can still land: it keeps its turn and its place", func(t *testing.T) {
+		w := orderWorld(t)
+		w.accept("D", "E")
+		turn(w, "turn-d", "D", "2026-10-02T01:00:00Z")
+		turn(w, "turn-e", "E", "2026-10-02T02:00:00Z")
+		w.k.putPlan("g", 2, "g-r3", lifeOp("archive_node", "D"))
+		if got := first(w, "D", "E"); !reflect.DeepEqual(got, []string{"E<[D]"}) {
+			t.Fatalf("with turns = %v", got)
+		}
+		if row := w.k.read("g").node("E").MergeOrder.After[0]; row.Lane != LaneTurn {
+			t.Fatalf("archived D is in the lane %q, want turn", row.Lane)
+		}
+	})
+	t.Run("an archived accepted node with no turn is still an accepted result", func(t *testing.T) {
+		w := orderWorld(t)
+		w.accept("D", "E")
+		w.k.putPlan("g", 2, "g-r3", lifeOp("archive_node", "D"))
+		if got := first(w, "D", "E"); !reflect.DeepEqual(got, []string{"E<[D]"}) {
+			t.Fatalf("order = %v", got)
+		}
+		if row := w.k.read("g").node("E").MergeOrder.After[0]; row.Lane != LaneAccepted {
+			t.Fatalf("archived D is in the lane %q, want accepted", row.Lane)
+		}
+	})
+	t.Run("a cancelled node cannot merge: it is working", func(t *testing.T) {
+		w := orderWorld(t)
+		w.accept("D", "E")
+		w.k.putPlan("g", 2, "g-r3", lifeOp("cancel_node", "D"))
+		if got := first(w, "D", "E"); !reflect.DeepEqual(got, []string{"D<[E]"}) {
+			t.Fatalf("order = %v", got)
+		}
+	})
 	t.Run("an accepted result that is no longer the node's current one is working", func(t *testing.T) {
 		w := orderWorld(t)
 		w.accept("D", "E")
