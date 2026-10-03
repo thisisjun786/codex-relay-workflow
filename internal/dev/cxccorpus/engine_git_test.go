@@ -50,7 +50,7 @@ func TestFreezeTimes_skips_an_entry_that_vanished_inside_a_git_directory(t *test
 	for _, gone := range []string{"ws/.git/objects/maintenance.lock", "ws/.git/objects/tmp_x"} {
 		t.Run(gone, func(t *testing.T) {
 			root := t.TempDir()
-			makeTree(t, root, "ws/.git/HEAD", "ws/.git/objects/maintenance.lock", "ws/.git/objects/tmp_x/f", "ws/a.txt")
+			makeTree(t, root, "ws/.git/HEAD", "ws/.git/objects/maintenance.lock", "ws/.git/objects/pack/p", "ws/.git/objects/tmp_x/f", "ws/.git/objects/zz", "ws/a.txt")
 			removed := 0
 			if err := freezeTimes(root, Epoch(), vanishing(filepath.Join(root, gone), &removed)); err != nil {
 				t.Errorf("a vanished entry inside .git failed the walk: %v", err)
@@ -58,7 +58,7 @@ func TestFreezeTimes_skips_an_entry_that_vanished_inside_a_git_directory(t *test
 			if removed != 1 {
 				t.Fatalf("the entry was removed %d times, want once", removed)
 			}
-			for _, kept := range []string{"ws/.git/HEAD", "ws/a.txt"} {
+			for _, kept := range []string{"ws/.git/HEAD", "ws/.git/objects/pack/p", "ws/.git/objects/zz", "ws/a.txt"} {
 				info, err := os.Stat(filepath.Join(root, kept))
 				if err != nil {
 					t.Fatal(err)
@@ -72,7 +72,8 @@ func TestFreezeTimes_skips_an_entry_that_vanished_inside_a_git_directory(t *test
 }
 
 // The exception is only for what lies inside a .git directory: the same disappearance anywhere else,
-// the .git entry itself and a directory merely named like it fail the walk.
+// the .git entry itself and a directory merely named like it fail the walk, and so does any other
+// error inside .git.
 func TestFreezeTimes_still_fails_for_a_vanished_entry_outside_a_git_directory(t *testing.T) {
 	for _, gone := range []string{"ws/a.txt", "ws/.git", "ws/dir.git/f"} {
 		t.Run(gone, func(t *testing.T) {
@@ -84,6 +85,21 @@ func TestFreezeTimes_still_fails_for_a_vanished_entry_outside_a_git_directory(t 
 				t.Errorf("removed %d times, error %v; want one removal and an ENOENT error", removed, err)
 			}
 		})
+	}
+}
+
+func TestFreezeTimes_still_fails_for_another_error_inside_a_git_directory(t *testing.T) {
+	root := t.TempDir()
+	makeTree(t, root, "ws/.git/HEAD")
+	denied := errors.New("denied")
+	err := freezeTimes(root, Epoch(), func(path string, _, _ time.Time) error {
+		if filepath.Base(path) == "HEAD" {
+			return denied
+		}
+		return nil
+	})
+	if !errors.Is(err, denied) {
+		t.Errorf("freezeTimes = %v, want the stamp error", err)
 	}
 }
 
