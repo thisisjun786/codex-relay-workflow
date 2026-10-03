@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -33,8 +32,8 @@ type fakeManager struct {
 	calls []string
 	show  string
 	fail  map[string]error
-	// afterEnable, when set, is what show answers once enable has run: a name loads only when its unit file does.
-	afterEnable string
+	// Once enable has run, show answers afterEnable when set, else that unitPath is loaded: a name loads when its unit file does.
+	afterEnable, unitPath string
 }
 
 func (m *fakeManager) run(_ context.Context, args ...string) (string, error) {
@@ -43,8 +42,11 @@ func (m *fakeManager) run(_ context.Context, args ...string) (string, error) {
 		return "", err
 	}
 	if args[0] == "show" {
-		if m.afterEnable != "" && strings.Contains(m.verbs(), "enable") {
+		if strings.Contains(m.verbs(), "enable") && m.afterEnable != "" {
 			return m.afterEnable, nil
+		}
+		if strings.Contains(m.verbs(), "enable") && m.unitPath != "" {
+			return loadedFrom(m.unitPath, "inactive"), nil
 		}
 		return m.show, nil
 	}
@@ -82,6 +84,7 @@ func newUnitHost(t *testing.T) *unitHost {
 		t.Fatal(err)
 	}
 	u.status(freshStatus)
+	u.manager.unitPath = u.path()
 	u.o = install.Options{Dest: u.dest, Socket: filepath.Join(home, "app.sock"), State: filepath.Join(home, "state"), Systemctl: u.manager.run,
 		Env: scope.Env{"HOME=" + home, "PATH=" + os.Getenv("PATH"), "STUB_OUT=" + u.out, policyVar + "=/elsewhere/policy.json", scopeVar + "=/elsewhere/scopes"}}
 	return u
@@ -330,6 +333,7 @@ func TestRemoveDisablesAndDeletesOnlyWhatItWrote(t *testing.T) {
 		{"an install section that reaches another unit", install.UnitModified, "[Unit]\n" + doctor.UnitOwnerLine + "\n[Install]\nWantedBy=default.target\nAlso=other.service\n", loadedFrom("UNIT", "inactive")},
 		{"another fragment", install.UnitNameTaken, "", loadedFrom("/usr/lib/systemd/user/"+doctor.ServiceUnit, "inactive")},
 		{"a second install section that systemd reads too", install.UnitModified, "[Unit]\n" + doctor.UnitOwnerLine + "\n[Install] \nAlso=other.service\n[Install]\nWantedBy=default.target\n", loadedFrom("UNIT", "inactive")},
+		{"an Also= joined from continued lines", install.UnitModified, "[Unit]\n" + doctor.UnitOwnerLine + "\n[Install]\nWantedBy=default.target\nAlso\\\n=other.service\n", loadedFrom("UNIT", "inactive")},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			u := newUnitHost(t)
@@ -345,7 +349,8 @@ func TestRemoveDisablesAndDeletesOnlyWhatItWrote(t *testing.T) {
 	}
 }
 
-// A step that fails says what stands: exit 3 for a unit written and not enabled (a rerun finishes) or deleted and not reloaded.
+// A step that fails says what stands: exit 3 when a change may have landed (written and not enabled, a failed enable or
+// disable, deleted and not reloaded).
 func TestStepsThatFailSayWhatStands(t *testing.T) {
 	u := newUnitHost(t)
 	u.manager.fail = map[string]error{"enable": errors.New("boom")}
@@ -358,7 +363,7 @@ func TestStepsThatFailSayWhatStands(t *testing.T) {
 		t.Fatalf("the rerun did not enable: %v", u.manager.calls)
 	}
 	u.manager.show, u.manager.fail = loadedFrom(u.path(), "inactive"), map[string]error{"disable": errors.New("boom")}
-	u.run(install.ServiceOptions{Remove: true}, install.Refused, install.UnitNotDisabled)
+	u.run(install.ServiceOptions{Remove: true}, install.Incomplete, install.UnitNotDisabled)
 	if u.text() == "" {
 		t.Fatal("the file was deleted although disable failed")
 	}
@@ -371,11 +376,19 @@ func TestStepsThatFailSayWhatStands(t *testing.T) {
 
 // Only a loaded name shows its drop-ins, so the unit is read again after enable and any drop-in is reported.
 func TestRegisterReportsDropInsThatOnlyShowOnceTheNameIsLoaded(t *testing.T) {
-	u := newUnitHost(t)
-	u.manager.afterEnable = strings.Replace(loadedFrom(u.path(), "inactive"), "DropInPaths=", "DropInPaths=/x/crw-.service.d/o.conf", 1)
-	result := u.run(install.ServiceOptions{}, install.Incomplete, install.UnitModified)
-	if at(result, "applied") != true || u.manager.verbs() != "show enable show" {
-		t.Fatalf("drop-ins after enable: %v\n%s", u.manager.calls, golden.Canon(result))
+	for _, c := range []struct{ name, after, outcome string }{
+		{"drop-ins", "DropInPaths=/x/crw-.service.d/o.conf", install.UnitModified},
+		{"a name the manager still does not load", "LoadState=not-found", install.UnitUnreadable},
+	} {
+		u := newUnitHost(t)
+		u.manager.afterEnable = strings.Replace(loadedFrom(u.path(), "inactive"), "DropInPaths=", c.after, 1)
+		if strings.HasPrefix(c.after, "LoadState") {
+			u.manager.afterEnable = notLoaded
+		}
+		result := u.run(install.ServiceOptions{}, install.Incomplete, c.outcome)
+		if at(result, "applied") != true || u.manager.verbs() != "show enable show" {
+			t.Fatalf("%s after enable: %v\n%s", c.name, u.manager.calls, golden.Canon(result))
+		}
 	}
 }
 
@@ -418,10 +431,10 @@ func TestUpdateAndStopStartDoNotFightTheUnit(t *testing.T) {
 	first, second := archive(t, "0.9.0", ""), archive(t, "0.9.1", "")
 	updated := runtimeDir(h, "0.9.1", second, t)
 	h.mustInstall(t, "install", first)
-	manager := &fakeManager{show: notLoaded}
+	units := filepath.Join(h.home, "units")
+	manager := &fakeManager{show: notLoaded, unitPath: filepath.Join(units, doctor.ServiceUnit)}
 	o := h.options()
 	o.Systemctl = manager.run
-	units := filepath.Join(h.home, "units")
 	if result, code := install.RegisterService(context.Background(), o, install.ServiceOptions{UnitDir: units, ScopeDir: filepath.Join(h.home, "scopes")}); code != install.OK {
 		t.Fatalf("register: %s", golden.Canon(result))
 	}
@@ -466,18 +479,10 @@ func TestUpdateAndStopStartDoNotFightTheUnit(t *testing.T) {
 		}
 		return started
 	}
-	// ours is whether pid is a process serving this test's state directory, so cleanup never signals one that only
-	// reuses the number.
-	ours := func(pid int) bool {
-		raw, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/cmdline")
-		return err == nil && strings.Contains(string(raw), h.relayState)
-	}
+	// The relay's own stop checks who owns a process before it signals it; cleanup relies on that and reports what it cannot stop.
 	t.Cleanup(func() {
-		call(stop...)
-		for _, key := range []string{"pid", "workerPid"} {
-			if pid, _ := verb("status")[key].(float64); pid > 0 && ours(int(pid)) {
-				_ = syscall.Kill(int(pid), syscall.SIGKILL)
-			}
+		if call(stop...); verb("status")["running"] == true {
+			t.Errorf("the relay this test started still runs on %s; stop it by hand", h.relayState)
 		}
 	})
 	if enabled := verb("enable"); enabled["ok"] != true {

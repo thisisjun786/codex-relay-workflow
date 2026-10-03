@@ -56,10 +56,11 @@ type ServiceOptions struct {
 var (
 	unitNamePattern = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}\.service$`)
 	// unsafeInUnit is what systemd would split, expand or unescape in an Exec line or Environment value.
-	unsafeInUnit = regexp.MustCompile("[\\s\"'\\\\%$;\\x00-\\x1f\\x7f]")
-	relayStarts  = regexp.MustCompile(`(?m)^\s*ExecStart=.*(codex-session-relay|crw relay)\b.*\bservice (start|run)\b`)
-	installKey   = regexp.MustCompile("^(Alias|WantedBy|RequiredBy|UpheldBy|Also|DefaultInstance)\\s*=")
-	busyStates   = map[string]bool{"active": true, "activating": true, "deactivating": true, "reloading": true}
+	unsafeInUnit  = regexp.MustCompile("[\\s\"'\\\\%$;\\x00-\\x1f\\x7f]")
+	relayStarts   = regexp.MustCompile(`(?m)^\s*ExecStart=.*(codex-session-relay|crw relay)\b.*\bservice (start|run)\b`)
+	renderedExec  = regexp.MustCompile(`(?m)^ExecStart=(\S+) --state (\S+) --socket (\S+) service start( --allow-isolated-scope)?$`)
+	renderedScope = regexp.MustCompile("(?m)^Environment=" + scopeVariable + "=(\\S+)$")
+	busyStates    = map[string]bool{"active": true, "activating": true, "deactivating": true, "reloading": true}
 )
 
 // systemctl is systemctl --user in this process's environment, which it needs for the user bus.
@@ -142,21 +143,39 @@ func readUnit(path string) unitFile {
 	return unitFile{present: true, text: string(raw), owned: strings.Contains("\n"+string(raw), "\n"+doctor.UnitOwnerLine+"\n")}
 }
 
-// installOnly is whether the unit has exactly one [Install] section and no install key but one WantedBy=default.target:
-// disable follows Also= into other units, and systemd ignores the whitespace around a header, so lines are judged trimmed.
-func installOnly(text string) bool {
-	sections, wanted := 0, 0
-	for _, line := range strings.Split(text, "\n") {
-		switch line = strings.TrimSpace(line); {
-		case line == "[Install]":
-			sections++
-		case line == "WantedBy=default.target":
-			wanted++
-		case installKey.MatchString(line):
+// rendered is whether text is exactly what renderUnit writes for the values its own ExecStart line names. disable follows
+// Also= into other units, and systemd joins continued lines and ignores whitespace around a header, so removal trusts
+// only a file that is byte for byte what this command wrote, never a reading of its sections.
+func rendered(text string) bool {
+	exec := renderedExec.FindStringSubmatch(text)
+	if exec == nil {
+		return false
+	}
+	scopeDir := ""
+	if exec[4] != "" {
+		found := renderedScope.FindStringSubmatch(text)
+		if found == nil {
 			return false
 		}
+		scopeDir = found[1]
 	}
-	return sections == 1 && wanted == 1
+	return text == renderUnit(exec[1], exec[2], exec[3], scopeDir)
+}
+
+// lock takes the unit's lock and checks the file is still the one decided on, or answers the refusal.
+func (u *unitRun) lock(basis look) (*record.Locked, Object, int) {
+	beforeWriteLock(u.path)
+	lock, err := record.Lock(u.ctx, u.path, 0)
+	if err != nil {
+		refusal, code := u.refuse(UnitUnreadable, "the unit could not be locked ("+err.Error()+"); nothing was changed")
+		return nil, refusal, code
+	}
+	if !lookAt(u.path).same(basis) {
+		lock.Release()
+		refusal, code := u.refuse(UnitUnreadable, u.path+" changed after it was read, so nothing was changed; rerun to decide against the file as it now stands")
+		return nil, refusal, code
+	}
+	return lock, nil, 0
 }
 
 // otherRelayUnits are the other units in dir that run the relay's service start or run: a second owner of
@@ -188,7 +207,7 @@ func otherRelayUnits(dir, name string) ([]string, error) {
 // manager is what the user manager says about the name, and a refusal outcome with why, or "". The disk is not enough:
 // systemd resolves a name through its search path and disable re-reads the disk and follows Also= in drop-ins, so the
 // name must resolve to this file, carry no drop-in, and the manager's definition must be current.
-func (u *unitRun) manager() (map[string]string, string, string) {
+func (u *unitRun) manager(afterEnable bool) (map[string]string, string, string) {
 	out, err := u.systemctl("show", "-p", "LoadState", "-p", "FragmentPath", "-p", "ActiveState", "-p", "DropInPaths", "-p", "NeedDaemonReload", u.name)
 	if err != nil {
 		return nil, UnitUnreadable, "the user manager could not be asked about " + u.name + " (" + err.Error() + ")"
@@ -201,6 +220,9 @@ func (u *unitRun) manager() (map[string]string, string, string) {
 	}
 	switch view["LoadState"] {
 	case "not-found":
+		if afterEnable {
+			return view, UnitUnreadable, "the user manager does not load " + u.name + " after enable"
+		}
 		return view, "", ""
 	case "loaded":
 	case "masked":
@@ -298,7 +320,7 @@ func RegisterService(ctx context.Context, o Options, s ServiceOptions) (Object, 
 	case len(others) > 0:
 		return u.refuse(UnitSecondOwner, strings.Join(others, ", ")+" already runs the relay's service start or run; a second unit would race it. Remove that unit first, by hand", field("units", strs(others)))
 	}
-	if _, refused, why := u.manager(); refused != "" {
+	if _, refused, why := u.manager(false); refused != "" {
 		return u.refuse(refused, why)
 	}
 	inputs, warnings, unreadable := u.bootInputs(relay, selection.Path, socket)
@@ -309,15 +331,11 @@ func RegisterService(ctx context.Context, o Options, s ServiceOptions) (Object, 
 	if s.DryRun {
 		return u.answer(outcome, false, append(extra, field("note", "dry run: nothing was written and systemd was only read."))...), OK
 	}
-	beforeWriteLock(u.path)
-	lock, lockErr := record.Lock(ctx, u.path, 0)
-	if lockErr != nil {
-		return u.refuse(UnitUnreadable, "the unit could not be locked ("+lockErr.Error()+"); nothing was changed")
+	lock, refusal, code := u.lock(basis)
+	if lock == nil {
+		return refusal, code
 	}
 	defer lock.Release()
-	if !lookAt(u.path).same(basis) {
-		return u.refuse(UnitUnreadable, u.path+" changed after it was read, so nothing was changed; rerun to decide against the file as it now stands")
-	}
 	wrote := outcome == UnitWouldCreate
 	if wrote {
 		if err := record.AtomicWrite(u.path, []byte(wanted)); err != nil {
@@ -330,14 +348,10 @@ func RegisterService(ctx context.Context, o Options, s ServiceOptions) (Object, 
 	}
 	extra = append(extra, field("wroteFile", wrote))
 	if _, err := u.systemctl("enable", u.path); err != nil {
-		code := Refused
-		if wrote {
-			code = Incomplete
-		}
-		return u.answer(UnitNotEnabled, wrote, append(extra, field("detail", "systemctl enable failed ("+err.Error()+"), possibly after changing some links; check systemctl --user is-enabled "+u.name+" and rerun"))...), code
+		return u.answer(UnitNotEnabled, wrote, append(extra, field("detail", "systemctl enable failed ("+err.Error()+"), possibly after changing some links; check systemctl --user is-enabled "+u.name+" and rerun"))...), Incomplete
 	}
 	// Only a loaded name shows its drop-ins, including prefix and type ones that apply to a unit that did not exist before.
-	if _, refused, why := u.manager(); refused != "" {
+	if _, refused, why := u.manager(true); refused != "" {
 		return u.answer(refused, true, append(extra, field("detail", "the unit is enabled, but afterwards "+why))...), Incomplete
 	}
 	return u.answer(outcome, true, append(extra, field("note", "enabled for default.target; nothing was started. The relay starts when the user manager next starts, or when you run systemctl --user restart "+u.name+". Registered, enabled and observed after a host restart are three claims; only the last is evidence for alwaysActive."))...), OK
@@ -393,13 +407,20 @@ func (u *unitRun) remove(dryRun bool) (Object, int) {
 		return u.refuse(UnitForeign, u.path+" is not a file this command can own: "+file.problem)
 	case !file.owned:
 		return u.refuse(UnitForeign, u.path+" is not the installer's unit (it lacks "+doctor.UnitOwnerLine+"); it is left alone")
-	case !installOnly(file.text):
-		return u.refuse(UnitModified, u.path+" has an [Install] section other than WantedBy=default.target, so disable could reach other units; it is left alone")
+	case !rendered(file.text):
+		return u.refuse(UnitModified, u.path+" is not exactly what this command writes, so disable could reach other units; it is left alone")
 	}
 	if _, err := os.Lstat(u.path + ".d"); err == nil {
 		return u.refuse(UnitModified, u.path+".d exists: a drop-in could make disable reach another unit")
 	}
-	view, refused, why := u.manager()
+	if !dryRun {
+		lock, refusal, code := u.lock(basis)
+		if lock == nil {
+			return refusal, code
+		}
+		defer lock.Release()
+	}
+	view, refused, why := u.manager(false)
 	switch {
 	case refused != "":
 		return u.refuse(refused, why)
@@ -409,26 +430,14 @@ func (u *unitRun) remove(dryRun bool) (Object, int) {
 	if dryRun {
 		return u.answer(UnitWouldRemove, false, field("note", "dry run: nothing was changed and systemd was only read.")), OK
 	}
-	beforeWriteLock(u.path)
-	lock, lockErr := record.Lock(u.ctx, u.path, 0)
-	if lockErr != nil {
-		return u.refuse(UnitUnreadable, "the unit could not be locked ("+lockErr.Error()+"); nothing was changed")
-	}
-	defer lock.Release()
-	if !lookAt(u.path).same(basis) {
-		return u.refuse(UnitUnreadable, u.path+" changed after it was read, so nothing was changed; rerun to decide against the file as it now stands")
-	}
 	disabled := view["LoadState"] == "loaded"
 	if disabled {
 		if _, err := u.systemctl("disable", u.name); err != nil {
-			return u.refuse(UnitNotDisabled, "systemctl disable failed ("+err.Error()+"), possibly after changing some links; the unit file is kept")
+			return u.answer(UnitNotDisabled, false, field("detail", "systemctl disable failed ("+err.Error()+"), possibly after changing some links; the unit file is kept")), Incomplete
 		}
 	}
 	if err := os.Remove(u.path); err != nil {
-		if !disabled {
-			return u.refuse(UnitNotDeleted, "the unit file could not be deleted: "+err.Error())
-		}
-		return u.answer(UnitNotDeleted, true, field("detail", "the unit was disabled and its file could not be deleted ("+err.Error()+"); delete it by hand")), Incomplete
+		return u.answer(UnitNotDeleted, disabled, field("detail", "the unit file could not be deleted ("+err.Error()+"); delete it by hand")), Incomplete
 	}
 	if _, err := u.systemctl("daemon-reload"); err != nil {
 		return u.answer(UnitNotReloaded, true, field("detail", "the unit file is deleted and systemctl daemon-reload failed ("+err.Error()+"); run it by hand")), Incomplete

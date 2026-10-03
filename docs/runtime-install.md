@@ -914,10 +914,12 @@ One owner registers this surface, and the command asks the manager as well as th
 It also reads what the boot start will find, through the pointer's relay in the unit's environment (`service status`), and
 reports `serviceEnabled`, `launchPolicySource` and `scopeAuthority`. A disabled service intent, an undeclared execution policy
 and an `XDG_STATE_HOME` the unit does not carry are `warnings`: the boot start would refuse `service_disabled`, withhold
-role-bound deliveries, or write its host record elsewhere. It never changes the intent. Exit status 3 means the unit file
-landed and a later step did not (written and not enabled: run it again; deleted and `daemon-reload` failed: run that); 1 is a
-refusal with nothing changed, 2 a usage error. `--remove` disables and deletes only a unit it wrote, only when its `[Install]`
-holds just `WantedBy=default.target`, the manager resolves the name to that file and it is not running; it never stops the relay.
+role-bound deliveries, or write its host record elsewhere. It never changes the intent. Exit status 3 means a change may have
+landed and a later step did not or could not be confirmed (written and not enabled: run it again; an `enable` or `disable` that
+failed, possibly after changing some links: read `systemctl --user is-enabled`; deleted and `daemon-reload` failed: run that); 1 is a
+refusal with nothing changed, 2 a usage error. `--remove` disables and deletes only a unit it wrote, only when the file is exactly
+what the command writes (`disable` follows `Also=` into other units), the manager resolves the name to that file and it is not
+running; it never stops the relay.
 
 The maintenance order is the relay's own: `service stop` (`systemctl --user stop crw-relay.service` runs the same stop while the
 unit is active, but a unit that never started has none to run), `crw install update`, which refuses while a daemon runs, then
