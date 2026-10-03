@@ -15,12 +15,14 @@ import (
 // Passing a stalled turn on (CRW-408).
 //
 // A holder that went silent keeps the target occupied until somebody takes it away. The route is
-// narrow on purpose. Only a turn that is still holding can be passed: until merge-turn-check moves
-// a turn to merging, no merge can be in flight, so releasing it takes nothing a holder may have
-// done. A merging or unknown turn is never passed (its holder may already have merged, and elapsed
-// time is not an observation); it leaves through land, or unknown and resolve. Only the supervisor
-// above the holder's project, or a parent with a waiting claim on the same target, may pass a turn,
-// and only once the relay's own ledger says the holder has been silent for the holding limit.
+// narrow on purpose. Only a turn that is still holding can be passed: a holder that follows the
+// protocol runs merge-turn-check, which moves the turn to merging, before it merges, so a holding
+// turn has not begun a merge by the protocol. That is a statement about the relay's record, not
+// proof that the pull request is unmerged, which is why a passer reads the pull request. A merging
+// or unknown turn is never passed (its holder may already have merged, and elapsed time is not an
+// observation); it leaves through land, or unknown and resolve. Only the supervisor above the
+// holder's project, or a parent with a waiting claim on the same target, may pass a turn, and only
+// once the relay's own ledger says the holder has been silent for the holding limit.
 
 // passRefusal is nil when actor may pass a turn on: the supervisor above its project, or the
 // parent of a live waiting claim on the same target that still owns its project.

@@ -20,7 +20,8 @@ import (
 // polling, CI result, merge attempt). merge-turn-show reads the newest sign of life and says
 // when a turn has been silent for the holding limit, so another parent can tell a holder that is
 // working from one whose session is gone. The limit is a rule of the lane, kept in this file and
-// copied into every reading and every pass record; it is not a store column.
+// shown in the target reading and copied into every pass record and return notice; it is not a
+// store column.
 
 // LongestCISeconds is the longest a hosted CI job may run: the largest timeout-minutes of any
 // job in .github/workflows/ci.yml (15 minutes). A test reads the workflow, so a change to it

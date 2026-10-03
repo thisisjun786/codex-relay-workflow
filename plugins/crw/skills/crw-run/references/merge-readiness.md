@@ -574,8 +574,9 @@ the candidate back like any other refusal.
 
 Everything from the grant to the landing runs in the foreground of the turn and records its steps
 with `merge-turn-progress` ([Working inside a merge turn](relay.md#working-inside-a-merge-turn)). Never
-start the refresh, the CI wait or the merge in the background: a script that dies with the shell
-leaves the turn held by nobody, and a holding turn silent for the holding limit is passed on.
+start the refresh, the CI wait or the merge in the background: detached work is not tied to the
+turn, and a holding turn that records nothing for the holding limit can be passed on to the next
+waiter.
 
 **Record the refresh** where the merge is recorded. `assignment-mark merged --evidence` carries the
 check's `evidence:` line exactly as printed (previous head, dev tip, new head, tree OID and the rule
