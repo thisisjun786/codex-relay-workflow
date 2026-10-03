@@ -152,7 +152,7 @@ func TestCXCReplay_against_a_fake_crw(t *testing.T) {
 }
 
 // Pending is not run, an unregistered fixture fails, and a claim that needs what no replay provides
-// (a connect or dns call in the expectation, rewrite-rule text in the given) is refused before
+// (a scripted fetch reply, a connect or dns call in the expectation, rewrite-rule text in the given) is refused before
 // anything runs, naming what is missing.
 func TestCXCReplay_states_and_refusals(t *testing.T) {
 	r := cxcTestReplayer(t)
@@ -180,6 +180,7 @@ func TestCXCReplay_states_and_refusals(t *testing.T) {
 		state string
 		want  string
 	}{
+		{"fetch given", bare(`{"fetch":{"https://example.invalid/":{"status":200,"body":"{}"}}}`, ""), cxcIdentical, "scripted fetch reply"},
 		{"connect call", bare("{}", calls("connect")), cxcChanged, "connect or dns"},
 		{"dns call", bare("{}", calls("dns")), cxcIdentical, "connect or dns"},
 		{"R19 given", bare(`{"files":{"ws/.codexclaw-install.json":"{}"}}`, ""), cxcChanged, "rewrite rule"},
