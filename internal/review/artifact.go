@@ -54,6 +54,33 @@ type Artifact struct {
 	FinishedAt  string         `json:"finishedAt"`
 	Findings    []Finding      `json:"findings"`
 	Dropped     []Drop         `json:"dropped"`
+	Calls       []CallRecord   `json:"calls,omitempty"`
+}
+
+// CallRecord records an actual runner invocation, in execution order. Reviewer is
+// -1 for auxiliary stages; Chunk is -1 for grouping. Model is the served label,
+// possibly empty, rather than the requested Artifact.Model. Error records a host
+// error independently of Class: valid output can survive a cleanup error.
+type CallRecord struct {
+	Stage         string     `json:"stage"`
+	Reviewer      int        `json:"reviewer"`
+	Chunk         int        `json:"chunk"`
+	Perspective   string     `json:"perspective"`
+	Model         string     `json:"model"`
+	Class         string     `json:"class"`
+	Reason        string     `json:"reason"`
+	Error         string     `json:"error,omitempty"`
+	ElapsedMillis int64      `json:"elapsedMillis"`
+	Tokens        TokenUsage `json:"tokens"`
+}
+
+// TokenUsage preserves the runner's counters without making the core depend on it.
+type TokenUsage struct {
+	Input     int64 `json:"input"`
+	Output    int64 `json:"output"`
+	Thinking  int64 `json:"thinking"`
+	CacheRead int64 `json:"cacheRead"`
+	Total     int64 `json:"total"`
 }
 
 //go:embed schema_v1.json

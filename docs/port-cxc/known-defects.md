@@ -443,6 +443,39 @@ No new oracle defect was identified in the directive text and assembly of `pabcd
 - Recovery checks `.codexclaw` and `affordance-recovery` with `lstat`, then creates or removes the marker by pathname, so a concurrent local directory swap can race the static symlink checks (source `plugins/codexclaw/components/cxc-ops/src/map-affordance.ts:242-255,263,274-276`; static symlink refusal is pinned by `TestRecoveryPathScopeSymlinksAndNonfiles`, not race-proof confinement); port: kept.
 - SessionStart accepts an unbounded, unvalidated session ID and interpolates it into its binding text, so embedded newlines/backticks can alter the guidance and a long ID grows the envelope without truncation (source `plugins/codexclaw/components/cxc-ops/src/map-affordance.ts:158-169,306-308,320`; `TestSessionStartThresholdFallbackAndPointers` and the escaped binding golden); port: kept.
 
+## Found by the CRW-502 recall repository-key port
+
+- Local-looking colon paths such as `C:\repo` are accepted as scp remotes and identify `c/repo`, rather than falling back to cwd scope (source `recall/src/repo-key.ts:38-41`; recorded base oracle); port: kept.
+- Decoding `%2F` before packing collapses an encoded path separator with a literal separator, so `a%2Fb` and `a/b` share a key (source `recall/src/repo-key.ts:46,56`; recorded base oracle); port: kept.
+- Platform difference: the bounded URL host parser does not NFC-normalize decomposed Unicode labels before RFC3492 encoding (source `recall/src/repo-key.ts:44` delegates to Node WHATWG URL; recorded NFC grid); port: kept.
+- Platform difference: UTS46 compatibility mappings, including long s and fullwidth letters, are not reproduced by lowercase plus RFC3492 (source `recall/src/repo-key.ts:44`; recorded compatibility grid); port: kept.
+- Platform difference: UTS46 disallowed-code-point checks beyond the URL forbidden-domain set and strict UTF-8 decoding are not reproduced (source `recall/src/repo-key.ts:44`; recorded disallowed grid); port: kept.
+- Platform difference: UTS46 Bidi checks are not reproduced (source `recall/src/repo-key.ts:44`; recorded Bidi grid); port: kept.
+- Platform difference: UTS46 ContextJ joiner checks are not reproduced (source `recall/src/repo-key.ts:44`; recorded ContextJ grid); port: kept.
+- Platform difference: existing `xn--` labels are passed through rather than decoded and re-validated; the recorded malformed ACE label is also passed through by this Node build, so this declared limit is latent in that row (source `recall/src/repo-key.ts:44`; recorded ACE grid); port: kept.
+
+## Found by the agent-thread permission hook port (CRW-494)
+
+- The config containment check treats project children whose names begin with `..` as outside the project, letting a project-controlled opt-in or full-access config grant permission (source `plugins/codexclaw/components/pabcd-state/src/agent-thread-permissions.ts:98-99`; reproduced for both config readers, regression `TestAgentThreadBoundaries/intentionally-changed_project_child_starting_with_two_dots`); port: fixed (security: compare path components, preserving the literal default-at-home exception; oracle cases intentionally-changed).
+
+## CRW-496 — skill-search CLI
+
+- Unknown options (including `--help`) and dangling flags become query/id text rather than help or a flag error (`skill-search/src/cli.ts:32-43` at v0.2.40); port: kept.
+- Catalog cache keys retain only the first 24 base64url URL characters, discarding the remainder of the URL identity (`skill-search/src/cli.ts:63-67` at v0.2.40); port: kept.
+- Search source, gh launch/auth and malformed-gh-JSON failures can produce empty results with exit 0 (`skill-search/src/cli.ts:101-135,170-194` at v0.2.40); port: kept.
+- `show --source gh` searches jaw, hermes and clawhub instead of GitHub, while unsupported show sources fall through to a no-skill message (`skill-search/src/cli.ts:204-229` at v0.2.40); port: kept.
+- Show suppresses catalog errors, but a matching row's body-fetch failure stops fallback; fetched skill bodies have no size cap (`skill-search/src/cli.ts:209-220` at v0.2.40); port: kept.
+- The default fetch transport reports only `fetch failed` for a network failure, discarding its cause (`skill-search/src/cli.ts:46` at v0.2.40, Node fetch transport); port: kept.
+
+## Found by the config-guard deactivation and marker port (CRW-497)
+
+- Managed-key restoration writes settings in place and an interrupted write can truncate them (source `config-guard/src/deactivate.ts:155`; `TestDeactivatePublicationFailureKeepsWholeSettings`); port: fixed (data loss: reuse protected fsynced temporary-file publication; failure leaves old settings whole and does not reach the feature CLI).
+- With a null post-activation hash, an unreadable config is skipped and the later feature-disable CLI can overwrite settings that were never read (source `deactivate.ts:58-65,131-133,184`; intentionally-changed recorded cases `unreadable_config` and `unreadable_config_no_table_keys` in `testdata/deactivation-changes.json`, driven by `TestDeactivateUnreadableSettingsRefusedBeforeCLI`); port: fixed (data loss: refuse unreadable settings before any CLI call, including manifests without managed table keys).
+- An unreadable self-heal marker is treated as absent and opt-out overwrites its healed-key consent and cache fields (source `config-guard/src/self-heal.ts:263-287`; intentionally-changed recorded case `unreadable_marker` in `testdata/deactivation-changes.json`, driven by `TestSelfHealMarkerUnreadablePreservesConsent`); port: fixed (data loss: direct marker functions return the read refusal and leave the record untouched).
+- Marker publication uses a shared fixed .tmp name without fsync, so competing writes can overwrite staging records and interrupted publication can lose consent data (source `self-heal.ts:272-277`; `TestSelfHealMarkerAtomicPublication`); port: fixed (data loss: reuse the exclusive, fsynced temporary-file publisher; it preserves permission bits and follows existing links as the shared writer specifies, with no lock or directory-fsync guarantee).
+- Manifest and backup read failures are reported as absent or unverifiable, without the read error (source `deactivate.ts:58-65,117-120,134-139`; `TestDeactivateEarlyReturnsAndV1`, `TestDeactivateOverrideMissingConfigAndBackup`); port: kept (neither record is overwritten).
+- A failed feature-disable exit is omitted from disabled without a failure field, and marker failure is swallowed even on early uninstall returns (source `deactivate.ts:99-103,184-185`; `TestDeactivateFlagPathsAndOrdering`, `TestSelfHealMarkerUnreadablePreservesConsent`); port: kept.
+
 ## Found by the CRW-344 provider detection and map launcher port
 
 - The provider dispatcher ignores every argument, including help and unknown verbs, and still probes status (source `bin/codexclaw.mjs:256-260,606-608`; `TestProviderMapCommandIngress` and the provider-help corpus cases); port: kept (this completes the earlier pending provider argument finding).
