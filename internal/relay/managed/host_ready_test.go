@@ -100,7 +100,11 @@ func TestHostReadySameRequestReadsUnlistedChild(t *testing.T) {
 				}
 			}
 			k.effects(1, 1)
-			if guardStart < 0 || !reflect.DeepEqual(h.calls[guardStart:][len(h.calls[guardStart:])-2:], []string{"thread/read", "thread/goal/get"}) {
+			if guardStart < 0 {
+				t.Fatal("business send never reached its final guard")
+			}
+			guardCalls := h.calls[guardStart:]
+			if len(guardCalls) < 2 || !reflect.DeepEqual(guardCalls[len(guardCalls)-2:], []string{"thread/read", "thread/goal/get"}) {
 				t.Fatalf("final guard did not use the direct-read fallback: %v", h.calls)
 			}
 			if !reflect.DeepEqual(k.host.threads["t-1"].turns, []string{"business"}) {
@@ -108,6 +112,24 @@ func TestHostReadySameRequestReadsUnlistedChild(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestHostReadyArchiveBoundaryRecordsReasonAndRecovers(t *testing.T) {
+	k := newReconcileKit(t)
+	h := &readinessApp{Adapter: k.host}
+	k.start.Adapter = h
+	k.host.standby = "inProgress"
+	k.expect(k.run(), "incomplete", "standby_incomplete", "")
+	k.host.standby = "interrupted"
+	h.archived = 201
+	got := k.run()
+	if got["state"] != "incomplete" || got["stage"] != "business" || got["reason"] != "archived_listing_incomplete" {
+		t.Fatalf("archive uncertainty reason not recorded: %v", got)
+	}
+	k.effects(1, 0)
+	h.archived = 0
+	k.expect(k.run(), "admitted", "", "")
+	k.effects(1, 1)
 }
 
 func TestHostReadyArchiveBoundaryAndReadJudgment(t *testing.T) {
