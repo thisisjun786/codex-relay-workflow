@@ -1,0 +1,17 @@
+{
+  "origin": {
+    "tag": "v0.2.40",
+    "commit": "3c1459acadeb1906d97c00a598e1457327ae372d",
+    "skills_listing_sha256": "a77cbd208b5c2bdb0e29e1dfab3480abb47af7b05d47d546b33af5c7c768809a"
+  },
+  "table_sha256": "25b5d19d9da7e07d474d2b31bc4d4139c68607457f59174a597f17505f7f23eb",
+  "from": "lunasearch",
+  "files": {
+    "SKILL.md": {
+      "original": "4d5e24d5ea01a3e8089cf8ab0d8a79a4f47ae2df88a880cb68716333a4ded252"
+    },
+    "agents/openai.yaml": {
+      "original": "4ebfdd6e39d1b3f50282b685a3ea8ea3df93fbfc898200e6ce44fdf5f2a34c31"
+    }
+  }
+}
