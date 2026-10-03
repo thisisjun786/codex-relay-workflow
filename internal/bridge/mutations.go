@@ -115,8 +115,11 @@ func (b *Bridge) SendMessageToThread(ctx context.Context, in SendMessage) (ledge
 		receipt["statusBeforeResume"] = status
 		if status == "notLoaded" {
 			receipt["echoIndependence"] = "not_established"
-			if in.Role != "" && auth.Provenance != "role_pair" {
+			if in.Role != "" && !auth.Pinned {
 				message := "Thread is not loaded and this request's model and effort were not checked against a declared role pair; message withheld"
+				if auth.Provenance == "role_pair" {
+					message = "Thread is not loaded and this role runs on one of several declared pairs, so the policy does not say which pair this thread is on; message withheld"
+				}
 				return &appserver.RPCError{Method: "thread/read", Message: message, Object: map[string]any{"code": "unverified_pair_for_unloaded_thread", "message": message}}
 			}
 		}

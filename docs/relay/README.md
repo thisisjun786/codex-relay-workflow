@@ -461,6 +461,17 @@ rows. Historical terminal turns remain observable, but opening a new generation
 supersedes all prior outcomes, including failures; observing an old failure does
 not send it as a current-generation report or establish acceptance.
 
+### Direct parent interventions
+
+A parent can send the child a message the relay does not carry: over the thread bridge, outside `decision-reply` and outside a ruling's correction message. The relay cannot see such a message. It learns of it only when a turn is admitted for it, and an admission by the relationship's registered parent is then recorded as a **direct parent intervention**, in the transaction of the admission:
+
+    codex-session-relay admit-turn --relationship <id> --generation <n> --turn <turn that received the message> --actor <the parent's task id> [--reason <why>]
+    codex-session-relay intervention-show --relationship <id>
+
+The record is a journal row of the kind `direct_parent_intervention` (subject the relationship id) naming the relationship, the generation, the turn, the anchor turn of that generation, the actor and the reason. `intervention-show` reads them back oldest first, each as `kind`, `generation`, `turn`, `anchorTurnId`, `actor`, `reason` (null when none was given) and `recordedAt`, beside the relationship's current generation and registered parent; an unknown relationship is refused `unregistered_relationship`. The same statement again (the same generation, turn, anchor, actor and reason) is not recorded twice, and the same turn with another reason is another statement.
+
+What this does and does not say. `admit-turn` answers what it always answered and still stores its admission and its `turn_admitted` journal row, whoever the actor is; only an actor equal to the relationship's registered parent task is also recorded as intervening, so an operator's confirmation of a continuation, or the child's own claim, is an admission and no intervention. The relay does not authenticate `--actor` (as for a continuation claim): the record is the statement of whoever ran the command. And a message that is never admitted stays invisible to the relay, which is why the route a parent should use for a decision is `decision-reply`, and why this record is the fallback's trace and not a gate: nothing is refused for a message sent outside the route.
+
 ### Exact-turn reporting observation
 
 `reporting-show` is a direct, manual, offline diagnosis of one already selected turn. It reads the
@@ -513,7 +524,8 @@ Global options come BEFORE the subcommand:
 | `register --project` | the same, and the issue's whole lower level in one transaction |
 | `settings-record` / `settings-show` | record and inspect a task's authorized execution settings |
 | `generation-open` / `generation-bind` | open a generation; bind its anchor to an exact dispatch turn |
-| `admit-turn` | record an owner-confirmed continuation turn out of band |
+| `admit-turn` | record an owner-confirmed continuation turn out of band; by the relationship's registered parent it is also a [direct parent intervention](#direct-parent-interventions) |
+| `intervention-show` | the direct parent interventions recorded for a relationship, oldest first; a read |
 | `relationship-status` / `relationship-resume` | pause, cancel, archive; resume only by restating generation and scope |
 | `relationship-close-merged` | archive the live assignments that are merged with nothing owed; a dry run without `--apply` |
 | `child-cleanup` | after the merge and the integration observation, archive the finished child and its loaded sub-threads on the App Server so their MCP helpers stop; refuses unless a merged mark counts and nothing can still be sent to the child; needs `--socket`, `--dry-run` plans |
@@ -680,7 +692,7 @@ The rule is fixed by the kind. `answer` and `stop` change nothing the child's at
 
 No refusal reason is added, and a refusal writes nothing. The command line is checked first: an unknown `--decision` or a missing required option ends with the parser's own exit 2 and a message on stderr before the writer runs, an unreadable `--note @path` is a host problem (exit 3, as for `verdict --criteria`), and `malformed_receipt` is what the writer answers to a direct call or to a blank note, turn or digest. `decision-show` reads the decisions of a relationship back, oldest first, each with the state of its delivery.
 
-Limits that are part of the contract. The relay records the decision and its delivery; it does not read the child's thread, so `dispatched` says the message was accepted, not that the child acted. A decision that opened g+1 is not recorded against a DAG plan node by this build: `dag-accept` finds no execution for g+1 and refuses, and the follow-up work "DAG reflection, bridge bypass record and crw-run procedure for decision replies" owns that, together with the record of a message sent to the child outside this route. Until it lands, the crw-run skill's need-input procedure is unchanged. After an answer or a stop, the relationship still reads as blocked (`dispositions-show`) until the child reports again. `registry`'s `generation-open --reason` still accepts only its own two reasons: `decision_reply` is written by this command alone. An installed relay older than this change has no `decision-reply` and answers the command as an unknown subcommand.
+Limits that are part of the contract. The relay records the decision and its delivery; it does not read the child's thread, so `dispatched` says the message was accepted, not that the child acted. A decision that opened g+1 is recorded against a DAG plan node by `dag-correct` ([the third way to open a generation](dag-scheduler.md#three-ways-to-open-the-generation)), which refuses until the decision was dispatched into the turn the generation is bound to; until it is recorded, `dag-accept` finds no execution for g+1 and refuses `stale_generation`. A message sent to the child outside this route leaves a record only when the registered parent admits its turn ([Direct parent interventions](#direct-parent-interventions)). The crw-run skill's need-input procedure follows this route. After an answer or a stop, the relationship still reads as blocked (`dispositions-show`) until the child reports again. `registry`'s `generation-open --reason` still accepts only its own two reasons: `decision_reply` is written by this command alone. An installed relay older than this change has no `decision-reply` and answers the command as an unknown subcommand.
 
 
 ## The coordination summary
