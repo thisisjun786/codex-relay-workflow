@@ -796,7 +796,7 @@ classified only at release, a user's choice made after planning, a move to Sonne
 the issue or the rules change; the seven tags; the bundle; the pair as a family, with its model and effort
 left in the launch record's settings entry, read from the creation receipt; the source at release, one of
 `user choice`, `issue body`, `table` and `quota`, where `issue body` means a line already stated the pair
-and the parent followed it; the mark `derived at release` when the line carried no tags; for a flexible
+and the parent followed it, and `table` also covers a move under When SOL fails applied at this release; the mark `derived at release` when the line carried no tags; for a flexible
 issue whose pair the parent itself chose, the counts it used; for a move under When SOL fails, its cause and
 date; the version of the plugin manifest the rules were read from, which says which revision of these rules
 classified the issue; the request id and the date. A later change of the pair (a user's choice, a move under

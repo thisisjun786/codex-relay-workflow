@@ -559,7 +559,7 @@ owns what the row holds and why it lives here and not in the relay; this is the 
 2. Take the tags and the bundle from the line, and quote the line, with its own source, in the row. The row's
    source is the step that decided at release: `issue body` where the line already stated the pair and you
    follow it, `user choice` for a choice written onto the line now, `table` for an issue you routed because it
-   had no line, `quota` reserved. A line in the older form states no tags: classify the issue by the
+   had no line or for a move under When SOL fails that you apply at this release, `quota` reserved. A line in the older form states no tags: classify the issue by the
    [tags](../crw-plan/references/integrations.md#classify-the-issue-by-its-kind-of-work), take the bundle from
    the [Bundles rows](../crw-plan/references/integrations.md#bundles), mark the row `derived at release` and
    leave the line as it is. The pair the line names stands (precedence): where the derived bundle names the
