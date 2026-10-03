@@ -6,6 +6,8 @@ package harness
 
 import (
 	"encoding/json"
+	"io"
+	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
@@ -41,10 +43,26 @@ type (
 	}
 )
 
+// decode is JSON.parse: one JSON document and nothing after it. Numbers stay json.Number, so one
+// that no float64 holds (1e400, which JavaScript reads as Infinity) does not cost the document.
+func decode(s string) (v any, ok bool) {
+	dec := json.NewDecoder(strings.NewReader(s))
+	dec.UseNumber()
+	if dec.Decode(&v) != nil {
+		return nil, false
+	}
+	_, err := dec.Token()
+	return v, err == io.EOF
+}
+
 // asObject is the oracle's: the trimmed text must be one JSON object, else nothing.
 func asObject(raw string) map[string]any {
-	var v any
-	if s := text.Trim(raw); s == "" || json.Unmarshal([]byte(s), &v) != nil {
+	s := text.Trim(raw)
+	if s == "" {
+		return nil
+	}
+	v, ok := decode(s)
+	if !ok {
 		return nil
 	}
 	o, _ := v.(map[string]any)

@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 )
@@ -81,8 +83,9 @@ func truthy(v any) bool {
 		return false
 	case bool:
 		return v
-	case float64:
-		return v != 0
+	case json.Number:
+		f, _ := strconv.ParseFloat(string(v), 64)
+		return f != 0
 	case string:
 		return v != ""
 	}
@@ -101,8 +104,8 @@ func RecordInvocation(raw, component, event string, env host.LookupEnv) (recorde
 			recorded = false
 		}
 	}()
-	var v any
-	if len(raw) > MaxStdinBytes || json.Unmarshal([]byte(raw), &v) != nil || !slug(component) || !slug(event) {
+	v, ok := decode(raw)
+	if len(raw) > MaxStdinBytes || !ok || !slug(component) || !slug(event) {
 		return false
 	}
 	o, _ := v.(map[string]any)
@@ -113,7 +116,9 @@ func RecordInvocation(raw, component, event string, env host.LookupEnv) (recorde
 	agent := "null" // the actor's key is its JSON, so no actor and an actor named null differ
 	if id := o["agent_id"]; id != nil {
 		s, ok := id.(string)
-		if !ok || !metadata(s) {
+		// A lone surrogate in the id arrives as U+FFFD, and ids that differ only in them would share
+		// a record: the oracle keeps them apart by their escapes, so the port records no such actor.
+		if !ok || !metadata(s) || strings.ContainsRune(s, utf8.RuneError) {
 			return false
 		}
 		agent = jsString(s)
@@ -139,11 +144,12 @@ func RecordInvocation(raw, component, event string, env host.LookupEnv) (recorde
 	if err != nil {
 		return false
 	}
-	var m map[string]any
-	if json.Unmarshal(data, &m) != nil {
+	m, ok := decode(string(data))
+	if !ok {
 		return false
 	}
-	version, _ := m["version"].(string)
+	manifestObject, _ := m.(map[string]any)
+	version, _ := manifestObject["version"].(string)
 	if !metadata(version) {
 		return false
 	}

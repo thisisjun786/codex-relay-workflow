@@ -3,6 +3,7 @@ package harness
 import (
 	"io"
 	"strings"
+	"unicode/utf8"
 )
 
 // MaxStdinBytes is the most a hook may send; more is refused, never cut short (cli.ts:76).
@@ -12,7 +13,8 @@ const oversizedReason = "[crw] hook input exceeded 4194304 bytes; refusing to by
 
 // ReadStdin reads a hook's input, at most MaxStdinBytes of it: one byte more is an overflow and the
 // input is dropped, and a read that fails reads as empty input, whatever it had returned before
-// (cli.ts readStdin).
+// (cli.ts readStdin). The input is text as Buffer.toString("utf8") makes it: each byte that is not
+// UTF-8 becomes U+FFFD, three bytes in the string, so a limit on its byte length counts them as three.
 func ReadStdin(in io.Reader) (raw string, overflow bool) {
 	b, err := io.ReadAll(io.LimitReader(in, MaxStdinBytes+1))
 	if err != nil {
@@ -21,7 +23,10 @@ func ReadStdin(in io.Reader) (raw string, overflow bool) {
 	if len(b) > MaxStdinBytes {
 		return "", true
 	}
-	return string(b), false
+	if raw = string(b); !utf8.Valid(b) {
+		raw = string([]rune(raw))
+	}
+	return raw, false
 }
 
 // OversizedHookOutput is what a leg of this slug answers to an input over MaxStdinBytes: a PreToolUse

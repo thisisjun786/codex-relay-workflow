@@ -49,7 +49,8 @@ func TestReadStdinBoundsTheInputAtTheLimit(t *testing.T) {
 		"exactly the limit":       {strings.NewReader(strings.Repeat("x", MaxStdinBytes)), strings.Repeat("x", MaxStdinBytes), false},
 		"one byte over the limit": {strings.NewReader(strings.Repeat("x", MaxStdinBytes+1)), "", true},
 		"far over the limit":      {strings.NewReader(strings.Repeat("x", 2*MaxStdinBytes)), "", true},
-		"a failing read":          {broken, "", false}, // what was read is dropped: the input reads as empty
+		"a failing read":          {broken, "", false},                                        // what was read is dropped: the input reads as empty
+		"invalid UTF-8":           {strings.NewReader("a\xff\xfeb"), "a\uFFFD\uFFFDb", false}, // as Buffer.toString("utf8") has it: the replacement characters count in the string's byte length
 	} {
 		if raw, overflow := ReadStdin(c.in); raw != c.raw || overflow != c.overflow {
 			t.Errorf("%s: %d bytes, overflow %v", name, len(raw), overflow)

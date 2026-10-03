@@ -93,6 +93,8 @@ func TestRecordInvocationRefusesWhatItCannotAttribute(t *testing.T) {
 		"non-string agent":         `{"session_id":"s1","agent_id":7}`,
 		"agent_type without agent": `{"session_id":"s1","agent_type":"worker"}`,
 		"over 4 MiB":               `{"session_id":"s1","pad":"` + strings.Repeat(" ", MaxStdinBytes) + `"}`,
+		"truthy agent_type":        `{"session_id":"s1","agent_type":1}`,
+		"lone surrogate actor":     `{"session_id":"s1","agent_id":"a\ud800"}`, // arrives as U+FFFD, which cannot tell two actors apart
 	} {
 		if RecordInvocation(raw, "pabcd-state", "stop", lookup(env)) {
 			t.Errorf("%s: recorded", name)
@@ -104,6 +106,15 @@ func TestRecordInvocationRefusesWhatItCannotAttribute(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(home, "crw")); err == nil {
 		t.Error("a refused record created a directory")
 	}
+	for name, raw := range map[string]string{
+		"falsy agent_type":          `{"session_id":"s1","agent_type":0}`,
+		"empty agent_type":          `{"session_id":"s1","agent_type":""}`,
+		"a number no float64 holds": `{"session_id":"s1","unused":1e400}`,
+	} {
+		if !RecordInvocation(raw, "pabcd-state", "stop", lookup(env)) {
+			t.Errorf("%s: not recorded", name)
+		}
+	}
 }
 
 func TestRecordInvocationNeedsAReadablePlugin(t *testing.T) {
@@ -112,8 +123,8 @@ func TestRecordInvocationNeedsAReadablePlugin(t *testing.T) {
 		"missing manifest": func(_ map[string]string, m string) { _ = os.Remove(m) },
 		"no version":       func(_ map[string]string, m string) { _ = os.WriteFile(m, []byte(`{"name":"crw"}`), 0o644) },
 		"symlinked manifest": func(_ map[string]string, m string) {
-			_ = os.Remove(m)
-			_ = os.Symlink(m+".elsewhere", m)
+			_ = os.Rename(m, m+".real") // a valid manifest, reached through a link
+			_ = os.Symlink(m+".real", m)
 		},
 	} {
 		env, home, plugin := hookEnv(t)

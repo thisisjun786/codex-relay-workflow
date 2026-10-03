@@ -115,8 +115,19 @@ func TestParsersKeepRequiredOptionalAndNullableFields(t *testing.T) {
 		t.Errorf("SubagentStop: %+v, %v", ss, ok)
 	}
 	pt, ok := ParsePostToolUse(doc(t, withKeys(base, obj{"hook_event_name": "PostToolUse", "tool_name": "x", "tool_input": obj{"a": 1.0}, "tool_use_id": "u"})))
-	if want := (PostToolUse{SessionID: "s1", Cwd: "/w", ToolName: "x", ToolInput: obj{"a": 1.0}, ToolUseID: ptr("u")}); !ok || !reflect.DeepEqual(pt, want) {
+	if want := (PostToolUse{SessionID: "s1", Cwd: "/w", ToolName: "x", ToolInput: obj{"a": json.Number("1")}, ToolUseID: ptr("u")}); !ok || !reflect.DeepEqual(pt, want) {
 		t.Errorf("PostToolUse: %+v, %v", pt, ok)
+	}
+	// JSON.parse reads a number no float64 holds as Infinity: an unrelated field of that kind must
+	// not cost the event, nor the subagent mark.
+	if _, ok := ParseStop(`{"hook_event_name":"Stop","session_id":"s1","cwd":"/w","unused":1e400}`); !ok {
+		t.Error("a payload with an out-of-range number was rejected")
+	}
+	if !IsSubagentHookPayload(`{"agent_id":"a","x":1e400}`) {
+		t.Error("a subagent payload with an out-of-range number reads as a root turn")
+	}
+	if _, ok := ParseStop(`{"hook_event_name":"Stop","session_id":"s1","cwd":"/w"} trailing`); ok {
+		t.Error("text after the document was accepted")
 	}
 	_, noPrompt := ParseUserPromptSubmit(doc(t, withKeys(base, obj{"hook_event_name": "UserPromptSubmit"})))
 	_, otherEvent := ParseStop(doc(t, withKeys(base, obj{"hook_event_name": "SessionStart"})))

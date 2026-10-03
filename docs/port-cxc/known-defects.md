@@ -72,5 +72,5 @@ Behavior of CXC v0.2.40 that looks unintended and that the recorded corpus ([con
 
 ## Found by the hook ingress library port
 
-- `readStdin` turns any failure to read the hook's input into empty input, so a read error is fail-open on every event, a `pre-tool-use` guard included, although the oversize branch beside it exists to refuse to bypass policy (source `plugins/codexclaw/components/pabcd-state/src/cli.ts:83` and `:96-98`); port: kept (`ReadStdin`).
+- `readStdin` turns any failure to read the hook's input into empty input, so a read error reads as an empty payload, which the handlers of every event but one answer with nothing to do, a `pre-tool-use` guard included (only the automation ownership gate denies an input it cannot parse, `automation-ownership-gate.ts:71` and `:90-92`), although the oversize branch beside it exists to refuse to bypass policy (source `plugins/codexclaw/components/pabcd-state/src/cli.ts:83` and `:96-98`); port: kept (`ReadStdin`).
 - The hook observation directory is `join(process.env.CODEX_HOME ?? ~/.codex, "codexclaw", ...)`, so a CODEX_HOME that is set but empty puts it under the working directory (source `plugins/codexclaw/scripts/hook-observation.mjs:17-18`); port: kept.
