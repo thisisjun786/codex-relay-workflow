@@ -176,7 +176,12 @@ type releaseKit struct {
 
 func newReleaseKit(t *testing.T) *releaseKit {
 	t.Helper()
-	f := newFixture(t)
+	return newReleaseKitOn(t, newFixture(t))
+}
+
+// newReleaseKitOn is a release kit over the fixture f: newReleaseKit over a store of its own, newReleaseKitAt over one the binary can open.
+func newReleaseKitOn(t *testing.T, f *fixture) *releaseKit {
+	t.Helper()
 	root := t.TempDir()
 	settings := map[string]any{"sandbox": map[string]any{"type": "workspaceWrite"}, "approvalPolicy": "never", "cwd": root, "runtimeWorkspaceRoots": []any{root}, "model": "gpt-5", "reasoningEffort": "medium", "environments": []any{}}
 	k := &releaseKit{fixture: f, host: newScriptedHost(t, settings), tips: &tips{sha: head1}, forge: &prs{by: map[string]PullRequest{}}, root: root, marker: t.TempDir(), state: t.TempDir()}

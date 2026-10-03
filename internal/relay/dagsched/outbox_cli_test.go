@@ -13,15 +13,12 @@ import (
 // the binary is the only user.
 func summaryState(t *testing.T) string {
 	t.Helper()
-	state := filepath.Join(t.TempDir(), "state")
-	f := newFixtureAt(t, filepath.Join(state, "relay.sqlite3"))
-	forkJoinPlan(f, "p1")
-	f.projectParent()
-	seedExecutionLedger(f)
-	if err := f.s.Close(); err != nil {
-		t.Fatal(err)
-	}
-	return state
+	return closedState(t, func(f *fixture) {
+		t.Helper()
+		forkJoinPlan(f, "p1")
+		f.projectParent()
+		seedExecutionLedger(f)
+	})
 }
 
 func summaryRun(t *testing.T, state string, wantExit int, args ...string) map[string]any {
