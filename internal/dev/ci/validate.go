@@ -10,7 +10,6 @@ import (
 	"io"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -186,37 +185,40 @@ func skillsRoot(manifestPath string) (string, error) {
 	return root, nil
 }
 
-// pythonSyntaxErrors compiles the named Python sources with the interpreter on PATH, the only
-// parser of the language; it returns "<name>: <error>" per failing file. It is needed only
-// while the repository still carries Python sources.
-func pythonSyntaxErrors(root string, names []string) (map[string]string, error) {
-	if len(names) == 0 {
-		return nil, nil
+// pythonFileErrors names the files that make the repository carry Python: a name ending in .py,
+// and a regular file whose first line is a python shebang. Nothing is exempt. The Python
+// implementation left in todo 44 and the last developer tools in todo 48, and nothing in the
+// product or in CI runs Python; a sample that has to stay can be kept under another name.
+func pythonFileErrors(root string, names []string) []string {
+	var errs []string
+	for _, name := range names {
+		switch {
+		case filepath.Ext(name) == ".py":
+			errs = append(errs, name+": a Python file; the repository tracks no Python")
+		case pythonShebang(filepath.Join(root, name)):
+			errs = append(errs, name+": a script with a python shebang; the repository tracks no Python")
+		}
 	}
-	const program = `import ast, json, sys
-out = {}
-for name in sys.stdin.read().split("\0"):
-    try:
-        with open(name, encoding="utf-8") as handle:
-            ast.parse(handle.read(), filename=name)
-    except (OSError, SyntaxError, ValueError) as exc:
-        out[name] = f"{name}: {exc}"
-json.dump(out, sys.stdout)
-`
-	cmd := exec.Command("python3", "-I", "-c", program)
-	cmd.Dir = root
-	cmd.Stdin = strings.NewReader(strings.Join(names, "\x00"))
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
+	return errs
+}
+
+// pythonShebang reports whether path is a regular file whose first line starts with #! and names
+// python. A symbolic link is judged as what it is, never followed; only the first 512 bytes are
+// read, so a binary without a newline is not read whole.
+func pythonShebang(path string) bool {
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	file, err := os.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("python3 could not check Python syntax: %v %s", err, strings.TrimSpace(stderr.String()))
+		return false
 	}
-	var result map[string]string
-	if err := json.Unmarshal(out, &result); err != nil {
-		return nil, fmt.Errorf("python3 syntax check: %v", err)
-	}
-	return result, nil
+	defer file.Close()
+	head := make([]byte, 512)
+	n, _ := io.ReadFull(file, head)
+	line, _, _ := bytes.Cut(head[:n], []byte("\n"))
+	return bytes.HasPrefix(line, []byte("#!")) && bytes.Contains(line, []byte("python"))
 }
 
 // repositoryRoot is the resolved top level of the checkout holding the working directory.
@@ -228,9 +230,9 @@ func repositoryRoot() (string, error) {
 	return resolve(strings.TrimSpace(string(out))), nil
 }
 
-// Validate is `crw-dev ci validate`: skill metadata, local link paths and Python syntax.
+// Validate is `crw-dev ci validate`: skill metadata, local link paths and the absence of Python.
 func Validate(args []string, stdout, stderr io.Writer) int {
-	if code := parseFlags(newFlags("validate"), "Validate this repository's supported metadata format, link paths and syntax.",
+	if code := parseFlags(newFlags("validate"), "Validate this repository's supported metadata format and link paths, and that it holds no Python.",
 		args, stdout, stderr); code >= 0 {
 		return code
 	}
@@ -248,23 +250,9 @@ func Validate(args []string, stdout, stderr io.Writer) int {
 		return failf(stderr, "%s: %s", manifest, err)
 	}
 	names := sortedSet(strings.Split(string(out), "\x00"))
-	var sources []string
-	for _, name := range names {
-		if filepath.Ext(name) == ".py" {
-			sources = append(sources, name)
-		}
-	}
-	syntax, err := pythonSyntaxErrors(root, sources)
-	if err != nil {
-		return failf(stderr, "validate: %s", err)
-	}
-	var errs []string
+	errs := pythonFileErrors(root, names)
 	count := 0
 	for _, name := range names {
-		if message, bad := syntax[name]; bad {
-			errs = append(errs, message)
-			continue
-		}
 		path := filepath.Join(root, name)
 		if filepath.Ext(name) == ".md" {
 			found, err := LinkErrors(root, name)
@@ -288,6 +276,6 @@ func Validate(args []string, stdout, stderr io.Writer) int {
 	if len(errs) > 0 {
 		return failf(stderr, "%s", strings.Join(errs, "\n"))
 	}
-	fmt.Fprintf(stdout, "Validated %d skills, local link paths and Python syntax.\n", count)
+	fmt.Fprintf(stdout, "Validated %d skills, local link paths and no Python files.\n", count)
 	return 0
 }
