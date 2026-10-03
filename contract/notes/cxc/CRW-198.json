@@ -1,0 +1,15 @@
+{
+  "issue": "CRW-198",
+  "identical": [
+    "hook__session-start-detecting-managed-worktree__baseline_empty_workspace",
+    "hook__session-start-detecting-managed-worktree__extra_root_env_is_honored",
+    "hook__session-start-detecting-managed-worktree__managed_cwd_injects_identity",
+    "hook__session-start-detecting-managed-worktree__nested_cwd_without_git_unconfirmed",
+    "hook__session-start-detecting-managed-worktree__pabcd_off_still_injects_subagent_silent",
+    "hook__session-start-detecting-managed-worktree__symlinked_cwd_resolves_into_slot",
+    "hook__session-start-detecting-managed-worktree__unmanaged_and_root_are_silent",
+    "hook__user-prompt-submit-guiding-worktree-rename__baseline_empty_workspace",
+    "hook__user-prompt-submit-guiding-worktree-rename__rename_intent_injects_once_per_session",
+    "hook__user-prompt-submit-guiding-worktree-rename__unrelated_prompt_or_unmanaged_silent"
+  ]
+}
