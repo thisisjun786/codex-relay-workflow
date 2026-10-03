@@ -491,4 +491,31 @@ WHEN NEW.state IN ('claimed', 'confirmed')
 BEGIN SELECT RAISE(ABORT, 'dag_summary_outbox: an older summary is never claimed or confirmed over a newer one'); END`,
 	`CREATE TRIGGER IF NOT EXISTS dag_summary_outbox_no_delete BEFORE DELETE ON dag_summary_outbox
 BEGIN SELECT RAISE(ABORT, 'dag_summary_outbox entries are never deleted'); END`,
+
+	// CRW-409: the grade of a declared edit region. A side table of dag_node_regions keyed like it, appended because a shipped statement is never edited (an ALTER TABLE ADD COLUMN would
+	// rewrite the shipped text of dag_node_regions): a declaration made before grades existed has no row here and reads as independent. A mechanical grade names the rule that settles its
+	// overlaps (union, renumber or regenerate:<command>) and no other grade names one.
+	`CREATE TABLE IF NOT EXISTS dag_node_region_grades (
+    plan_id         TEXT NOT NULL,
+    node_id         TEXT NOT NULL,
+    declaration_seq INTEGER NOT NULL CHECK (declaration_seq >= 1),
+    repository      TEXT NOT NULL,
+    path            TEXT NOT NULL,
+    region_kind     TEXT NOT NULL,
+    region_key      TEXT NOT NULL DEFAULT '',
+    grade           TEXT NOT NULL CHECK (grade IN ('independent','mechanical','local','exclusive')),
+    rule            TEXT NOT NULL DEFAULT '',
+    CHECK ((grade = 'mechanical' AND (rule IN ('union','renumber') OR rule GLOB 'regenerate:?*')) OR (grade <> 'mechanical' AND rule = '')),
+    PRIMARY KEY (plan_id, node_id, declaration_seq, repository, path, region_kind, region_key),
+    FOREIGN KEY (plan_id, node_id, declaration_seq, repository, path, region_kind, region_key) REFERENCES dag_node_regions (plan_id, node_id, declaration_seq, repository, path, region_kind, region_key)
+)`,
+
+	// CRW-409: the files git could not merge between the heads of an observation (dag_conflict_observations keeps only how many), under each name the observed checkout is known by: its path
+	// with links resolved and, when its origin remote names owner/name on the forge the relay talks to, that slug. A region is matched on the repository name it was declared with.
+	`CREATE TABLE IF NOT EXISTS dag_conflict_observation_files (
+    observation_id TEXT NOT NULL REFERENCES dag_conflict_observations (observation_id),
+    repository     TEXT NOT NULL CHECK (repository <> ''),
+    path           TEXT NOT NULL CHECK (path <> ''),
+    PRIMARY KEY (observation_id, repository, path)
+)`,
 }
