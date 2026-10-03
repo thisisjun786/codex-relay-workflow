@@ -456,6 +456,7 @@ func TestDR10_an_advancing_decision_reports_an_anchor_bound_to_another_turn(t *t
 // is registered again before the message is sent.
 func TestDR11_the_message_carries_the_criteria_the_decision_was_made_under(t *testing.T) {
 	d := newDecWorld(t)
+	d.registerCriteria([]any{Obj{{Key: "id", Value: "c1"}, {Key: "title", Value: "the endpoint returns the agreed shape"}}, Obj{{Key: "id", Value: "c2"}, {Key: "title", Value: "a malformed request is refused"}, {Key: "required", Value: false}}})
 	digest := pyjson.Text(d.setDigest())
 	d.mustReply(DecisionSplitApproval, "keep the endpoint half", digest)
 	d.registerCriteria(rrEdited)
@@ -463,7 +464,7 @@ func TestDR11_the_message_carries_the_criteria_the_decision_was_made_under(t *te
 		t.Fatalf("the scheduler's delivery: %v", rep.Notes)
 	}
 	message := d.sent().message
-	for _, want := range []string{"the endpoint returns the agreed shape", "a malformed request is refused", digest} {
+	for _, want := range []string{"c1: the endpoint returns the agreed shape\n", "c2: a malformed request is refused (optional)", digest} {
 		if !strings.Contains(message, want) {
 			t.Fatalf("the message does not carry %q:\n%s", want, message)
 		}

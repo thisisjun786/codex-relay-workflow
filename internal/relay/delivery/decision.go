@@ -217,7 +217,11 @@ func criteriaLines(set any, event string) []string {
 		o, _ := item.(Obj)
 		id, _ := o.Lookup("id")
 		title, _ := o.Lookup("title")
-		lines = append(lines, "  "+unheaded(inline(id))+": "+inline(title))
+		optional := ""
+		if required, _ := o.Lookup("required"); required == false {
+			optional = " (optional)"
+		}
+		lines = append(lines, "  "+unheaded(inline(id))+": "+inline(title)+optional)
 	}
 	if len(items) > manifestLines {
 		lines = append(lines, fmt.Sprintf("  ... and %d more: codex-session-relay show --event %s prints the whole set", len(items)-manifestLines, event))
