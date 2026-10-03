@@ -26,7 +26,7 @@ type revived struct {
 	FinalGate    *FinalGateState    `json:"finalGate,omitempty"`
 }
 
-// compact is JSON.stringify(v): no HTML escaping. The recorded cases hold no U+2028 or U+2029, which encoding/json escapes.
+// compact is JSON.stringify(v): no HTML escaping, and U+2028 and U+2029 written as themselves, where encoding/json escapes them.
 func compact(t *testing.T, v any) string {
 	t.Helper()
 	var b bytes.Buffer
@@ -35,7 +35,21 @@ func compact(t *testing.T, v any) string {
 	if err := enc.Encode(v); err != nil {
 		t.Fatal(err)
 	}
-	return string(bytes.TrimSuffix(b.Bytes(), []byte("\n")))
+	in, out := bytes.TrimSuffix(b.Bytes(), []byte("\n")), []byte{}
+	// A backslash and the byte after it are copied together, so an escaped backslash before "u2028" stays text.
+	for i := 0; i < len(in); i++ {
+		switch {
+		case in[i] != '\\':
+			out = append(out, in[i])
+		case bytes.HasPrefix(in[i:], []byte(`\u2028`)):
+			out, i = append(out, "\u2028"...), i+5
+		case bytes.HasPrefix(in[i:], []byte(`\u2029`)):
+			out, i = append(out, "\u2029"...), i+5
+		default:
+			out, i = append(out, in[i], in[i+1]), i+1
+		}
+	}
+	return string(out)
 }
 
 func reviveBoth(input map[string]any) revived {

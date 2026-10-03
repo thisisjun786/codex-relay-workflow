@@ -105,6 +105,8 @@ for (const v of ["pass", "near-pass", "fail", "PASS", 5, null]) finalGate("gate_
 finalGate("gate_full", gate({ status: "approved", qaRequired: true, reviewRoundId: "r3", testReceiptPath: "t", qaReceiptPath: "q", verdict: "near-pass", sourceIdentity: ident({ treeHash: "h" }) }));
 finalGate("gate_key_order_follows_revive", { sourceIdentity: ident(), verdict: "pass", qaReceiptPath: "q", testReceiptPath: "t", reviewRoundId: "r", updatedAt: T, qaRequired: true, status: "approved" });
 finalGate("gate_extra_keys_dropped", gate({ evil: 1 }));
+finalGate("gate_separators_written_literally", gate({ updatedAt: "a\u2028b\u2029c", reviewRoundId: "\\u2028" }));
+rounds("round_separators_written_literally", [round({ planPath: "x\u2028y", lane: lane({ reviewerSession: "\u2029" }) })]);
 cases.gate_and_rounds_are_independent = { reviewRounds: [round(), { roundId: "" }], finalGate: gate({ status: "approved" }) };
 
 const out = {};
