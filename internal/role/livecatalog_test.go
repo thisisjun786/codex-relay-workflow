@@ -106,6 +106,10 @@ func TestLiveCatalogCache(t *testing.T) {
 	if stale.Status != "stale" || stale.Entries[0].ID != "second" || strings.Contains(stale.Message, "secret") {
 		t.Fatal(stale)
 	}
+	now = now.Add(365 * 24 * time.Hour)
+	if c := liveRead(t, &r, o); c.Status != "stale" || c.Entries[0].ID != "second" {
+		t.Fatal("oracle permits indefinitely stale fallback", c)
+	}
 	o.ForceRefresh = true
 	o.RunOcx = func([]string) (string, error) { return "[]", nil }
 	if c := liveRead(t, &r, o); c.Status != "fresh" || len(c.Entries) != 0 {
@@ -146,6 +150,38 @@ func TestLiveCatalogCoalesces(t *testing.T) {
 		liveRead(t, &r, o)
 		if calls != 2 {
 			t.Fatal("pending request not retired", calls)
+		}
+	})
+}
+
+func TestLiveCatalogPendingPrecedesCacheAndIsolatesHomes(t *testing.T) {
+	o, other := liveOptions(t), liveOptions(t)
+	synctest.Test(t, func(t *testing.T) {
+		var r CatalogReader
+		o.RunOcx = func([]string) (string, error) { return liveRoster("old"), nil }
+		liveRead(t, &r, o)
+		release := make(chan struct{})
+		o.ForceRefresh = true
+		o.RunOcx = func([]string) (string, error) { <-release; return liveRoster("new"), nil }
+		results := make(chan LiveCatalog, 2)
+		go func() { results <- liveRead(t, &r, o) }()
+		synctest.Wait()
+		hit := o
+		hit.ForceRefresh = false
+		go func() { results <- liveRead(t, &r, hit) }()
+		synctest.Wait()
+		if len(results) != 0 {
+			t.Fatal("fresh cache bypassed pending refresh")
+		}
+		other.RunOcx = func([]string) (string, error) { return liveRoster("separate"), nil }
+		if c := liveRead(t, &r, other); c.Entries[0].ID != "separate" {
+			t.Fatal(c)
+		}
+		close(release)
+		for range 2 {
+			if c := <-results; c.Entries[0].ID != "new" {
+				t.Fatal(c)
+			}
 		}
 	})
 }
@@ -202,6 +238,8 @@ func TestLiveCatalogValidation(t *testing.T) {
 		{"missing-efforts", `{"entries":[{"id":"x","source":"ocx","label":"x"}]}`, false},
 		{"invalid-efforts", `{"entries":[{"id":"x","source":"ocx","label":"x","reasoningEfforts":[1]}]}`, false},
 		{"missing-state", `{"state":null,"extra":7}`, true},
+		{"numeric-date", `{"fetchedAt":2026}`, true},
+		{"zero-date", `{"fetchedAt":-0.0}`, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			o := liveOptions(t)
@@ -266,6 +304,38 @@ func TestLiveCatalogSourceIdentityAndClock(t *testing.T) {
 	liveRead(t, &r, o)
 	if ticks != 4 {
 		t.Fatal("TTL clock calls", ticks)
+	}
+	// HOME is absent from the oracle's key, even if it selects the native home.
+	first := catalogEnv([]string{"HOME=first", "CRW_HOME=shared"})
+	second := catalogEnv([]string{"HOME=second", "CRW_HOME=shared"})
+	if sourceKey(first) != sourceKey(second) {
+		t.Fatal("changed oracle home-key omission")
+	}
+}
+
+// Date.parse results recorded under UTC; numeric falsiness is separately tested through cache reads.
+func TestLiveCatalogOracleDates(t *testing.T) {
+	for _, c := range []struct {
+		input string
+		ms    int64
+		valid bool
+	}{
+		{"2026-01-01T00:00:00.000Z", 1767225600000, true}, {"2026-01-01", 1767225600000, true},
+		{"2026-01", 1767225600000, true}, {"2026", 1767225600000, true},
+		{"2026-02-30", 1772409600000, true}, {"2026-02-31", 1772496000000, true}, {"2026-13-01", 0, false},
+		{"2026-01-01T24:00:00Z", 1767312000000, true}, {"2026-01-01T00:00:00+0000", 1767225600000, true},
+		{"2026/1/2", 1767312000000, true}, {"1/2/2026", 1767312000000, true},
+		{"Thu Jan 01 2026 00:00:00 GMT+0000 (Coordinated Universal Time)", 1767225600000, true},
+		{"Thu, 01 Jan 2026 00:00:00 GMT", 1767225600000, true},
+		{"0", 946684800000, true}, {"1", 978307200000, true}, {"32", 1956528000000, true},
+		{"49", 2493072000000, true}, {"50", -631152000000, true}, {"1.5", 978652800000, true},
+	} {
+		t.Run(c.input, func(t *testing.T) {
+			ms, valid := catalogDate(c.input)
+			if valid != c.valid || valid && ms != c.ms {
+				t.Fatal(ms, valid, "want", c.ms, c.valid)
+			}
+		})
 	}
 }
 

@@ -367,3 +367,12 @@ This section supersedes the seeded `port: pending` statuses for native Write/Edi
 ## Found by the PABCD phase directive and assembly port
 
 No new oracle defect was identified in the directive text and assembly of `pabcd-state/src/hook.ts:212-235,324-575` (CXC v0.2.40, commit 3c1459ac). The prefix-only resolver's unterminated-backtick matching and whole-string fail-open behavior are preserved and recorded as edge cases, not changed into a Markdown parser. The goalplan reader and active-phase selector are outside this port.
+
+## CRW-501 — Helper role live catalog
+
+- Cache validation does not validate `state`, accepts blank entry IDs/labels and arbitrary string effort values, and echoes unknown members (source `subagent-config/src/live-catalog.ts:64-68,112`; `TestLiveCatalogValidation`); port: kept.
+- The source key omits the resolved native home, so changing `HOME` with an explicit unchanged catalog home and absent `CODEX_HOME` can reuse a list from the old native home (source `live-catalog.ts:55-58,86-93`; `TestLiveCatalogSourceIdentityAndClock`); port: kept.
+- The 30-second TTL only limits fresh reuse; a validated last-success list is returned stale without an age limit while discovery keeps failing (source `live-catalog.ts:92-93,110-113`; `TestLiveCatalogCache`); port: kept.
+- `fetchedAt` is declared a string but cache validation coerces truthy numbers through `Date.parse`, which also normalizes February days 30/31 and `24:00` (source `live-catalog.ts:15,65`; `TestLiveCatalogValidation/numeric-date` and `TestLiveCatalogOracleDates`); port: kept.
+
+The pinned oracle already publishes through an exclusive 0600 temporary file and rename (`live-catalog.ts:71-79`). This port preserves that invariant: the forced-rename failure case retains the previous bytes and removes its own temporary file. No new truncation defect or intentionally-changed fix is claimed.

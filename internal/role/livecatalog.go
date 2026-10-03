@@ -261,7 +261,9 @@ func cachedCatalog(path, key string, now int64) *LiveCatalog {
 	}
 	at, err := jsString(m["fetchedAt"])
 	ms, valid := catalogDate(at)
-	if err != nil || string(m["fetchedAt"]) == "0" || !valid || ms > now+1000 {
+	var numeric float64
+	zero := len(m["fetchedAt"]) > 0 && m["fetchedAt"][0] != '"' && json.Unmarshal(m["fetchedAt"], &numeric) == nil && numeric == 0
+	if err != nil || zero || !valid || ms > now+1000 {
 		return nil
 	}
 	entries := make([]CatalogEntry, 0, len(rows))
@@ -298,14 +300,49 @@ func cachedCatalog(path, key string, now int64) *LiveCatalog {
 // forms accepted by Date.parse in the oracle's cache. Cache reads keep the original spelling.
 func catalogDate(s string) (int64, bool) {
 	s = text.Trim(s)
-	for _, layout := range []string{time.RFC3339Nano, "2006-01-02T15:04Z07:00", "2006-01-02", "2006-01", "2006", time.RFC1123, time.RFC1123Z, time.RFC822, time.RFC822Z, time.ANSIC, time.UnixDate, time.RFC850, "Jan 2 2006", "January 2, 2006", "2006/1/2", "2006,1,2", "1/2/2006", "1-2-2006"} {
+	if i := strings.Index(s, " ("); i >= 0 && strings.HasSuffix(s, ")") {
+		s = text.Trim(s[:i])
+	}
+	// V8 normalizes days 29..31 and midnight written as 24:00. It still
+	// rejects month 0/13 and day 0/32; retain those validation boundaries.
+	extraDay := int64(0)
+	if len(s) >= 10 && s[4] == '-' && s[7] == '-' {
+		year, e1 := strconv.Atoi(s[:4])
+		month, e2 := strconv.Atoi(s[5:7])
+		day, e3 := strconv.Atoi(s[8:10])
+		if e1 == nil && e2 == nil && e3 == nil {
+			if month < 1 || month > 12 || day < 1 || day > 31 {
+				return 0, false
+			}
+			date := time.Date(year, time.Month(month), day, 0, 0, 0, 0, time.UTC)
+			s = date.Format("2006-01-02") + s[10:]
+			if len(s) >= 16 && s[10] == 'T' && s[11:16] == "24:00" {
+				tail := s[16:]
+				if strings.HasPrefix(tail, ":00") {
+					tail = tail[3:]
+				}
+				if strings.HasPrefix(tail, ".") {
+					tail = tail[1:]
+					for len(tail) > 0 && tail[0] == '0' {
+						tail = tail[1:]
+					}
+				}
+				if tail != "" && tail[0] != 'Z' && tail[0] != '+' && tail[0] != '-' {
+					return 0, false
+				}
+				s = s[:11] + "00:00" + s[16:]
+				extraDay = 24 * 60 * 60 * 1000
+			}
+		}
+	}
+	for _, layout := range []string{time.RFC3339Nano, "2006-01-02T15:04Z07:00", "2006-01-02T15:04:05Z0700", "2006-01-02", "2006-01", "2006", time.RFC1123, time.RFC1123Z, time.RFC822, time.RFC822Z, time.ANSIC, time.UnixDate, time.RFC850, "Mon Jan 02 2006 15:04:05 GMT-0700", "Jan 2 2006", "January 2, 2006", "2006/1/2", "2006,1,2", "1/2/2006", "1-2-2006", "1.2.2006"} {
 		if at, err := time.Parse(layout, s); err == nil {
-			return at.UnixMilli(), true
+			return at.UnixMilli() + extraDay, true
 		}
 	}
 	for _, layout := range []string{"2006-01-02T15:04:05", "2006-01-02T15:04", "2006-01-02 15:04:05"} {
 		if at, err := time.ParseInLocation(layout, s, time.Local); err == nil {
-			return at.UnixMilli(), true
+			return at.UnixMilli() + extraDay, true
 		}
 	}
 	if len(s) <= 2 {
@@ -324,6 +361,13 @@ func catalogDate(s string) (int64, bool) {
 				year += 1900
 			}
 			return time.Date(year, month, 1, 0, 0, 0, 0, time.Local).UnixMilli(), true
+		}
+	}
+	if parts := strings.Split(s, "."); len(parts) == 2 {
+		month, e1 := strconv.Atoi(parts[0])
+		day, e2 := strconv.Atoi(parts[1])
+		if e1 == nil && e2 == nil && month >= 1 && month <= 12 && day >= 1 && day <= 31 {
+			return time.Date(2001, time.Month(month), day, 0, 0, 0, 0, time.Local).UnixMilli(), true
 		}
 	}
 	return 0, false
