@@ -13,7 +13,7 @@ import (
 )
 
 // expectedSettingsKeys is bridge.py EXPECTED_SETTINGS_KEYS, sorted as its refusal lists them.
-var expectedSettingsKeys = []string{"approval_policy", "cwd", "expected_sandbox_policy", "mcp_profile", "model", "reasoning_effort", "runtime_workspace_roots", "sandbox"}
+var expectedSettingsKeys = []string{"approval_policy", "cwd", "expected_sandbox_policy", "model", "reasoning_effort", "runtime_workspace_roots", "sandbox"}
 
 func anyStrings(values []string) []any {
 	out := make([]any, len(values))
@@ -66,7 +66,6 @@ func (b *Bridge) SendMessageToThread(ctx context.Context, in SendMessage) (ledge
 	}
 	var auth execution.Authorized
 	var contract settings.Contract
-	var selection execution.MCPSelection
 	validate := func() error {
 		var err error
 		auth, err = b.Policy.Authorize(execution.Input{Model: expected["model"], Effort: expected["reasoning_effort"], CWD: pyjson.Text(expected["cwd"]), Exception: in.Exception, Role: in.Role})
@@ -89,18 +88,7 @@ func (b *Bridge) SendMessageToThread(ctx context.Context, in SendMessage) (ledge
 				return &Invalid{`approval_policy must be one of "never", "on-request", "untrusted"; a granular policy has no name a caller can declare`}
 			}
 		}
-		if err := contract.Validate(); err != nil {
-			return err
-		}
-		// A send applies a profile only when it names one: no thread that predates a policy change is
-		// resumed under a default it never started with.
-		if named, stated := expected["mcp_profile"]; stated {
-			if text, isText := named.(string); !isText || text == "" {
-				return &Invalid{"mcp_profile must be a non-empty string when supplied"}
-			}
-			selection, err = b.selectMCP(in.Role, named.(string))
-		}
-		return err
+		return contract.Validate()
 	}
 	return b.mutate(ctx, mutation{in.RequestID, "send_message_to_thread", params, validate, func(ctx context.Context, receipt ledger.Receipt, effects *[]string) error {
 		receipt["threadId"] = in.ThreadID
@@ -135,30 +123,17 @@ func (b *Bridge) SendMessageToThread(ctx context.Context, in SendMessage) (ledge
 				return &appserver.RPCError{Method: "thread/read", Message: message, Object: map[string]any{"code": "unverified_pair_for_unloaded_thread", "message": message}}
 			}
 		}
-		if selection.Name != "" {
-			var info map[string]any
-			if contract.MCP, info, err = ResolveMCP(ctx, b.call, selection, contract.CWD); err != nil {
-				return MCPRefusal("config/read", err)
-			}
-			receipt["mcpProfile"] = info
-		}
 		resumed, err := b.dispatch(ctx, "thread/resume", contract.ResumeParams(in.ThreadID), effects)
 		if err != nil {
 			return err
 		}
 		receipt["resumed"] = resumed
-		observed := resumed
-		if contract.MCP != nil {
-			if observed, err = b.observeMCP(ctx, contract.MCP, in.ThreadID, resumed, receipt); err != nil {
-				return err
-			}
-		}
-		receipt["settings"] = contract.Receipt(observed, "resume")
+		receipt["settings"] = contract.Receipt(resumed, "resume")
 		receipt["approvals"] = contract.Approvals(resumed)
 		if _, err = b.Ledger.Save(ctx, receipt); err != nil {
 			return err
 		}
-		if findings := contract.Findings(observed); len(findings) > 0 {
+		if findings := contract.Findings(resumed); len(findings) > 0 {
 			first := findings[0]
 			message := findingText(first.Code, first.Field, first.Returned, first.Expected) + "; message withheld"
 			if first.Code == settings.UnsupportedApproval {
