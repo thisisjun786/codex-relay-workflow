@@ -1,0 +1,59 @@
+# Root thread subscription lifetime
+
+The bridge and relay release the App Server root subscriptions they own after
+finishing their useful observations and confirming the delivered turn ended.
+A finished root remains resumable and is never archived by this path. The next
+relay delivery uses `thread/resume` again. Delivery acceptance, turn completion
+and subscription release are separate facts; release changes no receipt field
+and does not make an uncertain send retryable.
+
+## Connection and terminal ownership
+
+`thread/start` and `thread/resume` subscribe the calling connection. Reads and
+`turn/start` do not. A watch admits on an established socket; every subsequent
+operation call, including the bridge's final optional read and relay guard,
+stays on that socket. Loss fails that scope rather than reconnecting it. A new
+delivery establishes a new connection through its ordinary read/resume path.
+Release sends `thread/unsubscribe` on the original socket and never reconnects.
+A retired reader cannot complete or retire a replacement socket's watches.
+
+The reader records successful creation and turn acknowledgements before caller
+cancellation can hide them. Matching terminals are retained independently of
+the public notification buffer, including completion before the start reply.
+All pending watches belong to the root until it is quiescent. A newer refused
+or cancelled send cannot discard an older pending turn or release proof. A
+known older turn's terminal does not complete a newer turn whose id is unknown.
+An uncertain transmitted turn waits for its terminal or connection loss.
+
+A same-root gate orders admitted operations against unsubscribe. Release runs
+on a connection-owned worker after the operation finishes its receipt and last
+observation, and rechecks quiescence after taking that gate. Caller cancellation
+leaves that worker alive. An unsubscribe failure keeps the proof and retries on
+the same socket with delays from five seconds up to five minutes, logging the
+first error. Socket loss abandons only that socket's work. Shutdown cancels and
+drains release work before closing the transport.
+
+## Never-run roots and sub-threads
+
+A newly acknowledged root without a first durable turn retains its subscription:
+on the measured App Server, unloading a never-run root can leave no rollout for
+resume. Retention is recorded before creation receipt checkpoints, including
+both ordinary and worktree creation. A failed checkpoint or later refused send
+cannot clear it; the first terminal does. No failed read is used to materialize
+a rollout. Connection loss can still end a never-run subscription; this path
+does not claim to make that host state recoverable across disconnection.
+
+Finished sub-threads are handled by the separate **Automatic release of finished
+sub-threads** follow-up. A parent's unsubscribe does not prove descendant release.
+This root path performs no descendant discovery or archive and invokes no
+cleanup command. The explicit finished-child cleanup procedure remains available.
+
+## Measurement limits
+
+An isolated codex-cli 0.154.0 turn remained active and kept its MCP helper for
+80 seconds after its sole subscription was released. The host retains running
+turns; the ordinary root release worker also waits for their terminal. Unloading
+finished roots and stopping their helpers after the last subscription ends is a
+host behavior, with an approximately sixty-second delay on this version, rather
+than an API timing guarantee. Another client's subscription can keep a root
+loaded after this connection releases it.

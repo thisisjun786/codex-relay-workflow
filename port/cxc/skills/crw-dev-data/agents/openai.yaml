@@ -1,0 +1,6 @@
+interface:
+  display_name: "crw-dev-data"
+  short_description: "Data pipelines, ETL/ELT design, data quality validation, SQL optimization, and analysis patterns."
+  default_prompt: "Use $crw-dev-data to guide this task and verify its result."
+policy:
+  allow_implicit_invocation: false

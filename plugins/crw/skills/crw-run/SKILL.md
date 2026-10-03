@@ -388,7 +388,8 @@ Write the first packet in the form of the pair recorded for the issue: the
 [SOL packet](references/task-packet.md#sol-packet) for a SOL child; an issue with no recorded pair keeps the
 Launch packet. The rule that picks the pair is "Child pair by issue type" in
 [crw-plan's integrations.md](../crw-plan/references/integrations.md), and both forms carry the restoration block and
-restate the workflow on every send.
+restate the workflow on every send. The choice itself is recorded at release
+([Record the pair choice at release](#record-the-pair-choice-at-release)).
 
 Apply [Child task titles](references/task-packet.md#child-task-titles):
 `ISSUE-ID · descriptive task title` (title text up to 20 characters, including
@@ -446,8 +447,9 @@ that served the request. Settle a setting the creation path cannot apply before
 creating the task rather than downgrading it.
 
 Record request ID, task ID, host ID when supplied, turn ID, requested/actual title
-and settings, and launch outcome. For code work include the checkout and full Git
-baseline SHA. For non-PR work include the permitted working location and input
+and settings, and launch outcome, with the pair choice as
+[Record the pair choice at release](#record-the-pair-choice-at-release) lists it. For code work include the
+checkout and full Git baseline SHA. For non-PR work include the permitted working location and input
 source revision; add the delivered output identity when the result exists. Do not put raw
 credentials or full private prompts in public project records.
 
@@ -541,6 +543,43 @@ its report, so this text states none.
 
 This is an instruction the parent follows; nothing refuses a dispatch that skipped it, so the run records the answer where it records
 the dispatch.
+
+### Record the pair choice at release
+
+When an issue is released (a packet, a task, a `managed-start` or a DAG release), its pair choice goes into the
+coordination record with the launch record, one row per release, so that a later review can ask whether the
+issue was classified right. [The record at release](../crw-plan/references/integrations.md#the-record-at-release)
+owns what the row holds and why it lives here and not in the relay; this is the order of the steps.
+
+1. Read the issue's child pair line. With no line, route the issue by the shape table, write the line in the
+   [extended form](../crw-plan/references/integrations.md#the-extended-line) and read it back before anything
+   else, as [Child pair by issue type](../crw-plan/references/integrations.md#child-pair-by-issue-type) says.
+   Where the user chooses a pair for the issue now, write the choice onto the line first, with its reason and
+   the source `user choice`.
+2. Take the tags and the bundle from the line, and quote the line, with its own source, in the row. The row's
+   source is the step that decided at release: `issue body` where the line already stated the pair and you
+   follow it, `user choice` for a choice written onto the line now, `table` for an issue you routed because it
+   had no line or for a move under When SOL fails that you apply at this release, `quota` reserved. A line in the older form states no tags: classify the issue by the
+   [tags](../crw-plan/references/integrations.md#classify-the-issue-by-its-kind-of-work), take the bundle from
+   the [Bundles rows](../crw-plan/references/integrations.md#bundles), mark the row `derived at release` and
+   leave the line as it is. The pair the line names stands (precedence): where the derived bundle names the
+   other family, the row says so and the issue is released on the line's pair. A tag the issue does not settle
+   is left blank in the row with the reason, and a blank tag never holds the release.
+3. For a flexible issue whose line the parent writes itself, choose the pair by the count rule under
+   [Bundles](../crw-plan/references/integrations.md#bundles) and put the counts in the row. A flexible issue
+   whose line already names a pair keeps it; nothing here re-chooses it from quota, which is
+   [a later rule](../crw-plan/references/integrations.md#the-place-for-a-quota-rule).
+4. Decide the pair (steps 1 to 3) before the first packet is written, and write the row once the request id
+   exists: the fields of [The record at release](../crw-plan/references/integrations.md#the-record-at-release),
+   naming the family while the model and the effort stay in the launch record's settings entry, read from the
+   creation receipt.
+5. A later change of the pair (a user's choice, a move under When SOL fails, a replacement) adds a row and
+   overwrites none.
+
+Nothing refuses a dispatch that skipped this; the rows are what the review reads, so a missing row shows up
+there. The relay's release request has no field for these values
+([codex-session-relay](references/relay.md)); where the coordination record cannot be written, report that gap
+with the other launch facts that could not be recorded.
 
 ### Release by region grade
 
