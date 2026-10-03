@@ -357,3 +357,22 @@ func TestAdapterAndLazyFooter(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestHermesJavaScriptLineSeparators(t *testing.T) {
+	var cases []struct {
+		Name, Body string
+		Rows       json.RawMessage
+	}
+	if err := json.Unmarshal([]byte(readFile(t, "testdata/hermes-lines.json")), &cases); err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range cases {
+		t.Run(v.Name, func(t *testing.T) {
+			rows, err := FetchHermesRows(func(string) (string, error) { return v.Body, nil })
+			if err != nil {
+				t.Fatal(err)
+			}
+			equalJSON(t, rows, v.Rows)
+		})
+	}
+}
