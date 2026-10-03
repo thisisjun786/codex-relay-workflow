@@ -57,6 +57,32 @@ func (o WorkerObservation) Ready(ctx context.Context, request map[string]any, po
 		if finding != nil {
 			return pyjson.Text(finding.Get("code")), nil
 		}
+		if role == "child" {
+			if reason := mcpAdmission(policy, settings["mcpProfile"]); reason != "" {
+				return reason, nil
+			}
+		}
 	}
 	return "", nil
+}
+
+// mcpAdmission is why a child's stated MCP profile is not admitted, or "". A role that declares
+// profiles admits a child only when its request states one of them, so the child's record names the
+// profile every later resume sends again; a role that declares none admits a child that states none.
+func mcpAdmission(policy registry.RolePolicy, stated any) string {
+	declared, ok := policy.BridgePolicy().Role("child")
+	if !ok || declared.MCP == nil {
+		if stated == nil {
+			return ""
+		}
+		return "mcp_profile_unknown"
+	}
+	if stated == nil {
+		return "mcp_profile_required"
+	}
+	name, _ := stated.(string)
+	if _, listed := declared.MCP.Profiles[name]; !listed {
+		return "mcp_profile_unknown"
+	}
+	return ""
 }

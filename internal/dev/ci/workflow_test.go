@@ -156,16 +156,99 @@ func TestWorkflow_each_check_runs_once(t *testing.T) {
 	}
 }
 
-// CI installs no Python: the checks are Go only, so no job needs an interpreter set up.
-func TestWorkflow_installs_no_python(t *testing.T) {
-	jobs, _ := workflowJobs(t)
-	for name, body := range jobs {
-		for _, word := range []string{"setup-python", "python-version"} {
-			if strings.Contains(body, word) {
-				t.Errorf("%s job still names %q", name, word)
-			}
+var (
+	// pythonStep matches what installs or runs Python in a workflow line: the setup action and its
+	// version input, and a python or pip word (python3, python3.12, pip3, pipx, python3-minimal).
+	pythonStep = regexp.MustCompile(`(?:^|[^A-Za-z0-9_.-])(?:setup-python|python-version|python[0-9.]*|pipx?[0-9.]*)(?:$|[^A-Za-z0-9_])`)
+	// skillStep matches a path below a skills directory (the roots of the one allow-list in
+	// validate.go): a step cannot run a skill's script without naming where it lives, in a
+	// working-directory or a cd as well as in the command.
+	skillStep = regexp.MustCompile(`(?:^|[^A-Za-z0-9_-])(?:` + alternation(skillAssetRoots) + `)/[^/\s]`)
+)
+
+// alternation is words as a regular expression alternative, each taken literally.
+func alternation(words []string) string {
+	quoted := make([]string, len(words))
+	for i, word := range words {
+		quoted[i] = regexp.QuoteMeta(word)
+	}
+	return strings.Join(quoted, "|")
+}
+
+// pythonInWorkflow is the lines of a workflow, numbered, that install or run Python or name a
+// path below a skills directory. A line that starts with # is a comment and is skipped; a trailing
+// # is read as part of the line, because a # inside quotes hides nothing from the shell.
+func pythonInWorkflow(text string) []string {
+	var found []string
+	for number, line := range lines(text) {
+		code := strings.TrimSpace(line)
+		if !strings.HasPrefix(code, "#") && (pythonStep.MatchString(code) || skillStep.MatchString(code)) {
+			found = append(found, fmt.Sprintf("%d: %s", number+1, code))
 		}
 	}
+	return found
+}
+
+// CI installs no Python and runs no skill script (CRW-483): the checks are Go only, so no workflow
+// sets up an interpreter, calls python or pip, or names a path below a skills directory, whose
+// helper scripts are original assets an agent runs and no CI step does. Whether CI should test
+// skill scripts is a decision of its own; it starts by changing this test.
+func TestWorkflow_installs_no_python(t *testing.T) {
+	files, err := filepath.Glob(filepath.Join(repoRoot(), ".github", "workflows", "*.y*ml"))
+	if err != nil || len(files) < 2 {
+		t.Fatalf("workflow files = %v, %v", files, err)
+	}
+	for _, file := range files {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, line := range pythonInWorkflow(string(data)) {
+			t.Errorf("%s installs or runs Python, or runs a skill asset, at line %s", filepath.Base(file), line)
+		}
+	}
+}
+
+// The detector refuses what installs or runs Python in a workflow, and a step that names a skill
+// asset script, and lets comments, other words that contain pip or python, and ordinary skill
+// paths through.
+func TestWorkflow_python_detector(t *testing.T) {
+	for _, row := range []struct {
+		line  string
+		found bool
+	}{
+		{"      - uses: actions/setup-python@0123456789abcdef0123456789abcdef01234567 # v5", true},
+		{"          python-version: '3.12'", true},
+		{"      - run: python3 -m pytest", true},
+		{"      - run: python tools/check.py", true},
+		{"      - run: /usr/bin/python3.12 tools/check", true},
+		{"      - run: sh -c 'python -V'", true},
+		{"      - run: pip install -r requirements.txt", true},
+		{"      - run: pip3 install build", true},
+		{"      - run: pipx run build", true},
+		{"      - run: sudo apt-get install -y python3-minimal", true}, // an interpreter package is an install too
+		{"      - run: apt-get install python3-dev python3-pip", true},
+		{"      - run: ./plugins/crw/skills/example/scripts/helper.py", true},
+		{"      - run: \"$GITHUB_WORKSPACE/plugins/crw/skills/example/scripts/helper\"", true},
+		{"      - run: sh port/cxc/skills/crw-example/examples/demo.sh", true},
+		{"      - run: printf '%s\\n' ' # marker'; python3 -V", true},             // a # inside quotes hides nothing
+		{"          working-directory: plugins/crw/skills/example/scripts", true}, // a step runs a script by its directory
+		{"      - run: cd port/cxc/skills/crw-example && ./helper", true},
+		{"      - run: cat plugins/crw/skills/example/SKILL.md", true}, // any path below a skills root
+		{"      - run: go test ./... # no python here", true},          // a trailing comment is part of the line
+		{"      - run: go test ./...", false},
+		{"      # python is installed by nobody", false},
+		{"          set -euo pipefail", false},
+		{"      - run: echo pipeline cpython", false},
+		{"      - run: ls plugins/crw/skills port/cxc/skills/ plugins/crw/skillset/x", false}, // the roots themselves are no skill path
+		{"      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0", false},
+	} {
+		if got := pythonInWorkflow(row.line + "\n"); (len(got) > 0) != row.found {
+			t.Errorf("%q: found = %q, want found = %v", row.line, got, row.found)
+		}
+	}
+	expectEqual(t, "line number", pythonInWorkflow("jobs:\n  a:\n    steps:\n      - run: |\n          make test\n          python3 x.py\n"),
+		[]string{"6: python3 x.py"})
 }
 
 // matrixValues reads a one-line `key: [a, b]` matrix entry from a job body.

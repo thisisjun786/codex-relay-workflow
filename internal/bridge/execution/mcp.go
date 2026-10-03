@@ -9,6 +9,7 @@ import (
 const (
 	MCPProfileUnknown = "execution_mcp_profile_unknown"
 	MCPServerUnknown  = "execution_mcp_server_unknown"
+	MCPServerDisabled = "execution_mcp_server_disabled"
 	MCPNameMaximum    = 128
 )
 

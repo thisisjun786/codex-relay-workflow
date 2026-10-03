@@ -25,7 +25,11 @@ func verifyResume(settings delivery.TaskSettings, response any, status any) (con
 		message := code + ": " + pyjson.Text(first.Get("field")) + " returned " + returned + "; message withheld"
 		if !transmitted {
 			code = registry.SettingsFreeRefusalCode(mismatches)
-			message = code + ": " + pyjson.Text(first.Get("field")) + " is " + returned + " on the loaded thread and " + pyvalue.Repr(first.Get("expected")) + " in the record; nothing was transmitted and no turn was started"
+			sent := "nothing was transmitted"
+			if _, overrides := settings.Data.Lookup("mcpServers"); overrides {
+				sent = "only the MCP profile's overrides were transmitted"
+			}
+			message = code + ": " + pyjson.Text(first.Get("field")) + " is " + returned + " on the loaded thread and " + pyvalue.Repr(first.Get("expected")) + " in the record; " + sent + " and no turn was started"
 		}
 		return contract.OrderedObject{{Key: "code", Value: code}, {Key: "message", Value: message}}, findings, nil
 	}
