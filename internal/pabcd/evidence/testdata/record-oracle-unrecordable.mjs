@@ -10,6 +10,7 @@ import { mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, symlin
 import { spawn } from "node:child_process";
 import { join, dirname, isAbsolute } from "node:path";
 
+process.umask(0o022);
 const FROZEN = Date.parse("2026-01-01T00:00:00.000Z");
 const RealDate = Date;
 globalThis.Date = class extends RealDate {
@@ -50,9 +51,10 @@ const walk = (root, base = root, acc = []) => {
   try { names = readdirSync(root).sort(); } catch { return acc; }
   for (const name of names) {
     const p = join(root, name), rel = p.slice(base.length + 1), info = lstatSync(p);
+    const mode = (info.mode & 0o777).toString(8);
     if (info.isSymbolicLink()) acc.push({ path: rel, type: "link", to: readlinkSync(p) });
-    else if (info.isDirectory()) { acc.push({ path: rel, type: "dir" }); walk(p, base, acc); }
-    else acc.push({ path: rel, type: "file", ...(rel.includes("evidence-unrecordable/") || rel.includes("evidence-attempts/") ? { text: readFileSync(p, "utf8") } : {}) });
+    else if (info.isDirectory()) { acc.push({ path: rel, type: "dir", mode }); walk(p, base, acc); }
+    else acc.push({ path: rel, type: "file", mode, ...(rel.includes("evidence-unrecordable/") || rel.includes("evidence-attempts/") ? { text: readFileSync(p, "utf8") } : {}) });
   }
   return acc;
 };

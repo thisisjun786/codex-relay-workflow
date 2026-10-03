@@ -1365,6 +1365,1216 @@
    ]
   },
   {
+   "id": "uppercase_key_beside_the_list",
+   "seedOverrides": {
+    "unverifiedSubagents": [
+     {
+      "agentId": "a1",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     }
+    ],
+    "UNVERIFIEDSUBAGENTS": []
+   },
+   "payloads": [
+    {
+     "agent_type": "executor",
+     "agent_id": "a1",
+     "turn_id": "t1"
+    }
+   ]
+  },
+  {
+   "id": "uppercase_key_hides_the_overflow",
+   "seedOverrides": {
+    "unverifiedSubagents": [
+     {
+      "agentId": "a0",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a1",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a2",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a3",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a4",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a5",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a6",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a7",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a8",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a9",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a10",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a11",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a12",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a13",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a14",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a15",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a16",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a17",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a18",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a19",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a20",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a21",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a22",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a23",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a24",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a25",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a26",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a27",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a28",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a29",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a30",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a31",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a32",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a33",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a34",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a35",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a36",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a37",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a38",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a39",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a40",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a41",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a42",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a43",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a44",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a45",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a46",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a47",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a48",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a49",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a50",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a51",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a52",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a53",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a54",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a55",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a56",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a57",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a58",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a59",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a60",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a61",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a62",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a63",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a64",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a65",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     }
+    ],
+    "UNVERIFIEDSUBAGENTS": [
+     {
+      "agentId": "b0",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b1",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b2",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b3",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b4",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b5",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b6",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b7",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b8",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b9",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b10",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b11",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b12",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b13",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b14",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b15",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b16",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b17",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b18",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b19",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b20",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b21",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b22",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b23",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b24",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b25",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b26",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b27",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b28",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b29",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b30",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b31",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b32",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b33",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b34",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b35",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b36",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b37",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b38",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b39",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b40",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b41",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b42",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b43",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b44",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b45",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b46",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b47",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b48",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b49",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b50",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b51",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b52",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b53",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b54",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b55",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b56",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b57",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b58",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b59",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b60",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b61",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b62",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "b63",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     }
+    ]
+   },
+   "payloads": [
+    {
+     "agent_type": "executor",
+     "agent_id": "a0",
+     "turn_id": "t1"
+    }
+   ]
+  },
+  {
    "id": "sixty_six_entries_resolve_first",
    "seedOverrides": {
     "unverifiedSubagents": [

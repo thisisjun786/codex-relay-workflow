@@ -93,14 +93,14 @@ func resolveTombstone(cwd, sessionID string, p Payload, lock lockFunc) bool {
 	return removed
 }
 
-// storedVerdicts is the number of verdicts the session file holds, or -1 when that cannot be told.
+// storedVerdicts is the number of verdicts the session file holds under the exact key ReadState reads, or -1 when that cannot
+// be told (encoding/json would also match a key that differs in case, so the lookup goes through a map).
 func storedVerdicts(cwd, sessionID string) int {
-	var f struct {
-		UnverifiedSubagents []json.RawMessage `json:"unverifiedSubagents"`
-	}
+	var f map[string]json.RawMessage
+	var list []json.RawMessage
 	raw, err := os.ReadFile(state.StatePath(cwd, sessionID))
-	if err != nil || json.Unmarshal(raw, &f) != nil {
+	if err != nil || json.Unmarshal(raw, &f) != nil || json.Unmarshal(f["unverifiedSubagents"], &list) != nil {
 		return -1
 	}
-	return len(f.UnverifiedSubagents)
+	return len(list)
 }

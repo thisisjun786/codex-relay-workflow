@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -16,14 +17,15 @@ import (
 // testdata/oracle-unrecordable.json holds what the CXC v0.2.40 oracle answered for the cases of testdata/cases-unrecordable.json,
 // recorded once by testdata/record-oracle-unrecordable.mjs under Node 24 (no Node runs here). Each case runs in a fresh directory
 // with the clock frozen at 2026-01-01T00:00:00.000Z; "{S}" in a case is the state directory name (.codexclaw in the oracle, .crw
-// here), "<CWD>" and "<OUT>" the workspace and an outside directory. A tree lists the state directory without following links.
+// here), "<CWD>" and "<OUT>" the workspace and an outside directory. A tree lists the state directory without following links,
+// with the permission bits of what is not a link, recorded and replayed under the umask 022.
 
 type unrecSetup struct {
 	File, Dir, Symlink, Chmod, Text, To, Mode, Pre, Post string
 	Deep                                                 int
 }
 
-type treeEntry struct{ Path, Type, Text, To string }
+type treeEntry struct{ Path, Type, Mode, Text, To string }
 
 type unrecCases struct {
 	Marker []struct {
@@ -99,6 +101,13 @@ func sessionOf(s *string) string {
 	return *s
 }
 
+// fixUmask makes the permission bits of what the units create the ones the oracle recording shows.
+func fixUmask(t *testing.T) {
+	t.Helper()
+	old := syscall.Umask(0o022)
+	t.Cleanup(func() { syscall.Umask(old) })
+}
+
 // caseDirs makes the workspace and the outside directory of a case.
 func caseDirs(t *testing.T) (cwd, out string) {
 	t.Helper()
@@ -164,11 +173,16 @@ func treeOf(root, cwd, out string) []treeEntry {
 		case d.Type()&fs.ModeSymlink != 0:
 			target, _ := os.Readlink(p)
 			e.Type, e.To = "link", strings.NewReplacer(out, "<OUT>", cwd, "<CWD>").Replace(target)
-		case d.IsDir():
-			e.Type = "dir"
-		case strings.Contains(e.Path, UnrecordableSubdir+"/"), strings.Contains(e.Path, AttemptsSubdir+"/"):
-			raw, _ := os.ReadFile(p)
-			e.Text = string(raw)
+		default:
+			if info, err := d.Info(); err == nil {
+				e.Mode = strconv.FormatUint(uint64(info.Mode().Perm()), 8)
+			}
+			if d.IsDir() {
+				e.Type = "dir"
+			} else if strings.Contains(e.Path, UnrecordableSubdir+"/") || strings.Contains(e.Path, AttemptsSubdir+"/") {
+				raw, _ := os.ReadFile(p)
+				e.Text = string(raw)
+			}
 		}
 		entries = append(entries, e)
 		return nil
@@ -184,6 +198,7 @@ func TestUnrecordableSubdir(t *testing.T) {
 
 func TestWriteUnrecordableMarker(t *testing.T) {
 	c, g := loadUnrec(t)
+	fixUmask(t)
 	now := time.UnixMilli(1767225600000)
 	for _, k := range c.Marker {
 		cwd, out := caseDirs(t)
@@ -208,6 +223,7 @@ func TestWriteUnrecordableMarker(t *testing.T) {
 
 func TestUnrecordableVerdictStatus(t *testing.T) {
 	c, g := loadUnrec(t)
+	fixUmask(t)
 	for _, k := range c.Status {
 		cwd, out := caseDirs(t)
 		restore, skip := stage(t, k.Setup, cwd, out)
@@ -231,6 +247,7 @@ func TestHasSpentBudget(t *testing.T) {
 	// A counter whose JSON nests deeper than Go's limit of 10,000 levels reads as spent, where the oracle, which parses it, finds
 	// the attempts beside the nesting unspent. The port ends on the fail-closed side.
 	port := map[string]bool{"raw_deep_sibling": true}
+	fixUmask(t)
 	for _, k := range c.Budget {
 		cwd, out := caseDirs(t)
 		restore, skip := stage(t, k.Setup, cwd, out)
@@ -301,7 +318,7 @@ func TestResolveTombstone(t *testing.T) {
 			}
 			slices.Sort(gotSessions)
 		}
-		if k.ID == "sixty_six_entries_resolve_first" || k.ID == "malformed_entry_beside_resolved" {
+		if slices.Contains([]string{"sixty_six_entries_resolve_first", "malformed_entry_beside_resolved", "uppercase_key_hides_the_overflow"}, k.ID) {
 			want.Returns, want.State = []bool{false}, stateOf(before)
 		}
 		if !slices.Contains(want.Returns, true) && before != nil && !bytes.Equal(after, before) {
