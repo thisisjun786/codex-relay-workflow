@@ -3,9 +3,9 @@
 // narrative; for A>B the pasted verdict of an independent reviewer and the agent's judgment of it; for C>D pasted command output
 // with a passing exit code; and for P>A a plan that exists as numbered files. The package validates and writes nothing.
 //
-// Behaviour is ported as-is, oracle defects included (docs/port-cxc/known-defects.md). validateAttest is Validate, coerceAttest
-// is Coerce, and the two sets are functions (IsGated, GatedTransitions, IsAuditVerdict). Reasons carry CRW names where the oracle
-// names its command (name-substitution R9, R33, cli table): "crw pabcd plan init", "crw pabcd receipt test", "CRW-ROLE:".
+// Behaviour is ported as-is, oracle defects included (docs/port-cxc/known-defects.md), but a thrown error becomes a refusal.
+// validateAttest is Validate, coerceAttest is Coerce; the sets are functions (IsGated, GatedTransitions, IsAuditVerdict). Reasons
+// carry CRW names where the oracle names its command (name-substitution R9, R33): crw pabcd plan init, crw pabcd receipt test.
 //
 // Callers run, in the oracle's order: Coerce, on P>A ValidatePlanArtifacts (orchestrate-cli.ts:600), on every gated edge
 // ValidateWorkPhaseBinding with the bound goalplan's active work phase (nil when none), then Validate (fsm.ts:120). The FSM port
