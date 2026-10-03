@@ -1,6 +1,6 @@
 ---
 name: crw-logic
-description: "Find consequential contradictions and broken invariants across canonical Linear specifications, design decisions, calculations, implementation evidence, and evaluations, using focused Paperthin checks. Use for a requested logical-consistency or invariant audit; crw-check owns requirement-to-delivery coverage."
+description: "Find consequential contradictions and broken invariants across canonical Linear specifications, design decisions, calculations, implementation evidence, and evaluations, using focused checks of its own. Use for a requested logical-consistency or invariant audit; crw-check owns requirement-to-delivery coverage."
 ---
 
 # CRW Logic
@@ -13,20 +13,17 @@ Read [Integrations](../crw-plan/references/integrations.md). Resolve the target 
 
 If only a local file or pasted artifact is supplied, audit that bounded input and label its canonical Linear link unknown. Missing connector access can yield a partial audit; it cannot establish cross-document consistency. Do not create or migrate documents simply to run the check.
 
-Read selected installed Paperthin skills and use them according to the question:
+Run the checks that answer the question at hand. Each is a step of this audit:
 
-| Question | Route |
+| Question | Check |
 |---|---|
-| Did we understand the request and its scope? | `readchk` when materially ambiguous |
-| Do documents disagree about the same fact/rule? | `ssotize` in audit mode |
-| Is a factual premise unsupported or false? | `factchk`; use `cxc-search` for current/public sources |
-| Does an evaluation independently test its claim? | `mandela` |
-| Would a fresh reader recover the same rule? | `shower` when a blind comprehension check is needed and delegation is available |
-| Which single assumption could invalidate the plan? | `hate`, only when explicitly requested by the user |
-| Do distinct failure modes lead to different judgments? | `prism`, only when explicitly requested by the user |
-| Can the person justify a recent decision? | `feynman`, only when explicitly requested; do not turn an ordinary audit into an interrogation |
+| Did we understand the request and its scope? | When materially ambiguous, restate the request and its scope from the conversation and records and confirm the reading before auditing; ask only when the evidence cannot settle it |
+| Do documents disagree about the same fact/rule? | List every document that states it, then settle which one is the rule by [where each document type is canonical](../crw-plan/references/integrations.md#where-each-document-type-is-canonical); an accepted decision recorded on the item supersedes the body it changes, and the others are stale copies or a difference of scope |
+| Is a factual premise unsupported or false? | Trace the premise to its source and verify it there; use `cxc-search` for current/public sources, and report an unverified premise as an evidence gap |
+| Does an evaluation independently test its claim? | Ask whether the implementation and the scorer could agree without any outside truth; acceptance evidence must come from something other than the implementation's own assumption |
+| Would a fresh reader recover the same rule? | When a blind comprehension check is needed and delegation is available, give the text without its surrounding context to a context-free reviewer through CXC delegation and compare the rule it recovers with the intended one |
 
-Preserve helper invocation and output rules from Integrations. If the user explicitly requests `hate`, preserve its one root and cheapest falsification; if they request `prism`, preserve its lens disagreement or shared conclusion. Do not relabel a same-context read as an independent check.
+Do not relabel a same-context read as an independent check.
 
 For code, use installed `cxc-dev` and the relevant verification owner. CXC owns authorized implementation, loops, and subagent routing; this audit does not start a loop or create a competing workflow. Return bounded findings to `crw-check` or `crw-run` when called by them.
 
