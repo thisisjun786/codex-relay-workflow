@@ -1168,5 +1168,38 @@
     "file": "{ not json ]"
    }
   ]
+ },
+ {
+  "id": "get_scope_whitespace",
+  "note": "JSON.parse reads a scope with white space around it as the value",
+  "given": {
+   "store": null
+  },
+  "ops": [
+   {
+    "op": "get",
+    "scope": "  \"global\" ",
+    "result": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}},\"scope\":\"global\",\"sources\":{\"explorer\":\"session\",\"reviewer\":\"session\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":false,\"reviewer\":false,\"executor\":false,\"architect\":false}}",
+    "file": null
+   },
+   {
+    "op": "get",
+    "scope": "\n\"global\"\t",
+    "result": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}},\"scope\":\"global\",\"sources\":{\"explorer\":\"session\",\"reviewer\":\"session\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":false,\"reviewer\":false,\"executor\":false,\"architect\":false}}",
+    "file": null
+   },
+   {
+    "op": "get",
+    "scope": "\t\"galaxy\" ",
+    "error": "invalid scope \"galaxy\"",
+    "file": null
+   },
+   {
+    "op": "get",
+    "scope": " null ",
+    "error": "invalid scope \"null\"",
+    "file": null
+   }
+  ]
  }
 ]

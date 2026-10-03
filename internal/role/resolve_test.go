@@ -128,12 +128,13 @@ func TestProjectConfigTrustToken(t *testing.T) { // store.test.ts "Git-tracked p
 	if got, ok := ProjectConfigTrustToken(sub); !ok || got == token || got != digest(t, root, filepath.Join(sub, crwdir.DirName, StoreFile)) {
 		t.Errorf("a subdirectory (same root, other config path) gives %q", got)
 	}
-	if other, _ := ProjectConfigTrustToken(repo(t, config, true)); other == token {
-		t.Error("the same bytes in another repository need separate review")
+	elsewhere := repo(t, config, true)
+	if other, ok := ProjectConfigTrustToken(elsewhere); !ok || other == token || other != digest(t, elsewhere, filepath.Join(elsewhere, crwdir.DirName, StoreFile)) {
+		t.Errorf("the same bytes in another repository need separate review: %q", other)
 	}
 	check(t, os.WriteFile(file, []byte(`{"roles":{}}`), 0o644))
-	if edited, _ := ProjectConfigTrustToken(root); edited == token {
-		t.Error("editing the reviewed config keeps the token")
+	if edited, ok := ProjectConfigTrustToken(root); !ok || edited == token || edited != digest(t, root, file) {
+		t.Errorf("editing the reviewed config gives %q", edited)
 	}
 	if got, ok := ProjectConfigTrustToken(filepath.Join(root, "missing")); ok || got != "" {
 		t.Errorf("a missing config gives %q", got)

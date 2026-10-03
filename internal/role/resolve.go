@@ -70,8 +70,8 @@ func IsTrackedProjectConfig(cwd string) bool {
 }
 
 // ProjectConfigTrustToken is projectConfigTrustToken: sha256 over the canonical repository root (the directory itself outside a
-// repository, or when git does not answer), the canonical config path and the config's bytes, each part ended by a NUL, so a token
-// binds the repository and the exact bytes. ok is false where the oracle answers null: no config, an unresolvable path, or a git output
+// repository, or when git does not answer), the canonical config path and the config's bytes, joined by a NUL each, so a token binds
+// the repository and the exact bytes. ok is false where the oracle answers null: no config, an unresolvable path, or a git output
 // that is not valid UTF-8 (JavaScript would decode it with U+FFFD and fail to resolve the path).
 func ProjectConfigTrustToken(cwd string) (token string, ok bool) {
 	configPath, err := realpath(projectConfigPath(cwd))

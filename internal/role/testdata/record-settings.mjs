@@ -28,7 +28,8 @@ for (const c of JSON.parse(readFileSync(casesFile, "utf8"))) {
   process.env.CODEXCLAW_HOME = home; // updateSettings and getSettings read the process environment
   const ops = [];
   for (const op of c.ops) {
-    const rec = { ...op };
+    const { result: _r, error: _e, file: _f, ...input } = op; // an earlier recording's answers are not kept
+    const rec = { ...input };
     const get = () => api.getSettings(cwd, op.scope === undefined ? undefined : JSON.parse(op.scope));
     const update = () => api.updateSettings(cwd, JSON.parse(op.body));
     try {

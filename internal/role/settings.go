@@ -48,6 +48,7 @@ func checkScope(raw json.RawMessage) error {
 	if raw == nil {
 		return nil
 	}
+	raw = bytes.TrimSpace(raw) // JSON.parse allows white space around a value
 	if s, ok := stringOf(raw); ok {
 		_, err := ParseScope(&s)
 		return err
