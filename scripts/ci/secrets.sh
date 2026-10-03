@@ -8,6 +8,28 @@ if [[ $(git rev-parse --is-shallow-repository) != false ]]; then
   echo 'Secret scan requires full history; fetch --unshallow first.' >&2
   exit 1
 fi
+
+# What is scanned follows the event. A pull_request run scans the commits the pull request adds to
+# its base: the range from PR_BASE_SHA (the workflow passes the event's base tip) to the merge
+# candidate that is checked out, still with merge-parent diffs (-m). Another branch's content then
+# cannot fail it. Every other event, and a run outside Actions, scans every fetched ref as before.
+# A pull request without a usable base fails here, before anything is downloaded, rather than
+# scanning more or less than it says.
+scan_log_opts='--all -m'
+if [[ ${GITHUB_EVENT_NAME:-} == pull_request ]]; then
+  scan_base=${PR_BASE_SHA:-}
+  if [[ ! $scan_base =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]] ||
+    ! scan_base=$(git rev-parse --verify --quiet "${scan_base}^{commit}"); then
+    echo 'A pull_request scan needs PR_BASE_SHA: the full SHA of the base commit, present in this checkout.' >&2
+    exit 1
+  fi
+  scan_head=$(git rev-parse --verify HEAD)
+  scan_log_opts="-m $scan_base..$scan_head"
+  echo "Scanning the commits the pull request adds: $scan_base..$scan_head"
+else
+  echo 'Scanning every fetched ref.'
+fi
+
 scan_temp=$(mktemp -d)
 trap 'rm -rf "$scan_temp"' EXIT
 unset GITLEAKS_CONFIG GITLEAKS_CONFIG_TOML
@@ -27,4 +49,4 @@ touch "$scan_temp/empty.ignore"
 cd "$scan_temp"
 ./gitleaks git "$scan_git" --config "$scan_root/.gitleaks.toml" \
   --gitleaks-ignore-path "$scan_temp/empty.ignore" --ignore-gitleaks-allow \
-  --log-opts='--all -m' --redact --no-banner
+  --log-opts="$scan_log_opts" --redact --no-banner
