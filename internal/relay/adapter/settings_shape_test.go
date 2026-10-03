@@ -3,10 +3,12 @@ package adapter
 import "testing"
 
 func Test28_SettingsMissingNullAndWrongShapeNeverAdmit(t *testing.T) {
+	t.Parallel()
 	shareGoldens(t)
 	for _, key := range []string{"approvalPolicy", "sandbox", "cwd", "runtimeWorkspaceRoots", "model", "reasoningEffort", "thread"} {
 		for _, shape := range []string{"missing", "null", "object", "list", "number", "boolean"} {
 			t.Run(key+"/"+shape, func(t *testing.T) {
+				t.Parallel()
 				r := resume()
 				switch shape {
 				case "missing":

@@ -138,6 +138,7 @@ func (f *managedFake) Lifecycle(_ context.Context, _, _ string) (bool, string, e
 	return true, "", nil
 }
 func Test27_MST_7_WorkerPolicyDisappearsAfterCreation(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	dir := t.TempDir()
 	s, err := store.Open(ctx, filepath.Join(dir, "relay.sqlite3"), "")
@@ -185,6 +186,7 @@ func Test27_MST_7_WorkerPolicyDisappearsAfterCreation(t *testing.T) {
 }
 
 func Test27_MST_7_CreationEnvironmentDriftRefusesRegistration(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	dir := t.TempDir()
 	s, err := store.Open(ctx, filepath.Join(dir, "relay.sqlite3"), "")
@@ -217,6 +219,7 @@ func Test27_MST_7_CreationEnvironmentDriftRefusesRegistration(t *testing.T) {
 }
 
 func Test27_MST_3_PausedPartialShellNoRecoverySend(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	dir := t.TempDir()
 	s, err := store.Open(ctx, filepath.Join(dir, "relay.sqlite3"), "")
@@ -245,6 +248,7 @@ func Test27_MST_3_PausedPartialShellNoRecoverySend(t *testing.T) {
 }
 
 func Test27_MST_7_PausedChildPreservesShell(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	dir := t.TempDir()
 	s, err := store.Open(ctx, filepath.Join(dir, "relay.sqlite3"), "")
@@ -273,6 +277,7 @@ func Test27_MST_7_PausedChildPreservesShell(t *testing.T) {
 }
 
 func Test27_MST_6_CreatedChildIsAuthorizedOnce(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	dir := t.TempDir()
 	s, err := store.Open(ctx, filepath.Join(dir, "relay.sqlite3"), "")
@@ -312,6 +317,7 @@ func Test27_MST_6_CreatedChildIsAuthorizedOnce(t *testing.T) {
 }
 
 func Test27_MST_3_UnknownRecoverySendIsNotRetried(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	dir := t.TempDir()
 	s, err := store.Open(ctx, filepath.Join(dir, "relay.sqlite3"), "")
@@ -345,13 +351,17 @@ func Test27_MST_3_UnknownRecoverySendIsNotRetried(t *testing.T) {
 }
 
 func Test27_MST_8_FinalGuardRefusesScopeDrift(t *testing.T) {
+	t.Parallel()
 	for _, change := range []struct{ name, column, value string }{
 		{"parent", "parent_task_id", "other-parent"},
 		{"host", "child_host_id", "other-host"},
 		{"roots", "artifact_roots", `["/different"]`},
 		{"recipients", "allowed_recipients", `["unrelated"]`},
 	} {
-		t.Run(change.name, func(t *testing.T) { checkManagedScopeDrift(t, change.column, change.value) })
+		t.Run(change.name, func(t *testing.T) {
+			t.Parallel()
+			checkManagedScopeDrift(t, change.column, change.value)
+		})
 	}
 }
 
@@ -402,6 +412,7 @@ func checkManagedScopeDrift(t *testing.T, column, value string) {
 }
 
 func Test27_MST_3_UncertainFirstTurnNeverRecovers(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	dir := t.TempDir()
 	s, err := store.Open(ctx, filepath.Join(dir, "relay.sqlite3"), "")
@@ -435,6 +446,7 @@ func Test27_MST_3_UncertainFirstTurnNeverRecovers(t *testing.T) {
 }
 
 func Test27_MST_4_LedgerReplacementBeforeCreationWithholdsEffect(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	dir := t.TempDir()
 	s, err := store.Open(ctx, filepath.Join(dir, "relay.sqlite3"), "")
@@ -462,6 +474,7 @@ func Test27_MST_4_LedgerReplacementBeforeCreationWithholdsEffect(t *testing.T) {
 }
 
 func Test27_MST_4_UnknownLedgerNeverReserves(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	dir := t.TempDir()
 	s, err := store.Open(ctx, filepath.Join(dir, "relay.sqlite3"), "")
@@ -486,6 +499,7 @@ func Test27_MST_4_UnknownLedgerNeverReserves(t *testing.T) {
 }
 
 func Test27_MST_4_PreflightRefusesBeforeHostEffects(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	dir := t.TempDir()
 	s, err := store.Open(ctx, filepath.Join(dir, "relay.sqlite3"), "")
@@ -518,6 +532,7 @@ func Test27_MST_4_PreflightRefusesBeforeHostEffects(t *testing.T) {
 }
 
 func Test27_MST_2_RegisteredShellCompletesCriteriaAfterCrash(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	dir := t.TempDir()
 	s, err := store.Open(ctx, filepath.Join(dir, "relay.sqlite3"), "")
@@ -562,6 +577,7 @@ func Test27_MST_2_RegisteredShellCompletesCriteriaAfterCrash(t *testing.T) {
 }
 
 func Test27_MST_2_BusinessReceiptReplayedAfterAdmissionCrash(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	dir := t.TempDir()
 	s, err := store.Open(ctx, filepath.Join(dir, "relay.sqlite3"), "")
@@ -604,6 +620,7 @@ func Test27_MST_2_BusinessReceiptReplayedAfterAdmissionCrash(t *testing.T) {
 }
 
 func Test27_MST_2_StandbyRecoveryUsesRetainedShell(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	dir := t.TempDir()
 	s, err := store.Open(ctx, filepath.Join(dir, "relay.sqlite3"), "")
@@ -641,6 +658,7 @@ func Test27_MST_2_StandbyRecoveryUsesRetainedShell(t *testing.T) {
 }
 
 func Test27_MST_3_StandbyIncompleteRetainsChildUntilRetry(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	dir := t.TempDir()
 	s, err := store.Open(ctx, filepath.Join(dir, "relay.sqlite3"), "")
@@ -681,6 +699,7 @@ func Test27_MST_3_StandbyIncompleteRetainsChildUntilRetry(t *testing.T) {
 }
 
 func Test27_MST_3_UnknownCreationNeverCreatesReplacement(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	dir := t.TempDir()
 	s, err := store.Open(ctx, filepath.Join(dir, "relay.sqlite3"), "")
@@ -714,6 +733,7 @@ func Test27_MST_3_UnknownCreationNeverCreatesReplacement(t *testing.T) {
 }
 
 func Test27_MST_1_FakeHostStartReplay(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	dir := t.TempDir()
 	s, err := store.Open(ctx, filepath.Join(dir, "relay.sqlite3"), "")
