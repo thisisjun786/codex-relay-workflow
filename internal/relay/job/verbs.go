@@ -91,37 +91,52 @@ func cliRecord(rec BgRecord) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return pyjson.Loads(string(b), pyjson.LoadOptions{})
+	return pyjson.Loads(string(b), pyjson.LoadOptions{Surrogates: true})
 }
 
-// RunCLI ports run's local-file operations. The relay supplies validated options
-// and operands; its strict help/refusal contract takes precedence.
-func RunCLI(argv []string, cwd string, getenv func(string) (string, bool), clock func() time.Time) (result CLIResult, err error) {
-	result.Out = ""
+// CLIOptions keeps parsed values separate from command syntax.
+type CLIOptions struct {
+	Verb, ID            string
+	Command             []string
+	Note, Tail, Session *string
+	JSON                bool
+}
+
+// RunCLI is the oracle argv facade. The relay uses RunParsedCLI after validation.
+func RunCLI(argv []string, cwd string, getenv func(string) (string, bool), clock func() time.Time) (CLIResult, error) {
 	verb, args := "", []string{}
 	if len(argv) > 0 {
 		verb, args = argv[0], argv[1:]
 	}
-	id := ""
+	opts := CLIOptions{Verb: verb, Note: cliFlagValue(args, "--note"), Tail: cliFlagValue(args, "--tail"), Session: cliFlagValue(args, "--session"), JSON: slices.Contains(args, "--json")}
 	if len(args) > 0 {
-		id = args[0]
+		opts.ID = args[0]
 	}
-	asJSON := slices.Contains(args, "--json")
-	switch verb {
-	case "run":
+	if verb == "run" {
 		sep := slices.Index(args, "--")
 		if sep < 0 || sep == len(args)-1 {
 			return CLIResult{cliUsage, 1}, nil
 		}
+		opts.Command, opts.Note = args[sep+1:], cliFlagValue(args[:sep], "--note")
+	}
+	return RunParsedCLI(opts, cwd, getenv, clock)
+}
+
+// RunParsedCLI executes validated values without interpreting metadata as argv.
+func RunParsedCLI(opts CLIOptions, cwd string, getenv func(string) (string, bool), clock func() time.Time) (result CLIResult, err error) {
+	result.Out = ""
+	verb, id, asJSON := opts.Verb, opts.ID, opts.JSON
+	switch verb {
+	case "run":
 		var session *string
 		if s, ok := getenv("CODEX_THREAD_ID"); ok {
 			session = &s
 		}
 		var rec BgRecord
-		rec, err = RunBackground(cwd, RunOptions{SessionID: session, Command: args[sep+1:], Note: cliFlagValue(args[:sep], "--note")}, clock)
+		rec, err = RunBackground(cwd, RunOptions{SessionID: session, Command: opts.Command, Note: opts.Note}, clock)
 		if err == nil {
 			result.Out = rec.ID
-			if slices.Contains(args[:sep], "--json") {
+			if asJSON {
 				result.Out, err = cliRecord(rec)
 			}
 		}
@@ -156,7 +171,7 @@ func RunCLI(argv []string, cwd string, getenv func(string) (string, bool), clock
 			rec, err = Reconcile(cwd, rec, clock)
 			body, _ := ReadText(OutPath(cwd, id))
 			lines := text.SplitLinesByteExact(body)
-			tail := cliTail(cliFlagValue(args, "--tail"), len(lines))
+			tail := cliTail(opts.Tail, len(lines))
 			shown := ""
 			if tail > 0 {
 				shown = strings.Join(lines[len(lines)-tail:], "\n")
@@ -186,7 +201,7 @@ func RunCLI(argv []string, cwd string, getenv func(string) (string, bool), clock
 		recs, err = ListRecords(cwd, clock)
 		result.Out = strings.Join([]string{"wake: " + wake, flag, "  " + EnvVar + ": " + env, "  작업 " + strconv.Itoa(len(recs)) + "건"}, "\n")
 	case "drain":
-		session := cliFlagValue(args, "--session")
+		session := opts.Session
 		if session == nil {
 			return CLIResult{cliUsage, 1}, nil
 		}
@@ -219,14 +234,16 @@ func cliSwitch(cwd, verb string, clock func() time.Time) (string, error) {
 	path, event := DisabledPath(cwd), "disabled"
 	out := "bg wake OFF (이 워크트리). 다시 켜려면: crw relay job on"
 	if verb == "on" {
-		if err := RemovePath(cwd, path); err != nil {
-			return "", err
-		}
 		path, event = EnabledAtPath(cwd), "enabled"
 		out = "bg wake ON. 꺼져 있는 동안 끝난 작업은 웨이크하지 않고 crw relay job list 에만 남습니다."
 	}
 	if err := AtomicWrite(cwd, path, clock().UTC().Format(isoLayout)+"\n"); err != nil {
 		return "", err
+	}
+	if verb == "on" {
+		if err := RemovePath(cwd, DisabledPath(cwd)); err != nil {
+			return "", err
+		}
 	}
 	_ = appendLedger(cwd, Event{{"event", event}}, clock)
 	return out, nil

@@ -57,8 +57,14 @@ func TestJobParsedNoteKeepsCommandBoundary(t *testing.T) {
 			Command []string `json:"command"`
 		} `json:"out"`
 	}
-	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
-		t.Fatal(err)
+	decodeErr := json.Unmarshal(out.Bytes(), &result)
+	if decodeErr != nil {
+		var fallback struct {
+			Out string `json:"out"`
+		}
+		_ = json.Unmarshal(out.Bytes(), &fallback)
+		rec, _ := job.ReadRecord(ws, fallback.Out)
+		result.Out.PID = rec.PID
 	}
 	if result.Out.PID != nil {
 		pid := *result.Out.PID
@@ -72,6 +78,9 @@ func TestJobParsedNoteKeepsCommandBoundary(t *testing.T) {
 				}
 			}
 		})
+	}
+	if decodeErr != nil {
+		t.Fatal(decodeErr)
 	}
 	if code != 0 || result.Out.Note != "--" || strings.Join(result.Out.Command, " ") != "printf hello" {
 		t.Fatalf("corrupted input: %d %s %s", code, out.String(), stderr.String())

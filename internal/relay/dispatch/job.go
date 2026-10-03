@@ -48,23 +48,26 @@ func runJobCommand(_ context.Context, _ Services, args Args) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	verb := args.Positionals[0]
-	argv := []string{verb}
-	if verb == "get" || verb == "cancel" {
-		argv = append(argv, args.Positionals[1:]...)
+	opts := job.CLIOptions{Verb: args.Positionals[0], JSON: args.Bool("json")}
+	if opts.Verb == "get" || opts.Verb == "cancel" {
+		opts.ID = args.Positionals[1]
 	}
-	for _, name := range []string{"note", "tail", "session"} {
-		if args.Given(name) {
-			argv = append(argv, "--"+name, args.Text(name))
-		}
+	if opts.Verb == "run" {
+		opts.Command = args.Positionals[1:]
 	}
-	if args.Bool("json") {
-		argv = append(argv, "--json")
+	if args.Given("note") {
+		v := args.Text("note")
+		opts.Note = &v
 	}
-	if verb == "run" {
-		argv = append(append(argv, "--"), args.Positionals[1:]...)
+	if args.Given("tail") {
+		v := args.Text("tail")
+		opts.Tail = &v
 	}
-	result, err := job.RunCLI(argv, cwd, os.LookupEnv, time.Now)
+	if args.Given("session") {
+		v := args.Text("session")
+		opts.Session = &v
+	}
+	result, err := job.RunParsedCLI(opts, cwd, os.LookupEnv, time.Now)
 	if err != nil {
 		return nil, err
 	}

@@ -1,0 +1,9 @@
+{
+  "oracle": "CXC v0.2.40 3c1459ac",
+  "source": "bg-wake/src/cli.ts:145-154",
+  "scenario": "off, make enabled-at a directory, on",
+  "oracleDisabledFilePresent": false,
+  "classification": "intentionally-changed",
+  "reason": "A failed on operation must not lose the persistent disabled state file.",
+  "portedDisabledFilePresent": true
+}

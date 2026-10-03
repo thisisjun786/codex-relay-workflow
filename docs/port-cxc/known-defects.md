@@ -325,3 +325,12 @@ Behavior of CXC v0.2.40 that looks unintended and that the recorded corpus ([con
 - `detectAgbrowseSearchRequest` also scans the whole prompt and accepts ordinary implementation prose containing an action word, so `Do not use agbrowse to search`, `"agbrowse search"` and `Please describe the agbrowse hook with tests` return true (source `plugins/codexclaw/components/pabcd-state/src/hook.ts:307-312`; recorded detector cases); port: kept.
 - `requestLines` addresses each backtick command against the original line, so `Run ` + backtick-quoted `crw-loop` + ` then use ` + backtick-quoted `crw-pabcd` + ` to plan` keeps the first mode but strips the second and detects no phase (source `hook.ts:247-254`, with the declared name substitution; direct request-line case); port: kept.
 - `requestLines` recognizes only triple-backtick fences, so an example between Markdown tilde fences still yields a loop request (source `hook.ts:239-242`; direct request-line case with `~~~`, a mode request, and `~~~`); port: kept.
+
+## Found by the CRW-345 job verb port
+
+- `MAX_STDIN_BYTES` counts UTF-16 units, and `readStdin` reads the whole input before applying the bound (source `plugins/codexclaw/components/bg-wake/src/cli.ts:38-45`); port: kept.
+- `flagValue` takes the first occurrence and accepts another flag as its value (source `bg-wake/src/cli.ts:81-85`); port: kept in the argv facade; the approved relay parser validates options and uses its existing last-value rule.
+- A note equal to `--` becomes the command separator, and `--json` inside the command selects record output (source `bg-wake/src/cli.ts:101-107`); port: kept in the argv facade; the approved relay contract passes parsed metadata separately and selects JSON only from declared flags.
+- `get` counts the final empty line of a newline-terminated output toward its tail and trims whitespace from the displayed output (source `bg-wake/src/cli.ts:123-127`); port: kept.
+- Manual drain returns the selected completions even when a record cannot be stamped, and stamps before the caller emits the result (source `bg-wake/src/hook.ts:81-91`, `cli.ts:170-175`); port: kept.
+- A failed `on` can lose the persistent off flag: it removes `disabled` before the `enabled-at` write (source `bg-wake/src/cli.ts:145-154`; oracle reproduction makes `enabled-at` a directory); port: fixed by writing the gate before removing the flag, covered by `TestCLIOnRetainsTheOffFlagWhenGateWriteFails` and the intentionally-changed case `testdata/cli-on-gate-failure.json`.
