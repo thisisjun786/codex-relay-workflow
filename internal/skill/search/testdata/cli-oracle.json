@@ -1,0 +1,135 @@
+[
+  {
+    "args": [],
+    "exit": 0,
+    "stdout": "crw skill <search <query...> [--source jaw|hermes|clawhub|gh|all] [--limit N] [--json] [--refresh] | show <id> [--source ...]>\n",
+    "stderr": ""
+  },
+  {
+    "args": [
+      "search"
+    ],
+    "exit": 1,
+    "stdout": "crw skill <search <query...> [--source jaw|hermes|clawhub|gh|all] [--limit N] [--json] [--refresh] | show <id> [--source ...]>\n",
+    "stderr": ""
+  },
+  {
+    "args": [
+      "show"
+    ],
+    "exit": 1,
+    "stdout": "crw skill <search <query...> [--source jaw|hermes|clawhub|gh|all] [--limit N] [--json] [--refresh] | show <id> [--source ...]>\n",
+    "stderr": ""
+  },
+  {
+    "args": [
+      "wat"
+    ],
+    "exit": 1,
+    "stdout": "crw skill <search <query...> [--source jaw|hermes|clawhub|gh|all] [--limit N] [--json] [--refresh] | show <id> [--source ...]>\n",
+    "stderr": ""
+  },
+  {
+    "args": [
+      "search",
+      "x",
+      "--source",
+      "nope"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "skill-search: unknown source \"nope\"\n"
+  },
+  {
+    "args": [
+      "show",
+      "x",
+      "--source",
+      "nope"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "skill-search: no skill \"x\" in source(s) nope\n"
+  },
+  {
+    "args": [
+      "search",
+      "x",
+      "--json"
+    ],
+    "exit": 0,
+    "stdout": "[\n  {\n    \"id\": \"x\",\n    \"source\": \"jaw\",\n    \"name\": \"X\",\n    \"description\": \"x 😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\",\n    \"rawUrl\": \"https://raw.githubusercontent.com/lidge-jun/cli-jaw-skills/main/x/SKILL.md\",\n    \"supersededBy\": \"y\",\n    \"status\": \"old\",\n    \"requires\": {\n      \"bins\": [\n        \"git\"\n      ]\n    },\n    \"score\": 8\n  }\n]\n",
+    "stderr": ""
+  },
+  {
+    "args": [
+      "search",
+      "x"
+    ],
+    "exit": 0,
+    "stdout": "x (jaw, 8)  -> use y (active) [old] bins: git\n  x 😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\ud83d...\n  https://raw.githubusercontent.com/lidge-jun/cli-jaw-skills/main/x/SKILL.md\n# external skills: load with `crw skill show <id>` (adapter preamble applies; crw-dev wins on conflict)\n",
+    "stderr": ""
+  },
+  {
+    "args": [
+      "search",
+      "x",
+      "--source",
+      "all",
+      "--json"
+    ],
+    "exit": 0,
+    "stdout": "[\n  {\n    \"id\": \"x\",\n    \"source\": \"jaw\",\n    \"name\": \"X\",\n    \"description\": \"x 😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\",\n    \"rawUrl\": \"https://raw.githubusercontent.com/lidge-jun/cli-jaw-skills/main/x/SKILL.md\",\n    \"supersededBy\": \"y\",\n    \"status\": \"old\",\n    \"requires\": {\n      \"bins\": [\n        \"git\"\n      ]\n    },\n    \"score\": 8\n  },\n  {\n    \"id\": \"x\",\n    \"source\": \"clawhub\",\n    \"name\": \"x\",\n    \"description\": \"market\",\n    \"rawUrl\": \"https://clawhub.ai/api/v1/packages/x/file?path=SKILL.md\",\n    \"score\": 1\n  }\n]\n",
+    "stderr": "skill-search: source hermes failed (offline)\n"
+  },
+  {
+    "args": [
+      "show",
+      "x"
+    ],
+    "exit": 0,
+    "stdout": "[crw external skill adapter]\n- This is an EXTERNAL skill. crw dev discipline (crw-dev) always wins on conflict.\n- Substitute Claude-specific tools with Codex equivalents:\n  claude -p / claude CLI -> codex exec; Read/Grep/Glob tools -> shell (cat/rg/fd).\n- Resolve path placeholders ({baseDir}, $CODEX_HOME/skills/...) against the skill's\n  raw URL directory, not the local filesystem.\n- If the skill name collides with a crw built-in (dev-*, search), the built-in\n  is authoritative; use this document as supplementary reference only.\n\n--- x (jaw) https://raw.githubusercontent.com/lidge-jun/cli-jaw-skills/main/x/SKILL.md\n\n# Body\n",
+    "stderr": ""
+  },
+  {
+    "args": [
+      "show",
+      "x",
+      "--json"
+    ],
+    "exit": 0,
+    "stdout": "{\"id\":\"x\",\"source\":\"jaw\",\"name\":\"X\",\"description\":\"x 😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\",\"rawUrl\":\"https://raw.githubusercontent.com/lidge-jun/cli-jaw-skills/main/x/SKILL.md\",\"supersededBy\":\"y\",\"status\":\"old\",\"requires\":{\"bins\":[\"git\"]},\"body\":\"# Body\",\"preamble\":\"[crw external skill adapter]\\n- This is an EXTERNAL skill. crw dev discipline (crw-dev) always wins on conflict.\\n- Substitute Claude-specific tools with Codex equivalents:\\n  claude -p / claude CLI -> codex exec; Read/Grep/Glob tools -> shell (cat/rg/fd).\\n- Resolve path placeholders ({baseDir}, $CODEX_HOME/skills/...) against the skill's\\n  raw URL directory, not the local filesystem.\\n- If the skill name collides with a crw built-in (dev-*, search), the built-in\\n  is authoritative; use this document as supplementary reference only.\\n\"}\n",
+    "stderr": ""
+  },
+  {
+    "args": [
+      "show",
+      "missing"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "skill-search: no skill \"missing\" in source(s) jaw\n"
+  },
+  {
+    "args": [
+      "show",
+      "x",
+      "--source",
+      "gh"
+    ],
+    "exit": 0,
+    "stdout": "[crw external skill adapter]\n- This is an EXTERNAL skill. crw dev discipline (crw-dev) always wins on conflict.\n- Substitute Claude-specific tools with Codex equivalents:\n  claude -p / claude CLI -> codex exec; Read/Grep/Glob tools -> shell (cat/rg/fd).\n- Resolve path placeholders ({baseDir}, $CODEX_HOME/skills/...) against the skill's\n  raw URL directory, not the local filesystem.\n- If the skill name collides with a crw built-in (dev-*, search), the built-in\n  is authoritative; use this document as supplementary reference only.\n\n--- x (jaw) https://raw.githubusercontent.com/lidge-jun/cli-jaw-skills/main/x/SKILL.md\n\n# Body\n",
+    "stderr": ""
+  },
+  {
+    "args": [
+      "show",
+      "x",
+      "--source",
+      "all"
+    ],
+    "exit": 0,
+    "stdout": "[crw external skill adapter]\n- This is an EXTERNAL skill. crw dev discipline (crw-dev) always wins on conflict.\n- Substitute Claude-specific tools with Codex equivalents:\n  claude -p / claude CLI -> codex exec; Read/Grep/Glob tools -> shell (cat/rg/fd).\n- Resolve path placeholders ({baseDir}, $CODEX_HOME/skills/...) against the skill's\n  raw URL directory, not the local filesystem.\n- If the skill name collides with a crw built-in (dev-*, search), the built-in\n  is authoritative; use this document as supplementary reference only.\n\n--- x (jaw) https://raw.githubusercontent.com/lidge-jun/cli-jaw-skills/main/x/SKILL.md\n\n# Body\n",
+    "stderr": ""
+  }
+]

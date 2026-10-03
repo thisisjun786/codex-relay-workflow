@@ -30,18 +30,19 @@ const (
 // is their count (ACR's ReviewerCount). Severity is the text the reviewer reported; Grade and Security come from NormalizeGrade.
 // Everything a reviewer wrote is data: nothing in this package executes or follows it.
 type Finding struct {
-	File        string  `json:"file"`
-	Line        int     `json:"line"`
-	EndLine     int     `json:"endLine,omitempty"` // 0, or the last line of a range that starts at Line
-	Title       string  `json:"title"`
-	Explanation string  `json:"explanation"`
-	Severity    string  `json:"severity"`
-	Grade       Grade   `json:"grade"`
-	Security    bool    `json:"security"`
-	Perspective string  `json:"perspective"`
-	Reviewers   []int   `json:"reviewers"`
-	Support     int     `json:"support"`
-	Verdict     Verdict `json:"verdict"`
+	File         string  `json:"file"`
+	Line         int     `json:"line"`
+	EndLine      int     `json:"endLine,omitempty"` // 0, or the last line of a range that starts at Line
+	Title        string  `json:"title"`
+	Explanation  string  `json:"explanation"`
+	Severity     string  `json:"severity"`
+	Grade        Grade   `json:"grade"`
+	Security     bool    `json:"security"`
+	Perspective  string  `json:"perspective"`
+	Reviewers    []int   `json:"reviewers"`
+	Support      int     `json:"support"`
+	Verdict      Verdict `json:"verdict"`
+	NeedsContext bool    `json:"needsContext,omitempty"` // kept as unverified; never confirmation
 }
 
 // DropReason says why a finding was removed (the CRW form of ACR's Disposition kinds); Apply tries the rules in this order.

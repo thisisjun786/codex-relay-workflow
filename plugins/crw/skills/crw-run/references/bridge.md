@@ -126,8 +126,9 @@ the App Server configuration. Omitting any other setting uses that configuration
 checks nothing, so supply the ones the assignment depends on: an omitted setting is
 reported but never verified.
 
-It also accepts `role`. Name the role this task is being created for and state the pair the
-host's declared policy reports for it, read from `get_capabilities` rather than remembered;
+It also accepts `role`. Name the role this task is being created for and state a pair the
+host's declared policy reports for it (for a role that lists several, one entry of its `pairs`; for a
+child, the entry of its issue's family under [Child pair by issue type](../../crw-plan/references/integrations.md#child-pair-by-issue-type)), read from `get_capabilities` rather than remembered;
 the host then checks the answer instead of taking the caller's word. A role the policy does not
 declare is refused before any call, and no pair is supplied in its place. The rule and the
 decision it carries are in
@@ -199,8 +200,8 @@ creation on that same task.
 
 Where the host has configured an execution policy, the stated pair must also be one the
 operator approved, and an unapproved one is refused before anything is created. Read
-`get_capabilities` before creating: it reports whether an allowlist is in force and a
-digest identifying it, so an assumption about which pairs are available is never needed.
+`get_capabilities` before creating: it reports whether an allowlist is in force, a
+digest identifying it, and each role's pair or pairs, so an assumption about which pairs are available is never needed.
 A per-task exception is cited by id through `policy_exception`; the id, its one model,
 its one effort and the directories it covers all live in the host's own file. Naming an
 exception is not approving one, and a request cannot carry its own allowance. Ask the
@@ -233,11 +234,11 @@ The receipt also reports the runtime status the host gave before the resume. Whe
 is `notLoaded`, it carries `echoIndependence: "not_established"`: the host may apply the
 settings it was sent while materializing the task, so an agreeing answer cannot be told apart
 from it repeating the request. Report such an answer as agreement, never as preservation. Where
-a role was named and its pair was not checked against that role's declared pair — a supervisor,
+a role was named and its pair was not checked against that role's declared pairs — a supervisor,
 whose pair is the user's own selection, or a request citing a policy exception — the send is
 refused instead, because transmitting an unchecked pair there could restore a value the user has
 since changed. A send naming no role is not covered by that check; the relay resolves a
-recipient's role from its binding and owns it.
+recipient's role from its binding and owns it. Where the role lists several pairs, as the child role may, the policy does not say which pair a thread runs on, so a send naming that role to a recipient the host reports `notLoaded` is withheld as `unverified_pair_for_unloaded_thread` with nothing resumed; the relay's delivery, which resumes such a recipient with nothing requested and compares the host's report with the record, is the route that reaches it.
 
 These same returned settings are what a relay records as a task's authorized
 execution settings, so a later delivery preserves them instead of inheriting a host
@@ -257,7 +258,7 @@ what a new one costs, so a send with no stated pair is refused before the task i
 read. The resume carries those settings and is read as an observation, and a difference
 or a setting the host does not report withholds the message instead of dispatching it.
 Name the RECIPIENT's role in `role` where it has one, so the stated pair is checked against
-that role rather than accepted as given.
+that role rather than accepted as given. For a child the stated pair is the one its record holds, whichever of its role's pairs the task was created on.
 An unrecognised key is refused rather than ignored. Verify the returned settings on each
 mutation and reconcile a mismatch on the same task.
 

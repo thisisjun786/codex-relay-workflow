@@ -306,11 +306,16 @@ facts arrive, and refuses a disagreement as `role_binding_mismatch` rather than 
 the recovery for a mismatch is not re-recording, because that would write one side's answer over
 the other.
 
+A role that lists several pairs accepts a settings record on any one of them: a child recorded from the
+receipt it was created under is current whichever of its role's pairs that is, so the relay cannot tell
+whether it is the pair the issue's child pair line names. That comparison is the parent's, made on the
+creation receipt ([Child pair by issue type](../../crw-plan/references/integrations.md#child-pair-by-issue-type)).
+
 After a user changes an existing task's model, re-record that task's authorization from a
 user-attributed source before the next send, with `--source user_transition`. The record is what
 a send verifies against, and a value observed on the host is evidence of what the task is running
 rather than a new approval, so nothing adopts a drifting setting on its own. Until it is
-re-recorded the send is refused as `settings_record_stale_for_role`, before any transport call.
+re-recorded the send is refused: as `settings_record_stale_for_role`, before any transport call, when the old record is no longer one of its role's pairs; and, where it still is one (a child moved from one of its role's pairs to the other), as `settings_differ_after_load` after a resume that requests nothing, because the compare then finds the host on another pair than the record.
 A process that cannot read a role policy refuses role-bound sends as `role_policy_unconfigured`
 rather than skipping the check; that hold is retry-safe, so declaring the policy and restarting
 resumes the held deliveries. `doctor` reports the policy digest this process resolved and
@@ -322,24 +327,25 @@ A message to a task states the RECIPIENT's authorized pair, not the sender's. A 
 to its parent states the parent's, and its own settings are unaffected by what the parent runs
 on; copying the recipient's pair into the sender is how a correction to one level spreads to
 another. The pair to state is the one RECORDED as that task's authorization, which is what a send
-verifies against. For most tasks that is the pair its role's policy declares, and it is read at
-the time of the send rather than from a memory of what the role used to run on. It is not always
-that pair: an exception authorizes one specific model and effort for one role and directory, and
-a task created under a currently valid one legitimately differs from the ordinary declared pair.
-Stating the declared pair for such a task would either fail verification or ask the host to
+verifies against. For a task whose role declares one pair that is the pair its role's policy declares, read at the time
+of the send rather than from a memory of what the role used to run on; for a child, whose role lists
+several pairs, it is whichever of them the task was created on, which its creation receipt and the
+relay's record hold. It is not always a pair the role declares: an exception authorizes one specific model and effort for one role and directory, and
+a task created under a currently valid one legitimately differs from the pairs its role declares.
+Stating a declared pair for such a task would either fail verification or ask the host to
 change what the task runs on.
 
 The recipient's runtime state decides the mechanism as well as the settings, and it does not
 decide it alone. An ACTIVE recipient is steered into the turn it is already running, and a steer
 carries no model or effort at all, so there is nothing to state and nothing that could be
-applied. An IDLE recipient whose pair derives from its role's declared pair is resumed and
+applied. An IDLE recipient whose pair derives from its role's declared pair (a role that lists several derives none) is resumed and
 carries its settings, and so is one the host reports as `notLoaded`: a host that applies what it
 was sent while materializing the thread lands it where policy says it belongs. A record-based pair
-— a supervisor's — or an exception-authorized one is never transmitted, loaded or not, because a
+— a supervisor's, or a child's under a role that lists several pairs — or an exception-authorized one is never transmitted, loaded or not, because a
 resume could restore a value the user has since changed. The relay's transport loads such a
 recipient with a resume that requests nothing, compares what the host reports with the record
 before any turn, and refuses a difference as `settings_differ_after_load`, retry-safe with
-nothing started; re-record from a reading the user stands behind rather than retrying.
+nothing started; re-record from a reading the user stands behind rather than retrying. On a child that refusal can mean the host reports another pair than the record, for example because the user moved it, or that another recorded setting has drifted; the refusal names the field that differs, and the recovery follows that field. It is not a transport fault.
 
 The workspace roots are the one setting read differently, on both routes. A resume never changes
 the roots of a thread the host already has loaded: the thread keeps the roots of whichever load
