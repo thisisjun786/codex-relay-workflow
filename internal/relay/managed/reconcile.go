@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
@@ -153,6 +154,11 @@ func (r *startRun) reconcileCreation(ctx context.Context) (contract.OrderedObjec
 	}
 	switch d.action {
 	case "continue":
+		if r.row.ReceiptStatus.String != "accepted" {
+			if err := r.holdProject(ctx); err != nil {
+				return nil, err
+			}
+		}
 		r.receipt, r.adopted = adopted(r.receipt, d.thread), true
 	case "recreate":
 		r.projectLock()
@@ -171,6 +177,21 @@ func (r *startRun) reconcileCreation(ctx context.Context) (contract.OrderedObjec
 	}
 	r.reconciled = &d.rec
 	return nil, nil
+}
+
+// holdProject takes the project's lock and asks the project-scope decision again before a thread the creation left is sent to: the lock the creation
+// held was let go when the start that made it stopped, and the parent binding may have moved since. The lock is kept until register has registered the child.
+func (r *startRun) holdProject(ctx context.Context) error {
+	r.projectLock()
+	if project := pyjson.Text(r.req["projectKey"]); project != "" {
+		held, err := LockProject(ctx, r.m.Store.Path, project)
+		if err != nil {
+			return err
+		}
+		var once sync.Once
+		r.projectLock = func() { once.Do(func() { _ = held() }) }
+	}
+	return r.m.scopeRefusal(ctx, r.attemptIdentity(), r.req)
 }
 
 // adopted is the unknown receipt as a creation that reached its thread: the thread is the one observed and thread/start is among the effects,

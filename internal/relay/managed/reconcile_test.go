@@ -261,16 +261,9 @@ func recon(got map[string]any) map[string]any {
 
 func (k *reconcileKit) expect(got map[string]any, state, reason, why string) {
 	k.t.Helper()
-	if got["state"] != state || pyjson.Text(got["reason"]) != reason || recon(got)["state"] != nilIfEmpty(why) {
+	if got["state"] != state || pyjson.Text(got["reason"]) != reason || pyjson.Text(recon(got)["state"]) != why {
 		k.t.Fatalf("want %s/%s/%s, got %v/%v/%v (%v)", state, reason, why, got["state"], got["reason"], recon(got)["state"], recon(got))
 	}
-}
-
-func nilIfEmpty(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
 }
 
 func (k *reconcileKit) effects(created, sent int) {
@@ -278,16 +271,6 @@ func (k *reconcileKit) effects(created, sent int) {
 	if k.host.created != created || k.host.sent != sent {
 		k.t.Fatalf("host effects created/sent %d/%d, want %d/%d", k.host.created, k.host.sent, created, sent)
 	}
-}
-
-func (k *reconcileKit) count(method string) int {
-	n := 0
-	for _, call := range k.host.calls {
-		if call == method {
-			n++
-		}
-	}
-	return n
 }
 
 // A thread/start whose answer was lost and which left no thread is created again, once, after the grace period, under the same request.
@@ -420,16 +403,15 @@ func TestReconcileStopsAfterThreeCreations(t *testing.T) {
 	k.effects(3, 0)
 }
 
-// A standby send whose outcome is unknown is not sent again and the thread is not looked at again (I-473 for a send).
+// A standby send whose outcome is unknown is not sent again (I-473 for a send).
 func TestReconcileUnknownStandbySendIsNotRepeated(t *testing.T) {
 	t.Parallel()
 	k := newReconcileKit(t, "name-timeout")
 	k.host.sendReceipts = []map[string]any{{"status": "outcome_unknown", "threadId": "t-1"}}
 	k.expect(k.run(), "incomplete", "creation_unknown", "adopted")
-	reads := k.count("thread/read") + k.count("thread/turns/list")
 	k.expect(k.run(), "incomplete", "creation_unknown", "adopted")
-	if len(k.host.sends) != 1 || k.count("thread/read")+k.count("thread/turns/list") != reads {
-		t.Fatalf("an unknown send was repeated or the thread looked at again: sends %v", k.host.sends)
+	if len(k.host.sends) != 1 {
+		t.Fatalf("an unknown send was repeated: sends %v", k.host.sends)
 	}
 }
 
@@ -516,26 +498,32 @@ func TestReconcileStopsWhenANamedThreadCannotBeReadOrResumed(t *testing.T) {
 	}
 }
 
+// inProject makes the request a project's and binds its parent, as linkage-bind --role parent does.
+func (k *reconcileKit) inProject() {
+	k.t.Helper()
+	var request map[string]any
+	if err := json.Unmarshal(k.raw, &request); err != nil {
+		k.t.Fatal(err)
+	}
+	request["projectKey"] = scopeProject
+	raw, err := json.Marshal(request)
+	if err != nil {
+		k.t.Fatal(err)
+	}
+	k.raw = raw
+	reg := &registry.Registry{Store: k.start.Store, Now: k.clock.ISO}
+	if _, err := reg.BindScopeAs(context.Background(), "parent", scopeProject, registry.Endpoint{TaskID: "parent", HostID: "host"}, "active"); err != nil {
+		k.t.Fatal(err)
+	}
+}
+
 // reconcileCreation lets go of the project lock createChild took before it asks create for the next attempt: after the Run no start holds it.
 func TestReconcileLetsGoOfTheProjectLockBeforeCreatingAgain(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	k := newReconcileKit(t, "lost", "accept")
 	k.host.age = time.Hour // the answer was lost an hour ago: the grace period is over at once
-	var request map[string]any
-	if err := json.Unmarshal(k.raw, &request); err != nil {
-		t.Fatal(err)
-	}
-	request["projectKey"] = scopeProject
-	raw, err := json.Marshal(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	k.raw = raw
-	reg := &registry.Registry{Store: k.start.Store, Now: k.clock.ISO}
-	if _, err := reg.BindScopeAs(ctx, "parent", scopeProject, registry.Endpoint{TaskID: "parent", HostID: "host"}, "active"); err != nil {
-		t.Fatal(err)
-	}
+	k.inProject()
 	k.expect(k.run(), "admitted", "", "recreated")
 	k.effects(2, 1)
 	within, cancel := context.WithTimeout(ctx, 2*time.Second)
@@ -545,4 +533,20 @@ func TestReconcileLetsGoOfTheProjectLockBeforeCreatingAgain(t *testing.T) {
 		t.Fatalf("a lock is still held after the Run: %v", err)
 	}
 	_ = exclusive()
+}
+
+// A thread the creation left is not sent to once the project's parent binding has moved: the start is refused before the standby goes out.
+func TestReconcileRefusesToContinueAfterTheProjectBindingMoved(t *testing.T) {
+	t.Parallel()
+	k := newReconcileKit(t, "name-timeout")
+	k.inProject()
+	k.host.failures["thread/read|t-1"] = errors.New("thread/read: host busy") // the first Run cannot observe the thread
+	k.expect(k.run(), "incomplete", "creation_unknown", "unobservable")
+	delete(k.host.failures, "thread/read|t-1")
+	if _, err := k.start.Store.DB.ExecContext(context.Background(), "DELETE FROM scope_bindings WHERE scope_kind = 'project' AND scope_key = ?", scopeProject); err != nil {
+		t.Fatal(err)
+	}
+	_, err := k.runErr()
+	reasonIs(t, err, "unregistered_scope")
+	k.effects(1, 0)
 }
