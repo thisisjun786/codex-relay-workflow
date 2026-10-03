@@ -97,7 +97,7 @@ The Go checks need only the Go toolchain `go.mod` names and temporary synthetic
 data; CI installs no Python. Pin any
 downloaded tooling by version, commit and checksum, and keep fixtures synthetic
 and local. Ordinary CI does not need a
-contributor's Codex, CXC, Paperthin, Linear account, App Server socket or user
+contributor's Codex, CXC, Linear account, App Server socket or user
 skill installation. `crw-dev skills link` in the development binary links a checkout's skills
 (its Python predecessor, `scripts/install.py`, left in todo 44). Cross-platform
 symlink behavior and actual host compatibility need their own evidence before claiming support.
@@ -131,8 +131,7 @@ public-repository linkback settings; repository prose does not enforce them.
 Review public PR comments and their edit history as well as the Git diff before
 publishing an existing private repository.
 
-Keep the skills and their shared references consistent. Paperthin remains an
-external runtime dependency; do not vendor its source. CXC v0.2.40 (lidge-jun/codexclaw,
+Keep the skills and their shared references consistent. CXC v0.2.40 (lidge-jun/codexclaw,
 MIT) is being self-ported into the Go runtime with its MIT notice kept: [NOTICE](NOTICE)
 carries the notices, [provenance](docs/port-cxc/provenance.md) the origin and
 [known defects](docs/port-cxc/known-defects.md) the upstream defects the port records.

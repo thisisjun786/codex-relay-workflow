@@ -66,19 +66,24 @@ func (s *Scheduler) sweepHeads(ctx context.Context, q store.Querier, plan string
 
 // currentAcceptanceHead is the head the relay read from the forge when it accepted the node's result, when that result is still the node's current one: the acceptance stands on the relationship the node
 // runs on now, on that relationship's current generation and on the generation's current head event. A correction generation, or a newer report of the same generation, makes it history (the acceptance
-// stays active until the new result is accepted, so the node's reading does not say so itself). "" is no current accepted head.
+// stays active until the new result is accepted, so the node's reading does not say so itself). After a recorded base refresh (baserefresh.go) what the acceptance stands on is the later generation, its head
+// event and its head, and that head is the one returned. "" is no current accepted head.
 func (s *Scheduler) currentAcceptanceHead(ctx context.Context, q store.Querier, acc Acceptance, hasAcc bool, rel relRow, relFound bool) (string, error) {
-	if !hasAcc || acc.HeadSHA == "" || !relFound || rel.ID != acc.RelationshipID || rel.Generation != acc.ExecutionGeneration {
+	if !hasAcc || acc.HeadSHA == "" || !relFound || rel.ID != acc.RelationshipID {
 		return "", nil
 	}
-	head, err := delivery.HeadRevisionFrom(ctx, q, acc.RelationshipID, acc.ExecutionGeneration)
+	stand, err := s.standOf(ctx, q, acc)
+	if err != nil || rel.Generation != stand.Generation {
+		return "", err
+	}
+	head, err := delivery.HeadRevisionFrom(ctx, q, stand.RelationshipID, stand.Generation)
 	if err != nil {
 		return "", err
 	}
-	if id, _ := objString(head, "eventId"); id != acc.EventID {
+	if id, _ := objString(head, "eventId"); id != stand.EventID {
 		return "", nil
 	}
-	return acc.HeadSHA, nil
+	return stand.Head, nil
 }
 
 // childCheckoutHead is the HEAD of the checkout the node's current relationship says its child works in (child_cwd, which managed start records as the child's workspace). It counts only when that checkout
