@@ -739,7 +739,9 @@ flexible issue moves.
 
 **A pair of the other family.** A pair of the other family than a fixed bundle's stands only with its reason
 on the line: the user's choice, or the move to Sonnet under [When SOL fails](#child-pair-by-issue-type)
-with its cause and date. Under row 1 the Sonnet pair is the security rule's own and needs no further reason.
+with its cause and date; or its provider is exhausted in a readable quota snapshot or explicitly unusable,
+with the cause and date recorded before replacement. Under row 1 the Sonnet pair is the security rule's own
+and needs no further reason. These exceptions change the pair, never the tags or bundle.
 
 ##### The extended line
 
@@ -761,8 +763,8 @@ tags in the order of the table above, then `bundle:` (`Sonnet fixed`, `SOL fixed
   or the move to Sonnet under When SOL fails. After that move the tags and the bundle stay as classified,
   the source reads `table` and the reason names the cause and the date. A flexible issue whose source is
   `table` was chosen by the count, unless its reason names such a move.
-- `quota`: reserved for [the place for a quota rule](#the-place-for-a-quota-rule), and not written before
-  that rule exists.
+- `quota`: a readable snapshot decided the pair under [the quota rule](#the-place-for-a-quota-rule),
+  including a snapshot-confirmed exhaustion move. An unreadable snapshot never supplies this source.
 
 The axis is the one the Bundles row gives. A Korean issue body may keep the label `자식 pair`; the key
 words after it stay as written here.
@@ -799,7 +801,10 @@ left in the launch record's settings entry, read from the creation receipt; the 
 and the parent followed it, and `table` also covers a move under When SOL fails applied at this release; the mark `derived at release` when the line carried no tags; for a flexible
 issue whose pair the parent itself chose, the counts it used; for a move under When SOL fails, its cause and
 date; the version of the plugin manifest the rules were read from, which says which revision of these rules
-classified the issue; the request id and the date. A later change of the pair (a user's choice, a move under
+classified the issue; the request id and the date. The command report adds `pair`, `source`, `rule`,
+`default_pair`, `quota` (values and headroom, or unreadable with its reason), `window` (start, end, counts),
+`limits`, and any `cause`, `date` and `classification_reason`. Keep the full report beside the row, including
+stale decoded values when present; they are evidence of the read, not current capacity. A later change of the pair (a user's choice, a move under
 When SOL fails, a replacement) adds a row and overwrites none.
 
 **A line without tags.** The parent classifies the issue by the tags above, takes the bundle from the Bundles
@@ -843,10 +848,71 @@ cases triggers a change by itself; the cases are evidence to read.
 
 ##### The place for a quota rule
 
-Choosing a flexible issue's pair by the quota left on each side, instead of by the count above, is future
-work and is not part of this rule. When it exists it applies to the flexible bundle only: it yields a pair
-and the source `quota`, written onto the line and into the release row by the same steps, and a fixed
-bundle stays where its tags put it. Nothing in this section or in `crw-run` reads quota.
+Run `crw skill pair-choice choose [--snapshot quota.json] [request.json]` at release. The request is a JSON
+file or stdin; the optional snapshot is a separate file. The command reads only these supplied inputs:
+it never runs OCX, calls its API, reads its operating files or reads the usage ledger. No snapshot producer
+is approved yet. Until a cache-only OCX projection exists, run without `--snapshot`: an eligible flexible
+issue takes the count rule's default, with `quota.readable: false`, reason `no_snapshot_producer` and source
+`table`. Creating a snapshot with a probe-capable OCX command is not this procedure.
+
+**Release facts.** Supply `bundle`, `as_of` (RFC3339), `working` and `lines` (each `{sonnet, sol}`,
+nonnegative integers up to 1,000,000), optional `tie` (Sonnet or SOL; omitted picks Sonnet and records it),
+and `releases` (`{at, pair, bundle}` rows). Use one row per flexible issue in the window, excluding the
+release now being decided; replacements update that issue's contribution rather than count it twice.
+Fixed rows are ignored. The parent serializes choosing and recording, so two choices do not share old
+counts. Supply `recorded_pair` and `source` for a line: legacy `issue body` and `user choice` preserve it;
+an extended flexible `table` or `quota` line is eligible for reselection. An `undetermined` legacy bundle
+requires a preserved pair and `classification_reason`; it is never quota-reclassified. A fixed bundle
+keeps its recorded pair or table family. None of this classifies tags or edits the table.
+
+For example, a request without a snapshot (the two count objects default to zero when omitted):
+
+```json
+{"bundle":"flexible","as_of":"2026-01-01T01:00:00Z","working":{"sonnet":0,"sol":0},"lines":{"sonnet":0,"sol":0},"tie":"Sonnet","releases":[]}
+```
+
+**Snapshot contract.** `crw-pair-quota/1` is CRW-owned input, not a claim that OCX produces it. Sonnet
+reads `claude`; SOL reads `openai`. Each side has `state` (`available`, `exhausted`, `unknown`),
+`observed_at` (RFC3339) and named `windows` with `utilization` (used percent, 0–100) and `reset_at`.
+This example is synthetic:
+
+```json
+{"schema":"crw-pair-quota/1","claude":{"state":"available","observed_at":"2026-01-01T01:00:00Z","windows":[{"name":"five-hour","utilization":70,"reset_at":"2026-01-01T06:00:00Z"}]},"openai":{"state":"available","observed_at":"2026-01-01T01:00:00Z","windows":[{"name":"five-hour","utilization":20,"reset_at":"2026-01-01T06:00:00Z"}]}}
+```
+
+Headroom is 100 minus the highest utilization among windows whose reset is after `as_of`. Expired
+windows do not constrain it. Both sides must be complete, with an active window; `exhausted` must agree
+with zero headroom and `available` with positive headroom. A missing/unknown side, malformed or partial
+snapshot, unknown field, invalid window, future observation, or observation older than 30 minutes makes
+the whole snapshot unreadable. Thirty minutes matches R0's retained-quota freshness bound, not the older
+ordering-cache age. The parser accepts at most 1 MiB of UTF-8 JSON per input. A failed snapshot-file read
+also takes the table default and records its reason. Token consumption never becomes remaining quota.
+
+**Decision and guards.** Start with the ordered count default under Bundles. With readable quota, switch
+away from it only when the other side has strictly more than 10 percentage points of headroom. The
+project's more-than-60-percent line rule still forces the opposite pair. Then cap the projected share of
+flexible issues at 60 percent within an epoch-aligned UTC five-hour routing window (distinct from each
+provider's quota reset window). If the candidate exceeds it and the other choice fits, use the other.
+When neither fits (the first issue, or prior counts 1:1), retain the candidate and record
+`window_rounding`: indivisible issues cannot meet 60 percent at those totals. If a feasible window cap
+and the project rule force opposite pairs, hold with `guards_conflict`, rather than bypass either.
+
+Confirmed exhaustion takes the other side and exempts balance guards; both exhausted holds. A supplied
+`unusable: {sonnet: "cause", sol: "cause"}` is an authoritative provider-failure fact, not a quota estimate:
+it applies the table's failure exception even without a snapshot, recording source `table`, cause and
+UTC date. Two unavailable sides hold. A fixed bundle moves only for its own exhaustion/unusability;
+positive headroom never moves it for balance. An explicit user choice, a legacy flexible line or an
+undetermined line holds when its recorded provider is unavailable rather than silently rewriting it.
+A fixed legacy line retains the fixed-provider failure exception. Host pair authorization still applies.
+
+**Report and release.** Output is `crw-pair-choice/1`. `pair` is Sonnet or SOL (null on hold), `source`
+is the step that decided it, `rule` lists applied rule codes, and the fields under The record at release
+retain its quota evidence and counts. Exit 0 chooses; 1 holds; 2 rejects the request; 3 reports request
+or output I/O failure. An unreadable snapshot is a reported fallback, not a command failure. Only a
+readable quota decision writes source `quota`; preserved fixed choices from earlier `quota` lines now
+record `issue body`. Write a changed eligible line and read it back before the packet, keeping tags and
+bundle unchanged. Add the release row and report without overwriting earlier rows. The relay enforces
+neither using this command nor the truth of supplied counts; missing rows remain review findings.
 
 ### The message both relations are read by
 

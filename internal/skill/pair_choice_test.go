@@ -236,3 +236,49 @@ func TestPairChoiceCLI(t *testing.T) {
 		}
 	}
 }
+
+func TestPairChoiceRecordedFixedSource(t *testing.T) {
+	r := pairTestRequest()
+	r["bundle"] = "Sonnet fixed"
+	r["recorded_pair"] = "SOL"
+	r["source"] = "quota"
+	g, code := pairTestRun(t, r, nil)
+	if code != 0 || g["pair"] != "SOL" || g["source"] != "issue body" {
+		t.Fatal(code, g)
+	}
+}
+
+func TestPairChoiceSnapshotFileFailures(t *testing.T) {
+	for _, raw := range []string{"{", "null", "{} {}", "\xff", strings.Repeat(" ", (1<<20)+1)} {
+		p := filepath.Join(t.TempDir(), "snapshot.json")
+		if e := os.WriteFile(p, []byte(raw), 0600); e != nil {
+			t.Fatal(e)
+		}
+		var out, stderr bytes.Buffer
+		b, _ := json.Marshal(pairTestRequest())
+		code := Run([]string{"pair-choice", "choose", "--snapshot", p}, bytes.NewReader(b), &out, &stderr)
+		var g map[string]any
+		if e := json.Unmarshal(out.Bytes(), &g); e != nil {
+			t.Fatal(e, stderr.String())
+		}
+		q := g["quota"].(map[string]any)
+		if code != 0 || g["pair"] != "Sonnet" || g["source"] != "table" || q["readable"] != false || q["reason"] == "" {
+			t.Fatal(code, g)
+		}
+	}
+}
+func TestPairChoiceWindowRounding(t *testing.T) {
+	for _, rows := range [][]any{nil, {map[string]any{"at": pairTestTime, "pair": "Sonnet", "bundle": "flexible"}, map[string]any{"at": pairTestTime, "pair": "SOL", "bundle": "flexible"}}} {
+		r := pairTestRequest()
+		r["releases"] = rows
+		g, code := pairTestRun(t, r, pairTestSnapshot(80, 10))
+		if code != 0 || g["pair"] != "SOL" {
+			t.Fatal(code, g)
+		}
+		pairTestRule(t, g, "window_rounding")
+		limits := g["limits"].(map[string]any)
+		if limits["hysteresis_points"] != float64(10) || limits["ratio_percent"] != float64(60) || limits["quota_max_age_minutes"] != float64(30) {
+			t.Fatal(limits)
+		}
+	}
+}
