@@ -404,6 +404,12 @@ the standby forbids implementation, the business assignment is self-contained, a
 without consuming the business operation; host read errors propagate. The worker policy and final
 business guard still apply. A `completed` standby follows the existing path. This command does not
 install a retry scheduler.
+The daemon identifies the original standby by the attached managed request's child, generation,
+dispatch request and turn. It excludes that inert anchor from polling and rechecks the association
+under the settlement writer lock if another pending path or stale selection reaches it. It creates
+no failure event or settlement for the standby, before admission, while business runs or afterwards;
+it does not rewrite the terminal status. Ordinary/revision anchors and actual business failures
+remain observed. This does not retract an observation a previous runtime already delivered.
 `admitted` means the business turn was dispatched, not that the child claimed it, that its hook
 fired, or that its issue passed review. Those remain separately observed facts.
 If naming failed after a verified task was created and the bridge recorded that no first turn

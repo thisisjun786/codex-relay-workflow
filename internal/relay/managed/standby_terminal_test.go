@@ -2,6 +2,7 @@ package managed
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"testing"
@@ -182,7 +183,14 @@ func TestTerminalStandbyAfterCreationRecovery(t *testing.T) {
 	k.host.standby = "inProgress"
 	k.expect(k.run(), "incomplete", "standby_incomplete", "adopted")
 	_, business := OperationIDs("managed-1")
-	before := k.host.operations[recoveryID("managed-1", 0)]
+	encoded, err := json.Marshal(k.host.operations[recoveryID("managed-1", 0)])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var before map[string]any
+	if err := json.Unmarshal(encoded, &before); err != nil {
+		t.Fatal(err)
+	}
 	k.host.standby = "interrupted"
 	for i := 0; i < 3; i++ {
 		got := k.run()

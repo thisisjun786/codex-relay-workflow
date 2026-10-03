@@ -382,6 +382,12 @@ paused or limited goal), the engine proceeds to the business turn without sendin
 The standby is an inert bootstrap; its original turn remains the registration and generation anchor
 ([I-489](invariants.md)). The retained operations prevent repeated releases from duplicating either
 the standby or business turn. The existing creation reconciliation and its per-attempt IDs are unchanged.
+The daemon excludes the original standby identified by that attached request, permanently, including
+after a later generation opens. It rechecks the same association under the settlement writer lock
+before synthesis, so a tick that selected the turn before registration cannot report false failed
+work. Skipping creates neither an observation nor a settlement and changes no terminal status.
+Ordinary/revision anchors and genuine business failures still report. Previously delivered failure
+observations are not retracted by this source change.
 
 A missing, unknown or still-running standby remains `standby_incomplete`. A known host hold
 returns its reason without beginning the business operation, and an unreadable host returns an error;

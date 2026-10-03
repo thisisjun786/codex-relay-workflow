@@ -225,6 +225,20 @@ func (d *Daemon) read(ctx context.Context, until time.Time, r delivery.Relations
 // no longer does by the time the settlement commits.
 var errNotSilenced = errors.New("the later receipt that silenced the end of the turn no longer holds")
 
+var errManagedStandby = errors.New("the turn is the inert original managed standby")
+
+// isManagedStandby repeats the census association under the settlement writer
+// lock. Selection can predate attachment, or reach the turn through an admission
+// or staged claim instead of the anchor query. None licenses a standby settlement.
+func (d *Daemon) isManagedStandby(ctx context.Context, rid string, turn store.TurnReference) (bool, error) {
+	var found bool
+	err := d.Store.Q(ctx).QueryRowContext(ctx, `SELECT EXISTS (
+SELECT 1 FROM relationships r JOIN generations g ON g.relationship_id=r.relationship_id
+WHERE r.relationship_id=? AND r.child_task_id=? AND g.dispatch_turn_id=?
+  AND EXISTS (`+managedStandby+`))`, rid, turn.ThreadID, turn.TurnID).Scan(&found)
+	return found, err
+}
+
 func (d *Daemon) settle(ctx context.Context, r delivery.Relationship, turn store.TurnReference, report *Report) {
 	synthesized, laterTurn, laterEvent := "", "", ""
 	ended := turn.Status == "failed" || turn.Status == "interrupted"
@@ -239,25 +253,15 @@ func (d *Daemon) settle(ctx context.Context, r delivery.Relationship, turn store
 	// end of this one is not news: the turn is settled below with no event, so it is not read again. That
 	// rests on the lookup above, which was made before the settlement transaction opens, so the transaction
 	// makes it again.
-	if laterEvent == "" && ended {
-		receipt, err := d.Intake.DaemonObservation(ctx, r.ID, turn)
-		if err != nil {
-			if store.RefusalReason(err) == store.ReasonRelationshipNotActive {
-				report.Notes = append(report.Notes, "observation deferred, "+r.ID+" is not active: "+err.Error())
-				return
-			}
-			if store.RefusalReason(err) != "" {
-				report.Notes = append(report.Notes, "daemon observation refused: "+err.Error())
-			} else {
-				report.Notes = append(report.Notes, "daemon observation failed: "+err.Error())
-				return
-			}
-		} else {
-			synthesized = receipt.EventID
-		}
-	}
 	commit := func(queue bool, refusal error) error {
 		return d.Store.Compose(ctx, func(tx context.Context, conn *sql.Conn) error {
+			standby, err := d.isManagedStandby(tx, r.ID, turn)
+			if err != nil {
+				return err
+			}
+			if standby {
+				return errManagedStandby
+			}
 			if laterEvent != "" {
 				// The transaction holds the writer lock until it commits, so what it finds is what the
 				// settlement is written on. A generation opened or a relationship paused since the first
@@ -270,6 +274,20 @@ func (d *Daemon) settle(ctx context.Context, r delivery.Relationship, turn store
 					return errNotSilenced
 				}
 				laterTurn, laterEvent = turnNow, eventNow
+			}
+			// New binds Intake to this same Store, so its nested transaction joins
+			// Compose. Synthesis, settlement and enqueue now commit or roll back together.
+			synthesized = ""
+			if laterEvent == "" && ended {
+				receipt, err := d.Intake.DaemonObservation(tx, r.ID, turn)
+				if err != nil {
+					if store.RefusalReason(err) == store.ReasonRelationshipNotActive || store.RefusalReason(err) == "" {
+						return err
+					}
+					report.Notes = append(report.Notes, "daemon observation refused: "+err.Error())
+				} else {
+					synthesized = receipt.EventID
+				}
 			}
 			rows, err := d.Store.All(tx, "SELECT event_id FROM events WHERE stage='staged' AND turn_thread_id=? AND turn_id=? AND relationship_id=? ORDER BY first_seen_at", turn.ThreadID, turn.TurnID, r.ID)
 			if err != nil {
@@ -337,6 +355,13 @@ func (d *Daemon) settle(ctx context.Context, r delivery.Relationship, turn store
 		d.beforeSettle(turn)
 	}
 	err := commit(true, nil)
+	if errors.Is(err, errManagedStandby) {
+		return
+	}
+	if store.RefusalReason(err) == store.ReasonRelationshipNotActive {
+		report.Notes = append(report.Notes, "observation deferred, "+r.ID+" is not active: "+err.Error())
+		return
+	}
 	if errors.Is(err, errNotSilenced) {
 		report.Notes = append(report.Notes, "settlement of "+turn.TurnID+" ("+turn.Status+") withdrawn: the later receipt that silenced it no longer holds; the turn is judged again on the next pass")
 		return
