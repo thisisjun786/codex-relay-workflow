@@ -103,6 +103,7 @@ type pending struct {
 	conn   *websocket.Conn
 	done   chan outcome
 	method string
+	watch  *TurnWatch
 }
 
 // Client owns a single connection and correlates concurrent calls by numeric or string IDs.
@@ -123,6 +124,7 @@ type Client struct {
 	refusals      []RequestRecord
 	total         uint64
 	notifications chan Notification
+	subscriptions *subscriptionManager
 }
 type Notification struct {
 	Method string

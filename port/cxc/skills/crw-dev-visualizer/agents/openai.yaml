@@ -1,0 +1,6 @@
+interface:
+  display_name: "crw-dev-visualizer"
+  short_description: "Visual documents, SVG/HTML explainers and PDF delivery."
+  default_prompt: "Create the requested visual document with $crw-dev-visualizer, using the caller scope and the appropriate verification depth."
+policy:
+  allow_implicit_invocation: false

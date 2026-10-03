@@ -8,7 +8,8 @@ import (
 
 // The text of a summary and of the block and container it is written in (docs/relay/dag-outbox.md). The relay never writes Linear: it states exactly what the parent writes and reads a
 // readback by parsing these markers. They are HTML comments around a fenced body, the grammar the relationship outbox already relies on (the connector keeps comments and fenced text
-// byte for byte); a plan's summary lives in one container per plan, which holds one block.
+// as written, except that Linear's save puts a blank line between a block's closing fence and its end marker: sameBlock ignores exactly that); a plan's summary lives in one container per
+// plan, which holds one block.
 
 const (
 	blockMarkerPrefix     = "<!-- relay-dag-summary:"

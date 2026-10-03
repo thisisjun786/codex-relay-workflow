@@ -1,0 +1,6 @@
+interface:
+  display_name: "crw-ast-grep"
+  short_description: "AST-aware structural search + codemods across 25 languages; rg-first for byte searches."
+  default_prompt: "Use $crw-ast-grep to preview this structural code search or rewrite before applying changes."
+policy:
+  allow_implicit_invocation: false

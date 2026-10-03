@@ -1,0 +1,1780 @@
+{
+  "decisions": [
+    {
+      "owned": false,
+      "prior": null,
+      "live": null,
+      "drift": false,
+      "backupKnown": false,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": null,
+      "live": null,
+      "drift": false,
+      "backupKnown": true,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": null,
+      "live": null,
+      "drift": false,
+      "backupKnown": true,
+      "backup": "false",
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": null,
+      "live": null,
+      "drift": true,
+      "backupKnown": false,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": null,
+      "live": null,
+      "drift": true,
+      "backupKnown": true,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": null,
+      "live": null,
+      "drift": true,
+      "backupKnown": true,
+      "backup": "false",
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": null,
+      "live": "true",
+      "drift": false,
+      "backupKnown": false,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": null,
+      "live": "true",
+      "drift": false,
+      "backupKnown": true,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": null,
+      "live": "true",
+      "drift": false,
+      "backupKnown": true,
+      "backup": "false",
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": null,
+      "live": "true",
+      "drift": true,
+      "backupKnown": false,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": null,
+      "live": "true",
+      "drift": true,
+      "backupKnown": true,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": null,
+      "live": "true",
+      "drift": true,
+      "backupKnown": true,
+      "backup": "false",
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": null,
+      "live": "false",
+      "drift": false,
+      "backupKnown": false,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": null,
+      "live": "false",
+      "drift": false,
+      "backupKnown": true,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": null,
+      "live": "false",
+      "drift": false,
+      "backupKnown": true,
+      "backup": "false",
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": null,
+      "live": "false",
+      "drift": true,
+      "backupKnown": false,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": null,
+      "live": "false",
+      "drift": true,
+      "backupKnown": true,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": null,
+      "live": "false",
+      "drift": true,
+      "backupKnown": true,
+      "backup": "false",
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": null,
+      "live": "[true]",
+      "drift": false,
+      "backupKnown": false,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": null,
+      "live": "[true]",
+      "drift": false,
+      "backupKnown": true,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": null,
+      "live": "[true]",
+      "drift": false,
+      "backupKnown": true,
+      "backup": "false",
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": null,
+      "live": "[true]",
+      "drift": true,
+      "backupKnown": false,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": null,
+      "live": "[true]",
+      "drift": true,
+      "backupKnown": true,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": null,
+      "live": "[true]",
+      "drift": true,
+      "backupKnown": true,
+      "backup": "false",
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": "false",
+      "live": null,
+      "drift": false,
+      "backupKnown": false,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": "false",
+      "live": null,
+      "drift": false,
+      "backupKnown": true,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": "false",
+      "live": null,
+      "drift": false,
+      "backupKnown": true,
+      "backup": "false",
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": "false",
+      "live": null,
+      "drift": true,
+      "backupKnown": false,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": "false",
+      "live": null,
+      "drift": true,
+      "backupKnown": true,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": "false",
+      "live": null,
+      "drift": true,
+      "backupKnown": true,
+      "backup": "false",
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": "false",
+      "live": "true",
+      "drift": false,
+      "backupKnown": false,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": "false",
+      "live": "true",
+      "drift": false,
+      "backupKnown": true,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": "false",
+      "live": "true",
+      "drift": false,
+      "backupKnown": true,
+      "backup": "false",
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": "false",
+      "live": "true",
+      "drift": true,
+      "backupKnown": false,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": "false",
+      "live": "true",
+      "drift": true,
+      "backupKnown": true,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": "false",
+      "live": "true",
+      "drift": true,
+      "backupKnown": true,
+      "backup": "false",
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": "false",
+      "live": "false",
+      "drift": false,
+      "backupKnown": false,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": "false",
+      "live": "false",
+      "drift": false,
+      "backupKnown": true,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": "false",
+      "live": "false",
+      "drift": false,
+      "backupKnown": true,
+      "backup": "false",
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": "false",
+      "live": "false",
+      "drift": true,
+      "backupKnown": false,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": "false",
+      "live": "false",
+      "drift": true,
+      "backupKnown": true,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": "false",
+      "live": "false",
+      "drift": true,
+      "backupKnown": true,
+      "backup": "false",
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": "false",
+      "live": "[true]",
+      "drift": false,
+      "backupKnown": false,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": "false",
+      "live": "[true]",
+      "drift": false,
+      "backupKnown": true,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": "false",
+      "live": "[true]",
+      "drift": false,
+      "backupKnown": true,
+      "backup": "false",
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": "false",
+      "live": "[true]",
+      "drift": true,
+      "backupKnown": false,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": "false",
+      "live": "[true]",
+      "drift": true,
+      "backupKnown": true,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": "false",
+      "live": "[true]",
+      "drift": true,
+      "backupKnown": true,
+      "backup": "false",
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": "true",
+      "live": null,
+      "drift": false,
+      "backupKnown": false,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": "true",
+      "live": null,
+      "drift": false,
+      "backupKnown": true,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": "true",
+      "live": null,
+      "drift": false,
+      "backupKnown": true,
+      "backup": "false",
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": "true",
+      "live": null,
+      "drift": true,
+      "backupKnown": false,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": "true",
+      "live": null,
+      "drift": true,
+      "backupKnown": true,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": "true",
+      "live": null,
+      "drift": true,
+      "backupKnown": true,
+      "backup": "false",
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": "true",
+      "live": "true",
+      "drift": false,
+      "backupKnown": false,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": "true",
+      "live": "true",
+      "drift": false,
+      "backupKnown": true,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": "true",
+      "live": "true",
+      "drift": false,
+      "backupKnown": true,
+      "backup": "false",
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": "true",
+      "live": "true",
+      "drift": true,
+      "backupKnown": false,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": "true",
+      "live": "true",
+      "drift": true,
+      "backupKnown": true,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": "true",
+      "live": "true",
+      "drift": true,
+      "backupKnown": true,
+      "backup": "false",
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": "true",
+      "live": "false",
+      "drift": false,
+      "backupKnown": false,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": "true",
+      "live": "false",
+      "drift": false,
+      "backupKnown": true,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": "true",
+      "live": "false",
+      "drift": false,
+      "backupKnown": true,
+      "backup": "false",
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": "true",
+      "live": "false",
+      "drift": true,
+      "backupKnown": false,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": "true",
+      "live": "false",
+      "drift": true,
+      "backupKnown": true,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": "true",
+      "live": "false",
+      "drift": true,
+      "backupKnown": true,
+      "backup": "false",
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": "true",
+      "live": "[true]",
+      "drift": false,
+      "backupKnown": false,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": "true",
+      "live": "[true]",
+      "drift": false,
+      "backupKnown": true,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": "true",
+      "live": "[true]",
+      "drift": false,
+      "backupKnown": true,
+      "backup": "false",
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": "true",
+      "live": "[true]",
+      "drift": true,
+      "backupKnown": false,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": "true",
+      "live": "[true]",
+      "drift": true,
+      "backupKnown": true,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": false,
+      "prior": "true",
+      "live": "[true]",
+      "drift": true,
+      "backupKnown": true,
+      "backup": "false",
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": true,
+      "prior": null,
+      "live": null,
+      "drift": false,
+      "backupKnown": false,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "missing"
+      }
+    },
+    {
+      "owned": true,
+      "prior": null,
+      "live": null,
+      "drift": false,
+      "backupKnown": true,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "missing"
+      }
+    },
+    {
+      "owned": true,
+      "prior": null,
+      "live": null,
+      "drift": false,
+      "backupKnown": true,
+      "backup": "false",
+      "expected": {
+        "action": "skip",
+        "reason": "missing"
+      }
+    },
+    {
+      "owned": true,
+      "prior": null,
+      "live": null,
+      "drift": true,
+      "backupKnown": false,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "missing"
+      }
+    },
+    {
+      "owned": true,
+      "prior": null,
+      "live": null,
+      "drift": true,
+      "backupKnown": true,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "missing"
+      }
+    },
+    {
+      "owned": true,
+      "prior": null,
+      "live": null,
+      "drift": true,
+      "backupKnown": true,
+      "backup": "false",
+      "expected": {
+        "action": "skip",
+        "reason": "missing"
+      }
+    },
+    {
+      "owned": true,
+      "prior": null,
+      "live": "true",
+      "drift": false,
+      "backupKnown": false,
+      "backup": null,
+      "expected": {
+        "action": "restore"
+      }
+    },
+    {
+      "owned": true,
+      "prior": null,
+      "live": "true",
+      "drift": false,
+      "backupKnown": true,
+      "backup": null,
+      "expected": {
+        "action": "restore"
+      }
+    },
+    {
+      "owned": true,
+      "prior": null,
+      "live": "true",
+      "drift": false,
+      "backupKnown": true,
+      "backup": "false",
+      "expected": {
+        "action": "restore"
+      }
+    },
+    {
+      "owned": true,
+      "prior": null,
+      "live": "true",
+      "drift": true,
+      "backupKnown": false,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "unverifiable"
+      }
+    },
+    {
+      "owned": true,
+      "prior": null,
+      "live": "true",
+      "drift": true,
+      "backupKnown": true,
+      "backup": null,
+      "expected": {
+        "action": "restore"
+      }
+    },
+    {
+      "owned": true,
+      "prior": null,
+      "live": "true",
+      "drift": true,
+      "backupKnown": true,
+      "backup": "false",
+      "expected": {
+        "action": "skip",
+        "reason": "unverifiable"
+      }
+    },
+    {
+      "owned": true,
+      "prior": null,
+      "live": "false",
+      "drift": false,
+      "backupKnown": false,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": true,
+      "prior": null,
+      "live": "false",
+      "drift": false,
+      "backupKnown": true,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": true,
+      "prior": null,
+      "live": "false",
+      "drift": false,
+      "backupKnown": true,
+      "backup": "false",
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": true,
+      "prior": null,
+      "live": "false",
+      "drift": true,
+      "backupKnown": false,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": true,
+      "prior": null,
+      "live": "false",
+      "drift": true,
+      "backupKnown": true,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": true,
+      "prior": null,
+      "live": "false",
+      "drift": true,
+      "backupKnown": true,
+      "backup": "false",
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": true,
+      "prior": null,
+      "live": "[true]",
+      "drift": false,
+      "backupKnown": false,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": true,
+      "prior": null,
+      "live": "[true]",
+      "drift": false,
+      "backupKnown": true,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": true,
+      "prior": null,
+      "live": "[true]",
+      "drift": false,
+      "backupKnown": true,
+      "backup": "false",
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": true,
+      "prior": null,
+      "live": "[true]",
+      "drift": true,
+      "backupKnown": false,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": true,
+      "prior": null,
+      "live": "[true]",
+      "drift": true,
+      "backupKnown": true,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": true,
+      "prior": null,
+      "live": "[true]",
+      "drift": true,
+      "backupKnown": true,
+      "backup": "false",
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": true,
+      "prior": "false",
+      "live": null,
+      "drift": false,
+      "backupKnown": false,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "missing"
+      }
+    },
+    {
+      "owned": true,
+      "prior": "false",
+      "live": null,
+      "drift": false,
+      "backupKnown": true,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "missing"
+      }
+    },
+    {
+      "owned": true,
+      "prior": "false",
+      "live": null,
+      "drift": false,
+      "backupKnown": true,
+      "backup": "false",
+      "expected": {
+        "action": "skip",
+        "reason": "missing"
+      }
+    },
+    {
+      "owned": true,
+      "prior": "false",
+      "live": null,
+      "drift": true,
+      "backupKnown": false,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "missing"
+      }
+    },
+    {
+      "owned": true,
+      "prior": "false",
+      "live": null,
+      "drift": true,
+      "backupKnown": true,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "missing"
+      }
+    },
+    {
+      "owned": true,
+      "prior": "false",
+      "live": null,
+      "drift": true,
+      "backupKnown": true,
+      "backup": "false",
+      "expected": {
+        "action": "skip",
+        "reason": "missing"
+      }
+    },
+    {
+      "owned": true,
+      "prior": "false",
+      "live": "true",
+      "drift": false,
+      "backupKnown": false,
+      "backup": null,
+      "expected": {
+        "action": "restore"
+      }
+    },
+    {
+      "owned": true,
+      "prior": "false",
+      "live": "true",
+      "drift": false,
+      "backupKnown": true,
+      "backup": null,
+      "expected": {
+        "action": "restore"
+      }
+    },
+    {
+      "owned": true,
+      "prior": "false",
+      "live": "true",
+      "drift": false,
+      "backupKnown": true,
+      "backup": "false",
+      "expected": {
+        "action": "restore"
+      }
+    },
+    {
+      "owned": true,
+      "prior": "false",
+      "live": "true",
+      "drift": true,
+      "backupKnown": false,
+      "backup": null,
+      "expected": {
+        "action": "restore"
+      }
+    },
+    {
+      "owned": true,
+      "prior": "false",
+      "live": "true",
+      "drift": true,
+      "backupKnown": true,
+      "backup": null,
+      "expected": {
+        "action": "restore"
+      }
+    },
+    {
+      "owned": true,
+      "prior": "false",
+      "live": "true",
+      "drift": true,
+      "backupKnown": true,
+      "backup": "false",
+      "expected": {
+        "action": "restore"
+      }
+    },
+    {
+      "owned": true,
+      "prior": "false",
+      "live": "false",
+      "drift": false,
+      "backupKnown": false,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": true,
+      "prior": "false",
+      "live": "false",
+      "drift": false,
+      "backupKnown": true,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": true,
+      "prior": "false",
+      "live": "false",
+      "drift": false,
+      "backupKnown": true,
+      "backup": "false",
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": true,
+      "prior": "false",
+      "live": "false",
+      "drift": true,
+      "backupKnown": false,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": true,
+      "prior": "false",
+      "live": "false",
+      "drift": true,
+      "backupKnown": true,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": true,
+      "prior": "false",
+      "live": "false",
+      "drift": true,
+      "backupKnown": true,
+      "backup": "false",
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": true,
+      "prior": "false",
+      "live": "[true]",
+      "drift": false,
+      "backupKnown": false,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": true,
+      "prior": "false",
+      "live": "[true]",
+      "drift": false,
+      "backupKnown": true,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": true,
+      "prior": "false",
+      "live": "[true]",
+      "drift": false,
+      "backupKnown": true,
+      "backup": "false",
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": true,
+      "prior": "false",
+      "live": "[true]",
+      "drift": true,
+      "backupKnown": false,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": true,
+      "prior": "false",
+      "live": "[true]",
+      "drift": true,
+      "backupKnown": true,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": true,
+      "prior": "false",
+      "live": "[true]",
+      "drift": true,
+      "backupKnown": true,
+      "backup": "false",
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": true,
+      "prior": "true",
+      "live": null,
+      "drift": false,
+      "backupKnown": false,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "missing"
+      }
+    },
+    {
+      "owned": true,
+      "prior": "true",
+      "live": null,
+      "drift": false,
+      "backupKnown": true,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "missing"
+      }
+    },
+    {
+      "owned": true,
+      "prior": "true",
+      "live": null,
+      "drift": false,
+      "backupKnown": true,
+      "backup": "false",
+      "expected": {
+        "action": "skip",
+        "reason": "missing"
+      }
+    },
+    {
+      "owned": true,
+      "prior": "true",
+      "live": null,
+      "drift": true,
+      "backupKnown": false,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "missing"
+      }
+    },
+    {
+      "owned": true,
+      "prior": "true",
+      "live": null,
+      "drift": true,
+      "backupKnown": true,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "missing"
+      }
+    },
+    {
+      "owned": true,
+      "prior": "true",
+      "live": null,
+      "drift": true,
+      "backupKnown": true,
+      "backup": "false",
+      "expected": {
+        "action": "skip",
+        "reason": "missing"
+      }
+    },
+    {
+      "owned": true,
+      "prior": "true",
+      "live": "true",
+      "drift": false,
+      "backupKnown": false,
+      "backup": null,
+      "expected": {
+        "action": "restore"
+      }
+    },
+    {
+      "owned": true,
+      "prior": "true",
+      "live": "true",
+      "drift": false,
+      "backupKnown": true,
+      "backup": null,
+      "expected": {
+        "action": "restore"
+      }
+    },
+    {
+      "owned": true,
+      "prior": "true",
+      "live": "true",
+      "drift": false,
+      "backupKnown": true,
+      "backup": "false",
+      "expected": {
+        "action": "restore"
+      }
+    },
+    {
+      "owned": true,
+      "prior": "true",
+      "live": "true",
+      "drift": true,
+      "backupKnown": false,
+      "backup": null,
+      "expected": {
+        "action": "restore"
+      }
+    },
+    {
+      "owned": true,
+      "prior": "true",
+      "live": "true",
+      "drift": true,
+      "backupKnown": true,
+      "backup": null,
+      "expected": {
+        "action": "restore"
+      }
+    },
+    {
+      "owned": true,
+      "prior": "true",
+      "live": "true",
+      "drift": true,
+      "backupKnown": true,
+      "backup": "false",
+      "expected": {
+        "action": "restore"
+      }
+    },
+    {
+      "owned": true,
+      "prior": "true",
+      "live": "false",
+      "drift": false,
+      "backupKnown": false,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": true,
+      "prior": "true",
+      "live": "false",
+      "drift": false,
+      "backupKnown": true,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": true,
+      "prior": "true",
+      "live": "false",
+      "drift": false,
+      "backupKnown": true,
+      "backup": "false",
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": true,
+      "prior": "true",
+      "live": "false",
+      "drift": true,
+      "backupKnown": false,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": true,
+      "prior": "true",
+      "live": "false",
+      "drift": true,
+      "backupKnown": true,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": true,
+      "prior": "true",
+      "live": "false",
+      "drift": true,
+      "backupKnown": true,
+      "backup": "false",
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": true,
+      "prior": "true",
+      "live": "[true]",
+      "drift": false,
+      "backupKnown": false,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": true,
+      "prior": "true",
+      "live": "[true]",
+      "drift": false,
+      "backupKnown": true,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": true,
+      "prior": "true",
+      "live": "[true]",
+      "drift": false,
+      "backupKnown": true,
+      "backup": "false",
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": true,
+      "prior": "true",
+      "live": "[true]",
+      "drift": true,
+      "backupKnown": false,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": true,
+      "prior": "true",
+      "live": "[true]",
+      "drift": true,
+      "backupKnown": true,
+      "backup": null,
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    },
+    {
+      "owned": true,
+      "prior": "true",
+      "live": "[true]",
+      "drift": true,
+      "backupKnown": true,
+      "backup": "false",
+      "expected": {
+        "action": "skip",
+        "reason": "changed"
+      }
+    }
+  ],
+  "parses": [
+    {
+      "input": "null",
+      "expected": "null\n"
+    },
+    {
+      "input": "[]",
+      "expected": "null\n"
+    },
+    {
+      "input": "bad",
+      "expected": "null\n"
+    },
+    {
+      "input": "{}",
+      "expected": "{}\n"
+    },
+    {
+      "input": "{\"optedOut\":false,\"allEnabled\":false,\"healedKeys\":[],\"cachedKeys\":[]}",
+      "expected": "{\n  \"optedOut\": false,\n  \"allEnabled\": false,\n  \"healedKeys\": [],\n  \"cachedKeys\": []\n}\n"
+    },
+    {
+      "input": "{\"optedOut\":1,\"checkedAt\":true,\"configMtimeMs\":\"5\",\"healedKeys\":[\"\",\"goals\",3,\" \",\"goals\"],\"cachedKeys\":[false,\"hooks\"],\"other\":\"drop\"}",
+      "expected": "{\n  \"healedKeys\": [\n    \"goals\",\n    \" \",\n    \"goals\"\n  ],\n  \"cachedKeys\": [\n    \"hooks\"\n  ]\n}\n"
+    },
+    {
+      "input": "{\"optedOutAt\":\"\\ud800\",\"configMtimeMs\":1e400,\"checkedAt\":\"<&>\",\"allEnabled\":true}",
+      "expected": "{\n  \"optedOutAt\": \"\\ud800\",\n  \"configMtimeMs\": null,\n  \"checkedAt\": \"<&>\",\n  \"allEnabled\": true\n}\n"
+    },
+    {
+      "input": "{\"configMtimeMs\":-0}",
+      "expected": "{\n  \"configMtimeMs\": 0\n}\n"
+    },
+    {
+      "input": "{\"configMtimeMs\":1e-7}",
+      "expected": "{\n  \"configMtimeMs\": 1e-7\n}\n"
+    },
+    {
+      "input": "{\"configMtimeMs\":1000000000000000000000}",
+      "expected": "{\n  \"configMtimeMs\": 1e+21\n}\n"
+    }
+  ],
+  "merges": [
+    {
+      "input": "{}",
+      "opted": "{\n  \"optedOut\": true,\n  \"optedOutAt\": \"fixed\",\n  \"allEnabled\": false\n}\n",
+      "cleared": "{\n  \"allEnabled\": false\n}\n"
+    },
+    {
+      "input": "{\"healedKeys\":[\"goals\"],\"cachedKeys\":[],\"configMtimeMs\":10,\"checkedAt\":\"earlier\",\"allEnabled\":true}",
+      "opted": "{\n  \"configMtimeMs\": 10,\n  \"checkedAt\": \"earlier\",\n  \"allEnabled\": false,\n  \"healedKeys\": [\n    \"goals\"\n  ],\n  \"cachedKeys\": [],\n  \"optedOut\": true,\n  \"optedOutAt\": \"fixed\"\n}\n",
+      "cleared": "{\n  \"configMtimeMs\": 10,\n  \"checkedAt\": \"earlier\",\n  \"allEnabled\": false,\n  \"healedKeys\": [\n    \"goals\"\n  ],\n  \"cachedKeys\": []\n}\n"
+    },
+    {
+      "input": "{\"optedOut\":false,\"optedOutAt\":\"earlier\",\"checkedAt\":\"keep\",\"healedKeys\":[\"hooks\"]}",
+      "opted": "{\n  \"optedOut\": true,\n  \"optedOutAt\": \"fixed\",\n  \"checkedAt\": \"keep\",\n  \"healedKeys\": [\n    \"hooks\"\n  ],\n  \"allEnabled\": false\n}\n",
+      "cleared": "{\n  \"checkedAt\": \"keep\",\n  \"allEnabled\": false,\n  \"healedKeys\": [\n    \"hooks\"\n  ]\n}\n"
+    },
+    {
+      "input": "bad",
+      "opted": "{\n  \"optedOut\": true,\n  \"optedOutAt\": \"fixed\",\n  \"allEnabled\": false\n}\n",
+      "cleared": "{\n  \"allEnabled\": false\n}\n"
+    }
+  ]
+}
