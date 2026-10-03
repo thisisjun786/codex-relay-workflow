@@ -14,6 +14,11 @@ import (
 // (codex-rs/state): a statement that fails on it makes the database unreadable, it is never adapted.
 const GoalStatusQuery = "SELECT status FROM thread_goals WHERE thread_id = ?"
 
+// ThreadQuery is the statement run against the newest state_<N>.sqlite (session-binding.ts:81,
+// coverage item K11/sql-text), fixed as the oracle writes it. The table is Codex's, so a statement
+// that fails on it makes the database unreadable and is never adapted.
+const ThreadQuery = "SELECT id, cwd, archived, source FROM threads WHERE id = ?"
+
 // openReadOnly opens an existing database read-only (SQLITE_OPEN_READONLY, node:sqlite's readOnly:
 // true): it never creates the file, no statement run through it can write, and the busy timeout is
 // 0 as node:sqlite's is. database/sql opens lazily, so a failure shows at the first query. The path
