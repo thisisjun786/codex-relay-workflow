@@ -15,6 +15,7 @@ import (
 )
 
 func Test24_SCH_59_AlteredObligationNamesField(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name   string
 		mutate func(*Obligation)
@@ -43,6 +44,7 @@ func Test24_SCH_59_AlteredObligationNamesField(t *testing.T) {
 }
 
 func Test24_SCH_58_RecoveryBeforeLateSuccessKeepsUncertain(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	f.c.Settings = &delivery.TaskSettings{}
 	_, staged := f.staged(t)
@@ -80,6 +82,7 @@ func Test24_SCH_58_RecoveryBeforeLateSuccessKeepsUncertain(t *testing.T) {
 }
 
 func Test24_SCH_65_RecoveredClaimCannotStartTransport(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	f.c.Settings = &delivery.TaskSettings{}
 	_, staged := f.staged(t)
@@ -114,6 +117,7 @@ func Test24_SCH_65_RecoveredClaimCannotStartTransport(t *testing.T) {
 }
 
 func Test24_SCH_67_TransportStartPacingDefers(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	f.c.Settings = &delivery.TaskSettings{}
 	_, staged := f.staged(t)
@@ -145,6 +149,7 @@ func Test24_SCH_67_TransportStartPacingDefers(t *testing.T) {
 }
 
 func Test24_SCH_52_InvalidTurnStartCannotVerify(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name  string
 		start *float64
@@ -172,6 +177,7 @@ func Test24_SCH_52_InvalidTurnStartCannotVerify(t *testing.T) {
 // host-time reader shares: a string float() reads is the time it spells, anything else that is
 // not a finite number is no start and does not verify.
 func Test24_SCH_52b_TurnStartIsReadAsAHostTime(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name    string
 		started any
@@ -207,6 +213,7 @@ func (h *turnStartHost) ReadTurn(_ context.Context, _ string, id string) (*deliv
 }
 
 func Test24_SCH_51_HandoverAtTransportStartCancelsClaim(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	f.c.Settings = &delivery.TaskSettings{}
 	o, stage := f.staged(t)

@@ -11,6 +11,7 @@ import (
 )
 
 func Test24_SCH_27_UnsettledReadbackCanBeReplaced(t *testing.T) {
+	t.Parallel()
 	f, h, id, _ := delivered24(t)
 	first, err := f.c.ReadBack(f.ctx, id, "missing", Proof(id, "missing"), "", h, 1_700_000_002)
 	if err != nil || first["verified"] != "turn_not_found" {
@@ -26,6 +27,7 @@ func Test24_SCH_27_UnsettledReadbackCanBeReplaced(t *testing.T) {
 	}
 }
 func Test24_SCH_28_UncertainAttemptWithoutTurnHasUnknownOrigin(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	f.c.Settings = &delivery.TaskSettings{}
 	_, stage := f.staged(t)
@@ -41,6 +43,7 @@ func Test24_SCH_28_UncertainAttemptWithoutTurnHasUnknownOrigin(t *testing.T) {
 	}
 }
 func Test24_SCH_29_ClaimReadsPacingUnderTransaction(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	f.c.Settings = &delivery.TaskSettings{}
 	_, stage := f.staged(t)
@@ -60,6 +63,7 @@ func Test24_SCH_29_ClaimReadsPacingUnderTransaction(t *testing.T) {
 	}
 }
 func Test24_SCH_30_ExistingTurnPredatesSend(t *testing.T) {
+	t.Parallel()
 	f, h, id, _ := delivered24(t)
 	h.turns = map[string]float64{"turn-supervisor-1": 1_699_999_990}
 	read, err := f.c.ReadBack(f.ctx, id, "turn-supervisor-1", Proof(id, "turn-supervisor-1"), "", h, 1_700_000_002)
@@ -68,6 +72,7 @@ func Test24_SCH_30_ExistingTurnPredatesSend(t *testing.T) {
 	}
 }
 func Test24_SCH_31_ArchivedRecipientRecovers(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	f.c.Settings = &delivery.TaskSettings{}
 	_, stage := f.staged(t)
@@ -84,6 +89,7 @@ func Test24_SCH_31_ArchivedRecipientRecovers(t *testing.T) {
 	}
 }
 func Test24_SCH_32_SendReceiptReportsActualSend(t *testing.T) {
+	t.Parallel()
 	f, h, id, _ := delivered24(t)
 	_ = f
 	if len(h.sends) != 1 || !strings.Contains(h.sends[0], id) {
@@ -91,6 +97,7 @@ func Test24_SCH_32_SendReceiptReportsActualSend(t *testing.T) {
 	}
 }
 func Test24_SCH_33_ClaimRechecksHierarchy(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	f.c.Settings = &delivery.TaskSettings{}
 	_, stage := f.staged(t)

@@ -96,6 +96,7 @@ func (h *sendHost) FindTokenInTurn(context.Context, string, string, string, int)
 func (h *sendHost) RecipientFingerprint(context.Context, string) (string, error) { return "", nil }
 
 func Test24_SCH_6_FrozenSendAndSettings(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	f.c.Socket = "/tmp/host.sock"
 	f.c.Settings = &delivery.TaskSettings{}
@@ -122,6 +123,7 @@ func Test24_SCH_6_FrozenSendAndSettings(t *testing.T) {
 	}
 }
 func Test24_SCH_7_BusyArchivedAndBackoff(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, status string
 		archived     bool
@@ -154,6 +156,7 @@ func Test24_SCH_7_BusyArchivedAndBackoff(t *testing.T) {
 	}
 }
 func Test24_SCH_8_SharedRecipientRate(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	f.c.Settings = &delivery.TaskSettings{}
 	_, staged := f.staged(t)
@@ -167,6 +170,7 @@ func Test24_SCH_8_SharedRecipientRate(t *testing.T) {
 	}
 }
 func Test24_SCH_9_StagedHandoverHasNoAttempt(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	f.c.Settings = &delivery.TaskSettings{}
 	_, staged := f.staged(t)
@@ -188,6 +192,7 @@ func Test24_SCH_9_StagedHandoverHasNoAttempt(t *testing.T) {
 	}
 }
 func Test24_SCH_10_RealSettingsGate(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	_, staged := f.staged(t)
 	id := staged["messageId"].(string)

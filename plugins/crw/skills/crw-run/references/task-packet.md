@@ -169,6 +169,23 @@ Workspace ownership:
   long, and even a short one is no proof that a test's socket binds. A test that fails with
   `bind: invalid argument` under a short `TMPDIR` is reported with its path length, not worked
   around. Large disposable output goes under a scratch path the packet names separately]
+- Processes you start: [carry this rule in the packet's own words, because the child works from
+  the packet and may never read this reference. Other tasks build and test on this host at the same
+  time, and a command line does not say whose process it is, so a kill that selects by pattern ends
+  their runs along with yours: their checks stop without a word, and their owner can spend a long
+  time looking for a failure no change of theirs caused. Stop only an OS process you started: by the
+  pid you recorded when you started it, by a process group you created for it (for example by
+  starting it under `setsid`; a signal to the lone pid of a shell or of `make` can leave its
+  children running), or through the handle the execution tool returned for it. Having started a
+  process is necessary and not enough: the relay's delivery service is shared, and a parent that
+  started it still does not end it early ([OPS-4.1](operations.md#ops-41-ownership-is-the-operating-scope-not-a-parent)).
+  Never select a target by pattern or name: no `pkill`, no `killall`, no `fuser -k`, and no pid
+  taken from a `pgrep`, `ps` or `lsof` lookup by name, command line, directory or port, because a
+  listing shows what is running and not whose it is (reading one to report a process is fine).
+  Record the pid of a long command when you start it, or run it under `timeout`, and confirm a
+  recorded pid is still your process before you signal it, since a pid is reused after its
+  process exits. A process you did not start is not yours to stop, whatever it holds: report it
+  with its pid and working directory and leave it running]
 - Resource delta to report at close: [measured against the baseline above, what this task
   created, changed, retained, shared or cleaned, each with its owner, release condition and
   next action; the working directory, purpose, handle and running state of any process it
@@ -458,6 +475,11 @@ field in brackets where that reduced shape names it differently.
   request's title comes back in `Return:`.
 - Temporary path — a `TMPDIR` or other temporary directory the packet names is short, and the
   packet states the socket path limit, in the `Capacity and large artifacts:` line.
+- Process rule — the `Processes you start:` line under `Workspace ownership:` carries it in the
+  packet's own words: stop only processes the child started, by a recorded pid or its own process
+  group, never by pattern or name, and record a long command's pid or run it under `timeout`. The
+  child works from the packet, so that line is the only place the rule is guaranteed to reach it.
+  [A Non-PR packet carries the same line in its `Workspace ownership:`.]
 - Verification targets — every make target, CI check and repository script under
   `Verification:` was confirmed to exist when the packet was written, against the checkout at
   the packet's baseline commit. A make target is
@@ -610,7 +632,8 @@ holds.
 ## Non-PR packet
 
 Use this reduced shape for research, design or verification without repository changes.
-Keep the shared authorization, task settings and recovery rules above; omit code-only
+Keep the shared authorization, task settings and recovery rules above, and the `Processes you start:`
+line of the Launch packet in `Workspace ownership:`; omit code-only
 fields and OPS publication clauses. Relay-specific fields apply only when used. When using the relay, freeze the result
 and its verification evidence in a file under an authorized artifact root and emit
 that file; link-only completion has no manifest and is not a valid ready receipt.
@@ -1028,7 +1051,7 @@ The kinds of base refresh, and what reruns for each, which is all that a refresh
 | Kind | The entry shows | What reruns, and nothing more |
 |---|---|---|
 | `clean` | the merge's expected and actual trees: the tree of `git merge-tree --write-tree <previous> <merged>` and the tree of the merge commit, which are equal | the gates: the repository's local checks for the paths now in the branch and a digest re-record where the merge touched the plugin, then every required job, the `Devin Review` status and the threads on the final head, which [OPS-9.4](operations.md#ops-94-a-new-head-invalidates-the-review-it-outran) reads again on any new head. No review of the change and no audit of the plan |
-| `mechanical` | each resolved hunk with the rule the assignment names for that overlap (its wording or identifier), its path and lines, and the command that reproduces the resolution with the result of comparing it | the gates, and the deterministic checks that read those hunks: the reproduction and its comparison, the repository's validators and link check, the digest re-record, `git diff --check`. No model review |
+| `mechanical` | each resolved hunk with the rule the assignment names for that overlap (its wording or identifier), its path and lines, and the check that reproduces it with its output (for a union or a regeneration, `crw skill base-refresh mechanical` run on the merge) | the gates, and the deterministic checks that read those hunks: that check, the repository's validators and link check, the digest re-record, `git diff --check`. No model review |
 | `manual` | each hand-resolved hunk with its path and lines, and the independent check of those hunks | the gates, and an independent check of the hand-resolved hunks only, run by the child's own independent reviewer on those hunks and what they merge. The rest of the diff is not reviewed again |
 
 A named rule is one the assignment or the restoration block states for that overlap, such as keeping
@@ -1043,10 +1066,12 @@ a failing gate means: a job that fails on the final head is a defect like any ot
 The parent refreshes a candidate itself when only the base moved ([Refresh the base yourself when
 only the base moved](merge-readiness.md#refresh-the-base-yourself-when-only-the-base-moved)), and a
 refresh the parent made is `clean` by the same measure, so the two rules draw one line: a merge of
-the base with no conflict and no hand-resolved hunk reruns the gates, whoever merged it. What still
-goes back to the child, a conflict, a base that moved after `dag-accept`, or an installed runtime
-without the helper, arrives as a correction for the refresh alone, and the child's own merge of the
-base before a handoff is the same act.
+the base with no conflict and no hand-resolved hunk reruns the gates, whoever merged it. A refresh the parent made by
+settling a conflict with a declared mechanical rule is `mechanical` in the same way: it carries the output of `crw skill
+base-refresh mechanical` ([Resolve a mechanical conflict
+yourself](merge-readiness.md#resolve-a-mechanical-conflict-yourself)). What still goes back to the child, a conflict the
+parent does not settle by such a rule, a base that moved after `dag-accept`, or an installed runtime without the helper,
+arrives as a correction for the refresh alone, and the child's own merge of the base before a handoff is the same act.
 
 ## Restoration block
 

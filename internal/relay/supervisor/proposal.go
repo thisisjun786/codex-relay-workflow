@@ -64,13 +64,13 @@ func (c *Channel) refreshProposal(ctx context.Context, row store.SupervisorMessa
 			o := ObservationObligation(reading)
 			if o != nil {
 				if withdrawn := c.omissionWithdrawn(ctx, *o, reading, at); withdrawn != "" {
-					return false, Refusal{"superseded_revision", withdrawn + ". Nothing is sent through this message; it is held as 'superseded_by_report', and staging the project stages what is owed now"}
+					return false, Refusal{"superseded_revision", withdrawn + heldSupersededTail}
 				}
 			}
 			var event string
 			err := c.Store.Q(ctx).QueryRowContext(ctx, "SELECT event_id FROM events WHERE relationship_id=? AND turn_id=? AND stage='final' ORDER BY rowid DESC LIMIT 1", row.RelationshipID, row.Subject).Scan(&event)
 			if err == nil {
-				return false, Refusal{"superseded_revision", "turn " + pyvalue.StrRepr(row.Subject) + " has a final receipt, event " + pyvalue.StrRepr(event) + ", accepted after this omission was staged; the turn reported, and what that event raises goes up as its own fact. Nothing is sent through this message; it is held as 'superseded_by_report', and staging the project stages what is owed now"}
+				return false, Refusal{"superseded_revision", "turn " + pyvalue.StrRepr(row.Subject) + " has a final receipt, event " + pyvalue.StrRepr(event) + ", accepted after this omission was staged; the turn reported, and what that event raises goes up as its own fact" + heldSupersededTail}
 			}
 			if err != sql.ErrNoRows {
 				return false, err
@@ -91,14 +91,14 @@ func (c *Channel) refreshProposal(ctx context.Context, row store.SupervisorMessa
 		if raised != nil {
 			description = pyvalue.StrRepr(raised.Kind) + " obligation " + pyvalue.StrRepr(raised.ID)
 		}
-		return false, Refusal{"superseded_revision", "no event raises obligation " + pyvalue.StrRepr(row.ObligationID) + " any more; event " + pyvalue.StrRepr(row.EventID.String) + " now raises " + description + ". Nothing is sent through this message; it is held as 'superseded_by_report', and staging the project stages what is owed now"}
+		return false, Refusal{"superseded_revision", "no event raises obligation " + pyvalue.StrRepr(row.ObligationID) + " any more; event " + pyvalue.StrRepr(row.EventID.String) + " now raises " + description + heldSupersededTail}
 	}
 	owed, _, err := c.ReportableCurrent(ctx, *o)
 	if err != nil {
 		return false, err
 	}
 	if !owed {
-		return false, Refusal{"superseded_revision", "the Linear record now confirms this obligation, so the level above already has it. Nothing is sent through this message; it is held as 'superseded_by_report', and staging the project stages what is owed now"}
+		return false, Refusal{"superseded_revision", "the Linear record now confirms this obligation, so the level above already has it" + heldSupersededTail}
 	}
 	eventID, _ := o.Basis["eventId"].(string)
 	report, err := currentReport(ctx, c.Store, eventID)
@@ -211,12 +211,23 @@ func (c *Channel) newestRaising(ctx context.Context, row store.SupervisorMessage
 	return nil, nil
 }
 
+// The prose of the two holds, spelled through the store's hold words so that a sentence and the
+// word it names cannot drift apart.
+const (
+	// heldSupersededTail ends every refusal that says a message was parked as superseded.
+	heldSupersededTail = ". Nothing is sent through this message; it is held as '" + store.SupervisorHoldSuperseded + "', and staging the project stages what is owed now"
+	// unaddressedReleasedReason is the journal reason of a message re-addressed to the live hierarchy.
+	unaddressedReleasedReason = "the hierarchy names this message's endpoints again, so the " + store.SupervisorHoldUnaddressed + " hold is released"
+	// supersededReleasedReason is the journal reason of a message whose proposal is owed through it again.
+	supersededReleasedReason = "what this message is for is owed through it again, so the " + store.SupervisorHoldSuperseded + " hold is released"
+)
+
 func (c *Channel) holdSuperseded(ctx context.Context, id, requestID string, attemptNo int64, at, detail, owner string) error {
 	record := pyjson.Dumps(map[string]any{"requestId": requestID, "messageId": id, "attemptNo": attemptNo, "deliveryState": "withheld_pre_send", "sendAttempted": "no", "retrySafe": true, "reason": "what is owed moved between the claim and the transport", "proposal": "obsolete", "detail": detail}, pyjson.Options{SortKeys: true})
 	if err := c.Store.SettleSupervisorAttempt(ctx, requestID, "withheld_pre_send", "no", 1, sql.NullString{}, record, at); err != nil {
 		return err
 	}
-	if _, err := c.Store.SettleSupervisorMessage(ctx, id, "queued", sql.NullFloat64{}, sql.NullString{String: "superseded_by_report", Valid: true}, at, "sending", attemptNo, sql.NullString{String: owner, Valid: true}); err != nil {
+	if _, err := c.Store.SettleSupervisorMessage(ctx, id, "queued", sql.NullFloat64{}, sql.NullString{String: store.SupervisorHoldSuperseded, Valid: true}, at, "sending", attemptNo, sql.NullString{String: owner, Valid: true}); err != nil {
 		return err
 	}
 	_, err := c.Store.Q(ctx).ExecContext(ctx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_superseded',?,?)", at, id, pyjson.Dumps(contract.OrderedObject{{Key: "requestId", Value: requestID}, {Key: "detail", Value: detail}}, pyjson.Options{}))
@@ -226,14 +237,14 @@ func (c *Channel) holdSuperseded(ctx context.Context, id, requestID string, atte
 func (c *Channel) reopenAddressed(ctx context.Context, row store.SupervisorMessagesRow, at string) error {
 	return c.Store.Compose(ctx, func(tx context.Context, _ *sql.Conn) error {
 		live, err := c.Get(tx, row.MessageID)
-		if err != nil || live.HoldReason.String != "hierarchy_unresolved" {
+		if err != nil || live.HoldReason.String != store.SupervisorHoldUnaddressed {
 			return err
 		}
 		r, err := c.Resolve(tx, live.RelationshipID)
 		if err != nil || r.Sender != live.SenderTaskID || r.Recipient != live.RecipientTaskID || r.ProjectKey != live.ProjectKey.String {
 			return err
 		}
-		result, err := c.Store.Q(tx).ExecContext(tx, "UPDATE supervisor_messages SET hold_reason=NULL,updated_at=? WHERE message_id=? AND hold_reason='hierarchy_unresolved' AND "+store.SupervisorUnsentSQL(""), at, row.MessageID)
+		result, err := c.Store.Q(tx).ExecContext(tx, "UPDATE supervisor_messages SET hold_reason=NULL,updated_at=? WHERE message_id=? AND hold_reason='"+store.SupervisorHoldUnaddressed+"' AND "+store.SupervisorUnsentSQL(""), at, row.MessageID)
 		if err != nil {
 			return err
 		}
@@ -241,7 +252,7 @@ func (c *Channel) reopenAddressed(ctx context.Context, row store.SupervisorMessa
 		if err != nil || changed != 1 {
 			return err
 		}
-		detail := pyjson.Dumps(contract.OrderedObject{{Key: "proposal", Value: "addressed"}, {Key: "reason", Value: "the hierarchy names this message's endpoints again, so the hierarchy_unresolved hold is released"}}, pyjson.Options{})
+		detail := pyjson.Dumps(contract.OrderedObject{{Key: "proposal", Value: "addressed"}, {Key: "reason", Value: unaddressedReleasedReason}}, pyjson.Options{})
 		_, err = c.Store.Q(tx).ExecContext(tx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_reopened',?,?)", at, row.MessageID, detail)
 		return err
 	})
@@ -250,7 +261,7 @@ func (c *Channel) reopenAddressed(ctx context.Context, row store.SupervisorMessa
 func (c *Channel) reopenProposal(ctx context.Context, row store.SupervisorMessagesRow, at string) error {
 	return c.Store.Compose(ctx, func(tx context.Context, _ *sql.Conn) error {
 		live, err := c.Get(tx, row.MessageID)
-		if err != nil || live.HoldReason.String != "superseded_by_report" {
+		if err != nil || live.HoldReason.String != store.SupervisorHoldSuperseded {
 			return err
 		}
 		r, err := c.Resolve(tx, live.RelationshipID)
@@ -267,7 +278,7 @@ func (c *Channel) reopenProposal(ctx context.Context, row store.SupervisorMessag
 		if err != nil {
 			return err
 		}
-		result, err := c.Store.Q(tx).ExecContext(tx, "UPDATE supervisor_messages SET hold_reason=NULL,next_eligible_at=NULL,updated_at=? WHERE message_id=? AND hold_reason='superseded_by_report' AND "+store.SupervisorUnsentSQL(""), at, row.MessageID)
+		result, err := c.Store.Q(tx).ExecContext(tx, "UPDATE supervisor_messages SET hold_reason=NULL,next_eligible_at=NULL,updated_at=? WHERE message_id=? AND hold_reason='"+store.SupervisorHoldSuperseded+"' AND "+store.SupervisorUnsentSQL(""), at, row.MessageID)
 		if err != nil {
 			return err
 		}
@@ -275,7 +286,7 @@ func (c *Channel) reopenProposal(ctx context.Context, row store.SupervisorMessag
 		if err != nil || changed != 1 {
 			return err
 		}
-		detail := pyjson.Dumps(contract.OrderedObject{{Key: "proposal", Value: "current"}, {Key: "reason", Value: "what this message is for is owed through it again, so the superseded_by_report hold is released"}}, pyjson.Options{})
+		detail := pyjson.Dumps(contract.OrderedObject{{Key: "proposal", Value: "current"}, {Key: "reason", Value: supersededReleasedReason}}, pyjson.Options{})
 		_, err = c.Store.Q(tx).ExecContext(tx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_reopened',?,?)", at, row.MessageID, detail)
 		return err
 	})
