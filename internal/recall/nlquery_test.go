@@ -15,17 +15,12 @@ const (
 func chatMatchPlan(query string, anyMode, synonyms bool) MatchPlan {
 	rawAll := SplitQueryWordsRaw(query)
 	raw := DropStopwords(rawAll)
-	var groups []QueryGroup
+	groups := []QueryGroup{}
 	for _, w := range raw {
-		group := QueryGroup{{Text: Lower(w)}}
-		if synonyms {
-			group = ExpandQueryWords([]string{w})[0]
-		}
-		loose := make(QueryGroup, len(group))
-		for i, term := range group {
-			loose[i] = QueryTerm{Text: term.Text}
-		}
-		groups = append(groups, loose)
+		groups = append(groups, QueryGroup{{Text: Lower(w)}})
+	}
+	if synonyms {
+		groups = RelaxQueryGroups(ExpandQueryWords(raw))
 	}
 	return CompileMatchPlan(groups, raw, anyMode, len(rawAll) > MaxWords)
 }
