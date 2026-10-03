@@ -54,7 +54,7 @@ func TestDivergenceModeWritesAndReadsSessionScopedMode(t *testing.T) { // diverg
 	}
 }
 
-func TestCandidateArchiveRequiresSourceProvenanceAndFiltersBySession(t *testing.T) { // divergence.test.ts:35
+func TestCandidateArchiveRequiresSourceProvenanceAndFiltersBySession(t *testing.T) { // divergence.test.ts:38
 	cwd := t.TempDir()
 	if _, err := RecordDivergenceCandidate(cwd, CandidateInput{SessionID: "s1", Kind: KindStrong1, Title: "No source", Rationale: "memory only"}); err == nil || !strings.Contains(err.Error(), "source URL") {
 		t.Fatalf("an unsourced candidate gave %v", err)
@@ -69,7 +69,7 @@ func TestCandidateArchiveRequiresSourceProvenanceAndFiltersBySession(t *testing.
 	}
 }
 
-func TestCandidateArchiveRoundtripsLoopMetadataAndToleratesLegacyRows(t *testing.T) { // divergence.test.ts:66
+func TestCandidateArchiveRoundtripsLoopMetadataAndToleratesLegacyRows(t *testing.T) { // divergence.test.ts:76
 	cwd := t.TempDir()
 	divAdd(t, cwd, CandidateInput{SessionID: "s1", Kind: KindStrong1, Title: "State redesign", Rationale: "widen state representation", SourceURLs: []string{"https://example.com/state"},
 		Status: divPtr(StatusDiscarded), ChangeClass: divPtr(ChangeStateSpaceRedesign), KilledAtPhase: divPtr(PhaseD), Now: divClock("2026-07-01T00:01:00.000Z")})
@@ -83,7 +83,7 @@ func TestCandidateArchiveRoundtripsLoopMetadataAndToleratesLegacyRows(t *testing
 	}
 }
 
-func TestDiscardStreakReportsTrailingDiscardedSameClassRun(t *testing.T) { // divergence.test.ts:105
+func TestDiscardStreakReportsTrailingDiscardedSameClassRun(t *testing.T) { // divergence.test.ts:119
 	row := func(ts string, status CandidateStatus, class CandidateChangeClass) DivergenceCandidate {
 		return DivergenceCandidate{TS: ts, SessionID: "s1", Kind: KindStrong1, Rationale: "r", SourceURLs: []string{"https://example.com"}, Status: status, ChangeClass: class}
 	}
