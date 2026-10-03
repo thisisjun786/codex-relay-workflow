@@ -43,7 +43,8 @@ func ensureState(cwd, sessionID string, now func() time.Time, link func(existing
 type ensureStep int
 
 const (
-	stepWrite   ensureStep = iota // before the data is written to a file the fallback created
+	stepStat    ensureStep = iota // before the identity of a file the fallback created is read
+	stepWrite                     // before the data is written to that file
 	stepSync                      // before that file is fsynced
 	stepClose                     // before that file is closed; the error is returned after it is
 	stepPublish                   // before the no-replace rename; an error stands in for the rename's own
@@ -138,6 +139,7 @@ func publishWithoutLink(finalPath string, data []byte, fail func(ensureStep, str
 	case !noReplaceUnsupported(err):
 		return false, err
 	}
+	_ = removeFile(tmp) // the staged copy is of no use now, and the in-place file needs the room it holds: near a quota three copies would not fit where the oracle's two did
 	switch err = writeNew(finalPath, data, fail); {
 	case err == nil:
 		return true, nil
@@ -203,7 +205,17 @@ func writeNew(path string, data []byte, fail func(ensureStep, string) error) err
 	if err != nil {
 		return err
 	}
-	made, _ := f.Stat() // the file this call created
+	made, err := f.Stat() // the file this call created
+	if err == nil {
+		err = failAt(fail, stepStat, path)
+	}
+	if err != nil { // its identity is unknown, so only the instant since the create vouches for the path: take it back and say so
+		err = errors.Join(err, f.Close())
+		if rmErr := os.Remove(path); rmErr != nil && !errors.Is(rmErr, fs.ErrNotExist) {
+			err = errors.Join(err, rmErr)
+		}
+		return err
+	}
 	err = failAt(fail, stepWrite, path)
 	if err == nil {
 		_, err = f.Write(data)

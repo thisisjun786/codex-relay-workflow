@@ -155,7 +155,7 @@ func both(a, b hook) hook {
 
 // recording notes each step the fallback takes, as "<step> temp" or "<step> final", and fails none.
 func recording(final string, calls *[]string) hook {
-	names := [...]string{stepWrite: "write", stepSync: "sync", stepClose: "close", stepPublish: "publish"}
+	names := [...]string{stepStat: "stat", stepWrite: "write", stepSync: "sync", stepClose: "close", stepPublish: "publish"}
 	return func(s ensureStep, path string) error {
 		where := "temp"
 		if path == final {
@@ -214,10 +214,12 @@ func TestEnsureStateFallbackLeavesNothingAtTheFinalPathWhenAStepFails(t *testing
 		fail func(final string) hook
 		want syscall.Errno
 	}{
+		{"the identity of the temp file cannot be read", onTemp(stepStat, syscall.EIO), syscall.EIO},
 		{"the write of the temp file fails", onTemp(stepWrite, syscall.ENOSPC), syscall.ENOSPC},
 		{"the fsync of the temp file fails", onTemp(stepSync, syscall.EIO), syscall.EIO},
 		{"the close of the temp file fails", onTemp(stepClose, syscall.EIO), syscall.EIO},
 		{"the publication fails with an error that is not unsupported", onTemp(stepPublish, syscall.EIO), syscall.EIO},
+		{"no rename without replacing, and the identity of the in-place file cannot be read", inPlace(stepStat, syscall.EIO), syscall.EIO},
 		{"no rename without replacing, and the in-place write fails", inPlace(stepWrite, syscall.ENOSPC), syscall.ENOSPC},
 		{"no rename without replacing, and the in-place fsync fails", inPlace(stepSync, syscall.EIO), syscall.EIO},
 		{"no rename without replacing, and the in-place close fails", inPlace(stepClose, syscall.EIO), syscall.EIO},
@@ -311,13 +313,30 @@ func TestEnsureStateFallbackTakesTheRouteThePlatformOffers(t *testing.T) {
 		cwd, calls := t.TempDir(), []string{}
 		final := StatePath(cwd, id)
 		fail := recording(final, &calls)
-		want := []string{"write temp", "sync temp", "close temp", "publish temp"}
+		want := []string{"stat temp", "write temp", "sync temp", "close temp", "publish temp"}
 		if errno != 0 {
-			fail, want = both(fail, unsupported(final, errno)), append(want, "write final", "sync final", "close final")
+			fail, want = both(fail, unsupported(final, errno)), append(want, "stat final", "write final", "sync final", "close final")
 		}
 		if created, err := ensureStateWith(cwd, id, at, linkFails(syscall.EPERM), fail); !created || err != nil || !slices.Equal(calls, want) {
 			t.Errorf("rename answer %v: created %v, %v, steps %q, want %q", errno, created, err, calls, want)
 		}
+	}
+}
+
+func TestEnsureStateFallbackFreesTheStagedCopyBeforeTheInPlaceWrite(t *testing.T) {
+	// near a quota the in-place file must not have to fit beside two other copies: the oracle needed room for the first temp file and
+	// the final file, and the staged copy is of no use once the rename is known to be unsupported
+	cwd, id := t.TempDir(), "fallback-space"
+	final, temps := StatePath(cwd, id), -1
+	look := func(s ensureStep, path string) error {
+		if s == stepWrite && path == final {
+			temps = len(tempFiles(cwd))
+		}
+		return nil
+	}
+	created, err := ensureStateWith(cwd, id, at, linkFails(syscall.EPERM), both(unsupported(final, syscall.EINVAL), look))
+	if !created || err != nil || temps != 1 || !slices.Equal(sessionFiles(cwd), []string{id + ".json"}) {
+		t.Fatalf("created %v, %v, %d temp files while the in-place file was written (only the first temp file may be there), files %v", created, err, temps, sessionFiles(cwd))
 	}
 }
 
