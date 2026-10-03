@@ -985,6 +985,13 @@
     "output": "plan init: scaffolded devlog/_plan/260821_oracle_unit (000_plan.md + 9 phase doc(s)).\nWrite every doc to diff-level BEFORE P -> A; the P>A gate requires planUnit to carry numbered docs.",
     "code": 0
   },
+  "directTen": {
+    "result": {
+      "output": "plan init: scaffolded devlog/_plan/260821_unit (000_plan.md + 10 phase doc(s)).\nWrite every doc to diff-level BEFORE P -> A; the P>A gate requires planUnit to carry numbered docs.",
+      "code": 0
+    },
+    "document": "# 0100 — Phase 10 (unit)\n\n> DIFFLEVEL-ROADMAP-01: write this doc to full diff-level precision (exact paths,\n> NEW/MODIFY/DELETE, before/after diffs) BEFORE P -> A. An empty scaffold does not\n> satisfy the rule; the A-phase reviewer FAILS outline-only phase docs.\n\n## MODIFY / NEW / DELETE map\n\n(fill in: exact file paths with before/after diffs — a copy-paste-executable PRD)\n\n## TESTS\n\n(fill in: test files + cases)\n\n## Verification (C)\n\n(fill in: exact commands + expected exit codes)\n"
+  },
   "docs": {
     "000_plan.md": "# 000 — oracle_unit: Plan\n\n> DIFFLEVEL-ROADMAP-01: write this doc to full diff-level precision (exact paths,\n> NEW/MODIFY/DELETE, before/after diffs) BEFORE P -> A. An empty scaffold does not\n> satisfy the rule; the A-phase reviewer FAILS outline-only phase docs.\n\n## Objective\n\n(fill in: the concrete outcome, the observed failure, the evidence base)\n\n## Loop-spec\n\n- Loop archetype: (verifier-defined | judged)\n- Write scope / out-of-scope:\n- Budget / bounds:\n\n## Work-phase map (one phase = one full PABCD cycle)\n\n| WP | Doc | Slice | Depends on |\n|----|-----|-------|------------|\n\n## Accept criteria\n\n- (mirror into the goalplan criteria[])\n",
     "010_phase1.md": "# 010 — Phase 1 (oracle_unit)\n\n> DIFFLEVEL-ROADMAP-01: write this doc to full diff-level precision (exact paths,\n> NEW/MODIFY/DELETE, before/after diffs) BEFORE P -> A. An empty scaffold does not\n> satisfy the rule; the A-phase reviewer FAILS outline-only phase docs.\n\n## MODIFY / NEW / DELETE map\n\n(fill in: exact file paths with before/after diffs — a copy-paste-executable PRD)\n\n## TESTS\n\n(fill in: test files + cases)\n\n## Verification (C)\n\n(fill in: exact commands + expected exit codes)\n",

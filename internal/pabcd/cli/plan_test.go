@@ -291,6 +291,32 @@ func TestPlanHelpOracle(t *testing.T) {
 	}
 }
 
+func TestPlanDirectTenthPhaseOracle(t *testing.T) {
+	var o struct {
+		DirectTen struct {
+			Result   PlanCliResult
+			Document string
+		}
+	}
+	raw, err := os.ReadFile("testdata/plan/oracle.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &o); err != nil {
+		t.Fatal(err)
+	}
+	cwd := t.TempDir()
+	date := "260821"
+	r := successfulPlan(t, PlanCliArgs{Verb: "init", Cwd: cwd, Date: &date, Slug: "unit", Phases: 10})
+	if r != o.DirectTen.Result {
+		t.Fatal(r)
+	}
+	doc, err := os.ReadFile(filepath.Join(cwd, "devlog", "_plan", "260821_unit", "100_phase10.md"))
+	if err != nil || string(doc) != o.DirectTen.Document {
+		t.Fatalf("tenth document differs: %v", err)
+	}
+}
+
 func TestPlanRejectsSymlinkParents(t *testing.T) {
 	for _, part := range []string{"devlog", "_plan"} {
 		for _, target := range []string{"inside", "outside", "dangling"} {

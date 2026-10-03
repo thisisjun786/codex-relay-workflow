@@ -345,8 +345,10 @@ func planErrno(e syscall.Errno) (string, string) {
 }
 
 // Scaffold text is copied verbatim from the recorded Node documents.
-func planDoc(slug string) string         { return fmt.Sprintf(planTemplate, slug) }
-func phaseDoc(n int, slug string) string { return fmt.Sprintf(phaseTemplate, n*10, n, slug) }
+func planDoc(slug string) string { return fmt.Sprintf(planTemplate, slug) }
+func phaseDoc(n int, slug string) string {
+	return fmt.Sprintf(phaseTemplate, fmt.Sprintf("0%d0", n), n, slug)
+}
 
 const planTemplate = `# 000 — %s: Plan
 
@@ -374,7 +376,7 @@ const planTemplate = `# 000 — %s: Plan
 - (mirror into the goalplan criteria[])
 `
 
-const phaseTemplate = `# %03d — Phase %d (%s)
+const phaseTemplate = `# %s — Phase %d (%s)
 
 > DIFFLEVEL-ROADMAP-01: write this doc to full diff-level precision (exact paths,
 > NEW/MODIFY/DELETE, before/after diffs) BEFORE P -> A. An empty scaffold does not
