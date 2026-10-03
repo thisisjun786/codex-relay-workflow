@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -90,6 +91,7 @@ func (s *Scheduler) ObserveConflicts(ctx context.Context, plan, actor string, in
 		return out, err
 	}
 	out.Method, out.Files, out.Conflicts = "git merge-tree --write-tree", files, len(files)
+	names := repositoryNames(ctx, in.Repository)
 	sum := shaOf([]byte(strings.Join([]string{plan, left, right, leftHead, rightHead, out.BaseSHA}, "|")))
 	out.ObservationID = "dco-" + sum[:32]
 	err = s.Store.Compose(ctx, func(txCtx context.Context, _ *sql.Conn) error {
@@ -119,11 +121,78 @@ func (s *Scheduler) ObserveConflicts(ctx context.Context, plan, actor string, in
 			out.ObservationID, out.Replayed = existing, true
 			return nil
 		}
-		_, err = tx.ExecContext(txCtx, "INSERT INTO dag_conflict_observations (observation_id, plan_id, left_node_id, right_node_id, repository, left_head, right_head, base_sha, conflict_count, method, observed_by, observed_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-			out.ObservationID, plan, left, right, in.Repository, leftHead, rightHead, out.BaseSHA, out.Conflicts, out.Method, actor, s.now())
-		return err
+		if _, err = tx.ExecContext(txCtx, "INSERT INTO dag_conflict_observations (observation_id, plan_id, left_node_id, right_node_id, repository, left_head, right_head, base_sha, conflict_count, method, observed_by, observed_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+			out.ObservationID, plan, left, right, in.Repository, leftHead, rightHead, out.BaseSHA, out.Conflicts, out.Method, actor, s.now()); err != nil {
+			return err
+		}
+		// the files git could not merge, under each name the checkout is known by (CRW-409): what a release reads as the recent conflicts on a place. Written with the observation, so a repeat is a replay and
+		// leaves them as they were.
+		for _, name := range names {
+			for _, file := range files {
+				if _, err := tx.ExecContext(txCtx, "INSERT INTO dag_conflict_observation_files (observation_id, repository, path) VALUES (?,?,?)", out.ObservationID, name, file); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
 	})
 	return out, err
+}
+
+// repositoryNames are the names an observed checkout is known by: its absolute path with links resolved and, when its origin remote names owner/name on the forge the relay talks to, that slug. A
+// region is declared with one of them, and a conflict is attributed to a region only under the name the region was declared with. The origin is read once, here, for the evidence; it is never given to
+// the isolated repository the merge runs in, and an origin that is unset or names another host or no owner/name leaves the path alone.
+func repositoryNames(ctx context.Context, checkout string) []string {
+	names := []string{filepath.Clean(checkout)}
+	if resolved, err := filepath.EvalSymlinks(checkout); err == nil {
+		names[0] = resolved
+	}
+	if origin, err := runGit(ctx, checkout, nil, "config", "--get", "remote.origin.url"); err == nil {
+		if slug := originSlug(origin, forgeHost()); slug != "" {
+			names = append(names, slug)
+		}
+	}
+	return names
+}
+
+// forgeHost is the host the relay's owner/name repository slugs name: GH_HOST, else github.com, as the merge lane reads a tip.
+func forgeHost() string {
+	if host := os.Getenv("GH_HOST"); host != "" {
+		return host
+	}
+	return "github.com"
+}
+
+// originSlug is owner/name for a remote URL that names a repository on the given forge host: https://host/owner/name[.git], ssh://[user@]host/owner/name[.git] and the scp form [user@]host:owner/name[.git].
+// A local path, another host (the same owner/name on another host is another repository), a URL with more or fewer than two path segments or anything else gives "".
+func originSlug(origin, host string) string {
+	origin = strings.TrimSpace(origin)
+	var originHost, repoPath string
+	switch {
+	case strings.Contains(origin, "://"):
+		u, err := url.Parse(origin)
+		if err != nil || (u.Scheme != "https" && u.Scheme != "http" && u.Scheme != "ssh" && u.Scheme != "git") {
+			return ""
+		}
+		originHost, repoPath = u.Hostname(), u.Path
+	case strings.HasPrefix(origin, "/") || strings.HasPrefix(origin, "."):
+		return ""
+	default:
+		before, after, ok := strings.Cut(origin, ":")
+		if !ok {
+			return ""
+		}
+		originHost, repoPath = before[strings.LastIndex(before, "@")+1:], after
+	}
+	if originHost == "" || !strings.EqualFold(originHost, host) {
+		return ""
+	}
+	owner, name, ok := strings.Cut(strings.TrimSuffix(strings.Trim(repoPath, "/"), ".git"), "/")
+	slug := owner + "/" + name
+	if !ok || strings.Contains(name, "/") || !slugPattern.MatchString(slug) || owner == "." || owner == ".." || name == "." || name == ".." {
+		return ""
+	}
+	return slug
 }
 
 // runGit runs one git command in a checkout (a working tree, a linked working tree or a bare repository: git is asked, not guessed) and returns its standard output. A failure carries git's own words.
