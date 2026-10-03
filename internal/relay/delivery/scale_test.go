@@ -1,6 +1,7 @@
 package delivery
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -69,7 +71,7 @@ func (w *scaleWorld) create(i int) string {
 	r.emitted++
 	path := filepath.Join(r.root, fmt.Sprintf("out-%d.txt", r.emitted))
 	mustDo(w.t, os.WriteFile(path, []byte(fmt.Sprintf("%s-%d", r.child, r.emitted)), 0o644))
-	entries, err := store.BuildManifest([]string{path}, []string{r.root})
+	entries, err := store.BuildManifest(context.Background(), []string{path}, []string{r.root})
 	mustDo(w.t, err)
 	revision, err := store.ManifestRevision(entries)
 	mustDo(w.t, err)
@@ -502,7 +504,7 @@ func TestScale_attempts_that_failed_before_the_send_do_not_spend_the_hour(t *tes
 		w.f.host.script = []string{"read_fail"}
 		w.f.clock.Advance(6)
 		if record := w.f.mustAttempt(event, at(w.f.clock.Now())); record != nil {
-			if state := str(record, "deliveryState"); state != WithheldPreSend {
+			if state := pyjson.Text(record.Get("deliveryState")); state != WithheldPreSend {
 				t.Fatalf("failure %d settled as %s, want a failure before the send", i+1, state)
 			}
 		}
@@ -517,7 +519,7 @@ func TestScale_attempts_that_failed_before_the_send_do_not_spend_the_hour(t *tes
 	}
 	w.f.clock.Advance(6)
 	record := w.f.mustAttempt(event, at(w.f.clock.Now()))
-	if record == nil || str(record, "deliveryState") != Dispatched {
+	if record == nil || pyjson.Text(record.Get("deliveryState")) != Dispatched {
 		t.Fatalf("the claim after the failures was not sent: %v", record)
 	}
 	if spent, err = w.f.store.RelationshipSends(w.f.ctx, rel, scaleParent, window); err != nil || spent != 1 {

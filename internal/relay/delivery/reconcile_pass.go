@@ -3,6 +3,7 @@ package delivery
 import (
 	"context"
 	"database/sql"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"strings"
 )
 
@@ -191,22 +192,22 @@ func attemptsFor(ctx context.Context, rc *Reconciler, cursors *Scheduler, parent
 }
 
 func readsWereComplete(outcome Obj) bool {
-	if v, _ := get(outcome, "changed"); truthy(v) {
+	if v, _ := outcome.Lookup("changed"); truthy(v) {
 		return false
 	}
-	if trace, ok := get(outcome, "recipientTrace"); ok {
+	if trace, ok := outcome.Lookup("recipientTrace"); ok {
 		if o, _ := trace.(Obj); o != nil {
-			if p, _ := get(o, "pending"); truthy(p) {
+			if p, _ := o.Lookup("pending"); truthy(p) {
 				return false
 			}
 		}
 	}
-	observation, scan := str(outcome, "operationObservation"), str(outcome, "recipientScan")
+	observation, scan := pyjson.Text(outcome.Get("operationObservation")), pyjson.Text(outcome.Get("recipientScan"))
 	if strings.Contains(observation, "unreadable") || strings.Contains(scan, "unreadable") {
 		return false
 	}
 	if strings.HasPrefix(scan, "not scanned") {
-		return str(outcome, "evidence") != NoEvidence
+		return pyjson.Text(outcome.Get("evidence")) != NoEvidence
 	}
 	return true
 }
@@ -222,20 +223,20 @@ func gate(ctx context.Context, rc *Reconciler, adapter Adapter, attempt Row) (bo
 	if err != nil {
 		return false, nil, err
 	}
-	receipt, readErr := adapter.GetOperation(id)
+	receipt, readErr := adapter.GetOperation(ctx, id)
 	var content string
 	if readErr == nil {
-		content, readErr = adapter.RecipientFingerprint(delivery.S("recipient_thread_id"))
+		content, readErr = adapter.RecipientFingerprint(ctx, delivery.S("recipient_thread_id"))
 	}
 	if readErr != nil {
 		return true, nil, markGate(ctx, rc, id, nil, true, readErr.Error())
 	}
 	status, turnID := "missing", ""
 	if receipt != nil {
-		if v, ok := get(receipt, "status"); ok {
+		if v, ok := receipt.Lookup("status"); ok {
 			status = pyStr(v)
 		}
-		if v, ok := get(receipt, "turnId"); ok {
+		if v, ok := receipt.Lookup("turnId"); ok {
 			if turn, ok := usableTurnID(v).(string); ok {
 				turnID = turn
 			}

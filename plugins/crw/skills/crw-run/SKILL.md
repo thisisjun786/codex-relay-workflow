@@ -315,6 +315,8 @@ retain the task's private recovery receipt. Keep raw launch
 receipts and sensitive evidence in an appropriate private location; local
 snapshots point to the Linear document and are not another planning source.
 Do not store project state or credentials inside this installed skill.
+A DAG plan's Linear summary is the plan's own queue in the relay, drained by the parent with its own connector: take an entry, write it, read it back, confirm it, retry only
+that entry ([The Linear summary of a DAG plan](references/relay.md#the-linear-summary-of-a-dag-plan)).
 
 Before assigning a checkout, apply the shared
 [repository resolution](../crw-plan/references/integrations.md#resolve-the-implementation-repository)
@@ -524,6 +526,18 @@ its report, so this text states none.
 
 This is an instruction the parent follows; nothing refuses a dispatch that skipped it, so the run records the answer where it records
 the dispatch.
+
+### Release by region grade
+
+The parent exists to run work in parallel, so an edit region is a signal for the merge order and for the handling of a conflict, not a gate on release. Two nodes that both write a file are not run one
+after the other for that reason alone. Only a change two branches cannot both make holds a release back: the same file renamed or deleted, the same function body rewritten in two directions, a shared
+contract surface (the contract schema, the CLI spec, the contract goldens), or an overlap whose resolution would cost more than the work. Every other overlap is released and settled when the branches meet.
+The parent orders the merges and settles the mechanical conflicts by their rule, and the child of the later pull request resolves the rest when it refreshes its base.
+
+In a DAG plan the scheduler applies this by grade: a region is declared `independent`, `mechanical` (with the rule that settles it: `union`, `renumber` or `regenerate:<command>`), `local` or `exclusive`,
+`dag-ready` releases mechanical and local overlaps and defers only exclusive ones, and the rule it released a node under, with the rows that rest on and the overlap count by grade, is in the reading and
+in the recorded pass. [Release by region grade](references/region-grades.md) says how to declare the grades, how to read the judgement, and what the parent does at merge time: deciding the merge order,
+settling a mechanical overlap, and when a candidate goes back to its child.
 
 ### Start policy and child cap
 
@@ -867,6 +881,8 @@ each](references/task-packet.md#what-a-handoff-discloses)) and reruns that kind'
 more, so the correction does not ask for an audit of what the base moved under. The restoration
 block carries the siblings' landings and the conflicts the parent expects.
 
+A base conflict can show after the receipt was ruled `verified` and before the node is accepted. The needs-changes ruling on that same receipt carries it: the relay replaces the verified ruling and opens the next generation, as long as nothing rests on it. The steps, the refusals and what an older relay answers are in [a base conflict after the ruling and before the acceptance](references/merge-readiness.md#a-base-conflict-after-the-ruling-and-before-the-acceptance).
+
 Refresh the task's identity, ownership, current turn, checkout, and prior
 correction receipts before sending. Reuse its agreed model, effort, workflow,
 permissions, and delivery scope. Of those the workflow is the one only the message can
@@ -934,6 +950,19 @@ observed; installing, starting a service, or creating a task to find out are
 separate actions under their own authorization, and
 [OPS-2.4](references/operations.md#ops-24-update-and-recovery) owns the update
 path when one is actually authorized.
+
+### Close the project's merged assignments
+
+When a relay-managed project is finished, its parent closes the merged assignments it leaves live, so the next parent can take
+the project over with `linkage-handover` and the store stops counting finished work. Read `linkage-completion --project <key>`
+first and keep that reading as the completion evidence, because afterwards it reads `unregistered` while nothing is live. Run
+`relationship-close-merged --project <key> --actor <own task id>` without `--apply`, read `closable` and `kept`, then repeat
+it with `--apply`. A non-empty `kept` is not a finished project: report each kept assignment with its reason. For a supervised
+project read `supervisor-standing --project <key>` and do not apply while an entry for a `closable`
+assignment (its `relationId`) lacks a `decision.priorReport`, since a report not yet staged cannot be sent once its assignment
+is closed; entries of assignments already closed do not block.
+[Close the merged assignments](references/relay.md#close-the-merged-assignments-when-the-project-is-done) has the commands and
+the way back.
 
 ### Account for the resources this run leaves behind
 

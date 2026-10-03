@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"math/big"
 	"os"
 	"strings"
 
@@ -83,11 +82,11 @@ func f1Claim(ctx context.Context, l *Ledger, a map[string]string) (any, error) {
 		if r == nil {
 			return fmt.Errorf("fault_unknown: no publication '%s'", id)
 		}
-		kind := text(r, "kind")
+		kind := r.Text("kind")
 		if _, ok := executableKind(kind); !ok {
 			return f1Unregistered(kind)
 		}
-		state := text(r, "state")
+		state := r.Text("state")
 		if state != "pending" {
 			suffix := ""
 			if state == "uncertain" {
@@ -95,11 +94,11 @@ func f1Claim(ctx context.Context, l *Ledger, a map[string]string) (any, error) {
 			}
 			return fmt.Errorf("fault_not_claimable: publication %s is %s%s", id, state, suffix)
 		}
-		fault, e := l.one(ctx, "SELECT * FROM fault_ledger WHERE fault_id=?", text(r, "fault_id"))
+		fault, e := l.one(ctx, "SELECT * FROM fault_ledger WHERE fault_id=?", r.Text("fault_id"))
 		if e != nil {
 			return e
 		}
-		if text(r, "kind") == openRecord {
+		if r.Text("kind") == openRecord {
 			slot, _, e := issueSlot(ctx, l, fault)
 			if e != nil {
 				return e
@@ -119,7 +118,7 @@ func f1Claim(ctx context.Context, l *Ledger, a map[string]string) (any, error) {
 			return e
 		}
 		if held == "held" {
-			return fmt.Errorf("fault_budget_spent: %s's %s budget is spent; the write stays pending", text(fault, "product"), kind)
+			return fmt.Errorf("fault_budget_spent: %s's %s budget is spent; the write stays pending", fault.Text("product"), kind)
 		}
 		if held != "ready" {
 			reasons := map[string]string{"backingOff": "backing_off", "awaitingRecord": "awaiting_record", "awaitingTarget": "awaiting_target", "scopeKeyContested": "scope_key_contested", "kindUnregistered": "kind_unregistered", "issueOwned": "issue_owned"}
@@ -129,9 +128,9 @@ func f1Claim(ctx context.Context, l *Ledger, a map[string]string) (any, error) {
 		if e != nil {
 			return e
 		}
-		takeover := writer != nil && text(writer, "owner") != owner
+		takeover := writer != nil && writer.Text("owner") != owner
 		if takeover && a["--takeover"] == "" {
-			return fmt.Errorf("fault_writer_conflict: this write belongs to %s; pass takeover to reassign it", quote.Value(text(writer, "owner")))
+			return fmt.Errorf("fault_writer_conflict: this write belongs to %s; pass takeover to reassign it", quote.Value(writer.Text("owner")))
 		}
 		attempt := integer(r, "attempts") + 1
 		takeoverInt := 0
@@ -146,7 +145,7 @@ func f1Claim(ctx context.Context, l *Ledger, a map[string]string) (any, error) {
 		if e != nil {
 			return e
 		}
-		product := text(fault, "product")
+		product := fault.Text("product")
 		limit, window := int64(20), 3600.0
 		if kind == openRecord {
 			limit = 5
@@ -192,22 +191,22 @@ func f1Operation(ctx context.Context, l *Ledger, a map[string]string) (any, erro
 		if r == nil {
 			return fmt.Errorf("fault_unknown: no publication '%s'", id)
 		}
-		if text(r, "state") != "claimed" {
-			return fmt.Errorf("fault_not_claimable: an operation is handed out for a claimed publication; this one is %s", text(r, "state"))
+		if r.Text("state") != "claimed" {
+			return fmt.Errorf("fault_not_claimable: an operation is handed out for a claimed publication; this one is %s", r.Text("state"))
 		}
-		if text(r, "claim_token") != a["--claim-token"] {
+		if r.Text("claim_token") != a["--claim-token"] {
 			return fmt.Errorf("fault_claim_stale: this claim token is not the current one")
 		}
-		kind := text(r, "kind")
+		kind := r.Text("kind")
 		spec, ok := executableKind(kind)
 		if !ok {
 			return f1Unregistered(kind)
 		}
-		fault, e := l.one(ctx, "SELECT * FROM fault_ledger WHERE fault_id=?", text(r, "fault_id"))
+		fault, e := l.one(ctx, "SELECT * FROM fault_ledger WHERE fault_id=?", r.Text("fault_id"))
 		if e != nil {
 			return e
 		}
-		if kind == openRecord && text(fault, "external_ref") != "" {
+		if kind == openRecord && fault.Text("external_ref") != "" {
 			if e = f1CancelClaim(ctx, l, r, stamp, "the fault already owns an issue"); e != nil {
 				return e
 			}
@@ -249,23 +248,23 @@ func f1Operation(ctx context.Context, l *Ledger, a map[string]string) (any, erro
 				return nil
 			}
 		}
-		if spec.RequiresIssue && text(fault, "external_ref") == "" {
+		if spec.RequiresIssue && fault.Text("external_ref") == "" {
 			return fmt.Errorf("fault_not_claimable: this fault owns no issue yet")
 		}
 		if kind == "update_record" && extra != nil {
-			payload := loadsMap(text(extra, "payload"))
+			payload := loadsMap(extra.Text("payload"))
 			if payload["op"] == "set_project" {
-				target, e := l.one(ctx, "SELECT project_ref,product FROM fault_target_projects WHERE scope_key=?", text(fault, "scope_key"))
+				target, e := l.one(ctx, "SELECT project_ref,product FROM fault_target_projects WHERE scope_key=?", fault.Text("scope_key"))
 				if e != nil {
 					return e
 				}
 				var current any
-				if target != nil && text(target, "product") == text(fault, "product") {
+				if target != nil && target.Text("product") == fault.Text("product") {
 					current = target.Get("project_ref")
 				}
 				var reason string
 				if current == nil {
-					reason = fmt.Sprintf("the scope no longer targets a project %s owns, so %v is not where the issue belongs", text(fault, "product"), payload["value"])
+					reason = fmt.Sprintf("the scope no longer targets a project %s owns, so %v is not where the issue belongs", fault.Text("product"), payload["value"])
 				} else if current != payload["value"] {
 					reason = fmt.Sprintf("the scope now targets %v, not %v", current, payload["value"])
 				}
@@ -277,10 +276,10 @@ func f1Operation(ctx context.Context, l *Ledger, a map[string]string) (any, erro
 					if e != nil {
 						return e
 					}
-					if target != nil && text(target, "project_ref") != "" {
-						e = dRelinkOne(ctx, l, text(r, "fault_id"), text(target, "project_ref"), stamp)
+					if target != nil && target.Text("project_ref") != "" {
+						e = dRelinkOne(ctx, l, r.Text("fault_id"), target.Text("project_ref"), stamp)
 					} else {
-						e = dUnlinkOne(ctx, l, text(r, "fault_id"), stamp)
+						e = dUnlinkOne(ctx, l, r.Text("fault_id"), stamp)
 					}
 					if e != nil {
 						return e
@@ -300,10 +299,10 @@ func f1Operation(ctx context.Context, l *Ledger, a map[string]string) (any, erro
 		if _, e = l.exec(ctx, "UPDATE fault_publication_attempts SET issued_at=?,issued_ts=? WHERE attempt_id=(SELECT MAX(attempt_id) FROM fault_publication_attempts WHERE publication_id=?)", stamp, moment, id); e != nil {
 			return e
 		}
-		title := fmt.Sprintf("[%s] %s: %s", text(fault, "product"), text(fault, "fault_class"), domain(fault))
+		title := fmt.Sprintf("[%s] %s: %s", fault.Text("product"), fault.Text("fault_class"), domain(fault))
 		var payload any
 		if extra != nil && extra.Get("payload") != nil {
-			payload, e = loads(text(extra, "payload"))
+			payload, e = loads(extra.Text("payload"))
 			if e != nil {
 				return e
 			}
@@ -333,25 +332,25 @@ func f1Unregistered(kind string) error {
 }
 
 func f1OwnedTarget(ctx context.Context, l *Ledger, fault row) (row, string, error) {
-	target, e := l.one(ctx, "SELECT t.tracker_ref,p.project_ref,p.product FROM fault_targets t LEFT JOIN fault_target_projects p ON p.scope_key=t.scope_key WHERE t.scope_key=?", text(fault, "scope_key"))
+	target, e := l.one(ctx, "SELECT t.tracker_ref,p.project_ref,p.product FROM fault_targets t LEFT JOIN fault_target_projects p ON p.scope_key=t.scope_key WHERE t.scope_key=?", fault.Text("scope_key"))
 	if e != nil || target == nil || target.Get("product") == nil {
 		return nil, "awaiting_target", e
 	}
-	contested, e := l.one(ctx, "SELECT 1 FROM fault_ledger WHERE scope_key=? AND product!=? LIMIT 1", text(fault, "scope_key"), text(fault, "product"))
+	contested, e := l.one(ctx, "SELECT 1 FROM fault_ledger WHERE scope_key=? AND product!=? LIMIT 1", fault.Text("scope_key"), fault.Text("product"))
 	if e != nil {
 		return nil, "", e
 	}
-	if text(target, "product") != text(fault, "product") || contested != nil {
+	if target.Text("product") != fault.Text("product") || contested != nil {
 		return nil, "scope_key_contested", nil
 	}
 	return target, "", nil
 }
 
 func f1CancelClaim(ctx context.Context, l *Ledger, r row, stamp, reason string) error {
-	id := text(r, "publication_id")
+	id := r.Text("publication_id")
 	attempts := integer(r, "attempts")
-	if text(r, "state") == "claimed" {
-		if _, e := l.exec(ctx, "DELETE FROM fault_budget_uses WHERE product=(SELECT product FROM fault_ledger WHERE fault_id=?) AND kind=? AND ref=(SELECT publication_id || ':' || attempt_id FROM fault_publication_attempts WHERE publication_id=? ORDER BY attempt_id DESC LIMIT 1)", text(r, "fault_id"), text(r, "kind"), id); e != nil {
+	if r.Text("state") == "claimed" {
+		if _, e := l.exec(ctx, "DELETE FROM fault_budget_uses WHERE product=(SELECT product FROM fault_ledger WHERE fault_id=?) AND kind=? AND ref=(SELECT publication_id || ':' || attempt_id FROM fault_publication_attempts WHERE publication_id=? ORDER BY attempt_id DESC LIMIT 1)", r.Text("fault_id"), r.Text("kind"), id); e != nil {
 			return e
 		}
 		if _, e := l.exec(ctx, "UPDATE fault_publication_attempts SET outcome='cancelled',ended=1,ended_at=? WHERE attempt_id=(SELECT MAX(attempt_id) FROM fault_publication_attempts WHERE publication_id=?)", stamp, id); e != nil {
@@ -363,7 +362,7 @@ func f1CancelClaim(ctx context.Context, l *Ledger, r row, stamp, reason string) 
 	return e
 }
 func f1Release(ctx context.Context, l *Ledger, r row, stamp, outcome string, next any, hold string) error {
-	id := text(r, "publication_id")
+	id := r.Text("publication_id")
 	if _, e := l.exec(ctx, "UPDATE fault_publications SET state='pending',claim_token=NULL,lease_owner=NULL,lease_until=NULL,attempts=attempts-1,next_attempt_at=?,updated_at=? WHERE publication_id=?", next, stamp, id); e != nil {
 		return e
 	}
@@ -374,11 +373,11 @@ func f1Release(ctx context.Context, l *Ledger, r row, stamp, outcome string, nex
 	if e != nil {
 		return e
 	}
-	fault, e := l.one(ctx, "SELECT product FROM fault_ledger WHERE fault_id=?", text(r, "fault_id"))
+	fault, e := l.one(ctx, "SELECT product FROM fault_ledger WHERE fault_id=?", r.Text("fault_id"))
 	if e != nil {
 		return e
 	}
-	_, e = l.exec(ctx, "DELETE FROM fault_budget_uses WHERE product=? AND kind=? AND ref=?", text(fault, "product"), text(r, "kind"), fmt.Sprintf("%s:%d", id, integer(attempt, "id")))
+	_, e = l.exec(ctx, "DELETE FROM fault_budget_uses WHERE product=? AND kind=? AND ref=?", fault.Text("product"), r.Text("kind"), fmt.Sprintf("%s:%d", id, integer(attempt, "id")))
 	if e != nil {
 		return e
 	}
@@ -397,7 +396,7 @@ func f1Protocol(kind string) []any {
 	return []any{kind + ": follow the protocol its registering module documents", "complete from what was read back; a lost response is uncertain, never repeated"}
 }
 func f1RenderBlock(r, fault row) string {
-	summary := strings.TrimRight(strings.ReplaceAll(strings.ReplaceAll(text(r, "summary"), "\r\n", "\n"), "\r", "\n"), "\n")
+	summary := strings.TrimRight(strings.ReplaceAll(strings.ReplaceAll(r.Text("summary"), "\r\n", "\n"), "\r", "\n"), "\n")
 	maxRun, run := 0, 0
 	for _, c := range summary {
 		if c == '`' {
@@ -413,8 +412,8 @@ func f1RenderBlock(r, fault row) string {
 		maxRun = 2
 	}
 	fence := strings.Repeat("`", maxRun+1)
-	id := text(r, "publication_id")
-	fields := []string{"<!-- relay-fault:" + id + " -->", "blockFormat: v1", "publicationId: " + id, "faultId: " + text(r, "fault_id"), "product: " + text(fault, "product"), "faultClass: " + text(fault, "fault_class"), "trigger: " + text(r, "trigger_key"), fmt.Sprintf("cycle: %d", integer(r, "cycle")), "identityDigest: " + text(r, "identity_digest"), "summarySha256: " + pyvalue.SHA256Hex(summary), "", fence + "text", summary, fence, "<!-- /relay-fault:" + id + " -->"}
+	id := r.Text("publication_id")
+	fields := []string{"<!-- relay-fault:" + id + " -->", "blockFormat: v1", "publicationId: " + id, "faultId: " + r.Text("fault_id"), "product: " + fault.Text("product"), "faultClass: " + fault.Text("fault_class"), "trigger: " + r.Text("trigger_key"), fmt.Sprintf("cycle: %d", integer(r, "cycle")), "identityDigest: " + r.Text("identity_digest"), "summarySha256: " + pyvalue.SHA256Hex(summary), "", fence + "text", summary, fence, "<!-- /relay-fault:" + id + " -->"}
 	return strings.Join(fields, "\n")
 }
 
@@ -463,16 +462,16 @@ func f1Reconcile(ctx context.Context, l *Ledger, a map[string]string) (any, erro
 		if r == nil {
 			return fmt.Errorf("fault_unknown: no publication '%s'", id)
 		}
-		kind := text(r, "kind")
+		kind := r.Text("kind")
 		spec, ok := executableKind(kind)
 		if !ok {
 			return f1Unregistered(kind)
 		}
-		fault, e := l.one(ctx, "SELECT * FROM fault_ledger WHERE fault_id=?", text(r, "fault_id"))
+		fault, e := l.one(ctx, "SELECT * FROM fault_ledger WHERE fault_id=?", r.Text("fault_id"))
 		if e != nil {
 			return e
 		}
-		state := text(r, "state")
+		state := r.Text("state")
 		result = map[string]any{"publicationId": id, "state": state}
 		outcome := func(name, detail string) error { result["outcome"] = name; result["detail"] = detail; return nil }
 		attested := a["--searched"] != ""
@@ -540,14 +539,14 @@ func f1Reconcile(ctx context.Context, l *Ledger, a map[string]string) (any, erro
 				return e
 			}
 		}
-		query, _, args, _ := dRepointFaultQuery(text(r, "fault_id"))
+		query, _, args, _ := dRepointFaultQuery(r.Text("fault_id"))
 		args = append(args, 100)
 		selected, e := l.Store.All(ctx, query+" ORDER BY p.rowid LIMIT ?", args...)
 		if e != nil {
 			return e
 		}
 		for _, entry := range selected {
-			publication := text(entry, "publication_id")
+			publication := entry.Text("publication_id")
 			if _, e = l.exec(ctx, "UPDATE fault_publications SET tracker_ref=?,updated_at=? WHERE publication_id=?", entry.Get("team"), stamp, publication); e != nil {
 				return e
 			}
@@ -658,7 +657,7 @@ func f1Fence(line string) int {
 func f1ConfirmFields(extra row, observed map[string]any) []string {
 	var payload map[string]any
 	if extra != nil && extra.Get("payload") != nil {
-		payload = loadsMap(text(extra, "payload"))
+		payload = loadsMap(extra.Text("payload"))
 	}
 	op, _ := payload["op"].(string)
 	value := payload["value"]
@@ -702,8 +701,8 @@ func f1Mismatch(r, fault row, found f1Block) []string {
 		}
 		return out
 	}
-	summary := strings.TrimRight(strings.ReplaceAll(strings.ReplaceAll(text(r, "summary"), "\r\n", "\n"), "\r", "\n"), "\n")
-	expected := map[string]string{"blockFormat": "v1", "publicationId": text(r, "publication_id"), "faultId": text(r, "fault_id"), "product": text(fault, "product"), "faultClass": text(fault, "fault_class"), "trigger": text(r, "trigger_key"), "cycle": fmt.Sprint(integer(r, "cycle")), "identityDigest": text(r, "identity_digest"), "summarySha256": pyvalue.SHA256Hex(summary)}
+	summary := strings.TrimRight(strings.ReplaceAll(strings.ReplaceAll(r.Text("summary"), "\r\n", "\n"), "\r", "\n"), "\n")
+	expected := map[string]string{"blockFormat": "v1", "publicationId": r.Text("publication_id"), "faultId": r.Text("fault_id"), "product": fault.Text("product"), "faultClass": fault.Text("fault_class"), "trigger": r.Text("trigger_key"), "cycle": fmt.Sprint(integer(r, "cycle")), "identityDigest": r.Text("identity_digest"), "summarySha256": pyvalue.SHA256Hex(summary)}
 	problems := []string{}
 	for _, key := range []string{"blockFormat", "publicationId", "faultId", "product", "faultClass", "trigger", "cycle", "identityDigest", "summarySha256"} {
 		actual, ok := found.fields[key]
@@ -744,7 +743,7 @@ func f1Complete(ctx context.Context, l *Ledger, a map[string]string) (any, error
 		if r == nil {
 			return fmt.Errorf("fault_unknown: no publication '%s'", id)
 		}
-		state := text(r, "state")
+		state := r.Text("state")
 		if state == "confirmed" {
 			result = cView(r)
 			result["confirmed"] = false
@@ -754,15 +753,15 @@ func f1Complete(ctx context.Context, l *Ledger, a map[string]string) (any, error
 		if state != "claimed" && state != "issued" && state != "uncertain" {
 			return fmt.Errorf("fault_state_conflict: a %s publication has no write outstanding to confirm; claim it and write it again", state)
 		}
-		if state != "uncertain" && text(r, "claim_token") != a["--claim-token"] {
+		if state != "uncertain" && r.Text("claim_token") != a["--claim-token"] {
 			return fmt.Errorf("fault_claim_stale: this claim token is not the current one")
 		}
-		kind := text(r, "kind")
+		kind := r.Text("kind")
 		spec, ok := executableKind(kind)
 		if !ok {
 			return f1Unregistered(kind)
 		}
-		fault, e := l.one(ctx, "SELECT * FROM fault_ledger WHERE fault_id=?", text(r, "fault_id"))
+		fault, e := l.one(ctx, "SELECT * FROM fault_ledger WHERE fault_id=?", r.Text("fault_id"))
 		if e != nil {
 			return e
 		}
@@ -823,16 +822,16 @@ func f1Complete(ctx context.Context, l *Ledger, a map[string]string) (any, error
 			return e
 		}
 		if kind == openRecord {
-			if _, e = l.exec(ctx, "UPDATE fault_ledger SET external_ref=?,published_at=?,updated_at=? WHERE fault_id=? AND external_ref IS NULL", reference, stamp, stamp, text(r, "fault_id")); e != nil {
+			if _, e = l.exec(ctx, "UPDATE fault_ledger SET external_ref=?,published_at=?,updated_at=? WHERE fault_id=? AND external_ref IS NULL", reference, stamp, stamp, r.Text("fault_id")); e != nil {
 				return e
 			}
-			if e = f1ObserveLink(ctx, l, text(r, "fault_id"), reference, a["--project-ref"], stamp); e != nil {
+			if e = f1ObserveLink(ctx, l, r.Text("fault_id"), reference, a["--project-ref"], stamp); e != nil {
 				return e
 			}
 		} else if kind == "update_record" && extra != nil {
-			payload := loadsMap(text(extra, "payload"))
+			payload := loadsMap(extra.Text("payload"))
 			if payload["op"] == "set_project" {
-				if e = f1ObserveLink(ctx, l, text(r, "fault_id"), reference, payload["value"], stamp); e != nil {
+				if e = f1ObserveLink(ctx, l, r.Text("fault_id"), reference, payload["value"], stamp); e != nil {
 					return e
 				}
 			}
@@ -857,7 +856,7 @@ func f1ObserveLink(ctx context.Context, l *Ledger, id string, reference, observe
 		return e
 	}
 	var wanted any
-	if target != nil && text(target, "product") == text(fault, "product") {
+	if target != nil && target.Text("product") == fault.Text("product") {
 		wanted = target.Get("project_ref")
 	}
 	link, e := l.one(ctx, "SELECT * FROM fault_links WHERE fault_id=?", id)
@@ -900,12 +899,12 @@ var sweepInstallation = ExecutableInstallation
 
 type sweepInput struct {
 	readings any
-	after    *big.Int
+	after    int64
 }
 type sweepInputKey struct{}
 
 func validateSweep(ctx context.Context, a map[string]string) (sweepInput, error) {
-	input := sweepInput{after: big.NewInt(0)}
+	input := sweepInput{}
 	if a["--readings"] != "" {
 		raw, e := f1Argument(a["--readings"], "readings")
 		if e != nil {
@@ -918,10 +917,10 @@ func validateSweep(ctx context.Context, a map[string]string) (sweepInput, error)
 		input.readings = value
 	}
 	if a["--readings-after"] != "" {
-		input.after = integerArg(ctx, "--readings-after", a["--readings-after"])
-	}
-	if input.after.Sign() < 0 {
-		return input, fmt.Errorf("fault_observation_malformed: --readings-after is a non-negative integer, not %s", input.after.String())
+		var ok bool
+		if input.after, ok = integerArg(ctx, "--readings-after", a["--readings-after"]); !ok || input.after < 0 {
+			return input, fmt.Errorf("fault_observation_malformed: --readings-after is a non-negative integer, not %s", a["--readings-after"])
+		}
 	}
 	return input, nil
 }
@@ -945,10 +944,7 @@ func f1Sweep(ctx context.Context, l *Ledger, a map[string]string) (any, error) {
 	} else if input.readings != nil {
 		return nil, fmt.Errorf("fault_observation_malformed: readings are a list of reporting-observation/1 objects")
 	}
-	if !input.after.IsInt64() {
-		return nil, fmt.Errorf("fault_observation_malformed: readings after is an integer from 0 to 1000, not %s", input.after.String())
-	}
-	after := int(input.after.Int64())
+	after := int(input.after)
 	hostRecord, err := HostRecordPath()
 	if err != nil {
 		return nil, err

@@ -16,6 +16,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 )
 
 // Runner is the read-only forge process seam. Tests feed the same scripted gh transcript to
@@ -25,7 +26,7 @@ type Runner func(argv []string, timeout time.Duration) (code int, stdout, stderr
 type Forge struct {
 	Run                              Runner
 	Command                          []string
-	PageSize, PageBudget, CallBudget any
+	PageSize, PageBudget, CallBudget int64
 	Timeout                          time.Duration
 	TimeoutSeconds                   string // exact CLI integer for timeout diagnostics
 	Calls                            []map[string]any
@@ -185,7 +186,7 @@ func (f *Forge) enumerateArray(name, path string) (Enumeration, error) {
 			items, ok = []any{}, true
 		}
 		if !ok {
-			return Page{}, &Unreadable{Where: name, Detail: "the the " + name + " endpoint answered with a " + pyvalue.TypeName(raw) + " where a list was expected"}
+			return Page{}, &Unreadable{Where: name, Detail: "the the " + name + " endpoint answered with " + quote.Kind(raw) + " where a list was expected"}
 		}
 		var next any
 		if countReached(len(items), f.PageSize) {
@@ -481,7 +482,7 @@ func collectGates(f *Forge, owner, name string, base any, problems *[]Problem, c
 		var unread *Unreadable
 		if errors.As(err, &unread) && unread.Status == 404 {
 			g["baseRefExists"] = false
-			*problems = append(*problems, Problem{Code: BaseRefMissing, Detail: "the base branch " + pyvalue.StrRepr(ref) + " does not exist, so this candidate has no destination and its gates cannot be read from one"})
+			*problems = append(*problems, Problem{Code: BaseRefMissing, Detail: "the base branch " + quote.Value(ref) + " does not exist, so this candidate has no destination and its gates cannot be read from one"})
 		} else {
 			*problems = append(*problems, Problem{Code: UnreadableCode, Detail: err.Error()})
 		}
@@ -592,7 +593,7 @@ func snapshotBase(f *Forge, owner, name string, number any, started string, prob
 		}
 	}
 	if len(conflicting) > 0 {
-		problems = append(problems, Problem{Code: RequiredGateConflict, Detail: "this branch declares " + pyvalue.StrRepr(pyvalue.Str(conflicting[0])) + " required, and that reviewer is disabled by policy; it stays in the required set because removing it here would hide a rule that needs an authorised correction"})
+		problems = append(problems, Problem{Code: RequiredGateConflict, Detail: "this branch declares " + quote.Value(pyvalue.Str(conflicting[0])) + " required, and that reviewer is disabled by policy; it stays in the required set because removing it here would hide a rule that needs an authorised correction"})
 	}
 	handoff := map[string]any{"isDraft": boolOf(pinned["isDraft"]), "baseVerifiedAt": f.Now(), "baseSha": pinned["baseSha"], "baseRef": pinned["baseRef"], "reviewCoverage": defaultMap(coverage), "checks": defaultList(checks), "requiredDeclared": required, "requiredProviders": gates["requiredProviders"], "threadDispositions": []any{}, "criterionEvidence": []any{}, "limitations": []any{}}
 	return map[string]any{"repository": owner + "/" + name, "number": number, "url": pinned["url"], "observation": map[string]any{"startedAt": started, "finishedAt": f.Now(), "atomic": false, "note": "this observation is not atomic with any merge that follows it; the exact-head guard at merge time and the late-finding path afterwards are what bound the window"}, "pinned": pinned, "reread": reread, "handoffGuidance": "this handoff carries the observed half of a completion report: the review coverage, the checks, the required gates, the draft flag and the base it was verified against. threadDispositions, criterionEvidence and limitations are left empty because they are judgements rather than observations; a candidate whose threads were seen needs a judged disposition for each of them before the report is submitted", "gates": gates, "supersededRuns": defaultList(superseded), "connections": defaultList(connections), "handoff": handoff, "findings": defaultList(findings), "checkDetail": defaultList(detail), "problems": problemsJSON(problems), "verdict": VerdictOf(problems), "provenance": map[string]any{"calls": f.Calls, "disabledReviewers": disabled, "conflictingRequiredReviewers": conflicting}}
@@ -661,7 +662,7 @@ func Collect(f *Forge, repository string, numberValue any) (snapshot map[string]
 		var moved []string
 		for _, field := range []string{"headSha", "baseSha", "baseRef", "state", "merged", "isDraft"} {
 			if !pyvalue.ItemEqual(after[field], pinned[field]) {
-				moved = append(moved, field+": "+pyvalue.Repr(pinned[field])+" to "+pyvalue.Repr(after[field]))
+				moved = append(moved, field+": "+quote.Value(pinned[field])+" to "+quote.Value(after[field]))
 			}
 		}
 		if len(moved) > 0 {
@@ -688,7 +689,7 @@ func Collect(f *Forge, repository string, numberValue any) (snapshot map[string]
 func RestateProblems(head string, record, snapshot any) []Problem {
 	_, ok := Object(record)
 	if !ok {
-		return []Problem{{Code: Malformed, Detail: "a handoff record is an object, not a " + pyvalue.TypeName(record)}}
+		return []Problem{{Code: Malformed, Detail: "a handoff record is an object, not " + quote.Kind(record)}}
 	}
 	r := mapOf(record)
 	snap := mapOf(snapshot)
@@ -697,7 +698,7 @@ func RestateProblems(head string, record, snapshot any) []Problem {
 	var problems []Problem
 	if providers != nil {
 		if _, ok := Object(providers); !ok {
-			problems = append(problems, Problem{Code: RecordInvalid, Detail: "the record states requiredProviders as a " + pyvalue.TypeName(providers) + ", not a mapping of context to the integration its rule names"})
+			problems = append(problems, Problem{Code: RecordInvalid, Detail: "the record states requiredProviders as " + quote.Kind(providers) + ", not a mapping of context to the integration its rule names"})
 			providers = nil
 		}
 	}
@@ -716,23 +717,23 @@ func RestateProblems(head string, record, snapshot any) []Problem {
 	gates := mapOf(snap["gates"])
 	fresh, stated := listOf(gates["requiredDeclared"]), listOf(required)
 	if gates["requiredDeclared"] != nil && required != nil && pyvalue.Repr(sortedTexts(fresh)) != pyvalue.Repr(sortedTexts(stated)) {
-		problems = append(problems, Problem{Code: GatesMoved, Detail: "the record was graded against required checks " + pyvalue.Repr(sortedTexts(stated)) + " and this branch now declares " + pyvalue.Repr(sortedTexts(fresh))})
+		problems = append(problems, Problem{Code: GatesMoved, Detail: "the record was graded against required checks " + quote.Value(sortedTexts(stated)) + " and this branch now declares " + quote.Value(sortedTexts(fresh))})
 	}
 	expected, recorded := providerObject(gates["requiredProviders"]), providerObject(providers)
 	if _, ok := Object(gates["requiredProviders"]); ok && pyjson.Dumps(expected, pyjson.Options{Compact: true, SortKeys: true, Unicode: true}) != pyjson.Dumps(recorded, pyjson.Options{Compact: true, SortKeys: true, Unicode: true}) {
 		said := "nothing"
 		if len(recorded) > 0 {
-			said = pyvalue.Repr(recorded)
+			said = quote.Value(recorded)
 		}
-		problems = append(problems, Problem{Code: GatesMoved, Detail: "the record states " + said + " about which integration answers for a required context and this branch declares " + pyvalue.Repr(expected)})
+		problems = append(problems, Problem{Code: GatesMoved, Detail: "the record states " + said + " about which integration answers for a required context and this branch declares " + quote.Value(expected)})
 	}
 	observed := strOf(pinned["headSha"])
 	if head != "" && observed != "" && head != observed {
-		problems = append(problems, Problem{Code: CandidateMoved, Detail: "the record is about head " + pyvalue.StrRepr(head) + " and the forge now reports " + pyvalue.StrRepr(observed) + ", so the record describes a commit that is no longer the candidate"})
+		problems = append(problems, Problem{Code: CandidateMoved, Detail: "the record is about head " + quote.Value(head) + " and the forge now reports " + quote.Value(observed) + ", so the record describes a commit that is no longer the candidate"})
 	}
 	base := strOf(r["baseSha"])
 	if base != "" && strOf(pinned["baseSha"]) != "" && base != strOf(pinned["baseSha"]) {
-		problems = append(problems, Problem{Code: CandidateMoved, Detail: "the record was verified against base " + pyvalue.StrRepr(base) + " and the candidate now targets " + pyvalue.StrRepr(strOf(pinned["baseSha"])) + ", so its checks cover a merge that is no longer the one being made"})
+		problems = append(problems, Problem{Code: CandidateMoved, Detail: "the record was verified against base " + quote.Value(base) + " and the candidate now targets " + quote.Value(strOf(pinned["baseSha"])) + ", so its checks cover a merge that is no longer the one being made"})
 	} else if base == "" {
 		problems = append(problems, Problem{Code: RecordInvalid, Detail: "the record does not name the base commit it was verified against, so a destination that moved under an unchanged head cannot be noticed"})
 	}

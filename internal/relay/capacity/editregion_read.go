@@ -9,7 +9,9 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -120,29 +122,11 @@ func sortedPair(a, b string) (string, string) {
 	return a, b
 }
 
-// shellQuote is shlex.quote.
-func shellQuote(s string) string {
-	if s == "" {
-		return "''"
-	}
-	safe := true
-	for _, r := range s {
-		if !(r < 0x80 && (r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("%+,-./:=@_", r))) {
-			safe = false
-			break
-		}
-	}
-	if safe {
-		return s
-	}
-	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
-}
-
 // commandLine is editregion.command_line: a command quoted so that it runs as printed.
 func commandLine(words ...string) string {
 	quoted := make([]string, len(words))
 	for i, w := range words {
-		quoted[i] = shellQuote(w)
+		quoted[i] = quote.Shell(w)
 	}
 	return strings.Join(quoted, " ")
 }
@@ -200,16 +184,6 @@ type EditRegions struct {
 // row is a sqlite3.Row: the columns of one read, by name.
 type row = store.Row
 
-func text(r row, name string) string {
-	switch v := r.Get(name).(type) {
-	case string:
-		return v
-	case []byte:
-		return string(v)
-	}
-	return ""
-}
-
 // value is r[name] as a JSON value: None stays nil.
 func value(r row, name string) any {
 	switch v := r.Get(name).(type) {
@@ -231,7 +205,7 @@ func (e *EditRegions) all(ctx context.Context, query string, args ...any) ([]row
 func byID(rows []row) map[string]row {
 	out := map[string]row{}
 	for _, r := range rows {
-		out[text(r, "agreement_id")] = r
+		out[r.Text("agreement_id")] = r
 	}
 	return out
 }
@@ -239,7 +213,7 @@ func byID(rows []row) map[string]row {
 func successorMap(rows []row) map[string]string {
 	out := map[string]string{}
 	for _, r := range rows {
-		out[text(r, "from_revision")] = text(r, "to_revision")
+		out[r.Text("from_revision")] = r.Text("to_revision")
 	}
 	return out
 }
@@ -301,23 +275,23 @@ func (e *EditRegions) Show(ctx context.Context, repository string, f ShowFilter)
 	exclusive, regenerate := []any{}, []any{}
 	var ids []string
 	for _, r := range rows {
-		if f.BaseRevision.Valid && text(r, "base_revision") != f.BaseRevision.String {
+		if f.BaseRevision.Valid && r.Text("base_revision") != f.BaseRevision.String {
 			continue
 		}
-		if f.Project.Valid && f.Project.String != text(r, "left_project") && f.Project.String != text(r, "right_project") {
+		if f.Project.Valid && f.Project.String != r.Text("left_project") && f.Project.String != r.Text("right_project") {
 			continue
 		}
-		if f.Path.Valid && text(r, "region_path") != f.Path.String {
+		if f.Path.Valid && r.Text("region_path") != f.Path.String {
 			continue
 		}
 		record, err := e.described(ctx, agreementRecord(r), successors, carries, lineage)
 		if err != nil {
 			return nil, err
 		}
-		generated := text(r, "region_class") == classGenerated
+		generated := r.Text("region_class") == classGenerated
 		record = append(record, contract.Field{Key: "region", Value: contract.OrderedObject{
 			{Key: "path", Value: value(r, "region_path")}, {Key: "regionKind", Value: value(r, "region_kind")},
-			{Key: "regionKey", Value: orNone(text(r, "region_key"))}, {Key: "regionClass", Value: value(r, "region_class")},
+			{Key: "regionKey", Value: orNone(r.Text("region_key"))}, {Key: "regionClass", Value: value(r, "region_class")},
 			{Key: "regenerateFrom", Value: value(r, "regenerate_from")},
 		}})
 		resolution := "exclusive"
@@ -360,10 +334,10 @@ func (e *EditRegions) followupsFor(ctx context.Context, agreements []string) (co
 		}
 		for _, r := range rows {
 			record := followupRecord(r)
-			switch state := text(r, "state"); {
+			switch state := r.Text("state"); {
 			case state == followupDone || state == followupDropped:
 				closed = append(closed, record)
-			case text(r, "assignee_task_id") != "":
+			case r.Text("assignee_task_id") != "":
 				accepted = append(accepted, record)
 			default:
 				unassigned = append(unassigned, record)
@@ -402,30 +376,9 @@ func followupRecord(r row) contract.OrderedObject {
 	}
 }
 
-func get(record contract.OrderedObject, key string) any {
-	for _, f := range record {
-		if f.Key == key {
-			return f.Value
-		}
-	}
-	return nil
-}
-
-func set(record contract.OrderedObject, key string, v any) contract.OrderedObject {
-	for i := range record {
-		if record[i].Key == key {
-			record[i].Value = v
-			return record
-		}
-	}
-	return append(record, contract.Field{Key: key, Value: v})
-}
-
-func str(v any) string { s, _ := v.(string); return s }
-
 // described is EditRegions._described: what a record cannot say from its own columns.
 func (e *EditRegions) described(ctx context.Context, record contract.OrderedObject, successors map[string]string, carries, lineage map[string]row) (contract.OrderedObject, error) {
-	repository, identifier := str(get(record, "repository")), str(get(record, "agreementId"))
+	repository, identifier := pyjson.Text(record.Get("repository")), pyjson.Text(record.Get("agreementId"))
 	if successors == nil {
 		marks, err := e.all(ctx, marksQuery, repository)
 		if err != nil {
@@ -444,12 +397,12 @@ func (e *EditRegions) described(ctx context.Context, record contract.OrderedObje
 		}
 	}
 	carry, carried := carries[identifier]
-	base := str(get(record, "baseRevision"))
+	base := pyjson.Text(record.Get("baseRevision"))
 	var legacy any
 	var stated contract.OrderedObject
 	if !carried {
 		var constraint any = base
-		if str(get(record, "supersedes")) != "" {
+		if pyjson.Text(record.Get("supersedes")) != "" {
 			if lineage == nil {
 				lineageRows, err := e.all(ctx, lineageQuery, repository)
 				if err != nil {
@@ -462,7 +415,7 @@ func (e *EditRegions) described(ctx context.Context, record contract.OrderedObje
 				lineage, carries = byID(lineageRows), byID(carryRows)
 			}
 			constraint = writtenOn(identifier, lineage, carries)
-			if origin := originOf(identifier, lineage, carries); origin != nil && text(origin, "agreement_id") != identifier {
+			if origin := originOf(identifier, lineage, carries); origin != nil && origin.Text("agreement_id") != identifier {
 				legacy = contract.OrderedObject{
 					{Key: "origin", Value: value(origin, "agreement_id")}, {Key: "proposerTaskId", Value: value(origin, "proposer_task_id")},
 					{Key: "leftCondition", Value: value(origin, "left_condition")}, {Key: "rightCondition", Value: value(origin, "right_condition")},
@@ -470,7 +423,7 @@ func (e *EditRegions) described(ctx context.Context, record contract.OrderedObje
 			}
 		}
 		stateOf := func(key string) any {
-			if get(record, key) != nil {
+			if record.Get(key) != nil {
 				return base
 			}
 			return nil
@@ -482,20 +435,20 @@ func (e *EditRegions) described(ctx context.Context, record contract.OrderedObje
 			{Key: "leftCondition", Value: value(carry, "left_condition_revision")},
 			{Key: "rightCondition", Value: value(carry, "right_condition_revision")}}
 	}
-	record = set(record, "statedOn", stated)
-	record = set(record, "legacyCarry", legacy)
+	record = record.Set("statedOn", stated)
+	record = record.Set("legacyCarry", legacy)
 	earlier := []any{}
 	for _, f := range stated {
 		if f.Value != nil && f.Value != base {
 			earlier = append(earlier, f.Key)
 		}
 	}
-	record = set(record, "textFromEarlierRevision", earlier)
+	record = record.Set("textFromEarlierRevision", earlier)
 	current := base
 	if chain := walk(successors, base); len(chain) > 0 {
 		current = chain[len(chain)-1]
 	}
-	record = set(record, "currentRevision", current)
+	record = record.Set("currentRevision", current)
 	var reaffirmation any
 	if carried {
 		awaiting, err := e.awaiting(ctx, record, carry)
@@ -504,7 +457,7 @@ func (e *EditRegions) described(ctx context.Context, record contract.OrderedObje
 		}
 		var waiting any
 		if awaiting != nil {
-			record = set(record, "nextOwner", get(awaiting, "task"))
+			record = record.Set("nextOwner", awaiting.Get("task"))
 			waiting = awaiting
 		}
 		reaffirmation = contract.OrderedObject{
@@ -514,19 +467,19 @@ func (e *EditRegions) described(ctx context.Context, record contract.OrderedObje
 			{Key: "awaitingAcceptance", Value: waiting},
 		}
 	}
-	return set(record, "reaffirmation", reaffirmation), nil
+	return record.Set("reaffirmation", reaffirmation), nil
 }
 
 // awaiting is EditRegions._awaiting: the side a carried agreement still waits for.
 func (e *EditRegions) awaiting(ctx context.Context, record contract.OrderedObject, carry row) (contract.OrderedObject, error) {
-	if get(record, "state") != stateProposed {
+	if record.Get("state") != stateProposed {
 		return nil, nil
 	}
 	for _, side := range [][3]string{{"leftAcceptedAt", "leftProject", "left_accepted_at"}, {"rightAcceptedAt", "rightProject", "right_accepted_at"}} {
-		if str(get(record, side[0])) != "" {
+		if pyjson.Text(record.Get(side[0])) != "" {
 			continue
 		}
-		predecessor, err := e.one(ctx, "SELECT * FROM edit_agreements WHERE agreement_id = ?", text(carry, "predecessor_id"))
+		predecessor, err := e.one(ctx, "SELECT * FROM edit_agreements WHERE agreement_id = ?", carry.Text("predecessor_id"))
 		if err != nil {
 			return nil, err
 		}
@@ -534,12 +487,12 @@ func (e *EditRegions) awaiting(ctx context.Context, record contract.OrderedObjec
 		if predecessor != nil {
 			prior = value(predecessor, side[2])
 		}
-		key := str(get(record, side[1]))
+		key := pyjson.Text(record.Get(side[1]))
 		parent, err := e.soleParent(ctx, key)
 		if err != nil {
 			return nil, err
 		}
-		identifier := str(get(record, "agreementId"))
+		identifier := pyjson.Text(record.Get("agreementId"))
 		var task, command, precondition any
 		if parent != "" {
 			task = parent
@@ -577,11 +530,11 @@ func writtenOn(identifier string, lineage, carries map[string]row) any {
 		return nil
 	}
 	for range len(lineage) + 1 {
-		if carry, ok := carries[text(cursor, "agreement_id")]; ok {
+		if carry, ok := carries[cursor.Text("agreement_id")]; ok {
 			return value(carry, "constraint_revision")
 		}
-		before, ok := lineage[text(cursor, "supersedes")]
-		if !ok || text(before, "constraint_text") != text(cursor, "constraint_text") {
+		before, ok := lineage[cursor.Text("supersedes")]
+		if !ok || before.Text("constraint_text") != cursor.Text("constraint_text") {
 			break
 		}
 		cursor = before
@@ -596,10 +549,10 @@ func originOf(identifier string, lineage, carries map[string]row) row {
 		if !ok {
 			return nil
 		}
-		if _, carried := carries[text(cursor, "agreement_id")]; carried || text(cursor, "supersedes") == "" {
+		if _, carried := carries[cursor.Text("agreement_id")]; carried || cursor.Text("supersedes") == "" {
 			return cursor
 		}
-		before, found := lineage[text(cursor, "supersedes")]
+		before, found := lineage[cursor.Text("supersedes")]
 		if !found {
 			return cursor
 		}

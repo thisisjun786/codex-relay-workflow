@@ -164,9 +164,10 @@ Two dependencies a replay has to reproduce or exclude:
 
 ## Replaying against the Go build
 
-The Go contract runner does not replay this domain yet: `internal/contracttest` lists `cxc` as a
-pending domain and skips it by name, with the reason, until a Go implementation exists. A replay
-issue then:
+The Go contract runner replays this domain (`internal/contracttest`, `cxc_replay.go`) and runs what a
+status file claims, in these steps; the format and the exceptions are in
+[`contract/notes/cxc/README.md`](../../notes/cxc/README.md), and every fixture is pending until a port
+issue claims it:
 
 1. Maps each step to its CRW entry: `hook` legs through the CRW hook registration that
    replaces them (`crw hook <event>`), `cli` argv through `cli-names.md` (Wave 0) to `crw ...`,
@@ -175,7 +176,8 @@ issue then:
    helper roles, doctor).
 2. Builds the same `given` with the CRW names: `name-substitution.json` is applied to every path
    and text of `given` (`.codexclaw/` becomes `.crw/`, `codexclaw.json` becomes `crw.json`,
-   `CODEXCLAW_HOME` becomes `CRW_HOME` bound to the `${CXC_HOME}` root).
+   `CODEXCLAW_HOME` becomes `CRW_HOME` bound to the `${CXC_HOME}` root). An intentionally-changed claim can
+   then override the given where crw has no counterpart of it (the status-file format).
 3. Runs the Go build with the same isolation, normalises its output with `normalisation.json`
    (binding `${PLUGIN_ROOT}` to the crw plugin root), and applies `name-substitution.json` to the
    fixture's expected text, tree paths and tree contents, in rule order (regex rules with Go

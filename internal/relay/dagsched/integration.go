@@ -97,6 +97,9 @@ func (s *Scheduler) ObserveIntegration(ctx context.Context, plan, node, actor st
 	}
 	err = s.Store.Compose(ctx, func(txCtx context.Context, _ *sql.Conn) error {
 		tx := s.Store.Q(txCtx)
+		if err := s.fence(txCtx, tx, plan, actor); err != nil {
+			return err
+		}
 		// the targets are judged against the plan as it is now: an edge added while the tips were being read adds a target nobody has observed
 		now, _, err := dag.SnapshotAt(txCtx, tx, plan, 0)
 		if err != nil {

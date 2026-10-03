@@ -661,7 +661,8 @@ nobody proposed has no row at all, so an absent overlap is unknown rather than n
 the **project** rather than to whichever task currently parents each row. `--task` narrows it to
 one parent's rows and is deliberately left off for a handover: filtering by the parent made a
 replacement appear to have no outstanding work at all, which let a second replacement take the
-project without acknowledging anything.
+project without acknowledging anything. A handover also closes the merged
+assignments with nothing owed that it would otherwise strand, and lists them as `closedMerged` in its answer.
 
 `merge-turn-show`, `capacity-show` and `region-show` carry `unenforcedIndexes` where the store
 could not install a guard index. An ambiguous answer and a missing index are the same fact seen
@@ -678,7 +679,9 @@ The base a landing records is the value the next candidate on the same target ha
 `--base-sha`, so the relay does not take it from you: at the check, the landing, a resolution and
 a restatement it reads where the base branch points, from the target the claim named (git for an
 absolute repository path, which must be the repository the merge goes into; a read-only forge
-GET for `owner/name`), and records that reading. What you pass is compared with it.
+GET for `owner/name`), and records that reading. What you pass is compared with it. A check that
+finds the last landing's recorded base older than the branch also reads how the branch moved
+(below).
 
 - `--base-sha` is the branch tip now, in full. Anything else is refused `merge_currency_stale`.
 - `--landed-sha` is the commit your merge put on the base: the merge or squash commit, the last
@@ -696,11 +699,24 @@ target the relay cannot read refuses `merge_target_unreadable` and nothing is re
 merging turn checked before the relay read its base is refused `merge_evidence_required` and
 leaves through `merge-turn-unknown` and `merge-turn-resolve`.
 
-When `merge-turn-check` is refused because the last landing on the target recorded a different
-base, the refusal names that landing and who may correct it: its holder, or the supervisor above
-its project. That task runs `merge-turn-restate-base` on the landing; the relay reads the branch
-again, records it, and keeps the replaced value beside it (`merge-turn-show --turn <landing>`,
-`baseRestatements`). Then the candidate checks again. Nobody edits the store to correct a base.
+When the last landing on the target recorded a different base than the tip the check states, either
+the branch moved after that landing without a landing of the lane, or that landing recorded a
+wrong base. The check reads how the branch moved: the
+first-parent line of the base branch from the tip down to the recorded base. If every commit on
+it is a merge commit that no landing on the target records, which is what a pull request merged
+outside the lane leaves, the check records the base again itself, keeps the replaced value beside
+it (`merge-turn-show --turn <landing>`, `baseRestatements`, evidence beginning `automatic:`),
+reports it as `landingBaseRestated` in its answer and goes on. The parent that merged outside the
+lane has nothing to record afterwards, and no other parent waits for it.
+
+When the check cannot confirm that (the branch was rewritten, a commit on it is not a merge commit,
+more than 32 merges, a turn is in flight, or the branch could not be read) it writes nothing and
+is refused `merge_currency_stale` as before. The refusal names why and the command, with the
+landing and its holder filled in: that holder, or the supervisor above its project, runs
+`merge-turn-restate-base --turn <landing> --actor <task> --evidence <why the base moved>`; the
+relay reads the branch again, records it, and keeps the replaced value beside it. Then the
+candidate checks again. A waiting parent that is neither cannot run it. Nobody edits the store to
+correct a base.
 
 ## Peer region agreements across a moving base
 
@@ -1026,10 +1042,42 @@ After the parent refreshed the branch itself
 ([merge readiness](merge-readiness.md#refresh-the-base-yourself-when-only-the-base-moved)) the
 head that landed is not the head the receipt names: `--expected-event` still pins the child's
 report, and the mark records a revision, not a commit. So the `--evidence` text names the head
-that landed, the head the report named, and the check between them (the `base-refresh check`
-answer and the `merge-evidence` verdict on the landed head). Nothing else in the record says
-why the two heads differ, and `merge-evidence` on the landed head is the reading to quote, not
-the child's record.
+that landed, the head the report named, and the check between them: the `evidence:` line of the
+`base-refresh check` as it printed it (previous head, dev tip, new head, tree OID and the rule
+applied, one line for each step of a chain) and the `merge-evidence` verdict on the landed head.
+Nothing else in the record says why the two heads differ, and `merge-evidence` on the landed head
+is the reading to quote, not the child's record.
+
+## Close the merged assignments when the project is done
+
+A merged assignment keeps its relationship `active`: `assignment-mark` records what landed and changes nothing else. When a
+project is finished, or before its parent hands it over, the parent closes the merged assignments, so the next parent can take
+the project over and the store stops carrying finished work as live. `linkage-handover` closes a settled assignment itself
+when it would otherwise strand it; the sweep below closes them without a handover.
+
+    codex-session-relay --state "$RELAY_STATE" linkage-completion --project <key>
+    codex-session-relay --state "$RELAY_STATE" relationship-close-merged --project <key> --actor <own task id>
+    codex-session-relay --state "$RELAY_STATE" supervisor-standing --project <key>
+    codex-session-relay --state "$RELAY_STATE" relationship-close-merged --project <key> --actor <own task id> --apply
+
+Read `linkage-completion` first and keep that reading as the completion evidence: once nothing is live it reads
+`unregistered`, which says that nothing is attached, not that everything finished. The first `relationship-close-merged` is the dry run. It changes no relationship, link, binding or journal row and names
+`closable` and `kept`, each kept assignment with its state and the reason it stays: it is not merged, a delivery or a supervisor message of it is still owed, or its plan node has
+no active acceptance of the current head and criteria. Apply only when every `closable` entry is work this run integrated.
+A non-empty `kept` means the project is not closed: report each one with its reason.
+
+For a supervised project (a live initiative link over it) also read `supervisor-standing --project <key>` after the dry run, and
+do not apply while an entry whose `relationId` is one of the `closable` assignments lacks a `decision.priorReport`: such an
+entry is a report not yet staged, which cannot be sent once its assignment is closed, and the command cannot leave one
+assignment out, so the apply waits until the report is staged. Entries of assignments that are already closed are history and
+do not block, a discharged obligation is not listed, and a project with no supervisor stages nothing, so there the list is not a
+stop condition.
+
+A closed assignment reads `closed` in `assignment-show` and still shows its merge mark. The way back for a fix is
+`relationship-resume`, restating the generation, the roots and the recipients as in the next section, and then
+`generation-open`. After a handover the project belongs to the new parent, `relationship-resume` is refused
+`foreign_scope`, and the fix is a new assignment under the current parent. `--all` sweeps every live assignment of the
+store, including those with no project; it is for an operator cleaning an old store.
 
 ## Re-reviewing after the criteria change
 
@@ -1092,18 +1140,41 @@ criteria digest, so a re-review landing on the SAME disposition enqueues no seco
 document keeps the summary written against the earlier wording. Rewrite it yourself, the same way
 you wrote it the first time.
 
+### Changing a verified ruling before it is accepted
+
+A ruling of `verified` is replaced by `needs_changes` on the same receipt while nothing rests on it:
+no `dag-accept` of the event, no `assignment-mark merged`, and no merge turn of the assignment that
+is `merging`, of unknown effect or landed (a turn that only waits or holds does not count: the
+parent that found a base conflict holds it). An open re-review, which a changed criteria set opens,
+is decided first, as before, whether or not the head was accepted. The relay opens the next generation and queues the
+correction to the same child exactly as for a first `needs_changes` ruling, and answers the new
+record with `_supersedes` naming the ruling it replaced. Give the ruling as the ordinary `verdict`
+line, with the restoration block on the finding that carries the instruction. A different verdict
+is never answered with the recorded one: `unverified` or `aborted` after `verified`, and anything
+different after `needs_changes`, `unverified` or `aborted`, are refused with `disposition_conflict`,
+and a refusal wrote nothing. The same verdict again is still a replay marked `_replay`. A relay older
+than this rule answers a different verdict with the recorded ruling marked `_replay` and exit 0; an
+answer that still says `verified` with `_replay` changed nothing, so read the answer and
+`assignment-show`, never the exit code. The procedure for a base conflict after the ruling is
+[in merge readiness](merge-readiness.md#a-base-conflict-after-the-ruling-and-before-the-acceptance).
+
 ### A fresh execution generation
 
-That route is closed and a new generation is the one to use whenever the same event cannot be the
-answer:
+That route is closed. When the same event cannot be the answer, the cases are told apart here; a new
+generation is the way for the first two:
 
   - the artifact itself has to change, which is what a `needs_changes` verdict is for;
   - the event was already ruled `needs_changes`, `unverified` or `aborted`. Re-claiming it
-    returns `already_claimed` and `verdict` returns the settled record marked as a replay. After
-    `unverified` the state reads `verifying` rather than `re_review_needed`, so the assignment
+    returns `already_claimed`. The same `verdict` again returns the settled record marked as a
+    replay, and a different one is refused with `disposition_conflict`, which names the route (after
+    `needs_changes` the generation it opened is the one to use). After `unverified` the state reads `verifying` rather than `re_review_needed`, so the assignment
     does not announce this one;
-  - the event is no longer the revision this generation stands on, because a newer revision
-    arrived, the head is ambiguous, or the generation advanced.
+  - the generation advanced or a newer revision arrived, so the event is no longer the head: rule
+    the head that `assignment-show` names, which needs no new generation; a needs_changes ruling that
+    tries to replace the verified ruling of the old event is refused with `stale_generation` or
+    `superseded_revision` saying so;
+  - the head is ambiguous: outside a plan, a fresh generation; for a plan node this build records no
+    route, so report it and open none.
 
 A `needs_changes` verdict opens the generation itself. Open one by hand when nothing ruled it:
 
@@ -1179,6 +1250,66 @@ the presence of words, and confirmation is monotonic.
 A failed summary write is retried on its own and never re-runs a verification or re-sends a
 correction; `sync-status` and `sync-retry` manage the queue, and
 `sync-progress --relationship <rel>` queues a progress summary between verdicts.
+
+## The Linear summary of a DAG plan
+
+A DAG plan's own Linear summary is a project-level queue that is separate from the relationship job above: `dag_summary_outbox`, one table of the relay's DAG zone, with seven commands
+(the relay's `docs/relay/dag-outbox.md` is the reference). The relay still holds no Linear credential and calls no Linear: the parent writes with its own connector. The queue is per plan and
+document, and only the newest entry is ever written: when the plan has moved on, the entries not yet confirmed are superseded for you, so an older summary can never be put over a newer one. Every command
+below writes the summary table and nothing else, so recovering a summary re-runs no child, re-sends no correction and makes no second summary.
+
+You are the project's registered parent: every write command takes `--actor` with your task id, and a replaced parent is refused (`scope_role_mismatch`). Choose the Linear document that holds the plan's
+summary once and pass it as `--document` every time (its id or URL, one line).
+
+1. **Look.** `dag-summary-status --plan <plan>` lists each document with its newest entry, `owed` (that entry is not confirmed) and `up_to_date` (it states the plan as the store reads it now).
+   Nothing owed and up to date: stop. The plan moved on, or there is no entry: `dag-summary-enqueue --plan <plan> --actor <you> --document <doc>`. The same state of the plan is the same entry, so asking again
+   after a wake, a compaction or a restart is safe.
+
+        codex-session-relay --state "$RELAY_STATE" dag-summary-status --plan <plan>
+        codex-session-relay --state "$RELAY_STATE" dag-summary-enqueue --plan <plan> --actor <you> --document <doc>
+
+2. **Take.** `dag-summary-claim --summary <id> --actor <you>` answers a `claim_token` and the `operation`: the exact `block`, the exact `container` text, the `empty_container` and the protocol. A second claim of the same
+   entry is allowed at once (the answer of the first may have been lost) and kills the first token: a restarted or replacement session claims again any entry that reads `claimed`, because
+   a `dag-coordinator-claim` does not touch summary tokens and only that second claim ends the earlier session's. `sync_not_claimable` means this is not the entry to write: the entry was superseded or confirmed, so run
+   `dag-summary-status` and take the newest one; an entry that failed eight times says so, and `dag-summary-retry --summary <id> --actor <you>` reopens that entry only.
+
+        codex-session-relay --state "$RELAY_STATE" dag-summary-claim --summary <id> --actor <you>
+
+3. **Read and reconcile.** Read the document (`get_document`) and keep that one text: everything below is judged on it and written only against it. Ask the relay what it holds, before any write:
+
+        codex-session-relay --state "$RELAY_STATE" dag-summary-reconcile --summary <id> --observed @doc.txt
+
+   Stop, write nothing, take the newest entry (`dag-summary-status`) when `writable` is false or `relation` is newer: the entry was overtaken, and a write now would pass the connector's condition and put an
+   older summary over a newer one. `already_written`: the block is there, so confirm (step 5) and write nothing. Otherwise `repair` says how to write:
+
+   * `replace_container`: the document has the plan's container once: step 4.
+   * `initialize`: the document has no container. Add it with ONE `save_document` `patch` that replaces the WHOLE document text you read with that same text, a blank line and the `empty_container`:
+     `[{ "op": "replace", "old_string": <the document as you read it>, "new_string": <the document as you read it, a blank line, the empty_container> }]`. If anything changed since your read it is refused whole, so two sessions
+     cannot make two containers. Never an `append`, an `insert` or a `content` save for this (none is conditioned). Then read again and reconcile again. A document created for the summary is best created with the
+     `empty_container` as its content. If the whole document cannot be matched although nobody edited it, stop and ask a person to add the container.
+   * `manual`: the document is malformed (a block or container that is not closed, two containers, a block outside its container). Write nothing: record it with `dag-summary-fail`, naming the document and what
+     `detail` says, and report it to a person. The relay never confirms a corrupt document and one replacement cannot repair markers that appear twice.
+
+4. **Write.** One call, for `replace_container`: `save_document` on the document with `patch`, one operation:
+   `[{ "op": "replace", "old_string": <the container text from the read you reconciled, markers included>, "new_string": <operation.container> }]`. The connector applies a patch to the current content atomically and
+   refuses it whole unless `old_string` matches exactly once, so a write prepared before a newer summary landed, or before someone edited the container, is refused instead of overwriting it. Never write a summary
+   with `content` (whole-document replacement), an append, an insert or `replace_all`: none of them is conditioned on what the document holds.
+
+5. **Read back and confirm.** Read the document again (`get_document`) and pass the whole text:
+
+        codex-session-relay --state "$RELAY_STATE" dag-summary-complete --summary <id> --actor <you> --claim-token <token> \
+          --document <doc> --readback @doc.txt
+
+   It confirms only when the plan's container holds this entry's block and nothing else (`readback_mismatch` names the difference and leaves the entry claimed: reconcile the readback and act on its
+   `repair`, then read again). `replayed: true` means it was already confirmed.
+
+6. **Failure: retry only that entry.** A refused write (the container changed since you read it: a concurrent edit or a newer summary), a connector error, a lost response or a readback you cannot repair is recorded
+   with `dag-summary-fail --summary <id> --actor <you> --claim-token <token> --error '<text>'`. Then claim the same entry again and start at step 3: after a lost response the reconcile finds the block in the
+   document (`already_written`) and the entry is confirmed without a second write. Do not enqueue to retry; the entry is the unit. A failure the relay refuses with `sync_not_claimable` came after a newer summary
+   superseded the entry: take the newest.
+
+If the confirmed summary is no longer in the document (a person removed it, or something outside this procedure replaced it: `dag-summary-reconcile` of the newest confirmed entry answers `again: true`),
+`dag-summary-enqueue --plan <plan> --actor <you> --document <doc> --again` records the plan's state as a new entry and you write it as above.
 
 ## Not owned here
 

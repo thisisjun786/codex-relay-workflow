@@ -83,54 +83,6 @@ func TestWaitingFor_names_the_earliest_report_to_the_recipient_that_goes_first(t
 	}
 }
 
-func TestParkNotice_parks_only_a_notice_nothing_of_which_has_gone(t *testing.T) {
-	cases := []struct {
-		name, state string
-		assignments []string
-		attempt     string
-		parked      bool
-	}{
-		{"queued", "queued", nil, "", true},
-		{"deferred busy", "deferred_busy", nil, "", true},
-		{"withheld before the send", "withheld_pre_send", nil, "", true},
-		{"queued after an attempt that sent nothing and was retry safe", "queued", nil, "'no',1", true},
-		{"queued after an attempt that sent", "queued", nil, "'yes',1", false},
-		{"queued after an attempt whose retry was not shown safe", "queued", nil, "'no',0", false},
-		{"already held", "queued", []string{"hold_reason='held'"}, "", false},
-		{"sending", "sending", nil, "", false},
-		{"dispatched", "dispatched", nil, "", false},
-		{"held uncertain", "held_uncertain", nil, "", false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			// Given: a fault notice staged as a supervisor message in one state.
-			l, ctx := testLedger(t)
-			seedNoticeMessage(t, ctx, l.Store, "n1", "supervisor", tc.state, "2023-11-14T22:13:20.000000+00:00", append([]string{"obligation_kind='fault_notification'"}, tc.assignments...)...)
-			if tc.attempt != "" {
-				if _, err := l.Store.Q(ctx).ExecContext(ctx, "INSERT INTO supervisor_attempts (request_id, message_id, attempt_no, message, state, send_attempted, retry_safe, record, sent_at, observed_at) VALUES ('req-1','n1',1,'m','withheld_pre_send',"+tc.attempt+",'{}','t','t')"); err != nil {
-					t.Fatal(err)
-				}
-			}
-			// When: it is parked.
-			if err := l.ParkNotice(ctx, "n1", "why"); err != nil {
-				t.Fatal(err)
-			}
-			// Then: it is parked, and journaled once, only when it was unsent, unheld and nothing of it had gone.
-			r, err := l.Store.One(ctx, "SELECT hold_reason FROM supervisor_messages WHERE message_id='n1'")
-			if err != nil {
-				t.Fatal(err)
-			}
-			journal, err := l.Store.One(ctx, "SELECT COUNT(*) AS n FROM journal WHERE kind='supervisor_notice_parked'")
-			if err != nil {
-				t.Fatal(err)
-			}
-			if parked := text(r, "hold_reason") == NoticeParkedHold; parked != tc.parked || (integer(journal, "n") == 1) != tc.parked {
-				t.Fatalf("hold %q, journal rows %d, want parked=%v", text(r, "hold_reason"), integer(journal, "n"), tc.parked)
-			}
-		})
-	}
-}
-
 func TestWaitingFor_does_not_wait_for_a_notice_whose_message_has_left_the_queue(t *testing.T) {
 	cases := []struct {
 		state string

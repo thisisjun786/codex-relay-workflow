@@ -46,6 +46,11 @@ var zoneInventory = map[string][]string{
 	"dag_node_regions":             {"plan_id", "node_id", "declaration_seq", "repository", "path", "region_kind", "region_key", "change", "exclusive", "declared_by", "declared_at"},
 	// CRW-282 (appended statements).
 	"dag_release_recoveries": {"plan_id", "node_id", "manifest_digest", "abandoned_request_id", "action", "successor_request_id", "request_sha256", "request_json", "marker_root", "socket", "state_selector", "slot_id", "slot_released", "copy_path", "reason", "recorded_by", "coordinator_epoch", "recorded_at"},
+	// CRW-283 (appended statements).
+	"dag_summary_outbox": {"summary_id", "plan_id", "project_key", "document", "plan_revision", "seq", "subject_digest", "state_digest", "summary", "summary_sha256", "state", "attempts", "last_error", "claim_token", "claimed_by", "claimed_at", "readback", "confirmed_at", "enqueued_by", "coordinator_epoch", "created_at", "updated_at"},
+	// CRW-409 (appended statements): the grade and rule of a declared region, and the files a conflict observation could not merge.
+	"dag_node_region_grades":         {"plan_id", "node_id", "declaration_seq", "repository", "path", "region_kind", "region_key", "grade", "rule"},
+	"dag_conflict_observation_files": {"observation_id", "repository", "path"},
 }
 
 // rawDB opens path without any of the store's open rules, as an operator's sqlite3 would.
@@ -518,9 +523,7 @@ func TestDAGZoneReadOnlyCommandDoesNotCreateIt(t *testing.T) {
 // pendingWriters are the zone tables whose first writer is a later issue of the DAG project: no production query names them
 // yet. The list is exactly those tables: a table gains a query and leaves this list in the same change, and a table with neither
 // is dead schema.
-var pendingWriters = map[string]string{
-	"dag_coordinator_claims": "CRW-185",
-}
+var pendingWriters = map[string]string{}
 
 func TestDAGZoneEveryTableHasAQueryOrAPendingWriter(t *testing.T) {
 	var tables []string

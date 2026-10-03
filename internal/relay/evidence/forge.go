@@ -9,7 +9,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
+	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 )
 
 const (
@@ -46,11 +46,11 @@ func SplitRepository(value any) (string, string, error) {
 		text = ""
 	}
 	if strings.Count(text, "/") != 1 {
-		return "", "", &ForgeUsage{"a repository is written owner/name, not " + pyvalue.Repr(value)}
+		return "", "", &ForgeUsage{"a repository is written owner/name, not " + quote.Value(value)}
 	}
 	owner, name, _ := strings.Cut(text, "/")
 	if !ownerPattern.MatchString(owner) || !namePattern.MatchString(name) {
-		return "", "", &ForgeUsage{"a repository is written owner/name over the characters GitHub allows, not " + pyvalue.Repr(value)}
+		return "", "", &ForgeUsage{"a repository is written owner/name over the characters GitHub allows, not " + quote.Value(value)}
 	}
 	return owner, name, nil
 }
@@ -64,10 +64,10 @@ func PullRequestNumber(value any) (any, error) {
 		n, ok = pyvalue.ParseInt(text)
 	}
 	if !ok {
-		return 0, &ForgeUsage{"a pull request number is a positive whole number, not " + pyvalue.Repr(value)}
+		return 0, &ForgeUsage{"a pull request number is a positive whole number, not " + quote.Value(value)}
 	}
 	if n.Sign() < 1 {
-		return 0, &ForgeUsage{"a pull request number is counted from one, not " + pyvalue.Repr(value)}
+		return 0, &ForgeUsage{"a pull request number is counted from one, not " + quote.Value(value)}
 	}
 	if n.IsInt64() {
 		return int(n.Int64()), nil
@@ -75,14 +75,14 @@ func PullRequestNumber(value any) (any, error) {
 	return n, nil
 }
 
-func countReached(count int, limit any) bool {
-	return big.NewInt(int64(count)).Cmp(argparse.IntegerValue(limit)) >= 0
+func countReached(count int, limit int64) bool {
+	return int64(count) >= limit
 }
 
 func BranchRef(value any) (string, error) {
 	text := strings.TrimSpace(forgeText(value))
 	if text == "" || strings.Contains(text, "..") || strings.HasPrefix(text, "/") || !branchPattern.MatchString(text) {
-		return "", &ForgeUsage{"a branch name is a path segment without traversal or query characters, not " + pyvalue.Repr(value)}
+		return "", &ForgeUsage{"a branch name is a path segment without traversal or query characters, not " + quote.Value(value)}
 	}
 	return text, nil
 }
@@ -110,7 +110,7 @@ func (e Enumeration) Record() map[string]any {
 	}
 	return map[string]any{"connection": e.Name, "pagesRead": len(e.Pages), "totalCount": e.Total, "distinct": len(distinct), "complete": e.Complete, "pages": e.Pages}
 }
-func EnumerateConnection(name string, budget any, step func(any) (Page, error), identify func(any) any) (Enumeration, error) {
+func EnumerateConnection(name string, budget int64, step func(any) (Page, error), identify func(any) any) (Enumeration, error) {
 	found := Enumeration{Name: name}
 	var token any
 	used := []any{}

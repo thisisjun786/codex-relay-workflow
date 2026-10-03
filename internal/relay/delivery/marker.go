@@ -213,14 +213,9 @@ func fsyncDirectory(directory string) {
 
 // Publish is marker.publish: create-once publication, "published" when this writer won and
 // "exists" when it lost. root, when not empty, confines the write under it before and after the
-// directory is made.
-func Publish(target string, payload any, root string) (string, error) {
-	return PublishContext(context.Background(), target, payload, root)
-}
-
-// PublishContext preserves create-once publication, but never links a fact after
-// its caller's deadline. A blocked fsync cannot spend a hold after the hook exits.
-func PublishContext(ctx context.Context, target string, payload any, root string) (string, error) {
+// directory is made. It never links a fact after ctx is done: a blocked fsync cannot spend a hold
+// after the hook exits.
+func Publish(ctx context.Context, target string, payload any, root string) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -286,12 +281,9 @@ const (
 	factUnreadable
 )
 
-// readFact is _read_fact: "it is not there" and "I could not look" are different answers.
-func readFact(path string) (any, int) {
-	return readFactContext(context.Background(), path)
-}
-
-func readFactContext(ctx context.Context, path string) (any, int) {
+// readFact is _read_fact: "it is not there" and "I could not look" are different answers. A
+// deadline on ctx is carried through the read.
+func readFact(ctx context.Context, path string) (any, int) {
 	var data []byte
 	var err error
 	if _, bounded := ctx.Deadline(); bounded {
@@ -387,25 +379,21 @@ func identified(value any, factID string) any {
 		return value
 	}
 	out := append(Obj(nil), record...)
-	return set(out, "factId", factID)
+	return out.Set("factId", factID)
 }
 
 func stem(name string) string { return strings.TrimSuffix(name, filepath.Ext(name)) }
 
 // ReadAssignment is read_assignment: every published fact, plus the labels of anything that could
-// not be read. Nothing here fails; every outside-world step answers with a label instead.
-func ReadAssignment(directory string) (Obj, []string) {
-	return ReadAssignmentContext(context.Background(), directory)
-}
-
-// ReadAssignmentContext threads the hook's deadline through the fact walk.
-func ReadAssignmentContext(ctx context.Context, directory string) (Obj, []string) {
+// not be read. Nothing here fails; every outside-world step answers with a label instead. The
+// hook's deadline on ctx is carried through the fact walk.
+func ReadAssignment(ctx context.Context, directory string) (Obj, []string) {
 	marker, unreadable := Obj{}, []string{}
 	for _, fact := range singleFacts {
 		if ctx.Err() != nil {
 			return marker, append(unreadable, fact.key)
 		}
-		value, status := readFactContext(ctx, filepath.Join(directory, fact.name))
+		value, status := readFact(ctx, filepath.Join(directory, fact.name))
 		switch status {
 		case factAbsent:
 			continue
@@ -433,7 +421,7 @@ func ReadAssignmentContext(ctx context.Context, directory string) (Obj, []string
 			if strings.HasPrefix(name, ".") {
 				continue
 			}
-			value, status := readFactContext(ctx, entry)
+			value, status := readFact(ctx, entry)
 			switch status {
 			case factAbsent:
 				continue
@@ -455,7 +443,7 @@ func ReadAssignmentContext(ctx context.Context, directory string) (Obj, []string
 			return marker, append(unreadable, "claims")
 		}
 		factID := "claims/" + filepath.Base(session) + "/" + claimFile
-		value, status := readFactContext(ctx, filepath.Join(session, claimFile))
+		value, status := readFact(ctx, filepath.Join(session, claimFile))
 		switch status {
 		case factAbsent:
 			continue
@@ -470,18 +458,13 @@ func ReadAssignmentContext(ctx context.Context, directory string) (Obj, []string
 
 // ReadDisposition is read_disposition: the disposition this session recorded for this turn, read
 // at the path the Stop identity derives. (nil, true) when absent or when the identity names no
-// path; (nil, false) when it could not be read.
-func ReadDisposition(directory string, sessionID, turnID any) (any, bool) {
-	return ReadDispositionContext(context.Background(), directory, sessionID, turnID)
-}
-
-// ReadDispositionContext bounds the delivered identity's fact read.
-func ReadDispositionContext(ctx context.Context, directory string, sessionID, turnID any) (any, bool) {
+// path; (nil, false) when it could not be read. ctx bounds the delivered identity's fact read.
+func ReadDisposition(ctx context.Context, directory string, sessionID, turnID any) (any, bool) {
 	if !ValidSegment(sessionID) || !ValidSegment(turnID) {
 		return nil, true
 	}
 	session, turn := sessionID.(string), turnID.(string)
-	value, status := readFactContext(ctx, filepath.Join(directory, "dispositions", session, turn+".json"))
+	value, status := readFact(ctx, filepath.Join(directory, "dispositions", session, turn+".json"))
 	switch status {
 	case factAbsent:
 		return nil, true
@@ -504,18 +487,18 @@ func ListAssignments(root, workspace string) ([]string, bool, error) {
 
 // markerFactList is a numbered or claims fact list as the reader returned it.
 func markerFactList(marker Obj, key string) []any {
-	v, _ := get(marker, key)
+	v, _ := marker.Lookup(key)
 	list, _ := v.([]any)
 	return list
 }
 
 func markerFact(marker Obj, key string) Obj {
-	v, _ := get(marker, key)
+	v, _ := marker.Lookup(key)
 	record, _ := v.(Obj)
 	return record
 }
 
 func fieldOf(record Obj, key string) any {
-	v, _ := get(record, key)
+	v, _ := record.Lookup(key)
 	return v
 }

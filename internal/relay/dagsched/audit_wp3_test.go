@@ -163,7 +163,7 @@ func TestReadyFrozenManifestMustBeReadable(t *testing.T) {
 		blocked bool
 	}{
 		{"a good copy", func(t *testing.T, a accepted, frozen string) {
-			entries, err := store.BuildManifest(a.Files, []string{a.Root})
+			entries, err := store.BuildManifest(context.Background(), a.Files, []string{a.Root})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -190,7 +190,7 @@ func TestReadyFrozenManifestMustBeReadable(t *testing.T) {
 			if err := os.WriteFile(other, []byte("something else\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			entries, err := store.BuildManifest([]string{other}, []string{a.Root})
+			entries, err := store.BuildManifest(context.Background(), []string{other}, []string{a.Root})
 			if err != nil {
 				t.Fatal(err)
 			}

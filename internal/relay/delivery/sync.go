@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -46,16 +47,20 @@ func renderVerdictSummary(r Relationship, event Row, verdict string, findings []
 			line += ", ruling 1"
 		}
 		lines = append(lines, line)
+	} else if ruling > 1 {
+		// a ruling that replaced another on a relationship with no criteria set (CRW-404): without the
+		// ordinal the two blocks could not be told apart by which is current when they post out of order
+		lines = append(lines, fmt.Sprintf("ruling %d", ruling))
 	}
-	if next, _ := get(record, "nextExecutionGeneration"); truthy(next) {
+	if next, _ := record.Lookup("nextExecutionGeneration"); truthy(next) {
 		lines = append(lines, fmt.Sprintf("a revision request was queued to the same child under generation %s", pyStr(next)))
 	}
 	if len(findings) > 0 {
 		lines = append(lines, "findings:")
 		for _, f := range findings {
 			o := f.(Obj)
-			line := "  " + str(o, "id") + ": " + str(o, "verdict")
-			if note := str(o, "note"); note != "" {
+			line := "  " + pyjson.Text(o.Get("id")) + ": " + pyjson.Text(o.Get("verdict"))
+			if note := pyjson.Text(o.Get("note")); note != "" {
 				line += " — " + note
 			}
 			lines = append(lines, line)
@@ -76,7 +81,7 @@ func VerdictSync(s *store.Store, clock Clock) SyncHook {
 			identityRuling = ruling
 		}
 		summaryRuling := ruling
-		if digest == nil {
+		if digest == nil && ruling <= 1 {
 			summaryRuling = 0
 		}
 		canonical := syncCanonical(coordinationDocument, target.S("target_ref"), "verdict", r.ID, event.S("event_id"), event.I("execution_generation"), event.S("revision_hash"), verdict, digest, identityRuling)

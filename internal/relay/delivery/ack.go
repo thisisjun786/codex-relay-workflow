@@ -12,7 +12,9 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -151,7 +153,7 @@ func (a *Ack) currentDigest(ctx context.Context, rid string) (any, error) {
 	if err != nil || registered == nil {
 		return nil, err
 	}
-	return str(registered, "setDigest"), nil
+	return pyjson.Text(registered.Get("setDigest")), nil
 }
 
 func (a *Ack) rulingIsCurrent(ctx context.Context, eventID string) (bool, error) {
@@ -191,7 +193,7 @@ func (a *Ack) reReviewOpen(ctx context.Context, eventID string, decided any) (bo
 	if err != nil {
 		return false, err
 	}
-	current, _ := get(state, "current")
+	current, _ := state.Lookup("current")
 	return current == true, nil
 }
 
@@ -348,7 +350,7 @@ func (a *Ack) verifyAckTurn(ctx context.Context, row Row, ackTurn string, adapte
 	if err != nil {
 		return "", err
 	}
-	turn, err := adapter.ReadTurn(row.S("recipient_thread_id"), ackTurn)
+	turn, err := adapter.ReadTurn(ctx, row.S("recipient_thread_id"), ackTurn)
 	if err != nil || turn == nil || TurnStartedAt(turn) == nil {
 		return "unverified_turn", nil
 	}
@@ -359,7 +361,7 @@ func (a *Ack) verifyAckTurn(ctx context.Context, row Row, ackTurn string, adapte
 		}
 		var dispatched any
 		if !attempt.N("record") {
-			dispatched, _ = get(loadsObj(attempt.S("record")), "turnId")
+			dispatched, _ = loadsObj(attempt.S("record")).Lookup("turnId")
 		}
 		if !truthy(dispatched) && attempt.S("affirmative_evidence") == TurnFound {
 			dispatched = row.Opt("dispatch_turn_id")
@@ -396,9 +398,9 @@ func restorationResult(outcome, basis string, criterion any, detail string) Obj 
 func projectCap(findings []any) Obj {
 	for i, f := range findings {
 		o := f.(Obj)
-		if v, _ := get(o, "restoration"); truthy(v) {
+		if v, _ := o.Lookup("restoration"); truthy(v) {
 			where := fmt.Sprintf("finding %d of %d", i+1, len(findings))
-			id, _ := get(o, "id")
+			id, _ := o.Lookup("id")
 			if i < manifestLines {
 				return restorationResult("carried", "relay-message/legacy", id, fmt.Sprintf("%s, within the %d this renderer shows", where, manifestLines))
 			}
@@ -410,6 +412,12 @@ func projectCap(findings []any) Obj {
 
 // RecordVerdict is record_verdict: the verdict, the generation it opens and the correction, in
 // one transaction, with currency decided inside it. No parameter bypasses the check.
+//
+// An event has one standing ruling (rulingchange.go). The same verdict again is a replay. A different
+// one is never answered with the recorded ruling: a verified ruling that nothing rests on is
+// replaced by needs_changes (the correction opens as for a first needs_changes ruling) and every
+// other different verdict is refused with disposition_conflict. An open re-review is decided first,
+// as before: it is the route for a criteria set that moved, accepted head or not.
 func (a *Ack) RecordVerdict(ctx context.Context, eventID, verdict, verdictTurn string, criteria, findings []any, reason, expected any) (Obj, error) {
 	if !slices.Contains(verdicts, verdict) {
 		return nil, refuse(DispositionConflict, "unknown verdict %s", strconv.Quote(verdict))
@@ -419,21 +427,41 @@ func (a *Ack) RecordVerdict(ctx context.Context, eventID, verdict, verdictTurn s
 		return nil, err
 	}
 	now := a.Clock.ISO()
-	var record Obj
+	var record, replaced Obj
 	err = a.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
-		settled, err := one(ctx, a.Store, "SELECT v.record AS record, c.set_digest AS set_digest FROM verdicts v LEFT JOIN verdict_context c ON c.event_id = v.event_id WHERE v.event_id = ?", eventID)
+		replaced = nil
+		settled, err := one(ctx, a.Store, "SELECT v.record AS record, v.verdict AS verdict, v.verdict_turn_id AS verdict_turn, v.next_generation AS next_generation, c.set_digest AS set_digest FROM verdicts v LEFT JOIN verdict_context c ON c.event_id = v.event_id WHERE v.event_id = ?", eventID)
 		if err != nil {
 			return err
 		}
-		reReview := false
+		reReview, changed := false, false
 		if settled != nil {
 			if reReview, err = a.reReviewOpen(ctx, eventID, settled.Opt("set_digest")); err != nil {
 				return err
 			}
 		}
 		if settled != nil && !reReview {
-			record = append(loadsObj(settled.S("record")), F{Key: "_replay", Value: true})
-			return nil
+			recorded := settled.S("verdict")
+			move, route := rulingTransition(recorded, verdict, settled.I("next_generation"))
+			switch move {
+			case moveReplay:
+				record = append(loadsObj(settled.S("record")), F{Key: "_replay", Value: true})
+				return nil
+			case moveRefuse:
+				return differentRuling(eventID, recorded, settled.S("verdict_turn"), verdict, route)
+			}
+			// a verified ruling is replaced only while nothing rests on it, read before anything else of
+			// the existing path so that an event the plan accepted always names its acceptance
+			rest, err := registry.RestsOn(ctx, a.Store, eventID)
+			if err != nil {
+				return err
+			}
+			if rest.Kind != "" {
+				return builtOn(eventID, settled.S("verdict_turn"), rest)
+			}
+			changed = true
+			prior := loadsObj(settled.S("record"))
+			replaced = Obj{{Key: "verdict", Value: prior.Get("verdict")}, {Key: "verdictTurnId", Value: prior.Get("verdictTurnId")}, {Key: "decidedAt", Value: prior.Get("decidedAt")}}
 		}
 		if reReview && verdict != "verified" && verdict != "needs_changes" {
 			return refuse(DispositionConflict, "%s cannot replace the verified ruling this re-review is reopening: it would leave the assignment with no state to act on. Rule verified or needs_changes, or change the relationship's status", strconv.Quote(verdict))
@@ -454,6 +482,9 @@ func (a *Ack) RecordVerdict(ctx context.Context, eventID, verdict, verdictTurn s
 		}
 		relationship, err := RequireActive(ctx, a.Store, event.S("relationship_id"))
 		if err != nil {
+			if changed && Reason(err) == RelationshipNotActive {
+				return changeRefusal(RelationshipNotActive, eventID, Detail(err))
+			}
 			return err
 		}
 		relRow, err := one(ctx, a.Store, "SELECT * FROM relationships WHERE relationship_id = ?", event.S("relationship_id"))
@@ -464,9 +495,12 @@ func (a *Ack) RecordVerdict(ctx context.Context, eventID, verdict, verdictTurn s
 		if err != nil {
 			return err
 		}
-		current, _ := get(state, "current")
+		current, _ := state.Lookup("current")
 		if (verdict == "verified" || verdict == "needs_changes") && current != true {
-			return refuse(currencyReasons[str(state, "reason")], "%s cannot be ruled %s: %s", strconv.Quote(eventID), strconv.Quote(verdict), str(state, "detail"))
+			if changed {
+				return changeRefusal(currencyReasons[pyjson.Text(state.Get("reason"))], eventID, pyjson.Text(state.Get("detail")))
+			}
+			return refuse(currencyReasons[pyjson.Text(state.Get("reason"))], "%s cannot be ruled %s: %s", strconv.Quote(eventID), strconv.Quote(verdict), pyjson.Text(state.Get("detail")))
 		}
 		cover, err := a.Criteria.Coverage(ctx, event.S("relationship_id"), eventID, verdict, normalised, reason, expected)
 		if err != nil {
@@ -478,8 +512,8 @@ func (a *Ack) RecordVerdict(ctx context.Context, eventID, verdict, verdictTurn s
 				return refuse(RecipientNotAuthorized, "child %s is not an allowed recipient, so a revision cannot be routed to it", strconv.Quote(relationship.Child.TaskID))
 			}
 			projected = projectCap(normalised)
-			if o := str(projected, "outcome"); o == "truncated" || o == "budget_dropped" {
-				return refuse(RestorationUndeliverable, "this correction declares a restoration block on %s that the revision message would not carry: %s. Move it within the first %d findings and rule again. No execution generation has been opened", quote.Value(func() any { v, _ := get(projected, "criterion"); return v }()), str(projected, "detail"), manifestLines)
+			if o := pyjson.Text(projected.Get("outcome")); o == "truncated" || o == "budget_dropped" {
+				return refuse(RestorationUndeliverable, "this correction declares a restoration block on %s that the revision message would not carry: %s. Move it within the first %d findings and rule again. No execution generation has been opened", quote.Value(func() any { v, _ := projected.Lookup("criterion"); return v }()), pyjson.Text(projected.Get("detail")), manifestLines)
 			}
 		} else {
 			projected = restorationResult("not_carried", "relay-message/legacy", nil, fmt.Sprintf("a %s verdict opens no correction, so no message carries a restoration block", verdict))
@@ -532,9 +566,13 @@ func (a *Ack) RecordVerdict(ctx context.Context, eventID, verdict, verdictTurn s
 				return err
 			}
 		}
-		setDigest, _ := get(cover, "setDigest")
-		if reReview {
-			if err := journal(ctx, a.Store, "verdict_superseded", eventID, Obj{{Key: "supersededVerdict", Value: loadsObj(settled.S("record"))}, {Key: "reviewedSetDigest", Value: settled.Opt("set_digest")}, {Key: "currentSetDigest", Value: setDigest}}, now); err != nil {
+		setDigest, _ := cover.Lookup("setDigest")
+		if reReview || changed {
+			superseded := Obj{{Key: "supersededVerdict", Value: loadsObj(settled.S("record"))}, {Key: "reviewedSetDigest", Value: settled.Opt("set_digest")}, {Key: "currentSetDigest", Value: setDigest}}
+			if changed {
+				superseded = append(superseded, F{Key: "reason", Value: rulingChanged})
+			}
+			if err := journal(ctx, a.Store, "verdict_superseded", eventID, superseded, now); err != nil {
 				return err
 			}
 		}
@@ -544,7 +582,7 @@ func (a *Ack) RecordVerdict(ctx context.Context, eventID, verdict, verdictTurn s
 		}
 		currency := "current"
 		if current != true {
-			currency = str(state, "reason")
+			currency = pyjson.Text(state.Get("reason"))
 			if currency == "" {
 				currency = "unknown"
 			}
@@ -553,10 +591,10 @@ func (a *Ack) RecordVerdict(ctx context.Context, eventID, verdict, verdictTurn s
 		if err != nil {
 			return err
 		}
-		headID, _ := get(state, "headEventId")
-		headRev, _ := get(state, "headRevisionHash")
+		headID, _ := state.Lookup("headEventId")
+		headRev, _ := state.Lookup("headRevisionHash")
 		if _, err := execSQL(ctx, a.Store, "INSERT INTO verdict_context (event_id, set_digest, coverage, findings, reason, currency, head_event_id, head_revision, ack_evidence, recorded_at) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(event_id) DO UPDATE SET set_digest = excluded.set_digest, coverage = excluded.coverage, findings = excluded.findings, reason = excluded.reason, currency = excluded.currency, head_event_id = excluded.head_event_id, head_revision = excluded.head_revision, ack_evidence = excluded.ack_evidence, recorded_at = excluded.recorded_at",
-			eventID, setDigest, str(cover, "coverage"), findingsText, reason, currency, headID, headRev, tier, now); err != nil {
+			eventID, setDigest, pyjson.Text(cover.Get("coverage")), findingsText, reason, currency, headID, headRev, tier, now); err != nil {
 			return err
 		}
 		if a.Sync != nil {
@@ -568,6 +606,11 @@ func (a *Ack) RecordVerdict(ctx context.Context, eventID, verdict, verdictTurn s
 		}
 		return nil
 	})
+	if err == nil && replaced != nil {
+		// an answer annotation, as _replay is: the stored record and the summary owed to the
+		// coordination document stay the record's own fields
+		record = append(record, F{Key: "_supersedes", Value: replaced})
+	}
 	return record, err
 }
 

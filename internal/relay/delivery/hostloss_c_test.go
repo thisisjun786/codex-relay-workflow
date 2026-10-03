@@ -6,6 +6,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -121,9 +122,9 @@ func Test21_HLT19_an_ack_while_the_relay_is_still_sending_is_kept(t *testing.T) 
 		var keptRecord Obj
 		during := &hooked{Adapter: h.host}
 		during.send = func(requestID, thread, message string, settings *TaskSettings) (Obj, error) {
-			receipt, err := h.host.SendMessage(requestID, thread, message, settings)
+			receipt, err := h.host.SendMessage(context.Background(), requestID, thread, message, settings)
 			keptState = h.row(event).S("state")
-			keptRecord = h.cliAck(event, str(receipt, "turnId"), counting)
+			keptRecord = h.cliAck(event, pyjson.Text(receipt.Get("turnId")), counting)
 			return receipt, err
 		}
 		h.attemptOn(event, during, nil)
@@ -169,7 +170,7 @@ func Test21_HLT21_the_message_is_found_through_the_ack_turn_and_an_echo_confirms
 			for n := 0; n < 250; n++ {
 				h.item(parent, turn, fmt.Sprintf("work item %d", n), "commandExecution")
 			}
-			scan, err := h.host.FindToken(parent, request, 200, false)
+			scan, err := h.host.FindToken(context.Background(), parent, request, 200, false)
 			mustDo(t, err)
 			h.eq(scan.Found)
 			h.eq(field(h.cliAck(event, turn, nil), "_verified"))
@@ -238,7 +239,7 @@ func Test21_HLT23_an_ack_answers_only_attempts_sent_before_it_was_authored(t *te
 			h.parentHistory()
 			event := h.queuedEvent(regOpts{})
 			h.host.script = []string{"in_progress"}
-			first := str(h.attemptOn(event, h.host, nil), "requestId")
+			first := pyjson.Text(h.attemptOn(event, h.host, nil).Get("requestId"))
 			h.clock.Advance(2)
 			h.host.startTurn(parent, "ack-turn", "completed", "")
 			h.eq(field(h.cliAck(event, "ack-turn", nil), "_verified"))
@@ -246,8 +247,8 @@ func Test21_HLT23_an_ack_answers_only_attempts_sent_before_it_was_authored(t *te
 			h.reconcile(first, h.host)
 			h.clock.Advance(100000)
 			second := h.attemptOn(event, h.host, at(h.clock.Now()))
-			h.eq(str(second, "deliveryState"))
-			h.hostReloadsLosing(str(second, "turnId"))
+			h.eq(pyjson.Text(second.Get("deliveryState")))
+			h.hostReloadsLosing(pyjson.Text(second.Get("turnId")))
 			h.clock.Advance(120)
 			h.tick()
 			h.eq(h.attemptStates(event))
@@ -263,7 +264,7 @@ func Test21_HLT23_an_ack_answers_only_attempts_sent_before_it_was_authored(t *te
 			h.reconcile(first, h.host)
 			h.clock.Advance(100000)
 			h.host.script = []string{"in_progress"}
-			second := str(h.attemptOn(event, h.host, at(h.clock.Now())), "requestId")
+			second := pyjson.Text(h.attemptOn(event, h.host, at(h.clock.Now())).Get("requestId"))
 			h.item(parent, "folded", "requestId: "+second, "")
 			h.clock.Advance(5)
 			h.tick()
@@ -298,7 +299,7 @@ func (h *hl) confirmsDuringTheScan(event, turn string) *hooked {
 	fired := false
 	w := &hooked{Adapter: h.host}
 	w.findToken = func(thread, token string, limit int, messageOnly bool) (TokenScan, error) {
-		scan, err := h.host.FindToken(thread, token, limit, messageOnly)
+		scan, err := h.host.FindToken(context.Background(), thread, token, limit, messageOnly)
 		if !fired {
 			fired = true
 			_, cerr := h.rc.ConfirmDelivery(h.ctx, event, h.host, turn)
@@ -326,7 +327,7 @@ func Test21_HLT24_every_settlement_is_a_compare_and_set(t *testing.T) {
 					_, err := h.ack.Acknowledge(h.ctx, event, later.TurnID, AckProof(event, later.TurnID), true, nil, nil)
 					mustDo(t, err)
 				}
-				return h.host.ReadTurn(thread, turn)
+				return h.host.ReadTurn(context.Background(), thread, turn)
 			}
 			results, err := h.ack.VerifyPendingAcks(h.ctx, replaces, 8, nil)
 			mustDo(t, err)
@@ -353,11 +354,11 @@ func Test21_HLT24_every_settlement_is_a_compare_and_set(t *testing.T) {
 			h.parentHistory()
 			event := h.queuedEvent(regOpts{})
 			h.host.script = []string{"in_progress"}
-			request := str(h.attemptOn(event, h.host, nil), "requestId")
+			request := pyjson.Text(h.attemptOn(event, h.host, nil).Get("requestId"))
 			fired := false
 			rejects := &hooked{Adapter: h.host}
 			rejects.findToken = func(thread, token string, limit int, messageOnly bool) (TokenScan, error) {
-				scan, err := h.host.FindToken(thread, token, limit, messageOnly)
+				scan, err := h.host.FindToken(context.Background(), thread, token, limit, messageOnly)
 				if !fired {
 					fired = true
 					h.host.ledger[request] = preSendRejection(request)
@@ -391,7 +392,7 @@ func Test21_HLT24_every_settlement_is_a_compare_and_set(t *testing.T) {
 			h.parentHistory()
 			event := h.queuedEvent(regOpts{})
 			h.host.script = []string{"in_progress"}
-			request := str(h.attemptOn(event, h.host, nil), "requestId")
+			request := pyjson.Text(h.attemptOn(event, h.host, nil).Get("requestId"))
 			h.host.ledger[request] = preSendRejection(request)
 			h.reconcile(request, h.host)
 			h.eq(h.evidenceOf(event))
@@ -420,7 +421,7 @@ func Test21_HLT25_the_sender_and_a_concurrent_reconcile_never_undo_each_other(t 
 			w := &hooked{Adapter: h.host}
 			w.send = func(requestID, thread, message string, settings *TaskSettings) (Obj, error) {
 				seen = h.reconcile(requestID, h.host)
-				return h.host.SendMessage(requestID, thread, message, settings)
+				return h.host.SendMessage(context.Background(), requestID, thread, message, settings)
 			}
 			result := h.attemptOn(event, w, nil)
 			h.eq(field(seen, "state"))
@@ -441,7 +442,7 @@ func Test21_HLT25_the_sender_and_a_concurrent_reconcile_never_undo_each_other(t 
 			h.host.script = []string{"in_progress"}
 			w := &hooked{Adapter: h.host}
 			w.send = func(requestID, thread, message string, settings *TaskSettings) (Obj, error) {
-				receipt, err := h.host.SendMessage(requestID, thread, message, settings)
+				receipt, err := h.host.SendMessage(context.Background(), requestID, thread, message, settings)
 				h.host.startTurn(parent, "", "inProgress", "requestId: "+requestID)
 				h.reconcile(requestID, h.host)
 				return receipt, err
@@ -474,7 +475,7 @@ func Test21_HLT25_the_sender_and_a_concurrent_reconcile_never_undo_each_other(t 
 				defer func() { _ = other.Close() }()
 				waits := &hooked{Adapter: h.host}
 				waits.findToken = func(thread, token string, limit int, messageOnly bool) (TokenScan, error) {
-					scan, err := h.host.FindToken(thread, token, limit, messageOnly)
+					scan, err := h.host.FindToken(context.Background(), thread, token, limit, messageOnly)
 					once.Do(func() { close(readDone) })
 					<-settled
 					return scan, err
@@ -486,13 +487,13 @@ func Test21_HLT25_the_sender_and_a_concurrent_reconcile_never_undo_each_other(t 
 				wg.Add(1)
 				go reconcileElsewhere(requestID)
 				<-readDone
-				return h.host.SendMessage(requestID, thread, message, settings)
+				return h.host.SendMessage(context.Background(), requestID, thread, message, settings)
 			}
 			result := h.attemptOn(event, w, nil)
 			close(settled)
 			wg.Wait()
 			h.eq(anyErrors(failure))
-			h.eq(str(result, "deliveryState"))
+			h.eq(pyjson.Text(result.Get("deliveryState")))
 			h.eq(truthy(field(seen, "changed")))
 			h.eq(h.attemptStates(event))
 			row := h.row(event)
@@ -511,16 +512,16 @@ func anyErrors(err error) []any {
 func Test21_HLT26_a_typed_item_changes_the_fingerprint_and_readback(t *testing.T) {
 	mirror(t, hlt, "EverySettlementIsACompareAndSet.test_a_typed_item_leaves_the_fingerprint_and_readback_working", func(h *hl) {
 		h.item(parent, "t-x", "plain", "")
-		_, err := h.host.RecipientFingerprint(parent)
+		_, err := h.host.RecipientFingerprint(context.Background(), parent)
 		mustDo(t, err)
 		h.item(parent, "t-x", "del-echo-a1", "commandExecution")
-		after, err := h.host.RecipientFingerprint(parent)
+		after, err := h.host.RecipientFingerprint(context.Background(), parent)
 		mustDo(t, err)
 		h.eq(after)
-		anyItem, err := h.host.FindToken(parent, "del-echo-a1", 200, false)
+		anyItem, err := h.host.FindToken(context.Background(), parent, "del-echo-a1", 200, false)
 		mustDo(t, err)
 		h.eq(anyItem.Found)
-		only, err := h.host.FindToken(parent, "del-echo-a1", 200, true)
+		only, err := h.host.FindToken(context.Background(), parent, "del-echo-a1", 200, true)
 		mustDo(t, err)
 		h.eq(only.Found)
 	})
@@ -556,7 +557,7 @@ func Test21_HLT27_an_ack_is_judged_against_the_delivery_it_read(t *testing.T) {
 			var acked Obj
 			w := &hooked{Adapter: h.host}
 			w.send = func(requestID, thread, message string, settings *TaskSettings) (Obj, error) {
-				receipt, err := h.host.SendMessage(requestID, thread, message, settings)
+				receipt, err := h.host.SendMessage(context.Background(), requestID, thread, message, settings)
 				var aerr error
 				acked, aerr = h.ack.Acknowledge(h.ctx, event, lost, AckProof(event, lost), true, nil, actsDuringTheTurnRead(h.host, func() { h.reconcile(requestID, h.host) }))
 				mustDo(t, aerr)

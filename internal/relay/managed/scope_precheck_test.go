@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -74,7 +75,7 @@ func newScopeRun(t *testing.T) *scopeRun {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fake := &managedFake{operations: map[string]map[string]any{}, settings: obj(obj(parsed["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, standby: "completed"}
+	fake := &managedFake{operations: map[string]map[string]any{}, settings: pyjson.Map(pyjson.Map(parsed["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, standby: "completed"}
 	host := &callRecord{managedFake: fake}
 	now := func() string { return "2026-09-26T00:00:00.000000+00:00" }
 	return &scopeRun{

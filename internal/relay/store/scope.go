@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"path"
 	"strings"
 	"syscall"
 
@@ -25,25 +24,16 @@ func NormalizeDeclaredPath(declared string) (string, error) {
 		return "", refuse(ReasonScopeEscape, "path must be absolute: %s", pyvalue.StrRepr(declared))
 	case strings.Contains(declared, "~"):
 		return "", refuse(ReasonScopeEscape, "path must not contain '~': %s", pyvalue.StrRepr(declared))
-	case declared != pythonNormpath(declared):
-		return "", refuse(ReasonScopeEscape, "path must already be normalized; %s normalizes to %s", pyvalue.StrRepr(declared), pyvalue.StrRepr(pythonNormpath(declared)))
+	case declared != Normpath(declared):
+		return "", refuse(ReasonScopeEscape, "path must already be normalized; %s normalizes to %s", pyvalue.StrRepr(declared), pyvalue.StrRepr(Normpath(declared)))
 	}
 	return declared, nil
 }
 
-// pythonNormpath is posixpath.normpath, which keeps a leading "//" that path.Clean drops.
-func pythonNormpath(p string) string {
-	cleaned := path.Clean(p)
-	if strings.HasPrefix(p, "//") && !strings.HasPrefix(p, "///") {
-		return "/" + cleaned
-	}
-	return cleaned
-}
-
 // isWithin is containment by path component, so /a/b does not contain /a/bc.
 func isWithin(root, candidate string) bool {
-	root = pythonNormpath(root)
-	candidate = pythonNormpath(candidate)
+	root = Normpath(root)
+	candidate = Normpath(candidate)
 	if root == "/" {
 		return strings.HasPrefix(candidate, "/")
 	}
@@ -75,14 +65,10 @@ type ArtifactBinding struct {
 var betweenPasses func(fd int, before *statSnapshot)
 
 // HashArtifact reads one authorized artifact through a pinned descriptor, hashing it twice and
-// re-checking the binding afterwards (manifest.hash_path). The lease is requested only when
-// allowLease is set, because holding one stalls unrelated writers for the lease-break timeout.
-func HashArtifact(declared string, roots []string, allowLease bool) (string, int64, ArtifactBinding, error) {
-	return HashArtifactContext(context.Background(), declared, roots, allowLease)
-}
-
-// HashArtifactContext uses the caller's deadline for both hashing passes.
-func HashArtifactContext(ctx context.Context, declared string, roots []string, allowLease bool) (string, int64, ArtifactBinding, error) {
+// re-checking the binding afterwards (manifest.hash_path), both passes within ctx. The lease is
+// requested only when allowLease is set, because holding one stalls unrelated writers for the
+// lease-break timeout.
+func HashArtifact(ctx context.Context, declared string, roots []string, allowLease bool) (string, int64, ArtifactBinding, error) {
 	if err := ctx.Err(); err != nil {
 		return "", 0, ArtifactBinding{}, err
 	}
@@ -125,14 +111,15 @@ func HashArtifactContext(ctx context.Context, declared string, roots []string, a
 			defer releaseLease(fd)
 		}
 	}
-	first, size, err := hashDescriptorContext(ctx, fd)
+	countArtifactRead(ctx)
+	first, size, err := hashDescriptor(ctx, fd)
 	if err != nil {
 		return "", 0, ArtifactBinding{}, err
 	}
 	if betweenPasses != nil {
 		betweenPasses(fd, &before)
 	}
-	second, sizeAgain, err := hashDescriptorContext(ctx, fd)
+	second, sizeAgain, err := hashDescriptor(ctx, fd)
 	if err != nil {
 		return "", 0, ArtifactBinding{}, err
 	}
@@ -163,12 +150,9 @@ func verifyStable(fd int, declared string, before statSnapshot, mode PathBinding
 	return nil
 }
 
-// hashDescriptor is the uncancellable form used by authorized reads.
-func hashDescriptor(fd int) (string, int64, error) {
-	return hashDescriptorContext(context.Background(), fd)
-}
-
-func hashDescriptorContext(ctx context.Context, fd int) (string, int64, error) {
+// hashDescriptor hashes what the descriptor holds, ending the read with ctx. Authorized reads give
+// it a context nothing cancels.
+func hashDescriptor(ctx context.Context, fd int) (string, int64, error) {
 	hash := sha256.New()
 	size, err := io.Copy(hash, io.NewSectionReader(contextDescriptorReader{ctx, descriptorReader(fd)}, 0, 1<<62))
 	if err != nil {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -59,7 +60,7 @@ func ProjectStateReading(ctx context.Context, project string, reader ProjectRead
 	if len(owners) > 1 {
 		competing := make([]string, len(owners))
 		for i, o := range owners {
-			competing[i] = field(o, "taskId")
+			competing[i] = pyjson.Text(o.Get("taskId"))
 		}
 		sortStrings(competing)
 		return reading("ambiguous", true, attached, outstanding, contract.Field{Key: "competingOwners", Value: strList(competing)},
@@ -76,7 +77,7 @@ func ProjectStateReading(ctx context.Context, project string, reader ProjectRead
 			return reading("unreadable", false, attached, outstanding,
 				contract.Field{Key: "basis", Value: "the unfinished set could not be expanded: " + store.StoredSQLiteError(err)})
 		}
-		unfinished = append(unfinished, contract.OrderedObject{{Key: "relationshipId", Value: rid}, {Key: "state", Value: field(state, "state")}})
+		unfinished = append(unfinished, contract.OrderedObject{{Key: "relationshipId", Value: rid}, {Key: "state", Value: pyjson.Text(state.Get("state"))}})
 	}
 	if len(unfinished) > 0 {
 		return reading("incomplete", true, attached, outstanding, contract.Field{Key: "unfinished", Value: unfinished},
@@ -158,9 +159,7 @@ var linkageCommands = []command{
 		run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
 			q := CounterpartQuery{QuotedScope: p.optional("quoted-scope"), FromScope: p.optional("from-scope")}
 			if p.set["quoted-revision"] {
-				n := p.integer("quoted-revision")
-				q.QuotedRevision = sql.NullInt64{Int64: n.Int64(), Valid: true}
-				q.RevisionOutOfRange = !n.IsInt64()
+				q.QuotedRevision = sql.NullInt64{Int64: p.integer("quoted-revision"), Valid: true}
 			}
 			answer, err := r.counterpartRaising(ctx, p.text("from-task"), p.text("to-task"), q)
 			if err != nil {

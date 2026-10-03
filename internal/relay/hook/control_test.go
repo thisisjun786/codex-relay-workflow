@@ -34,7 +34,7 @@ func Test33ControlHandler(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if get(result, "decision") != "release" || get(result, "state") != "unmanaged" {
+	if result.Get("decision") != "release" || result.Get("state") != "unmanaged" {
 		t.Fatal(result)
 	}
 	select {
@@ -87,7 +87,7 @@ func Test33DeadlineReachesNestedWork(t *testing.T) {
 	if _, err := RecordObservation(ctx, root, Object{{Key: "sessionId", Value: "s"}, {Key: "turnId", Value: "t"}}, root); err != context.Canceled {
 		t.Fatal(err)
 	}
-	_, _, _, err := store.HashArtifactContext(ctx, "/never-open", []string{"/"}, false)
+	_, _, _, err := store.HashArtifact(ctx, "/never-open", []string{"/"}, false)
 	if err != context.Canceled {
 		t.Fatal(err)
 	}

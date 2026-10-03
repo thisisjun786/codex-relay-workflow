@@ -14,7 +14,6 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -280,15 +279,11 @@ func (r *Registry) RequireActive(ctx context.Context, rid string) (Relationship,
 }
 
 // GenerationOf is registry.generation; ok=false is None.
-func (r *Registry) GenerationOf(ctx context.Context, rid string, number any) (Generation, bool, error) {
+func (r *Registry) GenerationOf(ctx context.Context, rid string, number int64) (Generation, bool, error) {
 	if _, err := r.Get(ctx, rid); err != nil {
 		return Generation{}, false, err
 	}
-	n, err := argparse.SQLiteInteger(argparse.IntegerValue(number))
-	if err != nil {
-		return Generation{}, false, err
-	}
-	g, err := scanGeneration(r.Store.Querier(ctx).QueryRowContext(ctx, "SELECT "+generationColumns+" FROM generations WHERE relationship_id = ? AND execution_generation = ?", rid, n).Scan)
+	g, err := scanGeneration(r.Store.Querier(ctx).QueryRowContext(ctx, "SELECT "+generationColumns+" FROM generations WHERE relationship_id = ? AND execution_generation = ?", rid, number).Scan)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Generation{}, false, nil
 	}
@@ -871,7 +866,7 @@ func (r *Registry) OpenGenerationIn(ctx context.Context, rid, dispatchRequest, r
 }
 
 // BindAnchor is registry.bind_anchor.
-func (r *Registry) BindAnchor(ctx context.Context, rid string, number any, turn, source string) (Generation, error) {
+func (r *Registry) BindAnchor(ctx context.Context, rid string, number int64, turn, source string) (Generation, error) {
 	if source != "dispatch_receipt" {
 		return Generation{}, refuse(contract.RefusalUnboundGeneration, "an anchor binds only from a dispatch receipt, not from %s", strconv.Quote(source))
 	}
@@ -891,7 +886,6 @@ func (r *Registry) BindAnchor(ctx context.Context, rid string, number any, turn,
 		}
 		return Generation{}, refuse(contract.RefusalAnchorAlreadyBound, "generation %d is already bound to %s", number, quote.Value(nullable(current.DispatchTurnID)))
 	}
-	number = argparse.IntegerValue(number).Int64() // GenerationOf already bound this value to SQLite.
 	now := r.now()
 	err = r.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
 		if _, err := r.Store.Querier(ctx).ExecContext(ctx, "UPDATE generations SET anchor_state = ?, dispatch_turn_id = ?, bound_at = ?"+
@@ -917,21 +911,7 @@ func (r *Registry) SetStatus(ctx context.Context, rid, status, actor string) (Re
 	}
 	now := r.now()
 	err := r.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
-		q := r.Store.Querier(ctx)
-		var before sql.NullString
-		if err := q.QueryRowContext(ctx, "SELECT status FROM relationships WHERE relationship_id = ?", rid).Scan(&before); err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return err
-		}
-		if before.Valid && !isLive(before.String) && isLive(status) {
-			return refuse(contract.RefusalRelationshipNotActive, "%s is %s, so %s would bring it back to life. Restoring an assignment restates the generation and the scope it re-authorizes, which is relationship-resume; choosing a different live word does not make those checks optional", strconv.Quote(rid), strconv.Quote(before.String), strconv.Quote(status))
-		}
-		if _, err := q.ExecContext(ctx, "UPDATE relationships SET status = ?, updated_at = ? WHERE relationship_id = ?", status, now, rid); err != nil {
-			return err
-		}
-		if err := r.linkage().applyRelationshipStatus(ctx, rid, status, before.String, now); err != nil {
-			return err
-		}
-		return journal(ctx, r.Store, "status_changed", rid, contract.OrderedObject{{Key: "status", Value: status}, {Key: "actor", Value: actor}}, now)
+		return r.setStatusIn(ctx, rid, status, actor, now)
 	})
 	if err != nil {
 		return Relationship{}, r.recordRaced(ctx, err)
@@ -939,8 +919,30 @@ func (r *Registry) SetStatus(ctx context.Context, rid, status, actor string) (Re
 	return r.Get(ctx, rid)
 }
 
+// setStatusIn is the write of SetStatus, inside a transaction the caller owns: the new status, the issue scope that
+// moves with it and the journal row. extra fields ride on that row, so a caller that closes for a reason of its own
+// (CRW-288: a merged relationship nothing is owed on) says so there.
+func (r *Registry) setStatusIn(ctx context.Context, rid, status, actor, now string, extra ...contract.Field) error {
+	q := r.Store.Querier(ctx)
+	var before sql.NullString
+	if err := q.QueryRowContext(ctx, "SELECT status FROM relationships WHERE relationship_id = ?", rid).Scan(&before); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if before.Valid && !isLive(before.String) && isLive(status) {
+		return refuse(contract.RefusalRelationshipNotActive, "%s is %s, so %s would bring it back to life. Restoring an assignment restates the generation and the scope it re-authorizes, which is relationship-resume; choosing a different live word does not make those checks optional", strconv.Quote(rid), strconv.Quote(before.String), strconv.Quote(status))
+	}
+	if _, err := q.ExecContext(ctx, "UPDATE relationships SET status = ?, updated_at = ? WHERE relationship_id = ?", status, now, rid); err != nil {
+		return err
+	}
+	if err := r.linkage().applyRelationshipStatus(ctx, rid, status, before.String, now); err != nil {
+		return err
+	}
+	detail := contract.OrderedObject{{Key: "status", Value: status}, {Key: "actor", Value: actor}}
+	return journal(ctx, r.Store, "status_changed", rid, append(detail, extra...), now)
+}
+
 // Resume is registry.resume: restate the generation and the whole scope.
-func (r *Registry) Resume(ctx context.Context, rid string, expectGeneration any, roots, recipients []string, actor string) (Relationship, error) {
+func (r *Registry) Resume(ctx context.Context, rid string, expectGeneration int64, roots, recipients []string, actor string) (Relationship, error) {
 	now := r.now()
 	err := r.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
 		q := r.Store.Querier(ctx)
@@ -952,9 +954,8 @@ func (r *Registry) Resume(ctx context.Context, rid string, expectGeneration any,
 			return refuse(contract.RefusalUnregisteredRelationship, "no relationship %s", strconv.Quote(rid))
 		}
 		var mismatches []string
-		expected := argparse.IntegerValue(expectGeneration)
-		if !expected.IsInt64() || x.Generation != expected.Int64() {
-			mismatches = append(mismatches, fmt.Sprintf("generation is %d, not %s", x.Generation, expected.String()))
+		if x.Generation != expectGeneration {
+			mismatches = append(mismatches, fmt.Sprintf("generation is %d, not %d", x.Generation, expectGeneration))
 		}
 		recordedRoots, err := decodeJSON([]byte(x.Roots))
 		if err != nil {

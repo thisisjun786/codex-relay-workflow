@@ -248,7 +248,7 @@ func bridgeWrite(ctx context.Context, path string, wanted Object, apply bool) Ob
 		return append(answer, field("detail", "would write this record; nothing was written"))
 	}
 	beforeWriteLock(path)
-	lock, err := record.LockContext(ctx, path, 0)
+	lock, err := record.Lock(ctx, path, 0)
 	if err != nil {
 		if ctx.Err() != nil {
 			return append(record.Set(answer, "outcome", Interrupted), field("detail", interrupted(err)))
@@ -523,10 +523,13 @@ func executionPolicyReading(value string) (Object, string) {
 }
 
 // pathlibAbsolute is str(pathlib.Path(value).absolute()) on POSIX: the working directory
-// prefixed when value is relative, "." components and repeated or trailing slashes dropped, and
-// ".." KEPT. Folding ".." by text (filepath.Abs) names another file than the kernel opens when a
-// component before it is a symbolic link, and the record, the digest and the bridge have to name
-// the one file the operator named.
+// prefixed when value is relative, then the pathlib spelling (store.PathlibSpelling): "."
+// components and repeated or trailing slashes dropped, and ".." KEPT. Folding ".." by text
+// (filepath.Abs) names another file than the kernel opens when a component before it is a
+// symbolic link, and the record, the digest and the bridge have to name the one file the operator
+// named. The working directory is os.Getwd's and the join is cwd + "/" + value, as this
+// registration has always recorded them: the result is the stored executionPolicy text a
+// re-registration compares, so it is not store.Absolute (the kernel's directory, JoinCwd).
 func pathlibAbsolute(value string) (string, error) {
 	if !strings.HasPrefix(value, "/") {
 		cwd, err := os.Getwd()
@@ -535,17 +538,7 @@ func pathlibAbsolute(value string) (string, error) {
 		}
 		value = cwd + "/" + value
 	}
-	root := "/"
-	if strings.HasPrefix(value, "//") && !strings.HasPrefix(value, "///") {
-		root = "//"
-	}
-	var parts []string
-	for _, part := range strings.Split(value, "/") {
-		if part != "" && part != "." {
-			parts = append(parts, part)
-		}
-	}
-	return root + strings.Join(parts, "/"), nil
+	return store.PathlibSpelling(value), nil
 }
 
 // RegisterMCP is `crw install register-mcp --owner plugin`: the record the packaged launcher
@@ -557,7 +550,7 @@ func RegisterMCP(ctx context.Context, o Options, r RegisterOptions) (Object, int
 	if r.Owner != OwnerPlugin {
 		return append(base, field("outcome", Conflict), field("detail", "only --owner plugin is supported: the user-owned registration (a config.toml [mcp_servers] table) is retired with runtime_install.py, and the plugin declares the server itself"), field("applied", false), field("wrote", false), field("note", "nothing was written")), Usage
 	}
-	lock, err := record.LockContext(ctx, filepath.Join(o.CodexHome, OwnershipLockName), 0)
+	lock, err := record.Lock(ctx, filepath.Join(o.CodexHome, OwnershipLockName), 0)
 	if err != nil {
 		if ctx.Err() != nil {
 			return append(base, field("outcome", Interrupted), field("detail", interrupted(err)), field("applied", false), field("wrote", false), field("note", "nothing was written")), Refused

@@ -148,7 +148,7 @@ func (s *Scheduler) BuildManifest(ctx context.Context, q store.Querier, plan str
 	}
 	body := map[string]any{
 		"schema": dag.SchemaManifest, "node_id": node.NodeID, "issue_key": node.IssueKey, "node_slice_digest": node.SliceDigest, "criteria_set_digest": node.CriteriaSetDigest,
-		"inputs": inputs, "rule_version": in.RuleVersion.object(), "plan_revision_no": snap.Revision, "coordinator_epoch": int64(0),
+		"inputs": inputs, "rule_version": in.RuleVersion.object(), "plan_revision_no": snap.Revision, "coordinator_epoch": s.ExpectedEpoch,
 		"created_by_task_id": in.CreatedByTaskID, "created_at": in.CreatedAt,
 	}
 	if in.Base != nil {
@@ -243,13 +243,27 @@ func landedOf(ctx context.Context, q store.Querier, observation string) (string,
 	return landed, nil
 }
 
-// scopeOf is the artifact root a path lies under: the longest one, so nested roots are told apart.
+// scopeOf is the artifact root a path lies under: the longest one, so nested roots are told apart. A root holds a path when the store says so (store.IsWithin, the rule artifact reads are
+// authorized by: by path component, both sides normalized, a root of "/" holding every absolute path), and the root is returned as given, because the scope string is part of the manifest digest.
+//
+// The first loop is the answer manifests were always built with (a raw prefix test, and the longest trimmed root wins), narrowed to the roots the store agrees contain the path, so a path that
+// leaves its root by ".." is no longer inside it. It is kept as it was, comparisons included, so that no manifest already recorded changes its scope or its digest: a root of "/" never wins there
+// (it trims to nothing) and a spelling the raw test does not read never matches. The second loop answers only what the first could not, by the store's rule alone.
 func scopeOf(path string, roots []string) string {
 	best := ""
 	for _, root := range roots {
 		clean := strings.TrimRight(root, "/")
-		if (path == clean || strings.HasPrefix(path, clean+"/")) && len(clean) > len(best) {
+		if (path == clean || strings.HasPrefix(path, clean+"/")) && len(clean) > len(best) && store.IsWithin(root, path) {
 			best = root
+		}
+	}
+	if best != "" {
+		return best
+	}
+	longest := -1
+	for _, root := range roots {
+		if n := len(store.Normpath(root)); n > longest && store.IsWithin(root, path) {
+			best, longest = root, n
 		}
 	}
 	return best

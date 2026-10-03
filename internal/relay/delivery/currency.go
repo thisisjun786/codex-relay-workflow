@@ -2,10 +2,12 @@ package delivery
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -62,64 +64,138 @@ func HeadRevision(ctx context.Context, s *store.Store, rid string, generation in
 	return HeadRevisionFrom(ctx, s.Q(ctx), rid, generation)
 }
 
-// HeadRevisionFrom reads through the caller's snapshot, including a read-only guard connection.
-func HeadRevisionFrom(ctx context.Context, q store.Querier, rid string, generation int64) (Obj, error) {
-	rows, err := allFrom(ctx, q, "SELECT e.event_id, e.revision_hash, l.supersedes_hash FROM events e LEFT JOIN revision_lineage l ON l.event_id = e.event_id WHERE e.relationship_id = ? AND e.execution_generation = ? AND e.outcome = ? AND e.suppressed_reason IS NULL ORDER BY e.event_id", rid, generation, "ready_for_review")
+// headRevisionSQL reads the reviewable revisions of one generation, each with the predecessor it
+// declares. The lineage row is found by its primary key (relationship, generation, event): joined on
+// event_id alone, SQLite scans the whole of revision_lineage once for every event row, so one judgment
+// cost the revisions of the generation times the lineage rows of the store (CRW-416). The product
+// stores an event and its lineage row together under one relationship and generation, so this reads
+// the rows the event_id join read.
+const headRevisionSQL = "SELECT e.event_id, e.revision_hash, l.supersedes_hash FROM events e LEFT JOIN revision_lineage l ON l.relationship_id = e.relationship_id AND l.execution_generation = e.execution_generation AND l.event_id = e.event_id WHERE e.relationship_id = ? AND e.execution_generation = ? AND e.outcome = ? AND e.suppressed_reason IS NULL ORDER BY e.event_id"
+
+// revision is one reviewable revision of a generation as the head judgment reads it: its event, its
+// revision hash and the predecessor hash it declares ("" for none).
+type revision struct{ id, hash, declared string }
+
+// textOf reads a column as Row.S does: text, or "" for NULL and for any other type.
+func textOf(v any) string {
+	switch v := v.(type) {
+	case string:
+		return v
+	case []byte:
+		return string(v)
+	}
+	return ""
+}
+
+// reviewableRevisions is every reviewable revision of the generation in event id order. Reading
+// them all is what a head is: a fork, a cycle or an unknown predecessor anywhere among them
+// makes the whole generation ambiguous and names every revision as a competitor.
+func reviewableRevisions(ctx context.Context, q store.Querier, rid string, generation int64) (_ []revision, err error) {
+	rows, err := q.QueryContext(ctx, headRevisionSQL, rid, generation, "ready_for_review")
 	if err != nil {
 		return nil, err
 	}
-	if len(rows) == 0 {
-		return Obj{{Key: "eventId", Value: nil}, {Key: "revisionHash", Value: nil}, {Key: "evidence", Value: NoRevision}, {Key: "competitors", Value: []any{}}, {Key: "detail", Value: "no reviewable revision in this generation"}}, nil
-	}
-	var nodes []string
-	hashOf := map[string]string{}
-	declaredOf := map[string]string{}
-	byHash := map[string][]string{}
-	for _, row := range rows {
-		id := row.S("event_id")
-		if _, seen := hashOf[id]; !seen {
-			nodes = append(nodes, id)
+	defer func() { err = errors.Join(err, rows.Close()) }()
+	var out []revision
+	for rows.Next() {
+		var id, hash, declared any
+		if err := rows.Scan(&id, &hash, &declared); err != nil {
+			return nil, err
 		}
-		hashOf[id] = row.S("revision_hash")
-		declaredOf[id] = row.S("supersedes_hash")
+		out = append(out, revision{id: textOf(id), hash: textOf(hash), declared: textOf(declared)})
 	}
-	for _, id := range nodes {
-		byHash[hashOf[id]] = append(byHash[hashOf[id]], id)
+	return out, rows.Err()
+}
+
+// HeadRevisionFrom reads through the caller's snapshot, including a read-only guard connection.
+func HeadRevisionFrom(ctx context.Context, q store.Querier, rid string, generation int64) (Obj, error) {
+	revisions, err := reviewableRevisions(ctx, q, rid, generation)
+	if err != nil {
+		return nil, err
+	}
+	if len(revisions) == 0 {
+		return Obj{{Key: "eventId", Value: nil}, {Key: "revisionHash", Value: nil}, {Key: "evidence", Value: NoRevision}, {Key: "competitors", Value: []any{}}, {Key: "detail", Value: "no reviewable revision in this generation"}}, nil
 	}
 	anchors, err := requestedPredecessors(ctx, q, rid, generation)
 	if err != nil {
 		return nil, err
 	}
-	edges := map[string]string{}
+	return judgeHead(revisions, anchors), nil
+}
+
+// judgeHead is currency.head_revision over the generation's reviewable revisions (at least one, in
+// event id order) and its requested correction predecessors.
+func judgeHead(revisions []revision, anchors map[string][]string) Obj {
+	nodes := make([]string, 0, len(revisions))
+	hashOf := make(map[string]string, len(revisions))
+	declaredOf := make(map[string]string, len(revisions))
+	for _, r := range revisions {
+		// An event id is the events primary key and the lineage row is found by its own key, so it
+		// is listed once; were it repeated, it would keep its first place and its last values.
+		if _, seen := hashOf[r.id]; !seen {
+			nodes = append(nodes, r.id)
+		}
+		hashOf[r.id] = r.hash
+		declaredOf[r.id] = r.declared
+	}
+	byHash := make(map[string][]string, len(nodes))
+	for _, id := range nodes {
+		byHash[hashOf[id]] = append(byHash[hashOf[id]], id)
+	}
+	edges := make(map[string]string, len(nodes))
 	var unresolved []string
 	for _, id := range nodes {
 		declared := declaredOf[id]
 		if declared == "" {
 			continue
 		}
-		targets := append(slices.Clone(byHash[declared]), anchors[declared]...)
-		if len(targets) != 1 {
+		held, requested := byHash[declared], anchors[declared]
+		if len(held)+len(requested) != 1 {
 			unresolved = append(unresolved, id+" -> "+declared)
 			continue
 		}
-		edges[id] = targets[0]
+		if len(held) == 1 {
+			edges[id] = held[0]
+		} else {
+			edges[id] = requested[0]
+		}
 	}
 	if len(unresolved) > 0 {
-		return ambiguous(UnknownPredecessor, nodes, "a declared predecessor is neither a unique revision of this generation nor its requested correction predecessor: "+strings.Join(unresolved, ", ")), nil
+		return ambiguous(UnknownPredecessor, nodes, "a declared predecessor is neither a unique revision of this generation nor its requested correction predecessor: "+strings.Join(unresolved, ", "))
 	}
+	// A revision declares at most one predecessor, so a walk along the declared chain ends or
+	// returns to a revision it has passed. Starts are taken in event id order and the first walk that
+	// returns reports where it started and the revision it returned to. A walk that reaches a
+	// revision an earlier walk finished without returning stops there: what follows was walked then,
+	// and none of it is on the walk so far. Each revision is walked once.
+	const (
+		walking = iota + 1
+		cleared
+	)
+	passed := make(map[string]uint8, len(nodes))
 	for _, start := range nodes {
-		seen := map[string]bool{start: true}
-		current := start
-		for {
+		if passed[start] == cleared {
+			continue
+		}
+		walk := []string{start}
+		passed[start] = walking
+		for current := start; ; {
 			next, ok := edges[current]
 			if !ok {
 				break
 			}
 			current = next
-			if seen[current] {
-				return ambiguous(Cycle, nodes, fmt.Sprintf("the declared chain from %s returns to %s", start, current)), nil
+			if passed[current] == walking {
+				return ambiguous(Cycle, nodes, fmt.Sprintf("the declared chain from %s returns to %s", start, current))
 			}
-			seen[current] = true
+			if passed[current] == cleared {
+				break
+			}
+			passed[current] = walking
+			walk = append(walk, current)
+		}
+		for _, id := range walk {
+			passed[id] = cleared
 		}
 	}
 	predecessors := map[string]int{}
@@ -136,7 +212,7 @@ func HeadRevisionFrom(ctx context.Context, q store.Querier, rid string, generati
 	}
 	if len(forked) > 0 {
 		slices.Sort(forked)
-		return ambiguous(Fork, nodes, "more than one revision declares the same predecessor: "+strings.Join(forked, ", ")), nil
+		return ambiguous(Fork, nodes, "more than one revision declares the same predecessor: "+strings.Join(forked, ", "))
 	}
 	targets := map[string]bool{}
 	for _, t := range edges {
@@ -150,7 +226,7 @@ func HeadRevisionFrom(ctx context.Context, q store.Querier, rid string, generati
 	}
 	slices.Sort(tips)
 	if len(tips) != 1 {
-		return ambiguous(Fork, nodes, fmt.Sprintf("%d revisions in this generation are unsuperseded, so none of them is the head; a revision that replaces another says so when it is emitted", len(tips))), nil
+		return ambiguous(Fork, nodes, fmt.Sprintf("%d revisions in this generation are unsuperseded, so none of them is the head; a revision that replaces another says so when it is emitted", len(tips)))
 	}
 	tip := tips[0]
 	covered := map[string]bool{tip: true}
@@ -164,14 +240,14 @@ func HeadRevisionFrom(ctx context.Context, q store.Querier, rid string, generati
 	}
 	for _, id := range nodes {
 		if !covered[id] {
-			return ambiguous(Disconnected, nodes, "the declared chain from the tip does not reach every revision in this generation"), nil
+			return ambiguous(Disconnected, nodes, "the declared chain from the tip does not reach every revision in this generation")
 		}
 	}
 	evidence := Chain
 	if len(nodes) == 1 && len(edges) == 0 {
 		evidence = Sole
 	}
-	return Obj{{Key: "eventId", Value: tip}, {Key: "revisionHash", Value: hashOf[tip]}, {Key: "evidence", Value: evidence}, {Key: "competitors", Value: []any{}}, {Key: "detail", Value: ""}}, nil
+	return Obj{{Key: "eventId", Value: tip}, {Key: "revisionHash", Value: hashOf[tip]}, {Key: "evidence", Value: evidence}, {Key: "competitors", Value: []any{}}, {Key: "detail", Value: ""}}
 }
 
 // Currency is currency.currency_of: is this event the thing the assignment stands on now?
@@ -188,14 +264,14 @@ func Currency(ctx context.Context, s *store.Store, relationship, event Row) (Obj
 	if err != nil {
 		return nil, err
 	}
-	if slices.Contains(ambiguousEvidence, str(head, "evidence")) {
-		competitors, _ := get(head, "competitors")
-		return Obj{{Key: "current", Value: false}, {Key: "reason", Value: RevisionAmbiguous}, {Key: "evidence", Value: str(head, "evidence")}, {Key: "headEventId", Value: nil}, {Key: "headRevisionHash", Value: nil}, {Key: "detail", Value: str(head, "detail")}, {Key: "competitors", Value: competitors}}, nil
+	if slices.Contains(ambiguousEvidence, pyjson.Text(head.Get("evidence"))) {
+		competitors, _ := head.Lookup("competitors")
+		return Obj{{Key: "current", Value: false}, {Key: "reason", Value: RevisionAmbiguous}, {Key: "evidence", Value: pyjson.Text(head.Get("evidence"))}, {Key: "headEventId", Value: nil}, {Key: "headRevisionHash", Value: nil}, {Key: "detail", Value: pyjson.Text(head.Get("detail"))}, {Key: "competitors", Value: competitors}}, nil
 	}
-	headID, _ := get(head, "eventId")
-	headHash, _ := get(head, "revisionHash")
+	headID, _ := head.Lookup("eventId")
+	headHash, _ := head.Lookup("revisionHash")
 	if headID != event.S("event_id") {
-		return Obj{{Key: "current", Value: false}, {Key: "reason", Value: SupersededRevision}, {Key: "evidence", Value: str(head, "evidence")}, {Key: "headEventId", Value: headID}, {Key: "headRevisionHash", Value: headHash}, {Key: "detail", Value: fmt.Sprintf("the current revision of generation %d is %v", generation, headID)}}, nil
+		return Obj{{Key: "current", Value: false}, {Key: "reason", Value: SupersededRevision}, {Key: "evidence", Value: pyjson.Text(head.Get("evidence"))}, {Key: "headEventId", Value: headID}, {Key: "headRevisionHash", Value: headHash}, {Key: "detail", Value: fmt.Sprintf("the current revision of generation %d is %v", generation, headID)}}, nil
 	}
-	return Obj{{Key: "current", Value: true}, {Key: "reason", Value: nil}, {Key: "evidence", Value: str(head, "evidence")}, {Key: "headEventId", Value: headID}, {Key: "headRevisionHash", Value: headHash}, {Key: "detail", Value: ""}}, nil
+	return Obj{{Key: "current", Value: true}, {Key: "reason", Value: nil}, {Key: "evidence", Value: pyjson.Text(head.Get("evidence"))}, {Key: "headEventId", Value: headID}, {Key: "headRevisionHash", Value: headHash}, {Key: "detail", Value: ""}}, nil
 }

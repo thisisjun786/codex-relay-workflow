@@ -4,7 +4,6 @@ import (
 	"slices"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 )
@@ -14,13 +13,13 @@ var activationStates = []string{"observed", "absent", "refused", "unverified", "
 var modes = []string{"loop", "non_loop", "coordination"}
 
 func checkMode(mode any) error {
-	if slices.Contains(modes, str(mode)) {
+	if slices.Contains(modes, pyjson.Text(mode)) {
 		return nil
 	}
 	return malformed("%s is not an execution mode; it is one of coordination, loop, non_loop", quote.Value(mode))
 }
 func ActivationFact(state, source any, detail string) (Obj, error) {
-	if !slices.Contains(activationStates, str(state)) {
+	if !slices.Contains(activationStates, pyjson.Text(state)) {
 		return nil, malformed("%s is not an activation state; it is one of absent, not_applicable, observed, refused, unverified", quote.Value(state))
 	}
 	if slices.Contains([]any{"observed", "absent", "refused"}, state) && !truth(source) {
@@ -48,7 +47,7 @@ func ActivationClass(triple any, mode string, earlier any) (Obj, error) {
 	case activated == "refused":
 		class, reason = "L2", "binding or initialisation was attempted and refused, and the refusal itself is the evidence"
 	case activated == "not_applicable":
-		class, reason = "L5", "this mode arms no implementation FSM, so there is nothing missing; "+str(Get(Get(triple, "activated"), "detail"))
+		class, reason = "L5", "this mode arms no implementation FSM, so there is nothing missing; "+pyjson.Text(Get(Get(triple, "activated"), "detail"))
 	case activated == "observed":
 		class, reason = "L5", "the task's own bound goalplan and persisted phases answer for this assignment"
 	case Get(Get(earlier, "activated"), "state") == "observed" && activated == "absent":
@@ -79,7 +78,7 @@ func Unobserved() Obj {
 }
 func CheckProgression(ladder any) error {
 	if _, ok := evidence.Object(ladder); !ok {
-		return malformed("a handover ladder is an object of named states, not a %s", pyvalue.TypeName(ladder))
+		return malformed("a handover ladder is an object of named states, not %s", quote.Kind(ladder))
 	}
 	for i, n := range Progression {
 		if !Has(ladder, n) {
@@ -87,10 +86,10 @@ func CheckProgression(ladder any) error {
 		}
 		entry := Get(ladder, n)
 		if _, ok := evidence.Object(entry); !ok {
-			return malformed("each handover state is an object with a state and the record that answered it; %s is a %s", n, pyvalue.TypeName(entry))
+			return malformed("each handover state is an object with a state and the record that answered it; %s is %s", n, quote.Kind(entry))
 		}
 		state := Get(entry, "state")
-		if !slices.Contains(states, str(state)) {
+		if !slices.Contains(states, pyjson.Text(state)) {
 			return malformed("%s is not a state; it is one of conditional, no, not_applicable, unmeasured, yes", quote.Value(state))
 		}
 		source := progressionSources[i]
@@ -165,7 +164,7 @@ func ContentDigest(one any) string {
 }
 func Repeat(one, answered any) Obj {
 	id := Get(Get(one, "envelope"), "messageId")
-	prior := Get(answered, str(id))
+	prior := Get(answered, pyjson.Text(id))
 	mine := ContentDigest(one)
 	if !truth(prior) {
 		return O("state", "first", "messageId", id, "contentDigest", mine)
@@ -199,7 +198,7 @@ func SettleRepeat(answer Obj, repeated any) Obj {
 		Set(&settled, "act", accepted && !applied)
 	default:
 		problems, _ := evidence.List(Get(settled, "mismatches"))
-		problems = append(slices.Clone(problems), Mismatch("message_collision", "messageId", Get(repeated, "answeredDigest"), Get(repeated, "contentDigest"), str(Get(repeated, "reason"))))
+		problems = append(slices.Clone(problems), Mismatch("message_collision", "messageId", Get(repeated, "answeredDigest"), Get(repeated, "contentDigest"), pyjson.Text(Get(repeated, "reason"))))
 		Set(&settled, "mismatches", problems)
 		Set(&settled, "disposition", "refused")
 		Set(&settled, "repeat", O("state", "collision", "contentDigest", Get(repeated, "contentDigest"), "previousDisposition", Get(repeated, "disposition"), "reason", Get(repeated, "reason")))

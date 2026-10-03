@@ -19,6 +19,8 @@ type CapBasis struct {
 	SMinutes  float64
 	SSource   string
 	DecidedBy string
+	// Plan is the plan the recorder coordinates (--plan). It is not stored: a basis belongs to a limit. For a project limit it names the plan whose epoch fences the write (below).
+	Plan string
 }
 
 // RecordCapBasis writes the basis for one revision of a limit. The limit revision must be the one in the store; both sources are named; the minutes are positive numbers; and the caller is
@@ -44,6 +46,9 @@ func (s *Scheduler) RecordCapBasis(ctx context.Context, in CapBasis) error {
 		}
 		if dimension != "runs" {
 			return refuse(contract.RefusalMalformedReceipt, "limit %s is a limit on %s: a concurrency basis belongs to a runs limit", in.LimitID, dimension)
+		}
+		if err := s.fenceCapBasis(txCtx, tx, scopeKind, scopeKey, in); err != nil {
+			return err
 		}
 		if in.DecidedBy != declaredBy {
 			parents := []string(nil)

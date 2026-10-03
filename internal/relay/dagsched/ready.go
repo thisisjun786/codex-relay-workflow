@@ -87,6 +87,12 @@ func (s *Scheduler) Ready(ctx context.Context, q store.Querier, plan string, opt
 				if reading.Stale, err = s.staleOf(ctx, q, plan, snap, n); err != nil {
 					return Reading{}, err
 				}
+				// what is done about it (revalidation.go)
+				if reading.Stale != nil {
+					if reading.Stale, err = s.withRoute(ctx, q, plan, snap, n, reading.Stale); err != nil {
+						return Reading{}, err
+					}
+				}
 			}
 			life.overlayOwned(reading, state)
 			if state.Holds && n.Kind == dag.NodeImplementation {
@@ -162,6 +168,7 @@ func (s *Scheduler) Ready(ctx context.Context, q store.Querier, plan string, opt
 	})
 
 	pass := PassSummary{FreeSlots: capacity.Free, Ceiling: capacity.Ceiling, Held: capacity.Held, CeilingSource: capacity.Source, DecidingLimit: LimitNone}
+	observed := &observations{ctx: ctx, q: q, plan: plan}
 	var ready []NodeReading
 	selected := 0
 	for _, c := range candidates {
@@ -170,11 +177,19 @@ func (s *Scheduler) Ready(ctx context.Context, q store.Querier, plan string, opt
 		reading.Rank = &rank
 		limit := ""
 		if c.node.Kind == dag.NodeImplementation {
+			// the release rule (CRW-409, releaserule.go): the grades of what the candidate overlaps decide, and the rule travels in reading.Release. Only an exclusive overlap defers; a released node
+			// stays a plain ready node, so nothing that reads its disposition or reason sees a hold.
 			regions, declared := declarations[c.node.NodeID]
-			if overlapsAny(holder{NodeID: c.node.NodeID, Regions: regions, Unknown: !declared}, holders) {
+			judged, err := judgeRelease(holder{NodeID: c.node.NodeID, Regions: regions, Unknown: !declared}, holders, observed)
+			if err != nil {
+				return Reading{}, err
+			}
+			reading.Release = &judged
+			pass.Overlaps.add(judged.Overlaps)
+			if judged.Rule == RuleDefer {
 				limit = LimitEditOverlap
 				reading.Disposition, reading.Reason = DispDefer, DeferEditOverlap
-				reading.Detail = "its edit regions overlap a node that is running or accepted and not yet landed, or a region is undeclared"
+				reading.Detail = judged.deferDetail()
 			}
 		}
 		if limit == "" && selected >= capacity.Free {
@@ -306,6 +321,10 @@ func inputDigest(r Reading, c Capacity, hashes []string) string {
 	nodes := make([]any, len(r.Nodes))
 	for i, n := range r.Nodes {
 		nodes[i] = map[string]any{"node_id": n.NodeID, "state": n.State, "disposition": n.Disposition, "reason": n.Reason, "detail": n.Detail}
+		if n.Release != nil {
+			// the rule depends on declarations that nothing else in the digest carries
+			nodes[i].(map[string]any)["release"] = n.Release.canonical()
+		}
 	}
 	order := make([]any, len(r.Ready))
 	for i, n := range r.Ready {

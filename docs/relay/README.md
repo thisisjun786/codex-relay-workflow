@@ -34,8 +34,9 @@ store lives outside repositories; caller-selected receipt and artifact locations
 | CLI | implemented | `internal/relay/cli`; the corpus's `cli-shape` and `exit-codes` domains |
 | frozen-schema conformance | implemented | `internal/relay/store`; the corpus's `records` domain |
 | DAG plans: validated, append-only revision log and its additive store zone | implemented | [DAG plans](dag-plans.md); `internal/relay/dag`, `internal/relay/store` |
-| DAG scheduler: ready set, edit regions, capacity and pass records; release of a ready node to a Codex child; acceptance, integration, decisions and corrections; merge eligibility, conflict observations and cap basis | implemented (coordinator fencing, invalidation and installed proof are later issues) | [DAG scheduler](dag-scheduler.md); `internal/relay/dagsched` |
-| DAG progress: a read-only query of a plan's stage distribution, cumulative accepted and integrated counts, denominator per revision, a reason per blocked or stale node, and links | implemented (cursor and snapshot reconstruction and the Linear summary are later issues) | [DAG progress](dag-progress.md); `internal/relay/dagsched` |
+| DAG scheduler: ready set, edit regions, capacity and pass records; release of a ready node to a Codex child; acceptance, integration, decisions and corrections; merge eligibility, conflict observations and cap basis; the coordinator epoch that fences these writes, restart and adoption | implemented (installed proof is a later issue) | [DAG scheduler](dag-scheduler.md); `internal/relay/dagsched` |
+| DAG progress: a read-only query of a plan's stage distribution, cumulative accepted and integrated counts, denominator per revision, a reason per blocked or stale node, and links | implemented, with a rebuild of the view from events, a cursor and a snapshot as a Go API (the Linear summary is the summary outbox, below) | [DAG progress](dag-progress.md); `internal/relay/dagsched` |
+| DAG summary outbox: the project-level queue of a plan's Linear summaries (ordered per plan and document, an older summary never over a newer one), drained by the parent with its own connector: claim, write, read back, confirm, retry only that entry. The relay holds no Linear credential | implemented | [DAG summary outbox](dag-outbox.md); `internal/relay/dagsched`, `internal/relay/store` |
 
 Until todo 44 each row's proof was a test of the Python package under
 `packages/codex-session-relay/tests`; [the test map](../port/test-map.md) names where each one's
@@ -514,12 +515,13 @@ Global options come BEFORE the subcommand:
 | `generation-open` / `generation-bind` | open a generation; bind its anchor to an exact dispatch turn |
 | `admit-turn` | record an owner-confirmed continuation turn out of band |
 | `relationship-status` / `relationship-resume` | pause, cancel, archive; resume only by restating generation and scope |
+| `relationship-close-merged` | archive the live assignments that are merged with nothing owed; a dry run without `--apply` |
 | `linkage-supervise` | an initiative supervisor over a project parent, by execution or by reference |
 | `linkage-bind` | claim one scope for one task at one level |
 | `linkage-attach` | bind an existing assignment's issue to its project |
 | `linkage-peer` | join two project parents, symmetrically and outside the hierarchy |
 | `linkage-outstanding` | exactly the unfinished work a replacement owner must acknowledge |
-| `linkage-handover` | replace a scope's owner, only by restating the owner and that work |
+| `linkage-handover` | replace a scope's owner, only by restating the owner and that work; merged assignments with nothing owed are closed by it |
 | `linkage-directive` / `linkage-settle` | record an instruction by digest and origin, placed by its `--purpose` so one competing for a place already held is refused where it is recorded; settle one without erasing the other |
 | `linkage-up` / `linkage-down` | walk the hierarchy either way, with its gaps and contention |
 | `linkage-counterpart` | who a message is really addressing, and every problem with the reference |
@@ -605,6 +607,44 @@ Editing a criterion's text afterwards, even keeping its id, invalidates that rev
 passing it, and the assignment reports `re_review_needed` instead of `verified`.
 
 There is no parameter that turns any of this off.
+
+## Ruling an event that is already ruled
+
+An event has one standing ruling, and a second `verdict` call on it is never answered with a ruling it was not asked for. What the call does depends on the verdict already recorded and the verdict asked:
+
+| Recorded | Asked | Answer |
+| --- | --- | --- |
+| any verdict | the same verdict | a replay: the recorded record marked `_replay`, and nothing is written |
+| `verified` | `needs_changes` | the ruling is replaced and the correction opens, while nothing rests on the verified ruling |
+| `verified` | `unverified` or `aborted` | refused `disposition_conflict` |
+| `needs_changes`, `unverified` or `aborted` | any other verdict | refused `disposition_conflict` |
+
+No refusal reason is added: `disposition_conflict` already means a ruling that conflicts with the one on record, as in a re-review that is not allowed to replace a verified ruling with `unverified`. A refusal writes nothing, and the ruling on record stays in force. Its text names the recorded ruling, the verdict asked and the route that remains.
+
+**Replacing a verified ruling.** A verified ruling is the parent's own judgement, and until something acts on it, changing it costs only the correction. The route a parent follows to send a candidate back after it ruled verified, for example because the base moved and conflicts before the plan accepted the result, is a `needs_changes` ruling on the same receipt, so that ruling works instead of being answered with the old one. The writer reads these in this order:
+
+1. An open re-review is decided first, exactly as above (a criteria set that moved since the ruling), whether or not the head was accepted.
+2. The transition table above.
+3. Nothing may rest on the verified ruling: no plan acceptance of the event (`dag_acceptances`, whatever its state), no merged mark of it (`assignment_marks`), and no merge turn of the assignment that is merging, of unknown effect or landed. A turn that only waits for the lane or holds it does not count, because the parent that found the base conflict holds that very turn. The turn is read per assignment and not per head, because no head of an event is recorded.
+4. The existing path of a first `needs_changes` ruling: the event is the head of the generation the relationship stands on and the relationship is active (`stale_generation`, `superseded_revision`, `revision_ambiguous`, `relationship_not_active`), the finding marked `needs_changes` carries a note and the criteria set is the one the review is bound to, the child is an allowed recipient, and a declared restoration block can be carried.
+
+When all four hold, the writer replaces the ruling in the transaction that opens the next generation and queues the revision request to the same child, exactly as a first `needs_changes` ruling does. The replaced record stays: the journal records `verdict_superseded` with the replaced record and `reason: ruling_changed` (a re-review's entry has no reason). The answer is the new ruling plus `_supersedes`, the verdict, verdict turn and time of the ruling it replaced; like `_replay` it is an annotation of the answer and is not stored. The summary owed to the coordination document is a new job, because its identity carries the verdict, and it counts the rulings (`ruling 2`).
+
+When a step refuses, the refusal names what to do:
+
+| Cause | Reason | Route |
+| --- | --- | --- |
+| recorded `verified`, asked `unverified` or `aborted` | `disposition_conflict` | rule `needs_changes`, or stop the assignment by changing the relationship's status |
+| recorded `needs_changes` | `disposition_conflict` | the ruling opened a generation and is not withdrawn: rule the head of that generation when the child reports there |
+| recorded `unverified` or `aborted` | `disposition_conflict` | the ruling is final for the event: open a fresh execution generation (`generation-open`, then `generation-bind`) and rule what the child reports there |
+| a plan accepted the verified event | `disposition_conflict` | read the node's stale reading: when its action is `correct`, `dag-correct --prepare` prints the instruction and the dispatch request id, the generation is opened by hand and `dag-correct` binds it; `revalidate` and `hold` have their own steps; when the accepted result is current this build records no correction route, so report it and open no generation that `dag-correct` will refuse |
+| the work is marked merged, or a turn landed it | `disposition_conflict` | a merged result is corrected by new work, not by a second ruling |
+| a merge turn is merging or of unknown effect | `disposition_conflict` | resolve the turn (`merge-turn-resolve` reads the branch), then rule again |
+| the event is not the head | `stale_generation` or `superseded_revision` | rule the head the assignment shows |
+| the head is ambiguous | `revision_ambiguous` | outside a plan, a fresh execution generation; for a plan node this build records no route, so report it |
+| the relationship is not active | `relationship_not_active` | `relationship-resume`, then rule again |
+
+Two limits are part of the contract. The same verdict again is a replay even when its findings differ, so a `needs_changes` ruling that was already given cannot be given again with other words: the verdict does not resend (see [Return corrections to the existing task](../../plugins/crw/skills/crw-run/SKILL.md#return-corrections-to-the-existing-task)). And an installed relay older than this change answers a different verdict with the recorded ruling marked `_replay` and exit 0; read the answer (a ruling that is still `verified` and marked `_replay` changed nothing) and `assignment-show`, never the exit code.
 
 ## The coordination summary
 

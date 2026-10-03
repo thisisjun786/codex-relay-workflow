@@ -301,12 +301,12 @@ type failingHost struct {
 	fail map[string]bool
 }
 
-func (h *failingHost) ReadTurn(thread, turn string) (*delivery.TurnInfo, error) {
+func (h *failingHost) ReadTurn(_ context.Context, thread, turn string) (*delivery.TurnInfo, error) {
 	if h.fail[turn] {
 		h.reads = append(h.reads, turn)
 		return nil, errors.New("host unavailable")
 	}
-	return h.observationHost.ReadTurn(thread, turn)
+	return h.observationHost.ReadTurn(context.Background(), thread, turn)
 }
 
 func TestTurnsTheHostCannotAnswerDoNotHoldTheFrontOfTheLine(t *testing.T) {

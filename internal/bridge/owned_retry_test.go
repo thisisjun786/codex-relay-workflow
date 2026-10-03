@@ -12,6 +12,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 func Test_test_list_preserves_long_cursor(t *testing.T) {
@@ -23,7 +24,7 @@ func Test_test_list_preserves_long_cursor(t *testing.T) {
 		t.Fatalf("first=%v err=%v", first, err)
 	}
 	second, err := b.ListThreads(context.Background(), "", 1, cursor)
-	if err != nil || object(first["data"].([]any)[0])["id"] == object(second["data"].([]any)[0])["id"] || hostParams(t, host, "thread/list")["limit"] != float64(1) {
+	if err != nil || pyjson.Map(first["data"].([]any)[0])["id"] == pyjson.Map(second["data"].([]any)[0])["id"] || hostParams(t, host, "thread/list")["limit"] != float64(1) {
 		t.Fatalf("second=%v err=%v calls=%v", second, err, host.Requests())
 	}
 	var params map[string]any
@@ -57,7 +58,7 @@ func Test_test_a_lost_read_before_a_message_leaves_the_request_id_usable(t *test
 		t.Fatalf("retry=%v err=%v calls=%v", retried, err, host.Requests())
 	}
 	stored, err := b.GetOperation(context.Background(), "message")
-	if err != nil || object(stored["priorAttempts"].([]any)[0])["status"] != "not_attempted" {
+	if err != nil || pyjson.Map(stored["priorAttempts"].([]any)[0])["status"] != "not_attempted" {
 		t.Fatalf("stored=%v err=%v", stored, err)
 	}
 }

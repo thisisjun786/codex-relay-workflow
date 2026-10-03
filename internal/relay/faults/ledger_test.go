@@ -46,7 +46,7 @@ func state(t *testing.T, l *Ledger, ctx context.Context, id string) string {
 	if e != nil {
 		t.Fatal(e)
 	}
-	return text(r, "state")
+	return r.Text("state")
 }
 func record(t *testing.T, l *Ledger, ctx context.Context, o Observation) bool {
 	t.Helper()
@@ -235,8 +235,8 @@ func Test22_FLT_3_EvidenceBoundedByValue(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	items := loadsMap("{\"items\":" + text(r, "evidence") + "}")["items"].([]any)
-	if items[0].(map[string]any)["observed"].(map[string]any)["state"] != "failed" || evidenceDigest(items) != text(r, "evidence_digest") {
+	items := loadsMap("{\"items\":" + r.Text("evidence") + "}")["items"].([]any)
+	if items[0].(map[string]any)["observed"].(map[string]any)["state"] != "failed" || evidenceDigest(items) != r.Text("evidence_digest") {
 		t.Fatal("evidence not stored by value with its digest")
 	}
 	o.OccurrenceKey = "b"
@@ -249,7 +249,7 @@ func Test22_FLT_3_EvidenceBoundedByValue(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	items = loadsMap("{\"items\":" + text(r, "evidence") + "}")["items"].([]any)
+	items = loadsMap("{\"items\":" + r.Text("evidence") + "}")["items"].([]any)
 	if len(items) != 8 || integer(r, "truncated") != 1 {
 		t.Fatal("evidence bound failed")
 	}

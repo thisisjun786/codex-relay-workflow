@@ -8,8 +8,8 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
@@ -52,7 +52,7 @@ func observeTurn(ctx context.Context, state, socket, thread, turn string) (statu
 		return "", err
 	}
 	defer func() { err = errors.Join(err, a.Close()) }()
-	observed, err := a.ReadTurn(thread, turn)
+	observed, err := a.ReadTurn(ctx, thread, turn)
 	if err != nil {
 		return "", unconfirmedTurn(turn, err)
 	}
@@ -150,7 +150,7 @@ func hostCommand(ctx context.Context, command, state, socket string, args map[st
 	rc := delivery.NewReconciler(d)
 	switch command {
 	case "deliver":
-		if id := text(args["--event"]); id != "" {
+		if id := pyjson.Text(args["--event"]); id != "" {
 			record, e := d.Attempt(ctx, id, a, nil, "")
 			if e != nil {
 				return nil, e
@@ -164,10 +164,7 @@ func hostCommand(ctx context.Context, command, state, socket string, args map[st
 			}
 			return contract.OrderedObject{{Key: "attempt", Value: value}}, nil
 		}
-		limit, e := hostLimit(args["--limit"])
-		if e != nil {
-			return nil, e
-		}
+		limit := hostLimit(args["--limit"])
 		rows, e := d.Eligible(ctx, clock.Now(), limit, limit, 0)
 		if e != nil {
 			return nil, e
@@ -189,7 +186,7 @@ func hostCommand(ctx context.Context, command, state, socket string, args map[st
 		}
 		return contract.OrderedObject{{Key: "attempts", Value: attempts}}, nil
 	case "reconcile":
-		out, e := rc.ReconcileAttempt(ctx, text(args["--request-id"]), a, nil)
+		out, e := rc.ReconcileAttempt(ctx, pyjson.Text(args["--request-id"]), a, nil)
 		if e != nil {
 			if strings.HasPrefix(e.Error(), "KeyError: ") {
 				return nil, &dispatch.PayloadExit{Code: contract.ExitHost, Payload: contract.OrderedObject{{Key: "error", Value: "host"}, {Key: "detail", Value: e.Error()}}}
@@ -211,21 +208,15 @@ func hostCommand(ctx context.Context, command, state, socket string, args map[st
 		}
 		return append(out, contract.Field{Key: "anchorsBound", Value: bound}), nil
 	case "ack":
-		return delivery.AckCommand(ctx, ack, rc, a, text(args["--event"]), text(args["--ack-turn"]), text(args["--ack-proof"]), args["--reject"])
+		return delivery.AckCommand(ctx, ack, rc, a, pyjson.Text(args["--event"]), pyjson.Text(args["--ack-turn"]), pyjson.Text(args["--ack-proof"]), args["--reject"])
 	case "verify-acks":
-		limit, e := hostLimit(args["--limit"])
-		if e != nil {
-			return nil, e
-		}
-		return delivery.VerifyAcksCommand(ctx, ack, rc, a, limit)
+		return delivery.VerifyAcksCommand(ctx, ack, rc, a, hostLimit(args["--limit"]))
 	}
 	return nil, &HostUnavailable{"unknown host command: " + command}
 }
 
-// hostLimit is a host command's --limit as SQLite binds it: the *big.Int argparse parsed from
-// the argument, or the int64 default when none was given. One past int64 is the overflow the
-// command answers as a host error, exit 3.
-func hostLimit(value any) (int, error) {
-	n, err := argparse.SQLiteInteger(argparse.IntegerValue(value))
-	return int(n), err
+// hostLimit is a host command's --limit: the int64 the parser read from the line, else the
+// command's int64 default. A value past int64 is refused by the parser before this runs.
+func hostLimit(value any) int {
+	return int(value.(int64))
 }

@@ -52,7 +52,7 @@ func decodeRoute(row store.Row) (Object, error) {
 		}
 	}
 	unknown := []string{}
-	for _, key := range sortedKeys(object(out["target"])) {
+	for _, key := range sortedKeys(pyjson.Map(out["target"])) {
 		found := false
 		for _, k := range targetKeys {
 			if key == k {
@@ -95,7 +95,7 @@ func (r RouteStore) Upsert(ctx context.Context, value Object) error {
 	}
 	_, replace := value["goal"]
 	stamp := r.Clock.ISO()
-	return r.Store.UpsertIncidentRoute(ctx, store.IncidentRoutesRow{FaultID: text(value["fault_id"]), ProductKey: text(value["product"]), Workspace: text(value["workspace"]), Disposition: text(value["disposition"]), Stage: text(value["stage"]), Target: target, Origin: text(value["origin"]), ClaimedSeverity: text(value["claimed_severity"]), Goal: nullText(value["goal"]), Classification: classification, SupersededBy: nullText(value["superseded_by"]), Detail: sql.NullString{String: text(value["detail"]), Valid: true}, CreatedAt: stamp, UpdatedAt: stamp}, replace)
+	return r.Store.UpsertIncidentRoute(ctx, store.IncidentRoutesRow{FaultID: pyjson.Text(value["fault_id"]), ProductKey: pyjson.Text(value["product"]), Workspace: pyjson.Text(value["workspace"]), Disposition: pyjson.Text(value["disposition"]), Stage: pyjson.Text(value["stage"]), Target: target, Origin: pyjson.Text(value["origin"]), ClaimedSeverity: pyjson.Text(value["claimed_severity"]), Goal: nullText(value["goal"]), Classification: classification, SupersededBy: nullText(value["superseded_by"]), Detail: sql.NullString{String: pyjson.Text(value["detail"]), Valid: true}, CreatedAt: stamp, UpdatedAt: stamp}, replace)
 }
 func incidentID(fault, key string) string {
 	sum := sha256.Sum256([]byte(fault + "|" + key))
@@ -106,7 +106,7 @@ func (r RouteStore) StoreIncident(ctx context.Context, fault string, incident Ob
 	if err != nil {
 		return err
 	}
-	return r.Store.StoreRouteIncident(ctx, incidentID(fault, text(incident["occurrenceKey"])), fault, record, r.Clock.ISO(), keep, replace)
+	return r.Store.StoreRouteIncident(ctx, incidentID(fault, pyjson.Text(incident["occurrenceKey"])), fault, record, r.Clock.ISO(), keep, replace)
 }
 func (r RouteStore) Incidents(ctx context.Context, fault string) ([]any, error) {
 	rows, err := r.Store.RouteIncidents(ctx, fault)
@@ -184,7 +184,7 @@ func (r RouteStore) Listing(ctx context.Context, product any, stages, dispositio
 	}
 	var next any
 	if int64(len(rows)) > bound {
-		next = object(page[len(page)-1])["seq"]
+		next = pyjson.Map(page[len(page)-1])["seq"]
 	}
 	return Object{"routes": page, "next": next}, nil
 }

@@ -249,7 +249,7 @@ func (sw *Sweeper) RecordAll(ctx context.Context, ledger *Ledger, batch Batch) (
 		if alias, e := sw.Store.One(ctx, "SELECT fault_id FROM fault_aliases WHERE alias_id=?", id); e != nil {
 			return answer, e
 		} else if alias != nil {
-			id = text(alias, "fault_id")
+			id = alias.Text("fault_id")
 		}
 		before, e := sw.Store.One(ctx, "SELECT state FROM fault_publications WHERE fault_id=? AND state='pending' ORDER BY rowid DESC LIMIT 1", id)
 		if e != nil {
@@ -278,13 +278,13 @@ func (sw *Sweeper) RecordAll(ctx context.Context, ledger *Ledger, batch Batch) (
 		if row == nil && o.Cleared {
 			answer.Results = append(answer.Results, map[string]any{"faultId": id, "recorded": false, "state": nil, "occurrenceCount": 0, "publication": nil, "reason": "a clearing observation for a fault that was never recorded"})
 		} else if !recorded {
-			answer.Results = append(answer.Results, map[string]any{"faultId": id, "recorded": false, "state": text(row, "state"), "occurrenceCount": integer(row, "occurrence_count"), "publication": nil, "reason": "this occurrence was already recorded in this episode"})
+			answer.Results = append(answer.Results, map[string]any{"faultId": id, "recorded": false, "state": row.Text("state"), "occurrenceCount": integer(row, "occurrence_count"), "publication": nil, "reason": "this occurrence was already recorded in this episode"})
 		} else {
 			var publication any
 			if before == nil {
 				publication = publicationAnswer(ctx, ledger, id, true)
 			}
-			answer.Results = append(answer.Results, map[string]any{"faultId": id, "recorded": true, "state": text(row, "state"), "cycle": integer(row, "cycle"), "severity": text(row, "severity"), "occurrenceCount": integer(row, "occurrence_count"), "suppression": loadsMap(text(row, "suppression")), "publication": publication})
+			answer.Results = append(answer.Results, map[string]any{"faultId": id, "recorded": true, "state": row.Text("state"), "cycle": integer(row, "cycle"), "severity": row.Text("severity"), "occurrenceCount": integer(row, "occurrence_count"), "suppression": loadsMap(row.Text("suppression")), "publication": publication})
 		}
 		if recorded {
 			answer.Recorded++
@@ -303,7 +303,7 @@ func (sw *Sweeper) readCursors(ctx context.Context) (map[string]any, error) {
 	rows, err := sw.Store.All(ctx, "SELECT source, position FROM fault_cursors")
 	out := map[string]any{}
 	for _, r := range rows {
-		out[text(r, "source")] = r.Get("position")
+		out[r.Text("source")] = r.Get("position")
 	}
 	return out, err
 }
@@ -486,10 +486,10 @@ func (sw *Sweeper) scopeOf(ctx context.Context, rid any, cache map[string]map[st
 	}
 	found := map[string]any{}
 	if r != nil {
-		if p := text(r, "project_key"); p != "" {
+		if p := r.Text("project_key"); p != "" {
 			found["projectKey"] = p
 		}
-		if k := text(r, "issue_key"); k != "" {
+		if k := r.Text("issue_key"); k != "" {
 			found["issueKey"] = k
 		}
 	}
@@ -653,24 +653,24 @@ func (sw *Sweeper) deliveryFaults(ctx context.Context, product string, cursor an
 	scopes := map[string]map[string]any{}
 	cache := map[string]bool{}
 	for _, r := range rows {
-		ok, err := sw.current(ctx, text(r, "event_id"), cache)
+		ok, err := sw.current(ctx, r.Text("event_id"), cache)
 		if err != nil {
 			return page{}, err
 		}
 		if !ok {
 			continue
 		}
-		hold := text(r, "hold_reason")
+		hold := r.Text("hold_reason")
 		capped := integer(r, "attempt_count") >= sw.MaxAttempts
 		parked := contains(parentHolds, hold)
-		key := text(r, "last_request")
+		key := r.Text("last_request")
 		if key == "" {
-			key = text(r, "event_id")
+			key = r.Text("event_id")
 		}
 		occurrenceKey := "delivery:" + key
 		if contains(unknownSendHolds, hold) {
 			occurrenceKey += ":held:" + hold
-			if request := text(r, "last_request"); request != "" {
+			if request := r.Text("last_request"); request != "" {
 				named, err := sw.Store.One(ctx, "SELECT MAX(seq) AS seq FROM journal WHERE kind = ? AND subject = ?", holdNamed, request)
 				if err != nil {
 					return page{}, err
@@ -688,8 +688,8 @@ func (sw *Sweeper) deliveryFaults(ctx context.Context, product string, cursor an
 		if err != nil {
 			return page{}, err
 		}
-		recipient := text(r, "recipient_task_id")
-		settings, cause, err := sw.settingsItems(ctx, text(r, "event_id"), recipient, "", nil, text(r, "state") == "withheld_pre_send" || text(r, "state") == "inbox_only")
+		recipient := r.Text("recipient_task_id")
+		settings, cause, err := sw.settingsItems(ctx, r.Text("event_id"), recipient, "", nil, r.Text("state") == "withheld_pre_send" || r.Text("state") == "inbox_only")
 		if err != nil {
 			return page{}, err
 		}
@@ -700,7 +700,7 @@ func (sw *Sweeper) deliveryFaults(ctx context.Context, product string, cursor an
 		obs = append(obs, Observation{Product: product, FaultClass: "delivery_stalled", Severity: severity,
 			Signature: map[string]any{"recipient": recipient, "attemptState": r.Get("last_state")}, OccurrenceKey: occurrenceKey, Scope: scope,
 			Detail: detail,
-			Evidence: append(append([]any{evidence("row", "deliveries:"+text(r, "event_id"), map[string]any{"state": r.Get("state"), "holdReason": r.Get("hold_reason"), "attemptCount": r.Get("attempt_count"), "lastAttemptState": r.Get("last_state"), "relationship": r.Get("relationship_id")})}, settings...),
+			Evidence: append(append([]any{evidence("row", "deliveries:"+r.Text("event_id"), map[string]any{"state": r.Get("state"), "holdReason": r.Get("hold_reason"), "attemptCount": r.Get("attempt_count"), "lastAttemptState": r.Get("last_state"), "relationship": r.Get("relationship_id")})}, settings...),
 				sw.facts("the delivery reaches "+recipient, fmt.Sprintf("held (%s) after %d attempts; the last settled attempt ended %s", hold, integer(r, "attempt_count"), pyStr(r.Get("last_state"))),
 					"the recipient is not given this delivery while the hold stands", []any{"read from settled attempts only; one still in flight is not counted"},
 					map[string]any{"event": r.Get("event_id"), "relationship": r.Get("relationship_id"), "generation": r.Get("generation"), "turn": r.Get("turn")}))})
@@ -727,22 +727,22 @@ func (sw *Sweeper) retryFaults(ctx context.Context, product string, cursor any) 
 	scopes := map[string]map[string]any{}
 	cache := map[string]bool{}
 	for _, r := range rows {
-		ok, err := sw.current(ctx, text(r, "event_id"), cache)
+		ok, err := sw.current(ctx, r.Text("event_id"), cache)
 		if err != nil {
 			return page{}, err
 		}
 		if !ok {
 			continue
 		}
-		cause, err := sw.attemptSettingsCause(ctx, text(r, "event_id"), text(r, "request_id"))
+		cause, err := sw.attemptSettingsCause(ctx, r.Text("event_id"), r.Text("request_id"))
 		if err != nil {
 			return page{}, err
 		}
-		settings, settingsReason, err := sw.settingsItems(ctx, text(r, "event_id"), text(r, "recipient_task_id"), text(r, "request_id"), cause, integer(r, "attempt_no") == integer(r, "latest_settled") && text(r, "delivery_state") == "withheld_pre_send")
+		settings, settingsReason, err := sw.settingsItems(ctx, r.Text("event_id"), r.Text("recipient_task_id"), r.Text("request_id"), cause, integer(r, "attempt_no") == integer(r, "latest_settled") && r.Text("delivery_state") == "withheld_pre_send")
 		if err != nil {
 			return page{}, err
 		}
-		hold := text(r, "hold_reason")
+		hold := r.Text("hold_reason")
 		severity := Degraded
 		if hold != "" && hold != busyCap {
 			severity = Broken
@@ -751,15 +751,15 @@ func (sw *Sweeper) retryFaults(ctx context.Context, product string, cursor any) 
 		if err != nil {
 			return page{}, err
 		}
-		recipient, state := text(r, "recipient_task_id"), text(r, "attempt_state")
+		recipient, state := r.Text("recipient_task_id"), r.Text("attempt_state")
 		detail := fmt.Sprintf("an attempt to deliver to %s ended %s", recipient, state)
 		if settingsReason != "" {
 			detail += ": settings " + settingsReason
 		}
 		obs = append(obs, Observation{Product: product, FaultClass: "delivery_stalled", Severity: severity,
-			Signature: map[string]any{"recipient": recipient, "attemptState": state}, OccurrenceKey: "delivery:" + text(r, "request_id"), Scope: scope,
+			Signature: map[string]any{"recipient": recipient, "attemptState": state}, OccurrenceKey: "delivery:" + r.Text("request_id"), Scope: scope,
 			Detail: detail,
-			Evidence: append(append([]any{evidence("row", "attempts:"+text(r, "request_id"), map[string]any{"attemptState": state, "deliveryState": r.Get("delivery_state"), "holdReason": r.Get("hold_reason"), "attemptCount": r.Get("attempt_count"), "event": r.Get("event_id")})}, settings...),
+			Evidence: append(append([]any{evidence("row", "attempts:"+r.Text("request_id"), map[string]any{"attemptState": state, "deliveryState": r.Get("delivery_state"), "holdReason": r.Get("hold_reason"), "attemptCount": r.Get("attempt_count"), "event": r.Get("event_id")})}, settings...),
 				sw.facts("the attempt reaches "+recipient, "the attempt ended "+state, "the delivery is retried and has not reached its recipient", []any{"one occurrence per settled failed attempt; attempts in flight are not read"},
 					map[string]any{"event": r.Get("event_id"), "relationship": r.Get("relationship_id"), "generation": r.Get("generation"), "turn": r.Get("turn")}))})
 	}
@@ -787,7 +787,7 @@ func (sw *Sweeper) attemptSettingsCause(ctx context.Context, event, request stri
 	if best == nil {
 		return nil, nil
 	}
-	refusal, _ := loadsMap(text(best, "detail"))["settingsRefusal"].(map[string]any)
+	refusal, _ := loadsMap(best.Text("detail"))["settingsRefusal"].(map[string]any)
 	if _, ok := refusal["reason"].(string); ok {
 		return refusal, nil
 	}
@@ -819,9 +819,9 @@ func (sw *Sweeper) recovered(ctx context.Context, product string, cursor any) ([
 	var clears []Observation
 	undeterminedGaps := []any{}
 	for _, r := range rows {
-		class := text(r, "fault_class")
-		signature := loadsMap(text(r, "signature"))
-		stored := loadsMap(text(r, "scope"))["workspace"]
+		class := r.Text("fault_class")
+		signature := loadsMap(r.Text("signature"))
+		stored := loadsMap(r.Text("scope"))["workspace"]
 		if stored != nil && stored != sw.Workspace {
 			candidate := FaultIDInWorkspace(product, class, signature, sw.Workspace)
 			alias, e := sw.Store.One(ctx, "SELECT fault_id FROM fault_aliases WHERE alias_id=?", candidate)
@@ -829,9 +829,9 @@ func (sw *Sweeper) recovered(ctx context.Context, product string, cursor any) ([
 				return nil, nil, nil, e
 			}
 			if alias != nil {
-				candidate = text(alias, "fault_id")
+				candidate = alias.Text("fault_id")
 			}
-			if candidate != text(r, "fault_id") {
+			if candidate != r.Text("fault_id") {
 				continue
 			}
 		}
@@ -848,22 +848,22 @@ func (sw *Sweeper) recovered(ctx context.Context, product string, cursor any) ([
 			return nil, nil, nil, err
 		}
 		if undetermined {
-			undeterminedGaps = append(undeterminedGaps, map[string]any{"gap": "presence_undetermined", "faultId": text(r, "fault_id"), "reason": "more than 128 deliveries to judge; the next sweep continues and nothing is cleared yet"})
+			undeterminedGaps = append(undeterminedGaps, map[string]any{"gap": "presence_undetermined", "faultId": r.Text("fault_id"), "reason": "more than 128 deliveries to judge; the next sweep continues and nothing is cleared yet"})
 			continue
 		}
 		if present {
 			continue
 		}
-		last, err := sw.Store.One(ctx, "SELECT occurrence_id FROM fault_occurrences WHERE fault_id = ? AND cleared = 0 ORDER BY rowid DESC LIMIT 1", text(r, "fault_id"))
+		last, err := sw.Store.One(ctx, "SELECT occurrence_id FROM fault_occurrences WHERE fault_id = ? AND cleared = 0 ORDER BY rowid DESC LIMIT 1", r.Text("fault_id"))
 		if err != nil {
 			return nil, nil, nil, err
 		}
 		key := fmt.Sprintf("cleared:after:%d", integer(r, "cycle"))
 		if last != nil {
-			key = "cleared:after:" + text(last, "occurrence_id")
+			key = "cleared:after:" + last.Text("occurrence_id")
 		}
 		clears = append(clears, Observation{Product: product, FaultClass: class, Severity: Notice, Signature: signature, OccurrenceKey: key,
-			Scope: loadsMap(text(r, "scope")), Cleared: true, Detail: "this sweep read the source and no longer derives this fault",
+			Scope: loadsMap(r.Text("scope")), Cleared: true, Detail: "this sweep read the source and no longer derives this fault",
 			Evidence: []any{evidence("sweep", class, map[string]any{"derived": false})}})
 	}
 	var next any
@@ -903,19 +903,19 @@ func (sw *Sweeper) stillPresent(ctx context.Context, signature map[string]any) (
 			if sw.SupersessionReason == nil {
 				return true, false, sw.noteOvertaken(ctx, overtaken)
 			}
-			reason, err := sw.SupersessionReason(ctx, text(r, "event_id"))
+			reason, err := sw.SupersessionReason(ctx, r.Text("event_id"))
 			if err != nil {
 				return false, false, err
 			}
 			if reason == "" {
 				return true, false, sw.noteOvertaken(ctx, overtaken)
 			}
-			overtaken = append(overtaken, text(r, "event_id")+"\x00"+reason)
+			overtaken = append(overtaken, r.Text("event_id")+"\x00"+reason)
 		}
 		if len(rows) < sweepLimit {
 			return false, false, sw.noteOvertaken(ctx, overtaken)
 		}
-		after = text(rows[len(rows)-1], "event_id")
+		after = rows[len(rows)-1].Text("event_id")
 	}
 }
 

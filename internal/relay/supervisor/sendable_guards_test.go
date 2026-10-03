@@ -26,13 +26,13 @@ type guardHost struct {
 	reads, sends int
 }
 
-func (h *guardHost) ReadThread(id string) (delivery.ThreadFacts, error) {
+func (h *guardHost) ReadThread(_ context.Context, id string) (delivery.ThreadFacts, error) {
 	h.reads++
-	return h.sendHost.ReadThread(id)
+	return h.sendHost.ReadThread(context.Background(), id)
 }
-func (h *guardHost) SendMessage(id, thread, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
+func (h *guardHost) SendMessage(_ context.Context, id, thread, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
 	h.sends++
-	return h.sendHost.SendMessage(id, thread, message, settings)
+	return h.sendHost.SendMessage(context.Background(), id, thread, message, settings)
 }
 
 func newGuardHost() *guardHost { return &guardHost{sendHost: &sendHost{status: "idle"}} }

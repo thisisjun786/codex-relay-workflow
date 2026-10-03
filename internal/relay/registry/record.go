@@ -35,12 +35,12 @@ func findingRefusal(finding contract.OrderedObject) error {
 func (r *Registry) RecordSettings(ctx context.Context, task string, settings contract.OrderedObject, source, role string, citation Citation) (contract.OrderedObject, error) {
 	settings = copyObject(settings)
 	if role != "" {
-		settings = setField(settings, "citedRole", role)
+		settings = settings.Set("citedRole", role)
 	}
 	if citation.Clear {
 		settings = dropField(settings, "citedException")
 	} else if citation.Set {
-		settings = setField(settings, "citedException", citation.ID)
+		settings = settings.Set("citedException", citation.ID)
 	}
 	if err := (TaskSettings{settings}).RequireUsable(); err != nil {
 		return nil, err
@@ -66,7 +66,7 @@ func (r *Registry) RecordSettings(ctx context.Context, task string, settings con
 					pyvalue.StrRepr(task), pyvalue.Repr(carried), pyvalue.StrRepr(role))
 			}
 			if carried != nil && role == "" {
-				settings = setField(settings, "citedRole", carried)
+				settings = settings.Set("citedRole", carried)
 			}
 		}
 		bound, contested, err := boundRole(ctx, r.Store, task)
@@ -85,7 +85,7 @@ func (r *Registry) RecordSettings(ctx context.Context, task string, settings con
 				}
 			}
 			if carried != nil && stillNeeded && (unchanged || source != UserTransition) {
-				settings = setField(settings, "citedException", carried)
+				settings = settings.Set("citedException", carried)
 			}
 		}
 		if contested != nil {
@@ -198,19 +198,19 @@ func (r *Registry) SettingsShow(ctx context.Context, task string) (contract.Orde
 
 // describe is rolepolicy.describe.
 func describe(finding contract.OrderedObject) string {
-	if v, _ := getField(finding, "undeclared"); v == true {
+	if v, _ := finding.Lookup("undeclared"); v == true {
 		return "this host's execution policy declares no such role, so its authorization cannot be checked"
 	}
-	_, hasRecorded := getField(finding, "recorded")
-	if cited, _ := getField(finding, "citedException"); cited != nil && !hasRecorded {
+	_, hasRecorded := finding.Lookup("recorded")
+	if cited, _ := finding.Lookup("citedException"); cited != nil && !hasRecorded {
 		return "its record cites exception " + pyvalue.Repr(cited) + ", which this policy does not authorize for that role with this pair and directory"
 	}
 	if hasRecorded {
-		recorded, _ := getField(finding, "recorded")
-		expected, _ := getField(finding, "expected")
+		recorded, _ := finding.Lookup("recorded")
+		expected, _ := finding.Lookup("expected")
 		return "its recorded authorization is " + pyvalue.Repr(recorded) + " while the policy for that role is " + pyvalue.Repr(expected)
 	}
-	if detail, ok := getField(finding, "detail"); ok {
+	if detail, ok := finding.Lookup("detail"); ok {
 		if text, ok := detail.(string); ok {
 			return text
 		}
@@ -262,11 +262,11 @@ func CheckBoundRole(ctx context.Context, s *store.Store, task string, settings c
 			"pass.", pyvalue.StrRepr(task), pyvalue.StrRepr(role), policy.Detail)
 	}
 	if finding := CheckRecord(settings, role, policy); finding != nil {
-		recovery, ok := getField(finding, "recovery")
+		recovery, ok := finding.Lookup("recovery")
 		if !ok {
 			recovery = RoleRecovery
 		}
-		digest, _ := getField(finding, "digest")
+		digest, _ := finding.Lookup("digest")
 		return role, false, refuse(contract.RefusalReason(findingText(finding, "code")), "%s is bound as %s: %s (policy %v). Nothing was sent and no turn was started. %v",
 			pyvalue.StrRepr(task), pyvalue.StrRepr(role), describe(finding), digest, recovery)
 	}

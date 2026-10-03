@@ -31,7 +31,7 @@ func checksDigest(required []string, checks []any) string {
 		o, _ := evidence.Object(entry)
 		fields := make([]string, 0, 5)
 		for _, name := range []string{"runId", "name", "headSha", "conclusion", "attempt"} {
-			v, present := evidence.Lookup(o, name)
+			v, present := o.Lookup(name)
 			if !present {
 				fields = append(fields, "")
 				continue
@@ -75,12 +75,22 @@ func (s *Service) Check(ctx context.Context, turn, actor, head, base string, che
 	}
 	var tip Tip
 	unread := "the turn was not holding this ready candidate when the call began, and changed during it; call again"
+	// moved is how the branch got from the last landing's recorded base to the tip, read here
+	// like the tip, before the transaction; nil when there is no landing or nothing moved.
+	var moved *moveReading
 	if err == nil && early.HolderTaskID == actor && early.State == Holding && early.DeclaredReady == 1 && early.CandidateHead == head {
 		tip, unread = readTarget(ctx, reader, early.Repository, early.BaseRef)
+		if tip.SHA != "" && SameCommit(base, tip.SHA) {
+			var readErr error
+			if moved, readErr = s.readMoveSinceLanding(ctx, early, tip, reader); readErr != nil {
+				return nil, readErr
+			}
+		}
 	}
 	at := s.now()
 	var refusal *registry.CoordinationRefusal
 	var verified any
+	var restated map[string]any
 	err = s.Store.Transaction(ctx, func(tx context.Context, _ *sql.Conn) error {
 		row, e := s.row(tx, turn)
 		if e != nil {
@@ -141,10 +151,18 @@ func (s *Service) Check(ctx context.Context, turn, actor, head, base string, che
 			if landing != nil {
 				observed, _ := landing.Get("observed_base_sha").(string)
 				if !SameCommit(observed, base) {
-					holder, _ := landing.Get("holder_task_id").(string)
-					project, _ := landing.Get("project_key").(string)
-					landed, _ := landing.Get("turn_id").(string)
-					refuse(contract.RefusalMergeCurrencyStale, "the last landing on this target, turn "+pyvalue.StrRepr(landed)+", recorded base "+pyvalue.StrRepr(observed)+" and this restates "+pyvalue.StrRepr(base)+"; the base moved under the candidate. If that recorded base is wrong, the landing's holder "+pyvalue.StrRepr(holder)+" or the supervisor above project "+pyvalue.StrRepr(project)+" re-reads it with merge-turn-restate-base --turn "+landed, observed, base)
+					// The base moved after the last landing. When the move is confirmed as merges made
+					// outside the lane, the lane records the base again itself and the check goes on;
+					// otherwise the refusal says what is known and how to repair it.
+					done, detail, e := s.restateAfterOutOfLaneMerge(tx, row, landing, actor, base, tip, moved, id, at)
+					if e != nil {
+						return e
+					}
+					if done != nil {
+						restated = done
+					} else {
+						refuse(contract.RefusalMergeCurrencyStale, detail, observed, base)
+					}
 				}
 			}
 		}
@@ -194,6 +212,9 @@ func (s *Service) Check(ctx context.Context, turn, actor, head, base string, che
 	answer["checkId"] = id
 	answer["requiredDeclared"] = required
 	answer["headVerifiedAgainst"] = verified
+	if restated != nil {
+		answer["landingBaseRestated"] = restated
+	}
 	return answer, nil
 }
 
@@ -206,7 +227,7 @@ func (s *Service) relationshipRefusal(ctx context.Context, row store.MergeTurnsR
 		return nil, nil, err
 	}
 	if o, ok := attachment.(contract.OrderedObject); ok {
-		if project := field(o, "projectKey"); project != nil && project != row.ProjectKey {
+		if project := o.Get("projectKey"); project != nil && project != row.ProjectKey {
 			return nil, &registry.CoordinationRefusal{Reason: contract.RefusalForeignScope, Detail: "relationship " + pyvalue.StrRepr(rid) + " belongs to project " + pyvalue.Repr(project) + ", not " + pyvalue.StrRepr(row.ProjectKey), Domain: registry.DomainMergeTarget, Subject: row.TargetKey, Challenger: actor}, nil
 		}
 	}

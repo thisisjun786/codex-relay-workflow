@@ -15,6 +15,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/managed"
 )
@@ -87,7 +88,7 @@ func (a *Adapter) RequireLedger(ctx context.Context, expected map[string]any) er
 	if captured == nil {
 		return &HostUnavailable{"this adapter has no ledger to revalidate"}
 	}
-	observed, err := LedgerIdentity(text(captured["realPath"]))
+	observed, err := LedgerIdentity(pyjson.Text(captured["realPath"]))
 	if err != nil {
 		return &HostUnavailable{"ledger identity changed or is unknown; refusing before mutation"}
 	}
@@ -139,24 +140,24 @@ func (a *Adapter) reads(ctx context.Context) delivery.BridgeReads {
 		return a.callOrdered(ctx, method, plain(params).(map[string]any))
 	}}
 }
-func (a *Adapter) FindDispatchedTurn(thread, turn string, sentAt float64) (delivery.TurnPresence, error) {
-	ctx, release, err := a.admitRead(context.Background())
+func (a *Adapter) FindDispatchedTurn(ctx context.Context, thread, turn string, sentAt float64) (delivery.TurnPresence, error) {
+	ctx, release, err := a.admitRead(ctx)
 	if err != nil {
 		return delivery.TurnPresence{}, err
 	}
 	defer release()
 	return a.reads(ctx).FindDispatchedTurn(thread, turn, sentAt)
 }
-func (a *Adapter) FindTokenSince(thread, token string, older []string, limit int) (delivery.TokenScan, error) {
-	ctx, release, err := a.admitRead(context.Background())
+func (a *Adapter) FindTokenSince(ctx context.Context, thread, token string, older []string, limit int) (delivery.TokenScan, error) {
+	ctx, release, err := a.admitRead(ctx)
 	if err != nil {
 		return delivery.TokenScan{}, err
 	}
 	defer release()
 	return a.reads(ctx).FindTokenSince(thread, token, older, limit)
 }
-func (a *Adapter) FindTokenInTurn(thread, token, turn string, limit int) (delivery.TokenScan, error) {
-	ctx, release, err := a.admitRead(context.Background())
+func (a *Adapter) FindTokenInTurn(ctx context.Context, thread, token, turn string, limit int) (delivery.TokenScan, error) {
+	ctx, release, err := a.admitRead(ctx)
 	if err != nil {
 		return delivery.TokenScan{}, err
 	}
@@ -206,8 +207,8 @@ func (a Managed) SendMessage(ctx context.Context, in managed.SendRequest) (map[s
 	}
 	return plain(r).(map[string]any), nil
 }
-func (a Managed) ReadTurn(_ context.Context, thread, turn string) (*managed.Turn, error) {
-	r, err := a.Adapter.ReadTurn(thread, turn)
+func (a Managed) ReadTurn(ctx context.Context, thread, turn string) (*managed.Turn, error) {
+	r, err := a.Adapter.ReadTurn(ctx, thread, turn)
 	if err != nil || r == nil {
 		return nil, err
 	}

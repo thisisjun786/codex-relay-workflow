@@ -225,8 +225,8 @@ type restSuccessorHost struct {
 	threads []string
 }
 
-func (h *restSuccessorHost) SendMessage(id, thread, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
-	result, err := h.captureHost4.SendMessage(id, thread, message, settings)
+func (h *restSuccessorHost) SendMessage(_ context.Context, id, thread, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
+	result, err := h.captureHost4.SendMessage(context.Background(), id, thread, message, settings)
 	if err == nil {
 		h.threads = append(h.threads, thread)
 	}

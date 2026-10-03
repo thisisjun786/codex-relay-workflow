@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"math/big"
 	"slices"
 	"sort"
 	"strings"
@@ -20,17 +19,17 @@ func dBound(ctx context.Context, raw, field string, fallback, max int) (int, err
 		return fallback, nil
 	}
 	name := "--" + strings.TrimPrefix(strings.ReplaceAll(field, "_", "-"), "--")
-	n := integerArg(ctx, name, raw)
-	if n == nil {
+	n, ok := integerArg(ctx, name, raw)
+	if !ok {
 		return 0, fmt.Errorf("fault_observation_malformed: %s is a positive integer, not %s", field, raw)
 	}
-	if n.Sign() < 1 {
-		return 0, fmt.Errorf("fault_observation_malformed: %s is a positive integer, not %s", field, n.String())
+	if n < 1 {
+		return 0, fmt.Errorf("fault_observation_malformed: %s is a positive integer, not %d", field, n)
 	}
-	if n.Cmp(big.NewInt(int64(max))) > 0 {
+	if n > int64(max) {
 		return max, nil
 	}
-	return int(n.Int64()), nil
+	return int(n), nil
 }
 func dProduct(p string) error {
 	if !productName.MatchString(p) {
@@ -114,7 +113,7 @@ func dSetPolicy(ctx context.Context, l *Ledger, a map[string]string) (any, error
 		return nil, fmt.Errorf("fault_class_unregistered: '%s' is not a registered fault class, so nothing declares what would clear it", c)
 	}
 	if s != Notice && s != Degraded && s != Broken {
-		return nil, fmt.Errorf("fault_observation_malformed: severity '%s' is not one of ('notice', 'degraded', 'broken')", s)
+		return nil, fmt.Errorf("fault_observation_malformed: severity %s is not one of notice, degraded, broken", quote.Value(s))
 	}
 	if s != Degraded {
 		return nil, fmt.Errorf("fault_policy_fixed: a %s fault's policy is fixed: a broken fault files at once and a notice never files", s)
@@ -280,7 +279,7 @@ func dLimits(ctx context.Context, l *Ledger, a map[string]string) (any, error) {
 		return nil, e
 	}
 	for _, r := range rows {
-		names[text(r, "kind")] = true
+		names[r.Text("kind")] = true
 	}
 	keys := []string{}
 	for k := range names {

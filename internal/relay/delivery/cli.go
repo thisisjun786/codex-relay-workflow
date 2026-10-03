@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
@@ -143,7 +144,7 @@ func hostDetail(err error) string {
 	if encode := store.EncodeError(err); encode != nil {
 		return encode.HostDetail()
 	}
-	var overflow *argparse.IntegerOverflow
+	var overflow *store.IntegerOverflow
 	if errors.As(err, &overflow) {
 		return overflow.Error()
 	}
@@ -247,9 +248,9 @@ func AckCommand(ctx context.Context, ack *Ack, rc *Reconciler, adapter Adapter, 
 	if err != nil {
 		return nil, err
 	}
-	if why, ok := get(record, "_deliveryUnconfirmed"); ok && truthy(why) {
+	if why, ok := record.Lookup("_deliveryUnconfirmed"); ok && truthy(why) {
 		record = append(record, F{Key: "_note", Value: "kept as the parent's authored acknowledgement: the relay could not yet confirm this delivery for the turn it read (" + pyStr(why) + "). The daemon completes it once the delivery is confirmed, and a verdict completes it first; nothing needs to be acknowledged or sent again."})
-	} else if str(record, "_verified") != "verified" {
+	} else if pyjson.Text(record.Get("_verified")) != "verified" {
 		record = append(record, F{Key: "_note", Value: "recorded as the parent's authored intent; this turn is not established yet, so it does not close the attempt and cannot yet produce a verdict. Run verify-acks from a process with host access."})
 	}
 	return record, nil
@@ -273,7 +274,7 @@ func VerifyAcksCommand(ctx context.Context, ack *Ack, rc *Reconciler, adapter Ad
 		}
 		picked := Obj{}
 		for _, key := range []string{"eventId", "requestId", "confirmed", "turnRead", "error"} {
-			if v, ok := get(outcome, key); ok {
+			if v, ok := outcome.Lookup(key); ok {
 				picked = append(picked, F{Key: key, Value: v})
 			}
 		}
@@ -321,9 +322,9 @@ func cmdCriteriaShow(c *cliRun) (any, error) {
 	}
 	var criteria, digest, source any
 	if registered != nil {
-		criteria, _ = get(registered, "criteria")
-		digest, _ = get(registered, "setDigest")
-		source, _ = get(registered, "sourceRef")
+		criteria, _ = registered.Lookup("criteria")
+		digest, _ = registered.Lookup("setDigest")
+		source, _ = registered.Lookup("sourceRef")
 	}
 	return Obj{{Key: "relationshipId", Value: rid}, {Key: "mode", Value: mode}, {Key: "criteria", Value: criteria}, {Key: "setDigest", Value: digest}, {Key: "sourceRef", Value: source}}, nil
 }
@@ -339,14 +340,8 @@ func cmdRevisionHead(c *cliRun) (any, error) {
 		return nil, err
 	}
 	generation := r.Generation
-	if v := c.opt("--generation"); v != nil {
-		g := argparse.IntegerValue(v)
-		if g.Sign() != 0 {
-			generation, err = argparse.SQLiteInteger(g)
-			if err != nil {
-				return nil, err
-			}
-		}
+	if g, _ := c.opt("--generation").(int64); g != 0 {
+		generation = g
 	}
 	head, err := HeadRevision(c.ctx, d.Store, rid, generation)
 	return Obj{{Key: "relationshipId", Value: rid}, {Key: "executionGeneration", Value: generation}, {Key: "head", Value: head}}, err
@@ -407,7 +402,7 @@ func cmdVerdict(c *cliRun) (any, error) {
 				wellFormed = false
 				continue
 			}
-			if id, _ := get(o, "id"); strings.TrimSpace(pyStrOrEmpty(id)) == wanted {
+			if id, _ := o.Lookup("id"); strings.TrimSpace(pyStrOrEmpty(id)) == wanted {
 				marked = append(marked, o)
 			}
 		}
@@ -420,10 +415,10 @@ func cmdVerdict(c *cliRun) (any, error) {
 				if !ok {
 					continue
 				}
-				if id, _ := get(o, "id"); strings.TrimSpace(pyStrOrEmpty(id)) != wanted {
+				if id, _ := o.Lookup("id"); strings.TrimSpace(pyStrOrEmpty(id)) != wanted {
 					continue
 				}
-				existing, present := get(o, "restoration")
+				existing, present := o.Lookup("restoration")
 				if present && existing == false {
 					return nil, &dispatch.UsageError{Detail: "--restoration names " + strconv.Quote(wanted) + ", whose finding declares the restoration block false. One correction carries one block and says so once", Code: contract.ExitUsage}
 				}
@@ -432,7 +427,7 @@ func cmdVerdict(c *cliRun) (any, error) {
 						continue
 					}
 				}
-				list[i] = set(o, "restoration", true)
+				list[i] = o.Set("restoration", true)
 			}
 		}
 	}

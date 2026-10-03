@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"math"
 	"slices"
 	"testing"
@@ -179,7 +180,7 @@ func TestBusy_the_combined_count_holds_a_delivery_a_transport_also_found_busy(t 
 	f.host.script = []string{"busy"}
 	now := f.clock.Now()
 	record := f.mustAttempt(event, at(now))
-	if record == nil || str(record, "deliveryState") != DeferredBusy {
+	if record == nil || pyjson.Text(record.Get("deliveryState")) != DeferredBusy {
 		t.Fatalf("the transport's busy answer was not recorded as a deferred attempt: %v", record)
 	}
 	if n := f.count("SELECT COUNT(*) AS c FROM attempts WHERE event_id = ? AND state = ?", event, DeferredBusy); n != 1 {
@@ -215,10 +216,10 @@ func TestBusy_a_reconciliation_does_not_lift_the_busy_cap_the_combined_count_set
 	w.busy(false)
 	f.host.script = []string{"busy"}
 	record := f.mustAttempt(event, at(f.clock.Now()))
-	if record == nil || str(record, "deliveryState") != DeferredBusy {
+	if record == nil || pyjson.Text(record.Get("deliveryState")) != DeferredBusy {
 		t.Fatalf("the transport's busy answer was not recorded as a deferred attempt: %v", record)
 	}
-	request := str(record, "requestId")
+	request := pyjson.Text(record.Get("requestId"))
 	f.clock.T = f.row(event).F("next_eligible_at")
 	w.busy(true)
 	f.mustAttempt(event, at(f.clock.Now()))
@@ -247,10 +248,10 @@ func TestBusy_a_reconciliation_of_an_earlier_rejection_does_not_lift_the_busy_ca
 	event := w.emit(0)
 	f.host.script = []string{"read_fail"}
 	record := f.mustAttempt(event, at(f.clock.Now()))
-	if record == nil || str(record, "deliveryState") != WithheldPreSend {
+	if record == nil || pyjson.Text(record.Get("deliveryState")) != WithheldPreSend {
 		t.Fatalf("the transport's refusal was not recorded as a withheld attempt: %v", record)
 	}
-	request := str(record, "requestId")
+	request := pyjson.Text(record.Get("requestId"))
 	f.clock.T = f.row(event).F("next_eligible_at")
 	w.busy(true)
 	busyUntilDue(t, f, event, int(f.delivery.Policy.BusyMaxAttempts))
@@ -470,7 +471,7 @@ func TestBusy_only_a_busy_backoff_holds_the_line(t *testing.T) {
 			t.Fatalf("the newer delivery listed as due is %v, want %v", listed, !blocked)
 		}
 		record := f.mustAttempt(o.newer, at(now))
-		sent := record != nil && str(record, "deliveryState") == Dispatched
+		sent := record != nil && pyjson.Text(record.Get("deliveryState")) == Dispatched
 		if sent == blocked {
 			t.Fatalf("a direct attempt of the newer delivery sent=%v, want %v (the list said %v)", sent, !blocked, listed)
 		}
@@ -522,7 +523,7 @@ func TestBusy_only_a_busy_backoff_holds_the_line(t *testing.T) {
 		if !slices.Contains(ids, request) {
 			t.Fatalf("a request to the child is not due while a completion to the parent waits: %v", ids)
 		}
-		if record := f.mustAttempt(request, at(now)); record == nil || str(record, "deliveryState") != Dispatched {
+		if record := f.mustAttempt(request, at(now)); record == nil || pyjson.Text(record.Get("deliveryState")) != Dispatched {
 			t.Fatalf("a request to the child was not sent: %v", record)
 		}
 	})

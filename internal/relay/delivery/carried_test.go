@@ -12,6 +12,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -168,7 +169,7 @@ func stageAcknowledgedCompletion(t *testing.T, side *cliSide, rid string) string
 	payload := f.readyPayload(rid, 1, []string{f.artifact("out.txt", "the deliverable")}, 1, assigned("completed"))
 	_, err = f.accept(payload, store.AcceptOptions{})
 	mustDo(t, err)
-	event := str(payload, "eventId")
+	event := pyjson.Text(payload.Get("eventId"))
 	_, err = f.delivery.Enqueue(ctx, event, "", "")
 	mustDo(t, err)
 	f.mustAttempt(event, nil)
@@ -220,7 +221,7 @@ func Test25_RCT04_two_concurrent_binds_leave_one_winner_and_one_recorded_conflic
 	// The race itself, in Go.
 	root, work := filepath.Join(t.TempDir(), "markers"), t.TempDir()
 	t.Setenv(MarkerEnv, "")
-	_, err := DeclareIntent(root, IntentDeclaration{Workspace: work, DispatchRequestID: "dispatch-request-1", IssueKey: "REL-1", DeclaredAt: "2026-01-01T00:00:00+00:00"})
+	_, err := DeclareIntent(context.Background(), root, IntentDeclaration{Workspace: work, DispatchRequestID: "dispatch-request-1", IssueKey: "REL-1", DeclaredAt: "2026-01-01T00:00:00+00:00"})
 	mustDo(t, err)
 	assignment := AssignmentID("dispatch-request-1")
 	const at = "2026-01-01T00:00:00+00:00"
@@ -235,7 +236,7 @@ func Test25_RCT04_two_concurrent_binds_leave_one_winner_and_one_recorded_conflic
 			defer done.Done()
 			ready.Done()
 			<-start
-			outcomes[i], errs[i] = BindIdentity(root, work, assignment, who[0], who[1], at)
+			outcomes[i], errs[i] = BindIdentity(context.Background(), root, work, assignment, who[0], who[1], at)
 		}()
 	}
 	ready.Wait()
@@ -244,33 +245,33 @@ func Test25_RCT04_two_concurrent_binds_leave_one_winner_and_one_recorded_conflic
 	for _, err := range errs {
 		mustDo(t, err)
 	}
-	results := []string{str(outcomes[0], "outcome"), str(outcomes[1], "outcome")}
+	results := []string{pyjson.Text(outcomes[0].Get("outcome")), pyjson.Text(outcomes[1].Get("outcome"))}
 	if !(results[0] == Bound && results[1] == Conflict) && !(results[0] == Conflict && results[1] == Bound) {
 		t.Fatalf("two concurrent binds must settle as one winner and one conflict: %v", outcomes)
 	}
 	directory, err := AssignmentDir(root, work, assignment)
 	mustDo(t, err)
-	facts, _ := ReadAssignment(directory)
+	facts, _ := ReadAssignment(context.Background(), directory)
 	bound := sub(facts, "bound")
 	conflicts, _ := field(facts, "conflicts").([]any)
-	if len(conflicts) != 1 || str(conflicts[0].(Obj), "attemptedSessionId") == str(bound, "sessionId") {
+	if len(conflicts) != 1 || pyjson.Text(conflicts[0].(Obj).Get("attemptedSessionId")) == pyjson.Text(bound.Get("sessionId")) {
 		t.Fatalf("one recorded conflict naming the loser: %v", conflicts)
 	}
 	loser := outcomes[0]
 	if results[1] == Conflict {
 		loser = outcomes[1]
 	}
-	if str(loser, "boundSessionId") != str(bound, "sessionId") {
+	if pyjson.Text(loser.Get("boundSessionId")) != pyjson.Text(bound.Get("sessionId")) {
 		t.Fatalf("the loser is told the winner: %v", loser)
 	}
 	if DeriveAssignmentState(facts, at) != IdentityBound || !IdentityContested(facts) {
 		t.Fatalf("state %s contested %v", DeriveAssignmentState(facts, at), IdentityContested(facts))
 	}
 	fact := conflicts[0].(Obj)
-	_, err = PublishResolution(root, work, assignment, str(bound, "taskId"), str(bound, "sessionId"), "the winning link() is the identity", at,
+	_, err = PublishResolution(context.Background(), root, work, assignment, pyjson.Text(bound.Get("taskId")), pyjson.Text(bound.Get("sessionId")), "the winning link() is the identity", at,
 		[]Obj{{{Key: "factId", Value: field(fact, "factId")}, {Key: "digest", Value: FactDigest(fact)}}})
 	mustDo(t, err)
-	resolved, _ := ReadAssignment(directory)
+	resolved, _ := ReadAssignment(context.Background(), directory)
 	if IdentityContested(resolved) {
 		t.Fatal("a resolution naming the bound identity did not settle the contest")
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -29,6 +31,9 @@ func CorrectionInstruction(issue string, generation int64, digest, path, fileSHA
 // Prepared is what PrepareCorrection returns.
 type Prepared struct {
 	ManifestDigest, Instruction, FrozenPath string
+	// DispatchRequestID is the dispatch request id a coordinator opens the generation with when it opens it by hand (generation-open): derived from the manifest, so the generation names the manifest
+	// it was opened for (revalidation.go).
+	DispatchRequestID string
 }
 
 // PrepareCorrection rebuilds and verifies the node's input manifest from the store as it is now (the inputs may have moved since the first release), stores it, keeps a copy of its
@@ -37,6 +42,10 @@ type Prepared struct {
 func (s *Scheduler) PrepareCorrection(ctx context.Context, plan, node, actor string, in ManifestInput, opts VerifyOptions) (Prepared, error) {
 	var out Prepared
 	q := s.Store.Q(ctx)
+	// nothing is built, read from the forge or written for a session that does not hold the plan's epoch (the manifest is stored under the fence again below)
+	if err := s.fence(ctx, q, plan, actor); err != nil {
+		return out, err
+	}
 	snap, _, err := dag.SnapshotAt(ctx, q, plan, 0)
 	if err != nil {
 		return out, err
@@ -48,12 +57,19 @@ func (s *Scheduler) PrepareCorrection(ctx context.Context, plan, node, actor str
 	if err := lifecycleRefusal(snap, n, "correcting it", false); err != nil {
 		return out, err
 	}
+	// a node that landed is never run again (revalidation.go)
+	if err := s.refuseLanded(ctx, q, plan, snap, n); err != nil {
+		return out, err
+	}
 	rel, found, err := currentRelationshipOf(ctx, q, plan, node)
 	if err != nil {
 		return out, err
 	}
-	if !found || rel.Status != "active" || rel.Superseded || rel.ParentTaskID != actor {
-		return out, refuse(contract.RefusalRelationshipNotActive, "node %s has no active relationship of task %s to correct", node, actor)
+	if !found || rel.Status != "active" || rel.Superseded {
+		return out, refuse(contract.RefusalRelationshipNotActive, "node %s has no active relationship to correct", node)
+	}
+	if rel.ParentTaskID != actor {
+		return out, notParentOf(actor, rel)
 	}
 	roots, err := relationshipRoots(ctx, q, rel.ID)
 	if err != nil {
@@ -68,6 +84,14 @@ func (s *Scheduler) PrepareCorrection(ctx context.Context, plan, node, actor str
 	}
 	if len(opts.ArtifactRoots) == 0 {
 		opts.ArtifactRoots = roots
+	}
+	// the commit a correction records as its base is what the target branch reads, as in a release (the commit of a release's base is never given): a caller that states one has it checked
+	if in.Base != nil && in.Base.Repository != "" && in.Base.Ref != "" {
+		base, err := s.correctionBase(ctx, *in.Base)
+		if err != nil {
+			return out, err
+		}
+		in.Base = &base
 	}
 	in.CreatedByTaskID, in.CreatedAt = actor, s.now()
 	body, blocked, err := s.BuildManifest(ctx, q, plan, snap, n, in, opts)
@@ -87,12 +111,19 @@ func (s *Scheduler) PrepareCorrection(ctx context.Context, plan, node, actor str
 	if err != nil {
 		return out, err
 	}
+	if s.testBeforeManifestStore != nil {
+		s.testBeforeManifestStore()
+	}
 	if s.testBeforePrepareTx != nil {
 		s.testBeforePrepareTx()
 	}
-	// the plan's hold is asked again in the transaction that stores the manifest, and the file is frozen and the instruction returned only after it committed: a pause that landed while the inputs were
-	// being verified leaves no manifest and no instruction
+	// the fence and the plan's hold are asked again in the transaction that stores the manifest (PutManifest joins it), and the file is frozen and the instruction returned only after it committed: a claim
+	// that landed since the check above, or a pause that landed while the inputs were being verified, leaves no manifest and no instruction. The file written below is inert until a ruling names its
+	// manifest, which only a fenced RecordCorrection can bind.
 	if err := s.Store.Compose(ctx, func(txCtx context.Context, _ *sql.Conn) error {
+		if err := s.fence(txCtx, s.Store.Q(txCtx), plan, actor); err != nil {
+			return err
+		}
 		if err := lifecycleOpen(txCtx, s.Store.Q(txCtx), plan, node, "correcting it", false); err != nil {
 			return err
 		}
@@ -117,6 +148,7 @@ func (s *Scheduler) PrepareCorrection(ctx context.Context, plan, node, actor str
 	out.ManifestDigest = digest
 	out.FrozenPath = path
 	out.Instruction = CorrectionInstruction(n.IssueKey, rel.Generation+1, digest, path, shaOf(canonical))
+	out.DispatchRequestID = CorrectionRequestID(plan, node, digest, rel.Generation+1)
 	return out, nil
 }
 
@@ -125,6 +157,9 @@ type CorrectionResult struct {
 	PlanID, NodeID, RelationshipID, ManifestDigest string
 	Generation                                     int64
 	Replayed, CarriedOver                          bool
+	// OpenedBy is how the generation was opened: "ruling" (the relay's needs_changes ruling) or "generation_open" (opened by hand); empty for a generation that is not a correction. For one opened by hand
+	// DispatchRequestID and DispatchTurnID are how the instruction reached the child: the request id the generation was opened under and the turn it was dispatched in (revalidation.go).
+	OpenedBy, DispatchRequestID, DispatchTurnID string
 }
 
 var manifestNamePattern = regexp.MustCompile(`manifest ([0-9a-f]{64})`)
@@ -137,6 +172,9 @@ func (s *Scheduler) RecordCorrection(ctx context.Context, plan, node, actor, sup
 	out := CorrectionResult{PlanID: plan, NodeID: node}
 	err := s.Store.Compose(ctx, func(txCtx context.Context, _ *sql.Conn) error {
 		tx := s.Store.Q(txCtx)
+		if err := s.fence(txCtx, tx, plan, actor); err != nil {
+			return err
+		}
 		snap, _, err := dag.SnapshotAt(txCtx, tx, plan, 0)
 		if err != nil {
 			return err
@@ -159,7 +197,7 @@ func (s *Scheduler) RecordCorrection(ctx context.Context, plan, node, actor, sup
 			return refuse(contract.RefusalRelationshipNotActive, "the relationship %s of %s is %s: a correction goes to a child whose relationship is active", rel.ID, node, map[bool]string{true: "superseded", false: rel.Status}[rel.Superseded])
 		}
 		if rel.ParentTaskID != actor {
-			return refuse(contract.RefusalScopeRoleMismatch, "task %s is not the parent of relationship %s", actor, rel.ID)
+			return notParentOf(actor, rel)
 		}
 		out.RelationshipID, out.Generation = rel.ID, rel.Generation
 		var recorded sql.NullInt64
@@ -175,7 +213,11 @@ func (s *Scheduler) RecordCorrection(ctx context.Context, plan, node, actor, sup
 			if suppliedDigest != "" && suppliedDigest != latest {
 				return refuse(contract.RefusalDispositionConflict, "generation %d of %s is bound to manifest %s and the digest given is %s", rel.Generation, rel.ID, latest, suppliedDigest)
 			}
-			return nil
+			return s.describeOpening(txCtx, tx, plan, node, rel, &out)
+		}
+		// a new generation is bound to a node that did not land: one that did is never run again, and the generation the relay opened for it is not recorded as its own (revalidation.go)
+		if err := s.refuseLanded(txCtx, tx, plan, snap, n); err != nil {
+			return err
 		}
 		if !recorded.Valid || recorded.Int64 != rel.Generation-1 {
 			return refuse(contract.RefusalDispositionConflict, "generation %d of %s follows generation %d, and the last recorded execution of %s is %d", rel.Generation, rel.ID, rel.Generation-1, node, recorded.Int64)
@@ -196,7 +238,8 @@ func (s *Scheduler) RecordCorrection(ctx context.Context, plan, node, actor, sup
 			return err
 		}
 		if !ruled {
-			return refuse(contract.RefusalDispositionConflict, "no needs_changes ruling on generation %d of %s opened generation %d", rel.Generation-1, rel.ID, rel.Generation)
+			// nothing ruled it: the coordinator may have opened it by hand, for a result that is stale and cannot be ruled again (revalidation.go)
+			return s.recordHandOpened(txCtx, tx, plan, snap, n, rel, suppliedDigest, &out)
 		}
 		var previous string
 		if _, err := queryOne(txCtx, tx, "SELECT manifest_digest FROM dag_node_executions WHERE plan_id = ? AND node_id = ? AND relationship_id = ? AND execution_generation = ?", []any{plan, node, rel.ID, rel.Generation - 1}, &previous); err != nil {
@@ -242,7 +285,7 @@ func (s *Scheduler) RecordCorrection(ctx context.Context, plan, node, actor, sup
 		if suppliedDigest != "" && suppliedDigest != digest {
 			return refuse(contract.RefusalDispositionConflict, "the digest given (%s) is not the one the child was told (%s)", suppliedDigest, digest)
 		}
-		out.ManifestDigest = digest
+		out.ManifestDigest, out.OpenedBy = digest, OpenedByRuling
 		_, err = tx.ExecContext(txCtx, "INSERT INTO dag_node_executions (plan_id, node_id, relationship_id, execution_generation, manifest_digest, kind, managed_request_id) VALUES (?,?,?,?,?,'correction',NULL)",
 			plan, node, rel.ID, rel.Generation, digest)
 		return err
@@ -259,6 +302,29 @@ func lineSafe(s string) bool {
 		}
 	}
 	return true
+}
+
+// notParentOf is the refusal of an actor that is not the parent of the relationship a correction goes through. Both steps of a correction (preparing the manifest, recording the generation) refuse
+// that situation with it, so the reason and the text cannot differ: it is the reason every other DAG command gives for a task that is not the registered parent of what it acts on.
+func notParentOf(actor string, rel relRow) error {
+	return refuse(contract.RefusalScopeRoleMismatch, "task %s is not the parent of relationship %s", actor, rel.ID)
+}
+
+// correctionBase is the base a correction records: the commit its target branch reads now, read by the relay as a release reads it. A commit the caller states is a claim to check and not a value to
+// record: one that is not what the branch reads is refused as merge_base_mismatch, the reason the merge lane gives for the same statement ("the caller stated a base the branch does not read"). What
+// is recorded is the relay's reading, in its spelling, whatever spelling the caller used.
+func (s *Scheduler) correctionBase(ctx context.Context, given BaseRef) (BaseRef, error) {
+	if s.Tips == nil {
+		return BaseRef{}, errors.New("this scheduler has no target reader, so it cannot read the tip a correction starts from")
+	}
+	tip, err := s.Tips.Tip(ctx, given.Repository, given.Ref)
+	if err != nil {
+		return BaseRef{}, err
+	}
+	if given.SHA != "" && !mergeturn.SameCommit(given.SHA, tip.SHA) {
+		return BaseRef{}, refuse(contract.RefusalMergeBaseMismatch, "the base branch %s of %s reads %s and the request states %s; the relay records what the branch reads, so state it in full or leave the sha out", given.Ref, given.Repository, tip.SHA, given.SHA)
+	}
+	return BaseRef{Repository: given.Repository, Ref: given.Ref, SHA: tip.SHA}, nil
 }
 
 // relationshipRoots are the artifact roots of a relationship, the places its child reads and writes.

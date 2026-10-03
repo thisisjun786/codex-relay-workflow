@@ -147,31 +147,13 @@ func writeAtomic(path, prefix string, data []byte) (err error) {
 }
 
 // Lookup is dict lookup.
-func Lookup(o Object, key string) (any, bool) {
-	for _, f := range o {
-		if f.Key == key {
-			return f.Value, true
-		}
-	}
-	return nil, false
-}
+func Lookup(o Object, key string) (any, bool) { return o.Lookup(key) }
 
 // Get is dict.get(key).
-func Get(o Object, key string) any {
-	v, _ := Lookup(o, key)
-	return v
-}
+func Get(o Object, key string) any { return o.Get(key) }
 
 // Set replaces key's value in place, or appends it (dict assignment).
-func Set(o Object, key string, value any) Object {
-	for i := range o {
-		if o[i].Key == key {
-			o[i].Value = value
-			return o
-		}
-	}
-	return append(o, contract.Field{Key: key, Value: value})
-}
+func Set(o Object, key string, value any) Object { return o.Set(key, value) }
 
 // Delete is del o[key].
 func Delete(o Object, key string) Object {
@@ -185,10 +167,7 @@ func Delete(o Object, key string) Object {
 }
 
 // Text is the string at key, or "".
-func Text(o Object, key string) string {
-	s, _ := Get(o, key).(string)
-	return s
-}
+func Text(o Object, key string) string { return pyjson.Text(o.Get(key)) }
 
 // Component is hostrecord.component: the component entry with its two lists present. It
 // returns the record (which may have grown) and the entry.
@@ -366,15 +345,10 @@ type Delta struct {
 
 // Update is hostrecord.update: apply narrow deltas to state this helper loads itself, inside
 // the .crw-lock, at write time. Nothing is written when the record could not be read; the
-// returned reading says why. A lock that could not be taken is a *Busy error.
-func Update(path string, definitionVersion int, delta Delta) (reading.Reading, error) {
-	return UpdateContext(context.Background(), path, definitionVersion, delta)
-}
-
-// UpdateContext is Update whose wait for the record's lock ends, writing nothing, once ctx is
-// done.
-func UpdateContext(ctx context.Context, path string, definitionVersion int, delta Delta) (reading.Reading, error) {
-	lock, err := LockContext(ctx, path, 0)
+// returned reading says why. A lock that could not be taken is a *Busy error, and the wait for it
+// ends, writing nothing, once ctx is done.
+func Update(ctx context.Context, path string, definitionVersion int, delta Delta) (reading.Reading, error) {
+	lock, err := Lock(ctx, path, 0)
 	if err != nil {
 		return reading.Reading{}, err
 	}
@@ -461,7 +435,8 @@ func dropEnvironment(record Object, environment string) Object {
 // environment unless it is selected or the pointer may still name it. pointerNames is the
 // caller's pointer reading: true, false, or nil when it could not be established.
 func ReleaseCandidate(path string, definitionVersion int, environment string, pointerNames *bool) (reading.Reading, string) {
-	lock, err := Lock(path, 0)
+	// Releasing a candidate is cleanup after a failed install and finishes whatever the context says.
+	lock, err := Lock(context.Background(), path, 0)
 	if err != nil {
 		var busy *Busy
 		if errors.As(err, &busy) {

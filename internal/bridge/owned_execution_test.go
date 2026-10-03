@@ -11,6 +11,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 // The Python test_execution.py pairs: MODEL/EFFORT is the approved pair, UNAPPROVED is only
@@ -90,8 +91,8 @@ func Test_test_a_corrected_role_request_succeeds_under_the_same_id(t *testing.T)
 	pairStart(host, cwd, parentModel, parentEffort)
 	receipt, err := b.CreateThread(context.Background(), input)
 	start := hostParams(t, host, "thread/start")
-	expectation := object(object(receipt["executionPolicy"])["roleExpectation"])
-	if err != nil || receipt["status"] != "accepted" || start["model"] != parentModel || object(start["config"])["model_reasoning_effort"] != parentEffort || object(receipt["executionPolicy"])["role"] != "parent" || expectation["model"] != parentModel {
+	expectation := pyjson.Map(pyjson.Map(receipt["executionPolicy"])["roleExpectation"])
+	if err != nil || receipt["status"] != "accepted" || start["model"] != parentModel || pyjson.Map(start["config"])["model_reasoning_effort"] != parentEffort || pyjson.Map(receipt["executionPolicy"])["role"] != "parent" || expectation["model"] != parentModel {
 		t.Fatalf("receipt=%v err=%v", receipt, err)
 	}
 }
@@ -148,7 +149,7 @@ func Test_test_an_unavailable_model_is_an_error_and_not_a_substitution(t *testin
 	input.Prompt = "work"
 	host.Respond("thread/start", fakehost.Reply{Error: &fakehost.RPCError{Code: -32602, Message: "model is not available"}})
 	receipt, err := b.CreateThread(context.Background(), input)
-	if err != nil || receipt["status"] != "failed" || !strings.Contains(text(receipt["error"]), "model is not available") || host.Count("thread/start") != 1 || host.Count("turn/start") != 0 {
+	if err != nil || receipt["status"] != "failed" || !strings.Contains(pyjson.Text(receipt["error"]), "model is not available") || host.Count("thread/start") != 1 || host.Count("turn/start") != 0 {
 		t.Fatalf("receipt=%v err=%v calls=%v", receipt, err, host.Requests())
 	}
 }

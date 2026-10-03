@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
@@ -45,9 +46,9 @@ func Evaluate(ctx context.Context, stop Object, options GuardOptions) (verdict O
 	fault := func(cause any) {
 		verdict = faulted(stop, options.Now, options.Mode, cause)
 		if !options.NoRecord && directory != "" {
-			name, e := RecordObservation(ctx, directory, object(get(verdict, "record")), options.Root)
+			name, e := RecordObservation(ctx, directory, object(verdict.Get("record")), options.Root)
 			if e == nil {
-				verdict = set(verdict, "recordedAs", nullable(name))
+				verdict = verdict.Set("recordedAs", nullable(name))
 			}
 		}
 	}
@@ -60,25 +61,25 @@ func Evaluate(ctx context.Context, stop Object, options GuardOptions) (verdict O
 			return
 		}
 		if downgraded {
-			verdict = set(verdict, "modeDowngraded", "hold_requires_a_recorded_observation")
-			record := set(object(get(verdict, "record")), "modeDowngraded", "hold_requires_a_recorded_observation")
-			verdict = set(verdict, "record", record)
-			verdict = set(verdict, "reason", text(get(verdict, "reason"))+" Hold mode was not applied: this evaluation was asked not to record, and a hold that publishes no observation cannot be released, counted against the bounds, or audited.")
+			verdict = verdict.Set("modeDowngraded", "hold_requires_a_recorded_observation")
+			record := object(verdict.Get("record")).Set("modeDowngraded", "hold_requires_a_recorded_observation")
+			verdict = verdict.Set("record", record)
+			verdict = verdict.Set("reason", pyjson.Text(verdict.Get("reason"))+" Hold mode was not applied: this evaluation was asked not to record, and a hold that publishes no observation cannot be released, counted against the bounds, or audited.")
 		}
-		if _, ok := evidence.Lookup(verdict, "recordedAs"); !ok {
-			verdict = set(verdict, "recordedAs", nil)
+		if _, ok := verdict.Lookup("recordedAs"); !ok {
+			verdict = verdict.Set("recordedAs", nil)
 		}
 	}()
 	var marker Object
 	unreadable := []string{}
-	session, turn := get(stop, "session_id"), get(stop, "turn_id")
-	if workspace := get(stop, "cwd"); pyvalue.Truthy(workspace) {
+	session, turn := stop.Get("session_id"), stop.Get("turn_id")
+	if workspace := stop.Get("cwd"); pyvalue.Truthy(workspace) {
 		path, ok := workspace.(string)
 		if !ok {
 			fault("TypeError: expected str, bytes or os.PathLike object, not " + pyvalue.TypeName(workspace))
 			return verdict, nil
 		}
-		directory, marker, unreadable, err = delivery.SelectAssignmentContext(ctx, options.Root, path, session)
+		directory, marker, unreadable, err = delivery.SelectAssignment(ctx, options.Root, path, session)
 		if err != nil {
 			fault(err)
 			return verdict, nil
@@ -95,7 +96,7 @@ func Evaluate(ctx context.Context, stop Object, options GuardOptions) (verdict O
 			o.Malformed = "stop_identity"
 		}
 		var readable bool
-		o.Disposition, readable = delivery.ReadDispositionContext(ctx, directory, session, turn)
+		o.Disposition, readable = delivery.ReadDisposition(ctx, directory, session, turn)
 		if !readable {
 			o.Unreadable = append(o.Unreadable, "disposition")
 		}
@@ -103,13 +104,13 @@ func Evaluate(ctx context.Context, stop Object, options GuardOptions) (verdict O
 			o.Malformed = malformedDisposition(o.Disposition)
 		}
 		d, ok := evidence.Object(o.Disposition)
-		registered, rok := evidence.Object(get(marker, "relationship"))
-		if o.Malformed == "" && ok && get(d, "outcome") == "ready_for_review" && delivery.SameIdentity(get(d, "sessionId"), session) && delivery.SameIdentity(get(d, "turnId"), turn) && rok && delivery.Malformed(marker) == "" {
+		registered, rok := evidence.Object(marker.Get("relationship"))
+		if o.Malformed == "" && ok && d.Get("outcome") == "ready_for_review" && delivery.SameIdentity(d.Get("sessionId"), session) && delivery.SameIdentity(d.Get("turnId"), turn) && rok && delivery.Malformed(marker) == "" {
 			path := options.DBPath
 			if path == "" {
-				path = text(get(object(get(marker, "intent")), "dbPath"))
+				path = pyjson.Text(object(marker.Get("intent")).Get("dbPath"))
 			}
-			o.Receipt, readable, err = LookupReceipt(ctx, path, options.DefaultDBPath, get(registered, "relationshipId"), session, turn, get(registered, "executionGeneration"), delivery.ClaimedDispatch(marker, session, o.Assignment))
+			o.Receipt, readable, err = LookupReceipt(ctx, path, options.DefaultDBPath, registered.Get("relationshipId"), session, turn, registered.Get("executionGeneration"), delivery.ClaimedDispatch(marker, session, o.Assignment))
 			var raised *store.ManifestException
 			if errors.As(err, &raised) {
 				// The exception guard.deliverable_state lets out (a RecursionError) leaves
@@ -122,7 +123,7 @@ func Evaluate(ctx context.Context, stop Object, options GuardOptions) (verdict O
 			}
 			if !readable {
 				label := "receipts"
-				if get(o.Receipt, "evidence") == "deliverable_unverifiable" {
+				if o.Receipt.Get("evidence") == "deliverable_unverifiable" {
 					label = "the receipt's artifacts"
 				}
 				o.Unreadable = append(o.Unreadable, label)
@@ -130,7 +131,7 @@ func Evaluate(ctx context.Context, stop Object, options GuardOptions) (verdict O
 		}
 	}
 	verdict = Decide(o, counters, options.Mode)
-	if slicesOmission(text(get(verdict, "observation"))) && directory != "" {
+	if slicesOmission(pyjson.Text(verdict.Get("observation"))) && directory != "" {
 		var corrupt, unreadableHistory string
 		counters, corrupt, unreadableHistory = HoldCounters(ctx, directory, session, turn, options.Now, filepath.Dir(directory))
 		if unreadableHistory != "" {
@@ -142,7 +143,7 @@ func Evaluate(ctx context.Context, stop Object, options GuardOptions) (verdict O
 		verdict = Decide(o, counters, options.Mode)
 	}
 	held := false
-	if get(verdict, "decision") == "block" && directory != "" {
+	if verdict.Get("decision") == "block" && directory != "" {
 		var e error
 		held, e = reserveHold(ctx, directory, session, turn, options)
 		if e != nil {
@@ -151,24 +152,24 @@ func Evaluate(ctx context.Context, stop Object, options GuardOptions) (verdict O
 		}
 		if !held {
 			counts := append(Object{}, counters...)
-			counts = set(counts, "holdsThisTurn", int64(1))
+			counts = counts.Set("holdsThisTurn", int64(1))
 			verdict = Decide(o, counts, options.Mode)
 		}
 	}
-	verdict = set(verdict, "assignmentId", o.Assignment)
-	verdict = set(verdict, "counters", counters)
+	verdict = verdict.Set("assignmentId", o.Assignment)
+	verdict = verdict.Set("counters", counters)
 	if !options.NoRecord && directory != "" {
-		name, e := RecordObservation(ctx, directory, object(get(verdict, "record")), options.Root)
+		name, e := RecordObservation(ctx, directory, object(verdict.Get("record")), options.Root)
 		if e != nil {
 			if held {
-				if removeErr := os.Remove(filepath.Join(directory, "hook", text(session), text(turn), "hold.json")); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+				if removeErr := os.Remove(filepath.Join(directory, "hook", pyjson.Text(session), pyjson.Text(turn), "hold.json")); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
 					e = errors.Join(e, removeErr)
 				}
 			}
 			fault(e)
 			return verdict, nil
 		}
-		verdict = set(verdict, "recordedAs", nullable(name))
+		verdict = verdict.Set("recordedAs", nullable(name))
 	}
 	return verdict, nil
 }
@@ -189,7 +190,7 @@ func malformedDisposition(v any) string {
 		return "disposition"
 	}
 	for _, k := range []string{"sessionId", "turnId", "outcome"} {
-		if v, present := evidence.Lookup(o, k); present {
+		if v, present := o.Lookup(k); present {
 			if _, ok := v.(string); !ok {
 				return "disposition." + k
 			}
@@ -202,7 +203,7 @@ func faulted(stop Object, now, mode string, cause any) Object {
 	if !strings.Contains(detail, ": ") {
 		detail = "RuntimeError: " + detail
 	}
-	record := Object{{Key: "observation", Value: "guard_faulted"}, {Key: "turnId", Value: get(stop, "turn_id")}, {Key: "sessionId", Value: get(stop, "session_id")}, {Key: "decisionState", Value: "guard_faulted"}, {Key: "held", Value: false}, {Key: "mode", Value: mode}, {Key: "fault", Value: detail}, {Key: "at", Value: now}}
+	record := Object{{Key: "observation", Value: "guard_faulted"}, {Key: "turnId", Value: stop.Get("turn_id")}, {Key: "sessionId", Value: stop.Get("session_id")}, {Key: "decisionState", Value: "guard_faulted"}, {Key: "held", Value: false}, {Key: "mode", Value: mode}, {Key: "fault", Value: detail}, {Key: "at", Value: now}}
 	return Object{{Key: "decision", Value: "release"}, {Key: "state", Value: "guard_faulted"}, {Key: "observation", Value: "guard_faulted"}, {Key: "reason", Value: "The guard could not finish this evaluation: " + detail + ". Released and recorded; this is a defect in the guard rather than in the marker, and it is reported as one."}, {Key: "record", Value: record}, {Key: "fault", Value: detail}, {Key: "assignmentId", Value: nil}, {Key: "counters", Value: Object{}}, {Key: "hook_output", Value: Object{}}}
 }
 func listing(ctx context.Context, path, pattern string, dirs bool) ([]string, bool) {
@@ -279,7 +280,7 @@ func heldRecords(ctx context.Context, root, session string) ([]heldRecord, strin
 				if err != nil || !ok {
 					return records, "hook/" + filepath.Base(s), true
 				}
-				records = append(records, heldRecord{filepath.Base(s), filepath.Base(t), get(o, "at")})
+				records = append(records, heldRecord{filepath.Base(s), filepath.Base(t), o.Get("at")})
 			}
 		}
 	}
@@ -300,8 +301,8 @@ func HoldCounters(ctx context.Context, directory string, session, turn any, now,
 			current++
 		}
 	}
-	counts = set(counts, "holdsThisTurn", current)
-	counts = set(counts, "holdsThisGeneration", int64(len(records)))
+	counts = counts.Set("holdsThisTurn", current)
+	counts = counts.Set("holdsThisGeneration", int64(len(records)))
 	assignments := []string{directory}
 	if workspaceRoot != "" {
 		assignments, ok = listing(ctx, workspaceRoot, "", true)
@@ -312,7 +313,7 @@ func HoldCounters(ctx context.Context, directory string, session, turn any, now,
 	horizon := delivery.Moment(now)
 	var window int64
 	for _, a := range assignments {
-		records, bad, ok = heldRecords(ctx, filepath.Join(a, "hook"), text(session))
+		records, bad, ok = heldRecords(ctx, filepath.Join(a, "hook"), pyjson.Text(session))
 		if !ok {
 			return counts, "", "hook"
 		}
@@ -326,7 +327,7 @@ func HoldCounters(ctx context.Context, directory string, session, turn any, now,
 			}
 		}
 	}
-	return set(counts, "holdsThisSessionWindow", window), "", ""
+	return counts.Set("holdsThisSessionWindow", window), "", ""
 }
 func reserveHold(ctx context.Context, directory string, session, turn any, options GuardOptions) (bool, error) {
 	if !delivery.ValidSegment(session) || !delivery.ValidSegment(turn) {
@@ -335,15 +336,15 @@ func reserveHold(ctx context.Context, directory string, session, turn any, optio
 	if ctx.Err() != nil {
 		return false, ctx.Err()
 	}
-	result, err := delivery.PublishContext(ctx, filepath.Join(directory, "hook", text(session), text(turn), "hold.json"), Object{{Key: "sessionId", Value: session}, {Key: "turnId", Value: turn}, {Key: "at", Value: options.Now}, {Key: "mode", Value: options.Mode}}, options.Root)
+	result, err := delivery.Publish(ctx, filepath.Join(directory, "hook", pyjson.Text(session), pyjson.Text(turn), "hold.json"), Object{{Key: "sessionId", Value: session}, {Key: "turnId", Value: turn}, {Key: "at", Value: options.Now}, {Key: "mode", Value: options.Mode}}, options.Root)
 	return result == delivery.Published, err
 }
 func RecordObservation(ctx context.Context, directory string, record Object, root string) (string, error) {
-	session, turn := get(record, "sessionId"), get(record, "turnId")
+	session, turn := record.Get("sessionId"), record.Get("turnId")
 	if !delivery.ValidSegment(session) || !delivery.ValidSegment(turn) {
 		return "", nil
 	}
-	relative := filepath.Join("hook", text(session), text(turn))
+	relative := filepath.Join("hook", pyjson.Text(session), pyjson.Text(turn))
 	folder := filepath.Join(directory, relative)
 	for range 64 {
 		if ctx.Err() != nil {
@@ -351,7 +352,7 @@ func RecordObservation(ctx context.Context, directory string, record Object, roo
 		}
 		paths, ok := listing(ctx, folder, "*.json", false)
 		if !ok {
-			return "", fmt.Errorf("the hook observation directory for %s/%s cannot be read, so no slot can be allocated in it", text(session), text(turn))
+			return "", fmt.Errorf("the hook observation directory for %s/%s cannot be read, so no slot can be allocated in it", pyjson.Text(session), pyjson.Text(turn))
 		}
 		index := 0
 		for _, p := range paths {
@@ -361,7 +362,7 @@ func RecordObservation(ctx context.Context, directory string, record Object, roo
 			}
 		}
 		name := strconv.Itoa(index)
-		result, err := delivery.PublishContext(ctx, filepath.Join(folder, name+".json"), record, root)
+		result, err := delivery.Publish(ctx, filepath.Join(folder, name+".json"), record, root)
 		if err != nil {
 			return "", err
 		}
@@ -369,5 +370,5 @@ func RecordObservation(ctx context.Context, directory string, record Object, roo
 			return filepath.Join(relative, name), nil
 		}
 	}
-	return "", fmt.Errorf("could not publish an observation for %s/%s after 64 attempts; every allocated slot was taken by another writer first", text(session), text(turn))
+	return "", fmt.Errorf("could not publish an observation for %s/%s after 64 attempts; every allocated slot was taken by another writer first", pyjson.Text(session), pyjson.Text(turn))
 }

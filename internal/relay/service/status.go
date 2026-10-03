@@ -19,24 +19,24 @@ func (s *Service) Status(ctx context.Context) Object {
 	launch := s.ResolveLaunchPolicy()
 	observed := s.ReadWorkerPolicy(ctx)
 	var running any
-	if truth(get(observed, "observed")) {
-		policy, _ := get(observed, "policy").(Object)
-		running = get(policy, "digest")
+	if truth(observed.Get("observed")) {
+		policy, _ := observed.Get("policy").(Object)
+		running = policy.Get("digest")
 	}
 	matches := "unknown"
-	if truth(running) && truth(get(launch, "digest")) {
+	if truth(running) && truth(launch.Get("digest")) {
 		matches = "different"
-		if equal(running, get(launch, "digest")) {
+		if equal(running, launch.Get("digest")) {
 			matches = "same"
 		}
 	}
 	launch = set(launch, "appliesTo", "the next daemon launched from this state directory", "runningDigest", running, "matchesRunning", matches)
-	return obj("enabled", get(intent, "enabled"), "intentConfigured", get(intent, "configured"), "intentChangedAt", get(intent, "changedAt"), "intentChangedBy", get(intent, "changedBy"), "launchPolicy", launch, "running", held, "ownership", owner, "ownershipDetail", nullable(detail), "pid", get(r, "pid"), "workerPid", get(r, "workerPid"), "startedAt", get(r, "startedAt"), "storeId", get(r, "storeId"), "socketPath", nullable(s.Socket), "installationId", s.InstallationID, "stateDirectory", s.Selection.Path, "scopeAuthority", s.Scope.Authority, "scopeRoot", s.Scope.Root, "lock", func() string {
+	return obj("enabled", intent.Get("enabled"), "intentConfigured", intent.Get("configured"), "intentChangedAt", intent.Get("changedAt"), "intentChangedBy", intent.Get("changedBy"), "launchPolicy", launch, "running", held, "ownership", owner, "ownershipDetail", nullable(detail), "pid", r.Get("pid"), "workerPid", r.Get("workerPid"), "startedAt", r.Get("startedAt"), "storeId", r.Get("storeId"), "socketPath", nullable(s.Socket), "installationId", s.InstallationID, "stateDirectory", s.Selection.Path, "scopeAuthority", s.Scope.Authority, "scopeRoot", s.Scope.Root, "lock", func() string {
 		if held {
 			return "held"
 		}
 		return "free"
-	}(), "staleRecord", r != nil && truth(get(r, "pid")) && !held, "restarts", get(r, "restarts"), "consecutiveFailures", get(r, "consecutiveFailures"), "lastExit", get(r, "lastExit"), "nextRestartAt", get(r, "nextRestartAt"), "conflicts", s.Conflicts(), "projects", s.Projects(ctx))
+	}(), "staleRecord", r != nil && truth(r.Get("pid")) && !held, "restarts", r.Get("restarts"), "consecutiveFailures", r.Get("consecutiveFailures"), "lastExit", r.Get("lastExit"), "nextRestartAt", r.Get("nextRestartAt"), "conflicts", s.Conflicts(), "projects", s.Projects(ctx))
 }
 func (s *Service) Projects(ctx context.Context) Object {
 	type group struct {

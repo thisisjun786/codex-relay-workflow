@@ -43,7 +43,7 @@ func capturePriorMessage(t *testing.T, s *store.Store) string {
 
 type set1Host17 struct{ captureHost4 }
 
-func (h *set1Host17) FindToken(_ string, token string, _ int, _ bool) (delivery.TokenScan, error) {
+func (h *set1Host17) FindToken(_ context.Context, _ string, token string, _ int, _ bool) (delivery.TokenScan, error) {
 	for turn, text := range h.items {
 		if strings.Contains(text, token) {
 			return delivery.TokenScan{Found: true, TurnID: turn, Scanned: 1, Exhausted: turn != "turn-01supervisor-task-2"}, nil
@@ -353,9 +353,9 @@ type set1RaceHost struct {
 	beforeScan func()
 }
 
-func (h *set1RaceHost) FindToken(thread, token string, limit int, all bool) (delivery.TokenScan, error) {
+func (h *set1RaceHost) FindToken(_ context.Context, thread, token string, limit int, all bool) (delivery.TokenScan, error) {
 	h.beforeScan()
-	return h.captureHost4.FindToken(thread, token, limit, all)
+	return h.captureHost4.FindToken(context.Background(), thread, token, limit, all)
 }
 func Test24_SCH_27_RacedCapture(t *testing.T) {
 	captureTokens21(t)

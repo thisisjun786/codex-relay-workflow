@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"os/user"
+	posixpath "path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -381,6 +382,17 @@ func PathlibSpelling(path string) string {
 		return "."
 	}
 	return root + strings.Join(parts, "/")
+}
+
+// Normpath is posixpath.normpath: "." and empty components and ".." with the component before it
+// are folded lexically, and exactly two leading slashes stay (POSIX leaves "//" implementation-
+// defined; path.Clean would fold them to one).
+func Normpath(p string) string {
+	cleaned := posixpath.Clean(p)
+	if strings.HasPrefix(p, "//") && !strings.HasPrefix(p, "///") {
+		return "/" + cleaned
+	}
+	return cleaned
 }
 
 // InitialRecord is the mirror an initial stamp implies, derived only from the stamp and the

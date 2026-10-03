@@ -10,8 +10,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 var prescanRowFields = []string{"recordVersion", "event", "at", "adapterOutcome", "processEnding", "stdoutReading", "guardState", "guardDecision", "guardMode", "assignmentId", "guardRecordedAs", "held", "eventKey", "eventIdentity", "identityScanMs", "acceptance", "acceptedAs", "guardInvoked", "configuration", "elapsedMs", "sessionId", "turnId", "stopHookActive", "exitCode", "signal", "errno", "guardElapsedMs", "guardStderr", "detail"}
@@ -26,31 +28,31 @@ func NativePrescanUnreachable(row Object) bool {
 		return false
 	}
 	for _, name := range prescanRowFields {
-		if _, ok := evidence.Lookup(row, name); !ok {
+		if _, ok := row.Lookup(name); !ok {
 			return false
 		}
 	}
-	version, integer := evidence.PyInt(get(row, "recordVersion"))
+	version, integer := evidence.PyInt(row.Get("recordVersion"))
 	if !integer || version != 2 {
 		return false
 	}
-	if get(row, "event") != "Stop" || get(row, "adapterOutcome") != "guard_unreachable" || get(row, "processEnding") != "not_started" || get(row, "stdoutReading") != "said_nothing" || get(row, "guardInvoked") != true || get(row, "held") != false || get(row, "guardStderr") != "" {
+	if row.Get("event") != "Stop" || row.Get("adapterOutcome") != "guard_unreachable" || row.Get("processEnding") != "not_started" || row.Get("stdoutReading") != "said_nothing" || row.Get("guardInvoked") != true || row.Get("held") != false || row.Get("guardStderr") != "" {
 		return false
 	}
-	if mode := get(row, "guardMode"); mode != Observe && mode != Hold {
+	if mode := row.Get("guardMode"); mode != Observe && mode != Hold {
 		return false
 	}
 	for _, name := range []string{"acceptance", "acceptedAs", "identityScanMs", "eventKey", "eventIdentity", "guardState", "guardDecision", "assignmentId", "guardRecordedAs", "exitCode", "signal"} {
-		if get(row, name) != nil {
+		if row.Get(name) != nil {
 			return false
 		}
 	}
 	for _, name := range []string{"elapsedMs", "guardElapsedMs"} {
-		if !Count(get(row, name), true) {
+		if !Count(row.Get(name), true) {
 			return false
 		}
 	}
-	stamp, ok := get(row, "at").(string)
+	stamp, ok := row.Get("at").(string)
 	if !ok {
 		return false
 	}
@@ -58,11 +60,11 @@ func NativePrescanUnreachable(row Object) bool {
 	if err != nil || at.Format("2006-01-02T15:04:05Z") != stamp {
 		return false
 	}
-	if !journalAbsolutePath(text(get(row, "configuration"))) {
+	if !journalAbsolutePath(pyjson.Text(row.Get("configuration"))) {
 		return false
 	}
 	var number syscall.Errno
-	switch get(row, "errno") {
+	switch row.Get("errno") {
 	case "ENOENT":
 		number = syscall.ENOENT
 	case "ECONNREFUSED":
@@ -79,7 +81,7 @@ func NativePrescanUnreachable(row Object) bool {
 	message := number.Error()
 	message = strings.ToUpper(message[:1]) + message[1:]
 	prefix := fmt.Sprintf("the configured runtime could not be run: [Errno %d] %s: ", number, message)
-	detail, ok := get(row, "detail").(string)
+	detail, ok := row.Get("detail").(string)
 	if !ok || !strings.HasPrefix(detail, prefix) {
 		return false
 	}
@@ -117,15 +119,7 @@ func Count(v any, zero bool) bool {
 // completion._path_the_system_takes(path): a lone surrogate is judged as os.fsencode encodes it,
 // so a path whose name holds a byte that is not UTF-8 (U+DC80..U+DCFF) is one the system takes.
 func journalAbsolutePath(path string) bool {
-	if !filepath.IsAbs(path) || !PathTheSystemTakes(path) {
-		return false
-	}
-	normalized := filepath.Clean(path)
-	// posixpath.normpath preserves exactly two leading slashes.
-	if strings.HasPrefix(path, "//") && !strings.HasPrefix(path, "///") {
-		normalized = "/" + normalized
-	}
-	return normalized == path
+	return filepath.IsAbs(path) && PathTheSystemTakes(path) && store.Normpath(path) == path
 }
 
 // pythonQuotedPath is ast.literal_eval of a quoted str literal. A \u or \U escape of a surrogate
