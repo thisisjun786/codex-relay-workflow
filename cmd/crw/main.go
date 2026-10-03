@@ -7,10 +7,12 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/mcp"
+	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pluginwiring"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/adapter"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
@@ -115,35 +117,69 @@ func runAt(ctx context.Context, program string, args []string, stdout, stderr io
 		fmt.Fprintln(stderr, "crw: error: the following arguments are required: command")
 		return parserExit
 	}
-	switch mode, rest := args[0], args[1:]; mode {
-	case "relay":
-		return relay(ctx, "crw relay", rest, stdout, stderr)
-	case "bridge":
-		return bridge(ctx, program, rest)
-	case "hook":
-		return hook.Run(ctx, rest, os.Stdin, stdout, started)
-	case "skill":
-		return skill.Run(rest, os.Stdin, stdout, stderr)
-	case "doctor":
-		return doctor.Run(ctx, rest, stdout, stderr)
-	case "install":
-		// An install command waits on locks and then removes or replaces things, so every way an
-		// operator or a supervisor asks it to stop (SIGINT, SIGTERM, SIGHUP) cancels it: a wait
-		// ends and nothing destructive follows. Other modes keep their own signal handling.
-		ctx, stop := cancelOn(ctx, syscall.SIGTERM, syscall.SIGHUP)
-		defer stop()
-		return install.Run(ctx, rest, stdout, stderr)
-	case "help", "-h", "--help":
-		usage(stdout)
-		return 0
-	case "version", "--version":
-		fmt.Fprintln(stdout, version)
-		return 0
-	default:
-		usage(stderr)
-		fmt.Fprintf(stderr, "crw: error: argument command: invalid choice: %q (choose from 'relay', 'bridge', 'hook', 'skill', 'doctor', 'install', 'help', 'version')\n", mode)
-		return parserExit
+	for _, m := range modes() {
+		if m.name == args[0] {
+			return m.run(invocation{ctx, program, args[1:], stdout, stderr, started})
+		}
 	}
+	usage(stderr)
+	fmt.Fprintf(stderr, "crw: error: argument command: invalid choice: %q (choose from '%s')\n", args[0], strings.Join(listedModes(), "', '"))
+	return parserExit
+}
+
+// invocation is what a mode is run with: the command line after its name and the process's streams.
+type invocation struct {
+	ctx            context.Context
+	program        string
+	args           []string
+	stdout, stderr io.Writer
+	started        time.Time
+}
+
+// A mode is one top-level word of crw, and this table is the one place that lists them: dispatch, the
+// usage line and the invalid-choice message all read it. A mode that is not listed is dispatched but
+// not advertised: pabcd, until the switch that activates the ported hooks lists it.
+type mode struct {
+	name   string
+	listed bool
+	run    func(invocation) int
+}
+
+func modes() []mode {
+	help := func(c invocation) int { usage(c.stdout); return 0 }
+	showVersion := func(c invocation) int { fmt.Fprintln(c.stdout, version); return 0 }
+	return []mode{
+		{"relay", true, func(c invocation) int { return relay(c.ctx, "crw relay", c.args, c.stdout, c.stderr) }},
+		{"bridge", true, func(c invocation) int { return bridge(c.ctx, c.program, c.args) }},
+		{"hook", true, func(c invocation) int {
+			if harness.ClaimsHook(c.args) {
+				return harness.Hook(c.args, os.Stdin, c.stdout, c.stderr, os.LookupEnv, harness.Legs())
+			}
+			return hook.Run(c.ctx, c.args, os.Stdin, c.stdout, c.started)
+		}},
+		{"skill", true, func(c invocation) int { return skill.Run(c.args, os.Stdin, c.stdout, c.stderr) }},
+		{"doctor", true, func(c invocation) int { return doctor.Run(c.ctx, c.args, c.stdout, c.stderr) }},
+		{"install", true, func(c invocation) int {
+			// An install command waits on locks and then removes or replaces things, so every way an
+			// operator or a supervisor asks it to stop (SIGINT, SIGTERM, SIGHUP) cancels it: a wait
+			// ends and nothing destructive follows. Other modes keep their own signal handling.
+			ctx, stop := cancelOn(c.ctx, syscall.SIGTERM, syscall.SIGHUP)
+			defer stop()
+			return install.Run(ctx, c.args, c.stdout, c.stderr)
+		}},
+		{"pabcd", false, func(c invocation) int { return harness.Pabcd(c.args, os.Stdin, c.stdout, c.stderr, harness.Verbs()) }},
+		{"help", true, help}, {"-h", false, help}, {"--help", false, help},
+		{"version", true, showVersion}, {"--version", false, showVersion},
+	}
+}
+
+func listedModes() (names []string) {
+	for _, m := range modes() {
+		if m.listed {
+			names = append(names, m.name)
+		}
+	}
+	return names
 }
 
 // bridge is the MCP bridge, or with the plugin's flag first (wiring/crw-bridge.sh execs
@@ -162,5 +198,5 @@ func relay(ctx context.Context, program string, args []string, stdout, stderr io
 }
 
 func usage(w io.Writer) {
-	fmt.Fprintln(w, "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,help,version} ...")
+	fmt.Fprintln(w, "usage: crw [-h] [--version] {"+strings.Join(listedModes(), ",")+"} ...")
 }

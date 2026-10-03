@@ -1,0 +1,113 @@
+package harness
+
+import (
+	"fmt"
+	"io"
+	"os"
+	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/projectcfg"
+)
+
+// find is the leg that crw hook <event> --leg <name> (or --leg=<name>) names among legs; the event
+// must be the one the leg is registered for.
+func find(legs []Leg, args []string) (Leg, bool) {
+	var name string
+	switch {
+	case len(args) == 3 && args[1] == "--leg":
+		name = args[2]
+	case len(args) == 2 && strings.HasPrefix(args[1], "--leg="):
+		name = strings.TrimPrefix(args[1], "--leg=")
+	}
+	for _, l := range legs {
+		if name != "" && l.ID == name && l.Event == args[0] {
+			return l, true
+		}
+	}
+	return Leg{}, false
+}
+
+// hookCwd is the payload's cwd when JSON.parse reads the input as an object whose cwd is a non-empty
+// string, else the process's (cli.ts:418-426). It reads the input as the oracle does, not as asObject
+// does: no trimming (a BOM fails), one document, and a number no float64 holds does not cost it.
+func hookCwd(raw string) string {
+	if v, ok := decode(raw); ok {
+		if o, _ := v.(map[string]any); o != nil {
+			if cwd, _ := o["cwd"].(string); cwd != "" {
+				return cwd
+			}
+		}
+	}
+	cwd, _ := os.Getwd()
+	return cwd
+}
+
+// answer runs the leg's handler; with swallow an error in it is dropped (the oracle's try/catch) and the leg answers nothing.
+func (l Leg) answer(c Call, swallow bool) (out string) {
+	if swallow {
+		defer func() {
+			if recover() != nil {
+				out = ""
+			}
+		}()
+	}
+	if l.Handle != nil {
+		out = l.Handle(c)
+	}
+	return out
+}
+
+// Hook is crw hook <event> --leg <name> for the legs given, in the order of cli.ts (337-523): an input
+// over the limit is answered before anything else (the oracle reads it as empty, so no record is
+// made); a Permission leg answers before the record; then the record is made, under the verb the
+// oracle dispatched on (cli.ts:364), and the Guard legs run, for a subagent's turn too; a subagent's
+// turn then ends; the PABCD check is read and ends the Gated legs when PABCD is off; and the
+// FailClosed or Generic leg answers. The exit status is 0 unless an oversize input has no answer, or
+// an error no stage swallows (exit 1, "crw cli failed", as the oracle's generic handler).
+//
+// Intentional change: arguments that name no leg of the table (an unknown leg, an event that is not the
+// leg's, no --leg) release the hook in silence, without reading its input and without a record. The
+// oracle dispatches on a verb and, for one it does not know, reads the input, records the verb and
+// exits 0; crw has no verb for a registration this build lacks, and an invocation it cannot attribute
+// to a pabcd-state leg is not recorded as one.
+func Hook(args []string, in io.Reader, stdout, stderr io.Writer, env host.LookupEnv, legs []Leg) (code int) {
+	leg, ok := find(legs, args)
+	if !ok {
+		return 0
+	}
+	defer func() {
+		if p := recover(); p != nil {
+			fmt.Fprintf(stderr, "crw cli failed: %v\n", p)
+			code = 1
+		}
+	}()
+	raw, overflow := ReadStdin(in)
+	if overflow {
+		if out := OversizedHookOutput(leg.Slug); out != "" {
+			io.WriteString(stdout, out)
+		} else if leg.Stage != Permission {
+			return 1
+		}
+		return 0
+	}
+	call := Call{Raw: raw}
+	if leg.Stage == Permission {
+		io.WriteString(stdout, leg.answer(call, true))
+		return 0
+	}
+	RecordInvocation(raw, Component, leg.Slug, env)
+	if leg.Stage == Guard {
+		io.WriteString(stdout, leg.answer(call, leg.Recover))
+		return 0
+	}
+	if !leg.SubagentExempt && IsSubagentHookPayload(raw) {
+		return 0
+	}
+	call.PabcdEnabled = projectcfg.PabcdEnabled(hookCwd(raw), func(k string) string { v, _ := env(k); return v })
+	if !call.PabcdEnabled && leg.Gated {
+		return 0
+	}
+	io.WriteString(stdout, leg.answer(call, leg.Stage != FailClosed))
+	return 0
+}
