@@ -51,3 +51,7 @@ Behavior of CXC v0.2.40 that looks unintended and that the recorded corpus ([con
 ## Found by the corpus replayer
 
 - Fixture `cli-help__top-level__no_arguments` stores its only step as `{}`: the recorder's JSON encoding drops an empty `cli` list, so the step no longer says it is a cli step (a defect of the recorder, not of the oracle). The replayer reads a step of no kind as a cli step without arguments (fixture `cli-help__top-level__no_arguments`); port: kept.
+
+## Found by the corpus replayer's SQLite handling
+
+- The `json-epoch-ms` normalisation rule (`contract/schema/cxc/normalisation.json:79-83`) rewrites any JSON number of 13 digits that starts with 16 to 19 to the text `<MS>`, including the integer primary keys of the FTS5 shadow tables `msgs_fts_data` and `msgs_tri_data` in the recall index, so five recorded index dumps hold a string where the oracle's database holds an integer key and cannot be restored verbatim (fixtures `cli__chat__index_status`, `cli__chat__search_refresh_builds_index`, `hook__post-compact-injecting-recall-context__silent_even_with_history`, `hook__session-start-injecting-recall-context__compact_source_gets_recovery_directive` and `hook__session-start-injecting-recall-context__startup_with_index_injects_untrusted_block`); a defect of the recorder's normalisation, not of the oracle. The round-trip test rebuilds those keys as distinct numbers the same rule turns back into `<MS>`; port: kept.
