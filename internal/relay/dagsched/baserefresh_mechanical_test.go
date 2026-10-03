@@ -317,3 +317,24 @@ func TestBaseRefreshMechanicalEvaluationErrorIsUnreadable(t *testing.T) {
 		t.Fatalf("evaluation error=%v", err)
 	}
 }
+
+func TestBaseRefreshMechanicalRegenerateEachHop(t *testing.T) {
+	rule := "regenerate:cat recipe.txt > shared.json"
+	s := mechanicalRefresh(t, rule, false)
+	s.repo.commit("recipe.txt", "generated one\n")
+	mechanicalMerge(t, s, "generated one\n", false)
+	first := s.head
+	s.repo.commit("recipe.txt", "generated two\n")
+	s.repo.commit("shared.json", "second base version\n")
+	s.head = s.mergeDev("second regenerated hop", "shared.json", "generated two\n")
+	s.forge.by["owner/repo#7"] = openPR("owner/repo", 7, s.head)
+	got, err := s.record()
+	if err != nil || len(got.Steps) != 2 || got.Steps[0].Head != first || len(got.Resolved) != 0 {
+		t.Fatalf("regenerated chain=%v %+v", err, got)
+	}
+	for _, st := range got.Steps {
+		if len(st.Resolved) != 1 || st.Resolved[0].Rule != rule {
+			t.Fatalf("missing per-hop rule: %+v", st)
+		}
+	}
+}
