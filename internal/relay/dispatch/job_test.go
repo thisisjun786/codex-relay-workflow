@@ -53,6 +53,7 @@ func TestJobParsedNoteKeepsCommandBoundary(t *testing.T) {
 		Out struct {
 			ID      string   `json:"id"`
 			PID     *int     `json:"pid"`
+			Token   *string  `json:"startToken"`
 			Note    string   `json:"note"`
 			Command []string `json:"command"`
 		} `json:"out"`
@@ -65,14 +66,23 @@ func TestJobParsedNoteKeepsCommandBoundary(t *testing.T) {
 		_ = json.Unmarshal(out.Bytes(), &fallback)
 		rec, _ := job.ReadRecord(ws, fallback.Out)
 		result.Out.PID = rec.PID
+		result.Out.Token = rec.StartToken
 	}
 	if result.Out.PID != nil {
 		pid := *result.Out.PID
+		token := result.Out.Token
+		owned := func() bool {
+			if !job.PidAlive(pid) {
+				return false
+			}
+			current, ok := job.ProcessStartToken(pid)
+			return token != nil && ok && current == *token
+		}
 		t.Cleanup(func() {
-			if job.PidAlive(pid) {
+			if owned() {
 				_ = syscall.Kill(-pid, syscall.SIGKILL)
 			}
-			for deadline := time.Now().Add(5 * time.Second); job.PidAlive(pid); time.Sleep(time.Millisecond) {
+			for deadline := time.Now().Add(5 * time.Second); owned(); time.Sleep(time.Millisecond) {
 				if time.Now().After(deadline) {
 					t.Fatal("owned process survived")
 				}
