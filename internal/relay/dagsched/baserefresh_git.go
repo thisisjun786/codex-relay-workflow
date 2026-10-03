@@ -43,7 +43,12 @@ type RefreshResolved struct{ Path, Blob, Rule string }
 // The skill package registers its existing checker at initialization to avoid an import cycle.
 // A missing checker leaves every path manual; a refusal never becomes a manual override.
 type RefreshMechanicalChecker func(context.Context, string, RefreshStep, []Region, []string) (*RefreshMechanicalRefusal, error)
-type RefreshMechanicalRefusal struct{ Detail string }
+type RefreshMechanicalRefusal struct {
+	Detail string
+	// Manual is an internal eligibility result, never part of the wire proof.
+	// Empty Detail leaves these paths to the existing exact-name acceptance.
+	Manual []string
+}
 
 var refreshMechanical RefreshMechanicalChecker
 
@@ -85,16 +90,20 @@ func (p refreshProof) resolvedPaths() []string {
 	return out
 }
 
-func (p *refreshProof) applyMechanical(ctx context.Context, checkout string, regions []Region) (*refreshRefusal, error) {
+func (p *refreshProof) applyMechanical(ctx context.Context, g *refreshRepo, checkout string, regions []Region, contributors map[string][][]Region) (*refreshRefusal, error) {
 	if refreshMechanical == nil {
 		return nil, nil
 	}
 	for i := range p.Steps {
 		st := &p.Steps[i]
+		sets, err := g.contributingRegions(ctx, *st, contributors)
+		if err != nil {
+			return nil, err
+		}
 		var paths, descriptions []string
 		rules := map[string]string{}
 		for _, r := range st.Resolved {
-			if rule, ok := MechanicalRuleFor([][]Region{regions}, r.Path); ok {
+			if rule, ok := MechanicalRuleFor(append([][]Region{regions}, sets[r.Path]...), r.Path); ok && len(sets[r.Path]) > 0 {
 				paths = append(paths, r.Path)
 				descriptions = append(descriptions, fmt.Sprintf("%s (%s)", r.Path, rule))
 				rules[r.Path] = rule
@@ -107,14 +116,65 @@ func (p *refreshProof) applyMechanical(ctx context.Context, checkout string, reg
 		if err != nil {
 			return nil, fmt.Errorf("mechanical resolution of %s: %w", strings.Join(descriptions, ", "), err)
 		}
-		if why != nil {
+		if why != nil && why.Detail != "" {
 			return &refreshRefusal{Code: RefreshTreeDiffers, Detail: fmt.Sprintf("mechanical resolution of %s: %s", strings.Join(descriptions, ", "), why.Detail)}, nil
+		}
+		if why != nil {
+			for _, path := range why.Manual {
+				delete(rules, path)
+			}
 		}
 		for j := range st.Resolved {
 			st.Resolved[j].Rule = rules[st.Resolved[j].Path]
 		}
 	}
 	return nil, nil
+}
+
+// contributingRegions reads every new first-parent landing, without Git's path
+// history simplification. An unmapped path delta vetoes automatic classification
+// even when other landings for that path map to known nodes.
+func (g *refreshRepo) contributingRegions(ctx context.Context, st RefreshStep, heads map[string][][]Region) (map[string][][]Region, error) {
+	_, line, err := g.run(ctx, nil, "rev-list", "--first-parent", fmt.Sprintf("--max-count=%d", MaxBaseLine+1), st.BaseParent, "^"+st.Previous)
+	if err != nil {
+		return nil, err
+	}
+	ids := strings.Fields(line)
+	sets := map[string][][]Region{}
+	if len(ids) > MaxBaseLine {
+		return sets, nil
+	}
+	unknown := map[string]bool{}
+	for _, id := range ids {
+		parents, err := g.parents(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if len(parents) == 0 {
+			return map[string][][]Region{}, nil
+		}
+		paths, err := g.differing(ctx, parents[0], id)
+		if err != nil {
+			return nil, err
+		}
+		carrier := ""
+		switch len(parents) {
+		case 1:
+			carrier = id
+		case 2:
+			carrier = parents[1]
+		}
+		for _, path := range paths {
+			if len(heads[carrier]) == 0 {
+				unknown[path] = true
+			}
+			sets[path] = append(sets[path], heads[carrier]...)
+		}
+	}
+	for path := range unknown {
+		delete(sets, path)
+	}
+	return sets, nil
 }
 
 var refreshCommitPattern = regexp.MustCompile("^[0-9a-f]{40}([0-9a-f]{24})?$")
