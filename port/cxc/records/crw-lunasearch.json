@@ -2,7 +2,7 @@
   "origin": {
     "tag": "v0.2.40",
     "commit": "3c1459acadeb1906d97c00a598e1457327ae372d",
-    "skills_listing_sha256": "a77cbd208b5c2bdb0e29e1dfab3480abb47af7b05d47d546b33af5c7c768809a"
+    "skills_listing_sha256": "b5e89cd407db5eac39d3e111d438d2fff058a13c9bc7c01ca8d99dc078e7ecf4"
   },
   "table_sha256": "25b5d19d9da7e07d474d2b31bc4d4139c68607457f59174a597f17505f7f23eb",
   "from": "lunasearch",
