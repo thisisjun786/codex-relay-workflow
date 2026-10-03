@@ -89,6 +89,11 @@ func TestFaultRefusalsNameTheirValueWithGoQuotesAndWriteNothing(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			l, ctx := testLedger(t)
+			// An unrelated fault and its queued publication are already there, so a refusal that
+			// touched any existing row would show in the snapshot too.
+			if recorded, err := l.Record(ctx, testObservation("seed", "report_omitted", Broken)); err != nil || !recorded {
+				t.Fatalf("seed: %v %v", recorded, err)
+			}
 			before := faultTables(t, l)
 			err := c.run(ctx, l)
 			if got := refusalText(err); got != c.want {
@@ -117,9 +122,10 @@ func TestDuplicateHeaderProblemNamesTheHeaderWithGoQuotes(t *testing.T) {
 // the reason words and keep the whole text). They are not changed by the Python-spelling cleanup,
 // and this pins that: a later sweep that rewrites them must first decide what the stored rows hold.
 func TestStoredFaultConflictsKeepTheirPythonSpelling(t *testing.T) {
-	t.Run("adoption", func(t *testing.T) {
+	// A fault that files (broken) takes the adopted issue as its own at once.
+	t.Run("owned issue", func(t *testing.T) {
 		l, ctx := testLedger(t)
-		o := Observation{Product: "crw", FaultClass: "report_omitted", Severity: Broken, Signature: map[string]any{"turn": "f4"}, OccurrenceKey: "first", Scope: map[string]any{"projectKey": "P"}}
+		o := Observation{Product: "crw", FaultClass: "report_omitted", Severity: Broken, Signature: map[string]any{"turn": "f4-owned"}, OccurrenceKey: "first", Scope: map[string]any{"projectKey": "P"}}
 		if recorded, err := l.Record(ctx, o); err != nil || !recorded {
 			t.Fatalf("record: %v %v", recorded, err)
 		}
@@ -128,8 +134,29 @@ func TestStoredFaultConflictsKeepTheirPythonSpelling(t *testing.T) {
 			t.Fatal(err)
 		}
 		_, err := executeF2(ctx, l, "fault-adopt", map[string]string{"--fault": id, "--external-ref": "CRW-2", "--scope": `{"projectKey":"P"}`})
-		if !regexp.MustCompile(`^fault_adopt_conflict: this fault already (owns|adopts) 'CRW-1'$`).MatchString(refusalText(err)) {
-			t.Fatalf("refusal %q", refusalText(err))
+		if want := "fault_adopt_conflict: this fault already owns 'CRW-1'"; refusalText(err) != want {
+			t.Fatalf("refusal %q, want %q", refusalText(err), want)
+		}
+	})
+	// A fault that never files (notice) only records the adoption, still pending, so the second
+	// issue meets the stored adoption and not an owned issue.
+	t.Run("pending adoption", func(t *testing.T) {
+		l, ctx := testLedger(t)
+		o := Observation{Product: "crw", FaultClass: "report_omitted", Severity: Notice, Signature: map[string]any{"turn": "f4-pending"}, OccurrenceKey: "first", Scope: map[string]any{"projectKey": "P"}}
+		if recorded, err := l.Record(ctx, o); err != nil || !recorded {
+			t.Fatalf("record: %v %v", recorded, err)
+		}
+		id := FaultID("crw", "report_omitted", o.Signature)
+		if _, err := executeF2(ctx, l, "fault-adopt", map[string]string{"--fault": id, "--external-ref": "CRW-1", "--scope": `{"projectKey":"P"}`}); err != nil {
+			t.Fatal(err)
+		}
+		stored, err := l.Store.One(ctx, "SELECT state FROM fault_adoptions WHERE fault_id = ?", id)
+		if err != nil || stored == nil || stored.Text("state") != "pending" {
+			t.Fatalf("the adoption of a notice stays pending: %v %v", stored, err)
+		}
+		_, err = executeF2(ctx, l, "fault-adopt", map[string]string{"--fault": id, "--external-ref": "CRW-2", "--scope": `{"projectKey":"P"}`})
+		if want := "fault_adopt_conflict: this fault already adopts 'CRW-1'"; refusalText(err) != want {
+			t.Fatalf("refusal %q, want %q", refusalText(err), want)
 		}
 	})
 	t.Run("workspace", func(t *testing.T) {
