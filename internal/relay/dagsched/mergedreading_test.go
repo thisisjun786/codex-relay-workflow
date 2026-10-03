@@ -64,6 +64,17 @@ func TestClassifyPullRequestReadsAMergedPullRequest(t *testing.T) {
 	// A merged reading is classified as an open one is, with the two problems merging explains set aside. Rows marked synthetic carry a verdict and problems the collector cannot give together
 	// (VerdictOf derives the verdict from the problems); they pin the boundary of the rule and keep a mutation of it from surviving.
 	merged := []string{evidence.CandidateNotOpen, evidence.CandidateUnknown}
+	t.Run("a merged pull request whose rules cannot be read is still the host's failure", func(t *testing.T) {
+		g := mergedGH()
+		g.rulesOK = false
+		pr := g.read(t)
+		if pr.State != "merged" || pr.Verdict != evidence.UnknownVerdict || !slices.Contains(problemCodes(pr), evidence.UnreadableCode) {
+			t.Fatalf("the collector's reading = state %s, verdict %s, problems %v", pr.State, pr.Verdict, problemCodes(pr))
+		}
+		if err := ClassifyPullRequest(pr); err == nil || !strings.HasPrefix(refusalReason(err), "not a refusal") {
+			t.Fatalf("classification = %v, want the host's failure", err)
+		}
+	})
 	rows := []struct {
 		name    string
 		state   string
@@ -72,17 +83,21 @@ func TestClassifyPullRequestReadsAMergedPullRequest(t *testing.T) {
 		want    string // "" readable, "host" the host's failure, else a refusal reason
 	}{
 		{"merged, unknown, the two merged problems", "merged", "unknown", merged, ""},
-		{"merged, unknown, the unknown merge state alone", "merged", "unknown", []string{evidence.CandidateUnknown}, ""},
+		{"merged, unknown, the unknown merge state alone (synthetic)", "merged", "unknown", []string{evidence.CandidateUnknown}, ""},
 		{"merged, unknown, the merged problem alone (synthetic)", "merged", "unknown", []string{evidence.CandidateNotOpen}, ""},
 		{"merged, unknown, a judgement problem besides the merged ones", "merged", "unknown", append([]string{evidence.ReviewIncomplete}, merged...), ""},
 		{"merged, unknown, a read failure besides the merged ones", "merged", "unknown", append([]string{evidence.EnumerationTruncated}, merged...), "host"},
 		{"merged, unknown, a read failure and no merged problem", "merged", "unknown", []string{evidence.ReviewSetUnstable}, "host"},
+		{"merged, unknown, an unreadable code besides the merged ones", "merged", "unknown", append([]string{evidence.UnreadableCode}, merged...), "host"},
+		{"merged, unknown, an unstable review set besides the merged ones", "merged", "unknown", append([]string{evidence.ReviewSetUnstable}, merged...), "host"},
 		{"merged, unknown, no problem at all (synthetic)", "merged", "unknown", nil, "host"},
 		{"merged, stale, the candidate moved while it was read", "merged", "stale", []string{evidence.CandidateNotOpen, evidence.CandidateMoved}, "merge_candidate_moved"},
+		{"merged, stale, the gates moved while they were read", "merged", "stale", []string{evidence.CandidateNotOpen, evidence.GatesMoved}, "merge_evidence_malformed"},
+		{"merged, stale, the base branch is missing", "merged", "stale", []string{evidence.CandidateNotOpen, evidence.BaseRefMissing}, "merge_evidence_malformed"},
 		{"merged, stale, only the merged problems (synthetic)", "merged", "stale", merged, "host"},
 		{"merged, an unrecognised verdict, only the merged problems (synthetic)", "merged", "mostly fine", merged, "host"},
 		{"merged, no verdict, only the merged problems (synthetic)", "merged", "", merged, "host"},
-		{"merged, ready", "merged", "ready", nil, ""},
+		{"merged, ready (synthetic)", "merged", "ready", nil, ""},
 		{"merged, not ready", "merged", "not_ready", []string{evidence.CandidateNotOpen}, ""},
 		{"open, unknown, the same two problems", "open", "unknown", merged, "host"},
 		{"closed, unknown, the same two problems", "closed", "unknown", merged, "host"},
@@ -184,7 +199,8 @@ func TestEveryReaderDecidesAboutAMergedPullRequestFromItsState(t *testing.T) {
 }
 
 // dag-base-refresh read a merged pull request by its own rule before the classification was one place (readable when the two merged problems were its only problems, whatever the verdict). It
-// now classifies as every other reader does. These are the readings on which the two rules differ, and the reading they agree on.
+// now classifies as every other reader does. These are the readings the collector can give on which the two rules differ, and the reading they agree on; the readings it cannot give (a stale,
+// absent or unrecognised verdict that carries only the two merged problems) are rows of TestClassifyPullRequestReadsAMergedPullRequest, and are the host's failure there.
 func TestBaseRefreshClassifiesAMergedPullRequestAsEveryReaderDoes(t *testing.T) {
 	merged := []Problem{{Code: evidence.CandidateNotOpen}, {Code: evidence.CandidateUnknown}}
 	cases := []struct {
@@ -197,6 +213,8 @@ func TestBaseRefreshClassifiesAMergedPullRequestAsEveryReaderDoes(t *testing.T) 
 		{"a judgement problem besides them: not a read failure, as for an open pull request", "unknown", append([]Problem{{Code: evidence.ReviewIncomplete, Detail: "an open thread"}}, merged...), ""},
 		{"a read failure besides them", "unknown", append([]Problem{{Code: evidence.EnumerationTruncated, Detail: "the review list was cut"}}, merged...), "host"},
 		{"the candidate moved while it was read: a refusal, as for an open pull request", "stale", append([]Problem{{Code: evidence.CandidateMoved}}, merged...), "merge_candidate_moved"},
+		{"the gates moved while they were read: a refusal, as for an open pull request", "stale", append([]Problem{{Code: evidence.GatesMoved}}, merged...), "merge_evidence_malformed"},
+		{"the base branch is missing: a refusal, as for an open pull request", "stale", append([]Problem{{Code: evidence.BaseRefMissing}}, merged...), "merge_evidence_malformed"},
 		{"an unknown verdict that names no problem (the collector cannot produce it)", "unknown", nil, "host"},
 	}
 	for _, c := range cases {
