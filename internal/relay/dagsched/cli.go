@@ -119,6 +119,8 @@ type wireRegion struct {
 	Key        string `json:"key"`
 	Change     string `json:"change"`
 	Exclusive  bool   `json:"exclusive"`
+	Grade      string `json:"grade"`
+	Rule       string `json:"rule"`
 }
 
 func decodeRegions(raw []byte) ([]Region, error) {
@@ -126,7 +128,7 @@ func decodeRegions(raw []byte) ([]Region, error) {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&wire); err != nil {
-		return nil, usage("--regions is a JSON list of {repository, path, kind, key, change, exclusive}: " + err.Error())
+		return nil, usage("--regions is a JSON list of {repository, path, kind, key, change, exclusive, grade, rule}: " + err.Error())
 	}
 	if decoder.More() {
 		return nil, usage("--regions holds one JSON list")
@@ -159,7 +161,8 @@ func runRegionDeclare(ctx context.Context, services dispatch.Services, args disp
 	list := make([]any, len(declared.Regions))
 	for i, r := range declared.Regions {
 		list[i] = contract.OrderedObject{{Key: "repository", Value: r.Repository}, {Key: "path", Value: r.Path}, {Key: "kind", Value: r.Kind},
-			{Key: "key", Value: optionalText(r.Key)}, {Key: "change", Value: r.Change}, {Key: "exclusive", Value: r.Exclusive}}
+			{Key: "key", Value: optionalText(r.Key)}, {Key: "change", Value: r.Change}, {Key: "exclusive", Value: r.Exclusive},
+			{Key: "grade", Value: r.Grade}, {Key: "rule", Value: optionalText(r.Rule)}}
 	}
 	return contract.OrderedObject{{Key: "ok", Value: true}, {Key: "plan_id", Value: declared.PlanID}, {Key: "node_id", Value: declared.NodeID},
 		{Key: "declaration_seq", Value: declared.Seq}, {Key: "replayed", Value: declared.Replayed}, {Key: "regions", Value: list}}, nil
@@ -297,6 +300,8 @@ func runCorrect(ctx context.Context, services dispatch.Services, args dispatch.A
 	}
 	defer closeStore()
 	if args.Bool("prepare") {
+		// the commit of the correction's base is read from the target branch, as dag-release reads it
+		sched.Tips = mergeturn.TargetReader{}
 		raw, err := readDocument(args.Text("manifest-request"))
 		if err != nil {
 			return nil, err
