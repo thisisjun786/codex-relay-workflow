@@ -77,7 +77,7 @@ for (const k of cases.status) {
   setup(c, k.setup);
   const got = ev.unrecordableVerdictStatus(c.ws, k.session ?? "s1");
   restore(c, k.setup);
-  out.status[k.id] = { present: got.present, unreadable: got.unreadable, tree: gitignoreText(tree(c)) };
+  out.status[k.id] = { present: got.present, unreadable: got.unreadable, tree: gitignoreText(tree(c)), out: outTree(c) };
 }
 
 for (const k of cases.budget) {

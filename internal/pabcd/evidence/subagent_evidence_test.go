@@ -161,3 +161,26 @@ func TestVerifierDirectiveNamesTheAttempt(t *testing.T) {
 		}
 	}
 }
+
+// A verdict that is found but cannot be saved is not resolved: the call reports false and the file stays as it was. The lock is
+// replaced by one that does not need the directory, which is what the permission takes away.
+func TestResolveTombstoneReportsAFailedSave(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: permissions are not enforced")
+	}
+	cwd, p := t.TempDir(), agent("a1", "t1")
+	if !RecordTombstone(cwd, "s1", p, MaxAttempts, nil) {
+		t.Fatal("no tombstone")
+	}
+	sessions := filepath.Join(cwd, ".crw", "sessions")
+	before, err := os.ReadFile(state.StatePath(cwd, "s1"))
+	must(t, err)
+	must(t, os.Chmod(sessions, 0o500))
+	defer func() { must(t, os.Chmod(sessions, 0o700)) }()
+	if resolveTombstone(cwd, "s1", p, func(_, _ string, fn func() error) error { return fn() }) {
+		t.Error("a verdict that could not be saved was reported resolved")
+	}
+	if after, _ := os.ReadFile(state.StatePath(cwd, "s1")); !bytes.Equal(after, before) {
+		t.Errorf("the file changed: %q", after)
+	}
+}

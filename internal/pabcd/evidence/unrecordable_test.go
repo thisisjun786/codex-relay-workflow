@@ -1,6 +1,7 @@
 package evidence
 
 import (
+	"bytes"
 	"encoding/json"
 	"io/fs"
 	"os"
@@ -57,7 +58,7 @@ type unrecGolden struct {
 	}
 	Status map[string]struct {
 		Present, Unreadable bool
-		Tree                []treeEntry
+		Tree, Out           []treeEntry
 	}
 	Budget map[string]struct {
 		Spent bool
@@ -221,6 +222,7 @@ func TestUnrecordableVerdictStatus(t *testing.T) {
 		}
 		// The probe leaves nothing behind, and the query creates the state and marker directories as the oracle's does.
 		same(t, k.ID+" tree", treeOf(filepath.Join(cwd, ".crw"), cwd, out), want.Tree)
+		same(t, k.ID+" outside", treeOf(out, cwd, out), want.Out) // a probe never stays in a directory a link leads to
 	}
 }
 
@@ -248,6 +250,19 @@ func TestHasSpentBudget(t *testing.T) {
 	}
 }
 
+// stateOf is a session file as a map without its updatedAt; text that is not JSON is {"raw": text}.
+func stateOf(raw []byte) map[string]any {
+	var m map[string]any
+	if json.Unmarshal(raw, &m) != nil {
+		m = map[string]any{"raw": string(raw)}
+	}
+	delete(m, "updatedAt")
+	return m
+}
+
+// TestResolveTombstone replays the oracle's resolveTombstone. Two cases are intentionally changed (the data-loss fix): the oracle
+// writes back the verdicts its read kept, so the 65th and 66th of a list past the cap, and an entry it cannot parse, are lost
+// from the file; the port writes nothing when the file holds more verdicts than the read kept, and the call reports false.
 func TestResolveTombstone(t *testing.T) {
 	c, g := loadUnrec(t)
 	for _, k := range c.Resolve {
@@ -266,17 +281,17 @@ func TestResolveTombstone(t *testing.T) {
 		if k.Lock {
 			put(t, filepath.Join(sessions, "s1.json.lock"), []byte("12345"))
 		}
+		path := filepath.Join(sessions, "s1.json")
+		before, _ := os.ReadFile(path)
 		returns := []bool{}
 		for _, o := range k.Payloads {
 			str := func(key string) string { s, _ := o[key].(string); return s }
 			returns = append(returns, ResolveTombstone(cwd, "s1", Payload{AgentType: str("agent_type"), AgentID: str("agent_id"), TurnID: str("turn_id")}))
 		}
 		var gotState map[string]any
-		if raw, err := os.ReadFile(filepath.Join(sessions, "s1.json")); err == nil {
-			if json.Unmarshal(raw, &gotState) != nil {
-				gotState = map[string]any{"raw": string(raw)}
-			}
-			delete(gotState, "updatedAt")
+		after, err := os.ReadFile(path)
+		if err == nil {
+			gotState = stateOf(after)
 		}
 		var gotSessions []string
 		if entries, err := os.ReadDir(sessions); err == nil {
@@ -284,6 +299,12 @@ func TestResolveTombstone(t *testing.T) {
 				gotSessions = append(gotSessions, e.Name())
 			}
 			slices.Sort(gotSessions)
+		}
+		if k.ID == "sixty_six_entries_resolve_first" || k.ID == "malformed_entry_beside_resolved" {
+			want.Returns, want.State = []bool{false}, stateOf(before)
+		}
+		if !slices.Contains(want.Returns, true) && before != nil && !bytes.Equal(after, before) {
+			t.Errorf("%s: nothing was resolved and the file changed: %q, was %q", k.ID, after, before)
 		}
 		same(t, k.ID+" returns", returns, want.Returns)
 		same(t, k.ID+" state", gotState, want.State)

@@ -64,6 +64,15 @@
    ]
   },
   {
+   "id": "control_ids",
+   "calls": [
+    {
+     "session": "s\b\f\t\r1",
+     "agent": "a\u001f\u0000\\u2028"
+    }
+   ]
+  },
+  {
    "id": "two_agents",
    "calls": [
     {
@@ -723,6 +732,24 @@
    ]
   },
   {
+   "id": "raw_huge_number_sibling",
+   "setup": [
+    {
+     "file": "{S}/evidence-attempts/s1-a1-1.json",
+     "text": "{\"attempts\":1,\"x\":1e400}"
+    }
+   ]
+  },
+  {
+   "id": "raw_dup_huge_first",
+   "setup": [
+    {
+     "file": "{S}/evidence-attempts/s1-a1-1.json",
+     "text": "{\"attempts\":1e400,\"attempts\":1}"
+    }
+   ]
+  },
+  {
    "id": "raw_deep_sibling",
    "setup": [
     {
@@ -1252,6 +1279,65 @@
     ]
    },
    "lock": true,
+   "payloads": [
+    {
+     "agent_type": "executor",
+     "agent_id": "a1",
+     "turn_id": "t1"
+    }
+   ]
+  },
+  {
+   "id": "malformed_entry_beside_resolved",
+   "seedOverrides": {
+    "unverifiedSubagents": [
+     {
+      "agentId": "a1",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "junk": 1
+     }
+    ]
+   },
+   "payloads": [
+    {
+     "agent_type": "executor",
+     "agent_id": "a1",
+     "turn_id": "t1"
+    }
+   ]
+  },
+  {
+   "id": "flag_set_list_intact",
+   "seedOverrides": {
+    "unverifiedCorrupt": true,
+    "unverifiedSubagents": [
+     {
+      "agentId": "a1",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     },
+     {
+      "agentId": "a2",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     }
+    ]
+   },
    "payloads": [
     {
      "agent_type": "executor",

@@ -148,6 +148,27 @@
    ],
    "out": []
   },
+  "control_ids": {
+   "threw": [
+    false
+   ],
+   "tree": [
+    {
+     "path": ".gitignore",
+     "type": "file"
+    },
+    {
+     "path": "evidence-unrecordable",
+     "type": "dir"
+    },
+    {
+     "path": "evidence-unrecordable/s-1-a-u2028-1767225600000.json",
+     "type": "file",
+     "text": "{\"sessionId\":\"s\\b\\f\\t\\r1\",\"agentId\":\"a\\u001f\\u0000\\\\u2028\",\"at\":\"2026-01-01T00:00:00.000Z\"}\n"
+    }
+   ],
+   "out": []
+  },
   "two_agents": {
    "threw": [
     false,
@@ -306,7 +327,8 @@
      "path": "evidence-unrecordable",
      "type": "dir"
     }
-   ]
+   ],
+   "out": []
   },
   "empty_marker_dir": {
    "present": false,
@@ -316,7 +338,8 @@
      "path": "evidence-unrecordable",
      "type": "dir"
     }
-   ]
+   ],
+   "out": []
   },
   "marker_for_session": {
    "present": true,
@@ -331,7 +354,8 @@
      "type": "file",
      "text": "{}"
     }
-   ]
+   ],
+   "out": []
   },
   "marker_other_session": {
    "present": false,
@@ -346,7 +370,8 @@
      "type": "file",
      "text": "{}"
     }
-   ]
+   ],
+   "out": []
   },
   "marker_dash_prefixed_session": {
    "present": true,
@@ -361,7 +386,8 @@
      "type": "file",
      "text": "{}"
     }
-   ]
+   ],
+   "out": []
   },
   "marker_content_ignored": {
    "present": true,
@@ -376,7 +402,8 @@
      "type": "file",
      "text": ""
     }
-   ]
+   ],
+   "out": []
   },
   "marker_is_directory": {
    "present": true,
@@ -390,7 +417,8 @@
      "path": "evidence-unrecordable/s1-a1",
      "type": "dir"
     }
-   ]
+   ],
+   "out": []
   },
   "marker_sanitised_session": {
    "present": true,
@@ -405,7 +433,8 @@
      "type": "file",
      "text": "{}"
     }
-   ]
+   ],
+   "out": []
   },
   "marker_empty_session": {
    "present": true,
@@ -420,7 +449,8 @@
      "type": "file",
      "text": "{}"
     }
-   ]
+   ],
+   "out": []
   },
   "stale_probe_other_session": {
    "present": false,
@@ -435,7 +465,8 @@
      "type": "file",
      "text": ""
     }
-   ]
+   ],
+   "out": []
   },
   "stale_probe_dot_session": {
    "present": true,
@@ -450,7 +481,8 @@
      "type": "file",
      "text": ""
     }
-   ]
+   ],
+   "out": []
   },
   "marker_dir_is_file": {
    "present": false,
@@ -460,12 +492,14 @@
      "path": "evidence-unrecordable",
      "type": "file"
     }
-   ]
+   ],
+   "out": []
   },
   "state_dir_is_file": {
    "present": false,
    "unreadable": true,
-   "tree": []
+   "tree": [],
+   "out": []
   },
   "marker_dir_dangling_symlink": {
    "present": false,
@@ -476,7 +510,8 @@
      "type": "link",
      "to": "<OUT>/missing"
     }
-   ]
+   ],
+   "out": []
   },
   "marker_dir_symlink_to_dir": {
    "present": false,
@@ -487,7 +522,8 @@
      "type": "link",
      "to": "<OUT>"
     }
-   ]
+   ],
+   "out": []
   },
   "marker_dir_unwritable_empty": {
    "present": false,
@@ -497,7 +533,8 @@
      "path": "evidence-unrecordable",
      "type": "dir"
     }
-   ]
+   ],
+   "out": []
   },
   "marker_dir_unwritable_with_marker": {
    "present": true,
@@ -512,7 +549,8 @@
      "type": "file",
      "text": "{}"
     }
-   ]
+   ],
+   "out": []
   },
   "marker_dir_unreadable": {
    "present": false,
@@ -522,7 +560,8 @@
      "path": "evidence-unrecordable",
      "type": "dir"
     }
-   ]
+   ],
+   "out": []
   }
  },
  "budget": {
@@ -1039,6 +1078,34 @@
      "path": "evidence-attempts/s1-a1-1.json",
      "type": "file",
      "text": "{\"x\":{\"attempts\":9},\"attempts\":1}"
+    }
+   ]
+  },
+  "raw_huge_number_sibling": {
+   "spent": false,
+   "tree": [
+    {
+     "path": "evidence-attempts",
+     "type": "dir"
+    },
+    {
+     "path": "evidence-attempts/s1-a1-1.json",
+     "type": "file",
+     "text": "{\"attempts\":1,\"x\":1e400}"
+    }
+   ]
+  },
+  "raw_dup_huge_first": {
+   "spent": false,
+   "tree": [
+    {
+     "path": "evidence-attempts",
+     "type": "dir"
+    },
+    {
+     "path": "evidence-attempts/s1-a1-1.json",
+     "type": "file",
+     "text": "{\"attempts\":1e400,\"attempts\":1}"
     }
    ]
   },
@@ -1910,6 +1977,102 @@
    "sessions": [
     "s1.json",
     "s1.json.lock"
+   ]
+  },
+  "malformed_entry_beside_resolved": {
+   "returns": [
+    true
+   ],
+   "seed": "{\n  \"phase\": \"IDLE\",\n  \"sessionId\": \"s1\",\n  \"slug\": \"\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [\n    {\n      \"agentId\": \"a1\",\n      \"turnId\": \"t1\",\n      \"agentType\": \"executor\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2026-01-01T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"junk\": 1\n    }\n  ],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": null,\n  \"planEpoch\": null,\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+   "state": {
+    "phase": "IDLE",
+    "sessionId": "s1",
+    "slug": "",
+    "flags": {
+     "interview": false,
+     "auditPassed": false,
+     "checkPassed": false
+    },
+    "supersededBy": null,
+    "injectedTurns": [],
+    "lastInjectedPhase": null,
+    "orchestrationActive": false,
+    "interview": null,
+    "stopBlockPhase": null,
+    "stopBlockCount": 0,
+    "stopBlockWorkPhaseId": null,
+    "stopMetricCursor": 0,
+    "stopBlockTotal": 0,
+    "stopBlockTurnId": null,
+    "stopBlockCapNotified": false,
+    "loopArmSeen": false,
+    "idleEditNudges": 0,
+    "memoryWriteRequested": false,
+    "memoryWriteTurn": null,
+    "memoryWriteGrant": false,
+    "unverifiedSubagents": [],
+    "unverifiedCorrupt": true,
+    "phaseEntrySource": null,
+    "planUnit": null,
+    "planEpoch": null,
+    "checkEpoch": null,
+    "dcloseRecovery": null
+   },
+   "sessions": [
+    "s1.json"
+   ]
+  },
+  "flag_set_list_intact": {
+   "returns": [
+    true
+   ],
+   "seed": "{\n  \"phase\": \"IDLE\",\n  \"sessionId\": \"s1\",\n  \"slug\": \"\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [\n    {\n      \"agentId\": \"a1\",\n      \"turnId\": \"t1\",\n      \"agentType\": \"executor\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2026-01-01T00:00:00.000Z\",\n      \"resolvable\": true\n    },\n    {\n      \"agentId\": \"a2\",\n      \"turnId\": \"t1\",\n      \"agentType\": \"executor\",\n      \"attempts\": 3,\n      \"receiptClaimed\": \"\",\n      \"recordedAt\": \"2026-01-01T00:00:00.000Z\",\n      \"resolvable\": true\n    }\n  ],\n  \"unverifiedCorrupt\": true,\n  \"phaseEntrySource\": null,\n  \"planUnit\": null,\n  \"planEpoch\": null,\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+   "state": {
+    "phase": "IDLE",
+    "sessionId": "s1",
+    "slug": "",
+    "flags": {
+     "interview": false,
+     "auditPassed": false,
+     "checkPassed": false
+    },
+    "supersededBy": null,
+    "injectedTurns": [],
+    "lastInjectedPhase": null,
+    "orchestrationActive": false,
+    "interview": null,
+    "stopBlockPhase": null,
+    "stopBlockCount": 0,
+    "stopBlockWorkPhaseId": null,
+    "stopMetricCursor": 0,
+    "stopBlockTotal": 0,
+    "stopBlockTurnId": null,
+    "stopBlockCapNotified": false,
+    "loopArmSeen": false,
+    "idleEditNudges": 0,
+    "memoryWriteRequested": false,
+    "memoryWriteTurn": null,
+    "memoryWriteGrant": false,
+    "unverifiedSubagents": [
+     {
+      "agentId": "a2",
+      "turnId": "t1",
+      "agentType": "executor",
+      "attempts": 3,
+      "receiptClaimed": "",
+      "recordedAt": "2026-01-01T00:00:00.000Z",
+      "resolvable": true
+     }
+    ],
+    "unverifiedCorrupt": true,
+    "phaseEntrySource": null,
+    "planUnit": null,
+    "planEpoch": null,
+    "checkEpoch": null,
+    "dcloseRecovery": null
+   },
+   "sessions": [
+    "s1.json"
    ]
   },
   "sixty_six_entries_resolve_first": {
