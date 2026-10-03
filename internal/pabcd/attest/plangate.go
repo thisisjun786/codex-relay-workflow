@@ -45,17 +45,13 @@ func ValidatePlanArtifacts(att *Attestation, cwd string) PlanResult {
 		}
 	}
 	// Relative to cwd: the round binding compares paths, and an absolute and a relative attestation naming one unit must agree.
-	base, err := filepath.Abs(cwd)
-	if err == nil {
-		unit, err = filepath.Abs(unit)
+	base, _ := filepath.Abs(cwd)
+	abs, _ := filepath.Abs(unit)
+	rel, err := filepath.Rel(base, abs)
+	if err != nil {
+		rel = abs
 	}
-	if err == nil {
-		var rel string
-		if rel, err = filepath.Rel(base, unit); err == nil {
-			return PlanResult{OK: true, Unit: rel}
-		}
-	}
-	return PlanResult{OK: true, Unit: unit}
+	return PlanResult{OK: true, Unit: rel}
 }
 
 // resolve is path.isAbsolute(p) ? p : path.resolve(cwd, p).

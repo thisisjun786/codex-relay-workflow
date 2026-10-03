@@ -3,7 +3,6 @@ package attest
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -16,24 +15,13 @@ func plan(unit string, paths ...string) *Attestation {
 
 func write(t *testing.T, path string) {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte("x\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	must(t, os.WriteFile(path, []byte("x\n"), 0o644))
 }
 
 func reasonHas(t *testing.T, r PlanResult, want ...string) {
 	t.Helper()
-	if r.OK {
-		t.Fatalf("accepted, want a refusal naming %q", want)
-	}
-	for _, w := range want {
-		if !strings.Contains(r.Reason, w) {
-			t.Errorf("reason %q lacks %q", r.Reason, w)
-		}
-	}
+	mustHave(t, Result{OK: r.OK, Reason: r.Reason}, want...)
 }
 
 func TestPlanGateRefusesANullAttestAndAMissingPlanUnitWithAScaffoldHint(t *testing.T) {

@@ -1,27 +1,13 @@
 {
   "issue": "CRW-328",
   "pending": [
-    "cli__orchestrate__a_to_b_failing_verdict_blocked",
-    "cli__orchestrate__a_to_b_without_audit_output_refused",
-    "cli__orchestrate__attest_file_form",
-    "cli__orchestrate__attest_missing_fields_batched",
-    "cli__orchestrate__audit_output_fail_verdict_tail_refused",
-    "cli__orchestrate__bound_c_to_d_requires_test_receipt",
-    "cli__orchestrate__bound_goalplan_requires_work_phase_id",
-    "cli__orchestrate__c_to_d_failing_exit_code_refused",
-    "cli__orchestrate__c_to_d_without_exit_code_refused",
-    "cli__orchestrate__check_output_fail_line_with_exit_zero",
-    "cli__orchestrate__full_cycle_idle_p_a_b_c_d_idle",
-    "cli__orchestrate__i_to_p_agent_override",
-    "cli__orchestrate__illegal_edge_from_idle_refused",
-    "cli__orchestrate__interview_entry_and_ungated_i_to_p_refused",
-    "cli__orchestrate__p_to_a_without_attest_refused",
-    "cli__orchestrate__p_to_a_without_plan_unit_refused",
-    "cli__orchestrate__split_cwd_cycle_closes_on_real_commit_receipt",
-    "cli__receipt__failing_command_recorded",
-    "cli__review-round__open_signoff_and_binding_verdict",
-    "cli__review-round__unparsed_signoff_noted_and_abort",
-    "cli__session__bound_worktree_change_advances_b",
-    "cli__session__source_binds_linked_worktree"
+    "cli__orchestrate__a_to_b_failing_verdict_blocked", "cli__orchestrate__a_to_b_without_audit_output_refused", "cli__orchestrate__attest_file_form",
+    "cli__orchestrate__attest_missing_fields_batched", "cli__orchestrate__audit_output_fail_verdict_tail_refused", "cli__orchestrate__bound_c_to_d_requires_test_receipt",
+    "cli__orchestrate__bound_goalplan_requires_work_phase_id", "cli__orchestrate__c_to_d_failing_exit_code_refused", "cli__orchestrate__c_to_d_without_exit_code_refused",
+    "cli__orchestrate__check_output_fail_line_with_exit_zero", "cli__orchestrate__full_cycle_idle_p_a_b_c_d_idle", "cli__orchestrate__i_to_p_agent_override",
+    "cli__orchestrate__illegal_edge_from_idle_refused", "cli__orchestrate__interview_entry_and_ungated_i_to_p_refused", "cli__orchestrate__p_to_a_without_attest_refused",
+    "cli__orchestrate__p_to_a_without_plan_unit_refused", "cli__orchestrate__split_cwd_cycle_closes_on_real_commit_receipt", "cli__receipt__failing_command_recorded",
+    "cli__review-round__open_signoff_and_binding_verdict", "cli__review-round__unparsed_signoff_noted_and_abort",
+    "cli__session__bound_worktree_change_advances_b", "cli__session__source_binds_linked_worktree"
   ]
 }

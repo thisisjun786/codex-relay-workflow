@@ -38,6 +38,14 @@ func audit(did, output, verdict, residual string) *Attestation {
 	return a
 }
 
+// advances asserts that an A>B attest claiming pass over output is accepted.
+func advances(t *testing.T, output string) {
+	t.Helper()
+	if r := validate(audit("audited the plan", output, "pass", "")); !r.OK {
+		t.Errorf("refused %q: %s", output, r.Reason)
+	}
+}
+
 func TestAllFourForwardEdgesAreGated(t *testing.T) {
 	if got := slices.Sorted(slices.Values(GatedTransitions())); !slices.Equal(got, []string{"A>B", "B>C", "C>D", "P>A"}) {
 		t.Fatalf("gated edges %v", got)
@@ -45,11 +53,6 @@ func TestAllFourForwardEdgesAreGated(t *testing.T) {
 	for _, e := range [][2]state.Phase{{"IDLE", "P"}, {"C", "B"}, {"C", "P"}, {"D", "IDLE"}} {
 		if IsGated(e[0], e[1]) || !Validate(e[0], e[1], nil).OK {
 			t.Errorf("%s>%s is gated", e[0], e[1])
-		}
-	}
-	for _, e := range [][2]state.Phase{{"P", "A"}, {"A", "B"}, {"B", "C"}, {"C", "D"}} {
-		if !IsGated(e[0], e[1]) {
-			t.Errorf("%s>%s is not gated", e[0], e[1])
 		}
 	}
 }
@@ -84,29 +87,18 @@ func TestAToBNearPassNeedsAResidual(t *testing.T) {
 	mustHave(t, validate(audit("audited the plan", "VERDICT: GO-WITH-FIXES (blockers=1)", "near-pass", "")), "auditResidual")
 }
 
-func TestAToBPassWithCleanOutputAdvances(t *testing.T) {
-	if !validate(audit("audited the plan", "review complete\nVERDICT: PASS", "pass", "")).OK {
-		t.Error("refused")
-	}
-}
+func TestAToBPassWithCleanOutputAdvances(t *testing.T) { advances(t, "review complete\nVERDICT: PASS") }
 
 func TestAToBFailTailContradictionIsRefused(t *testing.T) {
-	r := validate(audit("audited the plan", "findings fixed\nVERDICT: FAIL", "pass", ""))
-	if r.OK || !strings.Contains(strings.ToLower(r.Reason), "contradict") {
-		t.Errorf("%+v", r)
-	}
+	mustHave(t, validate(audit("audited the plan", "findings fixed\nVERDICT: FAIL", "pass", "")), "contradict")
 }
 
 func TestAToBMidTextFailMentionDoesNotTripTheTail(t *testing.T) {
-	if !validate(audit("audited the plan", "scanned for FAIL markers; none apply\nVERDICT: PASS", "pass", "")).OK {
-		t.Error("refused")
-	}
+	advances(t, "scanned for FAIL markers; none apply\nVERDICT: PASS")
 }
 
 func TestAToBEarlierFailCorrectedByFinalPassDoesNotTrip(t *testing.T) {
-	if !validate(audit("audited the plan", "VERDICT: FAIL\nround 2 after fixes:\nVERDICT: PASS", "pass", "")).OK {
-		t.Error("refused")
-	}
+	advances(t, "VERDICT: FAIL\nround 2 after fixes:\nVERDICT: PASS")
 }
 
 func TestHasFailVerdictTailSeesOnlyTheLastVerdictLineOfTheFinalFive(t *testing.T) {

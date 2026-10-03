@@ -1,30 +1,30 @@
-// Package attest is the evidence gate of the PABCD phase transitions: the Go form of CXC v0.2.40 pabcd-state/src/attest.ts
-// (the whole file) and plan-gate.ts (the whole file), commit 3c1459ac. A forward edge (P>A, A>B, B>C, C>D) advances only when
-// the agent attaches evidence: a specific narrative, for A>B the pasted verdict of an independent reviewer and the agent's own
-// judgment of it, for C>D pasted command output with a passing exit code; and P>A also needs the plan to exist as numbered files
-// on disk. The package is pure validation. It reads the plan files and writes nothing; callers persist the flags the evidence
-// unlocks.
+// Package attest is the evidence gate of the PABCD phase transitions: the Go form of CXC v0.2.40 pabcd-state/src/attest.ts and
+// plan-gate.ts (both whole files, commit 3c1459ac). A forward edge (P>A, A>B, B>C, C>D) advances only when the agent attaches
+// evidence: a specific narrative, for A>B the pasted verdict of an independent reviewer and the agent's own judgment of it, for
+// C>D pasted command output with a passing exit code; P>A also needs the plan to exist as numbered files on disk. The package
+// validates and writes nothing; callers persist the flags the evidence unlocks.
 //
 // Behaviour is ported as-is, oracle defects included (docs/port-cxc/known-defects.md). Names: validateAttest is Validate,
 // coerceAttest is Coerce, GATED_TRANSITIONS and AUDIT_VERDICTS are IsGated, GatedTransitions and IsAuditVerdict (no package
-// variable holds a set), validatePlanArtifacts is ValidatePlanArtifacts. Reasons carry CRW names where the oracle names its
-// command (name-substitution R9, R33 and the cli table): "crw pabcd plan init", "crw pabcd receipt test" and "CRW-ROLE:".
+// variable holds a set). Reasons carry CRW names where the oracle names its command (name-substitution R9, R33 and the cli
+// table): "crw pabcd plan init", "crw pabcd receipt test" and "CRW-ROLE:".
 //
-// Callers run, in the oracle's order: Coerce, then on P>A ValidatePlanArtifacts (orchestrate-cli.ts:600), then on every gated
-// edge ValidateWorkPhaseBinding with the active work phase of the bound goalplan (nil when none, which never refuses), then
-// Validate (fsm.ts:120). The FSM port must not live in package state, which this package imports for Phase.
+// Callers run, in the oracle's order: Coerce, on P>A ValidatePlanArtifacts (orchestrate-cli.ts:600), on every gated edge
+// ValidateWorkPhaseBinding with the active work phase of the bound goalplan (nil when none), then Validate (fsm.ts:120). The FSM
+// port must not live in package state, which this package imports for Phase.
 //
-// JavaScript semantics are reproduced where a value reaches a decision or a message: String.prototype.trim (internal/pabcd/text),
-// toLowerCase with U+0130 and the final sigma, ASCII-only /i regular expressions, and number-to-string. Two inputs cannot be
-// carried: a Go string holds no lone surrogate (it becomes U+FFFD), and JSON text cannot spell NaN or Infinity, which only a
-// direct Go caller can set on ExitCode (Coerce drops a non-finite number, as the oracle does). Absent and empty strings are the
-// same value, and so are an absent and a false override: nothing in the oracle reads the difference.
+// JavaScript semantics are reproduced where a value reaches a decision or a message: trim (internal/pabcd/text), toLowerCase with
+// U+0130 and the final sigma, ASCII-only /i regular expressions, number-to-string. Two inputs cannot be carried: a Go string holds
+// no lone surrogate (it becomes U+FFFD), and JSON cannot spell NaN or Infinity, which only a direct Go caller can set on ExitCode
+// (Coerce drops a non-finite number, as the oracle does). Absent and empty strings are one value, as are an absent and a false
+// override: nothing in the oracle reads the difference.
 package attest
 
 import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -79,11 +79,7 @@ func GatedTransitions() []string { return []string{"P>A", "A>B", "B>C", "C>D"} }
 
 // IsGated reports whether the edge from>to needs an attestation. Backward edges, the interview entry and the D>IDLE close do not.
 func IsGated(from, to state.Phase) bool {
-	switch string(from) + ">" + string(to) {
-	case "P>A", "A>B", "B>C", "C>D":
-		return true
-	}
-	return false
+	return slices.Contains(GatedTransitions(), string(from)+">"+string(to))
 }
 
 // IsAuditVerdict reports whether v is one of the three verdicts.
@@ -140,8 +136,6 @@ func finite(v any) *float64 {
 	switch n := v.(type) {
 	case float64:
 		f = n
-	case int:
-		f = float64(n)
 	case json.Number:
 		f, _ = strconv.ParseFloat(string(n), 64)
 	default:

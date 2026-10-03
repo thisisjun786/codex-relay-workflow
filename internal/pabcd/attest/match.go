@@ -9,9 +9,8 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
 
-// This file holds the JavaScript semantics the oracle leans on: the regular expressions of attest.ts and plan-gate.ts are written
-// out by hand because Go's regexp folds case over all of Unicode (the KELVIN SIGN would match "k"), the oracle's flags fold ASCII
-// only, and no package-level variable may do work (a compiled pattern would).
+// The JavaScript semantics the oracle leans on. Its regular expressions are written out by hand: Go's regexp folds case over all of
+// Unicode (the KELVIN SIGN would match "k") where the oracle's flags fold ASCII only, and no package variable may do work.
 
 // asciiLower lowercases A to Z only, as a JavaScript regular expression without the u flag compares under /i.
 func asciiLower(s string) string {
