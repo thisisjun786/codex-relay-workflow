@@ -2,6 +2,8 @@ package contracttest
 
 import (
 	"os"
+	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
@@ -101,6 +103,32 @@ func TestPendingDomains_are_fixture_directories(t *testing.T) {
 	for domain := range pendingDomains {
 		if !present[domain] {
 			t.Errorf("pending domain %q has no contract/fixtures/%s directory", domain, domain)
+		}
+	}
+}
+
+// requiredDomains are the fixture domains the contract corpus holds. TestDomain replays whatever
+// directories exist, so a deleted domain would leave it green over a smaller corpus; naming them
+// here makes dropping one an explicit edit of this list. Adding a domain needs no edit. This is the
+// live part of the port test map's check (decision 75): the domains the map named exist.
+var requiredDomains = []string{"appserver", "cli-shape", "cxc", "git", "hook", "ledger-fingerprint", "mcp-tools", "records", "sqlite-ddl"}
+
+func TestCorpusKeepsItsDomains(t *testing.T) {
+	domains, err := Domains()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, domain := range requiredDomains {
+		if !slices.Contains(domains, domain) {
+			t.Errorf("contract/fixtures/%s is missing", domain)
+			continue
+		}
+		if entries, err := os.ReadDir(filepath.Join(root, "contract", "fixtures", domain)); err != nil || len(entries) == 0 {
+			t.Errorf("contract/fixtures/%s holds no fixture (%v)", domain, err)
 		}
 	}
 }

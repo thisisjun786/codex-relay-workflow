@@ -7,15 +7,17 @@ import (
 	"testing"
 )
 
-// Todo 48's acceptance: this repository tracks no Python file.
+// Todo 48's acceptance: this repository tracks no Python file and no script a python shebang
+// runs. The check is the one `crw-dev ci validate` applies, over the tracked files only, so a
+// scratch file breaks `crw-dev ci validate` but not `make test`.
 func TestNoPythonIsTracked(t *testing.T) {
-	out, err := runGit(repoRoot(), "ls-files", "-z")
+	root := repoRoot()
+	out, err := runGit(root, "ls-files", "-z")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range strings.Split(strings.TrimSuffix(string(out), "\x00"), "\x00") {
-		if strings.HasSuffix(name, ".py") {
-			t.Errorf("%s: a tracked Python file", name)
-		}
+	names := strings.Split(strings.TrimSuffix(string(out), "\x00"), "\x00")
+	for _, e := range pythonFileErrors(root, names) {
+		t.Error(e)
 	}
 }
