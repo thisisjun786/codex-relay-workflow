@@ -34,7 +34,9 @@ func managedStart(ctx context.Context, services dispatch.Services, args dispatch
 	if err != nil {
 		return nil, err
 	}
-	if reason != "" {
+	// Only the engine can prove an already armed request's eligibility for the
+	// default profile without changing its frozen input. It rechecks all readiness.
+	if reason != "" && reason != "mcp_profile_required" {
 		return nil, &dispatch.PayloadExit{Code: contract.ExitRefused, Payload: contract.OrderedObject{{Key: "schema", Value: managed.Schema}, {Key: "state", Value: "refused"}, {Key: "stage", Value: "preflight"}, {Key: "requestId", Value: request["requestId"]}, {Key: "reason", Value: reason}}}
 	}
 	bridgePolicy, err := execution.FromEnvironment(map[string]string{execution.EnvPolicy: os.Getenv(execution.EnvPolicy), execution.EnvDigest: os.Getenv(execution.EnvDigest)})
@@ -61,6 +63,9 @@ func managedStart(ctx context.Context, services dispatch.Services, args dispatch
 		return nil, err
 	}
 	if answer.Get("state") != "admitted" {
+		if answer.Get("stage") == "preflight" && answer.Get("reason") == "mcp_profile_required" {
+			return nil, &dispatch.PayloadExit{Code: contract.ExitRefused, Payload: contract.OrderedObject{{Key: "schema", Value: managed.Schema}, {Key: "state", Value: "refused"}, {Key: "stage", Value: "preflight"}, {Key: "requestId", Value: request["requestId"]}, {Key: "reason", Value: "mcp_profile_required"}}}
+		}
 		return nil, &dispatch.PayloadExit{Payload: answer, Code: contract.ExitRefused}
 	}
 	return answer, nil
