@@ -68,10 +68,15 @@ func Test408_c2_a_clock_that_went_backwards_or_an_unreadable_stored_time_never_s
 	}
 }
 
-// failingQueue is a delivery that addresses a notice and then cannot queue it.
-type failingQueue struct{ StoreDelivery }
+// failingQueue is a delivery that addresses a notice and then cannot queue it; it counts the
+// attempts, so a test shows the injected failure was the one reached.
+type failingQueue struct {
+	StoreDelivery
+	calls *int
+}
 
-func (failingQueue) Queue(context.Context, string, string, string, string, string, string) error {
+func (f failingQueue) Queue(context.Context, string, string, string, string, string, string) error {
+	*f.calls++
 	return errors.New("the delivery store is unavailable")
 }
 
@@ -79,8 +84,9 @@ func Test408_c2_a_pass_whose_promotion_cannot_queue_its_wake_changes_nothing(t *
 	w, clock := clockedFx(t)
 	w.exec("INSERT INTO relationships (relationship_id,issue_key,status,parent_task_id,parent_host_id,child_task_id,child_host_id,execution_generation,artifact_roots,allowed_recipients,created_at,updated_at) VALUES ('rel-b','ISS-2','active','task-beta','host-b','child-b','child-host',1,'[]','[\"task-beta\"]','2023-11-14T22:13:20.000000+00:00','2023-11-14T22:13:20.000000+00:00')")
 	turn := w.held()
-	w.must(w.m.Request(w.ctx, fxRepo, fxBase, fxB, beta.TaskID, beta.HostID, "head-b", true, ClaimOptions{Relationship: sql.NullString{String: "rel-b", Valid: true}}))
-	w.m.Delivery = failingQueue{StoreDelivery{Store: w.s}}
+	successor := w.must(w.m.Request(w.ctx, fxRepo, fxBase, fxB, beta.TaskID, beta.HostID, "head-b", true, ClaimOptions{Relationship: sql.NullString{String: "rel-b", Valid: true}}))["turnId"].(string)
+	calls := 0
+	w.m.Delivery = failingQueue{StoreDelivery{Store: w.s}, &calls}
 	clock.advance(30 * time.Minute)
 	if _, err := w.m.Pass(w.ctx, turn, beta.TaskID, "alpha is gone"); err == nil || !strings.Contains(err.Error(), "delivery store is unavailable") {
 		t.Fatalf("the pass fails on the next waiter's grant that cannot be queued, not before or after it: %v", err)
@@ -88,6 +94,17 @@ func Test408_c2_a_pass_whose_promotion_cannot_queue_its_wake_changes_nothing(t *
 	after := w.must(w.m.Turn(w.ctx, turn))
 	if after["state"] != "holding" {
 		t.Fatalf("the failed pass left the turn holding: %v", after["state"])
+	}
+	if next := w.must(w.m.Turn(w.ctx, successor)); next["state"] != "waiting" || next["grant"] != nil {
+		t.Fatalf("the next waiter was not promoted: %v", next["state"])
+	}
+	if calls != 1 {
+		t.Fatalf("the failure came from the one queue attempt the promotion makes: %d", calls)
+	}
+	for _, query := range []string{"SELECT 1 FROM events", "SELECT 1 FROM deliveries"} {
+		if rows, err := w.s.All(w.ctx, query); err != nil || len(rows) != 0 {
+			t.Fatalf("nothing was queued (%s): %v %v", query, rows, err)
+		}
 	}
 	for _, entry := range jsonValue(t, after["ledger"]).([]any) {
 		if kind := asMap(t, entry)["evidenceKind"]; kind == "turn_passed" || kind == "close" {

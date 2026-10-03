@@ -87,7 +87,18 @@ func TestMergeTurnProgressPassAndReturn_the_built_crw_end_to_end(t *testing.T) {
 	r.ok("linkage-bind", "--role", "parent", "--scope", "PRJ-B", "--task", "task-beta", "--host", "host-b")
 	held := r.ok("merge-turn-request", "--repository", "owner/repo", "--base-ref", "dev", "--project", "PRJ-A", "--task", "task-alpha", "--host", "host-a", "--head", "head-a", "--ready")
 	alphaTurn := held["turnId"].(string)
-	waiting := r.ok("merge-turn-request", "--repository", "owner/repo", "--base-ref", "dev", "--project", "PRJ-B", "--task", "task-beta", "--host", "host-b", "--head", "head-b", "--ready")
+	// task-beta's turn names an assignment, so what is addressed to it can be queued.
+	seeded, err := store.Open(context.Background(), filepath.Join(r.state, "relay.sqlite3"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := seeded.DB.ExecContext(context.Background(), "INSERT INTO relationships (relationship_id,issue_key,status,parent_task_id,parent_host_id,child_task_id,child_host_id,execution_generation,artifact_roots,allowed_recipients,created_at,updated_at) VALUES ('rel-b','ISS-2','active','task-beta','host-b','child-b','child-host',1,'[]','[\"task-beta\"]','2023-11-14T22:13:20.000000+00:00','2023-11-14T22:13:20.000000+00:00')"); err != nil {
+		t.Fatal(err)
+	}
+	if err := seeded.Close(); err != nil {
+		t.Fatal(err)
+	}
+	waiting := r.ok("merge-turn-request", "--repository", "owner/repo", "--base-ref", "dev", "--project", "PRJ-B", "--task", "task-beta", "--host", "host-b", "--head", "head-b", "--relationship", "rel-b", "--ready")
 	betaTurn := waiting["turnId"].(string)
 
 	// c1: the holder records progress; the target shows it.
@@ -95,8 +106,8 @@ func TestMergeTurnProgressPassAndReturn_the_built_crw_end_to_end(t *testing.T) {
 	if progress["step"] != "base_refresh" || progress["sequence"] != float64(1) {
 		t.Fatal(progress)
 	}
-	if _, exit := r.run("merge-turn-progress", "--turn", alphaTurn, "--actor", "task-alpha", "--step", "lunch"); exit == 0 {
-		t.Fatal("a step outside the closed list is refused")
+	if answer, exit := r.run("merge-turn-progress", "--turn", alphaTurn, "--actor", "task-alpha", "--step", "lunch"); exit != 2 || answer != nil {
+		t.Fatalf("a step outside the closed list is a usage error, exit 2 with no answer: %d %v", exit, answer)
 	}
 	r.refused("merge_turn_not_held", "merge-turn-progress", "--turn", alphaTurn, "--actor", "task-beta", "--step", "ci_started")
 	shown := r.ok("merge-turn-show", "--repository", "owner/repo", "--base-ref", "dev")
@@ -145,10 +156,40 @@ func TestMergeTurnProgressPassAndReturn_the_built_crw_end_to_end(t *testing.T) {
 		}
 	}
 
-	// c4: a return request on the new holder's turn is recorded; this turn names no assignment,
-	// so the notice is reported unaddressed, not lost.
+	// c4: a return request on the new holder's turn is queued through its assignment, and the
+	// status reader tells a delivered return request from a delivered grant.
 	requested := r.ok("merge-turn-request-return", "--turn", betaTurn, "--actor", "task-alpha", "--evidence", "I need the lane back")
-	if object(t, requested["returnNotice"])["state"] != "unaddressed" {
+	notice := object(t, requested["returnNotice"])
+	if notice["state"] != "queued" || notice["eventId"] == nil {
 		t.Fatal(requested["returnNotice"])
+	}
+	dispatched, err := store.Open(context.Background(), filepath.Join(r.state, "relay.sqlite3"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dispatched.DB.ExecContext(context.Background(), "UPDATE deliveries SET state = 'dispatched'"); err != nil {
+		t.Fatal(err)
+	}
+	if err := dispatched.Close(); err != nil {
+		t.Fatal(err)
+	}
+	phases := map[any]any{}
+	reported := map[any]any{}
+	for _, item := range r.ok("status")["deliveries"].([]any) {
+		delivery := object(t, item)
+		phases[delivery["eventId"]] = delivery["phase"]
+		reported[delivery["eventId"]] = delivery["reported"]
+	}
+	if phases[notice["eventId"]] != "return_request_delivered" || reported[notice["eventId"]] != "dispatched_return_request" {
+		t.Fatalf("status reads a delivered return request as one: %v %v", phases, reported)
+	}
+	grants := 0
+	for event, phase := range phases {
+		if event != notice["eventId"] && phase == "awaiting_grant_acknowledgement" {
+			grants++
+		}
+	}
+	if grants != 1 {
+		t.Fatalf("the promotion's grant notice is still awaiting its acknowledgement: %v", phases)
 	}
 }

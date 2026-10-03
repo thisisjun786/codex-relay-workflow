@@ -39,9 +39,13 @@ func Test408_c4_a_replay_keeps_the_original_request_and_adds_no_second_record(t 
 
 func Test408_c4_a_notice_that_cannot_be_queued_leaves_no_request_behind(t *testing.T) {
 	w, turn := returnFixture(t)
-	w.m.Delivery = failingQueue{StoreDelivery{Store: w.s}}
+	calls := 0
+	w.m.Delivery = failingQueue{StoreDelivery{Store: w.s}, &calls}
 	if _, err := w.m.RequestReturn(w.ctx, turn, beta.TaskID, "I have a ready candidate"); err == nil || !strings.Contains(err.Error(), "delivery store is unavailable") {
 		t.Fatalf("the request fails on the notice that cannot be queued: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("the failure came from the one queue attempt the request makes: %d", calls)
 	}
 	for _, item := range jsonValue(t, w.must(w.m.Turn(w.ctx, turn))["ledger"]).([]any) {
 		if asMap(t, item)["evidenceKind"] == "return_requested" {
