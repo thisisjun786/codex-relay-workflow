@@ -13,6 +13,7 @@ import (
 )
 
 func TestDiscoverStateDir_adopts_python_legacy_parent_spellings(t *testing.T) {
+	// Serial: sets process environment variables, which every other running test would see.
 	root := t.TempDir()
 	t.Setenv("HOME", filepath.Join(root, "user-home"))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
@@ -66,6 +67,7 @@ func legacyScope(t *testing.T, spelling, root string) string {
 }
 
 func TestResolveStateDir_matches_python_absolute_with_symlink_parent(t *testing.T) {
+	// Serial: sets process environment variables, which every other running test would see.
 	root := t.TempDir()
 	t.Setenv("HOME", filepath.Join(root, "home"))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
@@ -111,6 +113,7 @@ func TestResolveStateDir_matches_python_absolute_with_symlink_parent(t *testing.
 }
 
 func TestExpandUser_rejects_unknown_user_like_python_pathlib(t *testing.T) {
+	// Serial: sets process environment variables, which every other running test would see.
 	input := "~crw_user_that_does_not_exist_17/x/../y"
 	root := t.TempDir()
 	t.Setenv("HOME", root)
@@ -138,6 +141,7 @@ func TestExpandUser_rejects_unknown_user_like_python_pathlib(t *testing.T) {
 }
 
 func TestOpen_does_not_expand_tilde_like_python_store(t *testing.T) {
+	// Serial: changes the process working directory, which every other running test would see.
 	// Given: both implementations run from the same temporary working directory.
 	cwd := t.TempDir()
 	input := "~/pst/relay.sqlite3"
@@ -157,6 +161,7 @@ func TestOpen_does_not_expand_tilde_like_python_store(t *testing.T) {
 }
 
 func TestLocate_normalizes_db_path_and_absolutizes_real_path_like_python(t *testing.T) {
+	t.Parallel()
 	for _, input := range []string{"./x//relay.sqlite3", "./x/../y//relay.sqlite3", "~/literal/relay.sqlite3"} {
 		t.Run(input, func(t *testing.T) {
 			root := t.TempDir()
@@ -176,6 +181,7 @@ func TestLocate_normalizes_db_path_and_absolutizes_real_path_like_python(t *test
 }
 
 func TestLocate_relative_db_path_matches_python(t *testing.T) {
+	// Serial: changes the process working directory, which every other running test would see.
 	root := t.TempDir()
 	input := "./x//relay.sqlite3"
 	t.Chdir(root)
@@ -192,6 +198,7 @@ func TestLocate_relative_db_path_matches_python(t *testing.T) {
 }
 
 func TestLocate_log_name_matches_python(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	path := filepath.Join(root, "relay.sqlite3")
 	s, err := fixtureOpen(context.Background(), path, "")

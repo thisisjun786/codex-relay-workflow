@@ -49,6 +49,11 @@ A holder that reached the currency check may already have merged. So:
 The refusal a caller gets in that state names `land` and `merge-turn-unknown` as the two routes
 out, because "wait longer" is the one answer that never helps.
 
+The one thing that moves because a holder went quiet is a turn that is still `holding`: a holder that
+follows the protocol has not begun to merge before `merge-turn-check`, so a holding turn silent past
+the holding limit can be passed on (below). That is a recorded act by another parent, not the
+passing of time, and it is no proof that the pull request is unmerged.
+
 ## The base a landing leaves behind
 
 A landing records the base branch it leaves behind, and the next candidate on that target has to
@@ -59,11 +64,13 @@ their verified successors were refused `merge_currency_stale`, and nothing could
 turn: `merge-turn-resolve` admits only an unknown one.
 
 So the merge turn reads one fact from the target itself: the commit its base branch points at. It
-reads it at the four moments it records a base, and at no other time:
+reads it at the four moments it records a base, and at no other time. One more reading, how the
+branch got from the last landing's base to that tip, is taken only by a check that finds the two
+differ (below):
 
 | Command | What it reads and records |
 | --- | --- |
-| `merge-turn-check` | The restated `--base-sha` must be the branch tip now; the reading, not the caller's text, is stored as the base the merge was checked against |
+| `merge-turn-check` | The restated `--base-sha` must be the branch tip now; the reading, not the caller's text, is stored as the base the merge was checked against. When the last landing recorded a different base, it also reads how the branch moved and may record that base again (see "A merge outside the lane") |
 | `merge-turn-land` | The branch after the merge, recorded as the base the next candidate must restate. `--landed-sha` is recorded as stated; `--observed-base-sha` is an optional cross-check |
 | `merge-turn-resolve` | The branch now, recorded with the outcome. `--observed-base-sha` is cross-checked |
 | `merge-turn-restate-base` | The branch now, recorded over the latest landing's base, with the value it replaces kept in the ledger |
@@ -104,7 +111,8 @@ target, and not while another turn there is merging or unknown. The ledger entry
 `baseRestatements`. It records what the branch reads now, which is what the next candidate has
 to restate, so it can also carry a commit written outside the relay after the landing. When a
 `merge-turn-check` is refused because the last landing recorded a different base, its detail
-names that landing, this command, and who may run it.
+names that landing, this command with the holder to run it as, and who else may run it. After a
+merge outside the lane the check usually does not need it: see the next section.
 
 Each reading is taken before the command's transaction, never inside it, so a branch that moves
 between the reading and the write is recorded as it was read. That errs one way only: the next
@@ -115,18 +123,156 @@ What this does not establish: `landedSha` is the holder's statement and is not c
 containment in the branch, so a merge that failed while another write moved the branch is
 recorded as landed, with the true base. On a resolved landing `landedSha` is the candidate head,
 because no landing commit was reported. The comparison with the last recorded landing is kept
-beside the reading on purpose: after an outside commit it stops a correct successor until the
-landing's holder or supervisor restates the base, and that restatement is the record of why the
-base moved outside the relay.
+beside the reading on purpose: a move of the branch that no landing recorded is never absorbed
+silently. Where the relay can confirm the move it records the base again itself, with the reason
+in the ledger; where it cannot, the check stops until the landing's holder or supervisor
+restates the base, and that restatement is the record of why the base moved.
+
+## A merge outside the lane
+
+A pull request merged outside the lane (a node the lane cannot serve, a parent using the older
+route) moves the base branch past the base the last landing recorded. Before CRW-403 the next
+parent's `merge-turn-check` was refused `merge_currency_stale` against that record, and only the
+landing's holder or its supervisor could correct it, so one parent's outside merge stopped every
+other parent and the waiting parents could not tell why.
+
+Now the check that finds the recorded base differs from the tip it states reads how the branch got
+there, before its transaction like the tip: the first-parent line of the base branch from the tip
+down to the recorded base, one commit at a time, at most 32 commits and 90 seconds in all: for a
+local path the stored commit objects through `git cat-file` with replacement off, so a replace
+ref, a grafts file or the commit graph cannot change what is read; for `owner/name` one
+`git/commits/<sha>` GET per commit. The move is **confirmed** when all of these hold, and any
+other result is unconfirmed:
+
+- the reading runs from the recorded base to the tip this check read, and the line from the tip
+  reaches the recorded base within 32 commits without a gap;
+- every commit on that line is a merge commit (two or more parents);
+- none of them is the `landedSha` of a landing on this target;
+- no other turn on the target is merging or unknown;
+- the latest landing is still the landing, with the recorded base, that was read.
+
+A confirmed move is recorded inside the check's own transaction, by the writer
+`merge-turn-restate-base` uses: one `landing_base_restated` ledger entry on the landing under the
+next `restate-base:<n>`, the landing's recorded base set to the tip, and the same
+`merge_turn_base_restated` journal row with `automatic` and `checkTurnId` added. The entry's
+actor is the checking holder; its evidence begins `automatic:` and lists each merge commit with
+its subject, so `baseRestatements` keeps the old value, the new value and the reason beside each
+other. The check goes on to its other gates, and the restatement stands even if one of them
+refuses, because it is a fact about the branch and not about the candidate. The check's answer
+carries `landingBaseRestated` (`turnId`, `from`, `to`, `sequence`, `source`, `mergeCommits`) only
+when it wrote one. No authority rule applies, because the relay writes what it read, not what the
+caller said; the manual command and its rule are unchanged.
+
+An unconfirmed move changes nothing and refuses `merge_currency_stale`, as before. The detail
+keeps its sentence, then names the base the branch now reads, says why the relay did not restate
+it (the reader cannot read how the branch moved, the read failed, the line does not reach the
+recorded base, a commit on it has one parent, a commit is a recorded landing, a turn is in flight,
+or the landing changed during the call), and gives the command with the landing and the holder
+filled in: `merge-turn-restate-base --turn <landing> --actor <holder> --evidence '<why the base
+moved>'`. The supervisor above the landing's project may run it too.
+
+What this does not establish. Confirmation is by commit shape, not by pull request identity: a
+hand-made merge commit counts, and branch protection, not the lane, decides who may merge. A
+repository whose pull requests land as squash or rebase commits has no merge commits on its
+line, so it is never confirmed and keeps the manual command. More than 32 merges since the last
+landing is unconfirmed. `landedSha` is a statement (a resolved landing records the candidate
+head), so excluding the lane's own landings is a consistency check and not proof. Nothing watches
+the branch: a recorded base is brought up to date only when a check finds it behind.
+
+**The merged mark.** `assignment-mark merged` was examined as another way for the lane base to
+follow the branch and is not wired to it. A mark names a relationship and the event it integrated,
+with free-text evidence; it carries no repository, base ref or commit, so it cannot say which
+branch tip it concerns, and reading its text would turn an assertion into a reading. The lane
+records only what it read from the target. A mark is also written after the merge, which an
+outside merge may never be followed by, and it is written by the registry package, which the
+merge lane imports, so a mark that wrote the lane base would need the registry to call back into
+the lane. The reading of the branch names the target by construction and is what the check uses.
 
 ## A message about a turn is not the turn moving
 
-`merge-turn-request-return` records somebody asking. `merge-turn-attest` with
+`merge-turn-request-return` records somebody asking, and queues a notice to the holder through the
+delivery engine, which wakes the holder's thread when it is idle. The notice is the grant channel's
+(the same delivery kind, recipient and address, so a turn that names no usable assignment is refused
+in the same way and journaled as `merge_turn_wake_unaddressed`) and is told apart by the kind inside
+its receipt, `merge_turn_return_request`. The ledger entry and the notice are written in one
+transaction: if the notice cannot be queued the transaction rolls back and no request is recorded.
+A request with nowhere to go is recorded and answered as such. The answer carries `returnNotice`:
+`queued` with the event id, `unaddressed` with the reason, or `not_sent` for a turn that holds
+nothing. `queued` means the notice is in the delivery queue; the delivery engine sends it and wakes an
+idle holder under its usual pacing and holds, so it is not a receipt. One requester asking again
+about the same turn keeps the original request and its text and reuses the notice already queued; if
+none was queued because the turn then had no address, the replay queues one once an address exists.
+The notice reads as current while the turn occupies the target and as `merge_turn_closed` once it
+does not; an acknowledgement of the grant does not answer it. `merge-turn-attest` with
 `--evidence-kind transport_accepted` records a delivery layer accepting that message. Neither
-changes state. Only the holder's own `merge-turn-release` returns the turn, and
+changes state. Only the holder's own `merge-turn-release` returns the turn (a silent holding turn can
+also be passed on, below), and
 `merge-turn-show` reports `returnRequestedAt`, `transportAcceptedAt` and `releasedAt` as three
 separate facts. The same rule from the other side is that a parent asserting its turn in
 conversation changes nothing: only a write by the registered project parent does.
+
+## Progress, the holding limit and passing a silent turn
+
+A holder works inside its turn for as long as a refresh, CI and a merge take, and nothing used to
+show whether it was still there: a holder whose session died kept the target occupied until
+somebody noticed (23 minutes, with two pull requests waiting). Three things change that.
+
+**The holder records progress.** `merge-turn-progress --turn <id> --actor <holder> --step <step>
+[--evidence <what>]` records one step: `base_refresh` after refreshing the candidate,
+`ci_started` when its checks start, `ci_polled` while they run, `ci_result` when they finish,
+`merge_attempt` when the merge is requested. Only the holder records, only while the turn is
+holding or merging, and under the checks `merge-turn-acknowledge` makes (the owning binding is
+current and not paused). A record is a ledger entry (`progress_recorded`, key `progress:<n>`).
+The turn's clock starts at the grant. After that the newest of these refreshes it, each written by
+the holder itself: a progress record, its acknowledgement of the grant, a restated head or
+readiness, and a successful currency check (`merge-turn-check`). A tie is decided by rank (a
+progress record, then the other things the holder does, then the grant) and then by sequence. A
+stored time that cannot be read, or a clock behind the last sign, is no evidence of silence.
+
+**`merge-turn-show` shows it.** The target answer, when a turn occupies the target, carries
+`lastProgressAt`, `lastProgress` (`evidenceKind`, `step`, `sequence`, `recordedAt`),
+`holdingLimitSeconds`, `stallsAt` and `stalled`; the answer for a single turn does not (a turn's
+progress records are in its ledger), and `merge-turn-progress` answers with its own `progress` object. A stalled holding turn reads
+`blocked.cause` `holder_stalled` unless the holder no longer owns its project or its binding is
+paused, which are read first; a stalled merging turn keeps `merge_in_flight`. `stalled` is true in
+both.
+
+**The holding limit is 1200 seconds**: the longest hosted CI job may run 900 seconds (the largest
+`timeout-minutes` in `.github/workflows/ci.yml`; a test fails when that changes) plus a 300 second
+margin. It measures silence between records, not a CI budget: a holder that records `ci_polled`
+while CI runs is not silent. It is a constant of the lane, shown in the target reading and copied
+into every pass record and return notice, not a store column.
+
+A turn that is still **holding** and stalled can be passed:
+`merge-turn-pass --turn <id> --actor <passer> --evidence <what was observed>`. The passer is the
+supervisor above the holder's project or the parent of a live waiting claim on the same target
+that still owns its project. Inside one transaction the relay re-reads the ledger, refuses unless
+the holder has been silent for the limit (`merge_turn_not_held`, naming when the turn would
+stall), writes a `turn_passed` entry that keeps the original values (holder, candidate head,
+`heldAt`, the last sign of life and its step, the limit, the seconds of silence, the passer and
+the evidence), closes the turn as `passed` with that text as its close reason, and promotes the
+next ready waiter in the ordinary order with its grant and wake. The turn keeps its holder,
+candidate head, `heldAt` and every ledger entry; only its closure (state, close reason and time) is
+written. A merging or unknown turn is never passed (`merge_turn_unresolved`): its holder may
+already have merged, and elapsed time is not an observation. A merging turn leaves through
+`merge-turn-land`, or `merge-turn-unknown` and then `merge-turn-resolve`; an unknown turn goes
+straight to `merge-turn-resolve`. A holder that follows the protocol runs
+`merge-turn-check` before it merges, which moves the turn to merging; that is why only a holding
+turn can be passed. A pass is a statement about the relay's record, not proof that the pull
+request is unmerged: a holder that merged without running `merge-turn-check`, against the protocol,
+leaves a merged pull request behind a holding turn that can be passed, so a passer reads the pull
+request before relying on the candidate being unmerged. A holder that ran the check and died stays
+merging, and a merging turn is never passed.
+
+After a pass the original holder is refused `merge_turn_not_held` on every operation that acts on
+that turn (land, release, readiness, check, acknowledge, progress, withdraw), with a detail that
+says the turn was passed, when, by whom and after how long, and that it claims the target again with
+`merge-turn-request` if the candidate is still wanted; reading the turn and asking about it still
+answer. Each refusal is recorded as a contest on the target; the contest is one row per refused task
+and state, so `merge-turn-show` keeps the newest attempt's detail. A pass can also reach a holder
+that is only slow to wake: a grant whose notice waits in delivery longer than the limit reads as
+silent before the holder has seen it, and the holder finds itself refused when it wakes. That costs
+a new claim, not a wrong merge.
 
 ## Counts and ceilings are different kinds of fact
 
@@ -235,8 +381,9 @@ as `bad_invocation` at the command line.
   able to invoke the CLI is already inside the boundary.
 - **Forge evidence is cross-checked, never observed.** `merge-turn-check` verifies that what
   the caller restated is internally consistent and current against what this store knows. It
-  cannot see the pull request; the one thing it reads from the target is where the base branch
-  points (see above). An operator who wants proof that required CI was green reads
+  cannot see the pull request; what it reads from the target is where the base branch points
+  and, only when the last landing's recorded base is older than that tip, how the branch got
+  there (see above). An operator who wants proof that required CI was green reads
   the forge, not this record.
 
 - **An agreement confers nothing.** Not merge permission, not authority to instruct, not a
@@ -256,10 +403,11 @@ as `bad_invocation` at the command line.
   two totals and neither is a host-wide number.
 - **Required checks are restated, not discovered.** `merge-turn-check --required` is the
   caller's declaration of what branch protection requires, stored as `requiredDeclared`. The
-  merge turn never reads a forge's rules or checks; it reads only where the base branch points. What the check establishes is that the restated evidence is
+  merge turn never reads a forge's rules or checks; it reads where the base branch points and, in the one case described under "A merge outside the lane", how it moved. What the check establishes is that the restated evidence is
   internally consistent and current: every declared required name present and successful on the
   candidate head at its highest submitted attempt, the base matching the last landing recorded
-  here, and the review paginated to the end with nothing unresolved. When the turn names an
+  here (or restated by the check itself after a confirmed merge outside the lane), and the
+  review paginated to the end with nothing unresolved. When the turn names an
   assignment, the head must also be the one its current work reports name: the latest
   head-bearing submission of every event in the newest generation that names a head, read per
   event because submission numbers count per event. Two different current heads are refused as

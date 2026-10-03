@@ -12,6 +12,7 @@ func message(id, recipient, staged, state string) SupervisorMessagesRow {
 }
 
 func TestSupervisorMessages_stage_once_and_list_claimable_rows_in_staging_order(t *testing.T) {
+	t.Parallel()
 	// Given: three messages, one staged twice, one held, and one already sending.
 	s := recordStore(t)
 	ctx := context.Background()
@@ -40,6 +41,7 @@ func TestSupervisorMessages_stage_once_and_list_claimable_rows_in_staging_order(
 }
 
 func TestSettleSupervisorMessage_moves_only_the_claim_that_holds_it(t *testing.T) {
+	t.Parallel()
 	// Given: a message sending on attempt 1 under owner-a.
 	s := recordStore(t)
 	ctx := context.Background()
@@ -61,6 +63,7 @@ func TestSettleSupervisorMessage_moves_only_the_claim_that_holds_it(t *testing.T
 }
 
 func TestSupervisorAttempts_record_a_send_and_settle_its_receipt(t *testing.T) {
+	t.Parallel()
 	// Given: two attempts on one message.
 	s := recordStore(t)
 	ctx := context.Background()
@@ -89,6 +92,7 @@ func TestSupervisorAttempts_record_a_send_and_settle_its_receipt(t *testing.T) {
 }
 
 func TestSupervisorReadback_keeps_the_latest_readback(t *testing.T) {
+	t.Parallel()
 	// Given/When: a message read back twice.
 	s := recordStore(t)
 	ctx := context.Background()
@@ -106,6 +110,7 @@ func job(id, relationship, created string) SyncOutboxRow {
 }
 
 func TestSyncTargets_keep_one_target_per_relationship_and_kind(t *testing.T) {
+	t.Parallel()
 	// Given/When: a target set twice.
 	s := recordStore(t)
 	ctx := context.Background()
@@ -119,6 +124,7 @@ func TestSyncTargets_keep_one_target_per_relationship_and_kind(t *testing.T) {
 }
 
 func TestSyncOutbox_enqueues_once_and_offers_due_unleased_jobs(t *testing.T) {
+	t.Parallel()
 	// Given: three jobs, one enqueued twice, one leased into the future, one backing off.
 	s := recordStore(t)
 	ctx := context.Background()
@@ -152,6 +158,7 @@ func TestSyncOutbox_enqueues_once_and_offers_due_unleased_jobs(t *testing.T) {
 }
 
 func TestSyncOutbox_confirmation_is_final(t *testing.T) {
+	t.Parallel()
 	// Given: a job written, then confirmed twice.
 	s := recordStore(t)
 	ctx := context.Background()
@@ -171,6 +178,7 @@ func TestSyncOutbox_confirmation_is_final(t *testing.T) {
 }
 
 func TestProductRouting_registry_bindings_and_policy_replace_their_record(t *testing.T) {
+	t.Parallel()
 	// Given: two products, bindings and a policy, each restated once.
 	s := recordStore(t)
 	ctx := context.Background()
@@ -208,6 +216,7 @@ func route(severity string, goal, classification sql.NullString) IncidentRoutesR
 }
 
 func TestIncidentRoute_severity_only_rises_and_kept_fields_survive_a_restatement(t *testing.T) {
+	t.Parallel()
 	// Given: a route claimed broken with a goal and a classification.
 	s := recordStore(t)
 	ctx := context.Background()
@@ -232,6 +241,7 @@ func TestIncidentRoute_severity_only_rises_and_kept_fields_survive_a_restatement
 }
 
 func TestIncidentRoute_updates_target_stage_report_and_rotation(t *testing.T) {
+	t.Parallel()
 	// Given: two routes.
 	s := recordStore(t)
 	ctx := context.Background()
@@ -260,6 +270,7 @@ func TestIncidentRoute_updates_target_stage_report_and_rotation(t *testing.T) {
 }
 
 func TestRouteIncidents_sequence_replace_and_keep_only_the_newest(t *testing.T) {
+	t.Parallel()
 	// Given: three incidents of one fault, keeping two, and a restatement of the newest.
 	s := recordStore(t)
 	ctx := context.Background()
@@ -285,6 +296,7 @@ func TestRouteIncidents_sequence_replace_and_keep_only_the_newest(t *testing.T) 
 }
 
 func TestRouteIncidents_keep_none_keeps_all_and_keep_zero_deletes_all(t *testing.T) {
+	t.Parallel()
 	// Given: routes.store_incident (routes.py:224) keeps every incident for keep=None and none for
 	// keep=0.
 	// When: Go stores three incidents with keep nil and with keep 0.

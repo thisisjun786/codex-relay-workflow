@@ -17,6 +17,7 @@ import (
 // one the bridge defaults to, so a command run without --socket selects the store a relay
 // service started on that socket serves (docs/port/decisions.md section 73).
 func TestDiscoveryWithoutASocketIsScopedByTheDefaultSocket(t *testing.T) {
+	// Serial: sets process environment variables, which every other running test would see.
 	root := t.TempDir()
 	t.Setenv("CODEX_SESSION_RELAY_STATE", "")
 	// ownState gives a subtest a home and a state root (XDG_STATE_HOME) of its own, with
@@ -217,6 +218,7 @@ func unstampedStore(t *testing.T) string {
 // A store with no ownership stamp is refused in plain words, the reason and every other field
 // unchanged, by the doctor's write probe, a writable open and a registration hold.
 func TestAnUnstampedStoreIsRefusedInPlainWords(t *testing.T) {
+	t.Parallel()
 	path := unstampedStore(t)
 	want := "store_owned_by_other: " + UnstampedStoreDetail
 
@@ -253,6 +255,7 @@ func TestAnUnstampedStoreIsRefusedInPlainWords(t *testing.T) {
 // A store that carries a stamp keeps the gate's own words, and a store this runtime owns is
 // probed writable: the plain words are for an unstamped store only.
 func TestOnlyAnUnstampedStoreGetsThePlainWords(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	owned := filepath.Join(stateDir(t), "relay.sqlite3")
 	s, err := fixtureOpen(ctx, owned, "")
@@ -283,6 +286,7 @@ func TestOnlyAnUnstampedStoreGetsThePlainWords(t *testing.T) {
 // store a command given no --socket selects is the one a relay service started on the bridge's
 // socket serves. Nothing here opens a path: both only compute it.
 func TestTheDefaultSocketIsTheBridges(t *testing.T) {
+	// Serial: sets process environment variables, which every other running test would see.
 	type variable struct {
 		set   bool
 		value string

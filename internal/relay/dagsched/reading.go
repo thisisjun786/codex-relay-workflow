@@ -31,6 +31,8 @@ type NodeReading struct {
 	Stale                  *Stale // a stale node only: what its accepted result no longer matches (invalidation.go)
 	// Lifecycle is what the plan says of the node: paused, cancelled or archived. Empty for an active node, and then no key is printed (CRW-281).
 	Lifecycle string
+	// Release is how an implementation candidate is released and on what basis (CRW-409); nil for a node that was not judged.
+	Release *ReleaseJudgement
 }
 
 // PassSummary is the capacity side of one reading.
@@ -38,6 +40,9 @@ type PassSummary struct {
 	FreeSlots, Ceiling, Held, ReadyCount int
 	CeilingSource                        string
 	DecidingLimit                        string
+	// Overlaps are the overlaps the pass judged, by grade (CRW-409): every implementation candidate that reached the overlap judgement counts the holders it overlaps, by the worst grade of each overlap,
+	// whether or not it was released in the end. Counted leaves the mechanical ones out.
+	Overlaps OverlapCounts
 }
 
 // Reading is the ready set of one plan at one revision, computed from stored rows only. Ready is in release order; Nodes holds every live
@@ -65,6 +70,9 @@ func (n NodeReading) object() contract.OrderedObject {
 	}
 	if n.Rank != nil {
 		o = append(o, contract.Field{Key: "rank", Value: n.Rank.object()})
+	}
+	if n.Release != nil {
+		o = append(o, contract.Field{Key: "release", Value: n.Release.object()})
 	}
 	if n.Lifecycle != "" {
 		o = append(o, contract.Field{Key: "lifecycle", Value: n.Lifecycle})
@@ -105,6 +113,7 @@ func (r Reading) Object() contract.OrderedObject {
 		{Key: "pass", Value: contract.OrderedObject{
 			{Key: "free_slots", Value: r.Pass.FreeSlots}, {Key: "ceiling", Value: r.Pass.Ceiling}, {Key: "ceiling_source", Value: r.Pass.CeilingSource},
 			{Key: "held", Value: r.Pass.Held}, {Key: "ready_count", Value: r.Pass.ReadyCount}, {Key: "deciding_limit", Value: r.Pass.DecidingLimit},
+			{Key: "overlap_count", Value: r.Pass.Overlaps.Counted()}, {Key: "overlaps", Value: r.Pass.Overlaps.object()},
 		}},
 		{Key: "ready", Value: ready}, {Key: "nodes", Value: nodes},
 	}...)

@@ -10,6 +10,7 @@ import (
 // The frozen schema declares no foreign key, so no contract write can violate one; this proves
 // only that the PRAGMA each connection sets is enforced inside Store.Transaction.
 func TestTransaction_enforces_foreign_keys_on_a_scratch_table(t *testing.T) {
+	t.Parallel()
 	// Given: scratch tables declaring a foreign key, which the contract tables do not.
 	s := recordStore(t)
 	ctx := context.Background()

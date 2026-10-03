@@ -117,6 +117,7 @@ func count(t *testing.T, state, query string) int {
 }
 
 func Test25_CLI14_register_records_both_endpoints_settings_and_settings_show_reads_them(t *testing.T) {
+	t.Parallel()
 	got, _ := sameCLIAsGolden(t, "register_with_settings")
 	if payload := stdoutJSON(t, got[0]); payload["authorizedSettings"].(map[string]any)["01parent-task"] != "recorded" {
 		t.Fatal(payload)
@@ -132,6 +133,7 @@ func Test25_CLI14_register_records_both_endpoints_settings_and_settings_show_rea
 }
 
 func Test25_CLI15_settings_are_validated_where_written_and_nothing_is_stored(t *testing.T) {
+	t.Parallel()
 	for name, reason := range map[string]string{"settings_incomplete": SettingsIncomplete, "settings_mistyped": SettingsMistyped, "settings_untrusted": UnsupportedApprovalPolicy} {
 		got, _ := sameCLIAsGolden(t, name)
 		if got[0].Exit != 2 || stdoutJSON(t, got[0])["reason"] != reason {
@@ -141,6 +143,7 @@ func Test25_CLI15_settings_are_validated_where_written_and_nothing_is_stored(t *
 }
 
 func Test25_CLI16_settings_show_separates_complete_from_deliverable(t *testing.T) {
+	t.Parallel()
 	for name, code := range map[string]string{"show_cwd_int": SettingsMistyped, "show_bare_sandbox": UnsupportedSandboxType} {
 		got, _ := sameCLIAsGolden(t, name)
 		shown := stdoutJSON(t, got[len(got)-1])
@@ -151,6 +154,7 @@ func Test25_CLI16_settings_show_separates_complete_from_deliverable(t *testing.T
 }
 
 func Test25_CLI11_pause_refuses_and_resume_requires_the_restated_scope(t *testing.T) {
+	t.Parallel()
 	got, _ := sameCLIAsGolden(t, "pause_resume")
 	if got[2].Exit != 2 || stdoutJSON(t, got[2])["reason"] != "relationship_not_active" || stdoutJSON(t, got[3])["status"] != "active" {
 		t.Fatal(got)
@@ -160,6 +164,7 @@ func Test25_CLI11_pause_refuses_and_resume_requires_the_restated_scope(t *testin
 // The generation, anchor, admission and status commands answer exactly as Python on success and
 // refusal (Domain/cli-shape for generation-open, generation-bind, admit-turn, relationship-status).
 func Test25_CLI_generation_anchor_admission_and_status_commands(t *testing.T) {
+	t.Parallel()
 	sameCLIAsGolden(t, "generations_cli")
 	sameCLIAsGolden(t, "register_refusals")
 	sameCLIAsGolden(t, "argparse_stray_positional")
@@ -170,6 +175,7 @@ func Test25_CLI_generation_anchor_admission_and_status_commands(t *testing.T) {
 }
 
 func Test25_SPR8_registration_refuses_an_invalid_row_rather_than_storing_it(t *testing.T) {
+	t.Parallel()
 	got, state := sameCLIAsGolden(t, "settings_sandbox_list")
 	if stdoutJSON(t, got[0])["reason"] != UnsupportedSandboxType || stdoutJSON(t, got[1])["settings"] != nil {
 		t.Fatal(got)
@@ -180,6 +186,7 @@ func Test25_SPR8_registration_refuses_an_invalid_row_rather_than_storing_it(t *t
 }
 
 func Test25_SPR13_settings_round_trip_and_a_re_record_replaces(t *testing.T) {
+	t.Parallel()
 	got, state := sameCLIAsGolden(t, "re_record_replaces")
 	if stdoutJSON(t, got[2])["settings"].(map[string]any)["cwd"] != "/b" {
 		t.Fatal(got[2])
@@ -192,6 +199,7 @@ func Test25_SPR13_settings_round_trip_and_a_re_record_replaces(t *testing.T) {
 // RAT-2: a registration refused by a linkage contest rolls back entirely, and the contest is
 // recorded exactly once per refusal (one conflict row, one journal line each time).
 func Test25_RAT2_a_contest_outlives_the_rolled_back_registration_exactly_once(t *testing.T) {
+	t.Parallel()
 	_, state := sameCLIAsGolden(t, "contested_project")
 	for query, want := range map[string]int{
 		"SELECT COUNT(*) FROM relationships":                          0,
@@ -225,6 +233,7 @@ func Test25_RAT2_a_contest_outlives_the_rolled_back_registration_exactly_once(t 
 // A registration with --project binds the child and scopes the issue; the lifecycle moves the
 // binding; the creation role is not rewritten later (role_binding_mismatch).
 func Test25_CLI_project_registration_binds_and_keeps_the_creation_role(t *testing.T) {
+	t.Parallel()
 	sameCLIAsGolden(t, "project_attach")
 }
 
@@ -249,6 +258,7 @@ func registerWithBothSettings(r *Registry) error {
 // A full registration commits exactly once; a process killed at that commit leaves none of the
 // three tables with a row.
 func Test25_RAT1_register_is_one_transaction_and_a_kill_before_commit_leaves_nothing(t *testing.T) {
+	t.Parallel()
 	if path := os.Getenv("CRW_RAT1_DB"); path != "" {
 		s, err := store.Open(ctx(), path, "")
 		if err != nil {
@@ -312,6 +322,7 @@ func Test25_RAT1_register_is_one_transaction_and_a_kill_before_commit_leaves_not
 
 // A host error exits 3 with {"error": "host", "detail": <the error's text>}.
 func Test25_CLI_host_errors_exit_three_with_their_detail(t *testing.T) {
+	t.Parallel()
 	got, _ := sameCLIAsGolden(t, "host_errors")
 	for _, step := range got {
 		if step.Exit != 3 {
@@ -327,6 +338,7 @@ func Test25_CLI_host_errors_exit_three_with_their_detail(t *testing.T) {
 // "detail"}, byte-identical to Python (exercised through this package's commands; the property's
 // own example, emit scope_escape, is todo 21's command).
 func Test25_CLI6_a_refusal_exits_two_with_a_machine_readable_reason(t *testing.T) {
+	t.Parallel()
 	got, _ := sameCLIAsGolden(t, "register_refusals")
 	for _, step := range got[1:] {
 		payload := stdoutJSON(t, step)

@@ -17,6 +17,11 @@ func reportedState(row Row, ack Row, grant string, superseded Row) string {
 		switch {
 		case grant == mergeturn.GrantAnswered:
 			return "grant_acknowledged"
+		case grant == mergeturn.ReturnRequestLive:
+			// A return request has nothing to acknowledge; delivered is all it waits for.
+			if row.S("state") == Dispatched {
+				return "dispatched_return_request"
+			}
 		case grant != "":
 			return "superseded:" + grant
 		case row.S("state") == Dispatched:
@@ -55,7 +60,7 @@ func phase(row Row, attempts []Row, ack, failure Row, grant string, superseded R
 		}
 		return "rejected"
 	}
-	if row.S("kind") == MergeTurnGrant && grant != "" {
+	if row.S("kind") == MergeTurnGrant && grant != "" && grant != mergeturn.ReturnRequestLive {
 		if grant == mergeturn.GrantAnswered {
 			return "grant_acknowledged"
 		}
@@ -74,6 +79,9 @@ func phase(row Row, attempts []Row, ack, failure Row, grant string, superseded R
 			return "awaiting_child_receipt"
 		}
 		if row.S("kind") == MergeTurnGrant {
+			if grant == mergeturn.ReturnRequestLive {
+				return "return_request_delivered"
+			}
 			return "awaiting_grant_acknowledgement"
 		}
 		if n := len(attempts); n > 0 && strings.HasPrefix(attempts[n-1].S("recipient_scan"), TurnCheckUndecided+":") {
@@ -157,6 +165,17 @@ func (d *Service) SnapshotItem(ctx context.Context, eventID string) (Obj, error)
 	if row.S("kind") == MergeTurnGrant {
 		if grant, err = d.SupersessionReason(ctx, eventID); err != nil {
 			return nil, err
+		}
+		if grant == "" {
+			// A current return request is told apart from a current grant, which waits for an
+			// acknowledgement this notice does not have.
+			notice, err := one(ctx, d.Store, "SELECT receipt FROM events WHERE event_id = ?", eventID)
+			if err != nil {
+				return nil, err
+			}
+			if notice != nil && mergeturn.IsReturnRequestReceipt(notice.S("receipt")) {
+				grant = mergeturn.ReturnRequestLive
+			}
 		}
 	}
 	var pacing Obj

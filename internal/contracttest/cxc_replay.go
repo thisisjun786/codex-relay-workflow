@@ -19,14 +19,25 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/cxccorpus"
 )
 
-// What a claim can need that the replayer lacks: the SQLite, rewrite-rule and network handling a
-// later issue adds (a Go SQLite seed and dump, a given override, a closed-network seam).
+// What a claim can need that no replay provides; each text says what the claimant can do about it.
 const (
-	cxcNeedSQLite          = "a SQLite database"
-	cxcNeedNetwork         = "the closed network"
-	cxcNeedRewriteGiven    = "a rewrite rule in the given"
-	cxcNeedRewriteExpected = "a rewrite rule in the expectation"
+	cxcNeedFetchReply      = "a scripted fetch reply: the closed network answers nothing"
+	cxcNeedConnect         = "a connect or dns observation: the closed network logs nothing"
+	cxcNeedRewriteGiven    = "a rewrite rule in the given: the claim's given override must remove it"
+	cxcNeedRewriteExpected = "a rewrite rule in the expectation: only a claim that sets or removes that key can pass"
 )
+
+// cxcClosedNetwork is the oracle's closed network as far as a Go build can have it: the proxy
+// variables name an address nothing listens on, so the HTTP clients of the build fail where the
+// oracle's fetch does, and reach no host. Nothing is logged and nothing is answered: a fetch the
+// oracle logged is not observed (a claim removes that call), and a fixture that scripts a reply or
+// expects a connect or dns observation is refused. A client that ignores the variables is not held.
+func cxcClosedNetwork() (env []string) {
+	for _, name := range []string{"HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"} {
+		env = append(env, name+"=http://127.0.0.1:1")
+	}
+	return env
+}
 
 // cxcReplayer replays the CXC corpus against one crw build (contract/schema/cxc/README.md,
 // "Replaying against the Go build"); it is the corpus engine's Runtime for that build.
@@ -143,8 +154,8 @@ func mapStrings[T any](v T, f func(string) string) (T, error) {
 
 // scenario is README step 2: the fixture's scenario with names substituted and cli argv mapped to
 // crw's. A step of no kind is a cli step without arguments (the empty cli list is not stored); a
-// bare root in observe names a whole root and keeps its name.
-func (r *cxcReplayer) scenario(id string, fix cxccorpus.Fixture) (cxccorpus.Scenario, error) {
+// bare root in observe names a whole root and keeps its name. The claim's given override comes last.
+func (r *cxcReplayer) scenario(id string, fix cxccorpus.Fixture, claim cxcClaim) (cxccorpus.Scenario, error) {
 	s := cxccorpus.Scenario{ID: id, Covers: fix.Covers, Note: fix.Note, Given: fix.Given}
 	for _, step := range fix.Run.Steps {
 		if step.Hook == "" && step.MCP == nil && step.Node == nil && step.Write == nil {
@@ -156,6 +167,9 @@ func (r *cxcReplayer) scenario(id string, fix cxccorpus.Fixture) (cxccorpus.Scen
 		s.Steps = append(s.Steps, step)
 	}
 	s, err := mapStrings(s, r.rename)
+	if err == nil { // the override is in crw's names: it comes after the substitution
+		s.Given, err = patchGiven(s.Given, claim.Given)
+	}
 	for _, root := range fix.Run.Observe {
 		if !slices.Contains(cxccorpus.Roots, root) {
 			root = r.rename(root)
@@ -175,6 +189,7 @@ func (r *cxcReplayer) Setup(c *cxccorpus.Case, s cxccorpus.Scenario) error {
 	}
 	rec := filepath.Join(c.Root, ".rec")
 	c.Env = append(c.Env, "CRW_BIN="+filepath.Join(c.Root, "bin", "crw"), cxcRecDir+"="+rec, "CXC_REC_LOG="+filepath.Join(rec, "calls.jsonl"), "CXC_REC_GIT="+r.git)
+	c.Env = append(c.Env, cxcClosedNetwork()...)
 	return cxccorpus.InstallStubs(c, s.Given, func(name string) error { return link(r.exe, "stubs", name) })
 }
 
@@ -212,29 +227,25 @@ func (r *cxcReplayer) Command(c *cxccorpus.Case, s cxccorpus.Scenario, step cxcc
 	return inv, nil
 }
 
-var errSQLite = errors.New("a SQLite database is not replayable yet: its Go seed and dump belong to a later issue")
+func (r *cxcReplayer) GitPath() string          { return r.git }
+func (r *cxcReplayer) HookObservations() string { return r.rename(cxccorpus.HookObservations) }
 
-func (r *cxcReplayer) SeedSQLite(*cxccorpus.Case, map[string][]string) error { return errSQLite }
-func (r *cxcReplayer) DumpSQLite(string) (string, error)                     { return "", errSQLite }
-func (r *cxcReplayer) GitPath() string                                       { return r.git }
-func (r *cxcReplayer) HookObservations() string                              { return r.rename(cxccorpus.HookObservations) }
-
-// needs lists what a claim on the fixture needs that the replayer lacks. An identical claim also
-// cannot cover a rewrite rule's text in the expectation, which keeps the oracle's spelling: only
-// a claim that sets or removes that key can pass.
-func (r *cxcReplayer) needs(fix cxccorpus.Fixture, identical bool) (out []string) {
-	given, _ := json.Marshal(fix.Given)
+// needs lists what a claim on the fixture needs that no replay provides: a scripted fetch reply or a
+// connect or dns call in the expectation (the closed network answers and logs nothing), and a rewrite
+// rule's text in the given the claim runs with (the scenario's, after the claim's override) or, for
+// an identical claim, in the expectation, which keeps the oracle's spelling: only a claim that sets
+// or removes that key can pass.
+func (r *cxcReplayer) needs(fix cxccorpus.Fixture, given cxccorpus.Given, identical bool) (out []string) {
+	raw, _ := json.Marshal(given)
 	expected, _ := json.Marshal(fix.Expect)
 	add := func(hit bool, need string) {
 		if hit {
 			out = append(out, need)
 		}
 	}
-	add(len(fix.Given.SQLite) > 0 || bytes.Contains(expected, []byte(`"form":"sqlite"`)) || bytes.Contains(expected, []byte(`"form":"sqlite-text"`)), cxcNeedSQLite)
-	add(len(fix.Given.Fetch) > 0 || slices.ContainsFunc(fix.Expect.Calls, func(c cxccorpus.Call) bool {
-		return slices.Contains([]string{"fetch", "connect", "dns"}, c.Cmd)
-	}), cxcNeedNetwork)
-	add(r.rewrite.Match(given), cxcNeedRewriteGiven)
+	add(len(given.Fetch) > 0, cxcNeedFetchReply)
+	add(slices.ContainsFunc(fix.Expect.Calls, func(c cxccorpus.Call) bool { return c.Cmd == "connect" || c.Cmd == "dns" }), cxcNeedConnect)
+	add(r.rewrite.Match(raw), cxcNeedRewriteGiven)
 	add(identical && r.rewrite.Match(expected), cxcNeedRewriteExpected)
 	return out
 }
@@ -248,12 +259,12 @@ func (r *cxcReplayer) check(id string, fix cxccorpus.Fixture, claim cxcClaim, tm
 	case cxcPending:
 		return nil
 	}
-	if needs := r.needs(fix, claim.State == cxcIdentical); len(needs) > 0 {
-		return fmt.Errorf("%s: the %s claim by %s needs %s, which belongs to the later issue for the SQLite, rewrite-rule and network handling of this replayer", id, claim.State, claim.Issue, strings.Join(needs, " and "))
-	}
-	scenario, err := r.scenario(id, fix)
+	scenario, err := r.scenario(id, fix, claim)
 	if err != nil {
-		return err
+		return fmt.Errorf("%s (%s by %s): %w", id, claim.State, claim.Issue, err)
+	}
+	if needs := r.needs(fix, scenario.Given, claim.State == cxcIdentical); len(needs) > 0 {
+		return fmt.Errorf("%s: the %s claim by %s needs %s", id, claim.State, claim.Issue, strings.Join(needs, " and "))
 	}
 	scratch := "/var/tmp" // a case root /var/tmp/cxc-rec-<16 hex> is the recorded 33 bytes
 	if !slices.Contains(r.long, id) {
