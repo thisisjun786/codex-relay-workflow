@@ -131,4 +131,9 @@ func Test408_c4_a_request_for_a_turn_that_holds_nothing_wakes_nobody(t *testing.
 	if sent["state"] != "not_sent" {
 		t.Fatalf("a waiting claim holds nothing to return: %v", sent)
 	}
+	for _, query := range []string{"SELECT 1 FROM events", "SELECT 1 FROM deliveries", "SELECT 1 FROM journal WHERE kind LIKE 'merge_turn_wake%' OR kind = 'delivery_queued'"} {
+		if rows, err := w.s.All(w.ctx, query); err != nil || len(rows) != 0 {
+			t.Fatalf("nothing is queued or journaled for a turn that holds nothing (%s): %v %v", query, rows, err)
+		}
+	}
 }

@@ -43,8 +43,8 @@ func Test408_c4_real_sender_wakes_the_idle_holder_with_the_return_request(t *tes
 	}
 	state, err := f.delivery.SnapshotItem(f.ctx, event)
 	mustDo(t, err)
-	if phase := pyjson.Text(state.Get("phase")); strings.HasPrefix(phase, "superseded") {
-		t.Fatal("a live return request is not superseded:", state)
+	if pyjson.Text(state.Get("phase")) != "return_request_delivered" || pyjson.Text(state.Get("reported")) != "dispatched_return_request" {
+		t.Fatal("a delivered return request waits for no grant acknowledgement:", state)
 	}
 	again, err := f.delivery.Attempt(f.ctx, event, f.host, nil, "")
 	mustDo(t, err)

@@ -119,8 +119,8 @@ func Test408_c1_the_holder_alone_records_progress_while_it_holds(t *testing.T) {
 		t.Fatalf("a released turn takes no progress: %v", err)
 	}
 	conflicts, _ := jsonValue(t, mustConflicts(w)).([]any)
-	if len(conflicts) < 3 {
-		t.Fatalf("each refusal about a turn is recorded: %v", conflicts)
+	if len(conflicts) != 3 {
+		t.Fatalf("the three refusals about the turn are recorded, the bad step is refused before anything is read and records none: %v", conflicts)
 	}
 }
 
@@ -249,6 +249,14 @@ func Test408_c2_a_waiting_claim_that_is_not_ready_may_still_pass(t *testing.T) {
 	if answer["promoted"] != nil {
 		t.Fatalf("a claim that never declared ready is not promoted by the pass: %v", answer["promoted"])
 	}
+	released := asMap(t, jsonValue(t, answer["released"]))
+	if released["state"] != "passed" {
+		t.Fatalf("the silent turn was passed: %v", released)
+	}
+	ledgerEntry(t, released, "turn_passed")
+	if shown := w.reading(); shown["occupied"] != false || shown["holder"] != nil {
+		t.Fatalf("the lane is free for whoever declares ready: %v", shown)
+	}
 }
 
 func Test408_c2_a_merging_turn_is_never_passed(t *testing.T) {
@@ -273,30 +281,52 @@ func Test408_c3_the_original_holder_is_refused_everywhere_after_the_pass(t *test
 	clock.advance(25 * time.Minute)
 	w.must(w.m.Pass(w.ctx, turn, beta.TaskID, "alpha is gone"))
 
-	refused := map[string]error{}
-	_, refused["land"] = w.land(turn, "merge-1", "", "")
-	_, refused["release"] = w.m.Release(w.ctx, turn, alpha.TaskID, "returned", "done", "")
-	_, refused["ready"] = w.m.Ready(w.ctx, turn, alpha.TaskID, true, "", "")
-	_, refused["check"] = w.begin(turn, defaults())
-	_, refused["acknowledge"] = w.m.Acknowledge(w.ctx, turn, alpha.TaskID, grant, "read the grant")
-	_, refused["progress"] = w.m.Progress(w.ctx, turn, alpha.TaskID, "ci_result", "late")
-	_, refused["withdraw"] = w.m.Withdraw(w.ctx, turn, alpha.TaskID)
-	for name, err := range refused {
+	ops := []struct {
+		name, what string
+		do         func() error
+	}{
+		{"land", "recording a landing", func() error { _, err := w.land(turn, "merge-1", "", ""); return err }},
+		{"release", "release", func() error {
+			_, err := w.m.Release(w.ctx, turn, alpha.TaskID, "returned", "done", "")
+			return err
+		}},
+		{"ready", "declare readiness on", func() error { _, err := w.m.Ready(w.ctx, turn, alpha.TaskID, true, "", ""); return err }},
+		{"check", "beginning a merge", func() error { _, err := w.begin(turn, defaults()); return err }},
+		{"acknowledge", "acknowledging a grant", func() error {
+			_, err := w.m.Acknowledge(w.ctx, turn, alpha.TaskID, grant, "read the grant")
+			return err
+		}},
+		{"progress", "recording progress", func() error {
+			_, err := w.m.Progress(w.ctx, turn, alpha.TaskID, "ci_result", "late")
+			return err
+		}},
+		{"withdraw", "withdraw", func() error { _, err := w.m.Withdraw(w.ctx, turn, alpha.TaskID); return err }},
+	}
+	for _, op := range ops {
+		clock.advance(time.Second)
+		err := op.do()
 		if err == nil {
-			t.Fatalf("%s was accepted after the pass", name)
+			t.Fatalf("%s was accepted after the pass", op.name)
 		}
 		if reasonOf(err) != "merge_turn_not_held" {
-			t.Fatalf("%s: reason %q", name, reasonOf(err))
+			t.Fatalf("%s: reason %q", op.name, reasonOf(err))
 		}
-		for _, fragment := range []string{"passed", beta.TaskID, "1500", "claim"} {
+		for _, fragment := range []string{"passed", beta.TaskID, "1500", "claim the target again", op.what} {
 			if !strings.Contains(err.Error(), fragment) {
-				t.Fatalf("%s: the refusal does not say %q: %v", name, fragment, err)
+				t.Fatalf("%s: the refusal does not say %q: %v", op.name, fragment, err)
 			}
 		}
-	}
-	recorded, _ := json.Marshal(jsonValue(t, mustConflicts(w)))
-	if strings.Count(string(recorded), "passed") < len(refused) {
-		t.Fatalf("every refusal is recorded as a contest on the target: %s", recorded)
+		// The refusal is recorded as a contest on the target, kept current by the newest attempt.
+		recorded := false
+		for _, item := range jsonValue(t, mustConflicts(w)).([]any) {
+			row := asMap(t, item)
+			if row["challenger"] == alpha.TaskID && row["reason"] == "merge_turn_not_held" && row["at"] == clock.ISO() && strings.Contains(row["detail"].(string), op.what) {
+				recorded = true
+			}
+		}
+		if !recorded {
+			t.Fatalf("%s: the refusal is not recorded: %v", op.name, mustConflicts(w))
+		}
 	}
 	// The original holder is a claimant like any other afterwards.
 	again := w.must(w.claimOn(alpha, fxA, "head-a2", fxBase, true))
