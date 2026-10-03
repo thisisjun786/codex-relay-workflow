@@ -100,6 +100,20 @@ func TestActivateSelectedFlagsBackupAndManifest(t *testing.T) {
 	if parsed == nil || !reflect.DeepEqual(parsed.Flags, m.Flags) || !reflect.DeepEqual(parsed.TableKeys, m.TableKeys) {
 		t.Fatalf("manifest roundtrip=%+v", parsed)
 	}
+	var oracle struct {
+		Config, Backup, Manifest string
+		Calls                    [][]string
+	}
+	recorded, err := os.ReadFile("testdata/oracle-fresh-activation.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = json.Unmarshal(recorded, &oracle); err != nil {
+		t.Fatal(err)
+	}
+	if strings.ReplaceAll(raw, home, "<HOME>") != oracle.Manifest || content != oracle.Config || activationRead(t, *m.BackupPath) != oracle.Backup || !reflect.DeepEqual(calls, oracle.Calls) {
+		t.Fatal("activation differs from the recorded byte-exact manifest/config/backup or runner calls")
+	}
 }
 func TestActivateRerunKeepsManagedPriorAndOwnership(t *testing.T) {
 	home := activationHome(t)
