@@ -104,6 +104,7 @@ func TestMPI01_each_parent_keeps_its_scope_reference_and_project_key(t *testing.
 }
 
 func TestMPI02_two_parents_acknowledging_at_once_do_not_cross(t *testing.T) {
+	t.Parallel()
 	tree := t.TempDir()
 	expected := expectScenario(t, tree, "mpi", "acks")
 	f := newFixture(t, tree)
@@ -136,6 +137,7 @@ func TestMPI02_two_parents_acknowledging_at_once_do_not_cross(t *testing.T) {
 }
 
 func TestMPI03_two_parents_ruling_needs_changes_at_once_open_one_generation_each(t *testing.T) {
+	t.Parallel()
 	tree := t.TempDir()
 	expected := expectScenario(t, tree, "mpi", "verdicts")
 	f := newFixture(t, tree)
@@ -220,6 +222,7 @@ func (f *fixture) drain(sc *Scheduler, ids []string) map[string]bool {
 }
 
 func TestMPI05_one_parents_limits_never_starve_the_other(t *testing.T) {
+	t.Parallel()
 	scheduler := func(f *fixture) *Scheduler { return &Scheduler{Delivery: f.delivery, Ack: NewAck(f.delivery)} }
 	t.Run("A at its attempt cap", func(t *testing.T) {
 		f := newFixture(t, "")

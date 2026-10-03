@@ -219,8 +219,24 @@ func (s *Scheduler) RecordCorrection(ctx context.Context, plan, node, actor, sup
 		if err := s.refuseLanded(txCtx, tx, plan, snap, n); err != nil {
 			return err
 		}
-		if !recorded.Valid || recorded.Int64 != rel.Generation-1 {
-			return refuse(contract.RefusalDispositionConflict, "generation %d of %s follows generation %d, and the last recorded execution of %s is %d", rel.Generation, rel.ID, rel.Generation-1, node, recorded.Int64)
+		// the generation a recorded base refresh carried the accepted result to counts as recorded for the chain of corrections (baserefresh.go): the next correction is the generation after it
+		chain := recorded.Int64
+		if acc, has, err := loadActiveAcceptance(txCtx, tx, plan, node); err != nil {
+			return err
+		} else if has {
+			stand, err := s.standOf(txCtx, tx, acc)
+			if err != nil {
+				return err
+			}
+			if stand.RefreshID != "" && stand.Generation == rel.Generation {
+				return refuse(contract.RefusalDispositionConflict, "generation %d of %s is the base refresh recorded for %s (%s), not a correction: a correction is the generation after it, opened when the result is stale", rel.Generation, rel.ID, node, short(stand.RefreshID))
+			}
+			if stand.Generation > chain {
+				chain = stand.Generation
+			}
+		}
+		if !recorded.Valid || chain != rel.Generation-1 {
+			return refuse(contract.RefusalDispositionConflict, "generation %d of %s follows generation %d, and the last recorded execution of %s is %d", rel.Generation, rel.ID, rel.Generation-1, node, chain)
 		}
 		var reason sql.NullString
 		if _, err := queryOne(txCtx, tx, "SELECT reason FROM generations WHERE relationship_id = ? AND execution_generation = ?", []any{rel.ID, rel.Generation}, &reason); err != nil {
@@ -242,7 +258,8 @@ func (s *Scheduler) RecordCorrection(ctx context.Context, plan, node, actor, sup
 			return s.recordHandOpened(txCtx, tx, plan, snap, n, rel, suppliedDigest, &out)
 		}
 		var previous string
-		if _, err := queryOne(txCtx, tx, "SELECT manifest_digest FROM dag_node_executions WHERE plan_id = ? AND node_id = ? AND relationship_id = ? AND execution_generation = ?", []any{plan, node, rel.ID, rel.Generation - 1}, &previous); err != nil {
+		// the manifest of the newest generation recorded before this one: the generation right before it, except after a recorded base refresh, which has no execution of its own and carries the manifest of the one before it
+		if _, err := queryOne(txCtx, tx, "SELECT manifest_digest FROM dag_node_executions WHERE plan_id = ? AND node_id = ? AND relationship_id = ? AND execution_generation < ? ORDER BY execution_generation DESC LIMIT 1", []any{plan, node, rel.ID, rel.Generation}, &previous); err != nil {
 			return err
 		}
 		digest, note, err := restorationDigest(findings.String)
@@ -281,6 +298,9 @@ func (s *Scheduler) RecordCorrection(ctx context.Context, plan, node, actor, sup
 			if !strings.Contains(note, want) {
 				return refuse(contract.RefusalDispositionConflict, "the restoration note does not carry the instruction manifest %s was prepared with (generation %d, its path and its file hash): the child was not told this manifest as prepared", digest, rel.Generation)
 			}
+		}
+		if digest == "" {
+			return refuse(contract.RefusalDispositionConflict, "no generation of %s before generation %d has a recorded manifest to carry over, and the ruling names none", node, rel.Generation)
 		}
 		if suppliedDigest != "" && suppliedDigest != digest {
 			return refuse(contract.RefusalDispositionConflict, "the digest given (%s) is not the one the child was told (%s)", suppliedDigest, digest)
