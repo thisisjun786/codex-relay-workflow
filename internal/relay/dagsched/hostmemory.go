@@ -14,7 +14,7 @@ import (
 )
 
 // The host memory bound (CRW-468). A release starts one more child on a host other children already load, and the only bound used to be a number of slots. The bound reads the host once per command
-// (MemAvailable, the swap in use, the some avg10 of the memory pressure); while one reading is over its threshold every candidate is deferred (defer:host_memory) and dag-release refuses a new
+// (MemAvailable, the swap in use, the some avg60 of the memory pressure); while one reading is over its threshold every candidate is deferred (defer:host_memory) and dag-release refuses a new
 // release. A child that runs is not touched. A reading that cannot be had is recorded as unmeasured, never read as safe or as pressure. Only dag-ready and dag-release carry it (useHostMemory), so
 // dag-progress and dag-restart stay functions of the store.
 
@@ -22,8 +22,8 @@ import (
 const (
 	EnvHostProcRoot        = "CRW_DAG_HOST_PROC_ROOT"               // where meminfo and pressure/memory are read (default /proc)
 	EnvHostMinAvailableGiB = "CRW_DAG_HOST_MIN_AVAILABLE_GIB"       // floor of MemAvailable in GiB (default 15; 0 never trips)
-	EnvHostMaxSwapPercent  = "CRW_DAG_HOST_MAX_SWAP_PERCENT"        // ceiling of the swap in use, percent of SwapTotal (default 50; 100 never trips)
-	EnvHostMaxPressure     = "CRW_DAG_HOST_MAX_PRESSURE_SOME_AVG60" // ceiling of the some avg10 of the memory pressure (default 10; 100 never trips)
+	EnvHostMaxSwapPercent  = "CRW_DAG_HOST_MAX_SWAP_PERCENT"        // ceiling of the swap in use, percent of SwapTotal (default 85; 100 never trips)
+	EnvHostMaxPressure     = "CRW_DAG_HOST_MAX_PRESSURE_SOME_AVG60" // ceiling of the some avg60 of the memory pressure (default 10; 100 never trips)
 )
 
 // The states of the bound (within: something was read and nothing is over; deferring: something is over; unmeasured: nothing could be read), where the limits came from, and the dimensions.
@@ -42,8 +42,9 @@ const (
 // HostMemory is one sample of the host. A nil field is a dimension nobody could read (Unread says why, "<dimension>: <cause>"); the swap is read only when both its total and its free bytes are.
 type HostMemory struct {
 	AvailableBytes, SwapTotalBytes, SwapFreeBytes *int64
-	PressureSomeAvg60, PressureSomeAvg10          *float64
-	Unread                                        []string
+	// PressureSomeAvg60 is the pressure reading the bound judges; PressureSomeAvg10 is kept beside it as information and is never a threshold.
+	PressureSomeAvg60, PressureSomeAvg10 *float64
+	Unread                               []string
 }
 
 // HostMemoryLimits are the thresholds, all strict: available under MinAvailableBytes, swap use over MaxSwapPercent or pressure over MaxPressureSomeAvg60 holds releases.
@@ -52,9 +53,9 @@ type HostMemoryLimits struct {
 	MaxSwapPercent, MaxPressureSomeAvg60 float64
 }
 
-// DefaultHostMemoryLimits are the starting values: 15 GiB available, half of the swap, a some avg10 of 10.
+// DefaultHostMemoryLimits are the operating rule every coordinator applies: 15 GiB available, 85 percent of the swap (swapped-out pages stay swapped out while memory is ample, so a lower ceiling holds a healthy host), a some avg60 of 10.
 func DefaultHostMemoryLimits() HostMemoryLimits {
-	return HostMemoryLimits{MinAvailableBytes: 15 * gib, MaxSwapPercent: 50, MaxPressureSomeAvg60: 10}
+	return HostMemoryLimits{MinAvailableBytes: 15 * gib, MaxSwapPercent: 85, MaxPressureSomeAvg60: 10}
 }
 
 // HostMemoryBound is the sample a command took and the limits it judges it by; Scheduler.Host nil means no bound.
@@ -102,14 +103,17 @@ func ReadHostMemory(root string) HostMemory {
 		}
 	}
 	raw, err := os.ReadFile(filepath.Join(root, "pressure", "memory"))
-	if v, ok := somePressure(string(raw), "avg10"); err == nil && ok {
+	if v, ok := somePressure(string(raw), "avg60"); err == nil && ok {
 		m.PressureSomeAvg60 = &v
+		if w, ok := somePressure(string(raw), "avg10"); ok {
+			m.PressureSomeAvg10 = &w
+		}
 	} else if errors.Is(err, fs.ErrNotExist) {
 		unread(hostPressure, "no memory pressure file (a kernel without it)")
 	} else if err != nil {
 		unread(hostPressure, causeOf(err))
 	} else {
-		unread(hostPressure, "no usable some avg10")
+		unread(hostPressure, "no usable some avg60")
 	}
 	return m
 }
@@ -139,7 +143,7 @@ func meminfoFields(text string) map[string]int64 {
 	return out
 }
 
-// somePressure is the avg10 of the "some" line of the memory pressure file.
+// somePressure is the value of one window (avg10, avg60) on the "some" line of the memory pressure file.
 func somePressure(text, window string) (float64, bool) {
 	for _, line := range strings.Split(text, "\n") {
 		fields := strings.Fields(line)
