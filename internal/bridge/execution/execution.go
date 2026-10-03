@@ -95,9 +95,18 @@ func (p Policy) RoleOrder() []string { return append([]string(nil), p.roleOrder.
 func (p Policy) Summary() map[string]any {
 	roles := map[string]any{}
 	for name, role := range p.roles {
-		roles[name] = role.receipt(name)
+		roles[name] = role.receipt(name, nil)
 	}
 	return map[string]any{"mode": p.Mode(), "digest": nullable(p.digest), "roles": roles}
+}
+
+// Role is what the policy declares for a role: the pairs it may run on, or the record expectation
+// of a supervisor. ok is false when the policy does not declare the role. The relay's role gate
+// asks this instead of reading the description back, so there is one reader of the file.
+func (p Policy) Role(name string) (Role, bool) {
+	role, ok := p.roles[name]
+	role.Pairs = slices.Clone(role.Pairs)
+	return role, ok
 }
 
 func nullable(s string) any {
@@ -134,6 +143,7 @@ func (p Policy) Authorize(in Input) (Authorized, error) {
 	}
 	role, declared := p.roles[in.Role]
 	provenance := "unverified"
+	var matched *RolePair
 	var overriddenBy any
 	if in.Exception != "" {
 		if err := p.exceptionCovers(in, model, effort); err != nil {
@@ -145,11 +155,10 @@ func (p Policy) Authorize(in Input) (Authorized, error) {
 			return Authorized{}, &Refusal{Code: RoleUnknown, Field: "role", Requested: in.Role, Allowed: anys(sortedKeys(p.roles)), Detail: "no such role is declared in this host's execution policy; this bridge declares no pair of its own for any role"}
 		}
 		if role.Expectation == Pair {
-			for _, f := range [...]struct{ name, requested, authorized string }{{"model", model, role.Model}, {"reasoning_effort", effort, role.Effort}} {
-				if f.requested != f.authorized {
-					return Authorized{}, &Refusal{Code: RoleMismatch, Field: f.name, Requested: f.requested, Allowed: []any{f.authorized}, Detail: fmt.Sprintf("role %s runs %s %s on this host", repr(in.Role), f.name, repr(f.authorized))}
-				}
+			if !role.Allows(model, effort) {
+				return Authorized{}, role.mismatch(in.Role, model, effort)
 			}
+			matched = &RolePair{Model: model, Effort: effort}
 			provenance = "role_pair"
 		}
 	}
@@ -166,7 +175,7 @@ func (p Policy) Authorize(in Input) (Authorized, error) {
 	if in.Role != "" {
 		expectation := map[string]any{"role": in.Role, "expectation": nil, "model": nil, "reasoningEffort": nil}
 		if declared {
-			expectation = role.receipt(in.Role)
+			expectation = role.receipt(in.Role, matched)
 		}
 		expectation["overriddenBy"] = overriddenBy
 		receipt["roleExpectation"] = expectation

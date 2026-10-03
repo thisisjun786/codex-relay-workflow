@@ -51,8 +51,10 @@ func fromMapping(value any, digest string) (Policy, error) {
 			if !declared || role.Expectation != Pair {
 				continue
 			}
-			if !slices.Contains(allowed[role.Model], role.Effort) {
-				return Policy{}, &PolicyError{fmt.Sprintf("role %s is declared to run %s at %s, which this file's allowed list does not approve; no such task could be created, so the two sections disagree rather than one narrowing the other", repr(name), repr(role.Model), repr(role.Effort))}
+			for _, pair := range role.Pairs {
+				if !slices.Contains(allowed[pair.Model], pair.Effort) {
+					return Policy{}, &PolicyError{fmt.Sprintf("role %s is declared to run %s at %s, which this file's allowed list does not approve; no such task could be created, so the two sections disagree rather than one narrowing the other", repr(name), repr(pair.Model), repr(pair.Effort))}
+				}
 			}
 		}
 	}

@@ -25,12 +25,18 @@ relay records it in `scope_bindings` and the role ids here are the same three st
 | --- | --- | --- | --- |
 | `supervisor` | Astra | as selected | Jun, directly |
 | `parent` | `anthropic/claude-opus-5-5` | `xhigh` | this policy |
-| `child` | `anthropic/claude-sonnet-5-5` | `xhigh` | this policy |
+| `child` | `anthropic/claude-sonnet-5-5` or `gpt-6.1-sol` | `xhigh` on both | this policy |
 
 **This table is a record of the product decision, not a default the code applies.** The decision
 itself is Linear CRW-127, the child row's move to Opus 5.5 is CRW-217, the parent row's move
 to the same pair is CRW-219, and the child row's move to Sonnet 5.5 is Jun's 2026-09-29 decision;
 the values that are actually enforced are the ones in the host's policy file. If the two disagree, the file is what runs and the disagreement is the bug.
+
+The child row holds two pairs since Jun's 2026-10-03 decision: children that ran on Sonnet alone used
+up the Claude quota too fast, so `gpt-6.1-sol` at `xhigh` joins `anthropic/claude-sonnet-5-5` at `xhigh`.
+The policy says which pairs a child MAY run on and checks that a created child is on one of them. It
+does not say which issue gets which: the crw-plan routing rule assigns a pair to each issue when the
+project is planned, and nothing in the file or in the code ranks one pair above the other.
 
 That separation is what a change of pair costs, and the parent row has now paid it three times.
 It ran on `devin/swe-2` at `max`, moved to `xai/grok-4.6` at `xhigh` on 2026-09-21, was restored
@@ -82,6 +88,42 @@ This is worth stating because the failure it prevents already happened in prose 
 code: a coordinator retrying a withheld send changed the model and kept the old effort, and the
 host refused it again.
 
+## A role may carry several pairs
+
+A role entry states one pair with `model` and `reasoningEffort`, or several with `pairs`:
+
+    "child": {"pairs": [
+      {"model": "anthropic/claude-sonnet-5-5", "reasoningEffort": "xhigh"},
+      {"model": "gpt-6.1-sol", "reasoningEffort": "xhigh"}
+    ]}
+
+A request is judged against the whole pair. It passes when its model and its effort are both those of
+one pair in the list, and nothing else: `gpt-6.1-sol` at the effort Sonnet runs at is refused, and so is
+Sonnet at SOL's effort, because an effort name belongs to the model beside it. The list keeps the order
+the file declares, and that order carries no preference.
+
+The file is refused when it is read, not at the first creation, if a `pairs` list is empty or is not a
+list, names the same pair twice, holds an entry that is not exactly `{model, reasoningEffort}`, sits in
+the same entry as `model` or `reasoningEffort`, is declared for the `supervisor`, or names a pair that the
+file's `allowed` list does not approve. A list of one pair is the one-pair form written another way.
+
+A file written for one pair per role reads exactly as before: the same digest (the SHA-256 of its
+bytes), the same description from `get_capabilities`, the same answers and the same refusals. Only a
+role that lists more than one pair is described differently:
+
+- the description gives `pairs`, the list, and leaves `model` and `reasoningEffort` null, because no
+  single pair is the role's;
+- a creation or send under that role records, under `roleExpectation`, the pair it matched as `model`
+  and `reasoningEffort` together with the whole `pairs` list, and those two are null when an exception
+  answered instead of the role;
+- a pair that is none of them is refused `execution_role_mismatch` with the field `pair`, every pair in
+  the refusal's allowed list, and the same pairs in its text. A role with one pair keeps refusing the
+  way it did, naming the half that differs;
+- the relay reads the same declaration. A task recorded or bound on any of the role's pairs is current,
+  and one on another pair is `settings_record_stale_for_role` or `role_binding_mismatch` with `expected`
+  listing the pairs. `managed-start` and `--require-worker-policy` accept a requested pair when it is
+  any of them.
+
 ## The file
 
 The policy file is named by `CODEX_THREAD_BRIDGE_EXECUTION_POLICY` in the bridge server process's
@@ -96,9 +138,14 @@ show the shape. Do not copy it as a default.
       "roles": {
         "supervisor": {"expectation": "record"},
         "parent": {"model": "anthropic/claude-opus-5-5", "reasoningEffort": "xhigh"},
-        "child":  {"model": "anthropic/claude-sonnet-5-5", "reasoningEffort": "xhigh"}
+        "child":  {"pairs": [
+          {"model": "anthropic/claude-sonnet-5-5", "reasoningEffort": "xhigh"},
+          {"model": "gpt-6.1-sol", "reasoningEffort": "xhigh"}
+        ]}
       }
     }
+
+The same `child` as a single pair is `{"model": "anthropic/claude-sonnet-5-5", "reasoningEffort": "xhigh"}`.
 
 `allowed` stays optional when `roles` is declared. That matters: an allowlist restricts every task
 on the host, so forcing one in order to declare roles would block other legitimate work. With no
@@ -177,8 +224,9 @@ match.
 ## Reading the policy instead of remembering it
 
 Call `get_capabilities`. Its `executionPolicy` reports the mode, the digest and the declared roles
-with their pairs. State the pair it reports for the role being created, and pass the `role`
-argument so the host checks the answer rather than trusting the caller.
+with their pairs. State a pair it reports for the role being created (for a role that lists several,
+one entry of its `pairs`), and pass the `role` argument so the host checks the answer rather than
+trusting the caller.
 
 Never carry a pair from memory, from another project, or from a document — including this one.
 That is the habit the incident was made of.
@@ -189,11 +237,11 @@ That is the habit the incident was made of.
 | --- | --- | --- |
 | `execution_setting_missing` / `execution_setting_invalid` | the model or the effort was absent or blank | state both; no host default is ever inherited |
 | `execution_role_unknown` | a role was cited that this host's policy does not declare | declare it in the host's execution policy; there is no fallback pair |
-| `execution_role_mismatch` | the stated pair is not that role's pair | state the pair the policy declares for the role |
+| `execution_role_mismatch` | the stated pair is not one of that role's pairs | state a pair the policy declares for the role; a role with several lists them all in the refusal |
 | `execution_exception_out_of_scope` | the exception does not cover this directory, or its role and the cited role disagree | cite an exception written for this role and directory |
 | `role_policy_unconfigured` | the recipient is role-bound and the relay process has no declared role policy, or its policy does not declare that role | set the variable for the relay process and restart, or declare the role in the policy; withheld deliveries resume by themselves |
-| `role_binding_mismatch` | a task's cited role and its bound role disagree, its recorded pair is not that role's pair, it holds two live bindings, or its record cites an exception the policy does not authorize | fix the binding or the creation, and do not re-record over a binding that disagrees; for an unauthorized citation, re-record from a user-attributed source what actually authorized the creation |
-| `settings_record_stale_for_role` | the recorded authorization is not the role's current pair | re-record it from a user-attributed source |
+| `role_binding_mismatch` | a task's cited role and its bound role disagree, its recorded pair is not one of that role's pairs, it holds two live bindings, or its record cites an exception the policy does not authorize | fix the binding or the creation, and do not re-record over a binding that disagrees; for an unauthorized citation, re-record from a user-attributed source what actually authorized the creation |
+| `settings_record_stale_for_role` | the recorded authorization is not one of the role's current pairs | re-record it from a user-attributed source |
 
 Every refusal above is decided before any call that costs inference. A creation or resume refused
 for one of the first four reasons issues no RPC at all, leaves no ledger row, and for the worktree
@@ -233,6 +281,25 @@ Four steps, and the order matters because each one is a separate fact.
 Nothing before step 4 is evidence. A file written is not a process reading it, a process reading
 it is not the other process reading the same one, and either of those is a different fact from a
 provider actually serving the model a host recorded.
+
+### Adding a pair to a role
+
+A runtime from before `pairs` refuses a file that uses it: the role entry "has unknown keys", the
+bridge does not start, the relay holds every role-bound delivery as `role_policy_unconfigured` and
+`managed-start` refuses at its preflight. That is the safe direction, and it fixes the order:
+
+1. Install the runtime that reads `pairs` everywhere a role question is asked. A file with one pair
+   per role is unchanged by it (same digest, same description), so nothing has to be edited yet.
+2. Edit the file: approve the pair under `allowed` and add it to the role. The digest changes.
+3. Restart the relay daemon, which holds one snapshot and until then publishes the old digest (a
+   caller sees `worker_policy_digest_mismatch`), and replace every bridge process that is still
+   running. A bridge reads the file once when it starts, so a parent session that was already open
+   keeps refusing the new pair, and a bridge started expecting the old digest refuses the edited file.
+   The plugin bridge's record is registered again as
+   [the execution policy the plugin bridge runs under](runtime-install.md#the-execution-policy-the-plugin-bridge-runs-under)
+   describes.
+4. Read it back on the new connection: `get_capabilities` lists the pair under the role, and
+   `relay doctor` shows the worker with the same digest and pairs.
 
 ### The relay's daemon is told once, not once per shell
 

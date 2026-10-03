@@ -80,8 +80,8 @@ func (r *Registry) RecordSettings(ctx context.Context, task string, settings con
 			unchanged := model == prevModel && effort == prevEffort
 			stillNeeded := true
 			if contested == nil {
-				if m, e, ok := declaredPairFor(bound, r.Policy); ok {
-					stillNeeded = !(model == any(m) && effort == any(e))
+				if declared, ok := declaredRoleFor(bound, r.Policy); ok {
+					stillNeeded = !allows(declared, model, effort)
 				}
 			}
 			if carried != nil && stillNeeded && (unchanged || source != UserTransition) {
@@ -284,5 +284,5 @@ func derivedFromRolePair(settings contract.OrderedObject, role string, policy Ro
 	expectation, ok := policy.expectation(role)
 	model, effort := pairOf(settings)
 	return citedException(settings) == nil && ok && expectation.Expectation == "pair" &&
-		model == any(expectation.Model) && effort == any(expectation.Effort)
+		allows(expectation, model, effort)
 }
