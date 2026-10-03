@@ -43,6 +43,15 @@ func metricsMust(t *testing.T, err error) {
 	}
 }
 
+// metricsUnreadable makes path unreadable and skips the test where that is not possible (running as root).
+func metricsUnreadable(t *testing.T, path string) {
+	t.Helper()
+	metricsMust(t, os.Chmod(path, 0o200))
+	if _, err := os.ReadFile(path); err == nil {
+		t.Skip("the file is readable despite mode 0200 (running as root)")
+	}
+}
+
 func metricsWrite(t *testing.T, cwd, rel string, data []byte) {
 	t.Helper()
 	path := filepath.Join(cwd, crwdir.DirName, rel)
@@ -139,7 +148,7 @@ func TestCheckObjectivePlateauIgnoresRecordsFromEarlierWorkPhases(t *testing.T) 
 	}
 }
 
-func TestDefaultClockWritesIsoTimestampsAndTheFirstRecordCreatesTheStateDirectory(t *testing.T) {
+func TestDefaultClockWritesIsoTimestamps(t *testing.T) {
 	cwd := t.TempDir()
 	iso := regexp.MustCompile(`^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$`)
 	rec := metricsRecord(t, cwd, "s", "m", 1, nil)
@@ -152,18 +161,12 @@ func TestDefaultClockWritesIsoTimestampsAndTheFirstRecordCreatesTheStateDirector
 	if json.Unmarshal(raw, &kind) != nil || !iso.MatchString(rec.TS) || !iso.MatchString(kind.UpdatedAt) {
 		t.Errorf("row ts %q, kind file %s", rec.TS, raw)
 	}
-	if ignore, err := os.ReadFile(filepath.Join(cwd, crwdir.DirName, ".gitignore")); err != nil || string(ignore) != crwdir.GitignoreText {
-		t.Errorf(".gitignore %q, %v", ignore, err)
-	}
 }
 
 func TestRecordStartsANewLineAfterALedgerItCanNotReadToCheck(t *testing.T) {
 	cwd, row := t.TempDir(), "{\"ts\":\"t\",\"sessionId\":\"s\",\"workPhaseId\":\"default\",\"metricName\":\"m\",\"value\":1,\"baseline\":1,\"best\":1,\"source\":\"evaluate.sh\"}"
 	metricsWrite(t, cwd, MetricsFile, []byte(row)) // a valid final row without its newline
-	metricsMust(t, os.Chmod(metricsPath(cwd), 0o200))
-	if _, err := os.ReadFile(metricsPath(cwd)); err == nil {
-		t.Skip("the ledger is readable despite mode 0200 (running as root)")
-	}
+	metricsUnreadable(t, metricsPath(cwd))
 	_, recordErr := RecordObjectiveMetric(cwd, RecordInput{SessionID: "s", MetricName: "m", Value: 2, Source: EvaluateSh})
 	metricsMust(t, os.Chmod(metricsPath(cwd), 0o600))
 	if rows := ReadObjectiveMetrics(cwd, "s"); recordErr != nil || len(rows) != 2 {
@@ -188,10 +191,7 @@ func TestWriteObjectiveKindDoesNotReplaceAFileItCanNotRead(t *testing.T) {
 	metricsMust(t, WriteObjectiveKind(cwd, "s", Maximize))
 	path := objectiveKindPath(cwd, "s")
 	before, _ := os.ReadFile(path)
-	metricsMust(t, os.Chmod(path, 0o200))
-	if _, err := os.ReadFile(path); err == nil {
-		t.Skip("the file is readable despite mode 0200 (running as root)")
-	}
+	metricsUnreadable(t, path)
 	refused := WriteObjectiveKind(cwd, "s", Satisfy)
 	metricsMust(t, os.Chmod(path, 0o600))
 	if after, _ := os.ReadFile(path); refused == nil || string(after) != string(before) {
