@@ -213,3 +213,29 @@ func TestManagedStandbyCorrectionRechecksPauseBeforeSynthesizing(t *testing.T) {
 	}
 	noStandbySettlement(t, s)
 }
+
+func TestManagedStandbyCorrectionKeepsCompletedClaimIntentOnPause(t *testing.T) {
+	ctx, s := standbyStore(t)
+	lateClaim{"anchor", "child", "staged", ""}.insert(t, s)
+	h := &observationHost{status: "completed"}
+	d := standbyDaemon(s, h)
+	d.beforeSettle = func(store.TurnReference) {
+		exec(t, s, "UPDATE relationships SET status='paused' WHERE relationship_id='r'")
+	}
+	if report, err := d.Tick(ctx); err != nil || report.Observed != 1 || notesSaying(report.Notes, "enqueue refused") != 1 {
+		t.Fatalf("completed claim paused before enqueue: %+v %v", report, err)
+	}
+	for _, query := range []string{
+		"SELECT COUNT(*) FROM events WHERE event_id='claim-anchor' AND stage='final' AND finalizing_status='completed'",
+		"SELECT COUNT(*) FROM observations WHERE turn_id='anchor' AND terminal_status='completed'",
+		"SELECT COUNT(*) FROM assignment_settlements WHERE turn_id='anchor' AND terminal_status='completed'",
+		"SELECT COUNT(*) FROM delivery_intent WHERE event_id='claim-anchor' AND relationship_id='r' AND kind='completion_event' AND recipient_task_id='parent'",
+	} {
+		if n := count(t, s, query); n != 1 {
+			t.Errorf("completed claim was not retained: %s: %d", query, n)
+		}
+	}
+	if count(t, s, "SELECT COUNT(*) FROM deliveries") != 0 || count(t, s, "SELECT COUNT(*) FROM events WHERE producer='daemon_observation'") != 0 {
+		t.Fatal("paused claim was queued or synthesized as a failure")
+	}
+}

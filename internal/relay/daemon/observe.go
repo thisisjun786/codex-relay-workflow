@@ -241,6 +241,7 @@ WHERE r.relationship_id=? AND r.child_task_id=? AND g.dispatch_turn_id=?
 
 func (d *Daemon) settle(ctx context.Context, r delivery.Relationship, turn store.TurnReference, report *Report) {
 	synthesized, laterTurn, laterEvent := "", "", ""
+	observationDeferred := false
 	ended := turn.Status == "failed" || turn.Status == "interrupted"
 	if ended {
 		var err error
@@ -281,7 +282,11 @@ func (d *Daemon) settle(ctx context.Context, r delivery.Relationship, turn store
 			if laterEvent == "" && ended {
 				receipt, err := d.Intake.DaemonObservation(tx, r.ID, turn)
 				if err != nil {
-					if store.RefusalReason(err) == store.ReasonRelationshipNotActive || store.RefusalReason(err) == "" {
+					if store.RefusalReason(err) == store.ReasonRelationshipNotActive {
+						observationDeferred = true
+						return err
+					}
+					if store.RefusalReason(err) == "" {
 						return err
 					}
 					report.Notes = append(report.Notes, "daemon observation refused: "+err.Error())
@@ -358,7 +363,7 @@ func (d *Daemon) settle(ctx context.Context, r delivery.Relationship, turn store
 	if errors.Is(err, errManagedStandby) {
 		return
 	}
-	if store.RefusalReason(err) == store.ReasonRelationshipNotActive {
+	if observationDeferred {
 		report.Notes = append(report.Notes, "observation deferred, "+r.ID+" is not active: "+err.Error())
 		return
 	}
