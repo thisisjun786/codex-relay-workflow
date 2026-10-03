@@ -412,6 +412,22 @@ any permitted fallback or remaining limitation. A base refresh adds the head it 
 from, the head it produced and the check between them. Keep implementation verification,
 integration, and deployment as separate claims.
 
+### After the merge and the integration observation: release the child's threads
+
+A finished child stays loaded on the shared App Server, and so do the sub-threads it started, each with its own MCP helper processes; a day of runs leaves hundreds. A thread stays loaded while a
+connection is subscribed to it: the one that created or resumed it (the parent's bridge process, the relay daemon that delivered to it), and for a sub-thread the one subscribed to its parent. Release
+them yourself once the work is over, after `assignment-mark merged` and, for a plan node, `dag-integration-observe` answering `integrated` true:
+
+    codex-session-relay --state "$RELAY_STATE" --socket "$SOCK" child-cleanup --relationship <rel> --actor <own task id> --dry-run
+    codex-session-relay --state "$RELAY_STATE" --socket "$SOCK" child-cleanup --relationship <rel> --actor <own task id>
+
+It refuses, before any App Server call, unless no correction can still be sent to the child: you are the relationship's parent; it is live or closed (not paused, cancelled or handed to another
+relationship); a `merged` mark counts for its current head, generation, revision and criteria; no other live relationship names the child; nothing is still owed; and, for a plan node, the accepted head
+stands on that mark and has landed on every target. It then archives the loaded threads of the child's subtree (`thread/archive`), deepest sub-threads first and the child last, and touches nothing that
+is not loaded; `codex unarchive <thread id>` undoes it. Exit 2 carries the report with `ok` false: `held_active` or `held_incomplete` (something in the subtree is running, or it could not be established
+exactly, so nothing was archived: run it again later), `failed`, or `no_rollout_left_loaded` (a sub-thread that never ran a turn cannot be archived and unloads about a minute after its owner's connection
+closes; the relay never deletes it). A repeat after a complete cleanup changes nothing. Record in the coordination record which threads were released and which stayed.
+
 ### What the handoff discloses, checked at the verdict
 
 The handoff's `disclosures` member ([what a handoff
