@@ -4,14 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
-	"io"
-	"os"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -48,13 +46,7 @@ func usage(detail string) error {
 }
 
 // hostFailure answers a plan that does not agree with itself as the host's failure.
-func hostFailure(err error) error {
-	var corrupt *dag.CorruptError
-	if errors.As(err, &corrupt) {
-		return dispatch.Host(corrupt.Error())
-	}
-	return err
-}
+func hostFailure(err error) error { return dag.HostFailure(err) }
 
 // openScheduler opens the selected store for a scheduler command. Selectors are the spellings a release fingerprints; commands that do not release leave them empty. The epoch the
 // session holds (--expect-epoch, on the commands that decide) is the one every write of the command is fenced with.
@@ -98,26 +90,6 @@ func runReady(ctx context.Context, services dispatch.Services, args dispatch.Arg
 	return append(reading.Object(), contract.Field{Key: "pass_seq", Value: seq}), nil
 }
 
-// readDocument is a JSON option's value: the text itself, or @file.
-func readDocument(input string) ([]byte, error) {
-	if !strings.HasPrefix(input, "@") {
-		if err := store.EncodeUTF8(input); err != nil {
-			return nil, usage(err.Error())
-		}
-		return []byte(input), nil
-	}
-	file, err := os.Open(input[1:])
-	if err != nil {
-		return nil, usage(err.Error())
-	}
-	defer file.Close()
-	raw, err := io.ReadAll(io.LimitReader(file, dag.MaxDocumentBytes+1))
-	if err != nil {
-		return nil, usage(err.Error())
-	}
-	return raw, nil
-}
-
 // wireRegion is one region of the --regions document.
 type wireRegion struct {
 	Repository string `json:"repository"`
@@ -148,7 +120,7 @@ func decodeRegions(raw []byte) ([]Region, error) {
 }
 
 func runRegionDeclare(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
-	raw, err := readDocument(args.Text("regions"))
+	raw, err := dag.ReadDocument(args.Text("regions"))
 	if err != nil {
 		return nil, err
 	}
@@ -184,7 +156,7 @@ func runRelease(ctx context.Context, services dispatch.Services, args dispatch.A
 	if services.SocketPath == "" || services.Selection.Source != "flag" {
 		return nil, usage("dag-release starts a managed task and requires explicit --state and --socket")
 	}
-	raw, err := readDocument(args.Text("request"))
+	raw, err := dag.ReadDocument(args.Text("request"))
 	if err != nil {
 		return nil, err
 	}
@@ -201,7 +173,7 @@ func runRelease(ctx context.Context, services dispatch.Services, args dispatch.A
 		return nil, err
 	}
 	sched.Tips = mergeturn.TargetReader{}
-	sched.PRs = ForgePullRequestReader(ExecRunner)
+	sched.PRs = ForgePullRequestReader(evidence.ExecRunner)
 	sched.Start = ProductionStarter(services, args)
 	sched.Selectors = Selectors{MarkerRoot: args.Text("marker-root"), Socket: services.SocketPath, StateSelector: services.Selection.Path}
 	result, err := sched.Release(ctx, args.Text("plan"), args.Text("node"), args.Text("actor"), request)
@@ -229,7 +201,7 @@ func runReleaseClose(ctx context.Context, services dispatch.Services, args dispa
 }
 
 func runAccept(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
-	raw, err := readDocument(args.Text("rule-version"))
+	raw, err := dag.ReadDocument(args.Text("rule-version"))
 	if err != nil {
 		return nil, err
 	}
@@ -251,7 +223,7 @@ func runAccept(ctx context.Context, services dispatch.Services, args dispatch.Ar
 		return nil, err
 	}
 	defer closeStore()
-	sched.PRs = ForgePullRequestReader(ExecRunner)
+	sched.PRs = ForgePullRequestReader(evidence.ExecRunner)
 	sched.Tips = mergeturn.TargetReader{}
 	result, err := sched.Accept(ctx, args.Text("plan"), args.Text("node"), args.Text("actor"), input)
 	if err != nil {
@@ -309,7 +281,7 @@ func runBaseRefresh(ctx context.Context, services dispatch.Services, args dispat
 	}
 	defer closeStore()
 	sched.Tips = mergeturn.TargetReader{}
-	sched.PRs = ForgePullRequestReader(ExecRunner)
+	sched.PRs = ForgePullRequestReader(evidence.ExecRunner)
 	result, err := sched.RecordBaseRefresh(ctx, args.Text("plan"), args.Text("node"), args.Text("actor"), RefreshInput{Checkout: args.Text("checkout"), Resolved: args.Strings("resolved")})
 	if err != nil {
 		return nil, hostFailure(err)
@@ -379,7 +351,7 @@ func runCorrect(ctx context.Context, services dispatch.Services, args dispatch.A
 	if args.Bool("prepare") {
 		// the commit of the correction's base is read from the target branch, as dag-release reads it
 		sched.Tips = mergeturn.TargetReader{}
-		raw, err := readDocument(args.Text("manifest-request"))
+		raw, err := dag.ReadDocument(args.Text("manifest-request"))
 		if err != nil {
 			return nil, err
 		}
@@ -444,7 +416,7 @@ func runMergeJudge(ctx context.Context, services dispatch.Services, args dispatc
 		return nil, err
 	}
 	defer closeStore()
-	sched.Tips, sched.Ancestry, sched.PRs = mergeturn.TargetReader{}, GitAncestry{}.Ancestry, ForgePullRequestReader(ExecRunner)
+	sched.Tips, sched.Ancestry, sched.PRs = mergeturn.TargetReader{}, GitAncestry{}.Ancestry, ForgePullRequestReader(evidence.ExecRunner)
 	result, err := sched.Judge(ctx, args.Text("plan"), args.Text("node"), args.Text("actor"), JudgeInput{PullRequest: named})
 	if err != nil {
 		return nil, hostFailure(err)
@@ -462,7 +434,7 @@ func runMergeRequest(ctx context.Context, services dispatch.Services, args dispa
 		return nil, err
 	}
 	defer closeStore()
-	sched.Tips, sched.Ancestry, sched.PRs = mergeturn.TargetReader{}, GitAncestry{}.Ancestry, ForgePullRequestReader(ExecRunner)
+	sched.Tips, sched.Ancestry, sched.PRs = mergeturn.TargetReader{}, GitAncestry{}.Ancestry, ForgePullRequestReader(evidence.ExecRunner)
 	result, turn, err := sched.RequestMergeTurn(ctx, args.Text("plan"), args.Text("node"), args.Text("actor"), MergeRequestInput{PullRequest: named, Host: args.Text("host")})
 	if err != nil {
 		return nil, hostFailure(err)

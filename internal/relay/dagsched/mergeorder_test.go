@@ -31,7 +31,13 @@ func (w *sweepWorld) declareRegions(node string, regions ...Region) {
 // measure sweeps the live nodes at the heads given (the parent's word) with no tip.
 func (w *sweepWorld) measure(heads map[string]string) SweepResult {
 	w.k.t.Helper()
-	res, err := w.sweep(TriggerReceipt, "", "", func(in *SweepInput) { in.Heads = heads; in.Tips = nil })
+	return w.mustSweep(func(in *SweepInput) { in.Heads = heads; in.Tips = nil })
+}
+
+// mustSweep is the receipt sweep a measurement makes, shaped by mutate, and fails the test on an error. measure and measureAt differ only in the tip they leave.
+func (w *sweepWorld) mustSweep(mutate func(*SweepInput)) SweepResult {
+	w.k.t.Helper()
+	res, err := w.sweep(TriggerReceipt, "", "", mutate)
 	if err != nil {
 		w.k.t.Fatal(err)
 	}

@@ -48,7 +48,7 @@ func testSettingsHoldWholePythonObservation(t *testing.T, held bool) {
 	gs := seed(filepath.Join(home, "go"))
 	defer gs.Close()
 	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
-	sw := &Sweeper{Store: gs, HostRecordPath: testHostRecordPath(), MaxAttempts: 3, Current: func(context.Context, string) (bool, error) { return true, nil }, Installation: Installation{Package: "codex-session-relay", Version: "test", Location: "test"}, Program: func() []string { return []string{"codex-session-relay"} }}
+	sw := &Sweeper{Store: gs, HostRecordPath: testHostRecordPath(), MaxAttempts: 3, Installation: Installation{Package: "codex-session-relay", Version: "test", Location: "test"}, Program: func() []string { return []string{"codex-session-relay"} }}
 	var got page
 	var e error
 	if held {

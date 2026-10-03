@@ -1,0 +1,12 @@
+{
+  "issue": "CRW-342",
+  "identical": [
+    "hook__pre-tool-use-linting-apply-patch__allowed_edits",
+    "hook__pre-tool-use-linting-apply-patch__baseline_empty_workspace",
+    "hook__pre-tool-use-linting-apply-patch__clean_edit_idle_advisory_when_armed",
+    "hook__pre-tool-use-linting-apply-patch__fail_open_paths",
+    "hook__pre-tool-use-linting-apply-patch__forbidden_patterns_deny",
+    "hook__pre-tool-use-linting-apply-patch__pabcd_off_lint_survives_advisory_silent",
+    "hook__pre-tool-use-linting-apply-patch__prose_targets_exempt_source_still_scanned"
+  ]
+}

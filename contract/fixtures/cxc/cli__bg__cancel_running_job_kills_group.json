@@ -1,0 +1,248 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/bg/cancel-running",
+    "K6/bg/cancel",
+    "K8/ws/.codexclaw/bg",
+    "K12/ps",
+    "A/bg-wake/cli.test.ts"
+  ],
+  "note": "bg cancel on a live job: the job is a shell that traps SIGTERM and publishes probe/term, so the recording shows that the signal reached the job through the process group and not only that the record flipped to cancelled (the oracle records cancelled whether or not a signal landed). The job publishes probe/ready after its trap is installed and loops while probe exists, so it ends about a second after the case root is removed even when a recording fails. It sends its own stderr to /dev/null first: dash sometimes prints Terminated for the child it was waiting on when the group is signalled, and that text would reach <id>.out through the wrapper's 2>&1 and make two recordings differ. A wait step on the job's output file binds the random id as ${WAITED} for the cancel step (aliased <BG_1>). The step PATH adds the system directories, as in the bg run fixture, because the case PATH has no sh, mv or sleep. The ps stub answers the start fingerprint, so startToken is recorded and the ps calls (the start, the reconcile and the owner check of the cancel) are logged with their pids aliased. It observes ws/.codexclaw/bg and ws/probe only, for the reason the bg run fixture gives.",
+  "given": {
+    "dirs": [
+      "ws/probe"
+    ],
+    "env": {
+      "CODEX_THREAD_ID": "rec-s1"
+    },
+    "stubs": {
+      "ps": {
+        "stdout": "Thu Jan  1 00:00:00 2026\n",
+        "exit": 0
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "bg",
+          "run",
+          "--json",
+          "--",
+          "sh",
+          "-c",
+          "exec 2>/dev/null; trap 'echo term > probe/term.tmp && mv probe/term.tmp probe/term; exit 143' TERM; echo ready > probe/ready.tmp && mv probe/ready.tmp probe/ready; while [ -d probe ]; do sleep 1 & wait $!; done"
+        ],
+        "env": {
+          "PATH": "${STUBS}:${BIN}:/usr/bin:/bin"
+        }
+      },
+      {
+        "wait": "ws/probe/ready"
+      },
+      {
+        "wait": "ws/.codexclaw/bg/*.out"
+      },
+      {
+        "cli": [
+          "bg",
+          "cancel",
+          "${WAITED}"
+        ]
+      },
+      {
+        "wait": "ws/probe/term"
+      },
+      {
+        "cli": [
+          "bg",
+          "list",
+          "--json"
+        ]
+      }
+    ],
+    "observe": [
+      "ws/.codexclaw/bg",
+      "ws/probe"
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "id": "<BG_1>",
+          "sessionId": "rec-s1",
+          "adoptedBy": null,
+          "cwd": "${WS}",
+          "command": [
+            "sh",
+            "-c",
+            "exec 2>/dev/null; trap 'echo term > probe/term.tmp && mv probe/term.tmp probe/term; exit 143' TERM; echo ready > probe/ready.tmp && mv probe/ready.tmp probe/ready; while [ -d probe ]; do sleep 1 & wait $!; done"
+          ],
+          "note": null,
+          "pid": "<PID>",
+          "startToken": "Thu Jan  1 00:00:00 2026",
+          "status": "running",
+          "exitCode": null,
+          "startedAt": "<TS>",
+          "endedAt": null,
+          "deliveredAt": null
+        },
+        "stderr": ""
+      },
+      {
+        "action": "wait",
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "action": "wait",
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "<BG_1> cancelled\n",
+        "stderr": ""
+      },
+      {
+        "action": "wait",
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": [
+          {
+            "id": "<BG_1>",
+            "sessionId": "rec-s1",
+            "adoptedBy": null,
+            "cwd": "${WS}",
+            "command": [
+              "sh",
+              "-c",
+              "exec 2>/dev/null; trap 'echo term > probe/term.tmp && mv probe/term.tmp probe/term; exit 143' TERM; echo ready > probe/ready.tmp && mv probe/ready.tmp probe/ready; while [ -d probe ]; do sleep 1 & wait $!; done"
+            ],
+            "note": null,
+            "pid": "<PID>",
+            "startToken": "Thu Jan  1 00:00:00 2026",
+            "status": "cancelled",
+            "exitCode": null,
+            "startedAt": "<TS>",
+            "endedAt": "<TS>",
+            "deliveredAt": null
+          }
+        ],
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "ws/.codexclaw/bg/<BG_1>.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty",
+        "json": {
+          "id": "<BG_1>",
+          "sessionId": "rec-s1",
+          "adoptedBy": null,
+          "cwd": "${WS}",
+          "command": [
+            "sh",
+            "-c",
+            "exec 2>/dev/null; trap 'echo term > probe/term.tmp && mv probe/term.tmp probe/term; exit 143' TERM; echo ready > probe/ready.tmp && mv probe/ready.tmp probe/ready; while [ -d probe ]; do sleep 1 & wait $!; done"
+          ],
+          "note": null,
+          "pid": "<PID>",
+          "startToken": "Thu Jan  1 00:00:00 2026",
+          "status": "cancelled",
+          "exitCode": null,
+          "startedAt": "<TS>",
+          "endedAt": "<TS>",
+          "deliveredAt": null
+        }
+      },
+      "ws/.codexclaw/bg/<BG_1>.out": {
+        "type": "file",
+        "mode": "0644",
+        "form": "empty"
+      },
+      "ws/.codexclaw/bg/ledger.jsonl": {
+        "type": "file",
+        "mode": "0644",
+        "form": "jsonl",
+        "jsonl": [
+          {
+            "at": "<TS>",
+            "event": "registered",
+            "id": "<BG_1>",
+            "pid": "<PID>",
+            "command": [
+              "sh",
+              "-c",
+              "exec 2>/dev/null; trap 'echo term > probe/term.tmp && mv probe/term.tmp probe/term; exit 143' TERM; echo ready > probe/ready.tmp && mv probe/ready.tmp probe/ready; while [ -d probe ]; do sleep 1 & wait $!; done"
+            ]
+          },
+          {
+            "at": "<TS>",
+            "event": "cancelled",
+            "id": "<BG_1>"
+          }
+        ]
+      },
+      "ws/probe/ready": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "ready\n"
+      },
+      "ws/probe/term": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "term\n"
+      }
+    },
+    "calls": [
+      {
+        "cmd": "ps",
+        "argv": [
+          "-o",
+          "lstart=",
+          "-p",
+          "<PID>"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "ps",
+        "argv": [
+          "-o",
+          "lstart=",
+          "-p",
+          "<PID>"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "ps",
+        "argv": [
+          "-o",
+          "lstart=",
+          "-p",
+          "<PID>"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

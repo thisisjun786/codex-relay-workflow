@@ -34,11 +34,18 @@ const (
 const scanWindow = 4096
 
 var (
-	settledDelivery  = []any{"dispatched", "inbox_only", "superseded"}
 	parentHolds      = []string{"host_lost_turn", "unknown_send_lost", "unknown_send_undecided"}
 	unknownSendHolds = []string{"unknown_send_lost", "unknown_send_undecided"}
 	commit           = regexp.MustCompile(`^[0-9a-f]{40}$`)
 )
+
+// notSettled keeps the deliveries that have not reached their recipient. A dispatched or inbox-only delivery has been
+// sent, an acknowledged one has been sent and confirmed (delivery.Acknowledged, which this package cannot import:
+// a verified acknowledgement moves a delivery from dispatched to it), and a superseded one is no longer to be
+// delivered. The settled attempts such a delivery carries are history, not a stall, so none of the sources that
+// derive delivery_stalled or delivery_refused reads it, and neither presence check counts it. It is the one
+// definition of "settled" for the daemon's sweeper and the fault-sweep command, which share the sources.
+const notSettled = "d.state NOT IN ('dispatched','inbox_only','acknowledged','superseded')"
 
 const notSuperseded = "NOT EXISTS (SELECT 1 FROM delivery_supersession x WHERE x.event_id = d.event_id) AND NOT EXISTS (SELECT 1 FROM relationships sr WHERE sr.relationship_id = d.relationship_id AND sr.superseded_by IS NOT NULL)"
 
@@ -72,10 +79,11 @@ const RelayPackageVersion = "0.2.0"
 // Sweeper derives the delivery faults of one store.
 type Sweeper struct {
 	Store *store.Store
-	// Current is delivery.supersession_reason(...) is None: whether a delivery still says
-	// something current (the send path's own rule, owned by the delivery package).
-	Current func(ctx context.Context, eventID string) (bool, error)
-	// SupersessionReason preserves the send path's exact permanent verdict for memo rows.
+	// SupersessionReason is the send path's own verdict on a delivery (delivery.supersession_reason, owned by the
+	// delivery package): "" while the delivery still says something current, else why it is overtaken. It is the
+	// sweep's one rule of currency, so the daemon's sweeper and the fault-sweep command, which share the sources,
+	// answer alike on one ledger: the sources collect a delivery only while it is current, and the presence checks
+	// skip an overtaken one and keep the verdict for the memo rows. Nil takes every delivery as current.
 	SupersessionReason func(ctx context.Context, eventID string) (string, error)
 	// MaxAttempts is the RetryPolicy's max_attempts.
 	MaxAttempts  int64
@@ -621,13 +629,13 @@ func (sw *Sweeper) current(ctx context.Context, event string, cache map[string]b
 	if v, ok := cache[event]; ok {
 		return v, nil
 	}
-	if sw.Current == nil {
+	if sw.SupersessionReason == nil {
 		cache[event] = true
 		return true, nil
 	}
-	v, err := sw.Current(ctx, event)
-	cache[event] = v
-	return v, err
+	reason, err := sw.SupersessionReason(ctx, event)
+	cache[event] = reason == ""
+	return reason == "", err
 }
 
 func (sw *Sweeper) settingsItems(ctx context.Context, event, recipient, request string, own map[string]any, current bool) ([]any, string, error) {
@@ -644,8 +652,8 @@ func (sw *Sweeper) deliveryFaults(ctx context.Context, product string, cursor an
 	if err != nil {
 		return page{}, err
 	}
-	rows, err := sw.Store.All(ctx, "SELECT d.event_id, d.relationship_id, d.recipient_task_id, d.state, d.hold_reason,       d.attempt_count, e.execution_generation AS generation, e.turn_id AS turn,       (SELECT a.request_id FROM attempts a WHERE a.event_id = d.event_id          AND a.internal_state = 'settled'         ORDER BY a.attempt_no DESC LIMIT 1) AS last_request,       (SELECT a.state FROM attempts a WHERE a.event_id = d.event_id          AND a.internal_state = 'settled'         ORDER BY a.attempt_no DESC LIMIT 1) AS last_state  FROM deliveries d LEFT JOIN events e ON e.event_id = d.event_id WHERE d.hold_reason IS NOT NULL AND d.hold_reason != ? AND d.state NOT IN (?,?,?)   AND "+notSuperseded+"   AND d.event_id > ? AND d.event_id <= ? ORDER BY d.event_id LIMIT ?",
-		append(append(pick(busyCap), settledDelivery...), afterText, end, sweepLimit)...)
+	rows, err := sw.Store.All(ctx, "SELECT d.event_id, d.relationship_id, d.recipient_task_id, d.state, d.hold_reason,       d.attempt_count, e.execution_generation AS generation, e.turn_id AS turn,       (SELECT a.request_id FROM attempts a WHERE a.event_id = d.event_id          AND a.internal_state = 'settled'         ORDER BY a.attempt_no DESC LIMIT 1) AS last_request,       (SELECT a.state FROM attempts a WHERE a.event_id = d.event_id          AND a.internal_state = 'settled'         ORDER BY a.attempt_no DESC LIMIT 1) AS last_state  FROM deliveries d LEFT JOIN events e ON e.event_id = d.event_id WHERE d.hold_reason IS NOT NULL AND d.hold_reason != ? AND "+notSettled+"   AND "+notSuperseded+"   AND d.event_id > ? AND d.event_id <= ? ORDER BY d.event_id LIMIT ?",
+		busyCap, afterText, end, sweepLimit)
 	if err != nil {
 		return page{}, err
 	}
@@ -718,8 +726,8 @@ func (sw *Sweeper) retryFaults(ctx context.Context, product string, cursor any) 
 	if err != nil {
 		return page{}, err
 	}
-	args := append(append([]any(nil), settledDelivery...), "dispatched", "inbox_only", busyAttempt, unknownSendHolds[0], unknownSendHolds[1], afterInt, end, sweepLimit)
-	rows, err := sw.Store.All(ctx, "SELECT a.rowid AS seq, a.request_id, a.state AS attempt_state, a.event_id,       a.attempt_no,       (SELECT MAX(x.attempt_no) FROM attempts x WHERE x.event_id = a.event_id          AND x.internal_state = 'settled') AS latest_settled,       d.relationship_id, d.recipient_task_id, d.state AS delivery_state,       d.hold_reason, d.attempt_count, e.execution_generation AS generation,       e.turn_id AS turn  FROM attempts a JOIN deliveries d ON d.event_id = a.event_id  LEFT JOIN events e ON e.event_id = a.event_id WHERE d.state NOT IN (?,?,?)   AND a.internal_state = 'settled'   AND a.state IS NOT NULL AND a.state NOT IN (?,?,?)   AND NOT (COALESCE(d.hold_reason, '') IN (?,?) AND a.attempt_no = d.attempt_count)   AND "+notSuperseded+"   AND a.rowid > ? AND a.rowid <= ? ORDER BY a.rowid LIMIT ?", args...)
+	args := []any{"dispatched", "inbox_only", busyAttempt, unknownSendHolds[0], unknownSendHolds[1], afterInt, end, sweepLimit}
+	rows, err := sw.Store.All(ctx, "SELECT a.rowid AS seq, a.request_id, a.state AS attempt_state, a.event_id,       a.attempt_no,       (SELECT MAX(x.attempt_no) FROM attempts x WHERE x.event_id = a.event_id          AND x.internal_state = 'settled') AS latest_settled,       d.relationship_id, d.recipient_task_id, d.state AS delivery_state,       d.hold_reason, d.attempt_count, e.execution_generation AS generation,       e.turn_id AS turn  FROM attempts a JOIN deliveries d ON d.event_id = a.event_id  LEFT JOIN events e ON e.event_id = a.event_id WHERE "+notSettled+"   AND a.internal_state = 'settled'   AND a.state IS NOT NULL AND a.state NOT IN (?,?,?)   AND NOT (COALESCE(d.hold_reason, '') IN (?,?) AND a.attempt_no = d.attempt_count)   AND "+notSuperseded+"   AND a.rowid > ? AND a.rowid <= ? ORDER BY a.rowid LIMIT ?", args...)
 	if err != nil {
 		return page{}, err
 	}
@@ -878,7 +886,7 @@ func (sw *Sweeper) recovered(ctx context.Context, product string, cursor any) ([
 // index on internal_state alone: nearly every attempt is settled, so that plan read every settled
 // attempt once per delivery asked about. Without it the lookup goes through the (event_id, attempt_no)
 // key, which is one delivery's attempts.
-const stillPresentSQL = "SELECT d.event_id FROM deliveries d WHERE d.recipient_task_id = ? AND d.state NOT IN (?,?,?)   AND " + notSuperseded + "   AND ((d.hold_reason IS NOT NULL AND d.hold_reason != ?         AND COALESCE((SELECT a.state FROM attempts a WHERE a.event_id = d.event_id                     AND a.internal_state = 'settled'                   ORDER BY a.attempt_no DESC LIMIT 1), '') = COALESCE(?, ''))        OR EXISTS (SELECT 1 FROM attempts a2 WHERE a2.event_id = d.event_id                     AND +a2.internal_state = 'settled' AND a2.state = ?)) AND NOT EXISTS (SELECT 1 FROM fault_overtaken_deliveries o                  WHERE o.event_id = d.event_id) AND d.event_id > ? ORDER BY d.event_id LIMIT ?"
+const stillPresentSQL = "SELECT d.event_id FROM deliveries d WHERE d.recipient_task_id = ? AND " + notSettled + "   AND " + notSuperseded + "   AND ((d.hold_reason IS NOT NULL AND d.hold_reason != ?         AND COALESCE((SELECT a.state FROM attempts a WHERE a.event_id = d.event_id                     AND a.internal_state = 'settled'                   ORDER BY a.attempt_no DESC LIMIT 1), '') = COALESCE(?, ''))        OR EXISTS (SELECT 1 FROM attempts a2 WHERE a2.event_id = d.event_id                     AND +a2.internal_state = 'settled' AND a2.state = ?)) AND NOT EXISTS (SELECT 1 FROM fault_overtaken_deliveries o                  WHERE o.event_id = d.event_id) AND d.event_id > ? ORDER BY d.event_id LIMIT ?"
 
 // stillPresent is still_present for delivery_stalled via _first_current. The overtaken-delivery
 // memo (fault_overtaken_deliveries) is written as Python writes it.
@@ -891,7 +899,7 @@ func (sw *Sweeper) stillPresent(ctx context.Context, signature map[string]any) (
 	after, checked := "", 0
 	var overtaken []string
 	for {
-		rows, err := sw.Store.All(ctx, query, append(append(pick(signature["recipient"]), settledDelivery...), busyCap, state, state, after, sweepLimit)...)
+		rows, err := sw.Store.All(ctx, query, pick(signature["recipient"], busyCap, state, state, after, sweepLimit)...)
 		if err != nil {
 			return false, false, err
 		}

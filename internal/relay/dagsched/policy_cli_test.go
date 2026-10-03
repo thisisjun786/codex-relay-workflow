@@ -1,9 +1,6 @@
 package dagsched
 
-import (
-	"path/filepath"
-	"testing"
-)
+import "testing"
 
 // CRW-411 through the built binary, as the parent uses it: JSON on stdout, exit 0 for an answer and 2 for a refusal with its reason.
 
@@ -11,13 +8,10 @@ import (
 // only user.
 func policyCLIState(t *testing.T) string {
 	t.Helper()
-	state := filepath.Join(t.TempDir(), "state")
-	w := newPolicyWorldOn(t, newFixtureAt(t, filepath.Join(state, "relay.sqlite3")), "l1")
-	w.land("l1", 5, 1800)
-	if err := w.f.s.Close(); err != nil {
-		t.Fatal(err)
-	}
-	return state
+	return closedState(t, func(f *fixture) {
+		t.Helper()
+		newPolicyWorldOn(t, f, "l1").land("l1", 5, 1800)
+	})
 }
 
 func TestCLIReleasePolicyLandingResultAndMeasurements(t *testing.T) {
