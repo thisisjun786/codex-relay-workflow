@@ -92,6 +92,7 @@ func TestProcessGroupClose(t *testing.T) {
 	member := exec.Command("/bin/sh", "-c", "exit 0")
 	g.join(member)
 	if err := member.Start(); err != nil {
+		g.close()
 		t.Fatal(err)
 	}
 	time.Sleep(200 * time.Millisecond) // it has exited and stays a zombie: nobody waits for it yet
