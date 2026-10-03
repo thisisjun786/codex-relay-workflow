@@ -14,6 +14,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/buildinfo"
 )
 
 // Journal kinds of a pre-send transition and an accepted settings note (CRW-235).
@@ -717,6 +718,7 @@ type claimed struct {
 	attemptNo int64
 	requestID string
 	message   string
+	runtime   Obj
 }
 
 // claim is _claim: authorization, staging and eligibility decided in one atomic statement,
@@ -778,7 +780,13 @@ func (d *Service) claim(ctx context.Context, eventID string, now float64, owner,
 		if out.message, err = d.render(ctx, row, record, out.requestID); err != nil {
 			return err
 		}
-		if _, err := execSQL(ctx, d.Store, "INSERT INTO attempts (request_id, event_id, attempt_no, kind, internal_state, state, sent_at, observed_at) VALUES (?,?,?,?,?,?,?,?)", out.requestID, eventID, out.attemptNo, row.S("kind"), "in_flight", HeldUncertain, d.Clock.ISO(), d.Clock.ISO()); err != nil {
+		out.runtime = buildinfo.Snapshot()
+		sentAt, observedAt := d.Clock.ISO(), d.Clock.ISO()
+		initial, err := AttemptRecord(Classify(Obj{{Key: "status", Value: Unfinished}}), out.requestID, eventID, out.attemptNo, recipient, "unknown", observedAt, out.runtime, nil)
+		if err != nil {
+			return err
+		}
+		if _, err := execSQL(ctx, d.Store, "INSERT INTO attempts (request_id, event_id, attempt_no, kind, internal_state, state, sent_at, observed_at, record) VALUES (?,?,?,?,?,?,?,?,?)", out.requestID, eventID, out.attemptNo, row.S("kind"), "in_flight", HeldUncertain, sentAt, observedAt, dumps(initial)); err != nil {
 			return err
 		}
 		if _, err := execSQL(ctx, d.Store, "INSERT INTO attempt_messages (request_id, event_id, attempt_no, kind, message, rendered_at) VALUES (?,?,?,?,?,?)", out.requestID, eventID, out.attemptNo, row.S("kind"), out.message, d.Clock.ISO()); err != nil {
@@ -973,7 +981,7 @@ func (d *Service) Attempt(ctx context.Context, eventID string, adapter Adapter, 
 	if t, ok := facts.TurnID.(string); ok && slices.Contains(known, any(t)) {
 		previously = true
 	}
-	record, err := AttemptRecord(facts, c.requestID, eventID, c.attemptNo, recipient, statusForRecord(observation), d.Clock.ISO(), nil)
+	record, err := AttemptRecord(facts, c.requestID, eventID, c.attemptNo, recipient, statusForRecord(observation), d.Clock.ISO(), c.runtime, nil)
 	if err != nil {
 		return nil, err
 	}

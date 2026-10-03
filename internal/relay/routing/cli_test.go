@@ -54,7 +54,11 @@ func builtBinary(t *testing.T) string {
 		}
 		text := strings.Replace(string(source), `_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/routing"`, `routing "github.com/thisisjun786/codex-relay-workflow/internal/relay/routing"`, 1)
 		text = strings.Replace(text, "import (", "import (\n \"bytes\"\n \"github.com/thisisjun786/codex-relay-workflow/internal/relay/faults\"", 1)
-		text = strings.Replace(text, "cli.Version = version", "ctx = routing.WithClock(ctx, parityClock{})\n ctx = faults.WithInputs(ctx, parityClock{}, bytes.NewReader([]byte{0,1,2,3,4,5,6,7}))\n cli.Version = version", 1)
+		if strings.Count(text, "buildinfo.Version = version") != 1 {
+			binaryError = fmt.Errorf("runtime version assignment missing or repeated")
+			return
+		}
+		text = strings.Replace(text, "buildinfo.Version = version", "ctx = routing.WithClock(ctx, parityClock{})\n ctx = faults.WithInputs(ctx, parityClock{}, bytes.NewReader([]byte{0,1,2,3,4,5,6,7}))\n buildinfo.Version = version", 1)
 		text += "\ntype parityClock struct{}\nfunc(parityClock)Now()float64{return 1700000000}\nfunc(parityClock)ISO()string{return \"2023-11-14T22:13:20.000000+00:00\"}\n"
 		patched := filepath.Join(dir, "main.go")
 		if err = os.WriteFile(patched, []byte(text), 0600); err != nil {

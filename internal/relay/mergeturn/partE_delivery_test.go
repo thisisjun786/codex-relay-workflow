@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -185,7 +186,11 @@ func (w *wakeParity) compare(name string) {
 	if err := json.Unmarshal([]byte(clean), &steps); err != nil {
 		w.t.Fatal(err)
 	}
-	golden.CheckJSON(w.t, name, steps)
+	executable, err := os.Executable()
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	golden.CheckJSON(w.t, name, steps, golden.Substitute(executable, "<runtime executable>"))
 }
 func newWakeParity(t *testing.T) *wakeParity {
 	t.Helper()

@@ -7,9 +7,6 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 )
 
-// Version and Build are set by cmd/crw; doctor reports them in its runtime block.
-var Version, Build = "dev", ""
-
 // Execute is the codex-session-relay console script: the relay CLI under its own name.
 func Execute(ctx context.Context, argv []string, stdout, stderr io.Writer) int {
 	return ExecuteAs(ctx, "codex-session-relay", argv, stdout, stderr)
