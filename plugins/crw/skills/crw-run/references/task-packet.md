@@ -636,7 +636,8 @@ first assignment. The parent picks the form from that pair ([Prepare and dispatc
 the Launch packet stays the form for a Sonnet child, and neither form changes what a task owes. The premise is that a
 long checklist suits a Claude child while a GPT child follows short principle-style instructions better and drifts when
 many rules collide. So the SOL packet says the task in five short parts and moves CRW's mandatory procedure into a few hard
-invariants. Each invariant names the Launch packet rule it comes from, so shortening drops no obligation.
+invariants. Each invariant names the Launch packet rule it comes from, so shortening drops no obligation. A task whose scope excludes
+publication keeps the same parts, and its TASK, DELIVERABLE and STOP WHEN name the frozen diff in place of the pull request.
 
 ### Body
 
@@ -733,7 +734,8 @@ host values filled in.
    which publication you did not perform. Push your task branch only: no merge, force-push, rebase or tag, no push to the integration
    branch, and no release, installation, service restart, Linear write or change to global settings. Do not chase the integration
    branch: merge it into your branch with a merge commit only when GitHub reports a conflict (record what you resolved), or when
-   the coordinator's correction asks for a base refresh, which arrives as a new generation.
+   the coordinator's correction asks for a base refresh, which arrives as a new generation and is not new scope: name the kind of each
+   merge (`clean`, `mechanical` or `manual`) and rerun only what that kind needs ([what a handoff discloses](#what-a-handoff-discloses)).
 
    Source: the `Delivery:` line and the publication bullet of `Execution:` ("push your task branch and open the pull request ... never merge; no force-push,
    no tag, no push to `dev` or `main`"), OPS-9.1 and OPS-9.3 in [Operations contract](operations.md), and the `Execution:` bullet
@@ -769,9 +771,10 @@ host values filled in.
    the anchor its detail names. Before re-emitting inside the same generation read the current revision (`revision-head` or
    `assignment-show`) and name it with `--supersedes-revision`; the first receipt of a new generation names none; every head gets a
    new handoff file. Any other refusal: stop and report the receipt UNEMITTED with the exact refusal. If the issue
-   lookup names a different owner, report that conflict and write nothing into that relationship. Before acting on the assignment, a
-   correction or a resume that arrives with a typed packet file, check it with `packet-check` (with your own `--observation` when the packet
-   names an artifact) and act only on an accepted answer whose `act` is true; once you have acted, record it with `--applied`. Never message or steer the parent: the relay is the only route.
+   lookup names a different owner, report that conflict and write nothing into that relationship. Before acting on an assignment,
+   a correction or a resume that comes as a typed relay packet (SCOPE says when the assignment is a plain prompt that carries none), check it
+   with `packet-check`, with your own `--observation` when the packet names an artifact, and act only on an accepted answer whose `act` is
+   true; once you have acted, record it with `--applied`. Never message or steer the parent: the relay is the only route.
 
    Source: the relay bullets of `Execution:` (`packet-check`, "emit your completion receipt", "know which turn your receipt is emitted
    from", the UNEMITTED and other-owner bullets, the `blocked_needs_input` bullet), [Completing on a later turn of the same
@@ -794,8 +797,9 @@ host values filled in.
 STOP WHEN carries five principles in place of the Launch packet's longer rules about escalation and scope:
 
 - Do not stop to ask for permission for what the packet already grants. A decision, a credential or an approval it does not carry
-  is the one route for a question: write the question out, emit `blocked_needs_input` and end the turn. Never call
-  `request_user_input`, which CXC denies while a goal is active.
+  is the one route for a question: write the question out, emit `blocked_needs_input` (where no relay holds the assignment, return the CXC
+  status the case takes, BLOCKED, UNSAFE or NEEDS_HUMAN, with the question) and end the turn. Never call `request_user_input`, which CXC
+  denies while a goal is active.
 - Do not stop at a partial fix or a proof of concept: deliver the whole DELIVERABLE, or report blocked.
 - Make no refactor and add no feature the TASK did not ask for. An edit outside SCOPE is a defect even when it improves something.
 - After three failed attempts at the same thing, revert your own changes for it to the last good state and report it as blocked.
