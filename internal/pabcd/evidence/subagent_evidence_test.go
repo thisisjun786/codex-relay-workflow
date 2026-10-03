@@ -1,0 +1,163 @@
+package evidence
+
+import (
+	"bytes"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
+)
+
+// Ports of the tests of CXC v0.2.40 pabcd-state/test/subagent-evidence.test.ts that exercise the units of lines 326-470. The
+// oracle drives them through the SubagentStop gate, the PreToolUse goal gate and the evidence CLI, which other issues port, so
+// each test here makes the calls those entry points make: the gate's order (gate in corpus_test.go, whose resolution of a late
+// receipt is ClearAttempts and ResolveTombstone), the goal gate's probes (UnrecordableVerdictStatus and HasSpentBudget) and the
+// CLI's resolution (ClearAttempts, and a filter of its own over the tombstones, which the tests make with ResolveTombstone).
+
+func agent(id, turn string) Payload { return Payload{AgentType: "executor", AgentID: id, TurnID: turn} }
+
+// spend writes the counter an agent leaves behind after its blocks.
+func spend(t *testing.T, cwd, sessionID, agentID, turnID string) {
+	t.Helper()
+	for i := 1; i <= MaxAttempts; i++ {
+		if !WriteAttempts(cwd, sessionID, agentID, i, turnID) {
+			t.Fatal("the counter was not written")
+		}
+	}
+}
+
+func tombstones(cwd, sessionID string) (turns []string) {
+	for _, e := range state.ReadState(cwd, sessionID).UnverifiedSubagents {
+		turns = append(turns, e.AgentID+"/"+e.TurnID)
+	}
+	return turns
+}
+
+// :489, :504 and :551: a verdict that could not be recorded, an unreadable marker directory and an unwritable one each deny.
+func TestUnrecordableMarkerDeniesCompletion(t *testing.T) {
+	t.Run("a marker", func(t *testing.T) {
+		cwd := t.TempDir()
+		must(t, WriteUnrecordableMarker(cwd, "s1", "a1"))
+		if got := UnrecordableVerdictStatus(cwd, "s1"); got != (VerdictStatus{Present: true}) {
+			t.Errorf("%+v", got)
+		}
+		if got := UnrecordableVerdictStatus(cwd, "s2"); got != (VerdictStatus{}) {
+			t.Errorf("another session sees it: %+v", got)
+		}
+	})
+	t.Run("an unreadable marker directory", func(t *testing.T) {
+		cwd := t.TempDir()
+		put(t, filepath.Join(cwd, ".crw", UnrecordableSubdir), []byte("not a directory"))
+		if got := UnrecordableVerdictStatus(cwd, "s1"); got != (VerdictStatus{Unreadable: true}) {
+			t.Errorf("%+v", got)
+		}
+	})
+	t.Run("a readable but unwritable marker directory", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("running as root: permissions are not enforced")
+		}
+		cwd := t.TempDir()
+		dir := filepath.Join(cwd, ".crw", UnrecordableSubdir)
+		must(t, os.MkdirAll(dir, 0o777))
+		must(t, os.Chmod(dir, 0o500))
+		defer func() { must(t, os.Chmod(dir, 0o700)) }()
+		if got := UnrecordableVerdictStatus(cwd, "s1"); got != (VerdictStatus{Unreadable: true}) {
+			t.Errorf("%+v", got)
+		}
+	})
+}
+
+// :586: a tombstone is never committed over unreadable state; the verdict goes to the marker, which the gate passes in as the
+// writer of RecordTombstone.
+func TestUnreadableStateGetsAMarkerNotATombstone(t *testing.T) {
+	cwd := t.TempDir()
+	spend(t, cwd, "s1", "a1", "")
+	path := filepath.Join(cwd, ".crw", "sessions", "s1.json")
+	put(t, path, []byte("{ corrupt"))
+	var writer MarkerWriter = WriteUnrecordableMarker
+	if RecordTombstone(cwd, "s1", agent("a1", ""), MaxAttempts, writer) {
+		t.Error("a verdict was reported recorded over an unreadable file")
+	}
+	if raw, _ := os.ReadFile(path); !bytes.Equal(raw, []byte("{ corrupt")) {
+		t.Errorf("the unreadable file was rewritten: %q", raw)
+	}
+	if got := UnrecordableVerdictStatus(cwd, "s1"); !got.Present {
+		t.Errorf("no marker: %+v", got)
+	}
+}
+
+// :616: the spent counter outlives every other record of a verdict.
+func TestSpentBudgetOutlivesTheOtherRecords(t *testing.T) {
+	cwd := t.TempDir()
+	for i := 0; i <= MaxAttempts; i++ {
+		gate(cwd, "s1", agent("a1", ""))
+	}
+	if !HasTombstone(cwd, "s1", agent("a1", "")) || !HasSpentBudget(cwd, "s1") {
+		t.Fatal("the gate left no verdict")
+	}
+	must(t, os.RemoveAll(filepath.Join(cwd, ".crw", "sessions")))
+	must(t, os.RemoveAll(filepath.Join(cwd, ".crw", UnrecordableSubdir)))
+	if !HasSpentBudget(cwd, "s1") {
+		t.Error("the budget did not outlive the loss of the other records")
+	}
+}
+
+// :283 and :636: a late valid receipt resolves the tombstone and clears the spent counter, so the parent is not left blocked.
+func TestAReceiptResolvesTheVerdict(t *testing.T) {
+	cwd := t.TempDir()
+	for i := 0; i <= MaxAttempts; i++ {
+		gate(cwd, "s1", agent("a1", ""))
+	}
+	if got := tombstones(cwd, "s1"); len(got) != 1 {
+		t.Fatalf("tombstones: %v", got)
+	}
+	ClearAttempts(cwd, "s1", "a1", "")
+	if !ResolveTombstone(cwd, "s1", agent("a1", "")) {
+		t.Error("the tombstone was not resolved")
+	}
+	if got := tombstones(cwd, "s1"); len(got) != 0 || HasTombstone(cwd, "s1", agent("a1", "")) || HasSpentBudget(cwd, "s1") {
+		t.Errorf("the verdict stands: tombstones %v, spent %v", got, HasSpentBudget(cwd, "s1"))
+	}
+}
+
+// :519, :664 and :718: resolving one turn leaves the verdicts and the counters of the agent's other turns, the turn-less one
+// included.
+func TestResolvingOneTurnLeavesTheOthers(t *testing.T) {
+	cwd := t.TempDir()
+	for _, turn := range []string{"t1", "t2", ""} {
+		for i := 0; i <= MaxAttempts; i++ {
+			gate(cwd, "s1", agent("a1", turn))
+		}
+	}
+	ClearAttempts(cwd, "s1", "a1", "t1")
+	if !ResolveTombstone(cwd, "s1", agent("a1", "t1")) || ResolveTombstone(cwd, "s1", agent("a1", "t1")) {
+		t.Error("the turn was not resolved exactly once")
+	}
+	if got := tombstones(cwd, "s1"); len(got) != 2 || got[0] != "a1/t2" || got[1] != "a1/" {
+		t.Errorf("tombstones left: %v", got)
+	}
+	must(t, os.RemoveAll(filepath.Join(cwd, ".crw", "sessions"))) // only the counters speak now
+	if !HasSpentBudget(cwd, "s1") {
+		t.Error("the counters of the other turns did not survive")
+	}
+	ClearAttempts(cwd, "s1", "a1", "t2")
+	if !HasSpentBudget(cwd, "s1") {
+		t.Error("the turn-less counter did not survive the resolution of another turn")
+	}
+	ClearAttempts(cwd, "s1", "a1", "")
+	if HasSpentBudget(cwd, "s1") {
+		t.Error("the budget is spent with every counter cleared")
+	}
+}
+
+// :237 and :700: each block names its attempt of the budget.
+func TestVerifierDirectiveNamesTheAttempt(t *testing.T) {
+	for i := 1; i <= MaxAttempts; i++ {
+		if got := VerifierDirective(i); !strings.Contains(got, fmt.Sprintf("This is attempt %d of %d.", i, MaxAttempts)) {
+			t.Errorf("attempt %d: %q", i, got)
+		}
+	}
+}
