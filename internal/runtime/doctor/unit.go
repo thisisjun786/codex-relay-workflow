@@ -35,15 +35,14 @@ func UnitDir(env scope.Env) (string, error) {
 // another name or directory is not seen), and neither the unit's enabled state nor systemd is asked.
 func alwaysActiveEvidence(env scope.Env) string {
 	const tail = " No host restart was observed. Installation is not activation; this command enables no daemon."
-	dir, err := UnitDir(env)
-	if err != nil {
-		return "the unit directory could not be established (" + err.Error() + "), so no registration was looked for." + tail
-	}
+	dir, dirErr := UnitDir(env)
 	path := filepath.Join(dir, ServiceUnit)
 	raw, err := os.ReadFile(path)
 	switch {
+	case dirErr != nil:
+		return "the unit directory could not be established (" + dirErr.Error() + ")." + tail
 	case os.IsNotExist(err):
-		return "no relay unit file at " + path + ", so nothing registered by crw install register-service is set to start the relay when the user manager starts." + tail
+		return "no relay unit file at " + path + " (a unit registered under another name or directory is not looked for)." + tail
 	case err != nil:
 		return "the unit file " + path + " could not be read (" + err.Error() + ")." + tail
 	case !strings.Contains("\n"+string(raw), "\n"+UnitOwnerLine+"\n"):

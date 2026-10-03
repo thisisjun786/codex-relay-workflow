@@ -33,6 +33,8 @@ type fakeManager struct {
 	calls []string
 	show  string
 	fail  map[string]error
+	// afterEnable, when set, is what show answers once enable has run: a name loads only when its unit file does.
+	afterEnable string
 }
 
 func (m *fakeManager) run(_ context.Context, args ...string) (string, error) {
@@ -41,6 +43,9 @@ func (m *fakeManager) run(_ context.Context, args ...string) (string, error) {
 		return "", err
 	}
 	if args[0] == "show" {
+		if m.afterEnable != "" && strings.Contains(m.verbs(), "enable") {
+			return m.afterEnable, nil
+		}
 		return m.show, nil
 	}
 	return "", nil
@@ -106,17 +111,34 @@ func (u *unitHost) run(s install.ServiceOptions, code int, outcome string) recor
 	return result
 }
 
-// unchanged fails the test when a refusal asked systemd for anything but a reading, or touched the file.
-func (u *unitHost) unchanged(kept string) {
+// unchanged fails the test when a refusal asked systemd for anything but a reading, or changed what stood at the
+// unit path.
+func (u *unitHost) unchanged(before string) {
 	u.t.Helper()
 	for _, verb := range strings.Fields(u.manager.verbs()) {
 		if verb != "show" {
 			u.t.Fatalf("a refusal asked systemd to change something: %v", u.manager.calls)
 		}
 	}
-	if kept != "" && u.text() != kept {
-		u.t.Fatal("a refusal changed the unit file")
+	if got := snapshot(u.path()); got != before {
+		u.t.Fatalf("a refusal changed what stood at the unit path:\n%s\nwas:\n%s", got, before)
 	}
+}
+
+// snapshot is what stands at path: nothing, a link's target, a directory, or a file's bytes.
+func snapshot(path string) string {
+	info, err := os.Lstat(path)
+	switch {
+	case err != nil:
+		return "absent"
+	case info.Mode()&os.ModeSymlink != 0:
+		target, _ := os.Readlink(path)
+		return "link " + target
+	case info.IsDir():
+		return "dir"
+	}
+	raw, _ := os.ReadFile(path)
+	return "file " + string(raw)
 }
 
 func warned(result record.Object, want string) bool {
@@ -137,10 +159,8 @@ func put(t *testing.T, path, text string, mode os.FileMode) {
 	}
 }
 
-// A fresh registration writes the one unit, asks the manager about the name, and enables it by path: no
-// start, stop, restart or reload. The status read the warnings come from runs through the pointer's relay in
-// an environment without the policy and scope variables, though the registering environment sets both, and it
-// only reads.
+// A fresh registration writes the one unit, asks the manager and enables it by path, never starts anything; its status
+// read runs through the pointer's relay without the policy and scope variables though the caller sets both.
 func TestRegisterWritesTheUnitAndEnablesIt(t *testing.T) {
 	u := newUnitHost(t)
 	result := u.run(install.ServiceOptions{}, install.OK, install.UnitCreated)
@@ -153,7 +173,7 @@ func TestRegisterWritesTheUnitAndEnablesIt(t *testing.T) {
 	if info, err := os.Stat(u.path()); err != nil || u.text() != want || info.Mode().Perm() != 0o644 {
 		t.Fatalf("unit text:\n%s\nwant:\n%s", u.text(), want)
 	}
-	if u.manager.verbs() != "show enable" || u.manager.calls[1] != "enable "+u.path() {
+	if u.manager.verbs() != "show enable show" || u.manager.calls[1] != "enable "+u.path() {
 		t.Fatalf("systemctl calls: %v", u.manager.calls)
 	}
 	env, _ := os.ReadFile(filepath.Join(u.out, "env"))
@@ -166,8 +186,7 @@ func TestRegisterWritesTheUnitAndEnablesIt(t *testing.T) {
 	}
 }
 
-// Registering again converges: the file is left alone and enable runs again, so a unit disabled by hand is
-// enabled again. A dry run writes nothing and asks systemd only to read.
+// Registering again converges (enable runs again); a dry run writes nothing and only reads.
 func TestRegisterIsIdempotentAndDryRunWritesNothing(t *testing.T) {
 	u := newUnitHost(t)
 	u.run(install.ServiceOptions{DryRun: true}, install.OK, install.UnitWouldCreate)
@@ -177,13 +196,12 @@ func TestRegisterIsIdempotentAndDryRunWritesNothing(t *testing.T) {
 	u.run(install.ServiceOptions{}, install.OK, install.UnitCreated)
 	first, _ := os.Stat(u.path())
 	u.run(install.ServiceOptions{}, install.OK, install.UnitUnchanged)
-	if second, _ := os.Stat(u.path()); !second.ModTime().Equal(first.ModTime()) || u.manager.verbs() != "show show enable show enable" {
+	if second, _ := os.Stat(u.path()); !second.ModTime().Equal(first.ModTime()) || u.manager.verbs() != "show show enable show show enable show" {
 		t.Fatalf("rerun: %v", u.manager.calls)
 	}
 }
 
-// Nothing the installer did not write is adopted or overwritten; the manager resolves the name, and a manager
-// that cannot be asked is not one that said no.
+// Nothing the installer did not write is adopted or overwritten, and a manager that cannot be asked is not one that said no.
 func TestRegisterRefusesWhatItDoesNotOwnOrCannotResolve(t *testing.T) {
 	other := func(u *unitHost) string { return loadedFrom("/usr/lib/systemd/user/"+doctor.ServiceUnit, "inactive") }
 	for _, c := range []struct {
@@ -192,6 +210,11 @@ func TestRegisterRefusesWhatItDoesNotOwnOrCannotResolve(t *testing.T) {
 	}{
 		{"a file without the owner key", install.UnitForeign, func(u *unitHost) string {
 			put(t, u.path(), "[Service]\nExecStart=/bin/true\n", 0o644)
+			return notLoaded
+		}},
+		{"a symbolic link", install.UnitForeign, func(u *unitHost) string {
+			os.MkdirAll(u.dir, 0o755)
+			os.Symlink("/etc/hostname", u.path())
 			return notLoaded
 		}},
 		{"a directory", install.UnitForeign, func(u *unitHost) string { os.MkdirAll(u.path(), 0o755); return notLoaded }},
@@ -216,11 +239,9 @@ func TestRegisterRefusesWhatItDoesNotOwnOrCannotResolve(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			u := newUnitHost(t)
 			u.manager.show = c.arrange(u)
+			before := snapshot(u.path())
 			u.run(install.ServiceOptions{}, install.Refused, c.outcome)
-			u.unchanged("")
-			if _, err := os.Stat(u.path()); c.outcome != install.UnitForeign && c.outcome != install.UnitDiffers && !errors.Is(err, os.ErrNotExist) {
-				t.Fatalf("a refusal wrote the unit: %v", err)
-			}
+			u.unchanged(before)
 		})
 	}
 	u := newUnitHost(t)
@@ -230,20 +251,16 @@ func TestRegisterRefusesWhatItDoesNotOwnOrCannotResolve(t *testing.T) {
 
 // Inputs the unit cannot carry, or must not live where a runtime's removal would delete them.
 func TestRegisterRefusesInputsTheUnitCannotCarry(t *testing.T) {
-	for name, arrange := range map[string]func(u *unitHost) install.ServiceOptions{
-		"a socket path with a space": func(u *unitHost) install.ServiceOptions {
-			u.o.Socket = filepath.Join(u.home, "a b.sock")
-			return install.ServiceOptions{}
-		},
-		"no socket":                 func(u *unitHost) install.ServiceOptions { u.o.Socket = ""; return install.ServiceOptions{} },
-		"a name that is not a unit": func(*unitHost) install.ServiceOptions { return install.ServiceOptions{UnitName: "../x.txt"} },
-		"a name that is an option":  func(*unitHost) install.ServiceOptions { return install.ServiceOptions{UnitName: "-x.service"} },
-	} {
+	for _, c := range []struct{ socket, name string }{{"a b.sock", ""}, {"none", ""}, {"", "../x.txt"}, {"", "-x.service"}} {
 		u := newUnitHost(t)
-		s := arrange(u)
-		u.run(s, install.Usage, "usage")
+		if c.socket == "none" {
+			u.o.Socket = ""
+		} else if c.socket != "" {
+			u.o.Socket = filepath.Join(u.home, c.socket)
+		}
+		u.run(install.ServiceOptions{UnitName: c.name}, install.Usage, "usage")
 		if _, err := os.Stat(u.dir); !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("%s: something was written", name)
+			t.Fatalf("%+v: something was written", c)
 		}
 	}
 	u := newUnitHost(t)
@@ -260,9 +277,8 @@ func TestRegisterRefusesInputsTheUnitCannotCarry(t *testing.T) {
 	}
 }
 
-// What the boot start will find is read through the relay's own status: an unreadable launch declaration
-// refuses as its start would, an enabled and declared service raises no warning of its own, a status that
-// cannot be read is a warning, and a relative socket is resolved so the unit only ever names absolute paths.
+// The boot start's inputs come from the relay's own status: an unreadable declaration refuses, a ready service warns
+// of nothing, an unreadable status warns, and a relative socket is resolved so the unit names absolute paths only.
 func TestRegisterReadsTheBootStartInputs(t *testing.T) {
 	u := newUnitHost(t)
 	u.status("{\"enabled\":true,\"launchPolicy\":{\"source\":\"unreadable_record\",\"detail\":\"not JSON\"}}")
@@ -288,18 +304,16 @@ func TestRegisterCarriesAnIsolatedScope(t *testing.T) {
 	scopes := filepath.Join(u.home, "scopes")
 	u.status("{\"enabled\":true,\"launchPolicy\":{\"source\":\"record\"},\"scopeAuthority\":\"isolated\"}")
 	result := u.run(install.ServiceOptions{ScopeDir: scopes}, install.OK, install.UnitCreated)
-	text, env := u.text(), ""
-	if raw, err := os.ReadFile(filepath.Join(u.out, "env")); err == nil {
-		env = string(raw)
-	}
+	text := u.text()
+	raw, _ := os.ReadFile(filepath.Join(u.out, "env"))
+	env := string(raw)
 	if !strings.Contains(text, "Environment="+scopeVar+"="+scopes+"\n") || !strings.Contains(text, "service start --allow-isolated-scope\n") || !strings.Contains(text, "UnsetEnvironment="+policyVar+"\n") ||
 		at(result, "scopeAuthority") != "isolated" || !strings.Contains(env, scopeVar+"="+scopes+"\n") || strings.Contains(env, policyVar) {
 		t.Fatalf("isolated unit:\n%s\nstatus read environment:\n%s", text, env)
 	}
 }
 
-// Remove disables and deletes only what it wrote, only when the manager resolves the name to that file and says
-// it is not running, in that order; every other case leaves the file and asks systemd for nothing but a reading.
+// Remove disables then deletes only what it wrote and only when it is not running; every other case changes nothing.
 func TestRemoveDisablesAndDeletesOnlyWhatItWrote(t *testing.T) {
 	u := newUnitHost(t)
 	u.run(install.ServiceOptions{}, install.OK, install.UnitCreated)
@@ -315,6 +329,7 @@ func TestRemoveDisablesAndDeletesOnlyWhatItWrote(t *testing.T) {
 		{"a file that is not the installer's", install.UnitForeign, "[Service]\nExecStart=/bin/true\n", loadedFrom("UNIT", "inactive")},
 		{"an install section that reaches another unit", install.UnitModified, "[Unit]\n" + doctor.UnitOwnerLine + "\n[Install]\nWantedBy=default.target\nAlso=other.service\n", loadedFrom("UNIT", "inactive")},
 		{"another fragment", install.UnitNameTaken, "", loadedFrom("/usr/lib/systemd/user/"+doctor.ServiceUnit, "inactive")},
+		{"a second install section that systemd reads too", install.UnitModified, "[Unit]\n" + doctor.UnitOwnerLine + "\n[Install] \nAlso=other.service\n[Install]\nWantedBy=default.target\n", loadedFrom("UNIT", "inactive")},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			u := newUnitHost(t)
@@ -322,7 +337,7 @@ func TestRemoveDisablesAndDeletesOnlyWhatItWrote(t *testing.T) {
 			if c.file != "" {
 				put(t, u.path(), c.file, 0o644)
 			}
-			kept := u.text()
+			kept := snapshot(u.path())
 			u.manager.calls, u.manager.show = nil, strings.ReplaceAll(c.show, "UNIT", u.path())
 			u.run(install.ServiceOptions{Remove: true}, install.Refused, c.outcome)
 			u.unchanged(kept)
@@ -330,8 +345,7 @@ func TestRemoveDisablesAndDeletesOnlyWhatItWrote(t *testing.T) {
 	}
 }
 
-// A step that fails says what stands. A unit written and not enabled is exit 3 and a rerun finishes the job; a
-// disable that fails keeps the file; a reload that fails after the delete is exit 3 too.
+// A step that fails says what stands: exit 3 for a unit written and not enabled (a rerun finishes) or deleted and not reloaded.
 func TestStepsThatFailSayWhatStands(t *testing.T) {
 	u := newUnitHost(t)
 	u.manager.fail = map[string]error{"enable": errors.New("boom")}
@@ -340,7 +354,7 @@ func TestStepsThatFailSayWhatStands(t *testing.T) {
 	}
 	u.manager.fail = nil
 	u.run(install.ServiceOptions{}, install.OK, install.UnitUnchanged)
-	if !strings.HasSuffix(u.manager.verbs(), "enable") {
+	if !strings.HasSuffix(u.manager.verbs(), "enable show") {
 		t.Fatalf("the rerun did not enable: %v", u.manager.calls)
 	}
 	u.manager.show, u.manager.fail = loadedFrom(u.path(), "inactive"), map[string]error{"disable": errors.New("boom")}
@@ -355,8 +369,31 @@ func TestStepsThatFailSayWhatStands(t *testing.T) {
 	}
 }
 
-// parseUnit reads the lines a manager would act on: the executable and arguments of start and stop, what the
-// unit sets and what it unsets.
+// Only a loaded name shows its drop-ins, so the unit is read again after enable and any drop-in is reported.
+func TestRegisterReportsDropInsThatOnlyShowOnceTheNameIsLoaded(t *testing.T) {
+	u := newUnitHost(t)
+	u.manager.afterEnable = strings.Replace(loadedFrom(u.path(), "inactive"), "DropInPaths=", "DropInPaths=/x/crw-.service.d/o.conf", 1)
+	result := u.run(install.ServiceOptions{}, install.Incomplete, install.UnitModified)
+	if at(result, "applied") != true || u.manager.verbs() != "show enable show" {
+		t.Fatalf("drop-ins after enable: %v\n%s", u.manager.calls, golden.Canon(result))
+	}
+}
+
+// A unit file replaced between the decision and the lock is never acted on: not enabled again, not deleted.
+func TestNeitherRegisterNorRemoveActsOnAFileThatChangedUnderneath(t *testing.T) {
+	for _, remove := range []bool{false, true} {
+		u := newUnitHost(t)
+		u.run(install.ServiceOptions{}, install.OK, install.UnitCreated)
+		u.manager.calls, u.manager.show = nil, loadedFrom(u.path(), "inactive")
+		replaced := u.text() + "# replaced\n"
+		restore := install.ReplaceBeforeWriteLock(func(string) { put(t, u.path(), replaced, 0o644) })
+		u.run(install.ServiceOptions{Remove: remove}, install.Refused, install.UnitUnreadable)
+		restore()
+		u.unchanged("file " + replaced)
+	}
+}
+
+// parseUnit reads what a manager would act on: start and stop, and what the unit sets and unsets.
 func parseUnit(unit string) (start, stop []string, set scope.Env, unset []string) {
 	for _, line := range strings.Split(unit, "\n") {
 		switch key, value, _ := strings.Cut(line, "="); key {
@@ -373,11 +410,9 @@ func parseUnit(unit string) (start, stop []string, set scope.Env, unset []string
 	return start, stop, set, unset
 }
 
-// The unit and the maintenance order do not fight. With the unit registered (a fake manager) and its own
-// ExecStart and ExecStop run as the real relay against a fake App Server in an isolated scope: the relay starts;
-// an update is refused while it runs, whoever started it; after the stop the update lands and moves the pointer;
-// the unit file is byte for byte what it was and the manager was never called; and the unit's ExecStart then
-// starts the new runtime.
+// The unit and the maintenance order do not fight. The unit's own ExecStart and ExecStop run as the real relay against a
+// fake App Server in an isolated scope: an update is refused while the relay runs, lands after the stop, leaves the
+// unit file and the manager untouched, and the unit's ExecStart then starts the new runtime.
 func TestUpdateAndStopStartDoNotFightTheUnit(t *testing.T) {
 	h := newHost(t)
 	first, second := archive(t, "0.9.0", ""), archive(t, "0.9.1", "")
@@ -420,8 +455,10 @@ func TestUpdateAndStopStartDoNotFightTheUnit(t *testing.T) {
 	// from a clean temporary state.
 	startUnit := func() map[string]any {
 		started := call(start...)
-		for attempt := 1; attempt < 3 && started["reason"] == "did_not_report"; attempt++ {
-			call(stop...)
+		for attempt := 1; attempt < 3 && started["reason"] == "did_not_report" && started["child"] != "still_running"; attempt++ {
+			if stopped := call(stop...); stopped["ok"] != true && stopped["reason"] != "not_running" {
+				break
+			}
 			_ = os.RemoveAll(h.relayState)
 			_ = os.MkdirAll(h.relayState, 0o700)
 			verb("enable")
@@ -429,10 +466,16 @@ func TestUpdateAndStopStartDoNotFightTheUnit(t *testing.T) {
 		}
 		return started
 	}
+	// ours is whether pid is a process serving this test's state directory, so cleanup never signals one that only
+	// reuses the number.
+	ours := func(pid int) bool {
+		raw, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/cmdline")
+		return err == nil && strings.Contains(string(raw), h.relayState)
+	}
 	t.Cleanup(func() {
 		call(stop...)
 		for _, key := range []string{"pid", "workerPid"} {
-			if pid, _ := verb("status")[key].(float64); pid > 0 {
+			if pid, _ := verb("status")[key].(float64); pid > 0 && ours(int(pid)) {
 				_ = syscall.Kill(int(pid), syscall.SIGKILL)
 			}
 		}

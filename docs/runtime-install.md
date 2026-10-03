@@ -885,7 +885,8 @@ directory together with `assignment-find --issue` returning the expected relatio
 A relay service started by hand does not come back after a host restart: `service start` leaves a record that reads
 "recorded before a different boot", and nothing starts it again. `crw install register-service --socket <app-server-socket>
 [--state <dir>]` registers the one systemd user unit that does. It is a command of its own, like `hook` and `register-mcp`,
-because an install or an update never starts a daemon and gains no side effect here.
+because an install or an update never starts a daemon and gains no side effect here. Starting at boot, before anyone logs in,
+needs the user manager to start at boot, which a host with lingering off does only at login.
 
 The unit is written to `${XDG_CONFIG_HOME:-~/.config}/systemd/user/crw-relay.service` (`--unit-dir` and `--unit-name` change
 either) and enabled with `systemctl --user enable`. It is `Type=oneshot` with `RemainAfterExit=yes`, wanted by
@@ -905,7 +906,7 @@ One owner registers this surface, and the command asks the manager as well as th
 | `unit_foreign` | something at the path is not the installer's unit (it lacks `X-CRW-Owner=crw-install`), or is not a regular file |
 | `unit_differs` | the installer's unit says something else; run `--remove`, then register again |
 | `unit_name_taken` | the manager loads the name from another file, or it is masked |
-| `unit_modified` | a `<name>.d` directory, drop-ins, or a manager definition older than the disk (`NeedDaemonReload`), which `disable` would re-read |
+| `unit_modified` | a `<name>.d` directory, drop-ins (also read once the unit is enabled and loaded, when the unit stays enabled and the exit status is 3), or a manager definition older than the disk (`NeedDaemonReload`), which `disable` would re-read |
 | `unit_second_owner` | another unit in the directory runs the relay's `service start` or `run` |
 | `unit_dir_in_runtime` | the unit directory lies inside the installer's destination, where removing a runtime would delete it |
 | `unit_unreadable` | no runtime is installed, systemd could not be asked, or the relay cannot read its launch declaration |
