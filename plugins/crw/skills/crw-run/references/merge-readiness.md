@@ -566,9 +566,9 @@ jobs on N (`checks_pending` is waited on; the first failure is the `retry_same_s
 has to be fetched there, or it fails as a host problem and writes nothing. A base that moves after
 the acceptance, for example while N's jobs run or while the candidate waits for its turn, cannot be
 refreshed by the parent at this baseline: the update would move the head off the accepted one, and
-the judge reads `stale_base`. That candidate does not go back by a second ruling, because the relay takes none on an accepted head; [a base conflict after the ruling and before the acceptance](#a-base-conflict-after-the-ruling-and-before-the-acceptance) says what remains. The window now includes N's job time, and another project's landing during it
+the judge reads `stale_base`. That candidate does not go back by a second ruling, because the relay takes none on an accepted head; [a base refresh the child made after the acceptance](#a-base-refresh-the-child-made-after-the-acceptance) is the way back, and [a base conflict after the ruling and before the acceptance](#a-base-conflict-after-the-ruling-and-before-the-acceptance) says what remains for the ruling that precedes it. The window now includes N's job time, and another project's landing during it
 counts; refreshing only the candidate about to merge is what keeps it short. The limit is the
-scheduler's, which has no re-acceptance of a verified refresh.
+scheduler's, which has no re-acceptance of a verified refresh: the refresh is recorded beside the acceptance instead.
 
 **On the relay's merge lane**, claim the turn with N (`merge-turn-request --head N`). A claim already
 made at P is restated with `merge-turn-ready --head N`, which resets readiness and, for a turn
@@ -780,8 +780,43 @@ The verdict `verified` was given, and before `dag-accept` (or, in a project with
 3. **Read the answer, not the exit code.** A ruling that was replaced answers the new record: `verdict` is `needs_changes`, `nextExecutionGeneration` is the generation the child will report in, and `_supersedes` names the verified ruling it replaced; `assignment-show` then reads `needs_changes`.
 4. **Release the turn you hold** once the ruling is given, because the child works on the next generation and the lane must not wait for it: `merge-turn-release --turn <turn> --actor <id> --disposition returned --reason '<what invalidated the readiness>'`.
 5. **An older relay changed nothing.** An answer that is still `verified` and carries `_replay` means the installed relay is older than this rule and answered a different verdict with the recorded one: nothing reached the child and `assignment-show` still reads `verified`. Do not repeat the call, and do not open a parallel path to the child (the rule of [Return corrections to the existing task](../SKILL.md#return-corrections-to-the-existing-task)). Record the correction as undelivered on the assignment and hand the decision to whoever owns it, as for a relay that does not carry the restoration declaration.
-6. **A refusal says what remains**, with its reason, and wrote nothing: the verified ruling stands. `disposition_conflict` names the cause: a plan accepted the event, the work is marked merged, or a merge turn is merging, of unknown effect or landed. `stale_generation`, `superseded_revision`, `revision_ambiguous` and `relationship_not_active` say that the receipt is not the head of an active relationship, and each names its route. After the acceptance the relay takes no second ruling (unless a criteria re-review is open), so a verdict is not the way back for a candidate returned for any reason after it, a second job failure, a failed `Devin Review` status, a thread outside `threadsSeen` or `stale_base` included. The DAG records a correction only for a node whose stale reading says `correct`; for a result that is current (a base that moved after the acceptance is such a case) there is no recorded route in this build, so report it on the coordination record and do not open a generation that `dag-correct` will refuse.
+6. **A refusal says what remains**, with its reason, and wrote nothing: the verified ruling stands. `disposition_conflict` names the cause: a plan accepted the event, the work is marked merged, or a merge turn is merging, of unknown effect or landed. `stale_generation`, `superseded_revision`, `revision_ambiguous` and `relationship_not_active` say that the receipt is not the head of an active relationship, and each names its route. After the acceptance the relay takes no second ruling (unless a criteria re-review is open), so a verdict is not the way back for a candidate returned for any reason after it, a second job failure, a failed `Devin Review` status, a thread outside `threadsSeen` or `stale_base` included. The DAG records a correction only for a node whose stale reading says `correct`; for a result that is current there is no recorded correction route in this build, so report it on the coordination record and do not open a generation that `dag-correct` will refuse. The one exception is a base that moved after the acceptance: the child merges the base in a generation opened by hand and the parent records it with `dag-base-refresh` ([a base refresh the child made after the acceptance](#a-base-refresh-the-child-made-after-the-acceptance)).
 7. **When the child reports again** in the new generation, the receipt is a new event: acknowledge it and rule it as for any receipt ([the parent verifies](relay.md#the-parent-verifies): `claim`, `ack-proof`, `ack`, `verdict`), and refresh the base yourself if only the base moved again, as above. The child declares the receipt it replaces by its revision hash with `--supersedes-revision` only when it reports again inside the same generation.
+
+### A base refresh the child made after the acceptance
+
+In a DAG-managed project the node is accepted (`dag-ready` reads it `done:accepted`), the base moved after `dag-accept`, and the candidate cannot go back by a second ruling or by `dag-correct`, because its result is current. The way back to the same child is a generation you open by hand that asks for the merge of the base and nothing else. Once that generation is ruled `verified`, `dag-base-refresh` records that the acceptance also stands on it, after the relay has proved from git that its head is the accepted head plus merges of the base, and the node integrates on it. A generation that holds more than that, the child's own work, is a correction, and for a current result this build has no route for it: report it on the coordination record. The rule and its refusals are in `docs/relay/dag-scheduler.md`, "A base refresh of an accepted node".
+
+1. **Check the premise.** `dag-ready --plan <plan>` reads the node `done:accepted` (a node that reads `stale` goes through its stale reading's action, not this); `assignment-show --relationship <rel>` shows the relationship at the accepted generation; no merge turn of the candidate is merging, of unknown effect or landed.
+2. **Open the generation and send the instruction.** Open it by hand ([a fresh execution generation](relay.md#a-fresh-execution-generation)) and dispatch the child through the transport that dispatched it, with the instruction: merge `origin/dev` into the branch with a merge commit, resolve only the conflicts git reports, change nothing else, push, name every file it resolved by hand and how, and report `ready_for_review` in the new generation.
+
+       codex-session-relay --state "$RELAY_STATE" generation-open --relationship <rel> \
+         --dispatch-request-id <new stable id> --reason needs_changes_revision
+       codex-session-relay --state "$RELAY_STATE" generation-bind --relationship <rel> \
+         --generation <n> --dispatch-turn-id <the turn that carried the instruction> --source dispatch_receipt
+
+3. **Verify the report as any report** ([the parent verifies](relay.md#the-parent-verifies): `claim`, `ack-proof`, `ack`, `verdict` `verified` under the registered criteria). The merge gate does not change: every condition of it holds again on the new head.
+4. **Record the refresh**, from a checkout that holds the repository and has fetched the new head and the tip of the base (the command reads it and writes nothing to it):
+
+       git -C <checkout> fetch origin
+       codex-session-relay --state "$RELAY_STATE" dag-base-refresh --plan <plan> --node <node> \
+         --actor <the parent's task id> --checkout <checkout> --expect-epoch <the epoch you hold>
+
+   The answer carries `refresh_id`, `execution_generation`, `head_sha`, the proof `steps` (one per merge, oldest first) and `resolved_paths`. A refusal `disposition_conflict` that says the merges "resolved these files by hand: [...]" is not a failure: read each named file at the head (`git -C <checkout> show <head>:<path>`), confirm that it carries the resolution the child reported and nothing else, and repeat the call with `--resolved <path>` once per file, exactly the files named. Any other refusal names a closed code (`no_update`, `not_built_on_accepted`, `not_a_merge`, `not_from_base`, `tree_differs`, `chain_too_long`): the generation is not a base refresh, and nothing was written. `merge_target_unreadable` names the commit the checkout lacks: fetch it and call again. Calling again with the same facts is a replay.
+5. **Merge as before**, at the exact head the record names, and mark the merge on that generation's event:
+
+       codex-session-relay --state "$RELAY_STATE" assignment-mark --relationship <rel> --mark merged \
+         --evidence '<the merge commit and the refresh_id>' --actor <id> --expected-event <the event of generation n>
+
+   `dag-merge-judge` and `dag-merge-request` judge the pull request head against the accepted head and read `stale_head` for a refreshed pull request, so the candidate is merged by hand (`gh pr merge --match-head-commit <head>`) and not through the merge lane.
+6. **Observe the landing:**
+
+       codex-session-relay --state "$RELAY_STATE" dag-integration-observe --plan <plan> --node <node> \
+         --actor <id> --expect-epoch <the epoch you hold>
+
+   The answer says `integrated: true`, `mark_present: true` and `slot_released: true`, and `dag-ready` reads the node `done:integrated`. An observation made before the record stays a fact and changes nothing; observing again after the record integrates the node. A node with no outgoing edge that waits for a landing (a terminal node) is observed against a named target the first time: add `--target <repository>@<ref>`.
+
+**A node found already in this state** (the pull request merged and the mark on the later generation, `dag-integration-observe` answering `is_ancestor` true, `integrated` false, `mark_present` false, the node holding its slot) needs only steps 4 and 6. Check the commits first: `git -C <checkout> fetch origin`, then call step 4 without `--resolved`; the refusal, if the chain has a hand resolution, names the files to read. The relay's own settling then closes the relationship (`relationship-close-merged`), as it does for any merged relationship whose plan node has an acceptance of the marked head, which a recorded refresh gives it.
 
 ## Hold the turn only while you can use it
 
