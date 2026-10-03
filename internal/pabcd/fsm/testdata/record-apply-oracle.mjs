@@ -43,4 +43,3 @@ for (const from of PHASES) for (const n of FLAGS) for (const verb of VERBS) {
 // reset from IDLE: a no-op only when neither a check epoch nor a D-close marker is left (the seed holds both)
 for (const [id, over] of [["bare", { checkEpoch: null, dcloseRecovery: null }], ["epoch", { dcloseRecovery: null }], ["marker", { checkEpoch: null }]]) record("IDLE", "reset", 0, "ready", 0, { ...over, id });
 writeFileSync(outDir + "/oracle-apply.json", JSON.stringify({ seed: seed("IDLE", 0, null), trackers, attests: ATTESTS, texts, diffs, ledgers, rows }) + "\n");
-
