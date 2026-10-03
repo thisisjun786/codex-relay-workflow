@@ -56,8 +56,9 @@ the gate passes only when that object names at least one job and every job's `re
 `success`: a failure, a cancellation, a skip or anything unreadable fails it. It also fails a pull
 request whose base is `main`. `internal/dev/ci`'s workflow tests hold the structure: `dev-gate`
 needs exactly the other jobs, no job continues on error, every action is pinned by commit, every
-Makefile part has a leg, the integration step runs in `dist` after the build, and the gate's
-script, run with a written results file, passes only an all-success run.
+Makefile part has a leg and every package runs in exactly one ([the test legs](#the-test-legs)), the
+integration step runs in `dist` after the build, and the gate's script, run with a written results
+file, passes only an all-success run.
 
 Until wave R1 of the post-port refactoring a `selection` job classified the changed paths
 (`crw-dev ci scope`) and the gate (`crw-dev ci gate`) re-checked that selection; a `tests` job ran
@@ -71,6 +72,35 @@ During iteration run the affected tests and reuse valid evidence for unchanged s
 and environments. CI concurrency cancels obsolete runs within the same PR or branch. An
 interrupted dev push is not release evidence: rerun that exact push run if the owner later
 chooses its commit.
+
+## The test legs
+
+`make test-part TEST_PART=<n>` runs one leg on its own runner, so the slowest leg sets how long a
+pull request waits. Parts 1 to 4 name their packages in the Makefile and `rest` is every other
+package plus the `dev`-tagged tests, so a package runs in exactly one leg. `internal/dev/ci` holds
+that: it refuses a package named by two parts, a part missing from `TEST_PARTS` (what `rest`
+subtracts, so its packages would run again in `rest`), a named path with no tests, a pattern, and a
+package of the `dev`-tagged set, which only `rest` runs, with the tag.
+
+A runner spends about 50 s before its tests (checkout, toolchain, the one `crw` build). It then
+runs a few packages at a time on four CPUs, in the order a part lists them, so a leg takes about that
+plus its slowest package, or its packages' total over four CPUs if that is longer; list a slow
+package first. The legs as balanced after the slow packages' tests ran in parallel (CRW-424), with the
+hosted job time before and after (median of at least three runs each):
+
+| Leg | Packages | Before | After |
+| --- | --- | --- | --- |
+| `test-1` | `relay/dagsched`, `relay/delivery`, `relay/cli` | 159 s | 190 s |
+| `test-2` | `runtime/install`, `relay/supervisor`, `relay/registry` | 118 s | 214 s |
+| `test-3` | `contracttest`, `relay/store`, `relay/mergeturn`, `relay/service`, `relay/sync`, `relay/faults` | 170 s | 169 s |
+| `test-4` | `relay/hook`, `relay/linkage`, `relay/evidence`, `relay/managed` | 95 s | 80 s |
+| `test-rest` | the other 58 packages and the `dev`-tagged tests | 285 s | 179 s |
+
+`runtime/install` is the floor of the longest leg: its tests run one after another for about 140 s, so
+the leg that holds it takes about 215 s however the others are split, and a sixth leg would not
+shorten the longest one. To rebalance again, read the `ok <package> <seconds>` lines and the job
+times of several hosted runs of one commit (they differ by 20 s or more from run to run), move
+packages, and compare medians.
 
 ## Leftover isolation trees
 

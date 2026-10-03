@@ -40,11 +40,12 @@ test-binary:
 # build) and then runs a few packages at a time, so a leg takes about that plus its slowest
 # package or its packages' total over four CPUs, whichever is longer. runtime/install
 # (100-150 s) and relay/dagsched (100-130 s) are by far the slowest packages; left in rest
-# beside its fifty others they made it the longest leg, about 285 s against 100-180 s for
+# beside its fifty others they made it the longest leg, about 285 s against 95-170 s for
 # the numbered parts. install now leads part 2 with supervisor and registry, and dagsched
-# leads part 1 with delivery and cli, each listed first. install is the floor of the longest
-# leg: no other split goes under it. Part 3 is unchanged. The Stop-hook package has
-# wall-clock budgets, so it shares its runner only with light packages (part 4).
+# leads part 1 with delivery and cli, each listed first. The leg that holds install is now
+# the longest, about 215 s, and no split goes under it while install's own tests take about
+# 140 s. Part 3 is unchanged. The Stop-hook package has wall-clock budgets, so it shares
+# its runner only with light packages (part 4).
 TEST_PART_1 := ./internal/relay/dagsched ./internal/relay/delivery ./internal/relay/cli
 TEST_PART_2 := ./internal/runtime/install ./internal/relay/supervisor ./internal/relay/registry
 TEST_PART_3 := ./internal/contracttest ./internal/relay/store ./internal/relay/mergeturn ./internal/relay/service ./internal/relay/sync ./internal/relay/faults
