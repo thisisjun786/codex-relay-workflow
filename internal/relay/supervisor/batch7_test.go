@@ -33,6 +33,7 @@ func packetNumber24(t *testing.T, f *stageFixture, id string) int {
 	return int(p["artifact"].(map[string]any)["number"].(float64))
 }
 func Test24_SCH_53_CorrectedProposalBeforeAndAfterTransport(t *testing.T) {
+	t.Parallel()
 	for _, submission := range []int{1, 2} {
 		t.Run(string(rune('0'+submission)), func(t *testing.T) {
 			f := fixture24(t)
@@ -50,6 +51,7 @@ func Test24_SCH_53_CorrectedProposalBeforeAndAfterTransport(t *testing.T) {
 	}
 }
 func Test24_SCH_54_CorrectionBeforeStageLock(t *testing.T) {
+	t.Parallel()
 	for _, submission := range []int{1, 2} {
 		t.Run(string(rune('0'+submission)), func(t *testing.T) {
 			f := fixture24(t)
@@ -70,6 +72,7 @@ func Test24_SCH_54_CorrectionBeforeStageLock(t *testing.T) {
 	}
 }
 func Test24_SCH_55_OmissionContradictoryReading(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	base := map[string]any{"schema": "reporting-observation/1", "reportingState": "unreported", "relationshipId": "rel-1", "executionGeneration": float64(1), "reason": "missing", "selectors": map[string]any{"state": f.c.StoreDirectory(), "markerRoot": "/tmp/markers", "workspace": "/tmp/work", "assignment": "a", "session": "s", "turn": "turn-1"}}
 	o := ObservationObligation(base)
@@ -101,6 +104,7 @@ func omissionReading24(f *stageFixture) map[string]any {
 	return map[string]any{"schema": "reporting-observation/1", "reportingState": "unreported", "relationshipId": "rel-1", "executionGeneration": float64(1), "reason": "missing", "selectors": map[string]any{"state": f.c.StoreDirectory(), "markerRoot": "/tmp/markers", "workspace": "/tmp/My Project", "assignment": "it's here", "session": "\"quoted\"", "turn": "turn-1"}}
 }
 func Test24_SCH_60_OmissionObservationsConvergeAndContradict(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	base := omissionReading24(f)
 	raw, _ := json.Marshal(base)
@@ -129,6 +133,7 @@ func Test24_SCH_60_OmissionObservationsConvergeAndContradict(t *testing.T) {
 	}
 }
 func Test24_SCH_61_UnstagedCompletionStillOwed(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	o := f.obligation(t)
 	if o.Kind != "completion" {
@@ -150,6 +155,7 @@ func Test24_SCH_61_UnstagedCompletionStillOwed(t *testing.T) {
 	}
 }
 func Test24_SCH_62_OmissionEvidenceSelectsItsStore(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	reading := omissionReading24(f)
 	o := ObservationObligation(reading)
@@ -173,6 +179,7 @@ func Test24_SCH_62_OmissionEvidenceSelectsItsStore(t *testing.T) {
 	}
 }
 func Test24_SCH_63_ReadbackEstablishesArrivalOnly(t *testing.T) {
+	t.Parallel()
 	f, h, id, record := delivered24(t)
 	attempts, err := f.s.SupervisorAttempts(f.ctx, id)
 	if err != nil || len(attempts) != 1 {
@@ -206,6 +213,7 @@ func (h *policyRefusalHost) SendMessage(_ context.Context, id, thread, message s
 	return h.SendAdapter.SendMessage(context.Background(), id, thread, message, settings)
 }
 func Test24_SCH_58_ClaimOwnerSettlesAfterExpiredLease(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	f.c.Settings = &delivery.TaskSettings{}
 	_, stage := f.staged(t)
@@ -222,6 +230,7 @@ func Test24_SCH_58_ClaimOwnerSettlesAfterExpiredLease(t *testing.T) {
 	}
 }
 func Test24_SCH_58_LateRefusalAfterRecoveryKeepsUncertain(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	f.c.Settings = &delivery.TaskSettings{}
 	_, stage := f.staged(t)
@@ -255,6 +264,7 @@ func (h *presendRecoveryHost24) SendMessage(_ context.Context, id, thread, messa
 	return delivery.Obj{{Key: "status", Value: "failed"}, {Key: "error", Value: "thread/read: unavailable"}}, nil
 }
 func Test24_SCH_65_ExpiredUnstartedClaimReleasesForNextSend(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	f.c.Settings = &delivery.TaskSettings{}
 	_, stage := f.staged(t)
@@ -284,6 +294,7 @@ func Test24_SCH_65_ExpiredUnstartedClaimReleasesForNextSend(t *testing.T) {
 	}
 }
 func Test24_SCH_66_CancelledClaimDoesNotSpendBudget(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	f.c.Settings = &delivery.TaskSettings{}
 	_, stage := f.staged(t)
@@ -305,6 +316,7 @@ func Test24_SCH_66_CancelledClaimDoesNotSpendBudget(t *testing.T) {
 	}
 }
 func Test24_SCH_68_NewerBlockStatementRestatesSameMessage(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	f.c.Settings = &delivery.TaskSettings{}
 	_, err := f.s.Q(f.ctx).ExecContext(f.ctx, "UPDATE events SET outcome='blocked_needs_input' WHERE event_id='event-1'")
@@ -348,6 +360,7 @@ func Test24_SCH_68_NewerBlockStatementRestatesSameMessage(t *testing.T) {
 	}
 }
 func Test24_SCH_69_DeliveryTokenIsPerAttempt(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	f.c.Settings = &delivery.TaskSettings{}
 	_, stage := f.staged(t)
@@ -362,6 +375,7 @@ func Test24_SCH_69_DeliveryTokenIsPerAttempt(t *testing.T) {
 	}
 }
 func Test24_SCH_70_ReportAfterStagingIsRestatedAtClaim(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	f.c.Settings = &delivery.TaskSettings{}
 	_, stage := f.staged(t)
@@ -374,6 +388,7 @@ func Test24_SCH_70_ReportAfterStagingIsRestatedAtClaim(t *testing.T) {
 	}
 }
 func Test24_SCH_72_SettingsChangedBeforeTransportCancelsClaim(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	_, stage := f.staged(t)
 	id := stage["messageId"].(string)
@@ -402,6 +417,7 @@ func Test24_SCH_72_SettingsChangedBeforeTransportCancelsClaim(t *testing.T) {
 	}
 }
 func Test24_SCH_73_DischargedCompletionHeldAndReopened(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	f.c.Settings = &delivery.TaskSettings{}
 	_, stage := f.staged(t)
@@ -434,6 +450,7 @@ func Test24_SCH_73_DischargedCompletionHeldAndReopened(t *testing.T) {
 	}
 }
 func Test24_SCH_74_ApprovalPolicyPushRefusalCanRetry(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	f.c.Settings = &delivery.TaskSettings{}
 	_, staged := f.staged(t)
@@ -457,6 +474,7 @@ func Test24_SCH_74_ApprovalPolicyPushRefusalCanRetry(t *testing.T) {
 	}
 }
 func Test24_SCH_56_ArchivedAtTransportDoesNotSend(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	f.c.Settings = &delivery.TaskSettings{}
 	_, stage := f.staged(t)
@@ -474,6 +492,7 @@ func Test24_SCH_56_ArchivedAtTransportDoesNotSend(t *testing.T) {
 	}
 }
 func Test24_SCH_57_TransportStartRecorded(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	f.c.Settings = &delivery.TaskSettings{}
 	_, stage := f.staged(t)

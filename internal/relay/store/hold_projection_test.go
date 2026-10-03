@@ -13,6 +13,7 @@ import (
 // transaction of the same store that connection is taken, so it is refused like a nested
 // transaction instead of waiting on itself.
 func TestProjection_is_refused_inside_the_stores_own_transaction(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	s, err := Open(ctx, filepath.Join(t.TempDir(), "state", "relay.sqlite3"), "")

@@ -28,6 +28,7 @@ func decodedField(t *testing.T, value any, key string) any {
 // Python read: a string where a count was expected, NaN, an integer past int64 and the last of a
 // repeated key.
 func TestDecodeRecordReadsAsJSONLoadsDoes(t *testing.T) {
+	t.Parallel()
 	value, err := DecodeRecord([]byte("{\"bytes\": \"19\", \"nan\": NaN, \"big\": 99999999999999999999, \"k\": 1, \"k\": null}"))
 	if err != nil {
 		t.Fatal(err)
@@ -54,6 +55,7 @@ func TestDecodeRecordReadsAsJSONLoadsDoes(t *testing.T) {
 // A stored receipt is unreadable only when its roots or its receipt text is not JSON, the roots
 // first, and the detail is the first refusal's words; text that is JSON of any shape is read.
 func TestDecodeStoredReceiptNamesTheFirstRefusal(t *testing.T) {
+	t.Parallel()
 	roots, payload, unreadable := DecodeStoredReceipt("{}", "[1]")
 	if unreadable != "" || roots == nil || payload == nil {
 		t.Fatalf("JSON of another shape is readable: %v %v %q", roots, payload, unreadable)
@@ -75,6 +77,7 @@ func TestDecodeStoredReceiptNamesTheFirstRefusal(t *testing.T) {
 // so the deliverable is unverifiable, never changed and never current, over the live bytes and over
 // a frozen copy that answers for them; with a live ctx the same receipt is current.
 func TestDeliverableStateHonorsTheContext(t *testing.T) {
+	t.Parallel()
 	base := t.TempDir()
 	work := filepath.Join(base, "work")
 	if err := os.Mkdir(work, 0o700); err != nil {
@@ -151,6 +154,7 @@ func (c *endsAfterErrs) Err() error {
 // again once it has been read: a deadline that passes while a slow disk answers is a read that did
 // not finish, and a path that is not a regular file is refused rather than waited on.
 func TestReadWholeChecksTheContextBeforeAndAfter(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "MANIFEST.json")
 	if err := os.WriteFile(path, []byte("{}"), 0o600); err != nil {

@@ -16,6 +16,7 @@ import (
 // before it. 200000 keys took about 26 s when each was, and take a quarter of a second now; the
 // bound leaves room for a loaded machine on either side.
 func TestFrozenDocumentIsReadInTimeProportionalToItsLength(t *testing.T) {
+	// Serial: asserts a wall-clock budget, which other running tests would eat into.
 	const keys = 200000
 	var b strings.Builder
 	b.WriteString(`{"entries": []`)

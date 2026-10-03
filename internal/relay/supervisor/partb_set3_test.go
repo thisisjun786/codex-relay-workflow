@@ -36,6 +36,7 @@ func checkStatus(t *testing.T, f *stageFixture, project string, readings []any) 
 }
 
 func Test24_SR_16_EnvelopeCallerWholeOutput(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	for _, tc := range []struct {
 		name     string
@@ -72,6 +73,7 @@ func Test24_SR_16_EnvelopeCallerWholeOutput(t *testing.T) {
 }
 
 func Test24_SR_15_LiveProjectStatusWholeOutput(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	if _, err := f.s.DB.Exec(`INSERT INTO generations (relationship_id,execution_generation,dispatch_request_id,anchor_state,dispatch_turn_id,reason,opened_at,bound_at) VALUES ('rel-1',1,'dispatch-1','bound','turn-1','initial_assignment',?,?)`, f.at, f.at); err != nil {
 		t.Fatal(err)
@@ -109,6 +111,7 @@ func checkSelectEvent(t *testing.T, f *stageFixture, event, recipient string, no
 }
 
 func Test24_RCL_2_InvalidIdentityWholeOutput(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ name, flag, value string }{{"assignment", "--assignment", "../outside"}, {"session", "--session", "a/b"}} {
 		t.Run(tc.name, func(t *testing.T) {
 			code, payload, _, created := reportingCLIParity(t, func(home string) []string {
@@ -128,6 +131,7 @@ func Test24_RCL_2_InvalidIdentityWholeOutput(t *testing.T) {
 }
 
 func Test24_RCL_2_MissingFlagExitTwo(t *testing.T) {
+	t.Parallel()
 	code, _, stderr, created := reportingCLIParity(t, func(home string) []string {
 		return []string{"--state", "$STATE", "reporting-show", "--marker-root", home, "--workspace", home, "--assignment", strings.Repeat("a", 64), "--session", "session-1"}
 	})
@@ -136,6 +140,7 @@ func Test24_RCL_2_MissingFlagExitTwo(t *testing.T) {
 	}
 }
 func Test24_SR_1_EventWholeOutput(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ name, status, outcome, producer string }{
 		{"done", "DONE", "ready_for_review", "child"}, {"blocked", "BLOCKED", "blocked_needs_input", "child"},
 		{"decision", "NEEDS_HUMAN", "blocked_needs_input", "child"}, {"failed", "", "failed", "child"},
@@ -159,6 +164,7 @@ func Test24_SR_1_EventWholeOutput(t *testing.T) {
 }
 
 func Test24_SR_1_OrdinaryEventSelectionWholeOutput(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	if _, err := f.s.DB.Exec("UPDATE events SET outcome='interrupted' WHERE event_id='event-1'"); err != nil {
 		t.Fatal(err)
@@ -169,6 +175,7 @@ func Test24_SR_1_OrdinaryEventSelectionWholeOutput(t *testing.T) {
 	checkSelectEvent(t, f, "event-1", "", 1700000000)
 }
 func Test24_SR_7_DeliveryClockWholeOutput(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	if _, err := f.s.DB.Exec("INSERT INTO recipient_lifecycle (task_id,deliverable,observed_at) VALUES (?,?,?)", "01supervisor-task", "yes", f.at); err != nil {
 		t.Fatal(err)
@@ -178,6 +185,7 @@ func Test24_SR_7_DeliveryClockWholeOutput(t *testing.T) {
 }
 
 func Test24_SR_2_StableIdentityWholeOutput(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	checkEvent(t, f, "event-1")
 	checkEvent(t, f, "event-1")
@@ -188,6 +196,7 @@ func Test24_SR_2_StableIdentityWholeOutput(t *testing.T) {
 }
 
 func Test24_SR_3_SelectionAfterProducedReportWholeOutput(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	o := f.obligation(t)
 	checkSelection(t, f, o, "", nil)
@@ -203,6 +212,7 @@ func Test24_SR_3_SelectionAfterProducedReportWholeOutput(t *testing.T) {
 	checkSelection(t, f, o, "", nil)
 }
 func Test24_SR_2_BlockCauseWholeOutput(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	if _, err := f.s.DB.Exec("UPDATE events SET outcome='blocked_needs_input' WHERE event_id='event-1'"); err != nil {
 		t.Fatal(err)
@@ -226,6 +236,7 @@ func Test24_SR_2_BlockCauseWholeOutput(t *testing.T) {
 }
 
 func Test24_SR_4_ArchivedStandingWholeOutput(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	if _, err := f.s.DB.Exec("UPDATE relationships SET status='archived',superseded_by='rel-next' WHERE relationship_id='rel-1'"); err != nil {
 		t.Fatal(err)
@@ -233,6 +244,7 @@ func Test24_SR_4_ArchivedStandingWholeOutput(t *testing.T) {
 	checkStanding(t, f, "PRJ-1", nil)
 }
 func Test24_SR_9_StandingGridWholeOutput(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	scopes := []struct {
 		name    string
@@ -259,6 +271,7 @@ func Test24_SR_9_StandingGridWholeOutput(t *testing.T) {
 	}
 }
 func Test24_SR_12_StandingDedupWholeOutput(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	good := map[string]any{"schema": "reporting-observation/1", "reportingState": "unreported", "reason": "terminal_without_report", "relationshipId": "rel-1", "executionGeneration": float64(1), "selectors": map[string]any{"turn": "turn-7"}}
 	bad := map[string]any{"schema": "reporting-observation/1", "reportingState": "something", "relationshipId": "rel-1", "selectors": map[string]any{"turn": "turn-7"}}
@@ -275,6 +288,7 @@ func Test24_SR_12_StandingDedupWholeOutput(t *testing.T) {
 	}
 }
 func Test24_SR_12_ContrastingReadingsWholeOutput(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	rid := "rel-1"
 	base := map[string]any{"schema": "reporting-observation/1", "reportingState": "unreported", "reason": "terminal_without_report", "relationshipId": rid, "executionGeneration": float64(1), "selectors": map[string]any{"turn": "turn-7"}}
@@ -288,6 +302,7 @@ func Test24_SR_12_ContrastingReadingsWholeOutput(t *testing.T) {
 	}
 }
 func Test24_SR_12_TwoEventsOneBlockWholeOutput(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	if _, err := f.s.DB.Exec("UPDATE events SET outcome='blocked_needs_input' WHERE event_id='event-1'"); err != nil {
 		t.Fatal(err)
@@ -304,6 +319,7 @@ func Test24_SR_12_TwoEventsOneBlockWholeOutput(t *testing.T) {
 	checkStanding(t, f, "PRJ-1", nil)
 }
 func Test24_SR_13_ConfirmedOmissionWholeOutput(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	reading := map[string]any{"schema": "reporting-observation/1", "reportingState": "unreported", "reason": "terminal_without_report", "relationshipId": "rel-1", "executionGeneration": float64(1), "selectors": map[string]any{"turn": "turn-7"}}
 	for _, query := range []string{
@@ -319,6 +335,7 @@ func Test24_SR_13_ConfirmedOmissionWholeOutput(t *testing.T) {
 	checkStanding(t, f, "PRJ-1", []any{reading})
 }
 func Test24_SR_5_AdditionalRulingWholeOutput(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	o := f.obligation(t)
 	if _, err := f.s.DB.Exec("INSERT INTO sync_targets (relationship_id,target,target_ref,recorded_at) VALUES ('rel-1','coordination_document','doc-1','t')"); err != nil {
@@ -367,6 +384,7 @@ func commandExit24(t *testing.T, err error) int {
 }
 
 func Test24_SupervisorEmptyStringTruthinessMatchesTheGolden(t *testing.T) {
+	t.Parallel()
 	binary := testsupport.CRW(t)
 	observation := filepath.Join(t.TempDir(), "empty-observation.json")
 	if err := os.WriteFile(observation, []byte("{}\n"), 0600); err != nil {
@@ -401,10 +419,12 @@ func Test24_SupervisorEmptyStringTruthinessMatchesTheGolden(t *testing.T) {
 }
 
 func Test24_SR_18_RealBinarySelectWholeOutput(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	checkSupervisorBinary(t, f, testsupport.CRW(t), "supervisor-select", "--event", "event-1")
 }
 func Test24_SR_18_RealBinaryRecordWholeOutput(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	binary := testsupport.CRW(t)
 	checkSupervisorBinary(t, f, binary, "supervisor-report-recorded", "--event", "event-1", "--message", "m-1")
@@ -412,6 +432,7 @@ func Test24_SR_18_RealBinaryRecordWholeOutput(t *testing.T) {
 	checkSupervisorBinary(t, f, binary, "supervisor-select", "--event", "event-1")
 }
 func Test24_SR_19_RealBinaryOmissionWholeOutput(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	binary := testsupport.CRW(t)
 	reading := filepath.Join(f.root, "omission.json")
@@ -423,6 +444,7 @@ func Test24_SR_19_RealBinaryOmissionWholeOutput(t *testing.T) {
 	checkSupervisorBinary(t, f, binary, "supervisor-report-recorded", "--observation", reading, "--message", "m-1")
 }
 func Test24_SR_19_StandingLiveBinaryWholeOutput(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	if _, err := f.s.DB.Exec(`INSERT INTO generations (relationship_id,execution_generation,dispatch_request_id,anchor_state,dispatch_turn_id,reason,opened_at,bound_at) VALUES ('rel-1',1,'dispatch-1','bound','turn-1','initial_assignment',?,?)`, f.at, f.at); err != nil {
 		t.Fatal(err)
@@ -435,6 +457,7 @@ func Test24_SR_19_StandingLiveBinaryWholeOutput(t *testing.T) {
 	checkSupervisorBinary(t, f, testsupport.CRW(t), "supervisor-standing", "--project", "PRJ-1", "--observation", reading)
 }
 func Test24_SR_19_StandingUnregisteredBinaryWholeOutput(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	if _, err := f.s.DB.Exec("UPDATE relationships SET status='archived' WHERE relationship_id='rel-1'"); err != nil {
 		t.Fatal(err)
@@ -447,6 +470,7 @@ func Test24_SR_19_StandingUnregisteredBinaryWholeOutput(t *testing.T) {
 	checkSupervisorBinary(t, f, testsupport.CRW(t), "supervisor-standing", "--project", "PRJ-1", "--observation", reading)
 }
 func Test24_SR_20_UsageWholeOutput(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	binary := testsupport.CRW(t)
 	if _, err := f.s.DB.Exec("UPDATE events SET outcome='failed' WHERE event_id='event-1'"); err != nil {
@@ -482,6 +506,7 @@ func Test24_SR_20_UsageWholeOutput(t *testing.T) {
 	}
 }
 func Test24_SR_6_UnreadableObservationWholeOutput(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	o := f.obligation(t)
 	if _, err := f.s.DB.Exec("INSERT INTO recipient_lifecycle (task_id,deliverable,observed_at) VALUES ('01supervisor-task','yes','not-a-date')"); err != nil {
@@ -491,6 +516,7 @@ func Test24_SR_6_UnreadableObservationWholeOutput(t *testing.T) {
 	checkSelection(t, f, o, "01supervisor-task", &now)
 }
 func Test24_SR_23_RepointedTargetWholeOutput(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	o := f.obligation(t)
 	if _, err := f.s.DB.Exec("INSERT INTO sync_targets (relationship_id,target,target_ref,recorded_at) VALUES ('rel-1','coordination_document','doc-1','t')"); err != nil {
@@ -512,6 +538,7 @@ func Test24_SR_23_RepointedTargetWholeOutput(t *testing.T) {
 	checkSelection(t, f, o, "", nil)
 }
 func Test24_SR_23_CurrentRulingWholeOutput(t *testing.T) {
+	t.Parallel()
 	for _, newState := range []string{"failed", "confirmed"} {
 		t.Run(newState, func(t *testing.T) {
 			f := fixture24(t)

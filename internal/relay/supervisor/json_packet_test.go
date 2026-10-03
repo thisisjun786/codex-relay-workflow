@@ -15,6 +15,7 @@ import (
 // render's answer with each packet field set to every JSON value shape is the golden; it began
 // as what Python's SupervisorChannel.render answered.
 func Test24PacketAccessorPython(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	_, staged := f.staged(t)
 	row, err := f.c.Get(f.ctx, staged["messageId"].(string))
@@ -73,6 +74,7 @@ func packetAccessor(f *stageFixture, packet, field string, value any) (result, f
 }
 
 func Test24MalformedProposalRollsBackClaim(t *testing.T) {
+	t.Parallel()
 	for _, packet := range []string{`{"envelope":true}`, `{"envelope":[]}`, `{}`} {
 		t.Run(packet, func(t *testing.T) {
 			f := fixture24(t)

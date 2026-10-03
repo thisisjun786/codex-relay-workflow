@@ -59,6 +59,12 @@ route if one exists and report that distinction. Do not invent a new hosted CI
 requirement, waive an existing one, or claim readiness when necessary validation
 is still unknown.
 
+A local validation run the parent starts for that route follows the `Processes you start:` line of
+the [Launch packet](task-packet.md#launch-packet): it records its pid when it starts or runs under
+`timeout`, and is stopped only by that pid, its own process group or the handle the execution tool
+returned for it, never by pattern or name, because children run their own tests on the same host at
+the same time.
+
 ## Inspect review content and coverage
 
 Collect relevant submitted reviews, inline threads, summary comments, statuses,
@@ -574,6 +580,12 @@ A merge made outside the lane needs no step from the parent that made it: the ne
 `merge-turn-check` finds the base the last landing recorded behind the branch and records it again
 itself when it can confirm the move as merge commits no landing recorded
 ([the base a landing records](relay.md#checking-landing-and-correcting-a-landings-base)).
+
+Everything from the grant to the landing runs in the foreground of the turn and records its steps
+with `merge-turn-progress` ([Working inside a merge turn](relay.md#working-inside-a-merge-turn)). Never
+start the refresh, the CI wait or the merge in the background: detached work is not tied to the
+turn, and a holding turn that records nothing for the holding limit can be passed on to the next
+waiter.
 
 **Record the refresh** where the merge is recorded. `assignment-mark merged --evidence` carries the
 check's `evidence:` line exactly as printed (previous head, dev tip, new head, tree OID and the rule

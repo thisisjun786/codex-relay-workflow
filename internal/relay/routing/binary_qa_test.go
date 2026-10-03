@@ -17,6 +17,7 @@ import (
 func Test23_BuiltCommandRoundTrips(t *testing.T) { binaryRoundTrips(t, "qa") }
 func Test23_PR_18_BuiltProjectKind(t *testing.T) { binaryRoundTrips(t, "project-kind") }
 func binaryRoundTrips(t *testing.T, mode string) {
+	t.Parallel()
 	builtBinary(t)
 	// Each entry point runs the scenario against its own state directory and answers what the
 	// one golden holds.

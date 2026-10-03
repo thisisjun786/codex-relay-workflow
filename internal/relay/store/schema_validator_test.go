@@ -179,6 +179,7 @@ func mutated(t *testing.T, record string, change func(map[string]any)) json.RawM
 // The guard has to fail when a schema changes, and the real schemas are frozen, so each failure
 // is made on a copy of them in a temporary directory: one problem, naming the one schema at fault.
 func TestDraft7SchemaPins_name_the_schema_to_judge_again(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name   string
 		change func(t *testing.T, dir string, pinned map[string]string, cases map[string]int)

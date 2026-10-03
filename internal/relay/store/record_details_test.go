@@ -7,6 +7,7 @@ import (
 )
 
 func TestTransaction_refuses_immediate_foreign_key_violation(t *testing.T) {
+	t.Parallel()
 	// Given: an explicitly constrained table in a test-only database.
 	store := recordStore(t)
 	ctx := context.Background()

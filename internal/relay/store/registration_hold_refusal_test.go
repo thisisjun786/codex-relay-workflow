@@ -14,6 +14,7 @@ import (
 // store that does not exist, whose directory does not, that sits below a regular file or behind
 // a dangling symlink is answered with the stat's error (the golden), and nothing is created.
 func TestRegistrationHold_answers_an_unstattable_store_with_the_stat_error(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	file := filepath.Join(root, "a-file")
 	if err := os.WriteFile(file, nil, 0o600); err != nil {
@@ -70,6 +71,7 @@ func listTree(t *testing.T, root string) string {
 // legacy D still goes to the admission, which refuses it without a gate: Go never initializes
 // one (decisions.md 30).
 func TestOpen_reads_a_gateless_store_before_refusing_it(t *testing.T) {
+	// Serial: sets process environment variables, which every other running test would see.
 	t.Setenv("CRW_REFUSE_LIVE_STATE", "1")
 	for _, c := range []struct {
 		name  string

@@ -152,6 +152,7 @@ func slfRefusal(err error) map[string]any {
 }
 
 func slfWhole(t *testing.T, id string) {
+	t.Parallel()
 	base := slfBase()
 	switch id {
 	case "SLF-1":
