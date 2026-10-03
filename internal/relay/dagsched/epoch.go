@@ -212,13 +212,9 @@ func (s *Scheduler) Adopt(ctx context.Context, plan, node, actor string) (AdoptR
 		if err := s.fence(txCtx, tx, plan, actor); err != nil {
 			return err
 		}
-		snap, _, err := dag.SnapshotAt(txCtx, tx, plan, 0)
+		_, n, err := liveNode(txCtx, tx, plan, node)
 		if err != nil {
 			return err
-		}
-		n, ok := nodeOf(snap, node)
-		if !ok {
-			return refuse(contract.RefusalUnregisteredScope, "plan %s has no live node %s", plan, node)
 		}
 		if _, has, err := loadActiveAcceptance(txCtx, tx, plan, node); err != nil {
 			return err

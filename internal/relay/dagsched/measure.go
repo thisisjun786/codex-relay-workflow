@@ -486,7 +486,7 @@ func (m Measurements) Object() contract.OrderedObject {
 				results = append(results, kind)
 			}
 		}
-		landings[i] = contract.OrderedObject{{Key: "node_id", Value: l.NodeID}, {Key: "landed_at", Value: l.At}, {Key: "conflict_handling_seconds", Value: optionalSeconds(l.HandlingSeconds)},
+		landings[i] = contract.OrderedObject{{Key: "node_id", Value: l.NodeID}, {Key: "landed_at", Value: l.At}, {Key: "conflict_handling_seconds", Value: optionalInt(l.HandlingSeconds)},
 			{Key: "stale_base_judgements", Value: stale}, {Key: "returns_to_child", Value: l.Returns}, {Key: "results", Value: results}}
 	}
 	return contract.OrderedObject{{Key: "ok", Value: true}, {Key: "schema", Value: SchemaMeasurements}, {Key: "plan_id", Value: m.PlanID}, {Key: "plan_revision", Value: m.PlanRevision},

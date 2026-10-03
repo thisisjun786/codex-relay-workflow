@@ -385,5 +385,5 @@ func inputDigest(r Reading, c Capacity, hashes []string) string {
 		// absent when the scheduler carries no bound; the sample is part of what the reading saw, so a changed value is a changed digest
 		digest["host_memory"] = r.Pass.HostMemory.object()
 	}
-	return digestOf(digest)
+	return dag.Digest(digest)
 }

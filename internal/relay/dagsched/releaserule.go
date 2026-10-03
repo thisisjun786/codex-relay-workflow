@@ -47,12 +47,10 @@ type ReleaseJudgement struct {
 	PolicyReason string
 }
 
-func optionalOrNil(s string) any { return optionalText(s) }
-
 func (b BasisRow) object() contract.OrderedObject {
-	o := contract.OrderedObject{{Key: "holder", Value: b.Holder}, {Key: "repository", Value: optionalOrNil(b.Repository)}, {Key: "path", Value: optionalOrNil(b.Path)}, {Key: "grade", Value: b.Grade},
-		{Key: "candidate_grade", Value: optionalOrNil(b.CandidateGrade)}, {Key: "candidate_rule", Value: optionalOrNil(b.CandidateRule)},
-		{Key: "holder_grade", Value: optionalOrNil(b.HolderGrade)}, {Key: "holder_rule", Value: optionalOrNil(b.HolderRule)},
+	o := contract.OrderedObject{{Key: "holder", Value: b.Holder}, {Key: "repository", Value: optionalText(b.Repository)}, {Key: "path", Value: optionalText(b.Path)}, {Key: "grade", Value: b.Grade},
+		{Key: "candidate_grade", Value: optionalText(b.CandidateGrade)}, {Key: "candidate_rule", Value: optionalText(b.CandidateRule)},
+		{Key: "holder_grade", Value: optionalText(b.HolderGrade)}, {Key: "holder_rule", Value: optionalText(b.HolderRule)},
 		{Key: "recent_observations", Value: b.Observations}, {Key: "recent_conflicts", Value: b.Conflicts}, {Key: "unattributed_conflicts", Value: b.Unattributed}}
 	if b.Undeclared != "" {
 		o = append(o, contract.Field{Key: "undeclared", Value: b.Undeclared})
