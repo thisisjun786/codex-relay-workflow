@@ -124,7 +124,7 @@ func Test22_FC_36_UnloadedKindStoredLimitWholeOutput(t *testing.T) {
 
 func Test22_FC_9_ManagedReadingsWholeOutput(t *testing.T) {
 	goldenParent(t)
-	for _, variant := range []string{"unreported", "error", "none", "unnamed", "past_generation", "paged", "real_unreported", "real_absent", "real_reported", "real_unwitnessed", "real_bad_stop", "real_ready"} {
+	for _, variant := range []string{"unreported", "error", "none", "unnamed", "past_generation", "paged", "real_unreported", "real_absent", "real_reported", "real_unwitnessed", "real_bad_stop", "real_ready", "real_later_turn", "real_own_receipt"} {
 		t.Run(variant, func(t *testing.T) {
 			ctx, gd := f1ReplayStores(t)
 			seed := []string{f1Relationship,
@@ -184,6 +184,14 @@ func Test22_FC_9_ManagedReadingsWholeOutput(t *testing.T) {
 						}
 						f1Seed(t, ctx, gd, []string{fmt.Sprintf(`UPDATE relationships SET artifact_roots='["%s"]'`, work), fmt.Sprintf(`INSERT INTO events(event_id,relationship_id,execution_generation,revision_hash,outcome,producer,turn_thread_id,turn_id,turn_status,receipt,first_seen_at,last_seen_at) VALUES('receipt','rel',1,'%s','ready_for_review','child','child','turn-9','completed','%s','stamp','stamp')`, revision, strings.ReplaceAll(string(payload), "'", "''"))})
 					}
+					// A turn that is already past owes nothing: a later turn was admitted to the generation, or the
+					// turn has a final receipt of its own. The observer reads both as unreported with owed false.
+					if variant == "real_later_turn" {
+						f1Seed(t, ctx, gd, []string{"INSERT INTO generation_turns(relationship_id,execution_generation,turn_id,evidence,actor,detail,admitted_at) VALUES('rel',1,'turn-10','explicit_admission_bound:turn-9','child','admitted','stamp')"})
+					}
+					if variant == "real_own_receipt" {
+						f1Seed(t, ctx, gd, []string{"INSERT INTO events(event_id,relationship_id,execution_generation,revision_hash,outcome,producer,turn_thread_id,turn_id,turn_status,receipt,stage,first_seen_at,last_seen_at) VALUES('receipt','rel',1,'x','ready_for_review','child','child','turn-9','completed','{}','final','stamp','stamp')"})
+					}
 				}
 			}
 			s := fcOpen(t, ctx, gd)
@@ -206,7 +214,7 @@ func Test22_FC_9_ManagedReadingsWholeOutput(t *testing.T) {
 			sw := &Sweeper{Store: s, HostRecordPath: testHostRecordPath(), Now: clock.ISO, MaxAttempts: 6, Installation: Installation{Package: "codex-session-relay", Version: "test", Location: "test"}, Selection: "the-selection", ManagedObserver: observer}
 			if real {
 				sw.Selection = store.StateSelection{Path: gd}
-				sw.ManagedObserver = nil
+				sw.ManagedObserver = realObserver(t)
 			}
 			l := &Ledger{Store: s, Clock: clock}
 			replies := []any{}
