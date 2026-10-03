@@ -373,6 +373,22 @@
    ],
    "out": []
   },
+  "marker_longer_session_id": {
+   "present": false,
+   "unreadable": false,
+   "tree": [
+    {
+     "path": "evidence-unrecordable",
+     "type": "dir"
+    },
+    {
+     "path": "evidence-unrecordable/s10-a1-1.json",
+     "type": "file",
+     "text": "{}"
+    }
+   ],
+   "out": []
+  },
   "marker_dash_prefixed_session": {
    "present": true,
    "unreadable": false,
@@ -1182,6 +1198,20 @@
     },
     {
      "path": "evidence-attempts/s2-a1-1.json",
+     "type": "file",
+     "text": "{\"attempts\":3}\n"
+    }
+   ]
+  },
+  "longer_session_spent": {
+   "spent": false,
+   "tree": [
+    {
+     "path": "evidence-attempts",
+     "type": "dir"
+    },
+    {
+     "path": "evidence-attempts/s10-a1-1.json",
      "type": "file",
      "text": "{\"attempts\":3}\n"
     }

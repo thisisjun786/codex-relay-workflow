@@ -242,6 +242,15 @@
    ]
   },
   {
+   "id": "marker_longer_session_id",
+   "setup": [
+    {
+     "file": "{S}/evidence-unrecordable/s10-a1-1.json",
+     "text": "{}"
+    }
+   ]
+  },
+  {
    "id": "marker_dash_prefixed_session",
    "setup": [
     {
@@ -807,6 +816,15 @@
    "setup": [
     {
      "file": "{S}/evidence-attempts/s2-a1-1.json",
+     "text": "{\"attempts\":3}\n"
+    }
+   ]
+  },
+  {
+   "id": "longer_session_spent",
+   "setup": [
+    {
+     "file": "{S}/evidence-attempts/s10-a1-1.json",
      "text": "{\"attempts\":3}\n"
     }
    ]

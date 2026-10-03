@@ -37,7 +37,8 @@ func HasSpentBudget(cwd, sessionID string) bool {
 }
 
 // counterUnspent parses the counter the way JSON.parse does (all of the file, a number beyond float64 is Infinity and not an
-// error) and applies Number.isSafeInteger to attempts.
+// error) and applies the oracle's test to attempts: a safe integer from 0 below MaxAttempts. The two bounds already exclude
+// an infinity and an integer beyond 2^53, so only the integer test is left to make.
 func counterUnspent(path string) bool {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -54,7 +55,7 @@ func counterUnspent(path string) bool {
 	}
 	n, isNumber := o["attempts"].(json.Number)
 	f, _ := strconv.ParseFloat(string(n), 64)
-	return isNumber && !math.IsInf(f, 0) && f == math.Trunc(f) && math.Abs(f) <= 1<<53-1 && f >= 0 && f < MaxAttempts
+	return isNumber && f == math.Trunc(f) && f >= 0 && f < MaxAttempts
 }
 
 // ResolveTombstone clears the tombstone of an agent and turn, for the gate to call when a late valid receipt arrives, so the
