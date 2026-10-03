@@ -5,11 +5,14 @@
 package projectcfg
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
 
@@ -69,9 +72,15 @@ func ReadPolicy(cwd string) Policy {
 	return DefaultPolicy
 }
 
-// readObject is the file's top-level object; ok is false when it is unreadable or not a JSON object.
+// readObject is the file's top-level object; ok is false when it is unreadable or not a JSON object. The readers use it:
+// a hook must never fail on a prompt, so every failure is the default. The writer tells the failures apart.
 func readObject(path string) (members object, ok bool) {
 	data, _ := os.ReadFile(path)
+	return parseObject(data)
+}
+
+// parseObject is the top-level object of a document; ok is false when it does not parse or is not a JSON object.
+func parseObject(data []byte) (members object, ok bool) {
 	value, parsed := parse(data)
 	members, isObject := value.(object)
 	return members, parsed && isObject
@@ -85,20 +94,29 @@ type WriteResult struct {
 }
 
 // WritePolicy is writeInterviewPolicy: it sets "interview" and keeps every other member, rewriting
-// the file as JSON.stringify(value, null, 2) plus a newline would. A malformed existing file is
-// replaced, not merged, and the caller is told. The oracle writes in place, and so does this.
+// the file as JSON.stringify(value, null, 2) plus a newline would. A file that was read and is not a JSON
+// object is replaced, not merged, and the caller is told. Two departures from the oracle, both data-loss
+// fixes (CRW-427): the file is published by rename (crwdir.Publish), so a concurrent reader, or a process that
+// dies part-way, leaves the old file or the new one whole, where the oracle truncates and rewrites it in place; and a file that
+// exists but cannot be read (mode 0200, say) is refused with a reason and left as it is, where the oracle
+// takes it for malformed and rewrites it with only "interview". Reading and publishing are not one locked
+// step: a file changed in between is not noticed, as in the oracle.
 func WritePolicy(cwd string, policy Policy) (WriteResult, error) {
 	path := ConfigPath(cwd)
-	members, ok := readObject(path)
+	data, err := os.ReadFile(path)
+	existed := !errors.Is(err, fs.ErrNotExist)
+	if err != nil && existed {
+		return WriteResult{}, fmt.Errorf("could not read %s (left unchanged): %w", path, err)
+	}
+	members, ok := parseObject(data)
 	if !ok {
 		members = nil // an existing file that is not an object is replaced, not merged
 	}
-	_, statErr := os.Stat(path)
 	document := stringify(members.set("interview", string(policy)), "") + "\n"
-	if err := os.WriteFile(path, []byte(document), 0o666); err != nil {
+	if err := crwdir.Publish(path, []byte(document)); err != nil {
 		return WriteResult{}, fmt.Errorf("could not write %s: %w", path, err)
 	}
-	return WriteResult{Path: path, ReplacedMalformed: statErr == nil && !ok}, nil
+	return WriteResult{Path: path, ReplacedMalformed: existed && !ok}, nil
 }
 
 // EntryInput is what decides whether a plan request is advised to open with the Interview.
