@@ -171,7 +171,6 @@ func TestStoredReceiptLookupAtNeedsAPathOnlyForANamedTurn(t *testing.T) {
 // it neither waits for a second pool connection (the pool has one, and the transaction holds it)
 // nor leaves the transaction changed.
 func TestStoredReceiptLookupReadsThroughTheCallersTransaction(t *testing.T) {
-	t.Parallel()
 	ctx := context.Background()
 	s := stageReceipt(t)
 	rolledBack := errors.New("rolled back on purpose")
