@@ -881,9 +881,10 @@ host values filled in.
    a `pgrep`, `ps` or `lsof` lookup). Record the pid of every long command or run it under `timeout`, and confirm a recorded pid is still
    your process before you signal it, because a pid is reused after its process exits. A process you did not start is reported with its
    pid and working directory and left running. Run Go under the build resources SCOPE gives: the shared build cache (never `go clean
-   -cache`), `GOFLAGS=-p=4`, `-count=1` for a result you cite, and the changed packages locally with hosted CI standing in for the whole
-   suite. A heavy command (the race detector, a large `-count`, a load reproduction) runs alone, one at a time, inside the memory scope
-   and above the free-memory floor SCOPE states; a command the limit ends is reported, not rerun with a higher limit.
+   -cache`), `GOFLAGS=-p=4`, `-count=1` for a result you cite, and the changed packages locally, with the hosted CI of the same head standing in for the whole
+   suite where SCOPE states that override. A heavy command (the race detector, a large `-count`, a load reproduction) runs alone, one at
+   a time, inside the memory scope and above the free-memory floor SCOPE states; a command the limit ends is reported, and you do not raise
+   the limit to get past it.
 
    Source: `Processes you start:` (carried in the packet's own words, because the child works from the packet), `Go build resources:`
    for the cache, parallelism, local runs and memory limit, `Capacity and large artifacts:` for the temporary directory and the volumes,
