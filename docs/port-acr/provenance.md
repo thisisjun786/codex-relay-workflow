@@ -62,3 +62,29 @@ grep -n 'LookPath' <ACR>/internal/agent/antigravity.go <repo>/internal/review/ag
 ```
 
 Measured on 2026-10-04: both process-group files send SIGKILL to the negative group id and read ESRCH as done, both thresholds are `100 * 1024`, both executors cap with a `cappedBuffer` and end the group from `cmd.Cancel`, and both adapters call `exec.LookPath`. The rest was compared by reading: the comparison shows which names and values were taken, not that behavior is equal, because the Go code around them is new.
+
+### internal/review/bundle
+
+`gitdiff.go` and `render.go` carry the pinned Apache-2.0 adaptation headers. The other Go files and all tests were written for CRW. The package produces prompt text; it neither calls a reviewer nor writes a reference file.
+
+| Go file | Upstream | Kept | Changed |
+| --- | --- | --- | --- |
+| gitdiff.go | internal/git/diff.go | Reject empty or option-like refs; run Git with a context and remove external-diff environment input. | Resolve both commits, then borrow objects through a temporary bare view excluding source config and info attributes. Read the unique merge base and complete range patch/raw/numstat with fixed flags and head attributes, retain rename/type-change groups, use stable patch-id. No fetch, checkout or branch update. |
+| render.go | internal/agent/diff.go | Diff as text material and the no-change sentinel. | Data header, quoted names, prefixed lines and length boundaries replace fenced prompt concatenation. Binary payloads are excluded from both diff and head text. File groups carry head text and fixed rule excerpts; strict output caps and metadata are new. |
+
+`internal/agent/diff_review.go` and `internal/agent/reffile.go` were compared read-only: their 100 KiB reference-file switch, temporary patch files, author guidance and execution calls are deliberately not adopted. The new package's [doc.go](../../internal/review/bundle/doc.go) specifies cap allocation, chunk grouping, truncation and error behavior.
+
+Reproducible read-only comparisons, using the same `<ACR>` and `<repo>` placeholders as above:
+
+```sh
+git -C <ACR> rev-parse HEAD # a3e438e2bd1f0824c1eab88db738aa3c82c69e99
+git -C <ACR> show a3e438e2bd1f0824c1eab88db738aa3c82c69e99:internal/git/diff.go
+git -C <ACR> show a3e438e2bd1f0824c1eab88db738aa3c82c69e99:internal/agent/diff.go
+git -C <ACR> show a3e438e2bd1f0824c1eab88db738aa3c82c69e99:internal/agent/diff_review.go
+git -C <ACR> show a3e438e2bd1f0824c1eab88db738aa3c82c69e99:internal/agent/reffile.go
+git -C <repo> show HEAD:internal/review/bundle/gitdiff.go
+git -C <repo> show HEAD:internal/review/bundle/render.go
+git -C <ACR> show a3e438e2bd1f0824c1eab88db738aa3c82c69e99:LICENSE | cmp - <repo>/docs/port-acr/LICENSE
+```
+
+Compared on 2026-10-04 by reading these files: the retained ref/environment checks and sentinel have the upstream origin above; the rest is intentionally different behavior, verified with temporary Git repositories. NOTICE and the imported LICENSE are unchanged.

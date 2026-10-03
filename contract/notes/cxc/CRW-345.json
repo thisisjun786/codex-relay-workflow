@@ -1,0 +1,180 @@
+{
+  "issue": "CRW-345",
+  "identical": [],
+  "intentionally-changed": [
+    {
+      "id": "cli-help__bg__dash_h",
+      "reason": "Approved generation-2 scope: existing relay usage, strict flags/verbs and answer envelopes win; original job data and messages are retained under out. Removal uses the existing CRW checklist.",
+      "set": {
+        "steps/0/form": "text",
+        "steps/0/stdout": "usage: crw relay job [-h] <command> ...\n\nworkspace-local background jobs\n\noptions:\n  -h, --help  show this help and exit\n\ncommands:\n  run      run [--note TEXT] [--json] -- <command...>\n  list\n  get      get <id> [--tail N]\n  cancel   cancel <id>\n  off\n  on\n  status\n  drain\n  removal\n"
+      }
+    },
+    {
+      "id": "cli-help__bg__dashdash_help",
+      "reason": "Approved generation-2 scope: existing relay usage, strict flags/verbs and answer envelopes win; original job data and messages are retained under out. Removal uses the existing CRW checklist.",
+      "set": {
+        "steps/0/form": "text",
+        "steps/0/stdout": "usage: crw relay job [-h] <command> ...\n\nworkspace-local background jobs\n\noptions:\n  -h, --help  show this help and exit\n\ncommands:\n  run      run [--note TEXT] [--json] -- <command...>\n  list\n  get      get <id> [--tail N]\n  cancel   cancel <id>\n  off\n  on\n  status\n  drain\n  removal\n"
+      }
+    },
+    {
+      "id": "cli-help__bg__word_help",
+      "reason": "Approved generation-2 scope: existing relay usage, strict flags/verbs and answer envelopes win; original job data and messages are retained under out. Removal uses the existing CRW checklist.",
+      "set": {
+        "steps/0/form": "empty",
+        "steps/0/stdout": "",
+        "steps/0/exit": "2",
+        "steps/0/stderr": "usage: crw relay job [-h] <command> ...\ncrw relay job: error: argument command: invalid choice: \"help\" (see crw relay job --help)\n",
+        "exit": "2"
+      }
+    },
+    {
+      "id": "cli__bg__cancel_does_not_overwrite_finished_job",
+      "reason": "Approved generation-2 scope: existing relay usage, strict flags/verbs and answer envelopes win; original job data and messages are retained under out. Removal uses the existing CRW checklist.",
+      "set": {
+        "steps/0/form": "json-pretty",
+        "steps/0/stdout": "{\"out\":\"f1 complete\"}",
+        "steps/1/form": "json-pretty",
+        "steps/1/stdout": "{\"out\":[{\"id\":\"f1\",\"sessionId\":\"rec-s1\",\"adoptedBy\":null,\"cwd\":\"${WS}\",\"command\":[\"true\"],\"note\":null,\"pid\":null,\"startToken\":null,\"status\":\"complete\",\"exitCode\":0,\"startedAt\":\"<TS>\",\"endedAt\":\"<TS>\",\"deliveredAt\":null}]}"
+      }
+    },
+    {
+      "id": "cli__bg__cancel_missing_id_is_not_an_error",
+      "reason": "Approved generation-2 scope: existing relay usage, strict flags/verbs and answer envelopes win; original job data and messages are retained under out. Removal uses the existing CRW checklist.",
+      "set": {
+        "steps/0/form": "json-pretty",
+        "steps/0/stdout": "{\"out\":\"\\uc5c6\\ub294 id: ghost\"}"
+      }
+    },
+    {
+      "id": "cli__bg__cancel_running_job_kills_group",
+      "reason": "Approved generation-2 scope: existing relay usage, strict flags/verbs and answer envelopes win; original job data and messages are retained under out. Removal uses the existing CRW checklist.",
+      "set": {
+        "steps/0/form": "json-pretty",
+        "steps/0/stdout": "{\"out\":{\"id\":\"<BG_1>\",\"sessionId\":\"rec-s1\",\"adoptedBy\":null,\"cwd\":\"${WS}\",\"command\":[\"sh\",\"-c\",\"exec 2>/dev/null; trap 'echo term > probe/term.tmp && mv probe/term.tmp probe/term; exit 143' TERM; echo ready > probe/ready.tmp && mv probe/ready.tmp probe/ready; while [ -d probe ]; do sleep 1 & wait $!; done\"],\"note\":null,\"pid\":\"<PID>\",\"startToken\":\"Thu Jan  1 00:00:00 2026\",\"status\":\"running\",\"exitCode\":null,\"startedAt\":\"<TS>\",\"endedAt\":null,\"deliveredAt\":null}}",
+        "steps/3/form": "json-pretty",
+        "steps/3/stdout": "{\"out\":\"<BG_1> cancelled\"}",
+        "steps/5/form": "json-pretty",
+        "steps/5/stdout": "{\"out\":[{\"id\":\"<BG_1>\",\"sessionId\":\"rec-s1\",\"adoptedBy\":null,\"cwd\":\"${WS}\",\"command\":[\"sh\",\"-c\",\"exec 2>/dev/null; trap 'echo term > probe/term.tmp && mv probe/term.tmp probe/term; exit 143' TERM; echo ready > probe/ready.tmp && mv probe/ready.tmp probe/ready; while [ -d probe ]; do sleep 1 & wait $!; done\"],\"note\":null,\"pid\":\"<PID>\",\"startToken\":\"Thu Jan  1 00:00:00 2026\",\"status\":\"cancelled\",\"exitCode\":null,\"startedAt\":\"<TS>\",\"endedAt\":\"<TS>\",\"deliveredAt\":null}]}"
+      }
+    },
+    {
+      "id": "cli__bg__drain_session_ignores_off_switch",
+      "reason": "Approved generation-2 scope: existing relay usage, strict flags/verbs and answer envelopes win; original job data and messages are retained under out. Removal uses the existing CRW checklist.",
+      "set": {
+        "steps/0/form": "json-pretty",
+        "steps/0/stdout": "{\"out\":{\"delivered\":true,\"text\":\"[crw bg] \\ubc31\\uadf8\\ub77c\\uc6b4\\ub4dc \\uc791\\uc5c5 1\\uac74\\uc774 \\ub05d\\ub0ac\\uc2b5\\ub2c8\\ub2e4.\\n- e1 (complete, exit 0, 4m12s) \\u2014 npm run build\\n\\ucd9c\\ub825\\uc740 `crw relay job get <id> --tail 40`\\uc73c\\ub85c \\ubd05\\ub2c8\\ub2e4. \\uc804\\uccb4 \\ubaa9\\ub85d\\uc740 `crw relay job list`.\\n\\uacb0\\uacfc\\ub97c \\ud655\\uc778\\ud558\\uace0 \\ud544\\uc694\\ud55c \\ud6c4\\uc18d \\uc791\\uc5c5\\uc744 \\uc774\\uc5b4\\uac00\\uc138\\uc694.\"}}",
+        "steps/1/form": "json-pretty",
+        "steps/1/stdout": "{\"out\":\"\\ubbf8\\uc804\\ub2ec \\uc644\\ub8cc \\uc5c6\\uc74c\"}",
+        "steps/2/form": "empty",
+        "steps/2/stdout": "",
+        "steps/2/exit": "2",
+        "steps/2/stderr": "usage: crw relay job drain [-h] --session SESSION [--json]\ncrw relay job drain: error: the following arguments are required: --session\n",
+        "exit": "2"
+      }
+    },
+    {
+      "id": "cli__bg__get_tail_and_missing_id",
+      "reason": "Approved generation-2 scope: existing relay usage, strict flags/verbs and answer envelopes win; original job data and messages are retained under out. Removal uses the existing CRW checklist.",
+      "set": {
+        "steps/0/form": "json-pretty",
+        "steps/0/stdout": "{\"out\":\"- b1 (complete, exit 0, 4m12s) \\u2014 npm run build\\n\\nline 7\\nline 8\\nline 9\\nline 10\\nline 11\\nline 12\\nline 13\\nline 14\\nline 15\\nline 16\\nline 17\\nline 18\\nline 19\\nline 20\\nline 21\\nline 22\\nline 23\\nline 24\\nline 25\"}",
+        "steps/1/form": "json-pretty",
+        "steps/1/stdout": "{\"out\":\"- b1 (complete, exit 0, 4m12s) \\u2014 npm run build\\n\\nline 24\\nline 25\"}",
+        "steps/2/form": "json-pretty",
+        "steps/2/stdout": "{\"out\":\"- b1 (complete, exit 0, 4m12s) \\u2014 npm run build\"}",
+        "steps/3/form": "json-pretty",
+        "steps/3/stdout": "{\"out\":\"\\uc5c6\\ub294 id: nope\"}"
+      }
+    },
+    {
+      "id": "cli__bg__help_and_unknown_verb_print_usage",
+      "reason": "Approved generation-2 scope: existing relay usage, strict flags/verbs and answer envelopes win; original job data and messages are retained under out. Removal uses the existing CRW checklist.",
+      "set": {
+        "steps/0/form": "text",
+        "steps/0/stdout": "usage: crw relay job [-h] <command> ...\n\nworkspace-local background jobs\n\noptions:\n  -h, --help  show this help and exit\n\ncommands:\n  run      run [--note TEXT] [--json] -- <command...>\n  list\n  get      get <id> [--tail N]\n  cancel   cancel <id>\n  off\n  on\n  status\n  drain\n  removal\n",
+        "steps/1/form": "empty",
+        "steps/1/stdout": "",
+        "steps/1/exit": "2",
+        "steps/1/stderr": "usage: crw relay job [-h] <command> ...\ncrw relay job: error: the following arguments are required: command\n",
+        "steps/2/form": "empty",
+        "steps/2/stdout": "",
+        "steps/2/exit": "2",
+        "steps/2/stderr": "usage: crw relay job [-h] <command> ...\ncrw relay job: error: argument command: invalid choice: \"frobnicate\" (see crw relay job --help)\n",
+        "steps/3/form": "empty",
+        "steps/3/stdout": "",
+        "steps/3/exit": "2",
+        "steps/3/stderr": "usage: crw relay job run [-h] [--note NOTE] [--json]\ncrw relay job run: error: unrecognized arguments: echo hi\n",
+        "exit": "2"
+      }
+    },
+    {
+      "id": "cli__bg__list_empty",
+      "reason": "Approved generation-2 scope: existing relay usage, strict flags/verbs and answer envelopes win; original job data and messages are retained under out. Removal uses the existing CRW checklist.",
+      "set": {
+        "steps/0/form": "json-pretty",
+        "steps/0/stdout": "{\"out\":\"\\ubc31\\uadf8\\ub77c\\uc6b4\\ub4dc \\uc791\\uc5c5 \\uc5c6\\uc74c\"}",
+        "steps/1/form": "json-pretty",
+        "steps/1/stdout": "{\"out\":[]}"
+      }
+    },
+    {
+      "id": "cli__bg__list_plain_and_json",
+      "reason": "Approved generation-2 scope: existing relay usage, strict flags/verbs and answer envelopes win; original job data and messages are retained under out. Removal uses the existing CRW checklist. The replayer has no frozen clock: seed a3 at the oracle post-reconciliation boundary, with its recorded completion stamp and completed ledger row; live reconciliation is covered by Go tests.",
+      "set": {
+        "steps/0/form": "json-pretty",
+        "steps/0/stdout": "{\"out\":\"- a1 (complete, exit 0, 4m12s) \\u2014 npm run build  [\\uc804\\ub2ec\\ub428]\\n- a2 (failed, exit 2, 9s) \\u2014 sh -c exit 2  [\\ubbf8\\uc804\\ub2ec]\\n- a3 (complete, exit 0, 10m00s) \\u2014 npm run build  [\\ubbf8\\uc804\\ub2ec]\\n- a4 (complete, exit 0, 4m12s) \\u2014 npm run build  [\\ubbf8\\uc804\\ub2ec]\"}",
+        "steps/1/form": "json-pretty",
+        "steps/1/stdout": "{\"out\":[{\"id\":\"a1\",\"sessionId\":\"rec-s1\",\"adoptedBy\":null,\"cwd\":\"${WS}\",\"command\":[\"npm\",\"run\",\"build\"],\"note\":null,\"pid\":null,\"startToken\":null,\"status\":\"complete\",\"exitCode\":0,\"startedAt\":\"<TS>\",\"endedAt\":\"<TS>\",\"deliveredAt\":\"<TS>\"},{\"id\":\"a2\",\"sessionId\":\"rec-s1\",\"adoptedBy\":null,\"cwd\":\"${WS}\",\"command\":[\"sh\",\"-c\",\"exit 2\"],\"note\":null,\"pid\":null,\"startToken\":null,\"status\":\"failed\",\"exitCode\":2,\"startedAt\":\"<TS>\",\"endedAt\":\"<TS>\",\"deliveredAt\":null},{\"id\":\"a3\",\"sessionId\":\"rec-s1\",\"adoptedBy\":null,\"cwd\":\"${WS}\",\"command\":[\"npm\",\"run\",\"build\"],\"note\":null,\"pid\":null,\"startToken\":null,\"status\":\"complete\",\"exitCode\":0,\"startedAt\":\"<TS>\",\"endedAt\":\"<TS>\",\"deliveredAt\":null},{\"id\":\"a4\",\"sessionId\":\"rec-s9\",\"adoptedBy\":null,\"cwd\":\"${WS}\",\"command\":[\"npm\",\"run\",\"build\"],\"note\":\"other session\",\"pid\":null,\"startToken\":null,\"status\":\"complete\",\"exitCode\":0,\"startedAt\":\"<TS>\",\"endedAt\":\"<TS>\",\"deliveredAt\":null}]}"
+      },
+      "given": {
+        "json": {
+          "ws/.crw/bg/a3.json": null
+        },
+        "files": {
+          "ws/.crw/bg/a3.json": "{\n  \"id\": \"a3\",\n  \"sessionId\": \"rec-s1\",\n  \"adoptedBy\": null,\n  \"cwd\": \"${WS}\",\n  \"command\": [\n    \"npm\",\n    \"run\",\n    \"build\"\n  ],\n  \"note\": null,\n  \"pid\": null,\n  \"startToken\": null,\n  \"status\": \"complete\",\n  \"exitCode\": 0,\n  \"startedAt\": \"2025-12-31T23:50:00.000Z\",\n  \"endedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"deliveredAt\": null\n}\n",
+          "ws/.crw/bg/ledger.jsonl": "{\"at\":\"2026-01-01T00:00:00.000Z\",\"event\":\"completed\",\"id\":\"a3\",\"exitCode\":0}\n"
+        }
+      }
+    },
+    {
+      "id": "cli__bg__off_on_status",
+      "reason": "Approved generation-2 scope: existing relay usage, strict flags/verbs and answer envelopes win; original job data and messages are retained under out. Removal uses the existing CRW checklist.",
+      "set": {
+        "steps/0/form": "json-pretty",
+        "steps/0/stdout": "{\"out\":\"wake: ON\\n  \\ud30c\\uc77c \\ud50c\\ub798\\uadf8: on\\n  CRW_BGWAKE: unset/on\\n  \\uc791\\uc5c5 1\\uac74\"}",
+        "steps/1/form": "json-pretty",
+        "steps/1/stdout": "{\"out\":\"bg wake OFF (\\uc774 \\uc6cc\\ud06c\\ud2b8\\ub9ac). \\ub2e4\\uc2dc \\ucf1c\\ub824\\uba74: crw relay job on\"}",
+        "steps/2/form": "json-pretty",
+        "steps/2/stdout": "{\"out\":\"wake: OFF\\n  \\ud30c\\uc77c \\ud50c\\ub798\\uadf8: off (<TS>)\\n  CRW_BGWAKE: unset/on\\n  \\uc791\\uc5c5 1\\uac74\"}",
+        "steps/3/form": "json-pretty",
+        "steps/3/stdout": "{\"out\":\"bg wake ON. \\uaebc\\uc838 \\uc788\\ub294 \\ub3d9\\uc548 \\ub05d\\ub09c \\uc791\\uc5c5\\uc740 \\uc6e8\\uc774\\ud06c\\ud558\\uc9c0 \\uc54a\\uace0 crw relay job list \\uc5d0\\ub9cc \\ub0a8\\uc2b5\\ub2c8\\ub2e4.\"}",
+        "steps/4/form": "json-pretty",
+        "steps/4/stdout": "{\"out\":\"bg wake \\uc774\\ubbf8 ON\"}",
+        "steps/5/form": "json-pretty",
+        "steps/5/stdout": "{\"out\":\"wake: ON\\n  \\ud30c\\uc77c \\ud50c\\ub798\\uadf8: on\\n  CRW_BGWAKE: unset/on\\n  \\uc791\\uc5c5 1\\uac74\"}"
+      }
+    },
+    {
+      "id": "cli__bg__removal_checklist",
+      "reason": "Approved generation-2 scope: existing relay usage, strict flags/verbs and answer envelopes win; original job data and messages are retained under out. Removal uses the existing CRW checklist.",
+      "set": {
+        "steps/0/form": "json-pretty",
+        "steps/0/stdout": "{\"out\":\"crw relay job \\uc81c\\uac70 \\uccb4\\ud06c\\ub9ac\\uc2a4\\ud2b8 (5\\ub2e8\\uacc4)\\n\\n1. internal/relay/job/ \\ub514\\ub809\\ud130\\ub9ac \\uc0ad\\uc81c (bg \\uc800\\uc7a5\\uc18c\\uc640 \\uadf8 \\uc704\\uc5d0 \\uc5b9\\ud78c \\ucf54\\ub4dc \\uc804\\ubd80)\\n2. crw relay job \\ub3d9\\uc0ac\\uac00 \\uc5f0\\uacb0\\ub3fc \\uc788\\uc73c\\uba74 \\uc81c\\uac70: internal/relay/cli \\uc758 job \\uc5f0\\uacb0\\uacfc internal/relay/argparse/specs.json \\uc758 job \\uba85\\uc138\\n3. plugins/crw/wiring/hooks/ \\uc5d0 bg \\ud6c5 \\ud30c\\uc77c 3\\uac1c (stop / user-prompt-submit / session-start)\\uac00 \\uc788\\uc73c\\uba74 \\uc0ad\\uc81c\\ud558\\uace0, plugins/crw/.codex-plugin/plugin.json \\uc758 hooks[] \\uc5d0\\uc11c \\uadf8 3\\uc904 \\uc81c\\uac70\\n4. contract/notes/cxc/ \\uc5d0 bg fixture (cli__bg__*, cli-help__bg__*, \\ubc31\\uadf8\\ub77c\\uc6b4\\ub4dc \\uc644\\ub8cc \\ud6c5)\\ub97c \\ub9e1\\uc740 claim \\uc774 \\uc788\\uc73c\\uba74 \\uc0ad\\uc81c (\\uadf8 fixture \\ub294 pending \\uc73c\\ub85c \\ub3cc\\uc544\\uac04\\ub2e4)\\n5. go run -tags dev ./cmd/crw-dev ci plugin --record-version \\uc73c\\ub85c \\ud50c\\ub7ec\\uadf8\\uc778 digest \\ub2e4\\uc2dc \\uae30\\ub85d\\n\\n\\ud655\\uc778: make build && make test && make lint\\n\\n\\uc791\\uc5c5\\uacf5\\uac04\\uc758 .crw/bg/ \\ub294 \\uc790\\ub3d9\\uc73c\\ub85c \\uc9c0\\uc6cc\\uc9c0\\uc9c0 \\uc54a\\ub294\\ub2e4. \\ud544\\uc694\\ud558\\uba74 \\uc9c1\\uc811 \\uc0ad\\uc81c\\ud55c\\ub2e4.\\n\\n\\ub044\\uae30\\ub9cc \\ud558\\ub824\\uba74 \\uc81c\\uac70\\ud560 \\ud544\\uc694 \\uc5c6\\uc2b5\\ub2c8\\ub2e4.\\n  \\uc989\\uc2dc(\\uc774 \\uc6cc\\ud06c\\ud2b8\\ub9ac):   crw relay job off\\n  \\uc0c8 \\uc138\\uc158\\ubd80\\ud130(\\uc804\\uc5ed):   export CRW_BGWAKE=0\"}"
+      }
+    },
+    {
+      "id": "cli__bg__status_reports_env_switch",
+      "reason": "Approved generation-2 scope: existing relay usage, strict flags/verbs and answer envelopes win; original job data and messages are retained under out. Removal uses the existing CRW checklist.",
+      "set": {
+        "steps/0/form": "json-pretty",
+        "steps/0/stdout": "{\"out\":\"wake: OFF\\n  \\ud30c\\uc77c \\ud50c\\ub798\\uadf8: on\\n  CRW_BGWAKE: off\\n  \\uc791\\uc5c5 0\\uac74\"}"
+      }
+    }
+  ],
+  "pending": [
+    "cli__bg__on_after_off_gates_earlier_completions",
+    "cli__bg__run_detached_records_exit_code"
+  ]
+}
