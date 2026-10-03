@@ -170,6 +170,16 @@ it again ([Observe and verify](../SKILL.md#observe-and-verify)). That rule and
 re-derives from the child's handoff: thread coverage, check runs and review dispositions, which it does not
 paginate or triage again.
 
+The coordinator's own local runs, the re-run of gate 2 and the local gates of gate 3, happen on a host
+that every child builds on, so they take the settings the launch packet gave the child
+([`Go build resources:`](task-packet.md#launch-packet)): the shared build cache, `GOFLAGS=-p=4`, the
+packages the change touches, a `-count` (normally `-count=1`) for a result it will rely on (a
+`(cached)` line can be another task's run), and `-race`, a large `-count` or a load reproduction only
+inside its own memory-limited scope, one at a time. The whole test suite is gate 1's hosted CI on this
+head and is not repeated locally; the checks gate 3 names stay, and a full local test run is replaced
+by this CI only where the packet states the user's scoped override, after confirming that the CI runs
+the whole suite.
+
 Nothing else is a gate, and neither reviewer is one. A required review source or a mandatory formal approval
 that the target repository's own rules declare still applies as
 [Inspect review content and coverage](#inspect-review-content-and-coverage) has it; in this repository
