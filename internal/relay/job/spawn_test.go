@@ -20,7 +20,7 @@ import (
 )
 
 // Expectations marked "oracle" are what Node v24 printed running the unmodified CXC v0.2.40 bg-wake/src/spawn.ts. The cases that start
-// a job use only workspaces of this test and stop what they start by the pid of their own record (a process group of its own, CRW-414);
+// a job use only workspaces of this test and stop what they start by the pid of their own record (a process group of its own);
 // nothing is signalled by pattern. The deliberate differences from the oracle (the security checklist of the issue) have no oracle
 // counterpart.
 
