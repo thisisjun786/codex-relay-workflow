@@ -180,7 +180,11 @@ func goldenKey(t testing.TB, what string) string {
 // repository root.
 func treeGolden(t testing.TB, root string) []golden.Option {
 	t.Helper()
-	return []golden.Option{golden.Substitute(root, "<root>"), golden.Substitute(repoRoot(t), "<repo>")}
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return []golden.Option{golden.Substitute(executable, "<runtime executable>"), golden.Substitute(root, "<root>"), golden.Substitute(repoRoot(t), "<repo>")}
 }
 
 // fixtureGolden is the golden options for a value that names a stage fixture's directory
