@@ -269,6 +269,13 @@ func TestRegisterRefusesInputsTheUnitCannotCarry(t *testing.T) {
 	u := newUnitHost(t)
 	os.Remove(filepath.Join(u.dest, "current"))
 	u.run(install.ServiceOptions{}, install.Refused, install.UnitUnreadable)
+	if os.Geteuid() != 0 {
+		u = newUnitHost(t) // an execute bit that is only somebody else's does not let this user run the relay
+		if err := os.Chmod(filepath.Join(u.dest, "bin-stub", "bin", "codex-session-relay"), 0o001); err != nil {
+			t.Fatal(err)
+		}
+		u.run(install.ServiceOptions{}, install.Refused, install.UnitUnreadable)
+	}
 	u = newUnitHost(t)
 	inside, linked := filepath.Join(u.dest, "bin-stub", "units"), filepath.Join(u.home, "linked")
 	os.MkdirAll(inside, 0o755)
@@ -404,6 +411,17 @@ func TestRegisterReportsDropInsThatOnlyShowOnceTheNameIsLoaded(t *testing.T) {
 			t.Fatalf("%s after enable: %v\n%s", c.name, u.manager.calls, golden.Canon(result))
 		}
 	}
+}
+
+// A second owner that appears between the decision and the lock is found again under it.
+func TestRegisterLooksForASecondOwnerAgainUnderTheLock(t *testing.T) {
+	u := newUnitHost(t)
+	restore := install.ReplaceBeforeWriteLock(func(string) {
+		put(t, filepath.Join(u.dir, "other.service"), "[Service]\nExecStart=/opt/bin/codex-session-relay --socket /s service start\n", 0o644)
+	})
+	defer restore()
+	u.run(install.ServiceOptions{}, install.Refused, install.UnitSecondOwner)
+	u.unchanged("absent")
 }
 
 // A unit file replaced between the decision and the lock is never acted on: not enabled again, not deleted.

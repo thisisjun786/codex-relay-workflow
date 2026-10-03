@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"strings"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/definition"
@@ -168,10 +170,11 @@ func rendered(text string) bool {
 	return !unsafeInUnit.MatchString(scopeDir) && text == renderUnit(exec[1], exec[2], exec[3], scopeDir)
 }
 
-// lock takes the unit's lock and checks the file is still the one decided on, or answers the refusal.
+// lock takes the lock of the whole surface (one per unit directory, so registrations under different names exclude
+// each other) and checks the file is still the one decided on, or answers the refusal.
 func (u *unitRun) lock(basis look) (*record.Locked, Object, int) {
 	beforeWriteLock(u.path)
-	lock, err := record.Lock(u.ctx, u.path, 0)
+	lock, err := record.Lock(u.ctx, filepath.Join(u.dir, "crw-relay-service"), 0)
 	if err != nil {
 		refusal, code := u.refuse(UnitUnreadable, "the unit could not be locked ("+err.Error()+"); nothing was changed")
 		return nil, refusal, code
@@ -300,7 +303,7 @@ func RegisterService(ctx context.Context, o Options, s ServiceOptions) (Object, 
 			return usage(fmt.Sprintf("%s %q holds whitespace, a quote, a backslash, %%, $, ; or a control character, which systemd would split or expand in the unit", one.what, one.value))
 		}
 	}
-	if info, err := os.Stat(relay); err != nil || !info.Mode().IsRegular() || info.Mode()&0o111 == 0 {
+	if info, err := os.Stat(relay); err != nil || !info.Mode().IsRegular() || unix.Access(relay, unix.X_OK) != nil {
 		return u.refuse(UnitUnreadable, "no runtime is installed to start: "+relay+" is not an executable file; run crw install install first")
 	}
 	wanted := renderUnit(relay, selection.Path, socket, u.scopeDir)
@@ -342,6 +345,9 @@ func RegisterService(ctx context.Context, o Options, s ServiceOptions) (Object, 
 		return refusal, code
 	}
 	defer lock.Release()
+	if again, err := otherRelayUnits(u.dir, u.name); err != nil || len(again) > 0 {
+		return u.refuse(UnitSecondOwner, "another unit that runs the relay's start appeared, or the directory could not be read again, while this command waited for the lock; nothing was changed")
+	}
 	wrote := outcome == UnitWouldCreate
 	if wrote {
 		if err := record.AtomicWrite(u.path, []byte(wanted)); err != nil {
