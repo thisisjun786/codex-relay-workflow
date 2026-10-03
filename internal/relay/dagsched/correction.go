@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -63,8 +65,11 @@ func (s *Scheduler) PrepareCorrection(ctx context.Context, plan, node, actor str
 	if err != nil {
 		return out, err
 	}
-	if !found || rel.Status != "active" || rel.Superseded || rel.ParentTaskID != actor {
-		return out, refuse(contract.RefusalRelationshipNotActive, "node %s has no active relationship of task %s to correct", node, actor)
+	if !found || rel.Status != "active" || rel.Superseded {
+		return out, refuse(contract.RefusalRelationshipNotActive, "node %s has no active relationship to correct", node)
+	}
+	if rel.ParentTaskID != actor {
+		return out, notParentOf(actor, rel)
 	}
 	roots, err := relationshipRoots(ctx, q, rel.ID)
 	if err != nil {
@@ -79,6 +84,14 @@ func (s *Scheduler) PrepareCorrection(ctx context.Context, plan, node, actor str
 	}
 	if len(opts.ArtifactRoots) == 0 {
 		opts.ArtifactRoots = roots
+	}
+	// the commit a correction records as its base is what the target branch reads, as in a release (the commit of a release's base is never given): a caller that states one has it checked
+	if in.Base != nil && in.Base.Repository != "" && in.Base.Ref != "" {
+		base, err := s.correctionBase(ctx, *in.Base)
+		if err != nil {
+			return out, err
+		}
+		in.Base = &base
 	}
 	in.CreatedByTaskID, in.CreatedAt = actor, s.now()
 	body, blocked, err := s.BuildManifest(ctx, q, plan, snap, n, in, opts)
@@ -184,7 +197,7 @@ func (s *Scheduler) RecordCorrection(ctx context.Context, plan, node, actor, sup
 			return refuse(contract.RefusalRelationshipNotActive, "the relationship %s of %s is %s: a correction goes to a child whose relationship is active", rel.ID, node, map[bool]string{true: "superseded", false: rel.Status}[rel.Superseded])
 		}
 		if rel.ParentTaskID != actor {
-			return refuse(contract.RefusalScopeRoleMismatch, "task %s is not the parent of relationship %s", actor, rel.ID)
+			return notParentOf(actor, rel)
 		}
 		out.RelationshipID, out.Generation = rel.ID, rel.Generation
 		var recorded sql.NullInt64
@@ -289,6 +302,29 @@ func lineSafe(s string) bool {
 		}
 	}
 	return true
+}
+
+// notParentOf is the refusal of an actor that is not the parent of the relationship a correction goes through. Both steps of a correction (preparing the manifest, recording the generation) refuse
+// that situation with it, so the reason and the text cannot differ: it is the reason every other DAG command gives for a task that is not the registered parent of what it acts on.
+func notParentOf(actor string, rel relRow) error {
+	return refuse(contract.RefusalScopeRoleMismatch, "task %s is not the parent of relationship %s", actor, rel.ID)
+}
+
+// correctionBase is the base a correction records: the commit its target branch reads now, read by the relay as a release reads it. A commit the caller states is a claim to check and not a value to
+// record: one that is not what the branch reads is refused as merge_base_mismatch, the reason the merge lane gives for the same statement ("the caller stated a base the branch does not read"). What
+// is recorded is the relay's reading, in its spelling, whatever spelling the caller used.
+func (s *Scheduler) correctionBase(ctx context.Context, given BaseRef) (BaseRef, error) {
+	if s.Tips == nil {
+		return BaseRef{}, errors.New("this scheduler has no target reader, so it cannot read the tip a correction starts from")
+	}
+	tip, err := s.Tips.Tip(ctx, given.Repository, given.Ref)
+	if err != nil {
+		return BaseRef{}, err
+	}
+	if given.SHA != "" && !mergeturn.SameCommit(given.SHA, tip.SHA) {
+		return BaseRef{}, refuse(contract.RefusalMergeBaseMismatch, "the base branch %s of %s reads %s and the request states %s; the relay records what the branch reads, so state it in full or leave the sha out", given.Ref, given.Repository, tip.SHA, given.SHA)
+	}
+	return BaseRef{Repository: given.Repository, Ref: given.Ref, SHA: tip.SHA}, nil
 }
 
 // relationshipRoots are the artifact roots of a relationship, the places its child reads and writes.

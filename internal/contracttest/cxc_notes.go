@@ -3,6 +3,7 @@ package contracttest
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -10,6 +11,8 @@ import (
 	"slices"
 	"sort"
 	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/dev/cxccorpus"
 )
 
 // What a port issue stands behind for a fixture (contract/notes/cxc/README.md).
@@ -28,12 +31,14 @@ type cxcNotesFile struct {
 }
 
 // cxcChange is a fixture replayed with named differences: Set replaces the expected text of a key,
-// Remove drops the expected keys under a prefix (the keys a failing replay prints).
+// Remove drops the expected keys under a prefix (the keys a failing replay prints), and Given, a
+// JSON object, overrides the given the build is run with (patchGiven).
 type cxcChange struct {
 	ID     string            `json:"id"`
 	Reason string            `json:"reason"`
 	Set    map[string]string `json:"set"`
 	Remove []string          `json:"remove"`
+	Given  json.RawMessage   `json:"given"`
 }
 
 // cxcClaim is what the status files say about a fixture; the zero value is one no file registers.
@@ -41,6 +46,7 @@ type cxcClaim struct {
 	State, Issue, Reason string
 	Set                  map[string]string
 	Remove               []string
+	Given                json.RawMessage
 }
 
 // loadCXCNotes reads the status files in dir and resolves them against the fixtures: a claim beats
@@ -93,11 +99,73 @@ func loadCXCNotes(dir string, fixtures []string) (map[string]cxcClaim, error) {
 			if strings.TrimSpace(change.Reason) == "" {
 				return nil, fmt.Errorf("%s: %q is intentionally changed without a reason", file.Issue, change.ID)
 			}
-			claim := cxcClaim{State: cxcChanged, Issue: file.Issue, Reason: change.Reason, Set: change.Set, Remove: change.Remove}
+			claim := cxcClaim{State: cxcChanged, Issue: file.Issue, Reason: change.Reason, Set: change.Set, Remove: change.Remove, Given: change.Given}
 			if err := add(change.ID, claim); err != nil {
 				return nil, err
 			}
 		}
 	}
 	return claims, nil
+}
+
+// patchGiven applies a claim's given override to a scenario's given, which has been through the name
+// substitution already: the override is in crw's names. The override is an object. It is decoded as
+// a given first, strictly, so an unknown field is an error whatever its value; then it is merged
+// into the given as raw JSON: a null field is removed, a field whose value is an object has its keys
+// set or, when null, removed (git is such a field), and any other value (dirs) replaces the field. Entries are never merged
+// further and stay raw, so the key order of a given.json entry the override does not name is kept.
+func patchGiven(given cxccorpus.Given, override json.RawMessage) (cxccorpus.Given, error) {
+	if len(override) == 0 {
+		return given, nil
+	}
+	var patch map[string]json.RawMessage
+	checked := json.NewDecoder(bytes.NewReader(override))
+	checked.DisallowUnknownFields()
+	if err := errors.Join(json.Unmarshal(override, &patch), checked.Decode(new(cxccorpus.Given))); err != nil {
+		return given, fmt.Errorf("given override: %w", err)
+	}
+	if patch == nil {
+		return given, errors.New("given override: not an object")
+	}
+	var doc map[string]json.RawMessage
+	_ = json.Unmarshal(marshalPlain(given), &doc)
+	for field, value := range patch {
+		var keys, entries map[string]json.RawMessage
+		switch {
+		case string(value) == "null":
+			delete(doc, field)
+		case json.Unmarshal(value, &keys) != nil:
+			doc[field] = value
+		default:
+			_ = json.Unmarshal(doc[field], &entries)
+			if entries == nil {
+				entries = map[string]json.RawMessage{}
+			}
+			for key, entry := range keys {
+				if string(entry) == "null" {
+					delete(entries, key)
+				} else {
+					entries[key] = entry
+				}
+			}
+			doc[field] = marshalPlain(entries)
+		}
+	}
+	var out cxccorpus.Given
+	strict := json.NewDecoder(bytes.NewReader(marshalPlain(doc)))
+	strict.DisallowUnknownFields()
+	if err := strict.Decode(&out); err != nil {
+		return given, fmt.Errorf("given override: %w", err)
+	}
+	return out, nil
+}
+
+// marshalPlain is json.Marshal without the HTML escaping, which would rewrite the markup characters
+// inside a given entry (the file the build reads would then differ from the oracle's).
+func marshalPlain(v any) []byte {
+	var out bytes.Buffer
+	encoder := json.NewEncoder(&out)
+	encoder.SetEscapeHTML(false)
+	_ = encoder.Encode(v)
+	return bytes.TrimSuffix(out.Bytes(), []byte("\n"))
 }
