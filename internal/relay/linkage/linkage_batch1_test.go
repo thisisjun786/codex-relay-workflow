@@ -13,6 +13,7 @@ import (
 
 // Test26_LNK1: a binding is role + scope + task, carries the real identifiers and no title/name.
 func Test26_LNK1_a_binding_is_the_role_scope_and_task(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	record := w.step(w.r.BindScopeAs(w.ctx, "parent", project, parentEP(parent), "active")).(contract.OrderedObject)
 	w.step(registry.BindingID("parent", "project", project, parent), nil)
@@ -28,6 +29,7 @@ func Test26_LNK1_a_binding_is_the_role_scope_and_task(t *testing.T) {
 
 // Test26_LNK2: identical replays converge, sequentially and concurrently.
 func Test26_LNK2_identical_replays_converge(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	w.step(w.r.BindScopeAs(w.ctx, "parent", project, parentEP(parent), "active"))
 	w.step(w.r.BindScopeAs(w.ctx, "parent", project, parentEP(parent), "active"))
@@ -104,6 +106,7 @@ func (w *world) rowsQuiet(query string, args ...any) []store.Row {
 
 // Test26_LNK3: a link id is stable when its lower owner changes.
 func Test26_LNK3_a_link_id_does_not_change_when_its_owner_does(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	lid := registry.LinkID("execution", "initiative", initiative, "project", project)
 	w.step(lid, nil)
@@ -119,6 +122,7 @@ func Test26_LNK3_a_link_id_does_not_change_when_its_owner_does(t *testing.T) {
 // Test26_LNK4: one live owner per scope; the contest is retained once; concurrency settles
 // as one owner; an archived binding is revalidated, not restored.
 func Test26_LNK4_one_live_owner_per_scope(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	w.step(w.r.BindScopeAs(w.ctx, "parent", project, parentEP(parent), "active"))
 	for range 3 {
@@ -166,6 +170,7 @@ func Test26_LNK4_one_live_owner_per_scope(t *testing.T) {
 
 // Test26_LNK5: one task, one role, one scope (every row of the property).
 func Test26_LNK5_one_task_one_role_one_scope(t *testing.T) {
+	t.Parallel()
 	t.Run("parent_as_supervisor", func(t *testing.T) {
 		w := newWorld(t)
 		w.step(w.r.BindScopeAs(w.ctx, "parent", project, parentEP(parent), "active"))
@@ -235,6 +240,7 @@ func Test26_LNK5_one_task_one_role_one_scope(t *testing.T) {
 
 // Test26_LNK6: cycles and kinds.
 func Test26_LNK6_cycles_and_kinds(t *testing.T) {
+	t.Parallel()
 	t.Run("self_supervision", func(t *testing.T) {
 		w := newWorld(t)
 		s := w.supervision()
@@ -270,6 +276,7 @@ func Test26_LNK6_cycles_and_kinds(t *testing.T) {
 
 // Test26_LNK7: issue attachment scoping.
 func Test26_LNK7_issue_attachment_scoping(t *testing.T) {
+	t.Parallel()
 	other := supervision{otherInitiative, otherProject, supervisorEP(otherSupervisor), parentEP(otherParent), "execution"}
 	t.Run("foreign_parent", func(t *testing.T) {
 		w := newWorld(t)
@@ -329,6 +336,7 @@ func Test26_LNK7_issue_attachment_scoping(t *testing.T) {
 // Test26_LNK8: attaching writes scope row + child binding + edge, converges, completes a
 // partial attachment and keeps a paused assignment paused.
 func Test26_LNK8_attaching_writes_converges_and_keeps_paused(t *testing.T) {
+	t.Parallel()
 	t.Run("writes_and_converges", func(t *testing.T) {
 		w := newWorld(t)
 		w.superviseDefault()
@@ -362,6 +370,7 @@ func Test26_LNK8_attaching_writes_converges_and_keeps_paused(t *testing.T) {
 
 // Test26_LNK9: a shared project.
 func Test26_LNK9_a_shared_project(t *testing.T) {
+	t.Parallel()
 	reference := supervision{otherInitiative, project, supervisorEP(otherSupervisor), parentEP(parent), "reference"}
 	t.Run("second_initiative_references", func(t *testing.T) {
 		w := newWorld(t)
@@ -412,6 +421,7 @@ func (w *world) record(origin, task, link, digest, kind, key string) any {
 
 // Test26_LNK10: only the execution link's upper endpoint that owns its scope may instruct.
 func Test26_LNK10_directive_authority(t *testing.T) {
+	t.Parallel()
 	t.Run("authority", func(t *testing.T) {
 		w := newWorld(t)
 		execution := field(w.superviseDefault(), "linkId").(string)

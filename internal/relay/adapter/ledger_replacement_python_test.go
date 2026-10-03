@@ -32,6 +32,7 @@ func (r *ledgerReplacementRPC) Call(_ context.Context, method string, _ map[stri
 }
 
 func Test28LedgerReplacementAfterGuardMatchesTheGolden(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	socket := filepath.Join(root, "socket")
 	if err := os.WriteFile(socket, nil, 0600); err != nil {

@@ -36,6 +36,11 @@ func (s *Scheduler) RecordPass(ctx context.Context, plan, actor string, opts Rea
 			" order_json, dispositions_json, recorded_by, recorded_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
 			plan, seq, reading.PlanRevision, reading.InputDigest, reading.Pass.ReadyCount, reading.Pass.FreeSlots, reading.Pass.Ceiling, reading.Pass.Held,
 			reading.Pass.DecidingLimit, reading.orderJSON(), reading.dispositionsJSON(), actor, s.now())
+		if err != nil || reading.ReleasePolicy == nil {
+			return err
+		}
+		// the policy state this pass saw: the switch and its basis ride with the pass (CRW-411). A plan with no policy leaves the pass row alone.
+		_, err = q.ExecContext(txCtx, "INSERT INTO dag_pass_release_policy (plan_id, pass_seq, policy_json) VALUES (?,?,?)", plan, seq, dag.Canonical(reading.ReleasePolicy.canonical()))
 		return err
 	})
 	return reading, seq, err
@@ -60,6 +65,9 @@ func (r Reading) dispositionsJSON() string {
 		}
 		if n.Release != nil {
 			node["release"] = n.Release.canonical()
+		}
+		if n.MergeOrder != nil {
+			node["merge_order"] = n.MergeOrder.canonical()
 		}
 		nodes[i] = node
 	}

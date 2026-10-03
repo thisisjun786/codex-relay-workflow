@@ -33,6 +33,8 @@ type NodeReading struct {
 	Lifecycle string
 	// Release is how an implementation candidate is released and on what basis (CRW-409); nil for a node that was not judged.
 	Release *ReleaseJudgement
+	// MergeOrder is the node's place in the merge order when a measured conflict of two live nodes asks for one (CRW-410); nil otherwise, and then no key is printed.
+	MergeOrder *MergeOrder
 }
 
 // PassSummary is the capacity side of one reading.
@@ -43,6 +45,8 @@ type PassSummary struct {
 	// Overlaps are the overlaps the pass judged, by grade (CRW-409): every implementation candidate that reached the overlap judgement counts the holders it overlaps, by the worst grade of each overlap,
 	// whether or not it was released in the end. Counted leaves the mechanical ones out.
 	Overlaps OverlapCounts
+	// OrderConstraints is the pairs of live nodes the reading puts in a merge order (CRW-410): the later one of each refreshes its base after the earlier one lands.
+	OrderConstraints int
 }
 
 // Reading is the ready set of one plan at one revision, computed from stored rows only. Ready is in release order; Nodes holds every live
@@ -57,6 +61,8 @@ type Reading struct {
 	Nodes        []NodeReading
 	// PlanState is paused while the plan is paused; empty for an active plan, and then no key is printed (CRW-281).
 	PlanState string
+	// ReleasePolicy is the state of local-optimistic release under the plan's release policy (CRW-411); nil when the plan has none, and then no key is printed.
+	ReleasePolicy *OptimismState
 }
 
 func (n NodeReading) object() contract.OrderedObject {
@@ -73,6 +79,9 @@ func (n NodeReading) object() contract.OrderedObject {
 	}
 	if n.Release != nil {
 		o = append(o, contract.Field{Key: "release", Value: n.Release.object()})
+	}
+	if n.MergeOrder != nil {
+		o = append(o, contract.Field{Key: "merge_order", Value: n.MergeOrder.object()})
 	}
 	if n.Lifecycle != "" {
 		o = append(o, contract.Field{Key: "lifecycle", Value: n.Lifecycle})
@@ -109,14 +118,17 @@ func (r Reading) Object() contract.OrderedObject {
 	if r.PlanState != "" {
 		o = append(o, contract.Field{Key: "plan_state", Value: r.PlanState})
 	}
-	return append(o, contract.OrderedObject{
+	tail := contract.OrderedObject{
 		{Key: "pass", Value: contract.OrderedObject{
 			{Key: "free_slots", Value: r.Pass.FreeSlots}, {Key: "ceiling", Value: r.Pass.Ceiling}, {Key: "ceiling_source", Value: r.Pass.CeilingSource},
 			{Key: "held", Value: r.Pass.Held}, {Key: "ready_count", Value: r.Pass.ReadyCount}, {Key: "deciding_limit", Value: r.Pass.DecidingLimit},
-			{Key: "overlap_count", Value: r.Pass.Overlaps.Counted()}, {Key: "overlaps", Value: r.Pass.Overlaps.object()},
+			{Key: "overlap_count", Value: r.Pass.Overlaps.Counted()}, {Key: "overlaps", Value: r.Pass.Overlaps.object()}, {Key: "order_constraints", Value: r.Pass.OrderConstraints},
 		}},
-		{Key: "ready", Value: ready}, {Key: "nodes", Value: nodes},
-	}...)
+	}
+	if r.ReleasePolicy != nil {
+		tail = append(tail, contract.Field{Key: "release_policy", Value: r.ReleasePolicy.object()})
+	}
+	return append(append(o, tail...), contract.OrderedObject{{Key: "ready", Value: ready}, {Key: "nodes", Value: nodes}}...)
 }
 
 // SchemaReading names the document dag-ready prints.

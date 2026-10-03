@@ -6,7 +6,7 @@ import (
 	"errors"
 	"strconv"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -102,6 +102,10 @@ func cmdEmit(c *cliRun) (any, error) {
 		options.Continuation = []byte(dumps(Obj{{Key: "anchorTurnId", Value: anchor}, {Key: "actor", Value: actor}, {Key: "reason", Value: reason}}))
 	}
 	if c.opt("--supersedes-revision") != nil {
+		// Whatever the child names is recorded as it stated it, a suppressed receipt of this
+		// generation included (CRW-470): a staged receipt can be suppressed after the child names it,
+		// so no check here keeps the naming out; the head reads it through the suppressed receipt
+		// (registry.ReadThrough), and refuses nothing the child could not have known.
 		s := c.s("--supersedes-revision")
 		options.SupersedesRevision = &s
 	}
@@ -148,7 +152,7 @@ func withContinuationHint(err error) error {
 	if !errors.As(err, &need) || !errors.As(err, &refused) {
 		return err
 	}
-	return store.RefusedBecause(refused.Reason, refused.Detail+"; to continue this generation from this turn, re-run this emit with --continues-anchor "+pyvalue.StrRepr(need.Anchor)+" --continuation-actor <your own task id> --continuation-reason <why this turn continues it>", err)
+	return store.RefusedBecause(refused.Reason, refused.Detail+"; to continue this generation from this turn, re-run this emit with --continues-anchor "+quote.Shell(need.Anchor)+" --continuation-actor <your own task id> --continuation-reason <why this turn continues it>", err)
 }
 
 // rowObj is dict(sqlite3.Row) of a deliveries row, in the table's column order.

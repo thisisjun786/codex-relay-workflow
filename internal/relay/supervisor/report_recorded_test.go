@@ -11,6 +11,7 @@ func compareRecordedPython(t *testing.T, id string, first, second, prior any) {
 	compareReportCapture(t, id, map[string]any{"first": first, "second": second, "prior": prior})
 }
 func Test24_SR_3_RecordOnceAndSuppress(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	ctx := context.Background()
 	o := f.obligation(t)
@@ -39,6 +40,7 @@ func Test24_SR_3_RecordOnceAndSuppress(t *testing.T) {
 	compareRecordedPython(t, "SR-3", first, second, prior)
 }
 func Test24_SR_17_ReportJournalNamesMessage(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	ctx := context.Background()
 	o := f.obligation(t)

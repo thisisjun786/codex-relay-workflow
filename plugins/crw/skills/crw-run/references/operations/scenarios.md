@@ -322,7 +322,9 @@ Clauses: OPS-9.2, OPS-9.3.
 
 Action: the two are not treated alike. The optional reviewer is recorded as unavailable, sufficient
 independent review is obtained under the repository's policy, and the work continues; waiting
-indefinitely for an optional reviewer is not diligence and produces nothing. The missing mandatory
+indefinitely for an optional reviewer is not diligence and produces nothing; the one run each of Devin
+and Codex makes on a pull request is the exception, awaited to its end before the receipt
+([Devin and Codex reviews are references, not merge gates](../merge-readiness.md#devin-and-codex-reviews-are-references-not-merge-gates)). The missing mandatory
 check is blocked, and the child reports blocked rather than reporting completion with a caveat
 attached, because the caveat is the part that gets skimmed. The parent does not merge on a head
 whose required checks have not passed.

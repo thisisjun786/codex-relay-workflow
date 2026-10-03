@@ -31,6 +31,13 @@ type managedCLI struct {
 
 func newManagedCLI(t *testing.T) *managedCLI {
 	t.Helper()
+	return newManagedCLIOn(t, `{"roles":{"parent":{"model":"gpt-5.4","reasoningEffort":"medium"},"child":{"model":"gpt-5.4","reasoningEffort":"medium"}}}`, "gpt-5.4", "medium")
+}
+
+// newManagedCLIOn is newManagedCLI over the given policy file text, with the child's settings (and
+// what the app-server reports for it) on one model and effort.
+func newManagedCLIOn(t *testing.T, policy, model, effort string) *managedCLI {
+	t.Helper()
 	root := t.TempDir()
 	c := &managedCLI{t: t, state: filepath.Join(root, "state"), scope: filepath.Join(root, "scopes"), marker: filepath.Join(root, "markers")}
 	t.Setenv("CODEX_SESSION_RELAY_SCOPE_DIR", c.scope)
@@ -39,13 +46,13 @@ func newManagedCLI(t *testing.T) *managedCLI {
 		t.Fatal(err)
 	}
 	policyPath := filepath.Join(root, "policy.json")
-	if err := os.WriteFile(policyPath, []byte(`{"roles":{"parent":{"model":"gpt-5.4","reasoningEffort":"medium"},"child":{"model":"gpt-5.4","reasoningEffort":"medium"}}}`), 0600); err != nil {
+	if err := os.WriteFile(policyPath, []byte(policy), 0600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv(execution.EnvPolicy, policyPath)
 	registry.ResetRolePolicySnapshot()
 	t.Cleanup(registry.ResetRolePolicySnapshot)
-	c.settings = map[string]any{"sandbox": map[string]any{"type": "readOnly", "networkAccess": false}, "approvalPolicy": "never", "cwd": workspace, "runtimeWorkspaceRoots": []any{workspace}, "model": "gpt-5.4", "reasoningEffort": "medium", "environments": []any{map[string]any{"environmentId": "local", "cwd": workspace, "runtimeWorkspaceRoots": []any{workspace}}}}
+	c.settings = map[string]any{"sandbox": map[string]any{"type": "readOnly", "networkAccess": false}, "approvalPolicy": "never", "cwd": workspace, "runtimeWorkspaceRoots": []any{workspace}, "model": model, "reasoningEffort": effort, "environments": []any{map[string]any{"environmentId": "local", "cwd": workspace, "runtimeWorkspaceRoots": []any{workspace}}}}
 	c.host = fakehost.Start(t)
 	response := func() map[string]any {
 		r := map[string]any{}
@@ -71,7 +78,7 @@ func newManagedCLI(t *testing.T) *managedCLI {
 		}
 		return fakehost.Reply{Result: map[string]any{"turn": map[string]any{"id": id}}}
 	})
-	c.host.Respond("thread/read", fakehost.Reply{Result: map[string]any{"thread": map[string]any{"status": map[string]any{"type": "idle"}, "canAcceptDirectInput": true, "model": "gpt-5.4", "reasoningEffort": "medium", "cwd": workspace}}})
+	c.host.Respond("thread/read", fakehost.Reply{Result: map[string]any{"thread": map[string]any{"status": map[string]any{"type": "idle"}, "canAcceptDirectInput": true, "model": model, "reasoningEffort": effort, "cwd": workspace}}})
 	c.host.Respond("thread/resume", fakehost.Reply{Result: response()})
 	c.host.Respond("thread/goal/get", fakehost.Reply{Result: map[string]any{"goal": nil}})
 	c.host.Respond("thread/turns/list", fakehost.Reply{Result: map[string]any{"data": []any{map[string]any{"id": "standby", "status": "completed"}}, "nextCursor": nil}})
@@ -86,7 +93,7 @@ func newManagedCLI(t *testing.T) *managedCLI {
 		}
 		return fakehost.Reply{Result: map[string]any{"data": data, "nextCursor": nil}}
 	})
-	s, err := store.Open(context.Background(), filepath.Join(c.state, "relay.sqlite3"), c.host.SocketPath)
+	s, err := openStore(context.Background(), filepath.Join(c.state, "relay.sqlite3"), c.host.SocketPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +139,7 @@ func (c *managedCLI) start(raw []byte) (stdout, stderr string, code int) {
 // withStore runs f over the CLI's store, closed again before the next command.
 func (c *managedCLI) withStore(f func(*store.Store)) {
 	c.t.Helper()
-	s, err := store.Open(context.Background(), filepath.Join(c.state, "relay.sqlite3"), c.host.SocketPath)
+	s, err := openStore(context.Background(), filepath.Join(c.state, "relay.sqlite3"), c.host.SocketPath)
 	if err != nil {
 		c.t.Fatal(err)
 	}

@@ -1,0 +1,59 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "CRW independent review artifact, schema v1",
+  "description": "The Go validator in internal/review is the authority. Rules JSON Schema cannot state (head equals the expected head, the status and count invariants, support bounds, kept versus dropped findings) are enforced only there.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "tool", "toolVersion", "model", "effort", "agyVersion", "base", "head", "patchId", "diff", "reviewers", "status", "reason", "startedAt", "finishedAt", "findings", "dropped"],
+  "properties": {
+    "schema": {"const": "crw-independent-review/1"},
+    "tool": {"type": "string", "minLength": 1},
+    "toolVersion": {"type": "string", "minLength": 1},
+    "model": {"type": "string", "minLength": 1},
+    "effort": {"type": "string", "minLength": 1},
+    "agyVersion": {"type": "string", "minLength": 1, "description": "\"unknown\" when the version could not be read"},
+    "base": {"$ref": "#/definitions/commit"},
+    "head": {"$ref": "#/definitions/commit"},
+    "patchId": {"$ref": "#/definitions/commit"},
+    "diff": {
+      "type": "object", "additionalProperties": false, "required": ["files", "additions", "deletions"],
+      "properties": {"files": {"type": "integer", "minimum": 0}, "additions": {"type": "integer", "minimum": 0}, "deletions": {"type": "integer", "minimum": 0}}
+    },
+    "reviewers": {
+      "type": "object", "additionalProperties": false, "required": ["run", "failed", "timedOut", "authFailed"],
+      "properties": {"run": {"type": "integer", "minimum": 0}, "failed": {"type": "integer", "minimum": 0}, "timedOut": {"type": "integer", "minimum": 0}, "authFailed": {"type": "integer", "minimum": 0}}
+    },
+    "status": {"enum": ["complete", "partial", "unavailable"]},
+    "reason": {"type": "string", "description": "empty exactly when status is complete"},
+    "startedAt": {"type": "string", "format": "date-time"},
+    "finishedAt": {"type": "string", "format": "date-time"},
+    "findings": {"type": "array", "items": {"$ref": "#/definitions/finding"}},
+    "dropped": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false, "required": ["finding", "reason"],
+        "properties": {
+          "finding": {"$ref": "#/definitions/finding"},
+          "reason": {"enum": ["non_finding", "noise_file", "invalid_location", "not_in_diff", "missing_at_head", "line_beyond_head", "unknown_grade", "rejected_by_verification", "below_confidence_threshold"]},
+          "detail": {"type": "string"}
+        }
+      }
+    }
+  },
+  "definitions": {
+    "commit": {"type": "string", "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"},
+    "finding": {
+      "type": "object", "additionalProperties": false,
+      "required": ["file", "line", "title", "explanation", "severity", "grade", "security", "perspective", "reviewers", "support", "verdict"],
+      "properties": {
+        "file": {"type": "string"}, "line": {"type": "integer"}, "endLine": {"type": "integer"},
+        "title": {"type": "string"}, "explanation": {"type": "string"}, "severity": {"type": "string"},
+        "grade": {"enum": ["", "P0", "P1", "P2", "P3"], "description": "empty only in a dropped finding"},
+        "security": {"type": "boolean"}, "perspective": {"type": "string"},
+        "reviewers": {"type": "array", "items": {"type": "integer", "minimum": 0}},
+        "support": {"type": "integer", "minimum": 0},
+        "verdict": {"enum": ["confirmed", "rejected", "uncertain", "unverified"], "description": "never rejected in findings"}
+      }
+    }
+  }
+}

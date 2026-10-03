@@ -9,7 +9,9 @@ import (
 )
 
 func TestStore_python_durable_properties(t *testing.T) {
+	t.Parallel()
 	t.Run("test_schema_v1_carries_every_table_the_later_phases_need", func(t *testing.T) {
+		t.Parallel()
 		s := recordStore(t)
 		var count int
 		if err := s.DB.QueryRowContext(context.Background(), `SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('acks','attempts','deliveries','events','generations','journal','observations','recipient_lifecycle','recipient_rate','refusals','relationships','schema_meta','verdicts','verification_claims','fault_ledger','fault_occurrences','fault_timeline','fault_remediations','fault_publications','fault_targets','fault_cursors','fault_target_projects','fault_publication_payloads','fault_links','fault_adoptions','fault_aliases','fault_publication_attempts','fault_budget_uses','fault_limits','fault_notifications','fault_policies','fault_overtaken_deliveries')`).Scan(&count); err != nil || count != 32 {
@@ -21,6 +23,7 @@ func TestStore_python_durable_properties(t *testing.T) {
 		}
 	})
 	t.Run("test_columns_the_delivery_and_ack_layers_need_exist_now", func(t *testing.T) {
+		t.Parallel()
 		s := recordStore(t)
 		for _, spec := range []struct{ table, column string }{{"deliveries", "kind"}, {"deliveries", "recipient_task_id"}, {"deliveries", "recipient_thread_id"}, {"deliveries", "lease_owner"}, {"deliveries", "lease_until"}, {"deliveries", "hold_reason"}, {"deliveries", "dispatch_evidence"}, {"deliveries", "provenance"}, {"attempts", "internal_state"}, {"attempts", "sealed"}, {"attempts", "operation_observation"}, {"attempts", "recipient_scan"}, {"attempts", "affirmative_evidence"}, {"acks", "verified"}, {"recipient_lifecycle", "archived"}, {"recipient_lifecycle", "goal_status"}, {"recipient_lifecycle", "can_accept_input"}, {"recipient_lifecycle", "deliverable"}, {"recipient_lifecycle", "withhold_reason"}} {
 			rows, err := s.DB.QueryContext(context.Background(), "PRAGMA table_info("+spec.table+")")
@@ -52,6 +55,7 @@ func TestStore_python_durable_properties(t *testing.T) {
 		}
 	})
 	t.Run("test_the_database_file_is_private", func(t *testing.T) {
+		t.Parallel()
 		s := recordStore(t)
 		info, err := os.Stat(s.Path)
 		if err != nil || info.Mode().Perm() != 0600 {
@@ -59,6 +63,7 @@ func TestStore_python_durable_properties(t *testing.T) {
 		}
 	})
 	t.Run("test_an_exception_inside_a_transaction_leaves_no_partial_row", func(t *testing.T) {
+		t.Parallel()
 		s := recordStore(t)
 		ctx := context.Background()
 		if err := s.Compose(ctx, func(joined context.Context, _ *sql.Conn) error {
@@ -75,6 +80,7 @@ func TestStore_python_durable_properties(t *testing.T) {
 		}
 	})
 	t.Run("test_a_fault_after_the_body_still_rolls_back", func(t *testing.T) {
+		t.Parallel()
 		s := recordStore(t)
 		ctx := context.Background()
 		if _, err := s.DB.ExecContext(ctx, `CREATE TABLE deferred_guard (id INTEGER PRIMARY KEY, parent INTEGER REFERENCES missing_parent(id) DEFERRABLE INITIALLY DEFERRED)`); err != nil {
@@ -92,6 +98,7 @@ func TestStore_python_durable_properties(t *testing.T) {
 		}
 	})
 	t.Run("test_a_failed_registration_is_not_a_registration", func(t *testing.T) {
+		t.Parallel()
 		// Given: a fresh store.
 		s := recordStore(t)
 		r := Relationship{ID: "rel-0123456789abcdef", IssueKey: "REL-1", Status: StatusActive, ParentTaskID: "p", ChildTaskID: "c", Generation: 1, ArtifactRoots: "[]", AllowedRecipients: "[]", CreatedAt: "t", UpdatedAt: "t"}
@@ -111,6 +118,7 @@ func TestStore_python_durable_properties(t *testing.T) {
 		}
 	})
 	t.Run("test_state_survives_reopening_the_database", func(t *testing.T) {
+		t.Parallel()
 		s := recordStore(t)
 		ctx := context.Background()
 		if err := s.AppendJournal(ctx, JournalEntry{At: "t", Kind: "durable", Subject: "s", Detail: "d"}); err != nil {
@@ -127,6 +135,7 @@ func TestStore_python_durable_properties(t *testing.T) {
 		}
 	})
 	t.Run("test_identity_is_minted_once_and_survives_reopening", func(t *testing.T) {
+		t.Parallel()
 		s := recordStore(t)
 		ctx := context.Background()
 		first, err := s.Locate(ctx)

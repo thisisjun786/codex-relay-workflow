@@ -3,7 +3,7 @@ package cli
 // Reported by doctor, copied from cli.py OFFLINE_COMMANDS and HOST_REQUIRED_COMMANDS.
 var offlineCommands = []string{
 	"ack", "ack-proof", "admit-turn", "assignment-show", "claim", "criteria-register",
-	"criteria-show", "doctor", "emit", "generation-bind", "generation-open", "register",
+	"criteria-show", "decision-reply", "decision-show", "doctor", "emit", "generation-bind", "generation-open", "intervention-show", "register",
 	"relationship-resume", "relationship-status", "revision-head", "settings-record", "settings-show",
 	"show", "status", "store-challenge", "store-identity", "verdict", "linkage-attach",
 	"linkage-bind", "linkage-counterpart", "linkage-directive", "linkage-completion", "linkage-down",
@@ -28,7 +28,7 @@ var offlineCommands = []string{
 	"supervisor-report-recorded", "reporting-derive", "supervisor-stage", "supervisor-show",
 	"packet-check", "merge-evidence", "intent-declare", "intent-attempt", "intent-bind",
 	"intent-register", "intent-claim", "intent-disposition", "intent-resolve", "intent-show",
-	"dag-plan-put", "dag-plan-show", "dag-plan-log",
+	"dag-plan-put", "dag-plan-show", "dag-plan-log", "merge-turn-progress", "merge-turn-pass",
 }
 var hostRequiredCommands = []string{
 	"daemon", "deliver", "reconcile", "recover", "service run", "service start", "service restart",

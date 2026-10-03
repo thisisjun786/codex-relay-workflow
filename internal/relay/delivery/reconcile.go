@@ -508,9 +508,12 @@ func (rc *Reconciler) bindPromotedAnchor(ctx context.Context, attempt, delivery 
 	if turn == "" {
 		return nil, nil
 	}
-	event, err := one(ctx, rc.Store, "SELECT relationship_id, execution_generation FROM events WHERE event_id = ?", attempt.S("event_id"))
+	event, err := one(ctx, rc.Store, "SELECT relationship_id, execution_generation, outcome, receipt FROM events WHERE event_id = ?", attempt.S("event_id"))
 	if err != nil || event == nil {
 		return nil, err
+	}
+	if keepsAnchor(event) {
+		return nil, nil
 	}
 	return BindAnchorIn(ctx, rc.Store, rc.Clock, event.S("relationship_id"), event.I("execution_generation"), turn)
 }
@@ -523,6 +526,9 @@ func BindAnchorIn(ctx context.Context, s *store.Store, clock Clock, rid string, 
 	}
 	current, err := one(ctx, s, "SELECT anchor_state, dispatch_turn_id FROM generations WHERE relationship_id = ? AND execution_generation = ?", rid, number)
 	if err != nil || current == nil {
+		return "ineligible", err
+	}
+	if withdrawn, err := store.GenerationWithdrawn(ctx, s.Q(ctx), rid, number); err != nil || withdrawn {
 		return "ineligible", err
 	}
 	now := clock.ISO()

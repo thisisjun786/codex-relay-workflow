@@ -5,7 +5,10 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"fmt"
+	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
@@ -26,6 +29,8 @@ type IntegrationResult struct {
 	Observations                 []Observation
 	Integrated, MarkPresent      bool
 	SlotReleased                 bool
+	// Sweep is the conflict sweep a landing owes (conflicts, CRW-410): nil when no head landed in this call.
+	Sweep *SweepResult
 }
 
 // ObserveIntegration records, for each target, whether the head the parent accepted is contained in the branch now, as a fact the relay read itself (git merge-base --is-ancestor for a local
@@ -60,6 +65,11 @@ func (s *Scheduler) ObserveIntegration(ctx context.Context, plan, node, actor st
 	if err := s.observableRelationship(ctx, q, acc, actor); err != nil {
 		return out, err
 	}
+	// what the acceptance stands on: its own head and revision, or, after a recorded base refresh (baserefresh.go), the head of the later generation whose merged mark counts
+	stand, err := s.standOf(ctx, q, acc)
+	if err != nil {
+		return out, err
+	}
 	known, err := s.nodeTargets(ctx, q, snap, acc)
 	if err != nil {
 		return out, err
@@ -86,7 +96,7 @@ func (s *Scheduler) ObserveIntegration(ctx context.Context, plan, node, actor st
 		if err != nil {
 			return out, err
 		}
-		anc, method, err := s.Ancestry(ctx, t.Repository, acc.HeadSHA, tip.SHA)
+		anc, method, err := s.Ancestry(ctx, t.Repository, stand.Head, tip.SHA)
 		if err != nil {
 			return out, err
 		}
@@ -118,17 +128,22 @@ func (s *Scheduler) ObserveIntegration(ctx context.Context, plan, node, actor st
 		if err := s.observableRelationship(txCtx, tx, acc, actor); err != nil {
 			return err
 		}
+		if standNow, err := s.standOf(txCtx, tx, current); err != nil {
+			return err
+		} else if standNow != stand {
+			return refuse(contract.RefusalDispositionConflict, "the head %s stands on changed while it was being observed", node)
+		}
 		for _, r := range readings {
 			var subject, tip sql.NullString
 			var lastSeq, lastAnc sql.NullInt64
 			if err := tx.QueryRowContext(txCtx, "SELECT MAX(observed_seq) FROM dag_integration_observations WHERE acceptance_id = ? AND repository = ? AND base_ref = ?", acc.AcceptanceID, r.target.Repository, r.target.BaseRef).Scan(&lastSeq); err != nil {
 				return err
 			}
-			obs := Observation{Repository: r.target.Repository, BaseRef: r.target.BaseRef, SubjectSHA: acc.HeadSHA, TipSHA: r.tip, IsAncestor: r.anc, Method: r.method}
+			obs := Observation{Repository: r.target.Repository, BaseRef: r.target.BaseRef, SubjectSHA: stand.Head, TipSHA: r.tip, IsAncestor: r.anc, Method: r.method}
 			if lastSeq.Valid {
 				_ = tx.QueryRowContext(txCtx, "SELECT subject_sha, tip_sha, is_ancestor FROM dag_integration_observations WHERE acceptance_id = ? AND repository = ? AND base_ref = ? AND observed_seq = ?",
 					acc.AcceptanceID, r.target.Repository, r.target.BaseRef, lastSeq.Int64).Scan(&subject, &tip, &lastAnc)
-				if subject.String == acc.HeadSHA && tip.String == r.tip && (lastAnc.Int64 == 1) == r.anc {
+				if subject.String == stand.Head && tip.String == r.tip && (lastAnc.Int64 == 1) == r.anc {
 					obs.Replayed, obs.Seq = true, lastSeq.Int64
 					var id string
 					if err := tx.QueryRowContext(txCtx, "SELECT observation_id FROM dag_integration_observations WHERE acceptance_id = ? AND repository = ? AND base_ref = ? AND observed_seq = ?",
@@ -146,7 +161,7 @@ func (s *Scheduler) ObserveIntegration(ctx context.Context, plan, node, actor st
 			// a merge turn that landed this head on this branch carries the observation
 			var turn sql.NullString
 			if err := tx.QueryRowContext(txCtx, "SELECT turn_id FROM merge_turns WHERE repository = ? AND base_ref = ? AND candidate_head = ? AND state = 'landed' ORDER BY turn_id LIMIT 1",
-				r.target.Repository, r.target.BaseRef, acc.HeadSHA).Scan(&turn); err != nil && err != sql.ErrNoRows {
+				r.target.Repository, r.target.BaseRef, stand.Head).Scan(&turn); err != nil && err != sql.ErrNoRows {
 				return err
 			}
 			var carrier any
@@ -163,7 +178,7 @@ func (s *Scheduler) ObserveIntegration(ctx context.Context, plan, node, actor st
 			}
 			out.Observations = append(out.Observations, obs)
 		}
-		// integrated: every REQUIRED target contains the head and the parent marked the merge
+		// integrated: every REQUIRED target contains the head the acceptance stands on and the parent marked the merge of that revision
 		required, err := s.nodeTargets(txCtx, tx, now, acc)
 		if err != nil {
 			return err
@@ -178,7 +193,7 @@ func (s *Scheduler) ObserveIntegration(ctx context.Context, plan, node, actor st
 		}
 		var one int
 		out.MarkPresent, err = queryOne(txCtx, tx, "SELECT 1 FROM assignment_marks WHERE relationship_id = ? AND mark = 'merged' AND event_id = ? AND execution_generation = ? AND revision_hash = ?",
-			[]any{acc.RelationshipID, acc.EventID, acc.ExecutionGeneration, acc.RevisionHash}, &one)
+			[]any{stand.RelationshipID, stand.EventID, stand.Generation, stand.RevisionHash}, &one)
 		if err != nil {
 			return err
 		}
@@ -188,7 +203,26 @@ func (s *Scheduler) ObserveIntegration(ctx context.Context, plan, node, actor st
 		}
 		return err
 	})
-	return out, err
+	if err != nil {
+		return out, err
+	}
+	// a head that landed owes a conflict sweep: the other live heads against each other and against the tip it landed on. It rests on the landing's observation, so a repeat of this command (a replay of the
+	// observation) runs the sweep that a failure left undone and finds one that is done.
+	var tips []SweepTip
+	var landed []string
+	for i, r := range readings {
+		if !r.anc {
+			continue
+		}
+		tips = append(tips, SweepTip{Repository: r.target.Repository, Ref: r.target.BaseRef, SHA: r.tip})
+		if i < len(out.Observations) {
+			landed = append(landed, out.Observations[i].ObservationID)
+		}
+	}
+	if ref := landingRef(landed); ref != "" {
+		out.Sweep = s.sweepAfter(ctx, plan, node, actor, TriggerLanding, ref, tips, nil)
+	}
+	return out, nil
 }
 
 // observableRelationship refuses an observation for a relationship that is not the parent's to advance: paused or cancelled (contract 3.2), or another parent's. An archived
@@ -211,4 +245,52 @@ func (s *Scheduler) observableRelationship(ctx context.Context, q store.Querier,
 		return refuse(contract.RefusalScopeRoleMismatch, "task %s is not the parent of relationship %s, which is held by %s", actor, rel.ID, rel.ParentTaskID)
 	}
 	return nil
+}
+
+// landingRef is what a landing's sweep rests on: the observation of the one target the head is contained in, or, when several contain it, a digest of all of their observations, so that a later landing on
+// another target (a new observation) is a new trigger and is swept, and a repeat of the same call (the same observations, replayed) finds the sweep it owes.
+func landingRef(observations []string) string {
+	switch len(observations) {
+	case 0:
+		return ""
+	case 1:
+		return observations[0]
+	}
+	sorted := append([]string(nil), observations...)
+	sort.Strings(sorted)
+	return "dio-set-" + shaOf([]byte(strings.Join(sorted, "|")))[:32]
+}
+
+// ExecutionIntegrated says, for the relationship whose merged mark is (event, generation, revision), whether it executed a plan node and whether every node it executed has landed (CRW-429: the cleanup
+// of a finished child waits for this). applicable is false for a relationship that executed no node. For a node, integrated needs its active acceptance to stand on exactly that mark (its own head, or
+// after a recorded base refresh the later generation) and every target to contain the head with the merged mark on that revision (nodeIntegrated); another relationship's acceptance, none, and another
+// event, generation or revision all answer not integrated. It opens no transaction: call it inside one for one snapshot.
+func (s *Scheduler) ExecutionIntegrated(ctx context.Context, relationship, event string, generation int64, revision string) (applicable, integrated bool, err error) {
+	q := s.Store.Q(ctx)
+	if present, err := tableExists(ctx, q, "dag_node_executions"); err != nil || !present {
+		return false, false, err
+	}
+	nodes, err := s.Store.All(ctx, "SELECT DISTINCT plan_id, node_id FROM dag_node_executions WHERE relationship_id = ? ORDER BY plan_id, node_id", relationship)
+	if err != nil || len(nodes) == 0 {
+		return false, false, err
+	}
+	for _, row := range nodes {
+		plan, node := fmt.Sprint(row.Get("plan_id")), fmt.Sprint(row.Get("node_id"))
+		snap, _, err := dag.SnapshotAt(ctx, q, plan, 0)
+		if err != nil {
+			return true, false, err
+		}
+		acc, found, err := loadActiveAcceptance(ctx, q, plan, node)
+		if err != nil || !found {
+			return true, false, err
+		}
+		stand, err := s.standOf(ctx, q, acc)
+		if err != nil || stand.RelationshipID != relationship || stand.Generation != generation || stand.EventID != event || stand.RevisionHash != revision {
+			return true, false, err
+		}
+		if landed, _, err := s.nodeIntegrated(ctx, q, plan, snap, acc); err != nil || !landed {
+			return true, false, err
+		}
+	}
+	return true, true, nil
 }

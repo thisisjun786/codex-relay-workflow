@@ -260,6 +260,16 @@ func RunScenario(rt Runtime, o RunOptions, s Scenario) (expect Expect, err error
 	session := o.Rules.NewSession(c.bind)
 	var results []StepResult
 	for i, step := range s.Steps {
+		if step.Wait != "" {
+			if step.Hook != "" || step.CLI != nil || step.Node != nil || step.MCP != nil || step.Write != nil {
+				return Expect{}, fmt.Errorf("%s: step %d: a wait step runs nothing else", s.ID, i)
+			}
+			if err := waitFor(c, step.Wait, o.Timeout); err != nil {
+				return Expect{}, fmt.Errorf("%s: step %d: %w", s.ID, i, err)
+			}
+			results = append(results, StepResult{Action: "wait", StdoutForm: "empty"})
+			continue
+		}
 		if step.Write != nil {
 			if step.Hook != "" || step.CLI != nil || step.Node != nil || step.MCP != nil {
 				return Expect{}, fmt.Errorf("%s: step %d: a write step runs nothing else", s.ID, i)
@@ -299,6 +309,20 @@ func RunScenario(rt Runtime, o RunOptions, s Scenario) (expect Expect, err error
 		exit = results[len(results)-1].Exit
 	}
 	return Expect{Exit: exit, Steps: results, Tree: tree, Calls: calls}, nil
+}
+
+// waitFor polls for a file the case-path glob names, which a detached process of an earlier step writes after that step returned.
+func waitFor(c *Case, pattern string, limit time.Duration) error {
+	path, err := casePath(c, pattern)
+	for deadline := time.Now().Add(limit); err == nil; time.Sleep(50 * time.Millisecond) {
+		if hits, _ := filepath.Glob(path); len(hits) > 0 {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			err = fmt.Errorf("no file matches %s after %s", pattern, limit)
+		}
+	}
+	return err
 }
 
 // command is one step's process: the runtime says what to run, the engine expands the placeholders
@@ -803,6 +827,9 @@ func readCalls(c *Case, s *Session) ([]Call, error) {
 			return nil, err
 		}
 		for i := range call.Argv {
+			if call.Cmd == "ps" && i > 0 && call.Argv[i-1] == "-p" && call.Argv[i] != "" && strings.Trim(call.Argv[i], "0123456789") == "" { // a live process id, which no text rule can tell from another number
+				call.Argv[i] = "<PID>"
+			}
 			call.Argv[i] = s.Text(call.Argv[i])
 		}
 		call.Cwd = s.Text(call.Cwd)

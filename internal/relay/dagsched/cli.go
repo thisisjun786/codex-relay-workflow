@@ -30,11 +30,15 @@ func init() {
 		dispatch.Command{Name: "dag-release-close", Run: runReleaseClose},
 		dispatch.Command{Name: "dag-accept", Run: runAccept},
 		dispatch.Command{Name: "dag-integration-observe", Run: runObserve},
+		dispatch.Command{Name: "dag-base-refresh", Run: runBaseRefresh},
+		dispatch.Command{Name: "dag-generation-withdraw", Run: runWithdraw},
 		dispatch.Command{Name: "dag-decision-record", Run: runDecision},
 		dispatch.Command{Name: "dag-correct", Run: runCorrect},
 		dispatch.Command{Name: "dag-merge-judge", Run: runMergeJudge},
 		dispatch.Command{Name: "dag-merge-request", Run: runMergeRequest},
 		dispatch.Command{Name: "dag-conflict-observe", Run: runConflictObserve},
+		// dag-conflict-sweep measures every pair of the live heads and each against the tip: a measurement, like dag-conflict-observe, so it is not fenced by the coordinator epoch.
+		dispatch.Command{Name: "dag-conflict-sweep", Run: runConflictSweep},
 		dispatch.Command{Name: "dag-cap-basis-record", Run: runCapBasis},
 	)
 }
@@ -164,8 +168,13 @@ func runRegionDeclare(ctx context.Context, services dispatch.Services, args disp
 			{Key: "key", Value: optionalText(r.Key)}, {Key: "change", Value: r.Change}, {Key: "exclusive", Value: r.Exclusive},
 			{Key: "grade", Value: r.Grade}, {Key: "rule", Value: optionalText(r.Rule)}}
 	}
-	return contract.OrderedObject{{Key: "ok", Value: true}, {Key: "plan_id", Value: declared.PlanID}, {Key: "node_id", Value: declared.NodeID},
-		{Key: "declaration_seq", Value: declared.Seq}, {Key: "replayed", Value: declared.Replayed}, {Key: "regions", Value: list}}, nil
+	answer := contract.OrderedObject{{Key: "ok", Value: true}, {Key: "plan_id", Value: declared.PlanID}, {Key: "node_id", Value: declared.NodeID},
+		{Key: "declaration_seq", Value: declared.Seq}, {Key: "replayed", Value: declared.Replayed}, {Key: "regions", Value: list}}
+	if declared.Narrowed {
+		// printed only when the node already held its regions and this declaration narrowed them (CRW-411)
+		answer = append(answer, contract.Field{Key: "narrowed", Value: true})
+	}
+	return answer, nil
 }
 
 func runRelease(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
@@ -237,14 +246,19 @@ func runAccept(ctx context.Context, services dispatch.Services, args dispatch.Ar
 	}
 	defer closeStore()
 	sched.PRs = ForgePullRequestReader(ExecRunner)
+	sched.Tips = mergeturn.TargetReader{}
 	result, err := sched.Accept(ctx, args.Text("plan"), args.Text("node"), args.Text("actor"), input)
 	if err != nil {
 		return nil, hostFailure(err)
 	}
-	return contract.OrderedObject{{Key: "ok", Value: true}, {Key: "schema", Value: "dag-accept/1"}, {Key: "plan_id", Value: result.PlanID}, {Key: "node_id", Value: result.NodeID},
+	answer := contract.OrderedObject{{Key: "ok", Value: true}, {Key: "schema", Value: "dag-accept/1"}, {Key: "plan_id", Value: result.PlanID}, {Key: "node_id", Value: result.NodeID},
 		{Key: "acceptance_id", Value: result.AcceptanceID}, {Key: "relationship_id", Value: optionalText(result.RelationshipID)}, {Key: "execution_generation", Value: result.Generation},
 		{Key: "replayed", Value: result.Replayed}, {Key: "revalidated", Value: result.Revalidated}, {Key: "superseded_acceptance_id", Value: optionalText(result.SupersededID)},
-		{Key: "head_sha", Value: optionalText(result.HeadSHA)}, {Key: "evidence_digest", Value: optionalText(result.EvidenceDigest)}, {Key: "slot_released", Value: result.SlotReleased}}, nil
+		{Key: "head_sha", Value: optionalText(result.HeadSHA)}, {Key: "evidence_digest", Value: optionalText(result.EvidenceDigest)}, {Key: "slot_released", Value: result.SlotReleased}}
+	if result.Sweep != nil {
+		answer = append(answer, contract.Field{Key: "conflict_sweep", Value: result.Sweep.Object()})
+	}
+	return answer, nil
 }
 
 func runObserve(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
@@ -273,9 +287,58 @@ func runObserve(ctx context.Context, services dispatch.Services, args dispatch.A
 			{Key: "tip_sha", Value: o.TipSHA}, {Key: "is_ancestor", Value: o.IsAncestor}, {Key: "method", Value: o.Method}, {Key: "merge_turn_id", Value: optionalText(o.MergeTurnID)},
 			{Key: "observed_seq", Value: o.Seq}, {Key: "replayed", Value: o.Replayed}}
 	}
-	return contract.OrderedObject{{Key: "ok", Value: true}, {Key: "schema", Value: "dag-integration-observe/1"}, {Key: "plan_id", Value: result.PlanID}, {Key: "node_id", Value: result.NodeID},
+	answer := contract.OrderedObject{{Key: "ok", Value: true}, {Key: "schema", Value: "dag-integration-observe/1"}, {Key: "plan_id", Value: result.PlanID}, {Key: "node_id", Value: result.NodeID},
 		{Key: "acceptance_id", Value: result.AcceptanceID}, {Key: "observations", Value: list}, {Key: "integrated", Value: result.Integrated}, {Key: "mark_present", Value: result.MarkPresent},
-		{Key: "slot_released", Value: result.SlotReleased}}, nil
+		{Key: "slot_released", Value: result.SlotReleased}}
+	if result.Sweep != nil {
+		answer = append(answer, contract.Field{Key: "conflict_sweep", Value: result.Sweep.Object()})
+	}
+	return answer, nil
+}
+
+func runBaseRefresh(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
+	sched, closeStore, err := openScheduler(ctx, services, args)
+	if err != nil {
+		return nil, err
+	}
+	defer closeStore()
+	sched.Tips = mergeturn.TargetReader{}
+	sched.PRs = ForgePullRequestReader(ExecRunner)
+	result, err := sched.RecordBaseRefresh(ctx, args.Text("plan"), args.Text("node"), args.Text("actor"), RefreshInput{Checkout: args.Text("checkout"), Resolved: args.Strings("resolved")})
+	if err != nil {
+		return nil, hostFailure(err)
+	}
+	steps := make([]any, len(result.Steps))
+	for i, st := range result.Steps {
+		resolved := make([]any, len(st.Resolved))
+		for j, r := range st.Resolved {
+			resolved[j] = contract.OrderedObject{{Key: "path", Value: r.Path}, {Key: "blob", Value: optionalText(r.Blob)}}
+		}
+		steps[i] = contract.OrderedObject{{Key: "previous", Value: st.Previous}, {Key: "base_parent", Value: st.BaseParent}, {Key: "head", Value: st.Head}, {Key: "tree", Value: st.Tree}, {Key: "resolved", Value: resolved}}
+	}
+	paths := make([]any, len(result.Resolved))
+	for i, p := range result.Resolved {
+		paths[i] = p
+	}
+	return contract.OrderedObject{{Key: "ok", Value: true}, {Key: "schema", Value: SchemaBaseRefresh}, {Key: "plan_id", Value: result.PlanID}, {Key: "node_id", Value: result.NodeID},
+		{Key: "acceptance_id", Value: result.AcceptanceID}, {Key: "refresh_id", Value: result.RefreshID}, {Key: "refresh_seq", Value: result.Seq}, {Key: "relationship_id", Value: result.RelationshipID},
+		{Key: "execution_generation", Value: result.Generation}, {Key: "event_id", Value: result.EventID}, {Key: "head_sha", Value: result.HeadSHA}, {Key: "base_repository", Value: result.BaseRepository},
+		{Key: "base_ref", Value: result.BaseRef}, {Key: "base_tip_sha", Value: result.BaseTipSHA}, {Key: "steps", Value: steps}, {Key: "resolved_paths", Value: paths}, {Key: "replayed", Value: result.Replayed}}, nil
+}
+
+func runWithdraw(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
+	sched, closeStore, err := openScheduler(ctx, services, args)
+	if err != nil {
+		return nil, err
+	}
+	defer closeStore()
+	result, err := sched.WithdrawGeneration(ctx, args.Text("plan"), args.Text("node"), args.Text("actor"), WithdrawInput{Relationship: args.Text("relationship"), Generation: args.Integer("generation"), Reason: args.Text("reason")})
+	if err != nil {
+		return nil, hostFailure(err)
+	}
+	return contract.OrderedObject{{Key: "ok", Value: true}, {Key: "schema", Value: SchemaWithdraw}, {Key: "plan_id", Value: result.PlanID}, {Key: "node_id", Value: result.NodeID},
+		{Key: "relationship_id", Value: result.RelationshipID}, {Key: "withdrawn_generation", Value: result.Generation}, {Key: "restored_generation", Value: result.RestoredGeneration},
+		{Key: "dispatch_request_id", Value: result.DispatchRequestID}, {Key: "reason", Value: result.Reason}, {Key: "replayed", Value: result.Replayed}}, nil
 }
 
 func runDecision(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
@@ -408,9 +471,54 @@ func runConflictObserve(ctx context.Context, services dispatch.Services, args di
 	for i, f := range result.Files {
 		files[i] = f
 	}
+	drift := make([]any, len(result.Drift))
+	for i, d := range result.Drift {
+		drift[i] = contract.OrderedObject{{Key: "node_id", Value: d.Node}, {Key: "path", Value: d.Path}}
+	}
 	return contract.OrderedObject{{Key: "ok", Value: true}, {Key: "schema", Value: "dag-conflict-observe/1"}, {Key: "plan_id", Value: result.PlanID}, {Key: "observation_id", Value: result.ObservationID},
 		{Key: "left_node_id", Value: result.LeftNode}, {Key: "right_node_id", Value: result.RightNode}, {Key: "left_head", Value: result.LeftHead}, {Key: "right_head", Value: result.RightHead},
-		{Key: "base_sha", Value: result.BaseSHA}, {Key: "conflicts", Value: int64(result.Conflicts)}, {Key: "files", Value: files}, {Key: "method", Value: result.Method}, {Key: "replayed", Value: result.Replayed}}, nil
+		{Key: "base_sha", Value: result.BaseSHA}, {Key: "conflicts", Value: int64(result.Conflicts)}, {Key: "files", Value: files}, {Key: "drift", Value: drift}, {Key: "method", Value: result.Method}, {Key: "replayed", Value: result.Replayed}}, nil
+}
+
+// runConflictSweep measures every pair of the plan's live heads and each head against the tips named by --target (or, without one, the base frozen in the manifest of --node's current execution), in the checkout
+// named by --repository (or the parent's), and records the observations and a ledger row. Heads are the ones named with --head (NODE=SHA), else the node's current accepted head, else its child's checkout HEAD.
+func runConflictSweep(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
+	trigger := args.Text("trigger")
+	if trigger == "" {
+		trigger = TriggerManual
+	}
+	heads := map[string]string{}
+	for _, spelled := range args.Strings("head") {
+		node, sha, ok := strings.Cut(spelled, "=")
+		if !ok || node == "" || sha == "" {
+			return nil, usage("--head is NODE=SHA, not " + spelled)
+		}
+		heads[node] = sha
+	}
+	var targets []Target
+	for _, spelled := range args.Strings("target") {
+		repository, ref, ok := strings.Cut(spelled, "@")
+		if !ok || repository == "" || ref == "" {
+			return nil, usage("--target is repository@ref, not " + spelled)
+		}
+		targets = append(targets, Target{Repository: repository, BaseRef: ref})
+	}
+	sched, closeStore, err := openScheduler(ctx, services, args)
+	if err != nil {
+		return nil, err
+	}
+	defer closeStore()
+	sched.Tips = mergeturn.TargetReader{}
+	plan, node := args.Text("plan"), args.Text("node")
+	tips, err := sched.sweepTips(ctx, plan, node, targets)
+	if err != nil {
+		return nil, hostFailure(err)
+	}
+	result, err := sched.ObserveLive(ctx, plan, args.Text("actor"), SweepInput{Repository: args.Text("repository"), Trigger: trigger, TriggerNode: node, Tips: tips, Heads: heads})
+	if err != nil {
+		return nil, hostFailure(err)
+	}
+	return append(contract.OrderedObject{{Key: "ok", Value: true}, {Key: "schema", Value: "dag-conflict-sweep/1"}, {Key: "plan_id", Value: result.PlanID}}, result.Object()...), nil
 }
 
 func runCapBasis(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {

@@ -341,6 +341,7 @@ func testSOSID(t *testing.T, id string) {
 // These read-only CLI surfaces run on the Python SOS-5 store, through the built binary as the
 // alias the packets name; observedAt is the instant the binary answered.
 func Test24_SOS_5_BuiltBinaryBytes(t *testing.T) {
+	t.Parallel()
 	root, captured, opts := captureSOS(t, sosCases["SOS-5"][0])
 	binary := testsupport.CRWAt(t, filepath.Join(t.TempDir(), "crw"))
 	alias := filepath.Join(filepath.Dir(binary), "codex-session-relay")
@@ -448,6 +449,7 @@ func Test24_ReportingShowCommandContext(t *testing.T) {
 }
 
 func Test24_ObservationFilesBuiltBinaryBytes(t *testing.T) {
+	t.Parallel()
 	binary := testsupport.CRW(t)
 	root := t.TempDir()
 	env := append(os.Environ(), "HOME="+root, "XDG_STATE_HOME="+root, "CODEX_HOME="+root)

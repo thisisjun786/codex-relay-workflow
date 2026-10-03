@@ -103,6 +103,7 @@ func Test24_SCH_17_RecipientTurnCapture(t *testing.T) {
 	})
 }
 func Test24_SCH_11_Capture(t *testing.T) {
+	t.Parallel()
 	supervisorMirror(t, "TheTwoQueuesAreDisjoint.test_the_supervisor_queue_holds_no_deliveries_and_the_delivery_queue_no_messages", "event", func(c *Channel, s *store.Store) []any {
 		ctx := context.Background()
 		event := captureEvent(t, s)
@@ -127,6 +128,7 @@ func Test24_SCH_11_Capture(t *testing.T) {
 	})
 }
 func Test24_SCH_12_Capture(t *testing.T) {
+	t.Parallel()
 	supervisorMirror(t, "TheTwoQueuesAreDisjoint.test_the_oldest_staged_message_is_sent_first", "event", func(c *Channel, s *store.Store) []any {
 		ctx := context.Background()
 		o := captureObligation4(t, c, s)
@@ -475,6 +477,7 @@ func Test24_SCH_24_NoHostCapture(t *testing.T) {
 	}
 }
 func Test24_SCH_25_CommandClassificationCapture(t *testing.T) {
+	t.Parallel()
 	binary := testsupport.CRW(t)
 	supervisorMirror(t, "TheHostRequiredCommandsRefuseWithoutOne.test_both_are_declared_host_required_as_well_as_enforced", "setup", func(c *Channel, s *store.Store) []any {
 		code, answer, text := set1Command(t, binary, "--state", t.TempDir(), "doctor")
@@ -494,6 +497,7 @@ func Test24_SCH_25_CommandClassificationCapture(t *testing.T) {
 	})
 }
 func Test24_SCH_26_StageShapeCapture(t *testing.T) {
+	t.Parallel()
 	binary := testsupport.CRW(t)
 	for _, tc := range []struct {
 		name, id string
