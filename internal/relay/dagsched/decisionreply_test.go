@@ -213,7 +213,7 @@ func TestSplitApprovalGenerationIsRecordedAndItsResultAccepted(t *testing.T) {
 	}
 
 	// the same call again is a replay, and a supplied digest only cross-checks
-	if again, err := w.correct("parent", res.ManifestDigest); err != nil || !again.Replayed || again.OpenedBy != "decision_reply" || again.ManifestDigest != res.ManifestDigest || again.DispatchTurnID != "turn-decision" {
+	if again, err := w.correct("parent", res.ManifestDigest); err != nil || !again.Replayed || again.CarriedOver || again.OpenedBy != "decision_reply" || again.ManifestDigest != res.ManifestDigest || again.DispatchTurnID != "turn-decision" {
 		t.Fatalf("replay = %v %+v", err, again)
 	}
 	if _, err := w.correct("parent", dig("another manifest")); refusalReason(err) != "disposition_conflict" {
@@ -341,6 +341,10 @@ func TestDecisionReplyWithUnchangedCriteriaCarriesTheManifestOver(t *testing.T) 
 		res, err := w.correct("parent", previous)
 		if err != nil || !res.CarriedOver || res.ManifestDigest != previous || res.OpenedBy != "decision_reply" || res.Generation != 2 {
 			t.Fatalf("dag-correct = %v %+v, want the dispatch manifest %s carried over", err, res, previous)
+		}
+		// the same call again answers the same as the first: carried over, not a new manifest
+		if again, err := w.correct("parent", ""); err != nil || !again.Replayed || !again.CarriedOver || again.ManifestDigest != previous || again.OpenedBy != "decision_reply" {
+			t.Fatalf("replay = %v %+v, want the carried-over manifest again", err, again)
 		}
 		if w.k.count("SELECT COUNT(*) FROM dag_input_manifests") != manifests {
 			t.Fatal("a carried-over manifest was stored again")

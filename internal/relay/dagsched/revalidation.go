@@ -75,6 +75,12 @@ func (s *Scheduler) describeOpening(ctx context.Context, q store.Querier, plan, 
 	out.OpenedBy, out.DispatchRequestID, out.DispatchTurnID = OpenedByGenerationOpen, request.String, turn.String
 	if reason.String == delivery.DecisionReply {
 		out.OpenedBy = OpenedByDecisionReply
+		// a decision that left the node as the child was dispatched bound that manifest as it was: a replay says so as well
+		var previous string
+		if _, err := queryOne(ctx, q, "SELECT manifest_digest FROM dag_node_executions WHERE plan_id = ? AND node_id = ? AND relationship_id = ? AND execution_generation = ?", []any{plan, node, rel.ID, rel.Generation - 1}, &previous); err != nil {
+			return err
+		}
+		out.CarriedOver = previous != "" && previous == out.ManifestDigest
 	}
 	return nil
 }
