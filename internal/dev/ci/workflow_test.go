@@ -160,10 +160,10 @@ var (
 	// pythonStep matches what installs or runs Python in a workflow line: the setup action and its
 	// version input, and a python or pip command word (python3, python3.12, pip3, pipx).
 	pythonStep = regexp.MustCompile(`(?:^|[^A-Za-z0-9_.-])(?:setup-python|python-version|python[0-9.]*|pipx?[0-9.]*)(?:$|[^A-Za-z0-9_-])`)
-	// assetStep matches a path below a skill's asset directory (the one allow-list in validate.go).
-	assetStep = regexp.MustCompile(`(?:^|[^A-Za-z0-9_-])(?:` + alternation(skillAssetRoots) + `)/[^/\s]+/(?:` + alternation(skillAssetDirs) + `)/`)
-	// workflowComment is a YAML or shell comment: a # at the start of a line or after a space.
-	workflowComment = regexp.MustCompile(`(?:^|\s)#.*$`)
+	// skillStep matches a path below a skills directory (the roots of the one allow-list in
+	// validate.go): a step cannot run a skill's script without naming where it lives, in a
+	// working-directory or a cd as well as in the command.
+	skillStep = regexp.MustCompile(`(?:^|[^A-Za-z0-9_-])(?:` + alternation(skillAssetRoots) + `)/[^/\s]`)
 )
 
 // alternation is words as a regular expression alternative, each taken literally.
@@ -176,22 +176,23 @@ func alternation(words []string) string {
 }
 
 // pythonInWorkflow is the lines of a workflow, numbered, that install or run Python or name a
-// script below a skill's asset directories; a comment is not a line of the workflow.
+// path below a skills directory. A line that starts with # is a comment and is skipped; a trailing
+// # is read as part of the line, because a # inside quotes hides nothing from the shell.
 func pythonInWorkflow(text string) []string {
 	var found []string
 	for number, line := range lines(text) {
-		code := strings.TrimSpace(workflowComment.ReplaceAllString(line, ""))
-		if pythonStep.MatchString(code) || assetStep.MatchString(code) {
+		code := strings.TrimSpace(line)
+		if !strings.HasPrefix(code, "#") && (pythonStep.MatchString(code) || skillStep.MatchString(code)) {
 			found = append(found, fmt.Sprintf("%d: %s", number+1, code))
 		}
 	}
 	return found
 }
 
-// CI installs no Python and runs no skill asset (CRW-483): the checks are Go only, so no workflow
-// sets up an interpreter, calls python or pip, or names a script under a skill's asset
-// directories, which are original assets an agent runs and no CI step does. Whether CI should
-// test skill scripts is a decision of its own.
+// CI installs no Python and runs no skill script (CRW-483): the checks are Go only, so no workflow
+// sets up an interpreter, calls python or pip, or names a path below a skills directory, whose
+// helper scripts are original assets an agent runs and no CI step does. Whether CI should test
+// skill scripts is a decision of its own; it starts by changing this test.
 func TestWorkflow_installs_no_python(t *testing.T) {
 	files, err := filepath.Glob(filepath.Join(repoRoot(), ".github", "workflows", "*.y*ml"))
 	if err != nil || len(files) < 2 {
@@ -228,13 +229,16 @@ func TestWorkflow_python_detector(t *testing.T) {
 		{"      - run: ./plugins/crw/skills/example/scripts/helper.py", true},
 		{"      - run: \"$GITHUB_WORKSPACE/plugins/crw/skills/example/scripts/helper\"", true},
 		{"      - run: sh port/cxc/skills/crw-example/examples/demo.sh", true},
+		{"      - run: printf '%s\\n' ' # marker'; python3 -V", true},             // a # inside quotes hides nothing
+		{"          working-directory: plugins/crw/skills/example/scripts", true}, // a step runs a script by its directory
+		{"      - run: cd port/cxc/skills/crw-example && ./helper", true},
+		{"      - run: cat plugins/crw/skills/example/SKILL.md", true}, // any path below a skills root
+		{"      - run: go test ./... # no python here", true},          // a trailing comment is part of the line
 		{"      - run: go test ./...", false},
-		{"      - run: go test ./... # no python here", false},
 		{"      # python is installed by nobody", false},
 		{"          set -euo pipefail", false},
 		{"      - run: echo pipeline cpython", false},
-		{"      - run: cat plugins/crw/skills/example/SKILL.md", false},
-		{"      - run: ls plugins/crw/skills/example/references port/cxc/skills", false},
+		{"      - run: ls plugins/crw/skills port/cxc/skills/ plugins/crw/skillset/x", false}, // the roots themselves are no skill path
 		{"      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0", false},
 	} {
 		if got := pythonInWorkflow(row.line + "\n"); (len(got) > 0) != row.found {
