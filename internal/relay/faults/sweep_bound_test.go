@@ -293,7 +293,7 @@ func Test_CRW293_ACursorIsWrittenOnlyWhenItsPositionMoves(t *testing.T) {
 // plan that uses it reads every settled attempt for every delivery it is asked about.
 func Test_CRW293_StillPresentDoesNotScanSettledAttemptsPerDelivery(t *testing.T) {
 	l, c := testLedger(t)
-	args := append(append(pick("recipient"), settledDelivery...), busyCap, "transport_failed", "transport_failed", "", sweepLimit)
+	args := pick("recipient", busyCap, "transport_failed", "transport_failed", "", sweepLimit)
 	rows, err := l.Store.All(c, "EXPLAIN QUERY PLAN "+stillPresentSQL, args...)
 	if err != nil {
 		t.Fatal(err)
