@@ -346,7 +346,7 @@ The release is idempotent and never creates a second child. In order:
    decides capacity, reserves a slot of subject kind `dag_node` and key `plan/node` (a character neither id may contain) (decision D-15) and writes the manifest, the frozen request and the release together, or nothing. When no slot is free the
    contest is recorded and `capacity_exhausted` answered; a refusal of the reservation itself (another parent, a ceiling at initiative or store scope) leaves its conflict row and no intent, and any other failure of the store rolls the whole transaction back.
 5. **Start the child**, outside any transaction, with the frozen bytes. A refused or incomplete start (a creation whose outcome is unknown, settings that differ from what was asked) leaves the intent and the slot; the
-   same call again reaches this step again and the engine reconciles with the creation it already made (an unknown creation by observing the App Server: [A creation whose outcome is unknown](#a-creation-whose-outcome-is-unknown)). A request another caller is advancing waits for that caller to bind its child.
+   same call again reaches this step again and the engine reconciles with the creation it already made (an unknown creation by observing the App Server: [A creation whose outcome is unknown](#a-creation-whose-outcome-is-unknown); a known interrupted standby: [A standby interrupted by a restart](#a-standby-interrupted-by-a-restart)). A request another caller is advancing waits for that caller to bind its child.
 6. **Bind** the child to the node (`dag_node_executions`, kind `initial`). The engine already refuses a creation whose model, effort, sandbox or approval policy differ from the request; the bind refuses a
    relationship that is not this node's issue and parent.
 
@@ -372,6 +372,25 @@ The App Server can create a thread and fail to answer within the bridge's ack bo
 Every stop answers `creation_unknown` and carries `creationReconciliation` (`state`, `detail`, `attempt`, `attemptRequestId`, `thread`, `repeatAfter`) in the `managed` answer; the node stays `blocked:creation_unknown` until a repeat reaches the first or the fourth row. A repeat that continues or creates again answers the same object with the state `adopted` or `recreated`, and the answer of a start that reconciled nothing has no such key.
 
 What this does not establish. A thread that was created, never got a message and was unloaded again is in no listing, so "no thread" is a statement about loaded threads, and the grace period and the loaded listing are the whole of the evidence; a thread of an earlier attempt that appears after a later one was created is an orphan with no turn and no writer, never registered and never sent to. Several fitting threads, or a host that cannot be read, stop every repeat until the host answers or the stray thread is archived; the engine never picks one. A standby recovery the host refused (a thread it will not resume, a busy thread, a settings finding) is not sent again, as for a failed creation: the start stays stopped, the answer's `standbyRecovery` says what the host answered, and nothing is created beside the thread.
+
+### A standby interrupted by a restart
+
+An accepted creation or standby-recovery operation can name a standby turn that a restart ended
+`interrupted` (or the host ended `failed`). Repeating the same `dag-release` continues its frozen
+managed request: once the host is ready for direct input (idle or not loaded, unarchived, with no
+paused or limited goal), the engine proceeds to the business turn without sending another standby.
+The standby is an inert bootstrap; its original turn remains the registration and generation anchor
+([I-489](invariants.md)). The retained operations prevent repeated releases from duplicating either
+the standby or business turn. The existing creation reconciliation and its per-attempt IDs are unchanged.
+
+A missing, unknown or still-running standby remains `standby_incomplete`. A known host hold
+returns its reason without beginning the business operation, and an unreadable host returns an error;
+repeating after the hold clears can continue. Serving policy, settings, scope and the final business
+guard still apply. Host observation and turn start are not atomic: a thread that becomes busy in
+between can still leave a failed business receipt. Failed or unknown attempted standby-recovery and
+business sends are retained and not resent; this recovery does not resolve those send outcomes.
+An accepted business receipt is admission evidence even if that business turn later fails or is
+interrupted: managed start does not wait for business completion.
 
 ### Recovering an abandoned release
 
