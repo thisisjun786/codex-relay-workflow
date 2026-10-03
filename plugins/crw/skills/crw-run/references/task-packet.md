@@ -371,7 +371,9 @@ Execution:
   outcome alone. The relay refuses a file on those outcomes with `manifest_forbidden`; a file that
   must travel goes with `ready_for_review`.
 - [Only when a relay holds this assignment:] a refused emit is read, corrected and emitted again,
-  and a turn never ends without an accepted receipt, which is an emit that printed its event id.
+  and a turn that ends the work, finished or stopped (`ready_for_review`, `blocked_needs_input` or `failed`),
+  never ends without an accepted receipt, which is an emit that printed its event id; a turn that
+  continues the work (`in_progress`) owes none.
   A refusal is not "receipt not emitted, report and stop": its `reason` and `detail` say what
   to change, such as dropping `--artifact` from an execution-only outcome or adding the
   continuation claim to an emit refused `unassigned_turn`, so change that and emit again. Only a
@@ -882,8 +884,8 @@ host values filled in.
    (`none` where there is none), and from inside your own turn emit the completion receipt over it without `--socket`, publish
    `ready_for_review` and end the turn. If you cannot proceed, write a blocked file and emit `blocked_needs_input` (or `failed`) the same way but without `--artifact`: an execution-only receipt
    carries no file (the relay refuses one with `manifest_forbidden`), so the file stays where you wrote it, your final message names it, and a
-   file that must travel goes with `ready_for_review`. Never end a turn waiting on the parent without emitting, and never end one without an
-   accepted receipt: a refused emit is read, corrected from its reason and emitted again. Emitting from a turn that is not the generation's anchor (a
+   file that must travel goes with `ready_for_review`. Never end a turn waiting on the parent without emitting, and never end a turn that finishes or stops the
+   work without an accepted receipt (an `in_progress` turn owes none): a refused emit is read, corrected from its reason and emitted again. Emitting from a turn that is not the generation's anchor (a
    goal continuation, a turn after a restart) takes `--continues-anchor`, `--continuation-actor` and `--continuation-reason` on the first
    emit, with the anchor read from the relay's `status` for the relationship; if the emit is refused `unassigned_turn`, re-emit once with
    the anchor its detail names. Before re-emitting inside the same generation read the current revision (`revision-head` or
