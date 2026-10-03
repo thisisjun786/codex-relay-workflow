@@ -67,7 +67,7 @@ func TestShellWriteRecordedOracle(t *testing.T) {
 	if err := json.Unmarshal(raw, &golden); err != nil {
 		t.Fatal(err)
 	}
-	if len(golden.Entry) != 70 || len(golden.Units) != 348 {
+	if len(golden.Entry) != 71 || len(golden.Units) != 352 {
 		t.Fatal("incomplete recording")
 	}
 	for i, c := range golden.Entry {

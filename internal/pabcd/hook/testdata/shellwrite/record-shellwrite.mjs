@@ -47,6 +47,8 @@ additions.set("cat <<''\n'\n\n: 2>target", ["target"]);
 additions.set("cat <\\\n<EOF\n'\nEOF\n: 2>target", ["target"]);
 additions.set("cat <<EOF\n'\nEO\\\nF\n: 2>target", ["target"]);
 additions.set(": >a\rb", ["a\rb"]);
+commands.push("cat <<EOF\n\\\\\nEOF\n: 2>target");
+additions.set("cat <<EOF\n\\\\\nEOF\n: 2>target", ["target"]);
 const data = { oracle: 'CXC v0.2.40 commit 3c1459ac', source: path, entry: [], units: [] };
 for (const command of commands) {
  const output = api.shellWriteDestinations(command).map(utf8);

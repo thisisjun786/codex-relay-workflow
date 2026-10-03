@@ -256,7 +256,8 @@ func literalHeredocEnd(s string, i int, h literalHeredoc) int {
 			if h.tabs {
 				part = strings.TrimLeft(part, "\t")
 			}
-			continued := nl && !h.quoted && strings.HasSuffix(part, "\\")
+			backslashes := len(part) - len(strings.TrimRight(part, "\\"))
+			continued := nl && !h.quoted && backslashes%2 == 1
 			if continued {
 				part = strings.TrimSuffix(part, "\\")
 			}
