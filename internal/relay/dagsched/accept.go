@@ -283,7 +283,7 @@ func (s *Scheduler) accept(ctx context.Context, plan, node, actor string, in Acc
 				return err
 			}
 			if !carried {
-				return refuse(contract.RefusalStaleGeneration, "generation %d of %s is not recorded as an execution of %s (a correction is recorded with dag-correct before its result is accepted)", rel.Generation, rel.ID, node)
+				return refuse(contract.RefusalStaleGeneration, "generation %d of %s is not recorded as an execution of %s (a correction is recorded with dag-correct before its result is accepted)%s", rel.Generation, rel.ID, node, s.unsentGenerationHint(txCtx, tx, rel))
 			}
 		}
 		head, err := s.verifiedHead(txCtx, tx, rel, in.Event)
@@ -359,7 +359,7 @@ func (s *Scheduler) accept(ctx context.Context, plan, node, actor string, in Acc
 		}
 
 		if !bound {
-			return refuse(contract.RefusalStaleGeneration, "generation %d of %s is not recorded as an execution of %s (a correction is recorded with dag-correct before its result is accepted)", rel.Generation, rel.ID, node)
+			return refuse(contract.RefusalStaleGeneration, "generation %d of %s is not recorded as an execution of %s (a correction is recorded with dag-correct before its result is accepted)%s", rel.Generation, rel.ID, node, s.unsentGenerationHint(txCtx, tx, rel))
 		}
 		// a new output: it supersedes the node's active acceptance only explicitly
 		if implementation && (pr.State != "open" || pr.IsDraft) {
@@ -420,6 +420,18 @@ func (s *Scheduler) accept(ctx context.Context, plan, node, actor string, in Acc
 		return nil
 	})
 	return out, err
+}
+
+// unsentGenerationHint names the way out when the generation the relationship stands on is an anchor nobody bound, which is what a generation opened by hand and never sent to the child looks like: the
+// parent withdraws it (withdraw.go) and accepts the generation before it. It is only a hint, so a failed read gives none.
+func (s *Scheduler) unsentGenerationHint(ctx context.Context, q store.Querier, rel relRow) string {
+	var anchor string
+	var turn sql.NullString
+	has, err := queryOne(ctx, q, "SELECT anchor_state, dispatch_turn_id FROM generations WHERE relationship_id = ? AND execution_generation = ?", []any{rel.ID, rel.Generation}, &anchor, &turn)
+	if err != nil || !has || rel.Generation < 2 || anchor != "anchor_pending" || turn.Valid {
+		return ""
+	}
+	return "; if generation " + itoa64(rel.Generation) + " was opened by hand and never sent to the child, close it with dag-generation-withdraw and accept the generation before it"
 }
 
 // acceptTarget is the repository an implementation node's accepted head is judged against: the single repository its outgoing integrated and code-pinned edges name. A node with none

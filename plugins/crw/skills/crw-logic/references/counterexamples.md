@@ -11,7 +11,7 @@ These are probe ideas, not universal invariants. Establish preconditions from th
 | Retry/duplicate delivery | Can one logical action cause a second effect? | Use contractual identity; equal text alone need not mean duplicate work |
 | Cancellation/crash | Can completion be reported while durable state is partial? | Probe disposable state or an explicitly authorized environment |
 | Versioned behavior | Do new-write rules make valid old records unreadable? | Separate historical parsing, new generation, and accepted migrations |
-| Evaluation | Can implementation and scorer agree without outside truth? | Use `mandela`; reviewer agreement alone is not a reference answer |
+| Evaluation | Can implementation and scorer agree without outside truth? | Look for outside truth the scorer does not share with the implementation; reviewer agreement alone is not a reference answer |
 | Conflicting documents | Do two currently binding rules require incompatible behavior? | Resolve scope and accepted superseding decisions before declaring a contradiction |
 
 Example: a short-period estimate of 140 and a containing-period estimate of 100 is suspicious only after confirming they express the same constrained budget and scope. Different model pools with those values are not a counterexample. Unknown common scope is an evidence gap, not a reason to clamp the numbers.

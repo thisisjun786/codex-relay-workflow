@@ -56,6 +56,11 @@ func colString(row store.Row, name string) string {
 
 // requestedPredecessors is currency._requested_predecessors.
 func requestedPredecessors(ctx context.Context, s *store.Store, rid string, generation int64) (map[string][]string, error) {
+	// the generation a ruling's correction follows: the one before it, or the nearest one that was not withdrawn (CRW-446)
+	before, err := store.LiveGenerationBefore(ctx, s.Querier(ctx), rid, generation)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.All(ctx, "SELECT p.event_id, p.revision_hash, v.verdict_turn_id, r.event_id AS request_id,"+
 		" g.dispatch_request_id"+
 		" FROM generations g"+
@@ -65,10 +70,10 @@ func requestedPredecessors(ctx context.Context, s *store.Store, rid string, gene
 		" AND r.execution_generation = g.execution_generation"+
 		" WHERE g.relationship_id = ? AND g.execution_generation = ?"+
 		" AND g.reason = 'needs_changes_revision' AND v.verdict = 'needs_changes'"+
-		" AND p.execution_generation = g.execution_generation - 1"+
+		" AND p.execution_generation = ?"+
 		" AND p.outcome = ? AND p.stage = 'final' AND p.suppressed_reason IS NULL"+
 		" AND r.outcome = 'revision_request' AND r.producer = 'relay'"+
-		" AND r.stage = 'final' AND r.suppressed_reason IS NULL", rid, generation, reviewable)
+		" AND r.stage = 'final' AND r.suppressed_reason IS NULL", rid, generation, before, reviewable)
 	if err != nil {
 		return nil, err
 	}
@@ -88,27 +93,36 @@ func requestedPredecessors(ctx context.Context, s *store.Store, rid string, gene
 
 // HeadRevision is currency.head_revision.
 func HeadRevision(ctx context.Context, s *store.Store, rid string, generation int64) (Head, error) {
-	rows, err := s.All(ctx, "SELECT e.event_id, e.revision_hash, l.supersedes_hash"+
+	// One statement reads the generation's reviewable receipts, the suppressed ones with the live,
+	// so what a suppressed receipt declared and which receipts are live are one moment's answer.
+	rows, err := s.All(ctx, "SELECT e.event_id, e.revision_hash, l.supersedes_hash,"+
+		"       e.suppressed_reason IS NOT NULL AS suppressed"+
 		"  FROM events e"+
 		"  LEFT JOIN revision_lineage l ON l.event_id = e.event_id"+
 		" WHERE e.relationship_id = ? AND e.execution_generation = ?"+
-		"   AND e.outcome = ? AND e.suppressed_reason IS NULL"+
+		"   AND e.outcome = ?"+
 		" ORDER BY e.event_id", rid, generation, reviewable)
 	if err != nil {
 		return Head{}, err
 	}
-	if len(rows) == 0 {
-		return Head{Evidence: evidenceNone, Competitors: []string{}, Detail: "no reviewable revision in this generation"}, nil
-	}
 	var nodes []string
 	hashOf, declaredOf := map[string]string{}, map[string]string{}
+	suppressed := map[string][]string{}
 	for _, row := range rows {
+		if flag, _ := row.Get("suppressed").(int64); flag != 0 {
+			hash := colString(row, "revision_hash")
+			suppressed[hash] = append(suppressed[hash], colString(row, "supersedes_hash"))
+			continue
+		}
 		id := colString(row, "event_id")
 		if _, seen := hashOf[id]; !seen {
 			nodes = append(nodes, id)
 		}
 		hashOf[id] = colString(row, "revision_hash")
 		declaredOf[id] = colString(row, "supersedes_hash")
+	}
+	if len(nodes) == 0 {
+		return Head{Evidence: evidenceNone, Competitors: []string{}, Detail: "no reviewable revision in this generation"}, nil
 	}
 	byHash := map[string][]string{}
 	for _, id := range nodes {
@@ -117,6 +131,18 @@ func HeadRevision(ctx context.Context, s *store.Store, rid string, generation in
 	anchors, err := requestedPredecessors(ctx, s, rid, generation)
 	if err != nil {
 		return Head{}, err
+	}
+	if len(suppressed) > 0 {
+		declared := make([]string, 0, len(nodes))
+		for _, id := range nodes {
+			declared = append(declared, declaredOf[id])
+		}
+		through := ReadThrough(declared, func(hash string) int { return len(byHash[hash]) + len(anchors[hash]) }, suppressed)
+		for _, id := range nodes {
+			if effective, ok := through[declaredOf[id]]; ok {
+				declaredOf[id] = effective
+			}
+		}
 	}
 	edges := map[string]string{}
 	var unresolved []string
@@ -199,4 +225,76 @@ func HeadRevision(ctx context.Context, s *store.Store, rid string, generation in
 		evidence = evidenceSole
 	}
 	return Head{EventID: tip, RevisionHash: hashOf[tip], Evidence: evidence, Competitors: []string{}}, nil
+}
+
+// ReadThrough answers, for each revision hash in named that no live revision of the generation
+// and no requested correction predecessor holds (held counts those), what a revision naming it is
+// read as naming instead. declaredBy lists, for each revision hash, the predecessor hash of every
+// suppressed receipt of the generation holding it ("" for none).
+//
+// A suppressed receipt (the turn that staged it ended failed or interrupted, so the relay does
+// not promote it) is not a revision, and a child that restarted cannot know its earlier receipt
+// was one; so the naming is read through it, to the predecessor that receipt itself declared. ""
+// is no predecessor: the revision stands alone. Through two or more suppressed receipts in a row
+// is read the same way.
+//
+// Only a hash held by exactly one suppressed receipt is read through, and only to an end that is
+// "" or a hash held by exactly one live revision or requested predecessor. A hash nothing holds
+// (never emitted, or another generation's: declaredBy is this generation's), a hash several
+// suppressed receipts hold, and a chain of suppressed receipts that ends at a hash nothing
+// resolves are left out of the answer: the naming stays what it was, and the head reads it as it
+// always has. Each hash is followed once, however many revisions name it.
+func ReadThrough(named []string, held func(hash string) int, declaredBy map[string][]string) map[string]string {
+	if len(declaredBy) == 0 {
+		return nil
+	}
+	memo := map[string]readThroughEnd{}
+	through := map[string]string{}
+	for _, hash := range named {
+		if hash == "" || held(hash) != 0 {
+			continue
+		}
+		if end := readThrough(hash, held, declaredBy, memo); end.ok {
+			through[hash] = end.effective
+		}
+	}
+	return through
+}
+
+// readThroughEnd is where a naming ends once read through: ok is false when it cannot be.
+type readThroughEnd struct {
+	effective string
+	ok        bool
+}
+
+// readThrough follows start through the suppressed receipts that hold it and remembers the end for
+// every hash it passed, which is the end of any walk that reaches one of them.
+func readThrough(start string, held func(hash string) int, declaredBy map[string][]string, memo map[string]readThroughEnd) readThroughEnd {
+	var path []string
+	var onPath map[string]bool
+	var end readThroughEnd
+	for hash := start; ; {
+		if known, ok := memo[hash]; ok {
+			end = known
+			break
+		}
+		holders := declaredBy[hash]
+		if held(hash) != 0 || len(holders) != 1 || onPath[hash] {
+			break
+		}
+		path = append(path, hash)
+		if onPath == nil {
+			onPath = map[string]bool{}
+		}
+		onPath[hash] = true
+		hash = holders[0]
+		if hash == "" || held(hash) == 1 {
+			end = readThroughEnd{hash, true}
+			break
+		}
+	}
+	for _, passed := range path {
+		memo[passed] = end
+	}
+	return end
 }

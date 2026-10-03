@@ -195,6 +195,10 @@
   {"flag":"--all","kind":"true","help":"every live assignment in the store, scoped to a project or not"},
   {"flag":"--actor","required":true},
   {"flag":"--apply","kind":"true","help":"close them. Without it no relationship, link, binding or journal row is changed and no store is created; relationship-resume reopens a closed one"}],"groups":[{"required":true,"options":["--project","--all"]}]},
+{"name":"child-cleanup","summary":"releases a finished child thread and the sub-threads it started from the App Server so their MCP helper processes stop (thread/archive, undone by codex unarchive). Only for a relationship whose merged mark counts for its current head, generation, revision and criteria, that nothing else uses, with nothing owed and, for a plan node, its accepted head landed. Requires --socket. Without --dry-run it archives the loaded threads of the subtree, deepest first and the child last; nothing is archived while any of them is running or the subtree cannot be established exactly","options":[
+  {"flag":"--relationship","required":true},
+  {"flag":"--actor","required":true,"help":"the relationship's parent task"},
+  {"flag":"--dry-run","kind":"true","help":"say which loaded threads would be archived and call nothing that changes the App Server; the store is opened read-only"}]},
 {"name":"emit","options":[
   {"flag":"--relationship","required":true},
   {"flag":"--generation","type":"int","required":true},
@@ -765,6 +769,7 @@
   {"flag":"--pull-request","type":"int","required":true},
   {"flag":"--restate","help":"a handoff record or an earlier snapshot to grade against a fresh reading; '-' reads it from stdin"},
   {"flag":"--restate-head","help":"the head the restated record is about, when the record itself does not name one"},
+  {"flag":"--late-dispositions","help":"with --restate: a file holding the coordinator's dispositions of review threads that arrived after the record, a JSON object {\"lateDispositions\": [{threadId, disposition (answered, backlog, resolved or refuted), evidenceUrl, head, grade}]}. A thread with an entry for the head under restatement is not a late finding; the grade is recorded as given and never read"},
   {"flag":"--page-size","type":"int"},
   {"flag":"--page-budget","type":"int","help":"how many pages one connection may take before the read is reported unfinished rather than answered"},
   {"flag":"--call-budget","type":"int"},
@@ -857,6 +862,14 @@
   {"flag":"--actor","required":true},
   {"flag":"--checkout","help":"an absolute path to a local clone that holds the commits of the pull request (fetch first); needed when the node lands in a forge repository, refused when its target is itself a local checkout"},
   {"flag":"--resolved","kind":"append","help":"a file the merges resolved by hand, as the refusal names it (repeatable); the paths named must be exactly the ones the chain resolved by hand, after you read them"},
+  {"flag":"--expect-epoch","type":"int","help":"the coordinator epoch this session holds (dag-coordinator-claim answers it); a write from another epoch is refused stale_coordinator_epoch. 0 names none, which only a plan nobody claimed takes"}]},
+{"name":"dag-generation-withdraw","summary":"withdraws a generation the coordinator opened by hand (generation-open) and never bound or sent to the child, so that the node can be accepted on the result it already has: the generation row stays (a number is never reused: the next generation takes the number after the highest the relationship ever held) and the relationship stands on the generation before it again. Refused when the generation is bound to a dispatch turn, carries an event, an admitted turn or a recorded execution, or was opened by a needs_changes ruling; it is the newest generation of the node's relationship only. A repeat is a replay","options":[
+  {"flag":"--plan","required":true},
+  {"flag":"--node","required":true},
+  {"flag":"--actor","required":true},
+  {"flag":"--relationship","required":true,"help":"the relationship whose generation is withdrawn (assignment-show names it); naming it keeps a repeated call the same withdrawal"},
+  {"flag":"--generation","required":true,"type":"int","help":"the generation to withdraw: the one the relationship stands on now, 2 or more"},
+  {"flag":"--reason","required":true,"help":"why it is withdrawn (1 to 1000 characters), recorded with the withdrawal"},
   {"flag":"--expect-epoch","type":"int","help":"the coordinator epoch this session holds (dag-coordinator-claim answers it); a write from another epoch is refused stale_coordinator_epoch. 0 names none, which only a plan nobody claimed takes"}]},
 {"name":"dag-decision-record","summary":"records a decision for a decision edge: the subject and digest the plan fixed, approved or rejected, and the authority (kind and reference; opaque, compared and never read). Only the project's registered parent records; a repeat is a replay and another decision supersedes the active one","options":[
   {"flag":"--plan","required":true},

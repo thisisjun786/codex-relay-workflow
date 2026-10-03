@@ -4056,6 +4056,71 @@
       ]
     },
     {
+      "id": "cli__bg__run_detached_records_exit_code",
+      "covers": [
+        "K6/bg/run",
+        "K7/bg",
+        "K8/ws/.codexclaw/bg",
+        "K12/ps",
+        "A/bg-wake/cli.test.ts"
+      ],
+      "note": "bg run spawns a detached sh that outlives the step: the step's own PATH adds the system directories, because the oracle's case PATH (stubs and bin) has neither the sh nor the mv that the spawn wrapper needs to write <id>.exit; a wait step stands for the recorder waiting until that file is there (the id is random, aliased <BG_1>). The ps stub answers the start fingerprint, so startToken is recorded and the ps call is logged with its pid aliased. Then bg list --json shows the reconciled failed record (exit 3) and the Stop wakes on it. It observes only ws/.codexclaw/bg: an existing test pins the number of fixture trees that hold a first .codexclaw/.gitignore at 50, and the 50 fixtures that already record it hold that behaviour.",
+      "given": {
+        "env": {
+          "CODEX_THREAD_ID": "rec-s1"
+        },
+        "stubs": {
+          "ps": {
+            "stdout": "Thu Jan  1 00:00:00 2026\n",
+            "exit": 0
+          }
+        }
+      },
+      "steps": [
+        {
+          "cli": [
+            "bg",
+            "run",
+            "--note",
+            "rec",
+            "--json",
+            "--",
+            "sh",
+            "-c",
+            "echo hi; exit 3"
+          ],
+          "env": {
+            "PATH": "${STUBS}:${BIN}:/usr/bin:/bin"
+          }
+        },
+        {
+          "wait": "ws/.codexclaw/bg/*.exit"
+        },
+        {
+          "cli": [
+            "bg",
+            "list",
+            "--json"
+          ]
+        },
+        {
+          "hook": "stop-waking-on-background-completion",
+          "stdin": {
+            "hook_event_name": "Stop",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "stop_hook_active": false,
+            "last_assistant_message": "Done.",
+            "transcript_path": null
+          }
+        }
+      ],
+      "observe": [
+        "ws/.codexclaw/bg"
+      ]
+    },
+    {
       "id": "cli__hooks__retrust_safety_pin_refuses_all_drifted",
       "covers": [
         "K6/hooks/retrust",

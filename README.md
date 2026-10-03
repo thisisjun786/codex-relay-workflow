@@ -1,6 +1,6 @@
 # Codex Relay Workflow (CRW)
 
-Codex skills for planning, delegating, and verifying work with Linear, CXC, and Paperthin. Keep product decisions in Linear, implementation in Git, and delivery evidence connected to the issue and PR.
+Codex skills for planning, delegating, and verifying work with Linear and CXC. Keep product decisions in Linear, implementation in Git, and delivery evidence connected to the issue and PR.
 
 CRW is a community project designed to work with CXC; it is not an official
 OpenAI or Codex product. Its workflow connects child-task delegation, PR review
@@ -12,23 +12,23 @@ through (one Go binary serving the task bridge, the session relay and the comple
 hook) and a symlink installer for development. The two Python packages that runtime was
 ported from left the repository in todo 44, after the cutover; the bridge's upstream
 provenance and licence stay in [packages/codex-thread-bridge](packages/codex-thread-bridge/PROVENANCE.md).
-CXC and Paperthin remain separate dependencies. Having the source here
+CXC remains a separate dependency. Having the source here
 does not install or activate a runtime, and offline contract checks do not establish
 live Codex hook or Desktop compatibility.
 
 | Skill | Purpose |
 |---|---|
-| [crw-next](plugins/crw/skills/crw-next/SKILL.md) | Choose one next action when starting or after finishing work, using readchk and nba |
+| [crw-next](plugins/crw/skills/crw-next/SKILL.md) | Choose one next action when starting or after finishing work |
 | [crw-define](plugins/crw/skills/crw-define/SKILL.md) | Explore intent and define an initiative goal, success evidence, and scope |
 | [crw-plan](plugins/crw/skills/crw-plan/SKILL.md) | Decompose an agreed goal into projects, milestones, and one-PR issues |
 | [crw-run](plugins/crw/skills/crw-run/SKILL.md) | Bind the parent and execute one project's agreed scope, including parallel issue delivery and successors, without a parent goal |
 | [crw-loop](plugins/crw/skills/crw-loop/SKILL.md) | Add a parent goal and automatic continuation to the same Run project execution |
 | [crw-status](plugins/crw/skills/crw-status/SKILL.md) | Report where work stands, including the supervisor midpoint check and progress against the agreed schedule |
 | [crw-check](plugins/crw/skills/crw-check/SKILL.md) | Verify delivery and return in-scope corrections to managed tasks |
-| [crw-logic](plugins/crw/skills/crw-logic/SKILL.md) | Find consequential contradictions using Paperthin checks and minimal counterexamples |
+| [crw-logic](plugins/crw/skills/crw-logic/SKILL.md) | Find consequential contradictions using its own checks and minimal counterexamples |
 | [crw-refactor](plugins/crw/skills/crw-refactor/SKILL.md) | Diagnose post-cycle structural debt and plan bounded, behavior-preserving repairs |
 
-The shared [integration guide](plugins/crw/skills/crw-plan/references/integrations.md) owns Linear document authority and CXC/Paperthin routing. Keep the skills together because their references link to one another.
+The shared [integration guide](plugins/crw/skills/crw-plan/references/integrations.md) owns Linear document authority and CXC routing. Keep the skills together because their references link to one another.
 
 | Component of `crw` | Purpose |
 |---|---|
@@ -46,7 +46,7 @@ from, what was deliberately left behind, and where their Go ports live.
 - Product repositories own implementation, executable configuration, and repository policy.
 - Private task locations hold raw receipts, logs, and sensitive verification evidence.
 
-The skills use installed CXC/Paperthin and the available Linear connector; they do not bundle those tools or install credentials. Explicit-only Paperthin skills remain deliberate user choices.
+The skills use installed CXC and the available Linear connector; they do not bundle those tools or install credentials.
 
 ## Install
 
@@ -136,7 +136,7 @@ replaces its Python-era Stop settings, once).
 | Install the runtime | A release archive for Linux (amd64 or arm64); darwin/arm64 is built but unvalidated |
 | Run repository checks | The Go toolchain `go.mod` names |
 | Plan and verify Linear work | Codex with local skill support and a connected Linear workspace you can access |
-| Use the shared workflow | Separately installed CXC and Paperthin skills referenced by the [integration guide](plugins/crw/skills/crw-plan/references/integrations.md) |
+| Use the shared workflow | Separately installed CXC skills referenced by the [integration guide](plugins/crw/skills/crw-plan/references/integrations.md) |
 | Delegate independent tasks | A host exposing task creation and coordination tools, or an installed bridge |
 | Receive automatic completion reports | An installed runtime, a trusted Stop hook and verified host capability; installing these skills alone does not enable delivery |
 
@@ -156,14 +156,13 @@ contracts or passing offline fixtures as a supported turnkey runtime.
 ### Acquire external dependencies
 
 - CXC: follow the upstream [Codexclaw installation guide](https://github.com/lidge-jun/codexclaw#install).
-- Paperthin: follow the upstream [Paperthin setup guide](https://github.com/LilMGenius/paperthin#readme), selecting Codex as the target agent.
 - Bridge, relay and completion hook: the `crw` runtime above, from a release that
   carries its archives. Without an installed bridge or host-native task tools,
   independent delegation is unavailable; without an installed relay and a trusted
   Stop hook, automatic completion reporting is unavailable.
 
 You can read, install, and validate the skill sources without these runtimes.
-With Linear and the referenced CXC/Paperthin skills configured, planning and
+With Linear and the referenced CXC skills configured, planning and
 manual delivery verification do not require relay delivery. The full unattended
 workflow is not available from this repository alone. There is no certified
 cross-component version matrix yet; inspect the installed interfaces against the
@@ -319,7 +318,7 @@ and views remain the user's choice. See the shared
 [Linear operating model](plugins/crw/skills/crw-plan/references/integrations.md#linear-operating-model).
 
 `crw-next` distinguishes choosing a first step from choosing what follows a
-delivery. It uses `readchk` to resolve ambiguous intent and `nba` to pick one
+delivery. It restates an ambiguous request to resolve intent and picks one
 evidence-backed action with a clear completion condition. Standalone advice does
 not launch work; a question during an authorized run does not pause that run.
 
