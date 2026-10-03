@@ -229,28 +229,30 @@ func TestWriteObjectiveKindKeepsTheFileOfAnOwnerItCanNotTellApart(t *testing.T) 
 }
 
 func TestWriteObjectiveKindOfAliasedSessionsAtOnceKeepsExactlyOneFile(t *testing.T) {
-	cwd, start, winners := t.TempDir(), make(chan struct{}), make(chan string, 8)
-	var wg sync.WaitGroup
-	for _, id := range []string{"a/b", "a?b", "a b", "a:b", "a*b", "a|b", "a<b", "a>b"} {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			<-start
-			if WriteObjectiveKind(cwd, id, Maximize) == nil {
-				winners <- id
-			}
-		}()
-	}
-	close(start)
-	wg.Wait()
-	close(winners)
-	var won []string
-	for id := range winners {
-		won = append(won, id)
-	}
-	raw, _ := os.ReadFile(objectiveKindPath(cwd, "a-b"))
-	if len(won) != 1 || !strings.Contains(string(raw), rowQuote(won[0])) {
-		t.Errorf("writes that succeeded: %q; kind file %s", won, raw)
+	for round := 0; round < 50; round++ { // without the lock about one round in ten lets two writers through
+		cwd, start, winners := t.TempDir(), make(chan struct{}), make(chan string, 8)
+		var wg sync.WaitGroup
+		for _, id := range []string{"a/b", "a?b", "a b", "a:b", "a*b", "a|b", "a<b", "a>b"} {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				if WriteObjectiveKind(cwd, id, Maximize) == nil {
+					winners <- id
+				}
+			}()
+		}
+		close(start)
+		wg.Wait()
+		close(winners)
+		var won []string
+		for id := range winners {
+			won = append(won, id)
+		}
+		raw, _ := os.ReadFile(objectiveKindPath(cwd, "a-b"))
+		if len(won) != 1 || !strings.Contains(string(raw), rowQuote(won[0])) {
+			t.Fatalf("round %d: writes that succeeded: %q; kind file %s", round, won, raw)
+		}
 	}
 }
 
