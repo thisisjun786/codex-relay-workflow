@@ -145,7 +145,8 @@ func readUnit(path string) unitFile {
 
 // rendered is whether text is exactly what renderUnit writes for the values its own ExecStart line names. disable follows
 // Also= into other units, and systemd joins continued lines and ignores whitespace around a header, so removal trusts
-// only a file that is byte for byte what this command wrote, never a reading of its sections.
+// only a file that is byte for byte what this command wrote with values it could have written (a NUL is a line break
+// to systemd), never a reading of its sections.
 func rendered(text string) bool {
 	exec := renderedExec.FindStringSubmatch(text)
 	if exec == nil {
@@ -159,7 +160,12 @@ func rendered(text string) bool {
 		}
 		scopeDir = found[1]
 	}
-	return text == renderUnit(exec[1], exec[2], exec[3], scopeDir)
+	for _, value := range exec[1:4] {
+		if unsafeInUnit.MatchString(value) {
+			return false
+		}
+	}
+	return !unsafeInUnit.MatchString(scopeDir) && text == renderUnit(exec[1], exec[2], exec[3], scopeDir)
 }
 
 // lock takes the unit's lock and checks the file is still the one decided on, or answers the refusal.

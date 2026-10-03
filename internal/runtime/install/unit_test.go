@@ -349,6 +349,20 @@ func TestRemoveDisablesAndDeletesOnlyWhatItWrote(t *testing.T) {
 	}
 }
 
+// Removal trusts a file only if it is exactly what the command writes with values it could have written: a NUL is a
+// line break to systemd, so a generated-looking file whose scope value carries one is not trusted.
+func TestRemoveRefusesAGeneratedLookingFileWhoseValueCarriesNul(t *testing.T) {
+	u := newUnitHost(t)
+	scopes := filepath.Join(u.home, "scopes")
+	u.run(install.ServiceOptions{ScopeDir: scopes}, install.OK, install.UnitCreated)
+	line := "Environment=" + scopeVar + "=" + scopes
+	put(t, u.path(), strings.Replace(u.text(), line, line+"\x00[Install]\x00Also=other.service\x00[Service]\x00#", 1), 0o644)
+	kept := snapshot(u.path())
+	u.manager.calls, u.manager.show = nil, loadedFrom(u.path(), "inactive")
+	u.run(install.ServiceOptions{Remove: true}, install.Refused, install.UnitModified)
+	u.unchanged(kept)
+}
+
 // A step that fails says what stands: exit 3 when a change may have landed (written and not enabled, a failed enable or
 // disable, deleted and not reloaded).
 func TestStepsThatFailSayWhatStands(t *testing.T) {
@@ -481,8 +495,9 @@ func TestUpdateAndStopStartDoNotFightTheUnit(t *testing.T) {
 	}
 	// The relay's own stop checks who owns a process before it signals it; cleanup relies on that and reports what it cannot stop.
 	t.Cleanup(func() {
-		if call(stop...); verb("status")["running"] == true {
-			t.Errorf("the relay this test started still runs on %s; stop it by hand", h.relayState)
+		stopped, status := call(stop...), verb("status")
+		if stopped == nil || status == nil || stopped["ok"] != true && stopped["reason"] != "not_running" || status["running"] != false || status["workerPid"] != nil {
+			t.Errorf("the relay this test started may still run on %s (stop: %v, status: %v); stop it by hand", h.relayState, stopped, status)
 		}
 	})
 	if enabled := verb("enable"); enabled["ok"] != true {
