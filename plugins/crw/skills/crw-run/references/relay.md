@@ -1315,6 +1315,8 @@ child. Polling for the binding would be a readiness loop, and this workflow does
 If the child completes on a later turn than the anchor, that is a
 [continuation turn of the same child](#completing-on-a-later-turn-of-the-same-child).
 
+A generation that was opened by hand and never sent has a way back inside a plan: `dag-generation-withdraw` closes it, if the relay can show it was never bound, never reported in and never recorded as an execution of the node, and the relationship stands on the generation before it again ([a generation opened by hand and never sent](merge-readiness.md#a-generation-opened-by-hand-and-never-sent)). The generation's number stays spent. Outside a plan there is no such command: the generation stays, and the next one is opened after it.
+
 The child then emits under the new generation. Identical artifact bytes are fine: event identity
 includes the generation, so the receipt is a new event, its claim binds the CURRENT criteria set,
 and a fresh verdict records against the obligations now in force. This is a new review context,
