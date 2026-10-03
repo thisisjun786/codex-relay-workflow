@@ -91,7 +91,7 @@ func Remove(ctx context.Context, o Options, named string) (Object, int) {
 	if spelled != directory {
 		base = append(base, field("named", spelled))
 	}
-	lock, err := record.LockContext(ctx, directory, 0)
+	lock, err := record.Lock(ctx, directory, 0)
 	if err != nil {
 		if ctx.Err() != nil {
 			return refuse(interrupted(err))
@@ -99,7 +99,7 @@ func Remove(ctx context.Context, o Options, named string) (Object, int) {
 		return refuse("another run is deciding what to do with this directory: " + err.Error())
 	}
 	defer lock.Release()
-	exclusive, err := record.PromoteContext(ctx, o.RecordPath, 0)
+	exclusive, err := record.Promote(ctx, o.RecordPath, 0)
 	if err != nil {
 		if ctx.Err() != nil {
 			return refuse(interrupted(err))
@@ -397,7 +397,8 @@ func runningOrRegistered(ctx context.Context, o Options, d *runtimeDir) (*use, O
 // its name in the destination, so this holds after the directory was renamed to its tombstone.
 // It answers the environments dropped, whether outgoing was cleared, or why nothing was written.
 func dropInstalls(recordPath string, d *runtimeDir) ([]string, bool, string) {
-	lock, err := record.Lock(recordPath, 0)
+	// Dropping the entries of a directory already set aside finishes whatever the context says.
+	lock, err := record.Lock(context.Background(), recordPath, 0)
 	if err != nil {
 		return nil, false, "the host record's lock could not be taken, so this directory's install entries could not be dropped before it is removed: " + err.Error()
 	}

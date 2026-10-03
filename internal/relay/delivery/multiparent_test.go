@@ -32,7 +32,7 @@ func (f *fixture) twoParentAssignment(name string, events int) (string, []string
 	for i := 0; i < events; i++ {
 		path := filepath.Join(root, fmt.Sprintf("out-%d.txt", i))
 		mustDo(f.t, os.WriteFile(path, []byte(fmt.Sprintf("%s-%d", name, i)), 0o644))
-		entries, err := store.BuildManifest([]string{path}, []string{root})
+		entries, err := store.BuildManifest(context.Background(), []string{path}, []string{root})
 		mustDo(f.t, err)
 		revision, _ := store.ManifestRevision(entries)
 		attempt := i + 1

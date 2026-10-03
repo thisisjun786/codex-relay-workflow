@@ -10,7 +10,6 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 )
 
 const (
@@ -76,8 +75,8 @@ func PullRequestNumber(value any) (any, error) {
 	return n, nil
 }
 
-func countReached(count int, limit any) bool {
-	return big.NewInt(int64(count)).Cmp(argparse.IntegerValue(limit)) >= 0
+func countReached(count int, limit int64) bool {
+	return int64(count) >= limit
 }
 
 func BranchRef(value any) (string, error) {
@@ -111,7 +110,7 @@ func (e Enumeration) Record() map[string]any {
 	}
 	return map[string]any{"connection": e.Name, "pagesRead": len(e.Pages), "totalCount": e.Total, "distinct": len(distinct), "complete": e.Complete, "pages": e.Pages}
 }
-func EnumerateConnection(name string, budget any, step func(any) (Page, error), identify func(any) any) (Enumeration, error) {
+func EnumerateConnection(name string, budget int64, step func(any) (Page, error), identify func(any) any) (Enumeration, error) {
 	found := Enumeration{Name: name}
 	var token any
 	used := []any{}

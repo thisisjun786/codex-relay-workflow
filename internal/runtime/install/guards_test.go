@@ -50,7 +50,7 @@ func TestASplitSelectionIsNotReportedInstalled(t *testing.T) {
 	old, updated := runtimeDir(h, "0.9.0", first, t), runtimeDir(h, "0.9.1", second, t)
 	h.mustInstall(t, "install", first)
 	h.mustInstall(t, "update", second)
-	if _, err := record.Update(h.record, 1, record.Delta{Select: []contract.Field{{Key: "codex-thread-bridge", Value: filepath.Join(old, "bin")}}}); err != nil {
+	if _, err := record.Update(context.Background(), h.record, 1, record.Delta{Select: []contract.Field{{Key: "codex-thread-bridge", Value: filepath.Join(old, "bin")}}}); err != nil {
 		t.Fatal(err)
 	}
 	before := readFile(t, h.record)

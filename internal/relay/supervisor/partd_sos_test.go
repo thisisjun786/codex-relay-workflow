@@ -281,13 +281,13 @@ type sosHost struct {
 	nextTurn int
 }
 
-func (h *sosHost) ReadThread(string) (delivery.ThreadFacts, error) {
+func (h *sosHost) ReadThread(context.Context, string) (delivery.ThreadFacts, error) {
 	yes := true
 	return delivery.ThreadFacts{RuntimeStatus: "idle", CanAcceptInput: &yes}, nil
 }
-func (h *sosHost) IsArchived(string, any) (*bool, error) { return &h.archived, nil }
-func (h *sosHost) ReadGoalStatus(string) (any, error)    { return nil, nil }
-func (h *sosHost) SendMessage(id, thread, _ string, _ *delivery.TaskSettings) (delivery.Obj, error) {
+func (h *sosHost) IsArchived(context.Context, string, any) (*bool, error) { return &h.archived, nil }
+func (h *sosHost) ReadGoalStatus(context.Context, string) (any, error)    { return nil, nil }
+func (h *sosHost) SendMessage(_ context.Context, id, thread, _ string, _ *delivery.TaskSettings) (delivery.Obj, error) {
 	return delivery.Obj{{Key: "status", Value: "accepted"}, {Key: "requestId", Value: id}, {Key: "turnId", Value: fmt.Sprintf("turn-%s-%d", thread, h.nextTurn)}}, nil
 }
 

@@ -70,7 +70,7 @@ func Test28_BuiltBinaryHostRoundTrips(t *testing.T) {
 		}
 	})
 	settings := &delivery.TaskSettings{Data: ordered(authorized()).(delivery.Obj)}
-	receipt, err := a.SendMessage("real-socket-send", "thread-1", "hello", settings)
+	receipt, err := a.SendMessage(context.Background(), "real-socket-send", "thread-1", "hello", settings)
 	if err != nil {
 		t.Fatal(err)
 	}

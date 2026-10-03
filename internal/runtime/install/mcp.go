@@ -248,7 +248,7 @@ func bridgeWrite(ctx context.Context, path string, wanted Object, apply bool) Ob
 		return append(answer, field("detail", "would write this record; nothing was written"))
 	}
 	beforeWriteLock(path)
-	lock, err := record.LockContext(ctx, path, 0)
+	lock, err := record.Lock(ctx, path, 0)
 	if err != nil {
 		if ctx.Err() != nil {
 			return append(record.Set(answer, "outcome", Interrupted), field("detail", interrupted(err)))
@@ -550,7 +550,7 @@ func RegisterMCP(ctx context.Context, o Options, r RegisterOptions) (Object, int
 	if r.Owner != OwnerPlugin {
 		return append(base, field("outcome", Conflict), field("detail", "only --owner plugin is supported: the user-owned registration (a config.toml [mcp_servers] table) is retired with runtime_install.py, and the plugin declares the server itself"), field("applied", false), field("wrote", false), field("note", "nothing was written")), Usage
 	}
-	lock, err := record.LockContext(ctx, filepath.Join(o.CodexHome, OwnershipLockName), 0)
+	lock, err := record.Lock(ctx, filepath.Join(o.CodexHome, OwnershipLockName), 0)
 	if err != nil {
 		if ctx.Err() != nil {
 			return append(base, field("outcome", Interrupted), field("detail", interrupted(err)), field("applied", false), field("wrote", false), field("note", "nothing was written")), Refused

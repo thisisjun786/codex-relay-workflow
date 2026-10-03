@@ -1,7 +1,6 @@
 package argparse
 
 import (
-	"math/big"
 	"slices"
 	"strings"
 	"testing"
@@ -55,7 +54,7 @@ func TestParseReadsWhatTheSpecDeclares(t *testing.T) {
 		}
 	}
 	r := ParseSpec(spec, []string{"--name", "n", "--count", "9223372036854775807", "--seconds", "-0.25"})
-	if n, ok := r.Numbers["count"].(*big.Int); !ok || n.String() != "9223372036854775807" || r.Numbers["seconds"] != -0.25 {
+	if n, ok := r.Numbers["count"].(int64); !ok || n != 9223372036854775807 || r.Numbers["seconds"] != -0.25 {
 		t.Errorf("numbers: %+v", r.Numbers)
 	}
 	for _, c := range []struct {
