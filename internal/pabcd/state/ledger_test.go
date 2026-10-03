@@ -160,6 +160,42 @@ func TestAppendInterviewEventWritesAKindTheReaderSkips(t *testing.T) { // known 
 	}
 }
 
+func TestReadInterviewEventsDecodesAttributionsSoAReadEventCanBeAppendedAgain(t *testing.T) { // a review of the port found the typed Map empty on read
+	first, second := t.TempDir(), t.TempDir()
+	if err := AppendInterviewEvent(first, InterviewEvent{TS: "t", SessionID: "s", Event: ScanCompleted, RoundID: 2,
+		Map: []MapEntry{{"q-b", "goal"}, {"10", "x"}, {"q-a", "constraint"}, {"2", "y"}, {"q-b", "scope"}}}); err != nil {
+		t.Fatal(err)
+	}
+	read := ReadInterviewEvents(first, "s")
+	// the pairs come back in the order the file holds them: array indexes ascending, then insertion order, the repeated key once
+	if want := []MapEntry{{"2", "y"}, {"10", "x"}, {"q-b", "scope"}, {"q-a", "constraint"}}; len(read) != 1 || !slices.Equal(read[0].Map, want) {
+		t.Fatalf("%+v", read)
+	}
+	if err := AppendInterviewEvent(second, read[0]); err != nil || fileText(t, interviewLedgerPath(second, "s")) != fileText(t, interviewLedgerPath(first, "s")) {
+		t.Fatalf("appended again: %v\n got %s\nwant %s", err, fileText(t, interviewLedgerPath(second, "s")), fileText(t, interviewLedgerPath(first, "s")))
+	}
+	for name, c := range map[string]struct {
+		row   string
+		empty bool
+		isNil bool
+	}{
+		"no map":           {`{"event":"scan_started","roundId":1,"contradictionCount":0}`, false, true},
+		"empty map":        {`{"event":"scan_started","roundId":1,"contradictionCount":0,"map":{}}`, true, false},
+		"a non-string":     {`{"event":"scan_started","roundId":1,"contradictionCount":0,"map":{"q":1}}`, false, true},
+		"a null map":       {`{"event":"scan_started","roundId":1,"contradictionCount":0,"map":null}`, false, true},
+		"another key case": {`{"event":"scan_started","roundId":1,"contradictionCount":0,"MAP":{"q":"d"}}`, false, true},
+	} {
+		cwd := t.TempDir()
+		if err := os.MkdirAll(filepath.Dir(interviewLedgerPath(cwd, "s")), 0o777); err != nil || os.WriteFile(interviewLedgerPath(cwd, "s"), []byte(c.row+"\n"), 0o644) != nil {
+			t.Fatal(err)
+		}
+		got := ReadInterviewEvents(cwd, "s")
+		if len(got) != 1 || (got[0].Map == nil) != c.isNil || (c.empty && len(got[0].Map) != 0) {
+			t.Errorf("%s: %+v", name, got)
+		}
+	}
+}
+
 func TestAppendLedgerReportsAFailedAppend(t *testing.T) { // appendFileSync throws EISDIR when the ledger path is a directory
 	cwd := t.TempDir()
 	ledger := filepath.Join(cwd, crwdir.DirName, LedgerFile)

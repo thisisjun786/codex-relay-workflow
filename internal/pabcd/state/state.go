@@ -19,7 +19,7 @@
 // The write path differs from the oracle in ways no file shows: a temp file is named by the pid and a random UUID, where
 // writeState uses Date.now(), which two goroutines of one process could share; a rename onto a directory fails with EEXIST
 // from os.Rename where rename(2) and Node say EISDIR. ReadInterviewEvents returns each scan row's text in Raw beside typed fields (the
-// oracle returns the parsed object): a key the row lacks reads as zero, and map is not decoded.
+// oracle returns the parsed object): a key the row lacks reads as zero.
 package state
 
 import (

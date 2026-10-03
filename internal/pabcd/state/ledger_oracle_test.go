@@ -137,7 +137,7 @@ func TestLedgerWritesMatchTheRecordedOracle(t *testing.T) {
 }
 
 // compareEvents checks what ReadInterviewEvents returned against the objects the oracle returned: the row kept in Raw has the
-// same keys, presence and values, and the typed fields agree wherever the key is present.
+// same keys, presence and values, and the typed fields, the attributions included, agree wherever the key is present.
 func compareEvents(t *testing.T, id string, got []InterviewEvent, want []any) {
 	t.Helper()
 	if len(got) != len(want) {
@@ -154,6 +154,13 @@ func compareEvents(t *testing.T, id string, got []InterviewEvent, want []any) {
 		}
 		if high, ok := o["highContradictionCount"]; ok && got[i].HighContradictionCount != high {
 			t.Errorf("%s event %d: high %v, oracle %v", id, i, got[i].HighContradictionCount, high)
+		}
+		attributions := map[string]any{}
+		for _, p := range got[i].Map {
+			attributions[p.QuestionID] = p.Dimension
+		}
+		if recorded, ok := o["map"].(map[string]any); (ok && !reflect.DeepEqual(attributions, recorded)) || (!ok && got[i].Map != nil) {
+			t.Errorf("%s event %d: map %v, oracle %v", id, i, got[i].Map, o["map"])
 		}
 	}
 }

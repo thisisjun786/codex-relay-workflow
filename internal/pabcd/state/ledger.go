@@ -1,6 +1,7 @@
 package state
 
 import (
+	"bytes"
 	"cmp"
 	"encoding/json"
 	"errors"
@@ -109,8 +110,9 @@ type MapEntry struct{ QuestionID, Dimension string }
 // InterviewEvent is a scan row; the counters are JavaScript numbers, written as JSON.stringify writes them (-0 as 0, NaN and the
 // infinities as null; the reader skips a row whose roundId or contradictionCount is null). Map lists the attributions in the order they were assigned to the JavaScript
 // object (nil leaves the key out, an empty list writes {}). The oracle's reader returns the parsed object; a read event keeps it
-// as Raw, the line as written (trimmed), beside the typed fields, which read as zero when the key is absent or mistyped, and Map
-// is not decoded. Nothing in v0.2.40 consumes the result, and Raw keeps every key the typed fields do not.
+// as Raw, the line as written (trimmed), beside the typed fields, which read as zero when the key is absent or mistyped, and Map,
+// the attributions in the order their keys were written (nil when the row has no map or a value in it is not a string). Raw keeps
+// every key the typed fields do not; nothing in v0.2.40 consumes the result.
 type InterviewEvent struct {
 	TS                     string
 	SessionID              string
@@ -165,9 +167,38 @@ func ReadInterviewEvents(cwd, sessionID string) []InterviewEvent {
 		e.TS, _ = row["ts"].(string)
 		e.SessionID, _ = row["sessionId"].(string)
 		e.HighContradictionCount, _ = number(row["highContradictionCount"])
+		e.Map = attributions(line)
 		events = append(events, e)
 	}
 	return events
+}
+
+// attributions is the map of a scan row as the oracle's parsed object holds it, in the order its keys were written: nil when the row
+// has none or a value in it is not a string (Raw keeps what the row says), empty and not nil for {}. AppendInterviewEvent puts the
+// pairs through jsKeyOrder, so a read event appended again writes the same object.
+func attributions(line string) []MapEntry {
+	var members map[string]json.RawMessage // an exact key match, and the last of a repeated key, as JSON.parse reads it
+	if json.Unmarshal([]byte(line), &members) != nil {
+		return nil
+	}
+	dec := json.NewDecoder(bytes.NewReader(members["map"]))
+	if open, err := dec.Token(); err != nil || open != json.Delim('{') {
+		return nil
+	}
+	pairs := []MapEntry{}
+	for dec.More() {
+		key, _ := dec.Token()
+		var value any
+		if err := dec.Decode(&value); err != nil {
+			return nil
+		}
+		dimension, isString := value.(string)
+		if !isString {
+			return nil
+		}
+		pairs = append(pairs, MapEntry{key.(string), dimension})
+	}
+	return pairs
 }
 
 // jsKeyOrder is the order JavaScript lists an object built by assigning the pairs in sequence: the canonical array indexes
