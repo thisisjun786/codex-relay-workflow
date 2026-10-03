@@ -268,7 +268,8 @@ The grade decides who handles the thread, read as
 [What each finding needs before the receipt](#what-each-finding-needs-before-the-receipt) reads it and decided by
 [impact](#judge-a-finding-by-its-impact). A Devin yellow, a Codex P2 or a Codex P3 is minor only where it is minor
 and separable under that section. One whose real effect is in a blocking class is handled as red and is never a
-conditional acceptance. The stage of the candidate decides whether a correction can reach the child at all.
+conditional acceptance. A thread from any other reviewer is graded by impact in the same way. The stage of the candidate
+decides whether a correction can reach the child at all.
 
 **Before the acceptance.** In a DAG-managed project that is a node `dag-ready` does not yet read as accepted; in
 a project with no plan it lasts until the merged mark. A merge turn of the candidate that is merging or of
@@ -277,7 +278,12 @@ work is on the target (see After the merge below). A merge turn the coordinator 
 reason (`merge-turn-release`) and not kept while the candidate waits for the child. The correction route is the
 needs-changes ruling on the same receipt, which the relay allows while nothing rests on the ruling; its steps are
 those of [A base conflict after the ruling and before the acceptance](#a-base-conflict-after-the-ruling-and-before-the-acceptance),
-with this correction in place of the base-refresh one.
+with this correction in place of the base-refresh one. In a DAG-managed project the generation is also recorded for
+the node, as the first way of opening a generation in
+[the scheduler's account](../../../../../docs/relay/dag-scheduler.md#three-ways-to-open-the-generation) has it:
+`dag-correct --prepare` prints the instruction line, the ruling carries that line in its restoration finding, and
+`dag-correct` then binds the generation. Without that, `dag-accept` refuses the child's new result as
+`stale_generation`.
 
 - A red, P0, P1 or security thread, a blocking P2 or P3, or a thread the coordinator cannot grade without
   reconstructing the child's reasoning: an ordinary correction. It carries the restoration block, names the head
@@ -776,12 +782,13 @@ the judge reads `stale_base`. That candidate does not go back by a second ruling
 counts; refreshing only the candidate about to merge is what keeps it short. The limit is the
 scheduler's, which has no re-acceptance of a verified refresh: the refresh is recorded beside the acceptance instead.
 
-Read the review threads on N against the record's `threadsSeen` once more just before `dag-accept`. It is a
-check added to the order above and moves none of its steps: the jobs are still read after the acceptance, the
+Read the review threads on N against the record's `threadsSeen`, and each reviewer's summary comment, once more just
+before `dag-accept`. It is a check added to the order above and moves none of its steps: the jobs are still read after the acceptance, the
 reviews and threads again after it, and the restatement immediately before merging stays. Before the acceptance
 a late thread still has a correction route and after it none has
 ([Late review threads](#late-review-threads)), so this is the last point at which one reaches the child. It
-compares threads only and does not need a restatement of the record of P on N, which names another head.
+compares threads with the record and reads the summary comments for findings, and does not need a restatement of the
+record of P on N, which names another head.
 
 **On the relay's merge lane**, claim the turn with N (`merge-turn-request --head N`). A claim already
 made at P is restated with `merge-turn-ready --head N`. That resets readiness, so a `--ready` given with

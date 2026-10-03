@@ -415,8 +415,8 @@ Preserved: the goal lifecycle's own owner, and an accurate reason for the stall.
 
 ### M15 A review thread arrived after the receipt
 
-Observed: a delivery's record was handed over, and a Devin or Codex review thread now sits on its head that the
-record's `threadsSeen` does not list. The relay's restatement would read it as `late_finding`, resolved or not.
+Observed: a delivery's record was handed over, and a review thread, from Devin or Codex or from any other reviewer,
+now sits on its head that the record's `threadsSeen` does not list. The relay's restatement would read it as `late_finding`, resolved or not.
 Action: report it as its own row: the thread, its grade as the reviewer wrote it, the stage of the delivery and
 whose move it is. Before the acceptance, the coordinator triages a minor thread and the child only emits its
 receipt again, while a red, P0, P1 or security thread, or a P2 or P3 whose effect is blocking, is the child's
