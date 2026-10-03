@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
-	"slices"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -315,6 +315,7 @@ func (s *Scheduler) RecordBaseRefresh(ctx context.Context, plan, node, actor str
 	var regions []Region
 	for _, r := range declarations[node] {
 		if hasName(names, r.Repository) {
+			r.Repository = canonical
 			regions = append(regions, r)
 		}
 	}
@@ -330,6 +331,7 @@ func (s *Scheduler) RecordBaseRefresh(ctx context.Context, plan, node, actor str
 		return out, err
 	}
 	var resolved []string
+	var contributors map[string][][]Region
 	if has {
 		if existing != refreshDigest(acc.AcceptanceID, recordedRel, recordedGeneration, head.EventID, recordedRevision, pr.HeadSHA, baseRepo, baseRef, baseTip, storedProof, storedResolved) || recordedRel != rel.ID || recordedGeneration != rel.Generation || recordedRevision != head.RevisionHash {
 			return out, refuse(contract.RefusalDispositionConflict, "the stored base refresh for %s has invalid identity; nothing was replayed", node)
@@ -339,7 +341,11 @@ func (s *Scheduler) RecordBaseRefresh(ctx context.Context, plan, node, actor str
 			return out, err
 		}
 	} else {
-		refusal, err := proof.applyMechanical(ctx, checkout, regions)
+		contributors, err = s.refreshContributors(ctx, q, plan, node, canonical, names, declarations)
+		if err != nil {
+			return out, err
+		}
+		refusal, err := proof.applyMechanical(ctx, g, checkout, regions, contributors)
 		if err != nil {
 			return out, refuse(contract.RefusalMergeTargetUnreadable, "mechanical check could not answer: %v", err)
 		}
@@ -387,8 +393,17 @@ func (s *Scheduler) RecordBaseRefresh(ctx context.Context, plan, node, actor str
 		if err != nil {
 			return err
 		}
-		if !slices.Equal(declarations[node], currentDeclarations[node]) {
-			return refuse(contract.RefusalDispositionConflict, "the regions of %s changed while its base refresh was being proved", node)
+		if !reflect.DeepEqual(declarations, currentDeclarations) {
+			return refuse(contract.RefusalDispositionConflict, "the plan's regions changed while the base refresh of %s was being proved", node)
+		}
+		if !has {
+			currentContributors, err := s.refreshContributors(txCtx, tx, plan, node, canonical, names, currentDeclarations)
+			if err != nil {
+				return err
+			}
+			if !reflect.DeepEqual(contributors, currentContributors) {
+				return refuse(contract.RefusalDispositionConflict, "the contributor heads changed while the base refresh of %s was being proved", node)
+			}
 		}
 		current, _, err := dag.SnapshotAt(txCtx, tx, plan, 0)
 		if err != nil {
@@ -468,6 +483,54 @@ func (s *Scheduler) RecordBaseRefresh(ctx context.Context, plan, node, actor str
 		return err
 	})
 	return out, err
+}
+
+// refreshContributors freezes exact accepted and valid refresh heads of other
+// nodes in this plan/repository. A landing with no such identity remains manual.
+func (s *Scheduler) refreshContributors(ctx context.Context, q store.Querier, plan, node, repository string, names []string, declarations map[string][]Region) (map[string][][]Region, error) {
+	rows, err := q.QueryContext(ctx, "SELECT "+acceptanceColumns+" FROM dag_acceptances WHERE plan_id = ? AND state = 'active' ORDER BY acceptance_id", plan)
+	if err != nil {
+		return nil, err
+	}
+	var acceptances []Acceptance
+	for rows.Next() {
+		a, err := scanAcceptance(rows)
+		if err != nil {
+			rows.Close()
+			return nil, err
+		}
+		acceptances = append(acceptances, a)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	out := map[string][][]Region{}
+	for _, a := range acceptances {
+		if a.NodeID == node || a.AcceptanceID != AcceptanceDigest(a) {
+			continue
+		}
+		repo, err := canonicalRepository(a.Repository)
+		if err != nil || repo != repository {
+			continue
+		}
+		var regions []Region
+		for _, r := range declarations[a.NodeID] {
+			if hasName(names, r.Repository) {
+				r.Repository = repository
+				regions = append(regions, r)
+			}
+		}
+		heads, err := s.stoodOn(ctx, q, a)
+		if err != nil {
+			return nil, err
+		}
+		for _, head := range heads {
+			out[head] = append(out[head], regions)
+		}
+	}
+	return out, nil
 }
 
 // refreshCarries is whether the node's active acceptance stands, through a recorded base refresh, on the current generation of its relationship.

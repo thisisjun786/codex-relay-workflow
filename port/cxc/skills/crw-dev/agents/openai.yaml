@@ -1,0 +1,6 @@
+interface:
+  display_name: "crw-dev"
+  short_description: "Class-scaled development, routing, safety, and proof."
+  default_prompt: "Use $crw-dev to classify this task, load its surface owner and verify the result."
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,163 @@
+{
+  "rows": [
+    {
+      "id": "foo_bar",
+      "source": "jaw",
+      "name": "needle",
+      "description": "",
+      "rawUrl": "https://example.invalid/SKILL.md"
+    },
+    {
+      "id": "foo-bar",
+      "source": "jaw",
+      "name": "needle",
+      "description": "",
+      "rawUrl": "https://example.invalid/SKILL.md"
+    },
+    {
+      "id": "Foo",
+      "source": "jaw",
+      "name": "needle",
+      "description": "",
+      "rawUrl": "https://example.invalid/SKILL.md"
+    },
+    {
+      "id": "foo",
+      "source": "jaw",
+      "name": "needle",
+      "description": "",
+      "rawUrl": "https://example.invalid/SKILL.md"
+    },
+    {
+      "id": "Foo-bar",
+      "source": "jaw",
+      "name": "needle",
+      "description": "",
+      "rawUrl": "https://example.invalid/SKILL.md"
+    }
+  ],
+  "ranks": [
+    {
+      "limit": -10,
+      "rows": []
+    },
+    {
+      "limit": -1,
+      "rows": [
+        {
+          "id": "foo",
+          "source": "jaw",
+          "name": "needle",
+          "description": "",
+          "rawUrl": "https://example.invalid/SKILL.md",
+          "score": 4
+        },
+        {
+          "id": "Foo",
+          "source": "jaw",
+          "name": "needle",
+          "description": "",
+          "rawUrl": "https://example.invalid/SKILL.md",
+          "score": 4
+        },
+        {
+          "id": "foo_bar",
+          "source": "jaw",
+          "name": "needle",
+          "description": "",
+          "rawUrl": "https://example.invalid/SKILL.md",
+          "score": 4
+        },
+        {
+          "id": "foo-bar",
+          "source": "jaw",
+          "name": "needle",
+          "description": "",
+          "rawUrl": "https://example.invalid/SKILL.md",
+          "score": 4
+        }
+      ]
+    },
+    {
+      "limit": 0,
+      "rows": []
+    },
+    {
+      "limit": 1,
+      "rows": [
+        {
+          "id": "foo",
+          "source": "jaw",
+          "name": "needle",
+          "description": "",
+          "rawUrl": "https://example.invalid/SKILL.md",
+          "score": 4
+        }
+      ]
+    },
+    {
+      "limit": 10,
+      "rows": [
+        {
+          "id": "foo",
+          "source": "jaw",
+          "name": "needle",
+          "description": "",
+          "rawUrl": "https://example.invalid/SKILL.md",
+          "score": 4
+        },
+        {
+          "id": "Foo",
+          "source": "jaw",
+          "name": "needle",
+          "description": "",
+          "rawUrl": "https://example.invalid/SKILL.md",
+          "score": 4
+        },
+        {
+          "id": "foo_bar",
+          "source": "jaw",
+          "name": "needle",
+          "description": "",
+          "rawUrl": "https://example.invalid/SKILL.md",
+          "score": 4
+        },
+        {
+          "id": "foo-bar",
+          "source": "jaw",
+          "name": "needle",
+          "description": "",
+          "rawUrl": "https://example.invalid/SKILL.md",
+          "score": 4
+        },
+        {
+          "id": "Foo-bar",
+          "source": "jaw",
+          "name": "needle",
+          "description": "",
+          "rawUrl": "https://example.invalid/SKILL.md",
+          "score": 4
+        }
+      ]
+    }
+  ],
+  "tokens": [
+    {
+      "query": "PDF  vision,ocr/path",
+      "terms": [
+        "pdf",
+        "vision",
+        "ocr",
+        "path"
+      ]
+    },
+    {
+      "query": "İ ΟΣ﻿ab",
+      "terms": [
+        "i̇",
+        "οσ",
+        "ab"
+      ]
+    }
+  ]
+}

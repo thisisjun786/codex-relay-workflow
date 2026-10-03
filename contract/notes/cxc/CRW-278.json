@@ -1,0 +1,27 @@
+{
+  "issue": "CRW-278",
+  "pending": [
+    "cli-help__skill__dash_h",
+    "cli-help__skill__dashdash_help",
+    "cli-help__skill__search_dashdash_help",
+    "cli-help__skill__show_dashdash_help",
+    "cli-help__skill__word_help",
+    "cli__skill__help_and_usage_exits",
+    "cli__skill__search_all_sources_cached_and_offline",
+    "cli__skill__search_clawhub_scripted",
+    "cli__skill__search_gh_absent",
+    "cli__skill__search_gh_auth_failure",
+    "cli__skill__search_gh_scripted",
+    "cli__skill__search_json_from_fresh_cache",
+    "cli__skill__search_offline_without_cache",
+    "cli__skill__search_plain_with_footer",
+    "cli__skill__search_refresh_http_error_serves_cache",
+    "cli__skill__search_stale_cache_refetched",
+    "cli__skill__search_stale_cache_served_offline",
+    "cli__skill__show_known_id_needs_network",
+    "cli__skill__show_prints_preamble_and_body",
+    "cli__skill__show_unknown_id_exits_1"
+  ],
+  "identical": [],
+  "intentionally-changed": []
+}

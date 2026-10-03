@@ -110,6 +110,14 @@ func withoutVolatile(records []any) []any {
 		for _, key := range agreementVolatile {
 			delete(kept, key)
 		}
+		// stdinRead is Go-only (CRW-504; the Python-era runner never had it). Its cause, error and
+		// byte count must agree between the two runs; only the wait offsets are clocks.
+		if reading, ok := kept["stdinRead"].(map[string]any); ok {
+			reading = maps.Clone(reading)
+			delete(reading, "waitStartedMs")
+			delete(reading, "waitEndedMs")
+			kept["stdinRead"] = reading
+		}
 		out[i] = kept
 	}
 	return out
