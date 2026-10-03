@@ -259,7 +259,7 @@ func normalizedExecution(t *testing.T, v any, build string) any {
 	case map[string]any:
 		out := map[string]any{}
 		for k, value := range x {
-			if k == "runtime" {
+			if k == "runtime" || k == "writeProbe" {
 				continue
 			}
 			if k == "createdAt" {

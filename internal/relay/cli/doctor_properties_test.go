@@ -95,6 +95,10 @@ func comparableAnswer(t *testing.T, stdout string) string {
 	if strings.Contains(stdout, "\n  \"runtime\": {") {
 		stdout = withoutKey(t, stdout, "runtime")
 	}
+	// The Go-only writeProbe precedes runtime, so it is the last key once runtime is gone.
+	if strings.Contains(stdout, "\n  \"writeProbe\": {") {
+		stdout = withoutKey(t, stdout, "writeProbe")
+	}
 	stdout = timestamp.ReplaceAllString(stdout, "<T>")
 	stdout = runtimeBuild.ReplaceAllString(stdout, `"runtime_build": "<build>"`)
 	return identityNeutral(ownerNeutralBlock(stdout))
