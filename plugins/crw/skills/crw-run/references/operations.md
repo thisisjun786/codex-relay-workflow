@@ -1261,16 +1261,17 @@ round the child already owns. What the parent adds is currency, which only it ca
 the head and the base immediately before merging and compares the counts it sees against the record.
 That comparison is mechanical validity, not a review round. Where the re-read disagrees with the
 record, the candidate returns to the same child fail-closed; neither the parent nor the supervisor
-reviews on the child's behalf. The one thing the coordinator judges itself first is a minor review thread the
-record never saw, because it is outside `threadsSeen`: the child never judged it, so grading it is not a second
-review of the child's work, and the record still returns to the child to be rebuilt
+reviews on the child's behalf. A review thread outside `threadsSeen` is the one thing the coordinator grades
+first: the child never judged it, so grading it is not a second review of the child's work
 ([Late review threads](merge-readiness.md#late-review-threads)).
 
 One disagreement is the parent's own to remove: a base that moved under an otherwise verified head.
 The parent refreshes that itself under
 [Refresh the base yourself when only the base moved](merge-readiness.md#refresh-the-base-yourself-when-only-the-base-moved),
 and it is the one case where the parent builds the reading of the new head itself, because the
-record it would restate names the head the refresh replaced. Every other disagreement returns as
+record it would restate names the head the refresh replaced. A late review thread on the record's
+head that the parent has itself dispositioned under [OPS-9.4](#ops-94-a-new-head-invalidates-the-review-it-outran)
+is not a disagreement either. Every other disagreement returns as
 above.
 
 Two further things the parent does are not a second review round either. Deciding an acceptance
@@ -1303,11 +1304,13 @@ carry a green result forward across a head it never saw.
 
 A handoff record is invalidated the same way, and a review thread that appears on the SAME head
 counts: if it is not in the record's `threadsSeen`, the record did not see it and no longer
-describes the candidate. An invalidated record is not a verdict and is not a merge candidate. It
+describes the candidate, unless the parent has itself judged that thread and recorded its
+disposition for that head (`merge-evidence --restate <record> --late-dispositions <file>`, in
+[a late thread the parent dispositions itself](merge-readiness.md#a-late-thread-the-parent-dispositions-itself)).
+An invalidated record is not a verdict and is not a merge candidate. It
 returns to the child that produced it, through the correction path the assignment already uses, for as long as
 that path is open: once the node is accepted no correction can reach the child, and
-[Late review threads](merge-readiness.md#late-review-threads) says what holds then and which grades the
-coordinator triages first.
+[Late review threads](merge-readiness.md#late-review-threads) says what holds then.
 
 The one head the parent makes itself, a base refresh under that rule, is a head the child's evidence
 never saw either, and it is handled the same way: the jobs and the review are read again on it, the

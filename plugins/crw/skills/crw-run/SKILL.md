@@ -785,8 +785,11 @@ enumerated the check runs, so collecting them again repeats work this contract j
 elsewhere, and re-triaging its findings opens a second review round it already owns. What the
 coordinator adds is currency: re-read the head and base immediately before merging and compare
 the counts against the record. That is a mechanical check, not a review. Where they disagree,
-return the candidate to the same child fail-closed rather than fixing it here. The one thing you judge first
-is a minor review thread the record never saw ([Late review threads](references/merge-readiness.md#late-review-threads)).
+return the candidate to the same child fail-closed rather than fixing it here. A late review
+thread on the record's head that the coordinator has itself dispositioned with
+`merge-evidence --restate <record> --late-dispositions <file>` is not a disagreement
+([how](references/merge-readiness.md#a-late-thread-the-parent-dispositions-itself)). Where the installed relay
+lacks that option, [Late review threads](references/merge-readiness.md#late-review-threads) has the temporary procedure.
 
 Report **verified**, **needs changes**, or **unverified**, with concrete evidence,
 and distinguish implementation, merge, and deployment. Start a successor
