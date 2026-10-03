@@ -267,8 +267,8 @@ func TestAppendInterviewEventMapAttributions(t *testing.T) {
 
 // The scan ledger is the file the interview answer ledger writes its question and answer rows to as well. The oracle appends after a
 // final line that has no line feed without a separator, so the new row is joined to that line and the reader drops both (known
-// defect, repaired by CRW-474: port: fixed). AppendInterviewEvent starts the row on a line of its own instead; the transition ledger
-// is not part of this repair.
+// defect, repaired by CRW-474: port: fixed). AppendInterviewEvent starts the row on a line of its own instead; AppendLedger, the
+// transition ledger, gets the same repair (tests below).
 
 const answerLedgerRow = `{"ts":"t","sessionId":"s","turnId":"t1","event":"question_asked","questionId":"q","eventId":"t1:q:question_asked","question":"?"}`
 
@@ -346,27 +346,114 @@ func TestAppendInterviewEventToAFileWhoseTailCannotBeRead(t *testing.T) {
 	}
 }
 
-// The transition ledger is outside that repair: AppendLedger keeps the oracle's bytes after an unterminated final line, where the row
-// is joined to it. The test marks the scope of CRW-474 and is not a wish; a change that repairs the transition ledger too replaces it.
-func TestAppendLedgerStillJoinsARowToAFinalLineWithoutALineFeed(t *testing.T) {
-	e := LedgerEntry{TS: "t", SessionID: "s", To: PhaseP, Reason: "x"}
+// The transition ledger gets the same repair. The oracle's readers of ledger.jsonl (readJsonlObjects, orchestrate-cli.ts:431-435 and
+// hook.ts:622-626) parse every non-empty line with JSON.parse and no guard, so a joined line is not skipped there, it throws; ledgerRows
+// is that reader, and fails the test on such a line.
+
+// transitionRow is a transition ledger row that differs from another only by its reason.
+func transitionRow(reason string) LedgerEntry {
+	return LedgerEntry{TS: "t", SessionID: "s", To: PhaseP, Reason: reason}
+}
+
+// ledgerRows decodes the object rows of the transition ledger, failing the test on a non-empty line that is not JSON.
+func ledgerRows(t *testing.T, path string) []map[string]any {
+	t.Helper()
+	var rows []map[string]any
+	for _, line := range strings.Split(fileText(t, path), "\n") {
+		if line == "" {
+			continue
+		}
+		var row map[string]any
+		if err := json.Unmarshal([]byte(line), &row); err != nil {
+			t.Fatalf("a line of the transition ledger is not JSON (%v): %q", err, line)
+		}
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+func TestAppendLedgerKeepsAFinalLineThatHasNoLineFeed(t *testing.T) {
+	text := func(reason string) string { // the row and its line feed, as AppendLedger writes it to a new file
+		cwd := t.TempDir()
+		if err := AppendLedger(cwd, transitionRow(reason)); err != nil {
+			t.Fatal(err)
+		}
+		return fileText(t, filepath.Join(cwd, crwdir.DirName, LedgerFile))
+	}
+	earlier, row := strings.TrimSuffix(text("earlier"), "\n"), text("later")
+	for name, c := range map[string]struct {
+		before, separator string
+		rows              int // the rows ledgerRows reads afterwards; 0: the file is not read, its first line is damage
+	}{
+		"transition row": {earlier, "\n", 2},
+		"partial row":    {`{"partial":`, "\n", 0},
+		"lone CR":        {earlier + "\r", "\n", 2},
+		"terminated row": {earlier + "\n", "", 2}, // a complete line gets no blank line before the row
+		"empty file":     {"", "", 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cwd := t.TempDir()
+			p := filepath.Join(cwd, crwdir.DirName, LedgerFile)
+			if err := os.MkdirAll(filepath.Dir(p), 0o777); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(p, []byte(c.before), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := AppendLedger(cwd, transitionRow("later")); err != nil {
+				t.Fatal(err)
+			}
+			if got, want := fileText(t, p), c.before+c.separator+row; got != want {
+				t.Errorf("\n got %q\nwant %q", got, want)
+			}
+			if c.rows == 0 {
+				return
+			}
+			if rows := ledgerRows(t, p); len(rows) != c.rows || rows[len(rows)-1]["reason"] != "later" || (c.rows == 2 && rows[0]["reason"] != "earlier") {
+				t.Errorf("read %v, want %d rows ending with the later one", rows, c.rows)
+			}
+		})
+	}
+}
+
+func TestAppendLedgerToAFileWhoseTailCannotBeRead(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a write-only file")
+	}
 	fresh := t.TempDir()
-	if err := AppendLedger(fresh, e); err != nil {
+	if err := AppendLedger(fresh, transitionRow("later")); err != nil {
 		t.Fatal(err)
 	}
-	const old = `{"partial":`
-	cwd := t.TempDir()
-	p := filepath.Join(cwd, crwdir.DirName, LedgerFile)
-	if err := os.MkdirAll(filepath.Dir(p), 0o777); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(p, []byte(old), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := AppendLedger(cwd, e); err != nil {
-		t.Fatal(err)
-	}
-	if got, want := fileText(t, p), old+fileText(t, filepath.Join(fresh, crwdir.DirName, LedgerFile)); got != want {
-		t.Errorf("got %q, want %q", got, want)
+	row := fileText(t, filepath.Join(fresh, crwdir.DirName, LedgerFile))
+	const earlier = `{"ts":"t","sessionId":"s","from":null,"to":"P","reason":"earlier"}`
+	for name, c := range map[string]struct{ before, want string }{
+		"unterminated": {earlier, earlier + "\n" + row}, // the tail is unknown, so the row starts on a new line
+		"empty":        {"", row},                       // an empty file has no tail to protect
+	} {
+		cwd := t.TempDir()
+		p := filepath.Join(cwd, crwdir.DirName, LedgerFile)
+		if err := os.MkdirAll(filepath.Dir(p), 0o777); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(c.before), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(p, 0o200); err != nil {
+			t.Fatal(err)
+		}
+		if f, err := os.Open(p); err == nil {
+			_ = f.Close()
+			t.Skip("the file stays readable")
+		}
+		err := AppendLedger(cwd, transitionRow("later"))
+		if chmodErr := os.Chmod(p, 0o600); chmodErr != nil {
+			t.Fatal(chmodErr)
+		}
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if got := fileText(t, p); got != c.want {
+			t.Errorf("%s:\n got %q\nwant %q", name, got, c.want)
+		}
 	}
 }
