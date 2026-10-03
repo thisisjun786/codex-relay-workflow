@@ -304,7 +304,7 @@ type attemptRun struct {
 	owner    string
 	row      store.SupervisorMessagesRow // as read before the claim
 	r        Resolution                  // the hierarchy now, which the message must still match
-	at       string                      // what this attempt writes under, from the lifecycle gate on
+	at       string                      // the time of the lifecycle gate's journal entry, the claim and the fence: the injected clock when set, else the call's
 	service  *delivery.Service
 	settings *delivery.TaskSettings
 	claimed  claimedMessage
@@ -551,8 +551,9 @@ func (a *attemptRun) claimSend(ctx context.Context) (stop bool, err error) {
 	return false, nil
 }
 
-// startTransport runs the hook and then the transaction that fences the claim: it commits either the
-// transport start or the cancellation of the claim, and says which.
+// startTransport runs the hook and then the transaction that fences the claim: it commits the transport
+// start, the cancellation of the claim, or nothing when the claim no longer holds the message, and says
+// which.
 func (a *attemptRun) startTransport(ctx context.Context) (transportOutcome, error) {
 	if a.c.beforeTransport != nil {
 		a.c.beforeTransport()
