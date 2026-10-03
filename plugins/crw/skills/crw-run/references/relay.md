@@ -1201,18 +1201,41 @@ criteria digest, so a re-review landing on the SAME disposition enqueues no seco
 document keeps the summary written against the earlier wording. Rewrite it yourself, the same way
 you wrote it the first time.
 
+### Changing a verified ruling before it is accepted
+
+A ruling of `verified` is replaced by `needs_changes` on the same receipt while nothing rests on it:
+no `dag-accept` of the event, no `assignment-mark merged`, and no merge turn of the assignment that
+is `merging`, of unknown effect or landed (a turn that only waits or holds does not count: the
+parent that found a base conflict holds it). An open re-review, which a changed criteria set opens,
+is decided first, as before, whether or not the head was accepted. The relay opens the next generation and queues the
+correction to the same child exactly as for a first `needs_changes` ruling, and answers the new
+record with `_supersedes` naming the ruling it replaced. Give the ruling as the ordinary `verdict`
+line, with the restoration block on the finding that carries the instruction. A different verdict
+is never answered with the recorded one: `unverified` or `aborted` after `verified`, and anything
+different after `needs_changes`, `unverified` or `aborted`, are refused with `disposition_conflict`,
+and a refusal wrote nothing. The same verdict again is still a replay marked `_replay`. A relay older
+than this rule answers a different verdict with the recorded ruling marked `_replay` and exit 0; an
+answer that still says `verified` with `_replay` changed nothing, so read the answer and
+`assignment-show`, never the exit code. The procedure for a base conflict after the ruling is
+[in merge readiness](merge-readiness.md#a-base-conflict-after-the-ruling-and-before-the-acceptance).
+
 ### A fresh execution generation
 
-That route is closed and a new generation is the one to use whenever the same event cannot be the
-answer:
+That route is closed. When the same event cannot be the answer, the cases are told apart here; a new
+generation is the way for the first two:
 
   - the artifact itself has to change, which is what a `needs_changes` verdict is for;
   - the event was already ruled `needs_changes`, `unverified` or `aborted`. Re-claiming it
-    returns `already_claimed` and `verdict` returns the settled record marked as a replay. After
-    `unverified` the state reads `verifying` rather than `re_review_needed`, so the assignment
+    returns `already_claimed`. The same `verdict` again returns the settled record marked as a
+    replay, and a different one is refused with `disposition_conflict`, which names the route (after
+    `needs_changes` the generation it opened is the one to use). After `unverified` the state reads `verifying` rather than `re_review_needed`, so the assignment
     does not announce this one;
-  - the event is no longer the revision this generation stands on, because a newer revision
-    arrived, the head is ambiguous, or the generation advanced.
+  - the generation advanced or a newer revision arrived, so the event is no longer the head: rule
+    the head that `assignment-show` names, which needs no new generation; a needs_changes ruling that
+    tries to replace the verified ruling of the old event is refused with `stale_generation` or
+    `superseded_revision` saying so;
+  - the head is ambiguous: outside a plan, a fresh generation; for a plan node this build records no
+    route, so report it and open none.
 
 A `needs_changes` verdict opens the generation itself. Open one by hand when nothing ruled it:
 

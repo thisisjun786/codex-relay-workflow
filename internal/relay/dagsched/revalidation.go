@@ -75,11 +75,11 @@ func (s *Scheduler) describeOpening(ctx context.Context, q store.Querier, plan, 
 }
 
 // recordHandOpened binds a generation the coordinator opened by hand (the relay's generation-open, store-only, then generation-bind to the turn that carried the instruction line to the child) to the manifest
-// dag-correct --prepare made for it. It is the way a correction reaches the same child when no needs_changes ruling can open the generation: the relay's verdict writer answers a replay to a second ruling on
-// a head it ruled verified unless the criteria registered for the relationship changed (a node whose consumed input was replaced, its criteria untouched). The verdict writer is not touched, and the route
-// is bounded so that it cannot make a rerun or bind a manifest other than the one the generation was opened for:
+// dag-correct --prepare made for it. It is the way a correction reaches the same child when no needs_changes ruling can open the generation: the relay's verdict writer refuses a second ruling on
+// an accepted head it ruled verified (disposition_conflict, naming this route) unless the criteria registered for the relationship changed (a node whose consumed input was replaced, its criteria untouched). The
+// route is bounded so that it cannot make a rerun or bind a manifest other than the one the generation was opened for:
 //
-//   - the node's accepted result is stale and its route, without this generation, is a correction: a result that is current is corrected by a ruling, a change of the criteria alone is a revalidation and
+//   - the node's accepted result is stale and its route, without this generation, is a correction: a result that is not accepted yet is corrected by a ruling, an accepted result that is current has no recorded correction route in this build, a change of the criteria alone is a revalidation and
 //     opens no generation, and a node that landed was refused before this;
 //   - the manifest is named (--manifest-digest) and is the one stored for this node at its current slice and criteria, as on the ruling route, and its inputs are still the ones the node's edges are satisfied
 //     by now (VerifyManifest without the file bytes, as release checks its own intent): a predecessor accepted again after the prepare leaves another input than the one the child was told to consume;
@@ -96,7 +96,7 @@ func (s *Scheduler) recordHandOpened(ctx context.Context, q store.Querier, plan 
 		return err
 	}
 	if st == nil {
-		return refuse(contract.RefusalDispositionConflict, "%s, and the accepted result of %s is not stale, so it is not corrected by a generation opened by hand either: a result that is current is corrected by a ruling", notRuled, n.NodeID)
+		return refuse(contract.RefusalDispositionConflict, "%s, and the accepted result of %s is not stale, so it is not corrected by a generation opened by hand either: a result that is not accepted yet is corrected by a ruling, and an accepted result that is current has no recorded correction route in this build", notRuled, n.NodeID)
 	}
 	// the same route a stale node has without the generation: a change of the criteria alone is ruled again (a revalidation, no generation), and what rests on a stale predecessor or an input that is not
 	// there waits; only a result that must be reworked is corrected
@@ -188,7 +188,7 @@ func (s *Scheduler) consumedChange(ctx context.Context, q store.Querier, plan st
 	return nil, fmt.Sprintf("a value %s consumed changed without a stale result behind it: the edges and the merge lane report which", n.NodeID), nil
 }
 
-// reviewOpen is whether the relay's review of an accepted head is open, which is the one thing that lets the verdict writer take another ruling on a head it ruled verified (it answers a replay otherwise,
+// reviewOpen is whether the relay's review of an accepted head is open, which is the one thing that lets the verdict writer take another ruling on an accepted head it ruled verified (it refuses with disposition_conflict otherwise,
 // and opens no generation): the accepted event is still the head of the current generation, it is ruled verified, and the criteria registered for the relationship are no longer the set it was ruled under.
 func (s *Scheduler) reviewOpen(ctx context.Context, q store.Querier, rel relRow, a Acceptance) (bool, error) {
 	if rel.Generation != a.ExecutionGeneration {
@@ -325,7 +325,7 @@ func (s *Scheduler) routeOf(ctx context.Context, q store.Querier, plan string, s
 		}
 		why = st.Cause + " and " + changed.Cause
 	}
-	ruling := "the accepted head is not open to another ruling, so the relay's verdict writer answers one with a replay and opens no generation: open the generation by hand instead (generation-open --relationship " + rel.ID +
+	ruling := "the accepted head is not open to another ruling, so the relay's verdict writer refuses one (disposition_conflict) and opens no generation: open the generation by hand instead (generation-open --relationship " + rel.ID +
 		" --dispatch-request-id <the id dag-correct --prepare prints> --reason needs_changes_revision), send the instruction line to the child in the dispatching message, bind that turn (generation-bind --dispatch-turn-id), and record it with dag-correct --manifest-digest <the digest>; the review also reopens when the criteria registered for the relationship change"
 	if hasAcc {
 		open, err := s.reviewOpen(ctx, q, rel, acc)
