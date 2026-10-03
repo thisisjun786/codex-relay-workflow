@@ -162,9 +162,9 @@ it again ([Observe and verify](../SKILL.md#observe-and-verify)). That rule and
 re-derives from the child's handoff: thread coverage, check runs and review dispositions, which it does not
 paginate or triage again.
 
-Nothing else is a gate. The merge waits for no Devin or Codex status or review. An earlier Devin review is
-not inherited by patch-id, no substitute review comment is written or required, and a review against a
-security checklist is not a gate, although a coordinator who finds a security problem while reading the
+Nothing else is a gate. The merge waits for no Devin or Codex status or review. Neither inheriting an
+earlier Devin review by patch-id nor writing a substitute review comment is required, and a review against
+a security checklist is not a gate, although a coordinator who finds a security problem while reading the
 diff grades it like any finding ([impact](#judge-a-finding-by-its-impact)). The repository's own merge
 mechanics stay as [Recheck, integrate, and record](#recheck-integrate-and-record) and `POLICY.md` have
 them: a current base, no conflicts, Ready status, resolved review conversations and the expected-head guard.
@@ -193,13 +193,14 @@ Devin skipped, and `Completed analysis in 4s` stays a completion when the state 
 seconds on a head that only merged the base is still a completion; such a head carries no review object of its
 own, which is normal.
 
-A reviewer that has shown no signal of any kind (no status, no comment, no reaction) 30 minutes after the
-pull request became ready (Devin) or was opened (Codex) is recorded as `no signal by <time>` and not waited
-for. When neither shows a signal after those 30 minutes, the handoff says `review unavailable (no signal)` and the
-child goes on. A reviewer that has shown any start signal is waited for to its end or its skip, however long.
-A description or row status that is not in the table is such a signal: record it exactly as read and wait. If
-it has not changed in 30 minutes, the child emits no `ready_for_review` receipt: it ends its turn with a
-`blocked_needs_input` receipt that names the text, because the skill does not guess its meaning.
+When neither reviewer shows a signal of any kind (no status, no comment, no reaction) 30 minutes after the
+pull request became ready (Devin) or was opened (Codex), the handoff says `review unavailable (no signal)`
+and the child goes on. A reviewer that has shown a signal is waited for to its end or its skip, however long.
+A description or row status that is not in the table is such a signal: record it exactly as read and keep
+waiting. The skill does not guess its meaning; a child that cannot tell whether the run is still going asks
+through the usual `blocked_needs_input` route, as for any question only a person can answer. When only one
+reviewer is silent, the handoff records it as `no signal by <time>` and names the case, because the rule
+above is stated for both being silent and does not say whether the child waits longer for the one.
 
 A later head has no review of its own, and that is normal, a refresh of the base included. No review is
 requested again and no later run is awaited.
