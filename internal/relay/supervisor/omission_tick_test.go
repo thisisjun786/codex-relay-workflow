@@ -198,10 +198,9 @@ func TestCRW300ReceiptedTickReadsNoArtifact(t *testing.T) {
 	}
 }
 
-// The detectors the other tests lean on do detect: a second open of the database file through the
-// read-only path, through the driver registered as "sqlite", and through a reconnect of the store's own
-// pool each show up, and an artifact read is counted once.
-func TestCRW300DetectorsDetect(t *testing.T) {
+// The watch the tick test leans on sees a second open of the database file through the read-only path,
+// through the driver registered as "sqlite", and through a reconnect of the store's own pool.
+func TestCRW300DatabaseOpensAreSeen(t *testing.T) {
 	w := newOmissionWorld(t, 1, 0)
 	opens, watching := watchDatabaseOpens(t, filepath.Dir(w.s.Path))
 	if !watching {
@@ -240,6 +239,11 @@ func TestCRW300DetectorsDetect(t *testing.T) {
 	if opens() == 0 {
 		t.Error("a reconnect of the store's pool was not seen")
 	}
+}
+
+// The artifact read counter counts one read for one artifact, wherever the test runs.
+func TestCRW300ArtifactReadsAreCounted(t *testing.T) {
+	w := newOmissionWorld(t, 1, 0)
 	ctx, reads := store.WithArtifactReads(w.ctx)
 	if _, _, _, err := store.HashArtifactContext(ctx, w.artifacts[0], []string{filepath.Dir(w.artifacts[0])}, false); err != nil {
 		t.Fatal(err)
