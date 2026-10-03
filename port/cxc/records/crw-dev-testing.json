@@ -50,7 +50,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "Normalize frontmatter to the repository-supported name and description fields; preserve the invocation description and record the removed oracle metadata. Redirect the relative hub reference to the staged crw-dev directory.",
+      "reason": "Normalize frontmatter to the repository-supported name and description fields; preserve the invocation description and record the removed oracle metadata. Redirect the relative hub reference to the staged crw-dev directory. Adapt backticked cross-skill relative paths to the staged crw-* directory names; preserve the referenced guidance.",
       "hunks": [
         {
           "line": 4,
@@ -59,6 +59,15 @@
             "  last-verified: \"2026-07-02\"\n",
             "  short-description: \"Testing and QA router: strategy, harness choice, CI gates, TDD, and coverage.\"\n",
             "  keywords: [test, testing, TDD, coverage, regression, e2e, playwright, contract test, CI]\n"
+          ]
+        },
+        {
+          "line": 32,
+          "old": [
+            "| `../dev-devops/references/native-desktop-acceptance.md` | Desktop app suites and CI matrix | Owned by dev-devops; test suites plug into its rows |\n"
+          ],
+          "new": [
+            "| `../crw-dev-devops/references/native-desktop-acceptance.md` | Desktop app suites and CI matrix | Owned by dev-devops; test suites plug into its rows |\n"
           ]
         },
         {

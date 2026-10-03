@@ -36,7 +36,7 @@ proof remain mandatory; architecture/tool preferences need project-specific just
 | `references/platform-engineering.md` | Platform / DORA / provider routing | DORA capabilities, platform guardrails, provider table rows, SLSA handoff |
 | `references/kubernetes.md` | K8s deployment | Gateway API (v1.6+), Kustomize overlays, HPA/VPA, Helm, ArgoCD GitOps |
 | `references/ci-cd-deploy.md` | Deploy pipeline | GHA reusable workflows, deploy strategies, rollback, GitOps, progressive delivery |
-| `../dev/references/stacked-prs.md` | Stacked/dependent PRs or unexpected CI runs | `DEV-STACK-03/06/07`: native membership preflight and CI diagnosis; also reached globally through `dev` |
+| `../crw-dev/references/stacked-prs.md` | Stacked/dependent PRs or unexpected CI runs | `DEV-STACK-03/06/07`: native membership preflight and CI diagnosis; also reached globally through `dev` |
 | `references/branch-lifecycle.md` | Branch/worktree cleanup | Closed-PR branch automation, per-branch deletion evidence, worktree dirty audit, stacked-PR safety |
 | `references/repo-bootstrap.md` | New or under-configured repository; branch protection, rulesets, auto-delete, PR limits | Ruleset-first setup, merge-setting fields, closed-PR job values, PR limits, labels/template, read-only bootstrap check |
 | `references/agent-pr-intake.md` | Many agent-authored PRs/issues; intake policy; superseded PRs | Identity tiers, agent convention table, draft-first, supersede procedure, weak/medium/strong policy options with sources |
@@ -82,7 +82,7 @@ CRITICAL/HIGH image findings block push under this image policy. General checkli
 exception language does not waive this gate: changing it needs a separately approved,
 predeclared security policy, never an exception invented in the failing release report. Read
 `references/docker.md` §4 for scan/SBOM/sign command examples, and
-`../dev-security/references/supply-chain-sbom.md` for deeper SBOM/signing
+`../crw-dev-security/references/supply-chain-sbom.md` for deeper SBOM/signing
 policy.
 
 ### §1.3 Anti-Patterns

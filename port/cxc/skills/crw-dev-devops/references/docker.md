@@ -7,7 +7,7 @@ Canonical owner: dev-devops §1
 
 Cross-ref: read `platform-engineering.md` for provider routing and release
 capability framing; read `package-release.md` for package-registry auth; read
-`../../dev-security/references/supply-chain-sbom.md` for SBOM/signing depth.
+`../../crw-dev-security/references/supply-chain-sbom.md` for SBOM/signing depth.
 
 ---
 

@@ -74,7 +74,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "Normalize frontmatter to the repository-supported name and description fields; preserve the invocation description and record the removed oracle metadata. Redirect the relative hub reference to the staged crw-dev directory.",
+      "reason": "Normalize frontmatter to the repository-supported name and description fields; preserve the invocation description and record the removed oracle metadata. Redirect the relative hub reference to the staged crw-dev directory. Adapt backticked cross-skill relative paths to the staged crw-* directory names; preserve the referenced guidance.",
       "hunks": [
         {
           "line": 4,
@@ -82,6 +82,24 @@
             "metadata:\n",
             "  last-verified: \"2026-09-09\"\n",
             "  short-description: \"Container, deploy, Kubernetes, IaC, SRE, and branch-lifecycle guidance for production delivery.\"\n"
+          ]
+        },
+        {
+          "line": 42,
+          "old": [
+            "| `../dev/references/stacked-prs.md` | Stacked/dependent PRs or unexpected CI runs | `DEV-STACK-03/06/07`: native membership preflight and CI diagnosis; also reached globally through `dev` |\n"
+          ],
+          "new": [
+            "| `../crw-dev/references/stacked-prs.md` | Stacked/dependent PRs or unexpected CI runs | `DEV-STACK-03/06/07`: native membership preflight and CI diagnosis; also reached globally through `dev` |\n"
+          ]
+        },
+        {
+          "line": 88,
+          "old": [
+            "`../dev-security/references/supply-chain-sbom.md` for deeper SBOM/signing\n"
+          ],
+          "new": [
+            "`../crw-dev-security/references/supply-chain-sbom.md` for deeper SBOM/signing\n"
           ]
         },
         {
@@ -103,6 +121,21 @@
           "line": 4,
           "new": [
             "  default_prompt: \"Use $crw-dev-devops to guide this task and verify its result.\"\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/docker.md",
+      "reason": "Adapt backticked cross-skill relative paths to the staged crw-* directory names; preserve the referenced guidance.",
+      "hunks": [
+        {
+          "line": 10,
+          "old": [
+            "`../../dev-security/references/supply-chain-sbom.md` for SBOM/signing depth.\n"
+          ],
+          "new": [
+            "`../../crw-dev-security/references/supply-chain-sbom.md` for SBOM/signing depth.\n"
           ]
         }
       ]
@@ -134,6 +167,21 @@
           ],
           "new": [
             "  `node \"<crw-dev-devops skill directory>/scripts/verify-lipo-command.mjs\" --artifact <file> --arch <a> --arch <b> --candidate-json '<argv-json>'`.\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/package-release.md",
+      "reason": "Adapt backticked cross-skill relative paths to the staged crw-* directory names; preserve the referenced guidance.",
+      "hunks": [
+        {
+          "line": 8,
+          "old": [
+            "Cross-ref: read `../../dev-security/references/supply-chain-sbom.md` for SBOM/signing depth.\n"
+          ],
+          "new": [
+            "Cross-ref: read `../../crw-dev-security/references/supply-chain-sbom.md` for SBOM/signing depth.\n"
           ]
         }
       ]

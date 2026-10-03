@@ -100,7 +100,7 @@ steps:
   - run: npm publish --provenance
 ```
 
-For full npm trusted-publishing workflow shape, read `../../dev-devops/references/package-release.md`.
+For full npm trusted-publishing workflow shape, read `../../crw-dev-devops/references/package-release.md`.
 
 ### Checklist
 - [ ] Commit and honor the lockfile with `npm ci`, `pip-compile`, `poetry lock`, or equivalent.

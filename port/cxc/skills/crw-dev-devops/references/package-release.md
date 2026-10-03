@@ -5,7 +5,7 @@ Applies to: npm, PyPI, Bun-to-npm, Homebrew, crates.io, RubyGems, Go modules, GH
 When to read: Package publishing, release auth, downstream distribution, CLI package release
 Canonical owner: dev-devops package-release guidance
 
-Cross-ref: read `../../dev-security/references/supply-chain-sbom.md` for SBOM/signing depth.
+Cross-ref: read `../../crw-dev-security/references/supply-chain-sbom.md` for SBOM/signing depth.
 
 ---
 

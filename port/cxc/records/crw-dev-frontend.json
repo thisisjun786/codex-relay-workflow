@@ -151,7 +151,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "Normalize frontmatter to the repository-supported name and description fields; preserve the invocation description and record the removed oracle metadata.",
+      "reason": "Normalize frontmatter to the repository-supported name and description fields; preserve the invocation description and record the removed oracle metadata. Adapt backticked cross-skill relative paths to the staged crw-* directory names; preserve the referenced guidance.",
       "hunks": [
         {
           "line": 4,
@@ -160,6 +160,26 @@
             "  last-verified: \"2026-07-14\"\n",
             "  short-description: \"Production-grade frontend implementation with responsive, accessible, anti-slop UI guidance.\"\n",
             "  keywords: [frontend, UI, component, CSS, responsive, layout, animation, design implementation]\n"
+          ]
+        },
+        {
+          "line": 38,
+          "old": [
+            "| `../dev-uiux-design/references/design-trends.md` | Calibrating a dated design example | Source provenance, surface-specific exceptions, and re-verification before promoting a sample to a default |\n",
+            "| `../dev-uiux-design/references/design-trends.md` | Implementing a dated trend or checking whether a technique is stable | 2026-07-14 axis prevalence, technique maturity, signature status, risks, and re-crawl/promotion rules |\n"
+          ],
+          "new": [
+            "| `../crw-dev-uiux-design/references/design-trends.md` | Calibrating a dated design example | Source provenance, surface-specific exceptions, and re-verification before promoting a sample to a default |\n",
+            "| `../crw-dev-uiux-design/references/design-trends.md` | Implementing a dated trend or checking whether a technique is stable | 2026-07-14 axis prevalence, technique maturity, signature status, risks, and re-crawl/promotion rules |\n"
+          ]
+        },
+        {
+          "line": 46,
+          "old": [
+            "| `../dev-uiux-design/references/conversational-ai.md` | Implementing a turn-based AI surface with streaming, interruption, regeneration, or uncertain results | Turn-state contract the frontend must preserve before wiring rendering and a11y |\n"
+          ],
+          "new": [
+            "| `../crw-dev-uiux-design/references/conversational-ai.md` | Implementing a turn-based AI surface with streaming, interruption, regeneration, or uncertain results | Turn-state contract the frontend must preserve before wiring rendering and a11y |\n"
           ]
         }
       ]

@@ -79,6 +79,21 @@
           ]
         }
       ]
+    },
+    {
+      "file": "references/owasp-top10.md",
+      "reason": "Adapt backticked cross-skill relative paths to the staged crw-* directory names; preserve the referenced guidance.",
+      "hunks": [
+        {
+          "line": 103,
+          "old": [
+            "For full npm trusted-publishing workflow shape, read `../../dev-devops/references/package-release.md`.\n"
+          ],
+          "new": [
+            "For full npm trusted-publishing workflow shape, read `../../crw-dev-devops/references/package-release.md`.\n"
+          ]
+        }
+      ]
     }
   ]
 }
