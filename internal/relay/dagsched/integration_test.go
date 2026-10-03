@@ -63,7 +63,13 @@ type integrationKit struct {
 
 func newIntegrationKit(t *testing.T) *integrationKit {
 	t.Helper()
-	k := &integrationKit{releaseKit: newReleaseKit(t), repo: newGitRepo(t)}
+	return newIntegrationKitOn(t, newReleaseKit(t))
+}
+
+// newIntegrationKitOn is an integration kit over the release kit rk.
+func newIntegrationKitOn(t *testing.T, rk *releaseKit) *integrationKit {
+	t.Helper()
+	k := &integrationKit{releaseKit: rk, repo: newGitRepo(t)}
 	k.sched.Tips = mergeturn.TargetReader{}
 	k.sched.Ancestry = GitAncestry{}.Ancestry
 	// the plan: I lands on dev, K waits for it; D is a terminal node with no outgoing edge
