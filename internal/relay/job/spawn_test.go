@@ -191,8 +191,17 @@ func TestNewID(t *testing.T) { // oracle registry.test.ts: ids do not collide wi
 	save(t, ws, mk(ws, "bg010203"))
 	reads := 0
 	same := func(b []byte) { reads++; copy(b, []byte{1, 2, 3}) }
-	if got := newID(ws, "", same, func() time.Time { return time.UnixMilli(1790000000000) }); got != "bg"+strconv.FormatInt(1790000000000, 36) || reads != 20 {
-		t.Errorf("after %d collisions: %s", reads, got) // oracle: twenty tries, then "bg" + Date.now().toString(36)
+	fallback := "bg" + strconv.FormatInt(1790000000000, 36)
+	ticks := 0
+	clock := func() time.Time { ticks++; return time.UnixMilli(1790000000000) }
+	if got := newID(ws, "", same, clock); got != fallback || reads != 20 || ticks != 1 {
+		t.Errorf("after %d collisions: %s (%d clock readings)", reads, got, ticks) // oracle: twenty tries, then "bg" + Date.now().toString(36)
+	}
+	for _, taken := range []string{fallback, fallback + "-2"} { // the oracle returned the fallback unchecked, which can replace a record
+		save(t, ws, mk(ws, taken))
+		if got, want := newID(ws, "", same, clock), fallback+"-"+strconv.Itoa(2+strings.Count(taken, "-")); got != want {
+			t.Errorf("with %s taken: %s, want %s", taken, got, want)
+		}
 	}
 }
 

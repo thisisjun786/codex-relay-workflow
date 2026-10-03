@@ -6,15 +6,18 @@
 //	( cmd ) > out 2>&1; printf %s $? > exit.tmp && mv -- exit.tmp exit
 //
 // Behaviour is the oracle's. The differences are these. The workspace is the first argument and the record's cwd (store.go's rule), the
-// clock is the caller's, and an error is returned where the oracle throws. Four differences come from the security checklist of the
-// issue, each with a test:
+// clock is the caller's, and an error is returned where the oracle throws. Five differences come from the security checklist of the
+// issue and the data-loss rule of the parity revision, each with a test:
 //   - The shell is handed the absolute paths the store judged. The oracle passed OutPath and ExitPath as they were while the shell ran
 //     with the workspace as its directory, so a relative workspace sent its redirects to a place the store never confined.
 //   - <id>.exit.tmp is removed with the other files before the start, as the oracle removed .exit and .out only: a link planted there was
 //     written through by "printf >" and truncated its target.
 //   - mv takes "--", so a relative path that starts with "-" is not read as an option.
 //   - Cancel signals a pid only inside 1 < pid <= MaxInt32. A record is data, and kill(-pid) of pid 0 is the caller's own process group,
-//     of 1 every process the user may signal; the kernel's pid_t is 32 bits, so a larger number is cut to one of them.
+//     of 1 every process the user may signal; Node rejects a larger pid before the call, but a Go int such as 2^32 or 2^32+1 is cut by
+//     the kernel's 32-bit pid_t to 0 or 1.
+//   - After twenty collisions the fallback id is asked again and numbered while a record has it; the oracle returned it unchecked, which
+//     could replace the record of a job that has it.
 //
 // Two oracle behaviours have no Go spelling: Node starts the shell through libuv, which reaps it, so a Wait goroutine does that here,
 // and a shell that cannot start is reported by an error event after spawn returns (a Start error here, settled in the same order).
@@ -50,7 +53,7 @@ type RunOptions struct {
 }
 
 // NewID is a short id for a new job, "bg" and six hex digits, re-rolled while a record has it; the seed is tried first (newId). After
-// twenty collisions it is "bg" and the time in base 36.
+// twenty collisions it is "bg" and the time in base 36, numbered ("-2", "-3") while a record has it, which the oracle did not ask.
 func NewID(ws, seed string, clock func() time.Time) string {
 	return newID(ws, seed, func(b []byte) { _, _ = rand.Read(b) }, clock)
 }
@@ -67,7 +70,12 @@ func newID(ws, seed string, random func([]byte), clock func() time.Time) string 
 			return candidate
 		}
 	}
-	return "bg" + strconv.FormatInt(clock().UnixMilli(), 36)
+	base := "bg" + strconv.FormatInt(clock().UnixMilli(), 36)
+	id := base
+	for n := 2; RecordExists(ws, id); n++ {
+		id = base + "-" + strconv.Itoa(n)
+	}
+	return id
 }
 
 // shellQuotePosix is the argument as one word of a POSIX shell: inside single quotes only the quote itself is special.
@@ -222,7 +230,8 @@ func deferredStartError(err error) bool {
 }
 
 // Cancel stops a running job and records it cancelled (cancel). It reconciles first, so a finished job keeps its real outcome, and it
-// signals only the process it started: the start token stops a recycled pid's group from being signalled.
+// signals the group of the recorded pid while the start token it recorded still matches, which stops a recycled pid's group from being
+// signalled; a record without a token skips that check, as the oracle's does.
 func Cancel(ws string, input BgRecord, clock func() time.Time) (BgRecord, error) {
 	return cancel(ws, input, clock, syscall.Kill)
 }
