@@ -288,3 +288,63 @@ func TestLockRealProcesses(t *testing.T) {
 		})
 	}
 }
+
+func TestPinnedLookupAndObservedReplacement(t *testing.T) {
+	cwd, dir := readWorkspace(t)
+	parent, real, e := openPlanDir(cwd, "demo")
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer parent.Close()
+	outside := t.TempDir()
+	writeReadFile(t, filepath.Join(outside, "secret"), "outside")
+	// Replace the file after opening its parent: the non-following final open refuses it.
+	path := filepath.Join(dir, GoalplanFile)
+	if e = os.Remove(path); e != nil {
+		t.Fatal(e)
+	}
+	if e = os.Symlink(filepath.Join(outside, "secret"), path); e != nil {
+		t.Fatal(e)
+	}
+	if r := readPlanAt(parent, real, path, "demo"); r.Diagnostic == nil || r.Diagnostic.Kind != "unreadable" {
+		t.Fatalf("followed link: %+v", r)
+	}
+	if e = os.Remove(path); e != nil {
+		t.Fatal(e)
+	}
+	writeReadFile(t, path, readTestPlan)
+	// A pinned directory moved outside before the operation fails its real-path check.
+	moved := filepath.Join(outside, "moved")
+	if e = os.Rename(dir, moved); e != nil {
+		t.Fatal(e)
+	}
+	if r := readPlanAt(parent, real, path, "demo"); r.Diagnostic == nil || r.Diagnostic.Kind != "unreadable" {
+		t.Fatalf("relocated read: %+v", r)
+	}
+	if e = os.Rename(moved, dir); e != nil {
+		t.Fatal(e)
+	}
+	// An options clock failure is only metadata failure; the callback still runs.
+	r, e := WithGoalplanWriteLock(cwd, "demo", func(*Goalplan) (int, error) { return 7, nil }, &GoalplanWriteLockOptions{Now: func() string { panic("metadata") }})
+	if e != nil || r.Kind != "ok" || r.Value == nil || *r.Value != 7 {
+		t.Fatalf("metadata stopped callback: %+v %v", r, e)
+	}
+	// Cooperating cleanup never removes a replacement it can observe.
+	lock := filepath.Join(dir, GoalplanLockDir)
+	old := filepath.Join(dir, "old-lock")
+	r, e = WithGoalplanWriteLock(cwd, "demo", func(*Goalplan) (int, error) {
+		if e := os.Rename(lock, old); e != nil {
+			return 0, e
+		}
+		return 1, os.Mkdir(lock, 0o700)
+	}, nil)
+	if e != nil || r.Kind != "ok" {
+		t.Fatal(r, e)
+	}
+	if _, e = os.Stat(lock); e != nil {
+		t.Fatal("replacement deleted", e)
+	}
+	if b, _ := os.ReadFile(filepath.Join(outside, "secret")); string(b) != "outside" {
+		t.Fatal("outside changed")
+	}
+}
