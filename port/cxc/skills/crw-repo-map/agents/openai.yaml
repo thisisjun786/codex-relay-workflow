@@ -1,0 +1,6 @@
+interface:
+  display_name: "crw-repo-map"
+  short_description: "One-shot tree-sitter symbol map with PageRank for unfamiliar codebase exploration."
+  default_prompt: "Use $crw-repo-map to map this unfamiliar codebase before deeper source inspection."
+policy:
+  allow_implicit_invocation: false

@@ -1,0 +1,255 @@
+{
+  "origin": {
+    "tag": "v0.2.40",
+    "commit": "3c1459acadeb1906d97c00a598e1457327ae372d",
+    "skills_listing_sha256": "79d9580f39ca27221cb9c24337080e3fe4a1e71f76338c7329fca63f76a32e89"
+  },
+  "table_sha256": "25b5d19d9da7e07d474d2b31bc4d4139c68607457f59174a597f17505f7f23eb",
+  "from": "repo-map",
+  "files": {
+    "SKILL.md": {
+      "original": "ff5ee76d28b370bd397d0670006200de26fb9767f59a7706d757b0ac3758f046"
+    },
+    "agents/openai.yaml": {
+      "original": "4102b5e246ee8bc154a60218dd32207df7c87fbb5e7c5f173c04f519a61e1376"
+    },
+    "scripts/LICENSE": {
+      "original": "5aa478fc08ce132704692b3e205d17ee48b4efdc19d5fb70e273297732289d0a"
+    },
+    "scripts/NOTICE.md": {
+      "original": "7e38fdffedb13041a7dffce939bf7e0833ad26c7c5358b485e5820150583bcd6"
+    },
+    "scripts/importance.py": {
+      "original": "1e882412f8e56651e101fe04f247462ef80e4fade90a6666e91ef775c7207ac5",
+      "exec": true
+    },
+    "scripts/queries/tree-sitter-language-pack/README.md": {
+      "original": "efe3be67de4d9783080f44153318c83ca07d50de840fe5861a4da14bd98de49c"
+    },
+    "scripts/queries/tree-sitter-language-pack/arduino-tags.scm": {
+      "original": "1db81da2d853f498e4e7a08e5d3b5491501d675e2b64d9eaccb6d654b791b395"
+    },
+    "scripts/queries/tree-sitter-language-pack/c-tags.scm": {
+      "original": "108cf8e68e61061f3212e724e5947fe08a5c1b259278daf3c459ad90a646b769"
+    },
+    "scripts/queries/tree-sitter-language-pack/chatito-tags.scm": {
+      "original": "212926ae9e60215c686083e7a2ac71a819598f91bdb7387024cc7a6f47442a74"
+    },
+    "scripts/queries/tree-sitter-language-pack/commonlisp-tags.scm": {
+      "original": "19826596e4cf11daf19f88e96135f961002a935ef5ad5070ec80620b280c82dc"
+    },
+    "scripts/queries/tree-sitter-language-pack/cpp-tags.scm": {
+      "original": "d9f4aa4d471cd35001307900d09786f1ac443845d17c422e97c50a73dfed2862"
+    },
+    "scripts/queries/tree-sitter-language-pack/csharp-tags.scm": {
+      "original": "28e45f2b77a12a8afa3dfe93e629e2ba842bd7a11c1ed51ed2add722c0a33c9b"
+    },
+    "scripts/queries/tree-sitter-language-pack/d-tags.scm": {
+      "original": "2c33f7a2ba99f7c4d3152915fcf38312cf0bb294dc0aa50cbca70b759c2d8247"
+    },
+    "scripts/queries/tree-sitter-language-pack/dart-tags.scm": {
+      "original": "3dafe57998f1c5740eee61ffcc5e68fa467996a57182f6f2a7ca106ff9d9f4a0"
+    },
+    "scripts/queries/tree-sitter-language-pack/elisp-tags.scm": {
+      "original": "d6bf2238c33f0c4a5712f940d6b13b2a584613372a6b65ba787e05d9dd62bbb6"
+    },
+    "scripts/queries/tree-sitter-language-pack/elixir-tags.scm": {
+      "original": "7e0f530e96c28b12ebf145cd70d9df805951dd8edddefb732d16f72caf3851a4"
+    },
+    "scripts/queries/tree-sitter-language-pack/elm-tags.scm": {
+      "original": "5a9d43e70106cc56bfd9b88159168a6e0843b39ee50c6aaab1977b0db3e4767e"
+    },
+    "scripts/queries/tree-sitter-language-pack/gleam-tags.scm": {
+      "original": "c1d1550247a93c0675d3ee6c0485504a5e39bfde7064ff45a22fe262f3386082"
+    },
+    "scripts/queries/tree-sitter-language-pack/go-tags.scm": {
+      "original": "4c4e1f43b3ed42f1ca3deb6b847783aa3333d35285285b31163ca99c932ff292"
+    },
+    "scripts/queries/tree-sitter-language-pack/java-tags.scm": {
+      "original": "5e277c72738f2f5bf948eb717eaf1d3a2f7c6d6ad43cbed778ef3f236a81adf1"
+    },
+    "scripts/queries/tree-sitter-language-pack/javascript-tags.scm": {
+      "original": "d2a9592300ddb2fa0418cd1c603decd9ecf6ec56d8bb3f1ea59028f9c2cfd6e2"
+    },
+    "scripts/queries/tree-sitter-language-pack/lua-tags.scm": {
+      "original": "96a842567eca9c15615bca28ff063d99ed799c4053bbd052e58945d7351338fb"
+    },
+    "scripts/queries/tree-sitter-language-pack/ocaml-tags.scm": {
+      "original": "340732ce642e40f52391c86b42f71f86cbcaa9d72a6c0b797856f57217c484c0"
+    },
+    "scripts/queries/tree-sitter-language-pack/ocaml_interface-tags.scm": {
+      "original": "d95b69f68f44810d3f90b5242035cb380917f70a79723fcdc1da2f97086289d4"
+    },
+    "scripts/queries/tree-sitter-language-pack/pony-tags.scm": {
+      "original": "8063569a21f3bfc19ed07668f35b5ebfec48a87210aa34713d1e761b4e3cfb3b"
+    },
+    "scripts/queries/tree-sitter-language-pack/properties-tags.scm": {
+      "original": "01b723c611a91ba17a969087b3cdc74570f6db76fec2b1d062ffa2f63d3dc2d7"
+    },
+    "scripts/queries/tree-sitter-language-pack/python-tags.scm": {
+      "original": "2830ab33b89a5305d9fe16f6c151eb136fc4542abf012a37f8199bcec2ed164d"
+    },
+    "scripts/queries/tree-sitter-language-pack/r-tags.scm": {
+      "original": "ddc6f65adfbc4edd511813433e0a389c8f6a44e7f4d0e34d56a3c7bfc4e1f8c9"
+    },
+    "scripts/queries/tree-sitter-language-pack/racket-tags.scm": {
+      "original": "8ab8b668511a6e28a6fa079bfaddc2943569d598bc4ffad7d47f4bd2d969a8af"
+    },
+    "scripts/queries/tree-sitter-language-pack/ruby-tags.scm": {
+      "original": "bc889db02784d80d2f745375f325caa945a6a5732b197ca8e2e9ffd0cc6aafab"
+    },
+    "scripts/queries/tree-sitter-language-pack/rust-tags.scm": {
+      "original": "debcf55ea29a38f28f59150d3d35b9397fd36040e3e6d4197ccc411f710c07a8"
+    },
+    "scripts/queries/tree-sitter-language-pack/solidity-tags.scm": {
+      "original": "dee089b1b870a7e7554e24acac62edf8f434b809e39aa51e1c53d211777626f3"
+    },
+    "scripts/queries/tree-sitter-language-pack/swift-tags.scm": {
+      "original": "66f25c7e39940d9f70d780172923cfc5fe20be9744feacc1c438df09ccd8ac84"
+    },
+    "scripts/queries/tree-sitter-language-pack/udev-tags.scm": {
+      "original": "6af8f7bb8a6b211ee8f21ca61decceb2aaceaa33d22c6628ec2fe538be03c658"
+    },
+    "scripts/queries/tree-sitter-languages/README.md": {
+      "original": "a14850606d0bf7ad3ba7f918a4e402e6c01550648ee31bfc10dd178acfd32b89"
+    },
+    "scripts/queries/tree-sitter-languages/c-tags.scm": {
+      "original": "108cf8e68e61061f3212e724e5947fe08a5c1b259278daf3c459ad90a646b769"
+    },
+    "scripts/queries/tree-sitter-languages/c_sharp-tags.scm": {
+      "original": "c0ac85b4e14893e92a205076c8905bbb554645485d9009c3a71a3cb17b9b923c"
+    },
+    "scripts/queries/tree-sitter-languages/cpp-tags.scm": {
+      "original": "700170b5093764ab2f0955aba757e6852c0e3fc5864c2103451e4242eccb958e"
+    },
+    "scripts/queries/tree-sitter-languages/dart-tags.scm": {
+      "original": "023c69c89217b8b8cfe6edd4f3d6e159eae0c6eb347db50a935c75b881c228fc"
+    },
+    "scripts/queries/tree-sitter-languages/elisp-tags.scm": {
+      "original": "c239b56180f5be08c16e1d04d82cd49e66a097cd94abaf8b704a239af8622646"
+    },
+    "scripts/queries/tree-sitter-languages/elixir-tags.scm": {
+      "original": "78edb49cf23023bfefab81686fa5394635f5c0b2a09fa1a0963e35213a44e9e8"
+    },
+    "scripts/queries/tree-sitter-languages/elm-tags.scm": {
+      "original": "e2a4c458908077bfc139fc32932d2afcd63300cb46762abbab0a3518885799a8"
+    },
+    "scripts/queries/tree-sitter-languages/go-tags.scm": {
+      "original": "987b52e4d12ec562467d5cf5aeae1894944c6150c0979b5fee26279ba4629151"
+    },
+    "scripts/queries/tree-sitter-languages/hcl-tags.scm": {
+      "original": "c8e54205e1780b766b146fa083469d5a0d90931ca53dc23675b55e1200fb10f1"
+    },
+    "scripts/queries/tree-sitter-languages/java-tags.scm": {
+      "original": "ed629bf9d8c6bf421e7fa5c45903d8a5f2e98091ed30f3ee908522e793de82f1"
+    },
+    "scripts/queries/tree-sitter-languages/javascript-tags.scm": {
+      "original": "b2f55cb7aa716dc60fffec44070cc6cbab754a537b6a39045028af5240599ff4"
+    },
+    "scripts/queries/tree-sitter-languages/kotlin-tags.scm": {
+      "original": "ba093cbfb3abdcf5e2064fbf1df6739f02ee57e6feb374d89b4dd69b7ab687fa"
+    },
+    "scripts/queries/tree-sitter-languages/ocaml-tags.scm": {
+      "original": "340732ce642e40f52391c86b42f71f86cbcaa9d72a6c0b797856f57217c484c0"
+    },
+    "scripts/queries/tree-sitter-languages/ocaml_interface-tags.scm": {
+      "original": "d95b69f68f44810d3f90b5242035cb380917f70a79723fcdc1da2f97086289d4"
+    },
+    "scripts/queries/tree-sitter-languages/php-tags.scm": {
+      "original": "be6139087d8de3a1e243152947f14be358a542ab16b228288e269c597b704ee1"
+    },
+    "scripts/queries/tree-sitter-languages/python-tags.scm": {
+      "original": "ebe9e954933acba0b5abb77a56071fa2137be7f8aeed0b6b2e7bf03bf2f61260"
+    },
+    "scripts/queries/tree-sitter-languages/ql-tags.scm": {
+      "original": "f6a5690464a0142f5f48ae04ff9b0eda061ee3f8cfbcdf83d7c483e92e65351f"
+    },
+    "scripts/queries/tree-sitter-languages/ruby-tags.scm": {
+      "original": "bc889db02784d80d2f745375f325caa945a6a5732b197ca8e2e9ffd0cc6aafab"
+    },
+    "scripts/queries/tree-sitter-languages/rust-tags.scm": {
+      "original": "f658ccd67ce17cfb3f653470edcaf63fd4e83b284670a902a0de3f1cf5d25a2e"
+    },
+    "scripts/queries/tree-sitter-languages/scala-tags.scm": {
+      "original": "531423cfcd0922bac9ecf9b9eae5274324e17e640dbf093b690ccf372a41f80a"
+    },
+    "scripts/queries/tree-sitter-languages/typescript-tags.scm": {
+      "original": "38c74279e74f880db8932f360e981330a5cafe5db2493b85db3ad0d9f2408bd1"
+    },
+    "scripts/repomap.py": {
+      "original": "816b59a720aea066a52d73514126df0c66d11665ad8fb59b67a8cb9371c1e73f",
+      "exec": true
+    },
+    "scripts/repomap_class.py": {
+      "original": "38cfb5e6ed6c991c4a9ab0527b13e6f66a2143cc43acd7d3f861f9ba61d2eefc",
+      "exec": true
+    },
+    "scripts/requirements.txt": {
+      "original": "a1fa23870463e66a336a7affc85d665671445c9eef1d7d121f157f63bec3d015"
+    },
+    "scripts/scm.py": {
+      "original": "f7d22f11a6cf3a04c574e6450472ee024c05e304101bd839d30b9203e727e22a",
+      "exec": true
+    },
+    "scripts/utils.py": {
+      "original": "a7547ab4f89321ccc6f2e84c36f36323c89000e50418b76990045706a3558b24",
+      "exec": true
+    }
+  },
+  "edits": [
+    {
+      "file": "SKILL.md",
+      "reason": "Remove unsupported frontmatter metadata; use portable renamed-skill paths for direct helper examples; describe the CRW map-affordance hook without the CXC component pointer.",
+      "hunks": [
+        {
+          "line": 4,
+          "old": [
+            "metadata:\n",
+            "  short-description: \"One-shot tree-sitter symbol map with PageRank for unfamiliar codebase exploration.\"\n"
+          ]
+        },
+        {
+          "line": 51,
+          "old": [
+            "python3 plugins/crw/skills/repo-map/scripts/repomap.py .\n",
+            "python3 plugins/crw/skills/repo-map/scripts/repomap.py src/ --budget 2048\n"
+          ],
+          "new": [
+            "python3 \"<crw-repo-map skill directory>/scripts/repomap.py\" .\n",
+            "python3 \"<crw-repo-map skill directory>/scripts/repomap.py\" src/ --budget 2048\n"
+          ]
+        },
+        {
+          "line": 87,
+          "old": [
+            "python3 -m pip install -r plugins/crw/skills/repo-map/scripts/requirements.txt\n"
+          ],
+          "new": [
+            "python3 -m pip install -r \"<crw-repo-map skill directory>/scripts/requirements.txt\"\n"
+          ]
+        },
+        {
+          "line": 121,
+          "old": [
+            "  (`hooks/session-start-announcing-map-affordance.json`, cxc-ops) announces this\n"
+          ],
+          "new": [
+            "  (the crw SessionStart map-affordance hook) announces this\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "agents/openai.yaml",
+      "reason": "Add the required interface default_prompt naming this CRW skill while preserving the original implicit-invocation policy.",
+      "hunks": [
+        {
+          "line": 4,
+          "new": [
+            "  default_prompt: \"Use $crw-repo-map to map this unfamiliar codebase before deeper source inspection.\"\n"
+          ]
+        }
+      ]
+    }
+  ]
+}
