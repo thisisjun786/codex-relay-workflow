@@ -23,11 +23,13 @@ never send it back to draft.
 
 ## Disabled reviewer policy
 
-GitHub Codex automatic code review is disabled and is not a CRW completion or
-merge gate. Do not trigger it, re-request it after a push, or wait for a fresh-head
-Codex review or a settling period. Re-enabling it requires a new explicit user
-decision; an old assignment, review comment, or pending check does not supply one.
-Record it as disabled/not required, never as a successful review.
+GitHub Codex code review is not a CRW completion or merge gate. Do not trigger it,
+re-request it after a push, or wait for a fresh-head Codex review or a settling period.
+Jun's decision of 2026-10-03 lets it run once when a pull request is opened, and that one
+run is awaited to its end before the child's receipt, as
+[Devin and Codex reviews are references, not merge gates](#devin-and-codex-reviews-are-references-not-merge-gates)
+says. Anything beyond that run requires a new explicit user decision; an old assignment, review comment, or pending check
+does not supply one. Record a skipped or absent run as such, never as a successful review.
 
 This applies to the external GitHub reviewer, not Codex execution tasks, their
 model settings, CXC's workflow or independent review. Keep the target repository's
@@ -124,10 +126,107 @@ For optional reviewers, observe a running review with bounded waits appropriate
 to its expected runtime. If unavailable or stalled, use sufficient independent
 review already available or obtain a permitted local review. Record the gap and
 continue when the repository's requirements and relevant review coverage are met.
-Do not wait for every historical or possible future reviewer. Fallback review
-cannot replace required CI, a required review source, or mandatory formal approval.
+Do not wait for every historical or possible future reviewer. The one run each of Devin
+and Codex makes on a pull request is the exception: it is awaited to its end before the
+child's receipt
+([Devin and Codex reviews are references, not merge gates](#devin-and-codex-reviews-are-references-not-merge-gates)).
+Fallback review cannot replace required CI, a required review source, or mandatory formal approval.
 Inspection does not authorize enabling integrations, new paid usage, or sending
 private source to another service.
+
+## Devin and Codex reviews are references, not merge gates
+
+Devin Review and the GitHub Codex review are references. Neither is a merge gate, and a run that is
+skipped or never shows is not waited for. Each runs once per pull request, Devin when the pull request
+becomes ready for review and Codex when it is opened, and the merge waits for neither. The child does wait
+for that one run of each to end before it emits its receipt. A review thread that reaches the head after the receipt is found outside
+the record's `threadsSeen` when the parent restates it, the handoff no longer describes the candidate, and
+the candidate goes back for a round trip
+([Recheck, integrate, and record](#recheck-integrate-and-record)).
+
+### The three gates
+
+A pull request merges when all three hold on one and the same head:
+
+1. every CI job succeeds on that head ([Check CI for this candidate](#check-ci-for-this-candidate)),
+   all of them on the head the merge names and not on a mix of heads;
+2. the coordinator verified the candidate by its usual procedure: it read the diff and the code and
+   reran the tests the criteria rest on;
+3. the local gates pass: the checks the repository names for the change, run through the repository's
+   permitted local validation route.
+
+Gate 2 is the coordinator's own verification, not a restatement of the child's handoff. It is the
+exception to the rule that the coordinator reads a child's result that still applies instead of producing
+it again ([Observe and verify](../SKILL.md#observe-and-verify)). That rule and
+[OPS-9.3](operations.md#ops-93-the-parent-merges-and-does-not-release) keep governing what the coordinator
+re-derives from the child's handoff: thread coverage, check runs and review dispositions, which it does not
+paginate or triage again.
+
+Nothing else is a gate. The merge waits for no Devin or Codex status or review. An earlier Devin review is
+not inherited by patch-id, no substitute review comment is written or required, and a review against a
+security checklist is not a gate, although a coordinator who finds a security problem while reading the
+diff grades it like any finding ([impact](#judge-a-finding-by-its-impact)). The repository's own merge
+mechanics stay as [Recheck, integrate, and record](#recheck-integrate-and-record) and `POLICY.md` have
+them: a current base, no conflicts, Ready status, resolved review conversations and the expected-head guard.
+Pull requests that change activation wiring, manifest declarations, the installers, `SECURITY.md` or
+`POLICY.md` merge under the same three gates.
+
+### The one run of each reviewer, awaited before the receipt
+
+| | Devin Review | Codex review |
+| --- | --- | --- |
+| Runs | once, when the pull request becomes ready | once, when the pull request is opened: a code review and a security review |
+| In progress | the `Devin Review` status description is `Analyzing your changes` (state pending): wait, with no time limit | the bot's eyes reaction is on the pull request, or a row of its summary comment is not `Completed` |
+| Finished | the description is `Completed analysis in <time>` | the eyes reaction is gone, and either the bot's thumbs-up reaction is on the pull request or every row of its summary comment says `Completed` |
+| Skipped, not waited for | the description is `Full review skipped: trial expired and no credits remaining` (state `success`) | the bot's notice that it skipped for limits, for the review it names |
+| Findings | a review and inline threads by `devin-ai-integration` | a review by `chatgpt-codex-connector[bot]` whose inline comments start with a `P0` to `P3` badge |
+
+The Codex summary comment is the bot's issue comment whose first line is
+`<!-- codex-pull-request-review-summary -->`, with a table of one row per review (Code Review, Security Review)
+and a hidden security-review record. A security row that says `Completed` while the code review row is
+missing or not Completed, and there is no thumbs-up, is still running: on pull request 368 the security row
+finished about half a minute before the code review did. A skip ends only the review it names; the other is
+still awaited.
+
+Read the Devin status by its description and never by its state: a state of `success` also marks a head
+Devin skipped, and `Completed analysis in 4s` stays a completion when the state is `failure`. A completion within
+seconds on a head that only merged the base is still a completion; such a head carries no review object of its
+own, which is normal.
+
+A reviewer that has shown no signal of any kind (no status, no comment, no reaction) 30 minutes after the
+pull request became ready (Devin) or was opened (Codex) is recorded as `no signal by <time>` and not waited
+for. When neither shows a signal after those 30 minutes, the handoff says `review unavailable (no signal)` and the
+child goes on. A reviewer that has shown any start signal is waited for to its end or its skip, however long.
+A description or row status that is not in the table is such a signal: record it exactly as read and wait. If
+it has not changed in 30 minutes, the child emits no `ready_for_review` receipt: it ends its turn with a
+`blocked_needs_input` receipt that names the text, because the skill does not guess its meaning.
+
+A later head has no review of its own, and that is normal, a refresh of the base included. No review is
+requested again and no later run is awaited.
+
+### What each finding needs before the receipt
+
+Read the grade as the reviewer wrote it, whoever the reviewer is.
+
+- Devin red, Codex P0 and P1, and any security finding (Devin `"kind": "security"`, anything from the Codex
+  security review) are fixed or answered with code evidence before the receipt. A grade is a label, and
+  whether a finding blocks is still decided by [impact](#judge-a-finding-by-its-impact): a defect that is real
+  and blocks is fixed or the candidate is reported blocked, and is never recorded `not_applicable`, and a
+  conditional acceptance is not how one of these is cleared.
+- Devin yellow and Codex P2 and P3 get a reply and are resolved, or are listed for the backlog in the
+  handoff. A minor separable residue follows
+  [the parent's acceptance](#conditional-acceptance-and-what-recording-one-costs).
+
+### What the record says
+
+The handoff and the merge record give each reviewer's reading as one of: finished with N threads, skipped,
+`no signal by <time>`, or the text of a signal the table does not know. They give the disposition of each red,
+P0, P1 and security finding with its commit or its evidence, and they name the three gates. A skipped,
+missing or unrecognised status is never recorded as a pass.
+
+A packet criterion or gate line that reads "Devin has no red or security finding" is read as: if a Devin
+review exists, its red and security findings are resolved; no new Devin review is awaited. The merge does not
+wait for Devin, and the child's wait for the one run is the step above.
 
 ## Judge a finding by its impact
 
@@ -482,12 +581,12 @@ On the new head N nothing about P carries over. Before the merge:
 - **Every job and the review, on N.** `merge-evidence` on N, without `--restate` because the
   child's record names P, must exit 0: each required job a success at its newest attempt, reviews and
   threads read to the end, and the candidate no longer behind. Jobs still pending, and a reading that
-  is unknown or stale, are waiting: read again. Devin reports a `Devin Review` commit status on a
-  head it has analysed; read once on a merge-only head, it completed within seconds and left no
-  review object, and what posts it is the repository's Devin setup, which is not assumed for every
-  head: `gh api repos/OWNER/REPO/commits/N/status`. Pending is waiting, `success` means it ran,
-  and its review and threads on N are then read like any other; no status at all is recorded as an
-  unavailable reviewer, never as a pass. Every thread on N has to be in the record's `threadsSeen`.
+  is unknown or stale, are waiting: read again. The `Devin Review` commit status
+  (`gh api repos/OWNER/REPO/commits/N/status`) is not a gate and is not waited for at this step:
+  [Devin and Codex reviews are references, not merge gates](#devin-and-codex-reviews-are-references-not-merge-gates)
+  says how it is read, by its description and never by its state. Read once on a merge-only head, it
+  completed within seconds and left no review object, which is normal. Every thread on N, a Devin or
+  Codex one included, has to be in the record's `threadsSeen`.
 - **A required job that failed on N is rerun once, on N.** On a head the parent made, a failed
   required job is a flake or a real failure, and D-12 settles it with one rerun on the same SHA: a job that passes is a flake, one that fails again is a failure.
   In a DAG-managed project that rerun is the scheduler's own `retry_same_sha`: `dag-merge-judge`
@@ -545,10 +644,11 @@ left it: at P when this was the first attempt, at the newest head the parent mad
 repeat. The correction is the old base-refresh correction that names that head and the conflicting
 base, and it carries the [restoration block](task-packet.md#restoration-block) when an earlier
 refresh already moved the branch past what the child holds. Everything else is found on a head the
-parent made: a refusal from `base-refresh check`; a required job that failed on N again after its one rerun, or a
-`Devin Review` status that failed; a thread on N outside `threadsSeen`, or a blocking finding on N
-under [impact](#judge-a-finding-by-its-impact). Those corrections name N and not P, and carry the
-restoration block because the child's worktree is now behind its branch. Waiting is not a reason to
+parent made: a refusal from `base-refresh check`; a required job that failed on N again after its one
+rerun; a thread on N outside `threadsSeen`, or a blocking finding on N under
+[impact](#judge-a-finding-by-its-impact). A `Devin Review` status, failed or not, is not on this list
+([Devin and Codex reviews are references, not merge gates](#devin-and-codex-reviews-are-references-not-merge-gates)).
+Those corrections name N and not P, and carry the restoration block because the child's worktree is now behind its branch. Waiting is not a reason to
 return it. The route is otherwise the
 [needs-changes route](../SKILL.md#return-corrections-to-the-existing-task), unchanged. A conflict that shows after the verdict and before the acceptance takes that route on the same receipt: [a base conflict after the ruling and before the acceptance](#a-base-conflict-after-the-ruling-and-before-the-acceptance).
 
@@ -780,7 +880,7 @@ The verdict `verified` was given, and before `dag-accept` (or, in a project with
 3. **Read the answer, not the exit code.** A ruling that was replaced answers the new record: `verdict` is `needs_changes`, `nextExecutionGeneration` is the generation the child will report in, and `_supersedes` names the verified ruling it replaced; `assignment-show` then reads `needs_changes`.
 4. **Release the turn you hold** once the ruling is given, because the child works on the next generation and the lane must not wait for it: `merge-turn-release --turn <turn> --actor <id> --disposition returned --reason '<what invalidated the readiness>'`.
 5. **An older relay changed nothing.** An answer that is still `verified` and carries `_replay` means the installed relay is older than this rule and answered a different verdict with the recorded one: nothing reached the child and `assignment-show` still reads `verified`. Do not repeat the call, and do not open a parallel path to the child (the rule of [Return corrections to the existing task](../SKILL.md#return-corrections-to-the-existing-task)). Record the correction as undelivered on the assignment and hand the decision to whoever owns it, as for a relay that does not carry the restoration declaration.
-6. **A refusal says what remains**, with its reason, and wrote nothing: the verified ruling stands. `disposition_conflict` names the cause: a plan accepted the event, the work is marked merged, or a merge turn is merging, of unknown effect or landed. `stale_generation`, `superseded_revision`, `revision_ambiguous` and `relationship_not_active` say that the receipt is not the head of an active relationship, and each names its route. After the acceptance the relay takes no second ruling (unless a criteria re-review is open), so a verdict is not the way back for a candidate returned for any reason after it, a second job failure, a failed `Devin Review` status, a thread outside `threadsSeen` or `stale_base` included. The DAG records a correction only for a node whose stale reading says `correct`; for a result that is current (a base that moved after the acceptance is such a case) there is no recorded route in this build, so report it on the coordination record and do not open a generation that `dag-correct` will refuse.
+6. **A refusal says what remains**, with its reason, and wrote nothing: the verified ruling stands. `disposition_conflict` names the cause: a plan accepted the event, the work is marked merged, or a merge turn is merging, of unknown effect or landed. `stale_generation`, `superseded_revision`, `revision_ambiguous` and `relationship_not_active` say that the receipt is not the head of an active relationship, and each names its route. After the acceptance the relay takes no second ruling (unless a criteria re-review is open), so a verdict is not the way back for a candidate returned for any reason after it, a second job failure, a thread outside `threadsSeen` or `stale_base` included. The DAG records a correction only for a node whose stale reading says `correct`; for a result that is current (a base that moved after the acceptance is such a case) there is no recorded route in this build, so report it on the coordination record and do not open a generation that `dag-correct` will refuse.
 7. **When the child reports again** in the new generation, the receipt is a new event: acknowledge it and rule it as for any receipt ([the parent verifies](relay.md#the-parent-verifies): `claim`, `ack-proof`, `ack`, `verdict`), and refresh the base yourself if only the base moved again, as above. The child declares the receipt it replaces by its revision hash with `--supersedes-revision` only when it reports again inside the same generation.
 
 ## Hold the turn only while you can use it
