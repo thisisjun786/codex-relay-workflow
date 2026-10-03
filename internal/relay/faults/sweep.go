@@ -87,8 +87,10 @@ type Sweeper struct {
 	Program func() []string
 	// Now stamps the cursors, as faultsweep._now reads the wall clock.
 	Now func() string
-	// ManagedObserver enables the relay's own settled-turn readings. Selection is
-	// passed unchanged to the read-only reporting projection.
+	// ManagedObserver reads the relay's own settled managed turns; the daemon supplies delivery's omission
+	// judgment (supervisor.OmissionObserver), which this package cannot import. Selection is passed unchanged
+	// to it. A sweeper with a Selection and no observer cannot read those turns, and says so (see
+	// SweepReadings); one with neither reads none.
 	ManagedObserver ManagedReadingObserver
 	Selection       any
 	// Workspace is the scope under which this store's source rows are judged.
@@ -128,9 +130,7 @@ func (sw *Sweeper) Sweep(ctx context.Context, product string) (Batch, error) {
 }
 func (sw *Sweeper) SweepReadings(ctx context.Context, product, project string, readings []any, after int) (Batch, error) {
 	if sw.Selection != nil && sw.ManagedObserver == nil {
-		configured := *sw
-		configured.ManagedObserver = ManagedOmittedObserver{}
-		return configured.SweepReadings(ctx, product, project, readings, after)
+		return Batch{}, fmt.Errorf("fault_sweep_misconfigured: a store selection needs a managed observer, and none was supplied")
 	}
 	cursors, err := sw.readCursors(ctx)
 	if err != nil {
