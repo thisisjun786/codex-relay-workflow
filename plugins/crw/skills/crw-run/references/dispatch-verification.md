@@ -181,6 +181,7 @@ a case whose owner has moved or been reworded before relying on it.
 | S25b | A child that needs something only a person can give does not call `request_user_input`, which CXC denies while a goal is active: it writes the question out, records `blocked_needs_input` on its turn and, where a relay holds the assignment, emits that outcome; where none does it returns the CXC status the case takes with the question | The same three places and [OPS-6.2](operations.md#ops-62-record-shape) | Recovery | added 2026-10-03; the hook denial was read in the CXC source, no child's use of the route was observed, see below |
 | S25c | `LOOP-DOCS-FIRST-01` applies to a CRW child as CXC states it, to the child's own issue: a single-cycle issue skips the docs-only first cycle, and a child that plans two or more work-phases opens with one, with CXC's roadmap debt for scope found later | [Default independent execution](../../crw-plan/references/integrations.md#default-independent-execution) and the Loop bullet of the [Launch packet](task-packet.md#launch-packet) | Default settings | added 2026-10-03; read against recorded goalplans, the correction-generation and publication-phase cases it left open are decided by S25d, see below |
 | S25d | A correction generation, a base-refresh generation and a separated publication step are not the first work-phase of new work, so they do not open `LOOP-DOCS-FIRST-01`'s docs-only cycle, and the CXC rule text is unchanged | [Default independent execution](../../crw-plan/references/integrations.md#default-independent-execution), the Loop bullet of the [Launch packet](task-packet.md#launch-packet) and the workflow bullet of the [Restoration block](task-packet.md#restoration-block) | Default settings | added 2026-10-03; decides the cases S25c left open, from S25c's goalplan record, and no child reading the line was observed, see below |
+| S26 | A task that has to stop its own tests, a child or the parent, stops them by the pid it recorded when it started them or by the process group it created for them, and never by pattern or name (`pkill -f`, `killall`); a long command records its pid from the start or runs under `timeout`, and a process the task did not start is reported with its pid and working directory, not stopped | The `Processes you start:` line of the [Launch packet](task-packet.md#launch-packet) and its line in [First full assignment required fields](task-packet.md#first-full-assignment-required-fields); for the parent, [Observe and verify](../SKILL.md#observe-and-verify) and [Check CI for this candidate](merge-readiness.md#check-ci-for-this-candidate) | Preserved limits | added 2026-10-03; the mechanics were measured on this host's own processes, no child or parent reading the wording has been observed, see below |
 
 S14 and S17 are the pair that is easiest to confuse. S14 removed the readiness turn; S17
 added a capability check the coordinator performs before creating the task. A check that
@@ -367,6 +368,34 @@ are not the first work-phase of new work. The CXC rule text is not changed and s
 work-phases, so the line is how CRW reads that rule for its own children. Not observed: a child
 reading the line at a correction, a base refresh or a publication step; that waits for the next
 real-use run, and a test that matches the wording would show only that the text is present.
+
+S26 was read on 2026-10-03 against this checkout at dev 321f5bd0. The observation behind it is the
+issue's account of real use that day: a child stopped its own tests with `pkill -f 'make test'`
+while the children of several projects ran `make test` in their own worktrees on this host, and
+another child's local test part ended on a signal at about the same time (its hosted CI passed, so
+no merge was affected). The account is the issue's, taken from a parent's report; that report and
+the other child's test output are private and were not re-read, and nothing here shows that the
+pattern kill caused the signal. Before the change `rg -i 'pkill|killall' plugins/crw/skills` found
+nothing. The close-of-run paragraph of SKILL.md already said that a busy port, a matching command
+line or a familiar directory does not identify an owner and that a process the run cannot claim is
+reported rather than stopped. It did not say that a task stops its own processes by a pid recorded
+at the start or by its own process group, and it did not forbid choosing a target by name or
+pattern; the parent's verification procedure did not say how its own runs are stopped.
+
+What was run, on processes started for the purpose and stopped only by their own pids or process
+groups (no target was selected by name or pattern; the script and its output are kept in the
+private evidence root): a command tree started under `setsid` with its pid recorded had a process
+group id equal to that pid; a TERM to that pid alone left its two child processes running, and
+`kill -TERM -- -<pid>` ended the group; `timeout 2` over a command with two children put itself,
+the command and its two children in one process group and left nothing in that group at expiry
+(exit 124); and two processes with identical command lines were told apart only by pid. That is
+why the line names the recorded pid and the group, and says that the pid of a shell or of `make`
+alone is not enough for a tree. Not measured: a child or a parent following the new wording, the
+reuse of a recorded pid, `timeout --foreground`, and macOS, which was not tried (the line names
+`setsid` only as an example, and `timeout` because the issue does). The line is an instruction.
+Nothing in this repository enforces it and the host's hooks and sandbox profile were not checked
+for a refusal of `pkill`, so a child that never reads it can still use it, and a test that matches
+the wording would show only that the text is present.
 
 ## Negative cases
 
