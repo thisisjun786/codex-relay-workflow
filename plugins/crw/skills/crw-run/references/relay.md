@@ -484,6 +484,10 @@ while a declared required check is not successful at its highest attempt on that
 the pull request is a draft. State every field; an unstated one is refused rather than read as
 zero. If the review is not finished, the turn ends `blocked_needs_input` and says so, which is
 not a lesser outcome than pretending it did.
+A thread that arrives after this record is not in `threadsSeen`. The parent's restatement reports it
+as a late finding unless the parent has recorded its own disposition for it
+([how](merge-readiness.md#a-late-thread-the-parent-dispositions-itself)); that never replaces the
+child's dispositions.
 
 Without `--socket` the receipt is STAGED: recorded and visible, deliverable only once an
 independent observation sees that turn end normally. Staged is real progress; it is not delivery
@@ -1005,7 +1009,9 @@ Read the handoff the report carries rather than collecting its contents again. T
 already paginated the review and enumerated the check runs, and the values are the ones the merge
 turn expects to be restated. What this side adds is currency: re-read the head and the base
 immediately before merging and compare the counts to the record. A disagreement is a fail-closed
-return to the same child, through the needs-changes verdict below, not a repair made here.
+return to the same child, through the needs-changes verdict below, not a repair made here. A late
+review thread on the record's head that the parent has itself dispositioned
+([how](merge-readiness.md#a-late-thread-the-parent-dispositions-itself)) is not a disagreement.
 
 The proof is over the parent's OWN acknowledging turn, which the delivered message cannot carry:
 the child does not know which turn will acknowledge, and quoting the delivered fields back cannot

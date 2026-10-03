@@ -140,8 +140,10 @@ Devin Review and the GitHub Codex review are references. Neither is a merge gate
 skipped or never shows is not waited for. Each runs once per pull request, Devin when the pull request
 becomes ready for review and Codex when it is opened, and the merge waits for neither. The child does wait
 for that one run of each to end before it emits its receipt. A review thread that reaches the head after the receipt is found outside
-the record's `threadsSeen` when the parent restates it, the handoff no longer describes the candidate, and
-the candidate goes back for a round trip
+the record's `threadsSeen` when the parent restates it, and the handoff no longer describes the candidate.
+A thread the parent judges minor it dispositions itself
+([a late thread the parent dispositions itself](#a-late-thread-the-parent-dispositions-itself)); for any
+other the candidate goes back for a round trip
 ([Recheck, integrate, and record](#recheck-integrate-and-record)). The relay's restatement catches a late
 review thread only: a late finding that lives in a reviewer's summary comment is not caught, so the parent
 also reads each reviewer's summary comment again right before it merges.
@@ -396,13 +398,36 @@ expected-head guard; preserve required base-update or merge-queue behavior.
 `merge-evidence --restate <record>` is that re-read: it takes a fresh reading of its
 own and grades the child's record against it, rather than reading the child's own
 numbers back. A thread that arrived on the same head and is not in the record's
-`threadsSeen` invalidates the record, which returns to the child that produced it.
+`threadsSeen` invalidates the record, which returns to the child that produced it, unless the
+parent has judged that thread itself and recorded the judgement
+([below](#a-late-thread-the-parent-dispositions-itself)).
 The reading and the merge are not one act, and the command does not pretend they
 are: the expected-head guard is what closes the gap at the moment of merging, and a
 finding that lands after it is a late finding for the original issue's correction
 path.
 A base that only moved is the one disagreement the parent removes itself, under
 [Refresh the base yourself when only the base moved](#refresh-the-base-yourself-when-only-the-base-moved).
+A late thread it has dispositioned is the other, under the heading below.
+
+### A late thread the parent dispositions itself
+
+A late review thread that the parent judges minor and separable under
+[impact](#judge-a-finding-by-its-impact) (a Codex P2 or P3, a Devin yellow) need not go back to the
+child. The parent answers it on the thread, resolves it on the forge, and records its judgement in a
+file that the same command reads:
+
+    codex-session-relay merge-evidence --repository <owner/name> --pull-request <N> \
+      --restate <record.json> --late-dispositions <dispositions.json>
+
+The file is `{"lateDispositions": [{"threadId": ..., "disposition": ..., "evidenceUrl": ..., "head": ..., "grade": ...}]}`.
+`disposition` is `answered`, `backlog`, `resolved` or `refuted`; the evidence is the reply, the
+follow-up or the commit; `head` is the head the record is about; `grade` is the grade the parent gave.
+The relay checks that the entries are well formed and name that head, records the grade without
+reading it, and prints each entry under `restatement.lateDispositions`, which the parent copies into
+the merge record. A disposition names one head, so after a push or a base refresh it does not carry
+to the new head. A thread still unresolved on the forge fails the reading, and a P0, P1 or security
+finding is not recorded this way: it returns to the child. The file format and the refusals are in
+`docs/relay/coordination.md`, "A review thread that arrives after the child's record".
 
 Serialize integrations sharing a target. Verify the actual landing and resulting
 destination revision; an accepted or queued merge request is not a completed merge.
@@ -542,7 +567,8 @@ later refresh of the same candidate is a further step of its own, below):
 1. The base is the only thing wrong. `merge-evidence --restate <the child's record>` reports exactly
    two problems, `candidate_behind` and `candidate_moved`, and `pinned.headSha` is the record's
    head. The reading raises `candidate_moved` for a moved head and for a moved base alike, so the
-   head comparison is what attributes it to the base. Any other problem (a `late_finding`, a job that
+   head comparison is what attributes it to the base. Any other problem (a `late_finding` the parent has not
+   dispositioned, a job that
    is not a success, a changed gate, a draft) is not a currency problem and is handled as it always was.
    A merge state of `UNKNOWN`, which the forge reports briefly after a landing, is a reading to repeat.
 2. The forge reports no conflict: `pinned.mergeable` is true and the merge state is not `DIRTY`.
@@ -666,7 +692,8 @@ repeat. The correction is the old base-refresh correction that names that head a
 base, and it carries the [restoration block](task-packet.md#restoration-block) when an earlier
 refresh already moved the branch past what the child holds. Everything else is found on a head the
 parent made: a refusal from `base-refresh check`; a required job that failed on N again after its one
-rerun; a thread on N outside `threadsSeen`, or a blocking finding on N under
+rerun; a thread on N outside `threadsSeen` that the parent has not dispositioned for N (a disposition
+names one head), or a blocking finding on N under
 [impact](#judge-a-finding-by-its-impact). A `Devin Review` status, failed or not, is not on this list
 ([Devin and Codex reviews are references, not merge gates](#devin-and-codex-reviews-are-references-not-merge-gates)).
 Those corrections name N and not P, and carry the restoration block because the child's worktree is now behind its branch. Waiting is not a reason to
@@ -677,7 +704,7 @@ return it. The route is otherwise the
 it.** `dag-accept` records the head the forge shows as the accepted head and takes none from the
 child's report; a head that moves afterwards reads `stale_head` at `dag-merge-judge` and
 `dag-merge-request`, leaves the node `blocked:stale_head`, and the same output cannot be accepted at
-the new head (`merge_candidate_moved`). An acceptance reads no CI, no review and no thread
+the new head (`merge_candidate_moved`); the exception is a head that [a base refresh the child made after the acceptance](#a-base-refresh-the-child-made-after-the-acceptance) records. An acceptance reads no CI, no review and no thread
 (`docs/relay/dag-scheduler.md`, "Accepting a result"), so the order is: the verdict `verified`, the
 update and the base-refresh check on N, `dag-accept` (it records N), `dag-merge-judge` for the
 jobs on N (`checks_pending` is waited on; the first failure is the `retry_same_sha` above),
@@ -922,7 +949,7 @@ The verdict `verified` was given, and before `dag-accept` (or, in a project with
 
 ### A base refresh the child made after the acceptance
 
-In a DAG-managed project the node is accepted (`dag-ready` reads it `done:accepted`), the base moved after `dag-accept`, and the candidate cannot go back by a second ruling or by `dag-correct`, because its result is current. The way back to the same child is a generation you open by hand that asks for the merge of the base and nothing else. Once that generation is ruled `verified`, `dag-base-refresh` records that the acceptance also stands on it, after the relay has proved from git that its head is the accepted head plus merges of the base, and the node integrates on it. A generation that holds more than that, the child's own work, is a correction, and for a current result this build has no route for it: report it on the coordination record. The rule and its refusals are in `docs/relay/dag-scheduler.md`, "A base refresh of an accepted node".
+In a DAG-managed project the node is accepted (`dag-ready` reads it `done:accepted`), the base moved after `dag-accept`, and the candidate cannot go back by a second ruling or by `dag-correct`, because its result is current. The way back to the same child is a generation you open by hand that asks for the merge of the base and nothing else. Once that generation is ruled `verified`, `dag-base-refresh` records that the acceptance also stands on it, after the relay has proved from git that its head is the accepted head plus merges of the base. The pull request is then judged and merged through the lane at that head, and the node integrates on it. A generation that holds more than that, the child's own work, is a correction, and for a current result this build has no route for it: report it on the coordination record. The rule and its refusals are in `docs/relay/dag-scheduler.md`, "A base refresh of an accepted node".
 
 1. **Check the premise.** `dag-ready --plan <plan>` reads the node `done:accepted` (a node that reads `stale` goes through its stale reading's action, not this); `assignment-show --relationship <rel>` shows the relationship at the accepted generation; no merge turn of the candidate is merging, of unknown effect or landed.
 2. **Open the generation and send the instruction.** Open it by hand ([a fresh execution generation](relay.md#a-fresh-execution-generation)) and dispatch the child through the transport that dispatched it, with the instruction: merge `origin/dev` into the branch with a merge commit, resolve only the conflicts git reports, change nothing else, push, name every file it resolved by hand and how, and report `ready_for_review` in the new generation.
@@ -940,12 +967,12 @@ In a DAG-managed project the node is accepted (`dag-ready` reads it `done:accept
          --actor <the parent's task id> --checkout <checkout> --expect-epoch <the epoch you hold>
 
    The answer carries `refresh_id`, `execution_generation`, `head_sha`, the proof `steps` (one per merge, oldest first) and `resolved_paths`. A refusal `disposition_conflict` that says the merges "resolved these files by hand: [...]" is not a failure: read each named file at the head (`git -C <checkout> show <head>:<path>`), confirm that it carries the resolution the child reported and nothing else, and repeat the call with `--resolved <path>` once per file, exactly the files named. Any other refusal names a closed code (`no_update`, `not_built_on_accepted`, `not_a_merge`, `not_from_base`, `tree_differs`, `chain_too_long`): the generation is not a base refresh, and nothing was written. `merge_target_unreadable` names the commit the checkout lacks: fetch it and call again. Calling again with the same facts is a replay.
-5. **Merge as before**, at the exact head the record names, and mark the merge on that generation's event:
+5. **Merge through the lane**, as for any accepted candidate, at the head the record names. `dag-merge-judge` and `dag-merge-request` compare the pull request with the head the acceptance stands on, which after the record is that head, so the refreshed pull request is judged (the jobs on it are read there, `checks_pending` is waited on, the first failure is the `retry_same_sha` above) and gets its turn for that head. Then the lane's own steps, unchanged: acknowledge the grant, `merge-turn-check` on that head, the merge on the forge (`gh pr merge --match-head-commit <head>`), `merge-turn-land`, and the merge marked on that generation's event:
 
        codex-session-relay --state "$RELAY_STATE" assignment-mark --relationship <rel> --mark merged \
          --evidence '<the merge commit and the refresh_id>' --actor <id> --expected-event <the event of generation n>
 
-   `dag-merge-judge` and `dag-merge-request` judge the pull request head against the accepted head and read `stale_head` for a refreshed pull request, so the candidate is merged by hand (`gh pr merge --match-head-commit <head>`) and not through the merge lane.
+   A pull request at a head no record names (the child pushed again, or the head holds more than merges of the base) is `stale_head` and gets no turn: make the record again for the new head (step 4 proves it from the accepted head), or return it to the child. `merge-turn-check` wants the head that the newest generation's report names, written whole: a report that names an abbreviated head is refused there until the child names the whole head.
 6. **Observe the landing:**
 
        codex-session-relay --state "$RELAY_STATE" dag-integration-observe --plan <plan> --node <node> \
