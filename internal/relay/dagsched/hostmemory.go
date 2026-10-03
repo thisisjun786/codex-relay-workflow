@@ -149,7 +149,7 @@ func somePressure(text string) (float64, bool) {
 		for _, f := range fields[1:] {
 			if value, ok := strings.CutPrefix(f, "avg10="); ok {
 				v, err := strconv.ParseFloat(value, 64)
-				return v, err == nil && v >= 0 && !math.IsInf(v, 0)
+				return v, err == nil && v >= 0 && v <= 100
 			}
 		}
 	}

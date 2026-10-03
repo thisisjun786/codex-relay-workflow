@@ -44,8 +44,13 @@ func psi(some string) string {
 
 const kibPerGiB = 1 << 20
 
-// Every command the CLI tests run reads the host through the environment: point them at a proc root that does not exist, so no test of this package reads the live host (a test that wants a host sets its own).
-func init() { _ = os.Setenv(EnvHostProcRoot, "/nonexistent/crw-468-proc") }
+// Every command the CLI tests run reads the host through the environment: point them at a proc root that does not exist and drop the thresholds a developer's shell may carry, so no test of this package reads the live host or depends on it (a test that wants a host sets its own).
+func init() {
+	_ = os.Setenv(EnvHostProcRoot, "/nonexistent/crw-468-proc")
+	for _, name := range []string{EnvHostMinAvailableGiB, EnvHostMaxSwapPercent, EnvHostMaxPressure} {
+		_ = os.Unsetenv(name)
+	}
+}
 
 func TestProcHostMemoryReadsMeminfoAndPressure(t *testing.T) {
 	root := fakeProc(t, memInfo(40*kibPerGiB, 8*kibPerGiB, 6*kibPerGiB), psi("3.50"))
@@ -95,6 +100,7 @@ func TestProcHostMemoryUnreadableFilesAreNoReading(t *testing.T) {
 		{"a some line without avg10", memInfo(40*kibPerGiB, 8, 8), "some avg60=0.00 avg300=0.00 total=1\n", []string{"pressure"}},
 		{"a pressure avg10 that is not a number", memInfo(40*kibPerGiB, 8, 8), psi("high"), []string{"pressure"}},
 		{"a pressure avg10 below zero", memInfo(40*kibPerGiB, 8, 8), psi("-1.00"), []string{"pressure"}},
+		{"a pressure avg10 above 100", memInfo(40*kibPerGiB, 8, 8), psi("101.00"), []string{"pressure"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
