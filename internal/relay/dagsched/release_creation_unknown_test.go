@@ -85,6 +85,9 @@ func keepThreads(k *realKit) *leftovers {
 			st.known = append(st.known, id)
 		}
 		st.mu.Unlock()
+		if st.started == 1 && st.dropFirst {
+			return fakehost.Reply{Result: k.startReply(id), Delay: time.Second}
+		}
 		return fakehost.Reply{Result: k.startReply(id)}
 	})
 	h.Handle("thread/loaded/list", func(json.RawMessage) fakehost.Reply {
@@ -283,7 +286,6 @@ func TestReleaseCreationUnknownLegacyProfiles(t *testing.T) {
 				k.host.Script("thread/read", rpcFailure("host busy"))
 			} else {
 				st.dropFirst = true
-				k.host.Script("thread/start", fakehost.Reply{Result: map[string]any{}, Delay: time.Second})
 			}
 			releasePlan(k.fixture, "rp")
 			first, err := k.sched.Release(context.Background(), "rp", "A", "parent", k.request())
@@ -297,6 +299,7 @@ func TestReleaseCreationUnknownLegacyProfiles(t *testing.T) {
 			if strings.Contains(frozen, "mcpProfile") {
 				t.Fatal("legacy request states a profile")
 			}
+			beforeProfiles := len(k.host.Requests())
 			if err := os.WriteFile(os.Getenv(execution.EnvPolicy), []byte(recoveryProfiles), 0600); err != nil {
 				t.Fatal(err)
 			}
@@ -342,17 +345,22 @@ func TestReleaseCreationUnknownLegacyProfiles(t *testing.T) {
 			if k.count("SELECT COUNT(*) FROM relationships") != 1 || k.count("SELECT COUNT(*) FROM generation_turns WHERE turn_id='business'") != 1 {
 				t.Fatal("duplicate child admission")
 			}
-			for _, r := range k.host.Requests() {
+			verifiedProfiles := 0
+			for _, r := range k.host.Requests()[beforeProfiles:] {
 				params := paramsOf(r.Params)
 				if r.Method == "turn/start" && params["threadId"] != "real-child-2" {
 					t.Fatal("orphan was sent to")
 				}
 				if (r.Method == "thread/start" || r.Method == "thread/resume") && params["threadId"] != "real-child" && params["config"] != nil {
+					verifiedProfiles++
 					off := pyjson.Map(pyjson.Map(params["config"])["mcp_servers"])
 					if !reflect.DeepEqual(off, map[string]any{"extra": map[string]any{"enabled": false}}) {
 						t.Fatalf("default minimal not applied: %v", params)
 					}
 				}
+			}
+			if verifiedProfiles < 2 {
+				t.Fatal("creation and resume profiles were not both observed")
 			}
 		})
 	}

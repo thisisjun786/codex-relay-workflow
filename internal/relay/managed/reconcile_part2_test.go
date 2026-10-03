@@ -2,6 +2,7 @@ package managed
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -42,6 +43,37 @@ func TestReconcileAbandonsOnlyUnresumableThreads(t *testing.T) {
 			k.effects(2, 2) // refused recovery, then the replacement's business send
 		})
 	}
+}
+
+func TestNewRequestCannotInheritArmedReplayContext(t *testing.T) {
+	k := newReconcileKit(t, "lost")
+	k.run()
+	var captured context.Context
+	k.start.Readiness = func(ctx context.Context, _ map[string]any) (string, error) {
+		if ArmedReplay(ctx) {
+			captured = ctx
+			return "caller_policy_unconfigured", nil
+		}
+		return "mcp_profile_required", nil
+	}
+	k.run()
+	if captured == nil {
+		t.Fatal("existing armed request was not recognized")
+	}
+	req, err := ParseRequest(k.raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req["requestId"] = "new-profile-free-request"
+	raw, err := json.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := k.start.Run(captured, raw)
+	if err != nil || got.Get("reason") != "mcp_profile_required" {
+		t.Fatalf("inherited replay proof: %v %v", got, err)
+	}
+	k.effects(1, 0)
 }
 
 func TestReconcileUnknownTurnNeverLicensesAbandonment(t *testing.T) {
@@ -109,6 +141,13 @@ func TestReconcileExcludesBothEarlierReceiptSources(t *testing.T) {
 				}
 			}
 			k.expect(k.run(), "incomplete", "creation_unknown", "recreated")
+			if source == "creation" {
+				for id, receipt := range k.host.operations {
+					if strings.HasPrefix(id, "managed-standby-") {
+						delete(receipt, "threadId")
+					}
+				}
+			}
 			h := &readTrackingApp{scriptedApp: k.host}
 			k.start.Adapter = h
 			got := k.run()

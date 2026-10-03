@@ -8,6 +8,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/managed"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/service"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -58,7 +59,7 @@ func (o WorkerObservation) Ready(ctx context.Context, request map[string]any, po
 			return pyjson.Text(finding.Get("code")), nil
 		}
 		if role == "child" {
-			if reason := mcpAdmission(policy, settings["mcpProfile"]); reason != "" {
+			if reason := mcpAdmission(ctx, policy, settings["mcpProfile"]); reason != "" {
 				return reason, nil
 			}
 		}
@@ -69,7 +70,7 @@ func (o WorkerObservation) Ready(ctx context.Context, request map[string]any, po
 // mcpAdmission is why a child's stated MCP profile is not admitted, or "". A role that declares
 // profiles admits a child only when its request states one of them, so the child's record names the
 // profile every later resume sends again; a role that declares none admits a child that states none.
-func mcpAdmission(policy registry.RolePolicy, stated any) string {
+func mcpAdmission(ctx context.Context, policy registry.RolePolicy, stated any) string {
 	declared, ok := policy.BridgePolicy().Role("child")
 	if !ok || declared.MCP == nil {
 		if stated == nil {
@@ -78,6 +79,9 @@ func mcpAdmission(policy registry.RolePolicy, stated any) string {
 		return "mcp_profile_unknown"
 	}
 	if stated == nil {
+		if managed.ArmedReplay(ctx) && declared.MCP.Default != "" {
+			return ""
+		}
 		return "mcp_profile_required"
 	}
 	name, _ := stated.(string)
