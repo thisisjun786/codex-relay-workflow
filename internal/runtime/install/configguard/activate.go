@@ -301,8 +301,8 @@ func PreserveMultiAgentV2Table(pre, post string, enabled ...bool) (string, bool)
 		return "", false
 	}
 	out := post[:a] + post[b:]
-	out = regexp.MustCompile("(?:\\r?\\n){3,}").ReplaceAllString(out, eol+eol)
-	out = regexp.MustCompile("(?:\\r?\\n)*$").ReplaceAllString(out, eol)
+	out = regexp.MustCompile(`(?:\r?\n){3,}`).ReplaceAllString(out, eol+eol)
+	out = regexp.MustCompile(`(?:\r?\n)*$`).ReplaceAllString(out, eol)
 	return out + eol + "[features.multi_agent_v2]" + eol + "enabled = " + value + eol + strings.Join(lines, eol) + eol, true
 }
 func strconvBool(b bool) string {
