@@ -40,6 +40,10 @@ type Prepared struct {
 func (s *Scheduler) PrepareCorrection(ctx context.Context, plan, node, actor string, in ManifestInput, opts VerifyOptions) (Prepared, error) {
 	var out Prepared
 	q := s.Store.Q(ctx)
+	// nothing is built, read from the forge or written for a session that does not hold the plan's epoch (the manifest is stored under the fence again below)
+	if err := s.fence(ctx, q, plan, actor); err != nil {
+		return out, err
+	}
 	snap, _, err := dag.SnapshotAt(ctx, q, plan, 0)
 	if err != nil {
 		return out, err
@@ -94,12 +98,19 @@ func (s *Scheduler) PrepareCorrection(ctx context.Context, plan, node, actor str
 	if err != nil {
 		return out, err
 	}
+	if s.testBeforeManifestStore != nil {
+		s.testBeforeManifestStore()
+	}
 	if s.testBeforePrepareTx != nil {
 		s.testBeforePrepareTx()
 	}
-	// the plan's hold is asked again in the transaction that stores the manifest, and the file is frozen and the instruction returned only after it committed: a pause that landed while the inputs were
-	// being verified leaves no manifest and no instruction
+	// the fence and the plan's hold are asked again in the transaction that stores the manifest (PutManifest joins it), and the file is frozen and the instruction returned only after it committed: a claim
+	// that landed since the check above, or a pause that landed while the inputs were being verified, leaves no manifest and no instruction. The file written below is inert until a ruling names its
+	// manifest, which only a fenced RecordCorrection can bind.
 	if err := s.Store.Compose(ctx, func(txCtx context.Context, _ *sql.Conn) error {
+		if err := s.fence(txCtx, s.Store.Q(txCtx), plan, actor); err != nil {
+			return err
+		}
 		if err := lifecycleOpen(txCtx, s.Store.Q(txCtx), plan, node, "correcting it", false); err != nil {
 			return err
 		}
@@ -148,6 +159,9 @@ func (s *Scheduler) RecordCorrection(ctx context.Context, plan, node, actor, sup
 	out := CorrectionResult{PlanID: plan, NodeID: node}
 	err := s.Store.Compose(ctx, func(txCtx context.Context, _ *sql.Conn) error {
 		tx := s.Store.Q(txCtx)
+		if err := s.fence(txCtx, tx, plan, actor); err != nil {
+			return err
+		}
 		snap, _, err := dag.SnapshotAt(txCtx, tx, plan, 0)
 		if err != nil {
 			return err
