@@ -31,7 +31,14 @@ const backupHelp = "the directory the whole relay state directory is copied to (
 var Commands = []string{"install", "update", "rollback", "remove", "status", "register-mcp", "hook", "register-service", "features"}
 
 func usage(w io.Writer) {
-	fmt.Fprintln(w, "usage: crw install {"+strings.Join(Commands, ",")+"} ...")
+	// The installer help is a frozen contract; features has its own help surface.
+	var legacy []string
+	for _, command := range Commands {
+		if command != "features" {
+			legacy = append(legacy, command)
+		}
+	}
+	fmt.Fprintln(w, "usage: crw install {"+strings.Join(legacy, ",")+"} ...")
 }
 
 // Run is `crw install ...` over this process's environment.

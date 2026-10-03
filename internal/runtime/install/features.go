@@ -40,22 +40,12 @@ func runFeatures(ctx context.Context, args []string, env scope.Env, stdout, stde
 		fmt.Fprintln(stderr, "usage: crw install features <enable|disable|status>")
 		return 2
 	}
-	home := text.Trim(env.Get("CODEX_HOME"))
-	if home == "" {
-		// os.homedir() preserves HOME=""; joining that value gives relative .codex.
-		base, set := environOf(env)("HOME")
-		if !set {
-			var err error
-			base, err = record.Home(environOf(env))
-			if err != nil {
-				fmt.Fprintln(stderr, "crw: "+err.Error())
-				return 1
-			}
-		}
-		home = filepath.Join(base, ".codex")
+	home, err := resolveFeatureHome(env)
+	if err != nil {
+		fmt.Fprintln(stderr, "crw: "+err.Error())
+		return 1
 	}
 	run := featureRunner(ctx, env)
-	var err error
 	switch args[0] {
 	case "enable":
 		var m *configguard.InstallManifest
@@ -89,6 +79,23 @@ func runFeatures(ctx context.Context, args []string, env scope.Env, stdout, stde
 		return 1
 	}
 	return 0
+}
+
+// The oracle's resolveCodexHome: trim CODEX_HOME, then os.homedir(). HOME="" is
+// different from absent HOME: joining the empty value yields a relative .codex.
+func resolveFeatureHome(env scope.Env) (string, error) {
+	if home := text.Trim(env.Get("CODEX_HOME")); home != "" {
+		return home, nil
+	}
+	base, set := environOf(env)("HOME")
+	if !set {
+		var err error
+		base, err = record.Home(environOf(env))
+		if err != nil {
+			return "", err
+		}
+	}
+	return filepath.Join(base, ".codex"), nil
 }
 
 func featureList(keys []string) string {

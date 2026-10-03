@@ -434,14 +434,19 @@ func TestFeaturesBackupAndEmptySuccess(t *testing.T) {
 }
 
 func TestFeaturesEmptyHomeStaysAtWorkingDirectory(t *testing.T) {
-	h := newFeatureHome(t, "")
-	root := t.TempDir()
-	t.Chdir(root)
-	h.env = h.env.Without("CODEX_HOME").With("HOME", "")
-	if out := h.success("disable"); out != "crw: no install manifest; nothing to revert\n" {
-		t.Fatal(out)
+	// Assert the resolver alone: even the broken account-home fallback must never
+	// reach a mutating command in this regression's RED state.
+	home, err := resolveFeatureHome(scope.Env{"HOME=", "CODEX_HOME= \ufeff\t"})
+	if err != nil || home != ".codex" {
+		t.Fatalf("home %q, error %v", home, err)
 	}
-	if _, err := os.Stat(filepath.Join(root, ".codex", configguard.SelfHealMarkerName)); err != nil {
-		t.Fatal(err)
+}
+
+func TestFeaturesKeepsInstallerHelp(t *testing.T) {
+	var out, err bytes.Buffer
+	code := Main(context.Background(), []string{"help"}, nil, &out, &err)
+	want := "usage: crw install {install,update,rollback,remove,status,register-mcp,hook,register-service} ...\n"
+	if code != 0 || out.String() != want || err.Len() != 0 {
+		t.Fatalf("exit %d stdout=%q stderr=%q", code, out.String(), err.String())
 	}
 }
