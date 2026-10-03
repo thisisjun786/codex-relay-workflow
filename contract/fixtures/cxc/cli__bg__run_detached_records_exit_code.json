@@ -1,0 +1,233 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/bg/run",
+    "K7/bg",
+    "K8/ws/.codexclaw/bg",
+    "K12/ps",
+    "A/bg-wake/cli.test.ts"
+  ],
+  "note": "bg run spawns a detached sh that outlives the step: the step's own PATH adds the system directories, because the oracle's case PATH (stubs and bin) has neither the sh nor the mv that the spawn wrapper needs to write <id>.exit; a wait step stands for the recorder waiting until that file is there (the id is random, aliased <BG_1>). The ps stub answers the start fingerprint, so startToken is recorded and the ps call is logged with its pid aliased. Then bg list --json shows the reconciled failed record (exit 3) and the Stop wakes on it.",
+  "given": {
+    "env": {
+      "CODEX_THREAD_ID": "rec-s1"
+    },
+    "stubs": {
+      "ps": {
+        "stdout": "Thu Jan  1 00:00:00 2026\n",
+        "exit": 0
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "bg",
+          "run",
+          "--note",
+          "rec",
+          "--json",
+          "--",
+          "sh",
+          "-c",
+          "echo hi; exit 3"
+        ],
+        "env": {
+          "PATH": "${STUBS}:${BIN}:/usr/bin:/bin"
+        }
+      },
+      {
+        "wait": "ws/.codexclaw/bg/*.exit"
+      },
+      {
+        "cli": [
+          "bg",
+          "list",
+          "--json"
+        ]
+      },
+      {
+        "hook": "stop-waking-on-background-completion",
+        "stdin": {
+          "hook_event_name": "Stop",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "stop_hook_active": false,
+          "last_assistant_message": "Done.",
+          "transcript_path": null
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "id": "<BG_1>",
+          "sessionId": "rec-s1",
+          "adoptedBy": null,
+          "cwd": "${WS}",
+          "command": [
+            "sh",
+            "-c",
+            "echo hi; exit 3"
+          ],
+          "note": "rec",
+          "pid": "<PID>",
+          "startToken": "Thu Jan  1 00:00:00 2026",
+          "status": "running",
+          "exitCode": null,
+          "startedAt": "<TS>",
+          "endedAt": null,
+          "deliveredAt": null
+        },
+        "stderr": ""
+      },
+      {
+        "action": "wait",
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": [
+          {
+            "id": "<BG_1>",
+            "sessionId": "rec-s1",
+            "adoptedBy": null,
+            "cwd": "${WS}",
+            "command": [
+              "sh",
+              "-c",
+              "echo hi; exit 3"
+            ],
+            "note": "rec",
+            "pid": "<PID>",
+            "startToken": "Thu Jan  1 00:00:00 2026",
+            "status": "failed",
+            "exitCode": 3,
+            "startedAt": "<TS>",
+            "endedAt": "<TS>",
+            "deliveredAt": null
+          }
+        ],
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "decision": "block",
+          "reason": "[codexclaw bg] 백그라운드 작업 1건이 끝났습니다.\n- <BG_1> (failed, exit 3, 0s) — sh -c echo hi; exit 3\n출력은 `cxc bg get <id> --tail 40`으로 봅니다. 전체 목록은 `cxc bg list`.\n결과를 확인하고 필요한 후속 작업을 이어가세요."
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/.gitignore": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n"
+      },
+      "ws/.codexclaw/bg": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/bg/<BG_1>.exit": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json",
+        "json": 3
+      },
+      "ws/.codexclaw/bg/<BG_1>.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty",
+        "json": {
+          "id": "<BG_1>",
+          "sessionId": "rec-s1",
+          "adoptedBy": null,
+          "cwd": "${WS}",
+          "command": [
+            "sh",
+            "-c",
+            "echo hi; exit 3"
+          ],
+          "note": "rec",
+          "pid": "<PID>",
+          "startToken": "Thu Jan  1 00:00:00 2026",
+          "status": "failed",
+          "exitCode": 3,
+          "startedAt": "<TS>",
+          "endedAt": "<TS>",
+          "deliveredAt": "<TS>"
+        }
+      },
+      "ws/.codexclaw/bg/<BG_1>.out": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "hi\n"
+      },
+      "ws/.codexclaw/bg/ledger.jsonl": {
+        "type": "file",
+        "mode": "0644",
+        "form": "jsonl",
+        "jsonl": [
+          {
+            "at": "<TS>",
+            "event": "registered",
+            "id": "<BG_1>",
+            "pid": "<PID>",
+            "command": [
+              "sh",
+              "-c",
+              "echo hi; exit 3"
+            ]
+          },
+          {
+            "at": "<TS>",
+            "event": "completed",
+            "id": "<BG_1>",
+            "exitCode": 3
+          },
+          {
+            "at": "<TS>",
+            "event": "delivered",
+            "id": "<BG_1>",
+            "sessionId": "rec-s1"
+          }
+        ]
+      }
+    },
+    "calls": [
+      {
+        "cmd": "ps",
+        "argv": [
+          "-o",
+          "lstart=",
+          "-p",
+          "<PID>"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}
