@@ -305,7 +305,7 @@ func TestInterruptRecordsAFailedReviewAndExits130(t *testing.T) {
 		t.Fatalf("interrupted review: %d %q %q", code, out.String(), errOut.String())
 	}
 	recs := f.ledger()
-	if len(recs) != 2 || recs[0].Event != "started" || recs[1].Event != "failed" || recs[1].Reason != "interrupted" {
+	if len(recs) != 2 || recs[0].Event != "started" || recs[1].Event != "failed" || recs[1].Reason != "interrupted" || runsOn(recs, "2026-10-04") != 1 { // a review that began counts toward the cap
 		t.Fatalf("ledger after the interrupt: %+v", recs)
 	}
 	if code, sum, _ := f.run(h); code != 0 || sum.Outcome != OutcomeReviewed { // an interrupted review produced nothing, so the patch is still open
