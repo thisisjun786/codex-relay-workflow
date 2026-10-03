@@ -54,8 +54,7 @@ func TestCRW397AnAcknowledgedDeliveryIsSettledForEverySource(t *testing.T) {
 	seedDeliveryStates(t, l, c, states)
 	// Every delivery is current by the send path's own verdict, so only its state keeps one out of the sweep.
 	sw := &Sweeper{Store: l.Store, Now: l.Clock.ISO, MaxAttempts: 6,
-		SupersessionReason: func(context.Context, string) (string, error) { return "", nil },
-		Current:            func(context.Context, string) (bool, error) { return true, nil }}
+		SupersessionReason: func(context.Context, string) (string, error) { return "", nil }}
 
 	t.Run("the sources derive nothing for a settled delivery", func(t *testing.T) {
 		batch, err := sw.Sweep(c, "crw")

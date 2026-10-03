@@ -1,7 +1,6 @@
 package delivery
 
 import (
-	"context"
 	"path/filepath"
 	"sort"
 	"time"
@@ -20,11 +19,7 @@ func (h *hl) sweeper() *faults.Sweeper {
 		HostRecordPath: filepath.Join(h.tree, "xdg-state", "codex-relay-workflow", "host-record.json"),
 		Installation: faults.Installation{Package: "codex-session-relay", Version: faults.RelayPackageVersion,
 			Location: installationDir()},
-		SupersessionReason: h.delivery.SupersessionReason,
-		Current: func(ctx context.Context, event string) (bool, error) {
-			reason, err := h.delivery.SupersessionReason(ctx, event)
-			return reason == "", err
-		}}
+		SupersessionReason: h.delivery.SupersessionReason}
 }
 
 // faultStates is fault_states(): the delivery_stalled faults as (state, severity), sorted.
