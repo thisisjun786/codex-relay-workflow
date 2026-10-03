@@ -228,6 +228,10 @@ func cmdIntentClaim(c *cliRun) (any, error) {
 		return nil, err
 	}
 	facts, unreadable := ReadAssignment(c.ctx, directory)
+	if err := c.ctx.Err(); err != nil {
+		// A marker a stop left unread is not a marker that cannot be read whole: the claim is not reported as recorded or not.
+		return nil, err
+	}
 	session := fieldOf(published, "sessionId")
 	var standing Obj
 	claims, _ := fieldOf(facts, "claims").([]any)
@@ -308,6 +312,9 @@ func cmdIntentDisposition(c *cliRun) (any, error) {
 		}
 		facts, unreadable := ReadAssignment(c.ctx, directory)
 		standingValue, readable := ReadDisposition(c.ctx, directory, fieldOf(published, "sessionId"), fieldOf(published, "turnId"))
+		if err := c.ctx.Err(); err != nil {
+			return err
+		}
 		standing, _ := standingValue.(Obj)
 		switch {
 		case slices.Contains(unreadable, "intent") || slices.Contains(unreadableBefore, "intent") || !readable || !truthy(standingValue) || malformedDisposition(standingValue) != "":

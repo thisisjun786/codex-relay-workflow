@@ -744,6 +744,10 @@ func publishOrCompare(ctx context.Context, target string, payload Obj, fields []
 		return outcome, err
 	}
 	value, status := readFact(ctx, target)
+	if err := ctx.Err(); err != nil {
+		// A read a stop ended says nothing about the fact that is there.
+		return "", err
+	}
 	existing, isRecord := value.(Obj)
 	if status != factPresent || !isRecord {
 		return Conflict, nil
@@ -876,6 +880,10 @@ func BindIdentity(ctx context.Context, root, workspace string, assignment any, s
 		return Obj{{Key: "assignmentId", Value: assignment}, {Key: "outcome", Value: Bound}, {Key: "sessionId", Value: sessionID}, {Key: "taskId", Value: taskID}}, nil
 	}
 	marker, unreadable := ReadAssignment(ctx, directory)
+	if err := ctx.Err(); err != nil {
+		// The marker a stop left unread is not a bind that cannot be read.
+		return nil, err
+	}
 	winnerValue, _ := marker.Lookup("bound")
 	winner, ok := winnerValue.(Obj)
 	if !ok {
