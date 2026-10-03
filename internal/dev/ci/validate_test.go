@@ -101,3 +101,25 @@ func Test47_VAL_1_SkillNamePattern(t *testing.T) {
 		expectEqual(t, row.name, validate(t, r), want)
 	}
 }
+
+// No Python enters the repository (todo 48): a .py file, tracked or not, and a script a python
+// shebang runs are refused, with no exemption anywhere; a shell script and a symbolic link (judged
+// as what it is, never followed) are not named. The bodies parse as Python, so only the rule can
+// refuse them.
+func Test47_VAL_3_PythonFilesAreRefused(t *testing.T) {
+	r := validateRepo(t)
+	r.write("scripts/fake-gh", "#!/usr/bin/env python3\nprint()\n")
+	r.write("scripts/sh-tool", "#!/bin/sh\nexit 0\n")
+	if err := os.Symlink("fake-gh", filepath.Join(r.root, "scripts", "link")); err != nil {
+		t.Fatal(err)
+	}
+	r.write("scripts/tool.py", "print()\n")
+	r.write("plugins/crw/skills/example/scripts/fixtures/case/input.py", "print()\n")
+	r.commit()
+	r.write("scripts/new.py", "print()\n") // untracked: refused before it is added
+	const tail = "; the repository tracks no Python\n"
+	expectEqual(t, "refused", validate(t, r), result{1, "", "plugins/crw/skills/example/scripts/fixtures/case/input.py: a Python file" + tail +
+		"scripts/fake-gh: a script with a python shebang" + tail +
+		"scripts/new.py: a Python file" + tail +
+		"scripts/tool.py: a Python file" + tail})
+}
