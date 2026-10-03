@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/gate"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source/session"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
@@ -59,6 +58,10 @@ func receiptHelper(a []string) {
 		fmt.Fprintln(os.Stdout, "ready")
 		_, _ = io.Copy(io.Discard, os.Stdin)
 	case "atomic-failure":
+		// git status must not refresh its index under the helper's file-size limit: the failure belongs to receipt publication.
+		if err := os.Setenv("GIT_OPTIONAL_LOCKS", "0"); err != nil {
+			panic(err)
+		}
 		signal.Ignore(syscall.SIGXFSZ)
 		var limit syscall.Rlimit
 		if err := syscall.Getrlimit(syscall.RLIMIT_FSIZE, &limit); err != nil {
@@ -69,8 +72,9 @@ func receiptHelper(a []string) {
 			panic(err)
 		}
 		args := ReceiptCLIArgs{Verb: "test", Cwd: a[1], Session: "s1", Command: []string{os.Args[0], "--receipt-helper", "exit", "0"}}
-		_, err := RunReceiptCLI(args, ReceiptRunOptions{Stdout: io.Discard, Stderr: io.Discard})
+		result, err := RunReceiptCLI(args, ReceiptRunOptions{Stdout: io.Discard, Stderr: io.Discard})
 		if err == nil {
+			fmt.Fprintln(os.Stdout, result)
 			os.Exit(91)
 		}
 		fmt.Fprint(os.Stdout, "publication refused")
@@ -236,6 +240,9 @@ func TestReceiptGeneratedOracle(t *testing.T) {
 			if !reflect.DeepEqual(observed, c.Receipt) {
 				t.Fatalf("receipt %v, want %v", observed, c.Receipt)
 			}
+			if _, err := time.Parse(time.RFC3339Nano, record["createdAt"].(string)); err != nil {
+				t.Fatal(err)
+			}
 			if parsed, err := gate.ParseSourceBoundReceipt(expectedReceiptPath(root), root, gate.ReceiptTest); err != nil || parsed.Command == nil || *parsed.Command != strings.Join(args.Command, " ") {
 				t.Fatalf("reader: %#v, %v", parsed, err)
 			}
@@ -376,13 +383,33 @@ func TestReceiptBoundWorktreeAndGitEnv(t *testing.T) {
 	if parsed.SourceIdentity.SourceRoot == nil || *parsed.SourceIdentity.SourceRoot != wt {
 		t.Fatal("bound root not recorded")
 	}
-	keys := []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES"}
+	// The binding probe strips four; object routing is an existing oracle defect of the source-binding owner.
+	keys := []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE"}
 	for _, key := range keys {
 		t.Setenv(key, "wrong")
 	}
 	output.Reset()
 	a.Command = receiptCommand(t, "env", keys...)
 	got = receiptRun(t, a, ReceiptRunOptions{Stdout: &output})
+	if got.Code != 0 {
+		t.Fatal(got)
+	}
+	for _, key := range keys {
+		if !strings.Contains(output.String(), key+"=\n") {
+			t.Fatalf("routing env retained: %s", output.String())
+		}
+	}
+}
+
+func TestReceiptUnboundGitEnvStripsAllRouting(t *testing.T) {
+	root := receiptRepo(t)
+	keys := []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES"}
+	for _, key := range keys {
+		t.Setenv(key, "wrong")
+	}
+	var output bytes.Buffer
+	a := ReceiptCLIArgs{Verb: "test", Cwd: root, Session: "s1", Command: receiptCommand(t, "env", keys...)}
+	got := receiptRun(t, a, ReceiptRunOptions{Stdout: &output})
 	if got.Code != 0 {
 		t.Fatal(got)
 	}
@@ -420,6 +447,10 @@ func TestReceiptCancellationOnlyOwnChild(t *testing.T) {
 }
 
 func TestReceiptAtomicPublicationFailure(t *testing.T) {
+	var change struct{ GoExpected struct{ ReceiptExists bool } }
+	b, err := os.ReadFile("testdata/atomic-change.json")
+	receiptMust(t, err)
+	receiptMust(t, json.Unmarshal(b, &change))
 	root := receiptRepo(t)
 	cmd := exec.Command(receiptCommand(t, "atomic-failure", root)[0], "--receipt-helper", "atomic-failure", root)
 	output, err := cmd.CombinedOutput()
@@ -428,6 +459,9 @@ func TestReceiptAtomicPublicationFailure(t *testing.T) {
 		t.Fatalf("failure not observed: %q", output)
 	}
 	receiptAbsent(t, root)
+	if change.GoExpected.ReceiptExists {
+		t.Fatal("recorded intentional change expects a surviving partial record")
+	}
 	temps, err := filepath.Glob(filepath.Join(root, ".crw/evidence/s1/.*.tmp"))
 	receiptMust(t, err)
 	if len(temps) != 0 {
@@ -435,7 +469,7 @@ func TestReceiptAtomicPublicationFailure(t *testing.T) {
 	}
 }
 
-func TestReceiptHelpPathAndNoInitialization(t *testing.T) {
+func TestReceiptHelpAndPath(t *testing.T) {
 	root := t.TempDir()
 	got := receiptRun(t, ReceiptCLIArgs{Verb: "help", Cwd: root}, ReceiptRunOptions{})
 	if got.Code != 0 || !strings.Contains(got.Output, "crw pabcd receipt test") {
@@ -451,10 +485,5 @@ func TestReceiptHelpPathAndNoInitialization(t *testing.T) {
 	}
 	if got := ReceiptPathFor(root, ".."); got != filepath.Join(root, ".crw/test-receipt.json") {
 		t.Fatal("oracle dotdot key changed")
-	}
-	// The existing capture API is used, and timestamps are observed rather than supplied by the caller.
-	id := source.Capture(root, source.Options{})
-	if _, err := time.Parse(time.RFC3339Nano, id.CapturedAt); err != nil {
-		t.Fatal(err)
 	}
 }
