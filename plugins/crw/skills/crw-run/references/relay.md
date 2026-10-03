@@ -310,6 +310,9 @@ A role that lists several pairs accepts a settings record on any one of them: a 
 receipt it was created under is current whichever of its role's pairs that is, so the relay cannot tell
 whether it is the pair the issue's child pair line names. That comparison is the parent's, made on the
 creation receipt ([Child pair by issue type](../../crw-plan/references/integrations.md#child-pair-by-issue-type)).
+The request has no field for the issue's classification, bundle or source of the choice, and `managed-start/1` refuses a
+field it does not know, so those values are kept in the parent's coordination record
+([Record the pair choice at release](../SKILL.md#record-the-pair-choice-at-release)), not in the relay.
 
 After a user changes an existing task's model, re-record that task's authorization from a
 user-attributed source before the next send, with `--source user_transition`. The record is what
