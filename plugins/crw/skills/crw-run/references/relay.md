@@ -496,6 +496,27 @@ generation omits it: a `needs_changes` correction opens the next generation, and
 previous generation's revision there declares a predecessor that generation does not contain, which
 reads `unknown_predecessor` and leaves the whole generation with no current head.
 
+A receipt the relay suppressed is not a revision. The relay suppresses a staged receipt when the
+turn that staged it ends failed or interrupted, and a host or App Server restart does that, so
+after a restart the receipt you emitted before it may or may not still count, and you cannot tell.
+You do not have to: emit the new receipt and name the revision you emitted last, as above. The
+head reads a naming of a suppressed receipt as naming what that receipt itself replaced. When it
+replaced nothing, the new receipt has no predecessor, and with no other revision that counts it is
+the generation's only revision (`sole_revision`); when it replaced a revision that still counts,
+the new receipt replaces that one (`declared_chain`). Emit accepts the naming either way and
+records it as you stated it. That reading resolves the naming and nothing more: the generation is
+judged as always. A naming it cannot resolve still reads `unknown_predecessor` (a revision of
+another generation, a revision nobody emitted, a suppressed receipt whose own predecessor nobody
+holds), and revisions that stand unconnected still read `fork` (two re-emits naming the same
+suppressed receipt, or one naming a suppressed receipt that replaced nothing beside a revision
+that still counts): name the revision that yours replaces.
+
+A receipt is named by its revision, so the same bytes emitted again are the same receipt. If the
+receipt the restart cut off is suppressed and you emit an identical manifest, the answer says
+`"duplicate": true` and `"stage": "suppressed"` and nothing that counts is on record: change
+what the manifest holds (a handoff record carries the checks run since and the time of this emit)
+and emit that. `revision-head` shows what counts.
+
 ## A staged receipt needs a host-capable process
 
 Two different things stop a receipt short. This one is delivery. The other is that the assignment
@@ -1257,7 +1278,10 @@ generation is the way for the first two:
     tries to replace the verified ruling of the old event is refused with `stale_generation` or
     `superseded_revision` saying so;
   - the head is ambiguous: outside a plan, a fresh generation; for a plan node this build records no
-    route, so report it and open none.
+    route, so report it and open none. The reading, not the child's wording, says which case this
+    is: a re-emit that named a suppressed receipt of its own generation may read a head
+    ([the child emits](#the-child-emits)), so read `revision-head` first, rule that head like any
+    other, and treat the head as ambiguous only when it still reads so.
 
 A `needs_changes` verdict opens the generation itself. Open one by hand when nothing ruled it:
 
