@@ -40,6 +40,8 @@ var deliveryCommands = []commandSpec{
 	{dispatch.Command{Name: "ack-proof", Unselected: true, ReadOnly: true}, cmdAckProof},
 	{dispatch.Command{Name: "ack"}, cmdAck},
 	{dispatch.Command{Name: "verdict"}, cmdVerdict},
+	{dispatch.Command{Name: "decision-reply"}, cmdDecisionReply},
+	{dispatch.Command{Name: "decision-show", ReadOnly: true}, cmdDecisionShow},
 	{dispatch.Command{Name: "criteria-register"}, cmdCriteriaRegister},
 	{dispatch.Command{Name: "criteria-show", ReadOnly: true}, cmdCriteriaShow},
 	{dispatch.Command{Name: "revision-head", ReadOnly: true}, cmdRevisionHead},
