@@ -17,9 +17,9 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 )
 
-// A creation whose answer was lost leaves a bridge receipt that is outcome_unknown (or in_progress_or_unknown) and never runs again. The
-// engine does not repeat it: it asks the App Server what the creation left behind and either continues the same request on that thread,
-// creates again under the same request once no thread is shown after the grace period, or stops and says why.
+// A creation whose answer was lost leaves a bridge receipt that is outcome_unknown (or in_progress_or_unknown) and never runs again. The engine asks the
+// App Server what the creation left: it continues the same request on that thread, creates again under the same request once no thread is shown after the
+// grace period, or stops and says why.
 
 // DefaultCreationGrace is how long after a creation's answer was lost a thread that is not listed yet may still appear.
 const DefaultCreationGrace = 2 * time.Minute
@@ -30,9 +30,6 @@ const (
 	loadedPages         = 20
 	loadedPage          = 500
 	maxThreadReads      = 64
-	// idSlack is how far outside the creation's window a UUIDv7 thread id may be and still be read: an id that says the thread was made
-	// long before the creation began, or long after its grace period, is not read at all (a fleet loads hundreds of threads).
-	idSlack = time.Minute
 )
 
 // The states creationReconciliation reports.
@@ -199,9 +196,6 @@ func (r *startRun) decide(ctx context.Context) (decision, error) {
 	if standby != nil {
 		// The standby send was decided before: it only names the thread, and what to do about it is recoverStandby's rule for its status.
 		thread := pyjson.Text(standby["threadId"])
-		if abandonable(standby) {
-			return r.replace(base, thread, "the host refused to resume it"), nil
-		}
 		if delivery.ValidSegment(thread) {
 			base.state, base.thread, base.detail = reconAdopted, thread, "the standby send for this thread was made before"
 			return decision{action: "continue", thread: thread, rec: base}, nil
@@ -213,61 +207,17 @@ func (r *startRun) decide(ctx context.Context) (decision, error) {
 	return r.scan(ctx, base)
 }
 
-// abandonable is a standby recovery the host refused for a reason that cannot get better: it will not resume the thread, or no longer knows it.
-// The fields are those the transport saves (transport.go guardedSend): a refused resume leaves status failed, the status read before it, no
-// resumed record (a settings finding saves one) and an error that names the method; the transport's own connection_unavailable is not a refusal.
-func abandonable(recovery map[string]any) bool {
-	if recovery["status"] != "failed" || recovery["turnId"] != nil {
-		return false
-	}
-	text := pyjson.Text(recovery["error"])
-	if strings.Contains(text, "thread not found") && (strings.HasPrefix(text, "thread/read:") || strings.HasPrefix(text, "thread/resume:")) {
-		return true
-	}
-	if _, resumed := recovery["resumed"]; resumed || recovery["statusBeforeResume"] != "notLoaded" || !strings.HasPrefix(text, "thread/resume:") {
-		return false
-	}
-	return pyjson.Map(recovery["rpcError"])["code"] != "connection_unavailable"
-}
-
-// replace gives a thread up and creates the next attempt, unless the creations are spent.
-func (r *startRun) replace(base reconciliation, thread, why string) decision {
-	base.thread = thread
-	detail := why
-	if thread != "" {
-		detail = fmt.Sprintf("thread %s abandoned: %s", thread, why)
-	}
+// recreate creates the next attempt, unless the creations are spent.
+func (r *startRun) recreate(base reconciliation, why string) decision {
 	if r.attempt+1 >= maxCreationAttempts {
-		return base.stopped(reconExhausted, "%s, and %d creations were made already", detail, maxCreationAttempts)
+		return base.stopped(reconExhausted, "%s, and %d creations were made already", why, maxCreationAttempts)
 	}
-	base.state, base.detail = reconRecreated, detail
+	base.state, base.detail = reconRecreated, why
 	return decision{action: "recreate", rec: base}
 }
 
-func hostText(err error) string { return err.Error() }
-
-func gone(err error) bool { return strings.Contains(err.Error(), "thread not found") }
-
-// unreadable is a thread/read the host answers with one of the three refusals for a thread it cannot serve: it does not know the thread, or the
-// rollout its state is read from is missing (docs/live-trial.md names them). Such a thread cannot be resumed either.
-func unreadable(err error) bool {
-	for _, text := range []string{"thread not found", "missing source rollout", "no rollout found"} {
-		if strings.Contains(err.Error(), text) {
-			return true
-		}
-	}
-	return false
-}
-
-// A thread has no turn when the host says it never got its first message, or that its rollout (where turns live) does not exist.
-func noTurnAnswer(err error) bool {
-	for _, text := range []string{"not materialized", "missing source rollout", "no rollout found"} {
-		if strings.Contains(err.Error(), text) {
-			return true
-		}
-	}
-	return false
-}
+// A thread has no turn when the host says it never got its first message (turns/list refuses it before the first user message).
+func noTurnAnswer(err error) bool { return strings.Contains(err.Error(), "not materialized") }
 
 // observe reads a thread the creation named or the scan found: whether it has a turn decides, and the receipt decides whether the standby
 // turn/start may have been sent. Neither is concluded from the other.
@@ -277,10 +227,7 @@ func (r *startRun) observe(ctx context.Context, base reconciliation, thread stri
 		if ctx.Err() != nil {
 			return decision{}, ctx.Err()
 		}
-		if unreadable(err) {
-			return r.replace(base, thread, "the host cannot read it ("+hostText(err)+")"), nil
-		}
-		return base.stopped(reconUnobserved, "reading thread %s: %s", thread, hostText(err)), nil
+		return base.stopped(reconUnobserved, "reading thread %s: %s", thread, err), nil
 	}
 	facts := pyjson.Map(read["thread"])
 	hasTurn := pyjson.Text(pyjson.Map(facts["status"])["type"]) == "active" || strings.TrimSpace(pyjson.Text(facts["preview"])) != ""
@@ -291,10 +238,8 @@ func (r *startRun) observe(ctx context.Context, base reconciliation, thread stri
 		hasTurn = hasTurn || len(rows) > 0
 	case ctx.Err() != nil:
 		return decision{}, ctx.Err()
-	case gone(err):
-		return r.replace(base, thread, "the host no longer knows it"), nil
 	case !noTurnAnswer(err):
-		return base.stopped(reconUnobserved, "listing the turns of thread %s: %s", thread, hostText(err)), nil
+		return base.stopped(reconUnobserved, "listing the turns of thread %s: %s", thread, err), nil
 	}
 	base.thread = thread
 	if hasTurn {
@@ -330,36 +275,8 @@ func epoch(v any) (float64, bool) {
 	return 0, false
 }
 
-// uuidV7Millis is the creation time (milliseconds) a UUIDv7 thread id carries; ok is false for any other id.
-func uuidV7Millis(id string) (int64, bool) {
-	digits := strings.ReplaceAll(id, "-", "")
-	if len(digits) != 32 || digits[12] != '7' {
-		return 0, false
-	}
-	ms, err := strconv.ParseInt(digits[:12], 16, 64)
-	return ms, err == nil
-}
-
-// earlierThreads are the threads attempts before the current one named, in their creation or their standby recovery receipt: they were given up
-// (or are another attempt's) and no scan adopts them.
-func (r *startRun) earlierThreads(ctx context.Context) (map[string]bool, error) {
-	known := map[string]bool{}
-	for n := 0; n < r.attempt; n++ {
-		for _, id := range []string{attemptID(r.identity.RequestID, r.identity.CreateRequestID, n), recoveryID(r.identity.RequestID, n)} {
-			receipt, err := r.m.Adapter.GetOperation(ctx, id)
-			if err != nil {
-				return nil, err
-			}
-			if thread := pyjson.Text(receipt["threadId"]); thread != "" {
-				known[thread] = true
-			}
-		}
-	}
-	return known, nil
-}
-
 // scan looks for the thread a creation left when its receipt names none: the loaded threads that fit the creation. None is absence only
-// once the listing was read to its end and the grace period has passed.
+// once the listing was read to its end and the grace period has passed. Every loaded thread is read, up to maxThreadReads.
 func (r *startRun) scan(ctx context.Context, base reconciliation) (decision, error) {
 	started, hasStart := epoch(r.receipt["startedAt"])
 	updated, hasUpdate := epoch(r.receipt["updatedAt"])
@@ -375,10 +292,6 @@ func (r *startRun) scan(ctx context.Context, base reconciliation) (decision, err
 	now, err := time.Parse(time.RFC3339Nano, r.m.now())
 	if err != nil {
 		return base.stopped(reconUnobserved, "the engine's clock %q does not read as a time", r.m.now()), nil
-	}
-	known, err := r.earlierThreads(ctx)
-	if err != nil {
-		return decision{}, err
 	}
 	child := pyjson.Map(r.req["child"])
 	settings := pyjson.Map(child["settings"])
@@ -398,15 +311,12 @@ func (r *startRun) scan(ctx context.Context, base reconciliation) (decision, err
 			if ctx.Err() != nil {
 				return decision{}, ctx.Err()
 			}
-			return base.stopped(reconUnobserved, "listing the loaded threads: %s", hostText(err)), nil
+			return base.stopped(reconUnobserved, "listing the loaded threads: %s", err), nil
 		}
 		ids, _ := listing["data"].([]any)
 		for _, item := range ids {
 			id := pyjson.Text(item)
-			if id == "" || known[id] {
-				continue
-			}
-			if ms, ok := uuidV7Millis(id); ok && (ms < int64(started*1000)-idSlack.Milliseconds() || ms > int64((ended+r.m.grace().Seconds())*1000)+idSlack.Milliseconds()) {
+			if id == "" {
 				continue
 			}
 			if reads++; reads > maxThreadReads {
@@ -417,10 +327,7 @@ func (r *startRun) scan(ctx context.Context, base reconciliation) (decision, err
 				if ctx.Err() != nil {
 					return decision{}, ctx.Err()
 				}
-				if unreadable(err) {
-					continue
-				}
-				return base.stopped(reconUnobserved, "reading thread %s: %s", id, hostText(err)), nil
+				return base.stopped(reconUnobserved, "reading thread %s: %s", id, err), nil
 			}
 			th := pyjson.Map(read["thread"])
 			created, ok := epoch(th["createdAt"])
@@ -447,7 +354,7 @@ func (r *startRun) scan(ctx context.Context, base reconciliation) (decision, err
 			base.detail = "no thread is listed yet; the creation's answer was lost and a thread may still appear"
 			return decision{action: "stop", rec: base}, nil
 		}
-		return r.replace(base, "", "no thread was shown after the grace period"), nil
+		return r.recreate(base, "no thread was shown after the grace period"), nil
 	}
 	return base.stopped(reconAmbiguous, "%d threads fit the creation (%s); the engine adopts none of them", len(matches), strings.Join(matches, ", ")), nil
 }

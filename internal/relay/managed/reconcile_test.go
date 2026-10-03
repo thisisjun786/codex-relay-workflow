@@ -45,7 +45,6 @@ type scriptedApp struct {
 	failures     map[string]error
 	noTurn       map[string]string
 	sendReceipts []map[string]any
-	reads        []string      // the threads thread/read was asked about
 	age          time.Duration // how long ago a creation says it began
 	endless      bool          // the loaded listing never ends
 }
@@ -159,7 +158,6 @@ func (h *scriptedApp) HostCall(ctx context.Context, method string, params map[st
 		}
 		return map[string]any{"data": data}, nil
 	case "thread/read":
-		h.reads = append(h.reads, id)
 		if thread == nil {
 			return nil, errors.New("thread/read: thread not found")
 		}
@@ -387,9 +385,6 @@ func TestReconcileStopsAndSaysWhy(t *testing.T) {
 		{"the thread has a turn", []string{"name-timeout"}, func(k *reconcileKit) { k.host.initialTurns = []string{"x"} }, "thread_has_turn", "t-1"},
 		{"the standby turn/start was attempted", []string{"turn-timeout"}, nil, "standby_turn_unknown", "turn/start"},
 		{"the process died after the title was saved", []string{"saved-title"}, nil, "standby_turn_unknown", "title"},
-		{"the thread's turn listing fails", []string{"name-timeout"}, func(k *reconcileKit) {
-			k.host.failures["thread/turns/list|t-1"] = errors.New("thread/turns/list: timeout")
-		}, "unobservable", "timeout"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -423,18 +418,6 @@ func TestReconcileStopsAfterThreeCreations(t *testing.T) {
 	k.clock.now = k.clock.now.Add(3 * time.Minute)
 	k.expect(k.run(), "incomplete", "creation_unknown", "attempts_exhausted")
 	k.effects(3, 0)
-}
-
-func TestReconcileAmbiguousAfterARecreateStopsWithNothingSent(t *testing.T) {
-	t.Parallel()
-	k := newReconcileKit(t, "lost", "lost")
-	k.run()
-	k.clock.now = k.clock.now.Add(3 * time.Minute)
-	k.expect(k.run(), "incomplete", "creation_unknown", "recreated")
-	k.host.addThread() // attempt 0's thread, late
-	k.host.addThread() // attempt 1's thread
-	k.expect(k.run(), "incomplete", "creation_unknown", "ambiguous")
-	k.effects(2, 0)
 }
 
 // A standby send whose outcome is unknown is not sent again and the thread is not looked at again (I-473 for a send).
@@ -495,101 +478,41 @@ func hostRefusal(text, status string, extra map[string]any) map[string]any {
 	return receipt
 }
 
-// A thread the host will not resume is replaced; one it merely refused for another reason is not.
-func TestReconcileAbandonsOnlyAThreadTheHostWillNotResume(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		name    string
-		receipt map[string]any
-		replace bool
-	}{
-		{"resume rejected for an unloaded thread", hostRefusal("thread/resume: no rollout found for thread id t-1", "notLoaded", nil), true},
-		{"the host no longer knows the thread", hostRefusal("thread/read: thread not found", "", nil), true},
-		{"resume answered null and the settings were refused", hostRefusal("thread/resume: settings differ", "notLoaded", map[string]any{"resumed": nil}), false},
-		{"settings finding after a resume", hostRefusal("thread/resume: settings differ", "notLoaded", map[string]any{"resumed": map[string]any{"model": "other"}}), false},
-		{"initialize rejected while reconnecting", hostRefusal("initialize: refused", "notLoaded", nil), false},
-		{"connection could not be established", hostRefusal("thread/resume: establish phase exceeded 20s", "notLoaded", map[string]any{"rpcError": map[string]any{"code": "connection_unavailable", "message": "no connection"}}), false},
-		{"the thread is busy", hostRefusal("thread/read: Thread is active", "active", nil), false},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			t.Parallel()
-			k := newReconcileKit(t, "name-timeout", "accept")
-			k.host.noTurn["t-1"] = "thread/turns/list: missing source rollout"
-			k.host.sendReceipts = []map[string]any{c.receipt}
-			k.expect(k.run(), "incomplete", "creation_unknown", "adopted")
-			got := k.run()
-			if c.replace {
-				k.expect(got, "admitted", "", "recreated")
-				k.effects(2, 2)
-				if got["childTaskId"] != "t-2" || len(k.host.named) != 0 {
-					t.Fatalf("the new thread is the child and the abandoned one is not named: %v %v", got["childTaskId"], k.host.named)
-				}
-				return
-			}
-			k.expect(got, "incomplete", "creation_unknown", "adopted")
-			k.effects(1, 1)
-		})
-	}
-}
-
-// A thread the host cannot serve (it does not know it, or its rollout is missing) is replaced at once, whichever read says so.
-func TestReconcileReplacesAThreadTheHostCannotServe(t *testing.T) {
+// A thread the receipt names that cannot be read or resumed stops the start with its reason: nothing is created and nothing more is sent, however many times it is repeated.
+func TestReconcileStopsWhenANamedThreadCannotBeReadOrResumed(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct{ method, text string }{
 		{"thread/read", "thread/read: thread not found"},
 		{"thread/read", "thread/read: no rollout found for thread id t-1"},
-		{"thread/read", "thread/read: missing source rollout"},
-		{"thread/turns/list", "thread/turns/list: thread not found"},
+		{"thread/turns/list", "thread/turns/list: missing source rollout"},
 	} {
 		t.Run(c.text, func(t *testing.T) {
 			t.Parallel()
 			k := newReconcileKit(t, "name-timeout", "accept")
 			k.host.failures[c.method+"|t-1"] = errors.New(c.text)
-			got := k.run()
-			k.expect(got, "admitted", "", "recreated")
-			if got["childTaskId"] != "t-2" || len(k.host.creates) != 2 {
-				t.Fatalf("one replacement: %v %v", got["childTaskId"], k.host.creates)
+			for range 2 {
+				got := k.run()
+				k.expect(got, "incomplete", "creation_unknown", "unobservable")
+				if !strings.Contains(pyjson.Text(recon(got)["detail"]), c.text) {
+					t.Fatalf("detail %q lacks %q", recon(got)["detail"], c.text)
+				}
 			}
+			k.effects(1, 0)
 		})
 	}
-}
-
-// A thread named only by a recovery receipt is remembered by every later Run, so the next creation's scan never adopts it.
-func TestReconcileDoesNotAdoptAnAbandonedThreadAgain(t *testing.T) {
-	t.Parallel()
-	k := newReconcileKit(t, "lost-applied", "lost-applied")
-	k.host.noTurn["t-1"] = "thread/turns/list: missing source rollout"
-	k.host.sendReceipts = []map[string]any{hostRefusal("thread/resume: no rollout found", "notLoaded", nil)}
-	k.expect(k.run(), "incomplete", "creation_unknown", "adopted")
-	k.expect(k.run(), "incomplete", "creation_unknown", "recreated")
-	got := k.run()
-	k.expect(got, "admitted", "", "adopted")
-	if got["childTaskId"] != "t-2" || len(k.host.creates) != 2 {
-		t.Fatalf("the abandoned thread is not adopted again: %v %v", got["childTaskId"], k.host.creates)
-	}
-}
-
-// A thread whose UUIDv7 id says it was made long before the creation began, or long after its grace period, is not read at all; one inside the window is.
-func TestReconcileScanSkipsThreadsOlderThanTheCreation(t *testing.T) {
-	t.Parallel()
-	k := newReconcileKit(t, "lost")
-	uuid := func(at time.Time, tail string) string {
-		digits := fmt.Sprintf("%012x", at.UnixMilli())
-		return digits[:8] + "-" + digits[8:] + "-7000-8000-" + tail
-	}
-	old := k.host.addThreadAs(uuid(k.clock.now.Add(-24*time.Hour), "000000000001"))
-	fresh := k.host.addThreadAs(uuid(k.clock.now, "000000000002"))
-	late := k.host.addThreadAs(uuid(k.clock.now.Add(24*time.Hour), "000000000003"))
-	got := k.run()
-	k.expect(got, "admitted", "", "adopted")
-	for _, id := range k.host.reads {
-		if id == old || id == late {
-			t.Fatalf("a thread outside the creation's window was read: %v", k.host.reads)
-		}
-	}
-	if got["childTaskId"] != fresh {
-		t.Fatalf("child %v, want %s", got["childTaskId"], fresh)
+	for _, refusal := range []map[string]any{
+		hostRefusal("thread/resume: no rollout found for thread id t-1", "notLoaded", nil),
+		hostRefusal("thread/read: thread not found", "", nil),
+	} {
+		t.Run(pyjson.Text(refusal["error"]), func(t *testing.T) {
+			t.Parallel()
+			k := newReconcileKit(t, "name-timeout", "accept")
+			k.host.sendReceipts = []map[string]any{refusal}
+			for range 2 {
+				k.expect(k.run(), "incomplete", "creation_unknown", "adopted")
+			}
+			k.effects(1, 1)
+		})
 	}
 }
 

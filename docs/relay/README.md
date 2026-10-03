@@ -406,10 +406,9 @@ A creation whose outcome is unknown (the bridge receipt is `outcome_unknown`, or
 request, which observes the App Server before it answers. A thread that exists with no turn is continued
 under the same request (the standby turn under a standby operation of its own, then the title). When no thread
 is shown, the retry waits 2 minutes from the receipt's last update (`pending`, with `repeatAfter`) and then
-creates again under the same request with a derived bridge operation id, at most three creations in all; a
-thread the host will not resume or no longer knows is given up and replaced at once. A thread that has a turn,
-a creation whose `turn/start` may have been sent, several threads that fit, an unreadable host or a creation
-with no recorded time stop with `creation_unknown` and a `creationReconciliation` object that says why (`state`,
+creates again under the same request with a derived bridge operation id, at most three creations in all. A thread that has a turn,
+a creation whose `turn/start` may have been sent, several threads that fit, a thread or a listing the host cannot read, a standby
+recovery the host refused, or a creation with no recorded time stop with `creation_unknown` and a `creationReconciliation` object that says why (`state`,
 `detail`, `attempt`, `attemptRequestId`, `thread`, `repeatAfter`); no replacement request is ever the answer.
 dag-scheduler.md ([A creation whose outcome is unknown](dag-scheduler.md#a-creation-whose-outcome-is-unknown))
 gives the table and what it does not establish.
