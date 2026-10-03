@@ -17,10 +17,12 @@ const SchemaWithdraw = "dag-generation-withdraw/1"
 // MaxWithdrawReason bounds the coordinator's statement of why the generation is withdrawn.
 const MaxWithdrawReason = 1000
 
-// WithdrawInput names the generation to withdraw and says why.
+// WithdrawInput names the generation to withdraw and says why. The relationship is named, not looked up from the node, so a repeated call (a lost answer, a node adopted by a successor since) can only be
+// the same withdrawal and never a withdrawal of another relationship's generation that has the same number.
 type WithdrawInput struct {
-	Generation int64
-	Reason     string
+	Relationship string
+	Generation   int64
+	Reason       string
 }
 
 // WithdrawResult is the answer of WithdrawGeneration.
@@ -43,6 +45,9 @@ type WithdrawResult struct {
 func (s *Scheduler) WithdrawGeneration(ctx context.Context, plan, node, actor string, in WithdrawInput) (WithdrawResult, error) {
 	out := WithdrawResult{PlanID: plan, NodeID: node, Generation: in.Generation}
 	reason := strings.TrimSpace(in.Reason)
+	if strings.TrimSpace(in.Relationship) == "" {
+		return out, refuse(contract.RefusalMalformedReceipt, "a withdrawal names the relationship whose generation it closes (--relationship)")
+	}
 	if in.Generation < 2 {
 		return out, refuse(contract.RefusalMalformedReceipt, "a generation opened by hand is withdrawn by its number, 2 or more: generation 1 is the assignment itself")
 	}
@@ -66,12 +71,18 @@ func (s *Scheduler) WithdrawGeneration(ctx context.Context, plan, node, actor st
 		if err := lifecycleRefusal(snap, n, "withdrawing a generation of it", false); err != nil {
 			return err
 		}
-		rel, found, err := currentRelationshipOf(txCtx, tx, plan, node)
+		rel, found, err := loadRelationship(txCtx, tx, in.Relationship)
 		if err != nil {
 			return err
 		}
 		if !found {
-			return refuse(contract.RefusalUnregisteredRelationship, "node %s has no execution to withdraw a generation of", node)
+			return refuse(contract.RefusalUnregisteredRelationship, "no relationship %s", in.Relationship)
+		}
+		var executed int
+		if has, err := queryOne(txCtx, tx, "SELECT 1 FROM dag_node_executions WHERE plan_id = ? AND node_id = ? AND relationship_id = ? LIMIT 1", []any{plan, node, rel.ID}, &executed); err != nil {
+			return err
+		} else if !has {
+			return refuse(contract.RefusalDispositionConflict, "relationship %s is not an execution of node %s of plan %s", rel.ID, node, plan)
 		}
 		if rel.ParentTaskID != actor {
 			return notParentOf(actor, rel)
@@ -97,12 +108,16 @@ func (s *Scheduler) WithdrawGeneration(ctx context.Context, plan, node, actor st
 			return refuse(contract.RefusalStaleGeneration, "generation %d is not the generation %s stands on (%d): only the newest generation, the one opened by hand and never sent, is withdrawn", in.Generation, rel.ID, rel.Generation)
 		}
 		var anchor string
-		var turn, bound sql.NullString
-		if has, err := queryOne(txCtx, tx, "SELECT dispatch_request_id, anchor_state, dispatch_turn_id, bound_at FROM generations WHERE relationship_id = ? AND execution_generation = ?",
-			[]any{rel.ID, in.Generation}, &out.DispatchRequestID, &anchor, &turn, &bound); err != nil {
+		var turn, bound, opened sql.NullString
+		if has, err := queryOne(txCtx, tx, "SELECT dispatch_request_id, anchor_state, dispatch_turn_id, bound_at, reason FROM generations WHERE relationship_id = ? AND execution_generation = ?",
+			[]any{rel.ID, in.Generation}, &out.DispatchRequestID, &anchor, &turn, &bound, &opened); err != nil {
 			return err
 		} else if !has {
 			return refuse(contract.RefusalUnknownGeneration, "%s has no generation %d", rel.ID, in.Generation)
+		}
+		// generation-open gives the generation a reason; a returning tenure's generation has none, and undoing a tenure is not what a withdrawal does (it leaves the supersession and the linkage as they are)
+		if opened.String != "initial_assignment" && opened.String != "needs_changes_revision" {
+			return refuse(contract.RefusalDispositionConflict, "generation %d of %s was not opened by generation-open (its reason is %q): a returning tenure or a reply opened it, and a withdrawal does not undo that", in.Generation, rel.ID, opened.String)
 		}
 		if anchor != "anchor_pending" || turn.Valid || bound.Valid {
 			return refuse(contract.RefusalDispositionConflict, "generation %d of %s is bound to a dispatch turn (%s): it was sent to the child, so it is not withdrawn; the child reports in it", in.Generation, rel.ID, turn.String)

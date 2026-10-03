@@ -863,6 +863,7 @@
   {"flag":"--plan","required":true},
   {"flag":"--node","required":true},
   {"flag":"--actor","required":true},
+  {"flag":"--relationship","required":true,"help":"the relationship whose generation is withdrawn (assignment-show names it); naming it keeps a repeated call the same withdrawal"},
   {"flag":"--generation","required":true,"type":"int","help":"the generation to withdraw: the one the relationship stands on now, 2 or more"},
   {"flag":"--reason","required":true,"help":"why it is withdrawn (1 to 1000 characters), recorded with the withdrawal"},
   {"flag":"--expect-epoch","type":"int","help":"the coordinator epoch this session holds (dag-coordinator-claim answers it); a write from another epoch is refused stale_coordinator_epoch. 0 names none, which only a plan nobody claimed takes"}]},

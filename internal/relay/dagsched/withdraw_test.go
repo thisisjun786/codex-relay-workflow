@@ -10,6 +10,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/storeseed"
 )
 
 // What the relay can show was used keeps a generation from being withdrawn, and a refusal writes nothing: no record, the pointer where it was, no journal row.
@@ -19,6 +20,7 @@ func TestWithdrawalRefusesAGenerationThatWasUsed(t *testing.T) {
 		name, reason, detail string
 		generation           int64
 		node, actor, why     string
+		relationship         string
 		epoch                int64
 		setup                func(k *withdrawKit)
 	}{
@@ -41,6 +43,12 @@ func TestWithdrawalRefusesAGenerationThatWasUsed(t *testing.T) {
 		{name: "opened by a needs_changes ruling", reason: "disposition_conflict", detail: "a needs_changes ruling that opened it", setup: func(k *withdrawKit) {
 			k.exec("UPDATE verdicts SET next_generation = 2 WHERE event_id = ?", k.event1)
 		}},
+		{name: "a generation that a returning tenure or a reply opened (no reason from generation-open)", reason: "disposition_conflict", detail: "was not opened by generation-open", setup: func(k *withdrawKit) {
+			k.exec("UPDATE generations SET reason = NULL WHERE relationship_id = ? AND execution_generation = 2", k.rid)
+		}},
+		{name: "a relationship that is not named", reason: "malformed_receipt", relationship: "-"},
+		{name: "a relationship the store does not have", reason: "unregistered_relationship", relationship: "rel-nope"},
+		{name: "a relationship of another node", reason: "disposition_conflict", detail: "is not an execution of node I", relationship: "rel-g-D", setup: func(k *withdrawKit) { k.reportNode("g", "D", acceptOpts{}) }},
 		{name: "not the generation the relationship stands on", reason: "stale_generation", generation: 3, detail: "stands on"},
 		{name: "generation 1 is the assignment", reason: "malformed_receipt", generation: 1},
 		{name: "a reason is required", reason: "malformed_receipt", why: "  "},
@@ -62,7 +70,12 @@ func TestWithdrawalRefusesAGenerationThatWasUsed(t *testing.T) {
 			rows := k.rows()
 			generations := k.generations()
 			k.sched.ExpectedEpoch = c.epoch
-			in := WithdrawInput{Generation: 2, Reason: "refreshed the base myself"}
+			in := WithdrawInput{Relationship: k.rid, Generation: 2, Reason: "refreshed the base myself"}
+			if c.relationship == "-" {
+				in.Relationship = " "
+			} else if c.relationship != "" {
+				in.Relationship = c.relationship
+			}
 			if c.generation != 0 {
 				in.Generation = c.generation
 			}
@@ -230,6 +243,65 @@ func TestTheNumberingOfAStoreWithoutTheZoneIsThePlainOne(t *testing.T) {
 	}
 }
 
+// A repeated withdrawal is the same withdrawal: the relationship is named, so a call repeated after the node was adopted by a successor relationship replays the record and never touches the generation of
+// the relationship that stands there now, and that one is withdrawn only by a call that names it.
+func TestARepeatedWithdrawalNeverReachesAnotherRelationshipsGeneration(t *testing.T) {
+	k := newWithdrawKit(t)
+	ctx := context.Background()
+	k.openUnsent()
+	if _, err := k.withdraw(2, "never sent"); err != nil {
+		t.Fatal(err)
+	}
+	// the node moves on: a successor relationship of the same node with its own unsent generation 2
+	successor := "rel-successor"
+	now := k.clock()
+	if err := storeseed.RecordRelationship(ctx, k.s, store.Relationship{ID: successor, IssueKey: "CRW-I", Status: "active", ParentTaskID: "parent", ChildTaskID: "child-I-2", Generation: 1,
+		ArtifactRoots: "[]", AllowedRecipients: "[\"parent\"]", CreatedAt: now, UpdatedAt: now},
+		store.Generation{RelationshipID: successor, Number: 1, DispatchRequestID: "dispatch-" + successor, AnchorState: store.AnchorBound, DispatchTurnID: sql.NullString{String: "turn-1", Valid: true}, OpenedAt: now,
+			BoundAt: sql.NullString{String: now, Valid: true}}, "host", "host"); err != nil {
+		t.Fatal(err)
+	}
+	k.exec("INSERT INTO dag_node_executions (plan_id, node_id, relationship_id, execution_generation, manifest_digest, kind) SELECT plan_id, node_id, ?, 1, manifest_digest, 'parent_handover' FROM dag_node_executions WHERE relationship_id = ?", successor, k.rid)
+	k.exec("UPDATE relationships SET status = 'archived', superseded_by = ? WHERE relationship_id = ?", successor, k.rid)
+	if _, err := (&registry.Registry{Store: k.s}).OpenGeneration(ctx, successor, "successor-open", "needs_changes_revision", sql.NullString{}); err != nil {
+		t.Fatal(err)
+	}
+	again, err := k.withdraw(2, "asked again")
+	if err != nil || !again.Replayed || again.RelationshipID != k.rid || again.Reason != "never sent" {
+		t.Fatalf("the call repeated after the node moved on = %v %+v, want the replay of the first withdrawal", err, again)
+	}
+	if n := k.count("SELECT execution_generation FROM relationships WHERE relationship_id = ?", successor); n != 2 || k.count("SELECT COUNT(*) FROM dag_generation_withdrawals WHERE relationship_id = ?", successor) != 0 {
+		t.Fatalf("the successor's generation was touched (pointer %d)", n)
+	}
+	res, err := k.sched.WithdrawGeneration(ctx, "g", "I", "parent", WithdrawInput{Relationship: successor, Generation: 2, Reason: "the successor's own"})
+	if err != nil || res.Replayed || res.RelationshipID != successor || res.RestoredGeneration != 1 {
+		t.Fatalf("withdrawing the successor's generation = %v %+v", err, res)
+	}
+}
+
+// A node whose result was accepted before a generation was opened by hand and never sent keeps its acceptance when that generation is withdrawn: the acceptance and the head it names are not touched, the
+// node reads accepted again, and the same output accepted again is a replay.
+func TestAnAcceptedNodeKeepsItsAcceptanceWhenItsUnsentGenerationIsWithdrawn(t *testing.T) {
+	k := newWithdrawKit(t)
+	first, err := k.accept()
+	if err != nil || first.AcceptanceID == "" || first.HeadSHA != k.h1 {
+		t.Fatalf("accept = %v %+v", err, first)
+	}
+	k.openUnsent()
+	if _, err := k.withdraw(2, "decided not to send it"); err != nil {
+		t.Fatal(err)
+	}
+	if n := k.read("g").node("I"); n.Reason != DoneAccepted {
+		t.Fatalf("I = %+v, want %s again", n, DoneAccepted)
+	}
+	if k.count("SELECT COUNT(*) FROM dag_acceptances WHERE acceptance_id = ? AND state = 'active'", first.AcceptanceID) != 1 || k.count("SELECT COUNT(*) FROM dag_acceptances") != 1 {
+		t.Fatal("the acceptance changed")
+	}
+	if again, err := k.accept(); err != nil || !again.Replayed || again.AcceptanceID != first.AcceptanceID {
+		t.Fatalf("accepting the same output again = %v %+v, want the replay", err, again)
+	}
+}
+
 // The command as an operator runs it: parse, dispatch, store, JSON readback, and the exit codes of a refusal and of a usage error.
 func TestTheWithdrawCommandAnswersAsAnOperatorReadsIt(t *testing.T) {
 	state := filepath.Join(t.TempDir(), "state")
@@ -243,7 +315,7 @@ func TestTheWithdrawCommandAnswersAsAnOperatorReadsIt(t *testing.T) {
 	if err := f.s.Close(); err != nil {
 		t.Fatal(err)
 	}
-	args := []string{"dag-generation-withdraw", "--plan", "p1", "--node", "research", "--actor", "parent", "--generation", "2", "--reason", "sent nothing"}
+	args := []string{"dag-generation-withdraw", "--plan", "p1", "--node", "research", "--actor", "parent", "--relationship", r.Acceptance.RelationshipID, "--generation", "2", "--reason", "sent nothing"}
 	out, code := crw(t, state, args...)
 	answer := parseOut(t, out)
 	if code != 0 || answer["schema"] != SchemaWithdraw || answer["withdrawn_generation"] != float64(2) || answer["restored_generation"] != float64(1) || answer["relationship_id"] != r.Acceptance.RelationshipID ||
@@ -253,11 +325,11 @@ func TestTheWithdrawCommandAnswersAsAnOperatorReadsIt(t *testing.T) {
 	if out, code := crw(t, state, args...); code != 0 || parseOut(t, out)["replayed"] != true {
 		t.Fatalf("repeat = %d %s", code, out)
 	}
-	if out, code := crw(t, state, "dag-generation-withdraw", "--plan", "p1", "--node", "research", "--actor", "parent", "--generation", "3", "--reason", "x"); code != 2 || parseOut(t, out)["reason"] != "stale_generation" {
+	if out, code := crw(t, state, "dag-generation-withdraw", "--plan", "p1", "--node", "research", "--actor", "parent", "--relationship", r.Acceptance.RelationshipID, "--generation", "3", "--reason", "x"); code != 2 || parseOut(t, out)["reason"] != "stale_generation" {
 		t.Fatalf("another generation = %d %s", code, out)
 	}
 	// a missing required option is a refusal of the command as the other DAG commands give it (exit 2), and writes nothing
-	if out, code := crw(t, state, "dag-generation-withdraw", "--plan", "p1", "--node", "research", "--actor", "parent", "--generation", "2"); code != 2 {
+	if out, code := crw(t, state, "dag-generation-withdraw", "--plan", "p1", "--node", "research", "--actor", "parent", "--relationship", r.Acceptance.RelationshipID, "--generation", "2"); code != 2 {
 		t.Fatalf("without --reason: exit %d\n%s", code, out)
 	}
 }

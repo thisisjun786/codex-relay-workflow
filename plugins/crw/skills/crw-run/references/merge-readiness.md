@@ -990,7 +990,7 @@ The verdict `verified` was given, the base moved before `dag-accept`, and the pa
 2. **Withdraw it.** From the parent that owns the node:
 
        codex-session-relay --state "$RELAY_STATE" dag-generation-withdraw --plan <plan> --node <node> \
-         --actor <the parent's task id> --generation <N> --reason '<why it was opened and why it was never sent>' --expect-epoch <the epoch you hold>
+         --actor <the parent's task id> --relationship <rel> --generation <N> --reason '<why it was opened and why it was never sent>' --expect-epoch <the epoch you hold>
 
    The answer carries `withdrawn_generation`, `restored_generation` (N-1 unless an earlier generation was withdrawn too), `dispatch_request_id` and `replayed`. A refusal `disposition_conflict` names what the relay found: the generation is bound to a dispatch turn, carries an event, had a turn admitted, was opened by a `needs_changes` ruling or was recorded as an execution of the node; it was used, and nothing was written. `stale_generation` says N is not the generation the relationship stands on. Calling again with the same facts is a replay. The generation's number is spent: the next generation takes N+1, never N.
 3. **Read it back.** `assignment-show --relationship <rel>` names generation N-1 and the event you ruled as the head, `verified` again.

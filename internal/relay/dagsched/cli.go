@@ -332,7 +332,7 @@ func runWithdraw(ctx context.Context, services dispatch.Services, args dispatch.
 		return nil, err
 	}
 	defer closeStore()
-	result, err := sched.WithdrawGeneration(ctx, args.Text("plan"), args.Text("node"), args.Text("actor"), WithdrawInput{Generation: args.Integer("generation"), Reason: args.Text("reason")})
+	result, err := sched.WithdrawGeneration(ctx, args.Text("plan"), args.Text("node"), args.Text("actor"), WithdrawInput{Relationship: args.Text("relationship"), Generation: args.Integer("generation"), Reason: args.Text("reason")})
 	if err != nil {
 		return nil, hostFailure(err)
 	}

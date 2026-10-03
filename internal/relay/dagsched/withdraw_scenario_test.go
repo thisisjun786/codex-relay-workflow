@@ -73,7 +73,7 @@ func (w *withdrawKit) accept() (AcceptResult, error) {
 
 func (w *withdrawKit) withdraw(generation int64, reason string) (WithdrawResult, error) {
 	w.t.Helper()
-	return w.sched.WithdrawGeneration(context.Background(), "g", "I", "parent", WithdrawInput{Generation: generation, Reason: reason})
+	return w.sched.WithdrawGeneration(context.Background(), "g", "I", "parent", WithdrawInput{Relationship: w.rid, Generation: generation, Reason: reason})
 }
 
 func (w *withdrawKit) generations() int {
