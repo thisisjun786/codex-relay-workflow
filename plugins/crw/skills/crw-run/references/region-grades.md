@@ -37,11 +37,11 @@ Declare before the release, with the grade of each region:
 
     codex-session-relay --state "$RELAY_STATE" dag-region-declare --plan <plan> --node <node> --actor <you> --regions @regions.json
 
-    [{"repository": "owner/name", "path": "plugins/crw/.codex-plugin/plugin.json", "kind": "file", "grade": "mechanical", "rule": "regenerate:crw-dev ci plugin --record-version"},
+    [{"repository": "owner/name", "path": "plugins/crw/.codex-plugin/plugin.json", "kind": "file", "grade": "mechanical", "rule": "regenerate:go run -tags dev ./cmd/crw-dev ci plugin --record-version"},
      {"repository": "owner/name", "path": "docs/port/refactor-backlog.md", "kind": "file", "grade": "mechanical", "rule": "union"},
      {"repository": "owner/name", "path": "internal/relay/dagsched/ready.go", "kind": "symbol", "key": "Ready", "grade": "local"}]
 
-A region without a grade is `independent`, which is how every earlier declaration reads. A declaration is made before the release; once a node is released its regions are held until its
+The parent's check runs a `regenerate` command at the root of a fresh checkout of the head, so declare one that works there (the example builds `crw-dev` from the tree, which needs nothing installed), and declare `union` only for a list that both sides add lines to. A region without a grade is `independent`, which is how every earlier declaration reads. A declaration is made before the release; once a node is released its regions are held until its
 head lands and a different declaration is refused. A node with no declaration is unknown, and an unknown node overlaps every other.
 
 ## Read the judgement
@@ -94,15 +94,17 @@ It is a constraint on the merge and on the base refresh, not on the work. Nothin
 
 ### Settle a mechanical overlap
 
-Refresh the base as that section says. A clean merge needs nothing more. When the forge reports a conflict, the update did not happen and the parent does not resolve a conflicted merge
-itself: the correction goes to the child and names the rule of the region for each conflicting place, which is "the rule the assignment names for that overlap" of the `mechanical`
-kind in the [base refresh kinds](task-packet.md#what-a-handoff-discloses). The child resolves each hunk by that rule only and lists the hunks, and the parent reproduces them
-([the check on a refresh the child made](merge-readiness.md)): for `union` every row of both sides is still present and none is added; for `renumber` no id clashes and no other id moved;
-for `regenerate:<command>` the command is run on the merged tree and its output equals the file byte for byte. A hunk no declared rule covers is `manual`.
+Refresh the base as that section says. A clean merge needs nothing more. When the forge reports a conflict, the update did not happen. If every conflicting file lies in a
+place declared `mechanical`, the parent settles the conflict itself by the rule of the place and proves the result with `crw skill base-refresh mechanical` before it pushes anything
+([Resolve a mechanical conflict yourself](merge-readiness.md#resolve-a-mechanical-conflict-yourself)). For `union` every line of both sides is kept, each side's lines in their own order,
+a line both sides added stands twice and nothing is added; for `regenerate:<command>` the command is run twice on a checkout of the head (the second time from the dev tip's version of the
+file) and leaves the head's files as they are. For `renumber` there is no check yet, because the rule names no id: such a conflict goes to the child, who renumbers the clashing id
+only and lists the hunks (the `mechanical` kind in the [base refresh kinds](task-packet.md#what-a-handoff-discloses)). The parent passes the declarations of the candidate and of every node
+whose landing the conflict comes from, and the rule counts only where all of them name it; when it cannot name them all, the candidate goes to the child. A hunk no declared rule covers is `manual`.
 
 ### Send a candidate back to its child
 
-A candidate goes back for a conflict in a `local` or `exclusive` place, a mechanical hunk that its rule does not cover or that does not reproduce, a conflict in a file outside
+A candidate goes back for a conflict in a `local` or `exclusive` place, a mechanical hunk whose rule is `renumber` or that the check refuses, a conflict in a file outside
 every declared region (the declaration did not describe the work), and a refusal of the refresh check. The correction is a base refresh and not new scope, and names the landed head and
 the places that conflict.
 
