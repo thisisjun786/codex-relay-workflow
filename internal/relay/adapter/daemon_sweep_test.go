@@ -12,6 +12,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/faults"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/supervisor"
 )
 
 // CRW-304: the fault sweep the daemon runs files report_omitted for a settled managed turn only while the
@@ -97,21 +98,59 @@ func daemonSweepWorld(t *testing.T, ctx context.Context, past string) (*faults.S
 	return d.Sweeper, d.Faults, s
 }
 
+// recordingObserver passes every request to the observer the daemon installed and keeps what it answered,
+// so a test can say that a turn was judged, and how, and not only that nothing was filed for it.
+type recordingObserver struct {
+	faults.ManagedReadingObserver
+	readings []map[string]any
+}
+
+func (r *recordingObserver) Observe(ctx context.Context, request faults.ManagedReadingRequest) (any, error) {
+	reading, err := r.ManagedReadingObserver.Observe(ctx, request)
+	if object, ok := reading.(map[string]any); ok {
+		r.readings = append(r.readings, object)
+	}
+	return reading, err
+}
+
 func TestDaemonSweepFilesAnOmissionOnlyForATurnThatStillOwesItsReport(t *testing.T) {
 	for _, c := range []struct {
 		name, past string
-		filed      int
+		owedReason string
+		owed       bool
 	}{
-		{"a turn that still owes its report", "", 1},
-		{"a later turn was admitted", "later_turn_admitted", 0},
-		{"the turn has its own final receipt", "own_receipt", 0},
+		{"a turn that still owes its report", "", "terminal_without_report", true},
+		{"a later turn was admitted", "later_turn_admitted", "later_turn_admitted", false},
+		{"the turn has its own final receipt", "own_receipt", "turn_receipted", false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			ctx := context.Background()
 			sweeper, ledger, s := daemonSweepWorld(t, ctx, c.past)
+			// The daemon reads its settled managed turns through delivery's omission judgment.
+			if _, ok := sweeper.ManagedObserver.(supervisor.OmissionObserver); !ok {
+				t.Fatalf("the daemon's sweeper reads managed turns through %T, want supervisor.OmissionObserver", sweeper.ManagedObserver)
+			}
+			recorder := &recordingObserver{ManagedReadingObserver: sweeper.ManagedObserver}
+			sweeper.ManagedObserver = recorder
 			batch, err := sweeper.Sweep(ctx, "crw")
 			if err != nil {
 				t.Fatal(err)
+			}
+			if len(batch.Gaps) != 0 {
+				t.Fatalf("the sweep reports gaps: %v", batch.Gaps)
+			}
+			// Turn-9 is the one settled turn the sweep reads (the standby turn is skipped), and it was judged: it
+			// ended without a report, and delivery says whether a report is still owed for it.
+			if len(recorder.readings) != 1 {
+				t.Fatalf("the sweep read %d managed turns, want 1: %v", len(recorder.readings), recorder.readings)
+			}
+			reading := recorder.readings[0]
+			if selectors, _ := reading["selectors"].(map[string]any); selectors["turn"] != "turn-9" || reading["reportingState"] != "unreported" || reading["owed"] != c.owed || reading["owedReason"] != c.owedReason {
+				t.Fatalf("turn-9 reads %v / owed %v (%v), want unreported / owed %v (%s)", reading["reportingState"], reading["owed"], reading["owedReason"], c.owed, c.owedReason)
+			}
+			want := 0
+			if c.owed {
+				want = 1
 			}
 			filed := 0
 			for _, o := range batch.Observations {
@@ -122,13 +161,11 @@ func TestDaemonSweepFilesAnOmissionOnlyForATurnThatStillOwesItsReport(t *testing
 				case "report_omitted":
 					filed++
 				case "observation_unmeasured":
-					// The turn was never judged (a marker or registry fact did not line up): the test would pass for
-					// the wrong reason.
 					t.Fatalf("the turn was left unmeasured: %s", o.Detail)
 				}
 			}
-			if filed != c.filed {
-				t.Fatalf("the sweep files %d report_omitted observations for turn-9, want %d", filed, c.filed)
+			if filed != want {
+				t.Fatalf("the sweep files %d report_omitted observations for turn-9, want %d", filed, want)
 			}
 			if _, err = sweeper.RecordAll(ctx, ledger, batch); err != nil {
 				t.Fatal(err)
@@ -137,8 +174,8 @@ func TestDaemonSweepFilesAnOmissionOnlyForATurnThatStillOwesItsReport(t *testing
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(rows) != c.filed {
-				t.Fatalf("the fault ledger holds %d report_omitted faults, want %d", len(rows), c.filed)
+			if len(rows) != want {
+				t.Fatalf("the fault ledger holds %d report_omitted faults, want %d", len(rows), want)
 			}
 		})
 	}
