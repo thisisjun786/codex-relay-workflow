@@ -26,6 +26,7 @@ func requestFixture(t *testing.T) []byte {
 	return b
 }
 func Test27_MST_5_InputSnapshotAndStableBoundedOperationIDs(t *testing.T) {
+	t.Parallel()
 	input := requestFixture(t)
 	r, err := ParseRequest(input)
 	if err != nil {
@@ -43,6 +44,7 @@ func Test27_MST_5_InputSnapshotAndStableBoundedOperationIDs(t *testing.T) {
 	}
 }
 func Test27_MST_9_UnknownInputBeforeRPC(t *testing.T) {
+	t.Parallel()
 	var r map[string]any
 	if err := json.Unmarshal(requestFixture(t), &r); err != nil {
 		t.Fatal(err)

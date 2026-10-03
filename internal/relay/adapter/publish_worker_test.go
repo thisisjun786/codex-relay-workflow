@@ -12,13 +12,12 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"golang.org/x/sys/unix"
 )
 
 func publishWorker(t *testing.T, state, socket, scope, installationRoot string) {
 	t.Helper()
-	s, err := store.Open(context.Background(), filepath.Join(state, "relay.sqlite3"), socket)
+	s, err := openStore(context.Background(), filepath.Join(state, "relay.sqlite3"), socket)
 	if err != nil {
 		t.Fatal(err)
 	}

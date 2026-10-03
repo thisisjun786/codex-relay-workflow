@@ -93,6 +93,7 @@ func allTables(t *testing.T, s *store.Store) map[string]any {
 	return tables
 }
 func Test28_BAD_14_ShutdownSettlesClaimedDelivery(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	// The result includes every table, schema_meta too, its owner neutralized: the store is the
 	// seed as a pre-fence Python wrote it, stamped as Go stamps a store.
@@ -130,7 +131,7 @@ func Test28_BAD_14_ShutdownSettlesClaimedDelivery(t *testing.T) {
 	if cancellation == nil {
 		t.Fatal("shutdown accepted")
 	}
-	s, err := store.Open(context.Background(), goPath, "")
+	s, err := openStore(context.Background(), goPath, "")
 	if err != nil {
 		t.Fatal(err)
 	}
