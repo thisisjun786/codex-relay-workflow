@@ -1,8 +1,6 @@
 package dagsched
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"strconv"
 	"strings"
@@ -36,11 +34,6 @@ func canonText(s string) string {
 		lines[i] = strings.TrimRight(line, " \t")
 	}
 	return strings.Trim(strings.Join(lines, "\n"), "\n")
-}
-
-func sha(s string) string {
-	sum := sha256.Sum256([]byte(s))
-	return hex.EncodeToString(sum[:])
 }
 
 // fenceFor is a backtick fence longer than any run of backticks in the text, so the text cannot close it.
@@ -132,7 +125,7 @@ func summaryBlock(e SummaryEntry) string {
 		"seq: " + strconv.FormatInt(e.Seq, 10),
 		"stateDigest: " + e.StateDigest,
 		"subjectDigest: " + e.SubjectDigest,
-		"summarySha256: " + sha(body),
+		"summarySha256: " + shaOf([]byte(body)),
 		"",
 		fence + "text",
 	}

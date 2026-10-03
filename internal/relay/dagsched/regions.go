@@ -173,13 +173,9 @@ func (s *Scheduler) DeclareRegions(ctx context.Context, plan, node, actor string
 		if err := s.fence(txCtx, q, plan, actor); err != nil {
 			return err
 		}
-		snap, _, err := dag.SnapshotAt(txCtx, q, plan, 0)
+		snap, n, err := liveNode(txCtx, q, plan, node)
 		if err != nil {
 			return err
-		}
-		n, ok := nodeOf(snap, node)
-		if !ok {
-			return refuse(contract.RefusalUnregisteredScope, "plan %s has no live node %s", plan, node)
 		}
 		if n.Kind != dag.NodeImplementation {
 			return refuse(contract.RefusalDispositionConflict, "node %s is a %s node: it edits no repository, so it has no regions to declare", node, n.Kind)
@@ -269,7 +265,7 @@ func normalizeRegions(in []Region) ([]Region, error) {
 		r.Repository = repository
 		// A path is kept as written, spaces inside a name included: trimming would store another place than the one declared. Whitespace around the whole
 		// path is refused rather than guessed at.
-		if r.Path != strings.TrimSpace(r.Path) || hasControl(r.Path) {
+		if r.Path != strings.TrimSpace(r.Path) || dag.HasControl(r.Path) {
 			return nil, refuse(contract.RefusalMalformedReceipt, "region path %q has whitespace or a control character at its ends or inside it", r.Path)
 		}
 		clean := path.Clean(r.Path)
@@ -324,7 +320,7 @@ var slugPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 // checkout path of the same repository remain two keys; a plan names one spelling per repository, the target_repository of its edges.
 func canonicalRepository(in string) (string, error) {
 	switch {
-	case in == "" || in != strings.TrimSpace(in) || hasControl(in):
+	case in == "" || in != strings.TrimSpace(in) || dag.HasControl(in):
 		return "", refuse(contract.RefusalMalformedReceipt, "region repository %q is empty or has whitespace around it or a control character in it", in)
 	case strings.HasPrefix(in, "/"):
 		// The identity of a checkout is the directory the path reaches: links are resolved with the path as written (a ".." after a link means the link
@@ -344,13 +340,4 @@ func canonicalRepository(in string) (string, error) {
 		return "", refuse(contract.RefusalMalformedReceipt, "region repository %q is neither an absolute path nor owner/name", in)
 	}
 	return in, nil
-}
-
-func hasControl(s string) bool {
-	for _, r := range s {
-		if r < 0x20 || r == 0x7f {
-			return true
-		}
-	}
-	return false
 }

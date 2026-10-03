@@ -2,9 +2,7 @@ package dagsched
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"fmt"
 	"sort"
 	"strings"
@@ -388,8 +386,7 @@ func ProjectProgress(in ProgressInput) (Progress, error) {
 	if err != nil {
 		return Progress{}, invariant("plan %s: the document cannot be printed: %v", r.PlanID, err)
 	}
-	sum := sha256.Sum256(printed)
-	p.Digest = hex.EncodeToString(sum[:])
+	p.Digest = shaOf(printed)
 	return p, nil
 }
 

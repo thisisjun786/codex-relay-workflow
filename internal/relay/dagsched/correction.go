@@ -47,13 +47,9 @@ func (s *Scheduler) PrepareCorrection(ctx context.Context, plan, node, actor str
 	if err := s.fence(ctx, q, plan, actor); err != nil {
 		return out, err
 	}
-	snap, _, err := dag.SnapshotAt(ctx, q, plan, 0)
+	snap, n, err := liveNode(ctx, q, plan, node)
 	if err != nil {
 		return out, err
-	}
-	n, ok := nodeOf(snap, node)
-	if !ok {
-		return out, refuse(contract.RefusalUnregisteredScope, "plan %s has no live node %s", plan, node)
 	}
 	if err := lifecycleRefusal(snap, n, "correcting it", false); err != nil {
 		return out, err
@@ -184,13 +180,9 @@ func (s *Scheduler) RecordCorrection(ctx context.Context, plan, node, actor, sup
 		if err := s.fence(txCtx, tx, plan, actor); err != nil {
 			return err
 		}
-		snap, _, err := dag.SnapshotAt(txCtx, tx, plan, 0)
+		snap, n, err := liveNode(txCtx, tx, plan, node)
 		if err != nil {
 			return err
-		}
-		n, ok := nodeOf(snap, node)
-		if !ok {
-			return refuse(contract.RefusalUnregisteredScope, "plan %s has no live node %s", plan, node)
 		}
 		if err := lifecycleRefusal(snap, n, "correcting it", false); err != nil {
 			return err
@@ -203,7 +195,7 @@ func (s *Scheduler) RecordCorrection(ctx context.Context, plan, node, actor, sup
 			return refuse(contract.RefusalUnregisteredRelationship, "node %s has no execution to correct", node)
 		}
 		if rel.Status != "active" || rel.Superseded {
-			return refuse(contract.RefusalRelationshipNotActive, "the relationship %s of %s is %s: a correction goes to a child whose relationship is active", rel.ID, node, map[bool]string{true: "superseded", false: rel.Status}[rel.Superseded])
+			return refuse(contract.RefusalRelationshipNotActive, "the relationship %s of %s is %s: a correction goes to a child whose relationship is active", rel.ID, node, relationshipState(rel))
 		}
 		if rel.ParentTaskID != actor {
 			return notParentOf(actor, rel)
