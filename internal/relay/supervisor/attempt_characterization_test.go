@@ -162,6 +162,7 @@ func budgetSpentAtTransport(t *testing.T, f *stageFixture) {
 }
 
 func TestAttemptCharacterization_an_unknown_message_is_refused_before_anything_is_read(t *testing.T) {
+	t.Parallel()
 	f, _ := charStaged(t)
 	host := &sendHost{status: "idle"}
 	since := journalSeq(t, f)
@@ -178,6 +179,7 @@ func TestAttemptCharacterization_an_unknown_message_is_refused_before_anything_i
 // A write that fails stops the attempt with that error: never a quiet nil and never the refusal the
 // attempt was about to return. charWant says what the failed write leaves behind.
 func TestAttemptCharacterization_a_failed_write_stops_the_attempt_with_its_error(t *testing.T) {
+	t.Parallel()
 	const (
 		toQueued   = "OLD.state='sending' AND NEW.state='queued'"
 		attemptEnd = "NEW.state='withheld_pre_send'"
@@ -251,6 +253,7 @@ func TestAttemptCharacterization_a_failed_write_stops_the_attempt_with_its_error
 		{"journaling the attempt after the send", "", nil, "INSERT", "journal", journal("supervisor_message_attempted")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			f, id := charStaged(t)
 			status := tc.status
 			if status == "" {
@@ -276,6 +279,7 @@ func TestAttemptCharacterization_a_failed_write_stops_the_attempt_with_its_error
 
 // The proposal can be restated at the transport start only so many times in one call.
 func TestAttemptCharacterization_the_third_restatement_in_one_call_refuses_and_sends_nothing(t *testing.T) {
+	t.Parallel()
 	f, id := charStaged(t)
 	host := &sendHost{status: "idle"}
 	submission := 1
@@ -297,6 +301,7 @@ func TestAttemptCharacterization_the_third_restatement_in_one_call_refuses_and_s
 // A refreshProposal error at the transport start that is not a superseded_revision refusal cancels
 // the claim with the error's own text as the reason, and is returned as it is.
 func TestAttemptCharacterization_a_plain_error_refreshing_the_proposal_at_the_transport_cancels_the_claim(t *testing.T) {
+	t.Parallel()
 	f, id := charStaged(t)
 	host := &sendHost{status: "idle"}
 	proposalRestatedAtTransport(t, f)
@@ -319,6 +324,7 @@ func TestAttemptCharacterization_a_plain_error_refreshing_the_proposal_at_the_tr
 // holdObsoleteClaim compares the row to the one the attempt read and does nothing when they differ:
 // the claim's refusal comes back, but no hold is set and nothing is journaled.
 func TestAttemptCharacterization_a_row_that_moved_after_the_attempt_read_it_is_not_held_as_superseded(t *testing.T) {
+	t.Parallel()
 	f, id := charStaged(t)
 	inner := &sendHost{status: "idle"}
 	host := &charHost{sendHost: inner}
