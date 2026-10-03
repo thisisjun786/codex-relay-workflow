@@ -8,11 +8,13 @@ const grids = {
   punycode: ["bücher.de", "BÜCHER.de", "mañana.com", "例え.テスト", "İ.de", "ΣΣ.de", "ẞ.de", "😀.com", "xn--bcher-kva.de", "a..b", "host.", "a_b.c", "a*b", "a%41", "a%2Fb", "%FF", "%ZZ"],
 };
 const rows = [];
+grids.ipv4.push("0x10000000000000000z", "0x10000000000000000g", "0x10000000000000000", "x.0x10000000000000000z");
 grids.ipv4.push("0xffffffffffffffffffff", "00077777777777777777777777777", "a.0xffffffffffffffffffff");
 for (const [group, hosts] of Object.entries(grids)) for (const host of hosts) {
   const raw = `https://${host}/a.git`; rows.push({ group, raw, key: normalizeRepoKey(raw) });
 }
 const urls = [
+  "file:/\\host/a://b", "file:\\/host/a://b", "file:\\\\host/a://b", "file://host/a://b",
   "https:///x/a", "https:/x://y", "https:x://y", "a:b://c", "://x/a", "1x://x/a", "https://a@b@c/a", "https://@x/a", "https://@/a",
   "https://x:/a", "https://x:0/a", "https://x:65535/a", "https://x:65536/a", "ssh://x:99999/a", "ssh://x:22:/a", "https://[::1]:22/a", "https://[::1]x/a",
   "thing://bücher/a", "thing://a%FF/a", "thing://a%ZZ/a", "thing://a b/a", "git://HOST/a/../b", "thing:///a", "file://HOST/a", "file://localhost/a",

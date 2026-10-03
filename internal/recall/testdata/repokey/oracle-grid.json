@@ -111,6 +111,26 @@
   },
   {
     "group": "ipv4",
+    "raw": "https://0x10000000000000000z/a.git",
+    "key": "0x10000000000000000z/a"
+  },
+  {
+    "group": "ipv4",
+    "raw": "https://0x10000000000000000g/a.git",
+    "key": "0x10000000000000000g/a"
+  },
+  {
+    "group": "ipv4",
+    "raw": "https://0x10000000000000000/a.git",
+    "key": null
+  },
+  {
+    "group": "ipv4",
+    "raw": "https://x.0x10000000000000000z/a.git",
+    "key": "x.0x10000000000000000z/a"
+  },
+  {
+    "group": "ipv4",
     "raw": "https://0xffffffffffffffffffff/a.git",
     "key": null
   },
@@ -278,6 +298,26 @@
     "group": "punycode",
     "raw": "https://%ZZ/a.git",
     "key": null
+  },
+  {
+    "group": "states",
+    "raw": "file:/\\host/a://b",
+    "key": "host/a://b"
+  },
+  {
+    "group": "states",
+    "raw": "file:\\/host/a://b",
+    "key": "host/a://b"
+  },
+  {
+    "group": "states",
+    "raw": "file:\\\\host/a://b",
+    "key": "host/a://b"
+  },
+  {
+    "group": "states",
+    "raw": "file://host/a://b",
+    "key": "host/a://b"
   },
   {
     "group": "states",

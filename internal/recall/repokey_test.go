@@ -134,6 +134,7 @@ func TestMain(m *testing.M) {
 		switch mode {
 		case "timeout":
 			time.Sleep(10 * time.Second)
+			_, _ = os.Stdout.WriteString("late origin")
 		case "fail":
 			os.Exit(1)
 		case "signal":
@@ -181,6 +182,9 @@ func TestRepoKeyOriginProcessBoundaries(t *testing.T) {
 			t.Setenv("RECALL_ORIGIN_PID", pidFile)
 			start := time.Now()
 			got := readOriginUrl(root)
+			if row.mode == "timeout" && time.Since(start) >= 8*time.Second {
+				t.Fatal("deadline did not bound the helper before its ten-second completion")
+			}
 			want := row.want
 			if row.size != 0 {
 				want = strings.Repeat("x", row.size)

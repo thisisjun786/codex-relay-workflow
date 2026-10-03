@@ -30,6 +30,9 @@ func parseRemoteURL(raw string) (host, path string, ok bool) {
 	}
 	scheme, rest := strings.ToLower(raw[:colon]), raw[colon+1:]
 	special := scheme == "ftp" || scheme == "file" || scheme == "http" || scheme == "https" || scheme == "ws" || scheme == "wss"
+	if scheme == "file" {
+		rest = strings.ReplaceAll(rest, "\\", "/")
+	}
 	if special && scheme != "file" {
 		rest = strings.TrimLeft(rest, "/\\")
 	} else {
@@ -210,6 +213,14 @@ func ipv4Number(s string) (uint64, bool) {
 	// ParseUint accepts a leading +; WHATWG's radix-number grammar does not.
 	if strings.ContainsAny(s, "+-_") {
 		return 0, false
+	}
+	// ParseUint can report overflow before examining a trailing invalid digit.
+	// Validate the entire grammar first; such a label is a domain, not an IPv4 number.
+	for i := 0; i < len(s); i++ {
+		digit, valid := hexDigit(s[i])
+		if !valid || int(digit) >= base {
+			return 0, false
+		}
 	}
 	n, err := strconv.ParseUint(s, base, 64)
 	// A syntactically valid oversized number still triggers IPv4 parsing, which
