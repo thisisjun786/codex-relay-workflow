@@ -227,7 +227,9 @@ func TestRC03_a_different_verdict_that_cannot_replace_the_recorded_one_is_refuse
 }
 
 // c1: once the plan accepted the verified result, or the work was marked merged, a second ruling
-// is refused with the route that remains, which depends on the node's own reading.
+// is refused with the route that remains, which depends on the node's own reading. For an accepted
+// result that is current, a base that moved after the acceptance has a route (dag-base-refresh, CRW-430)
+// and every other current result keeps the report-it sentence.
 func TestRC04_acceptance_and_a_merge_mark_close_the_change(t *testing.T) {
 	t.Parallel()
 	t.Run("accepted", func(t *testing.T) {
@@ -236,6 +238,10 @@ func TestRC04_acceptance_and_a_merge_mark_close_the_change(t *testing.T) {
 		h.rcAccept(event)
 		detail := h.rcRefused(event, "needs_changes", "v2", rcRestoration(), nil, DispositionConflict)
 		rcMentions(t, detail, "acceptance-1", "plan-1", "node-1", "dag-correct --prepare", "stale", "no recorded correction route", "generation dag-correct will refuse")
+		rcMentions(t, detail, "a base that moved after the acceptance", "dag-base-refresh", "merges of the base")
+		if strings.Contains(detail, "a base that moved after the acceptance is such a case") {
+			t.Fatalf("the refusal still files the moved base under the case that has no route: %s", detail)
+		}
 	})
 	t.Run("merged", func(t *testing.T) {
 		h := newRulingHL(t)
