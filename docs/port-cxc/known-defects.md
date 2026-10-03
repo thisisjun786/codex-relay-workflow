@@ -349,6 +349,13 @@ This section supersedes the seeded `port: pending` statuses for native Write/Edi
 - Recursive pathname cleanup can remove a lock another writer substituted during a callback (source `goalplan.ts:866-871`; `TestPinnedLookupAndObservedReplacement`, intentionally-changed); port: fixed for an observed replacement by descriptor-path/inode checks and non-following cleanup. The mkdir protocol still requires cooperating writers: removal/replacement between the final check and unlink, or directory relocation after the last binding check, is not atomic or prevented.
 - Go JSON decoding substitutes U+FFFD for an unpaired surrogate escape and could lose stored text on a later write; the reader refuses such plans without changing bytes (source `goalplan.ts:721`, `:727`; recorded case `lone_surrogate`, intentionally-changed; paired surrogates and escaped-backslash controls pass); port: fixed for file reads.
 
+## Found by the helper role native catalog port
+
+- `nativeCatalogPath` decodes a TOML basic string with `JSON.parse`, so TOML-only escapes such as `\U0001F600` and `\e` make the configured catalog unavailable instead of selecting its valid TOML path (source `subagent-config/src/catalog.ts:67-75`; `TestNativeCatalogPaths/toml-unicode-escape`); port: kept.
+- `readNativeCatalog` catches every read/parse failure and returns null, so an unreadable or malformed catalog is indistinguishable from a missing one (source `catalog.ts:88-105`; native oracle cases `invalid-shape`/`malformed` and the missing/directory path tests); port: kept.
+- `nativeEntries` trusts an injected native list without deduplicating it, and `buildCatalog` rejects only empty provider ids rather than blank ids, so native duplicates and a whitespace-only provider id survive (source `catalog.ts:112-121,144-151`; oracle cases `native-duplicates`/`whitespace`); port: kept.
+- `buildCatalog` and `readNativeCatalog` give the same cache entry different labels and only the latter retains its effort ladder (source `catalog.ts:102,119-120`; oracle native/build rows); port: kept.
+
 ## Found by the PABCD phase directive and assembly port
 
 No new oracle defect was identified in the directive text and assembly of `pabcd-state/src/hook.ts:212-235,324-575` (CXC v0.2.40, commit 3c1459ac). The prefix-only resolver's unterminated-backtick matching and whole-string fail-open behavior are preserved and recorded as edge cases, not changed into a Markdown parser. The goalplan reader and active-phase selector are outside this port.
