@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
@@ -505,7 +506,7 @@ func contains(values []string, value string) bool {
 }
 
 func itoa(n int) string {
-	return strings.TrimSpace(strings.Replace(pyvalue.Repr(int64(n)), " ", "", -1))
+	return strconv.Itoa(n)
 }
 
 // RootsNarrowing is TaskSettings.roots_narrowing: a note for each place a resume reported fewer

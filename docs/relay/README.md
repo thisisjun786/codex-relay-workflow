@@ -535,6 +535,7 @@ Global options come BEFORE the subcommand:
 | `ack` | record the parent's acknowledgement |
 | `verify-acks` | complete acknowledgements authored without a host |
 | `verdict` | record a verdict; needs_changes routes a revision to the same child |
+| `decision-reply` / `decision-show` | the parent's decision on a child's blocked_needs_input receipt, delivered to the child; read back |
 | `assignment-show` / `assignment-find` / `assignment-mark` | one issue, one child, and where it stands |
 | `sync-*` | the coordination-document outbox: target, next, claim, operation, reconcile, complete, fail, retry, status, progress |
 | `status` | observable delivery, acknowledgement and verification state |
@@ -645,6 +646,41 @@ When a step refuses, the refusal names what to do:
 | the relationship is not active | `relationship_not_active` | `relationship-resume`, then rule again |
 
 Two limits are part of the contract. The same verdict again is a replay even when its findings differ, so a `needs_changes` ruling that was already given cannot be given again with other words: the verdict does not resend (see [Return corrections to the existing task](../../plugins/crw/skills/crw-run/SKILL.md#return-corrections-to-the-existing-task)). And an installed relay older than this change answers a different verdict with the recorded ruling marked `_replay` and exit 0; read the answer (a ruling that is still `verified` and marked `_replay` changed nothing) and `assignment-show`, never the exit code.
+
+## Replying to a blocked receipt
+
+A child that cannot go on records a `blocked_needs_input` receipt and ends its turn. The receipt carries no artifact, so it is never the head revision of its generation and a verdict on it is refused `superseded_revision`: the parent's answer has no verdict to travel in. `decision-reply` is the relationship-level route for it. The parent returns a decision, the relay records it, and the delivery engine carries it to the child (held while the child is busy, waking it when it is idle) as a `revision_request` delivery rendered as its own message, `[codex-session-relay] parent decision`. A decision is never a verdict: it writes no ruling, and no ruling writes a decision. A `verified` or `needs_changes` verdict on a blocked receipt is still refused `superseded_revision` once the parent acknowledged it (the receipt is not the head revision), while `aborted` and `unverified` are not refused by the currency check. So the two exclude each other explicitly, each writer checking the other inside its own transaction: a receipt that carries a decision takes no first verdict, and a receipt that already has a verdict takes no decision, each refused `disposition_conflict` (a verdict on an unacknowledged receipt is refused `not_acknowledged` first, as for any verdict).
+
+    codex-session-relay decision-reply --event <blocked receipt> --decision <kind> --decision-turn <your turn id> --note <text|@file> [--criteria-digest <digest>]
+    codex-session-relay decision-show --relationship <id>
+
+| Decision | Generation | What the relay requires | What the child is told |
+| --- | --- | --- | --- |
+| `answer` | stays | a note | the answer; continue under the criteria already registered |
+| `stop` | stays | a note | stop work and change nothing more; report `interrupted` |
+| `split_approval` | advances to g+1 | a note and `--criteria-digest`, equal to the set registered for the relationship | the criteria changed: here is the set (as registered when the decision was made); continue on the same node under it |
+| `scope_change` | advances to g+1 | the same | the same |
+
+The rule is fixed by the kind. `answer` and `stop` change nothing the child's attempt stands on, so generation g goes on. The child's next turn is not the generation's anchor, so the message prints the continuation claim that admits it (`--continues-anchor <anchor of g> --continuation-actor <child> --continuation-reason ...`); the anchor binding is not offered the reply's turn, which would be refused `anchor_already_bound` and reported on every tick. `split_approval` and `scope_change` change the criteria the output is judged against, so they open generation g+1 (reason `decision_reply`, dispatch request id `decision-<event id>`) in the same transaction, the reply is an event of g+1, and the turn it opens becomes the anchor of g+1 through the same binding a correction uses (a generation that was bound by hand to another turn first is reported as `anchor_already_bound`, as it is for a correction). The child's first receipt there needs no claim and passes no `--supersedes-revision` (the generation holds no earlier revision to replace). The parent registers the new set first (`criteria-register`) and names its digest, so a reply that names a stale set is refused. The record keeps the set as it was registered when the decision was made, and the message prints it (the first ten criteria, an optional one marked, with a count of the rest), so the child works from what the parent approved even if the set is registered again before the message is sent; the child's output is still judged against the set registered when it is ruled, by the re-review rule. `stop` does not change the relationship status: `relationship-status` still pauses, cancels or archives. Opening g+1 marks the older undelivered deliveries `stale_generation`, the blocked receipt's delivery to the parent among them unless the parent acknowledged it.
+
+**What a decision answers.** A final, unsuppressed receipt of the child, `blocked_needs_input`, that is the child's newest final receipt of the relationship's current generation (newest in the order the relay saw the receipts: when it first saw each, and for receipts first seen at one instant the order they were stored in, because an event id is a hash and not a sequence), on an active relationship whose child is an allowed recipient. One decision per receipt: the same decision again (same kind, note and criteria digest) is a replay (the record marked `_replay`, nothing written); any other is refused `disposition_conflict`. The record is the event (outcome `decision_reply`, producer `relay`, id the first 32 hex characters of `sha256(relationship|receipt|decision_reply)`), its delivery, and a `decision_recorded` journal row. A reply that the child has moved past is not sent: a later final receipt of the child in the same generation, later than the receipt that was answered (a receipt staged before the reply and made final after it counts), supersedes it (`superseded_revision`), as a newer generation does (`stale_generation`).
+
+| Cause | Reason |
+| --- | --- |
+| no such event | `not_claimable` |
+| the receipt is not a final child `blocked_needs_input` (a receipt with an artifact is ruled with a verdict), another decision or any verdict is on record | `disposition_conflict` |
+| the relationship is not active | `relationship_not_active` |
+| the receipt is not of the current generation | `stale_generation` |
+| the child has reported again in this generation | `superseded_revision` |
+| the child is not an allowed recipient | `recipient_not_authorized` |
+| an unknown decision, no note, no turn, a criteria digest missing or given where none belongs | `malformed_receipt` |
+| no criteria registered, or a digest other than the registered set's | `criteria_unregistered`, `criteria_set_changed` |
+| a keeping decision on a generation with no bound anchor | `unbound_generation` |
+
+No refusal reason is added, and a refusal writes nothing. The command line is checked first: an unknown `--decision` or a missing required option ends with the parser's own exit 2 and a message on stderr before the writer runs, an unreadable `--note @path` is a host problem (exit 3, as for `verdict --criteria`), and `malformed_receipt` is what the writer answers to a direct call or to a blank note, turn or digest. `decision-show` reads the decisions of a relationship back, oldest first, each with the state of its delivery.
+
+Limits that are part of the contract. The relay records the decision and its delivery; it does not read the child's thread, so `dispatched` says the message was accepted, not that the child acted. A decision that opened g+1 is not recorded against a DAG plan node by this build: `dag-accept` finds no execution for g+1 and refuses, and the follow-up work "DAG reflection, bridge bypass record and crw-run procedure for decision replies" owns that, together with the record of a message sent to the child outside this route. Until it lands, the crw-run skill's need-input procedure is unchanged. After an answer or a stop, the relationship still reads as blocked (`dispositions-show`) until the child reports again. `registry`'s `generation-open --reason` still accepts only its own two reasons: `decision_reply` is written by this command alone. An installed relay older than this change has no `decision-reply` and answers the command as an unknown subcommand.
+
 
 ## The coordination summary
 

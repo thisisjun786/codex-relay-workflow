@@ -17,7 +17,8 @@ import (
 )
 
 // Region is one place in a repository a node expects to edit (contract 7.2). Kind is tree, file or symbol; Change is edit, rename or delete.
-// Exclusive regions conflict with every other region of the same repository (a hold on the whole repository: a rename, a delete, a hotspot or the caller's word).
+// Exclusive is the declarer's word that the node holds the whole repository (a repository-wide rename, say): the region conflicts with every other region of its repository. Nothing else sets it (CRW-431): a rename, a
+// delete and a hotspot file are exclusive at their own place and nowhere else (Classify, foldedGrade).
 // Grade says how an overlap on the place is settled and Rule, for a mechanical grade, how (CRW-409, grades.go); a region declared without a grade is independent.
 type Region struct {
 	Repository, Path, Kind, Key, Change string
@@ -30,8 +31,10 @@ var hotspotNames = map[string]bool{
 	"poetry.lock": true, "Pipfile.lock": true, "uv.lock": true, "Makefile": true, "Dockerfile": true,
 }
 
-// Classify says whether a region is exclusive and why: a rename or a delete, or a hotspot (a lockfile, anything under .github/, a Makefile or a
-// Dockerfile, a .sql file, a path with a schema or migrations segment), is the kind of change two parallel branches cannot both make.
+// Classify says whether a change to a place is exclusive at that place, and why: a rename or a delete, or a hotspot (a lockfile, anything under .github/, a Makefile or a
+// Dockerfile, a .sql file, a path with a schema or migrations segment), is the kind of change two parallel branches cannot both make. The hold is on the place and not on the repository (CRW-431): the
+// region is judged exclusive against whatever shares its place (the same path, a tree that covers it, what lies under a tree it deletes or renames) and against nothing else; a whole-repository hold is
+// only what the declarer states (Region.Exclusive).
 func Classify(p, change string) (exclusive bool, why string) {
 	if change == "rename" || change == "delete" {
 		return true, change
@@ -51,10 +54,18 @@ func Classify(p, change string) (exclusive bool, why string) {
 	return false, ""
 }
 
+// placeHold is whether Classify makes the region exclusive at its place.
+func placeHold(r Region) bool {
+	exclusive, _ := Classify(r.Path, r.Change)
+	return exclusive
+}
+
 func within(p, dir string) bool { return p == dir || strings.HasPrefix(p, dir+"/") }
 
-// Overlaps is whether two regions can be touched by the same change. Different repositories never overlap; an exclusive region overlaps everything in its repository; a tree
-// overlaps whatever lies under it; two symbols overlap only when they are the same symbol; any other pair on one path overlaps. It says nothing of how the overlap is settled: PairGrade does.
+// Overlaps is whether two regions can be touched by the same change. Different repositories never overlap; a region whose declarer stated a whole-repository hold overlaps everything in its repository; a tree
+// overlaps whatever lies under it; two symbols overlap only when they are the same symbol, unless one of them is a delete, a rename, a hotspot or a shared contract file, which makes the file one place (wholeFile);
+// any other pair on one path overlaps. A delete, a rename and a hotspot overlap only what shares their place: they hold no more of the repository than the same path and the trees that cover it. It says nothing
+// of how the overlap is settled: PairGrade does.
 func Overlaps(a, b Region) bool {
 	if a.Repository != b.Repository {
 		return false
@@ -69,6 +80,11 @@ func Overlaps(a, b Region) bool {
 // loadDeclarations is the latest declaration of every node of a plan (the rows with the highest declaration_seq per node). A node absent from the map has none: its
 // regions are unknown. The grade of a region is read from dag_node_region_grades (a row of a declaration made before grades existed has none and reads as independent) and folded the
 // way a declaration is (foldedGrade), so a stored declaration compares equal to the same one declared now. A store whose zone predates that table is read without it.
+//
+// Whether the region holds the whole repository is read from dag_node_region_holds, which a declaration made since CRW-431 fills for every region with what the declarer stated. A declaration made before
+// has no row and carries the exclusive column the classifier set (a rename, a delete or a hotspot) or the caller's word; it reads as follows: a delete and a hotspot protected nothing outside their own place and read at
+// it; a rename protected a destination no region can name, and a region the classifier does not flag can only have been held by the declarer, so those two stay a hold of the repository until the node is
+// declared again. A store whose zone predates dag_node_region_holds reads every row that way.
 func loadDeclarations(ctx context.Context, q store.Querier, plan string) (map[string][]Region, error) {
 	graded, err := tableExists(ctx, q, "dag_node_region_grades")
 	if err != nil {
@@ -80,7 +96,17 @@ func loadDeclarations(ctx context.Context, q store.Querier, plan string) (map[st
 		join = " LEFT JOIN dag_node_region_grades g ON g.plan_id = r.plan_id AND g.node_id = r.node_id AND g.declaration_seq = r.declaration_seq AND g.repository = r.repository" +
 			" AND g.path = r.path AND g.region_kind = r.region_kind AND g.region_key = r.region_key"
 	}
-	rows, err := q.QueryContext(ctx, "SELECT r.node_id, r.repository, r.path, r.region_kind, r.region_key, r.change, r.exclusive"+columns+" FROM dag_node_regions r"+join+
+	held, err := tableExists(ctx, q, "dag_node_region_holds")
+	if err != nil {
+		return nil, err
+	}
+	stated := ", -1"
+	if held {
+		stated = ", COALESCE(h.stated, -1)"
+		join += " LEFT JOIN dag_node_region_holds h ON h.plan_id = r.plan_id AND h.node_id = r.node_id AND h.declaration_seq = r.declaration_seq AND h.repository = r.repository" +
+			" AND h.path = r.path AND h.region_kind = r.region_kind AND h.region_key = r.region_key"
+	}
+	rows, err := q.QueryContext(ctx, "SELECT r.node_id, r.repository, r.path, r.region_kind, r.region_key, r.change, r.exclusive"+columns+stated+" FROM dag_node_regions r"+join+
 		" WHERE r.plan_id = ? AND r.declaration_seq = (SELECT MAX(declaration_seq) FROM dag_node_regions m WHERE m.plan_id = r.plan_id AND m.node_id = r.node_id)"+
 		" ORDER BY r.node_id, r.repository, r.path, r.region_kind, r.region_key", plan)
 	if err != nil {
@@ -91,11 +117,15 @@ func loadDeclarations(ctx context.Context, q store.Querier, plan string) (map[st
 	for rows.Next() {
 		var node string
 		var r Region
-		var exclusive int
-		if err := rows.Scan(&node, &r.Repository, &r.Path, &r.Kind, &r.Key, &r.Change, &exclusive, &r.Grade, &r.Rule); err != nil {
+		var exclusive, stated int
+		if err := rows.Scan(&node, &r.Repository, &r.Path, &r.Kind, &r.Key, &r.Change, &exclusive, &r.Grade, &r.Rule, &stated); err != nil {
 			return nil, err
 		}
-		r.Exclusive = exclusive == 1
+		if stated >= 0 {
+			r.Exclusive = stated == 1
+		} else {
+			r.Exclusive = exclusive == 1 && (r.Change == "rename" || !placeHold(r))
+		}
 		r.Grade, r.Rule = foldedGrade(r)
 		out[node] = append(out[node], r)
 	}
@@ -124,9 +154,10 @@ type RegionDeclaration struct {
 }
 
 // DeclareRegions records the edit regions of an implementation node before it is released (contract 7.2). A declaration replaces the node's earlier one
-// as a whole; one identical to the latest is a replay and writes nothing. The classifier marks a rename, a delete and the hotspots exclusive whatever
-// the caller said; a caller can only make a region more exclusive. A grade is stored with every region: a mechanical one with its rule, and a shared contract surface as exclusive
-// whatever the caller said (grades.go).
+// as a whole; one identical to the latest is a replay and writes nothing. The classifier makes a rename, a delete and the hotspots exclusive at their own place whatever grade the caller
+// said (foldedGrade); a hold of the whole repository is only what the caller states with Region.Exclusive. A grade is stored with every region: a mechanical one with its rule, and a shared contract surface as exclusive
+// whatever the caller said (grades.go). What the caller stated is stored with every region too (dag_node_region_holds), so a declaration made by this build reads back as it was made and one made before reads as
+// loadDeclarations says; the exclusive column of dag_node_regions keeps the value an older runtime reads as a hold (stated, or flagged by the classifier).
 //
 // Regions are held from release until the head lands (contract 7.2), so a node that holds them may declare again only to narrow them (narrowing.go): every new region inside a held one and
 // held at least as strictly, which frees the rest for the next pass. A declaration that widens them is refused disposition_conflict, naming the region. A node whose head is accepted keeps
@@ -193,8 +224,11 @@ func (s *Scheduler) DeclareRegions(ctx context.Context, plan, node, actor string
 		out.Seq = last.Int64 + 1
 		at := s.now()
 		for _, r := range normal {
-			exclusive := 0
+			exclusive, stated := 0, 0
 			if r.Exclusive {
+				stated = 1
+			}
+			if r.Exclusive || placeHold(r) {
 				exclusive = 1
 			}
 			if _, err := q.ExecContext(txCtx, "INSERT INTO dag_node_regions (plan_id, node_id, declaration_seq, repository, path, region_kind, region_key, change, exclusive, declared_by, declared_at)"+
@@ -203,6 +237,10 @@ func (s *Scheduler) DeclareRegions(ctx context.Context, plan, node, actor string
 			}
 			if _, err := q.ExecContext(txCtx, "INSERT INTO dag_node_region_grades (plan_id, node_id, declaration_seq, repository, path, region_kind, region_key, grade, rule) VALUES (?,?,?,?,?,?,?,?,?)",
 				plan, node, out.Seq, r.Repository, r.Path, r.Kind, r.Key, r.Grade, r.Rule); err != nil {
+				return err
+			}
+			if _, err := q.ExecContext(txCtx, "INSERT INTO dag_node_region_holds (plan_id, node_id, declaration_seq, repository, path, region_kind, region_key, stated) VALUES (?,?,?,?,?,?,?,?)",
+				plan, node, out.Seq, r.Repository, r.Path, r.Kind, r.Key, stated); err != nil {
 				return err
 			}
 		}
@@ -248,8 +286,6 @@ func normalizeRegions(in []Region) ([]Region, error) {
 			return nil, refuse(contract.RefusalMalformedReceipt, "only a symbol region has a key")
 		}
 		r.Path = clean
-		classified, _ := Classify(clean, r.Change)
-		r.Exclusive = r.Exclusive || classified
 		if err := checkGrade(r); err != nil {
 			return nil, err
 		}

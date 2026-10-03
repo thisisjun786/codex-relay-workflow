@@ -80,7 +80,7 @@ func f1Claim(ctx context.Context, l *Ledger, a map[string]string) (any, error) {
 			return e
 		}
 		if r == nil {
-			return fmt.Errorf("fault_unknown: no publication '%s'", id)
+			return fmt.Errorf("fault_unknown: no publication %q", id)
 		}
 		kind := r.Text("kind")
 		if _, ok := executableKind(kind); !ok {
@@ -189,7 +189,7 @@ func f1Operation(ctx context.Context, l *Ledger, a map[string]string) (any, erro
 			return e
 		}
 		if r == nil {
-			return fmt.Errorf("fault_unknown: no publication '%s'", id)
+			return fmt.Errorf("fault_unknown: no publication %q", id)
 		}
 		if r.Text("state") != "claimed" {
 			return fmt.Errorf("fault_not_claimable: an operation is handed out for a claimed publication; this one is %s", r.Text("state"))
@@ -460,7 +460,7 @@ func f1Reconcile(ctx context.Context, l *Ledger, a map[string]string) (any, erro
 			return e
 		}
 		if r == nil {
-			return fmt.Errorf("fault_unknown: no publication '%s'", id)
+			return fmt.Errorf("fault_unknown: no publication %q", id)
 		}
 		kind := r.Text("kind")
 		spec, ok := executableKind(kind)
@@ -592,7 +592,7 @@ func f1ReadBlock(observed, id string) f1Block {
 			key = strings.TrimSpace(key)
 			if ok && key != "" && !strings.Contains(key, " ") {
 				if seen[key] {
-					answer.problems = append(answer.problems, fmt.Sprintf("duplicate header '%s'", key))
+					answer.problems = append(answer.problems, fmt.Sprintf("duplicate header %q", key))
 				}
 				seen[key] = true
 				answer.fields[key] = strings.TrimSpace(value)
@@ -741,7 +741,7 @@ func f1Complete(ctx context.Context, l *Ledger, a map[string]string) (any, error
 			return e
 		}
 		if r == nil {
-			return fmt.Errorf("fault_unknown: no publication '%s'", id)
+			return fmt.Errorf("fault_unknown: no publication %q", id)
 		}
 		state := r.Text("state")
 		if state == "confirmed" {

@@ -57,6 +57,8 @@ var zoneInventory = map[string][]string{
 	"dag_conflict_drift":                 {"observation_id", "node_id", "path"},
 	"dag_conflict_sweeps":                {"plan_id", "sweep_seq", "trigger_kind", "trigger_node", "trigger_ref", "repository", "observed_by", "observed_at"},
 	"dag_conflict_sweep_members":         {"plan_id", "sweep_seq", "member_seq", "kind", "left_node_id", "right_node_id", "left_head", "right_head", "left_head_source", "right_head_source", "status", "reason", "observation_id", "conflicts"},
+	// CRW-431 (appended statement): whether the declarer stated a whole-repository hold on a declared region.
+	"dag_node_region_holds": {"plan_id", "node_id", "declaration_seq", "repository", "path", "region_kind", "region_key", "stated"},
 	// CRW-411 (appended statements): the release policy of a plan, the results a parent records after a landing, and the policy state a recorded pass saw.
 	"dag_release_policy":      {"plan_id", "policy_seq", "window_size", "handling_seconds", "red_merges", "clean_run", "recorded_by", "recorded_at"},
 	"dag_landing_results":     {"result_id", "plan_id", "node_id", "kind", "commit_sha", "evidence", "recorded_by", "recorded_at"},

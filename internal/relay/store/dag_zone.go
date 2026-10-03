@@ -595,6 +595,22 @@ BEGIN SELECT RAISE(ABORT, 'dag_summary_outbox entries are never deleted'); END`,
     FOREIGN KEY (plan_id, sweep_seq) REFERENCES dag_conflict_sweeps (plan_id, sweep_seq)
 )`,
 
+	// CRW-431: whether the declarer stated that a declared edit region holds the whole repository. A side table of dag_node_regions like dag_node_region_grades, appended because a shipped statement is never
+	// edited: dag_node_regions.exclusive is set for a rename, a delete and a hotspot as well as for the declarer's word, so it cannot say which. Every region of a declaration made since this table has a row, stated
+	// 1 when the declarer said it and 0 when not; a declaration made before has none, which is how the scheduler tells the two apart (dagsched.loadDeclarations).
+	`CREATE TABLE IF NOT EXISTS dag_node_region_holds (
+    plan_id         TEXT NOT NULL,
+    node_id         TEXT NOT NULL,
+    declaration_seq INTEGER NOT NULL CHECK (declaration_seq >= 1),
+    repository      TEXT NOT NULL,
+    path            TEXT NOT NULL,
+    region_kind     TEXT NOT NULL,
+    region_key      TEXT NOT NULL DEFAULT '',
+    stated          INTEGER NOT NULL CHECK (stated IN (0,1)),
+    PRIMARY KEY (plan_id, node_id, declaration_seq, repository, path, region_kind, region_key),
+    FOREIGN KEY (plan_id, node_id, declaration_seq, repository, path, region_kind, region_key) REFERENCES dag_node_regions (plan_id, node_id, declaration_seq, repository, path, region_kind, region_key)
+)`,
+
 	// CRW-411: the release policy of a plan, the results the parent records for landed and discarded work, and the policy a recorded pass kept. All three are side tables, appended because a shipped statement is never
 	// edited. dag_release_policy is the ledger of the values the scheduler reads when it decides whether local-optimistic release stays on (the last window_size landings, a landing is slow above handling_seconds, red_merges
 	// red or reverted landings in the window switch it off, clean_run clean landings in a row switch it on again); the latest policy_seq of a plan is in force and a plan with no row has no policy. dag_landing_results

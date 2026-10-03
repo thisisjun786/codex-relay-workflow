@@ -33,7 +33,7 @@ type wireRegion struct {
 }
 
 // regionSet is the regions of one declaration that name the repository, folded like a declaration is
-// (a rename, a delete and a hotspot are exclusive whatever grade was written).
+// (a rename, a delete and a hotspot are exclusive at their own place whatever grade was written; only a region the declarer states as exclusive holds the whole repository).
 type regionSet struct{ regions []dagsched.Region }
 
 // coverage is the declarations given to one check: one set for each node that has a say in the place.
@@ -85,8 +85,7 @@ func normalizeRegion(w wireRegion) (dagsched.Region, error) {
 	case w.Kind != "symbol" && w.Key != "":
 		return dagsched.Region{}, fmt.Errorf("only a symbol region has a key")
 	}
-	exclusive, _ := dagsched.Classify(clean, change)
-	r := dagsched.Region{Repository: w.Repository, Path: clean, Kind: w.Kind, Key: w.Key, Change: change, Exclusive: w.Exclusive || exclusive, Grade: w.Grade, Rule: w.Rule}
+	r := dagsched.Region{Repository: w.Repository, Path: clean, Kind: w.Kind, Key: w.Key, Change: change, Exclusive: w.Exclusive, Grade: w.Grade, Rule: w.Rule}
 	switch w.Grade {
 	case "", dagsched.GradeIndependent, dagsched.GradeLocal, dagsched.GradeExclusive:
 		if w.Rule != "" {

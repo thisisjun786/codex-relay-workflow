@@ -42,6 +42,11 @@ func redeclareHeld(f *fixture, regions ...Region) (RegionDeclaration, error) {
 func TestARunningNodeMayNarrowItsDeclaration(t *testing.T) {
 	exclusive := func(path, kind string) Region { return nr(path, kind, "", "exclusive", "") }
 	wholeRepo := func(path string) Region {
+		r := nr(path, "file", "", "exclusive", "")
+		r.Exclusive = true
+		return r
+	}
+	deleting := func(path string) Region {
 		r := nr(path, "file", "", "", "")
 		r.Change = "delete"
 		return r
@@ -65,6 +70,9 @@ func TestARunningNodeMayNarrowItsDeclaration(t *testing.T) {
 		{"a tree with a local and an exclusive region inside narrows to the stricter one", []Region{nr("pkg", "tree", "", "local", ""), exclusive("pkg/y.go", "file")}, []Region{exclusive("pkg/y.go", "file")}},
 		{"a subtree keeps the strict file inside it", []Region{nr("pkg", "tree", "", "local", ""), exclusive("pkg/sub/x.go", "file")}, []Region{nr("pkg/sub", "tree", "", "local", ""), exclusive("pkg/sub/x.go", "file")}},
 		{"a subtree that holds the strict file as strictly itself", []Region{nr("pkg", "tree", "", "local", ""), nr("pkg/sub/x.go", "file", "", "local", "")}, []Region{nr("pkg/sub", "tree", "", "exclusive", "")}},
+		{"an edit becomes a delete of the same file, which holds that place exclusively", []Region{nr("pkg/y.go", "file", "", "local", "")}, []Region{deleting("pkg/y.go")}},
+		{"a delete of a file inside a tree held locally", []Region{nr("pkg", "tree", "", "local", "")}, []Region{deleting("pkg/y.go")}},
+		{"a symbol of a hotspot file becomes the file: it is one place", []Region{nr("go.mod", "symbol", "Foo", "local", "")}, []Region{nr("go.mod", "file", "", "local", "")}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -121,7 +129,8 @@ func TestARunningNodeCannotWidenItsDeclaration(t *testing.T) {
 		{"a subtree becomes its parent", []Region{nr("pkg/sub", "tree", "", "exclusive", "")}, []Region{nr("pkg", "tree", "", "exclusive", "")}, "pkg"},
 		{"a symbol becomes its file", []Region{nr("pkg/y.go", "symbol", "Foo", "local", "")}, []Region{nr("pkg/y.go", "file", "", "local", "")}, "pkg/y.go"},
 		{"a symbol becomes another symbol of the file", []Region{nr("pkg/y.go", "symbol", "Foo", "local", "")}, []Region{nr("pkg/y.go", "symbol", "Bar", "local", "")}, "Bar"},
-		{"an edit becomes a delete of the same file", []Region{nr("pkg/y.go", "file", "", "exclusive", "")}, []Region{deleting("pkg/y.go")}, "pkg/y.go"},
+		{"a file becomes the delete of the tree that holds it", []Region{nr("pkg/y.go", "file", "", "exclusive", "")}, []Region{{Repository: "owner/repo", Path: "pkg", Kind: "tree", Change: "delete"}}, "pkg"},
+		{"a symbol becomes the delete of its file", []Region{nr("pkg/y.go", "symbol", "Foo", "local", "")}, []Region{deleting("pkg/y.go")}, "pkg/y.go"},
 		{"a region that holds the whole repository where none was held", []Region{nr("pkg/y.go", "file", "", "exclusive", "")}, []Region{whole("pkg/y.go")}, "pkg/y.go"},
 		{"an exclusive region declared local", []Region{nr("pkg/y.go", "file", "", "exclusive", "")}, []Region{nr("pkg/y.go", "file", "", "local", "")}, "pkg/y.go"},
 		{"an exclusive region declared mechanical", []Region{nr("pkg/y.go", "file", "", "exclusive", "")}, []Region{nr("pkg/y.go", "file", "", "mechanical", "union")}, "pkg/y.go"},

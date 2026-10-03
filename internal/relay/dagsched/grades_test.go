@@ -234,7 +234,7 @@ func TestGradeIsPartOfTheDeclaration(t *testing.T) {
 	}
 }
 
-// What the classifier forces: a rename, a delete and the hotspots stay a whole-repository hold, and are stored as the exclusive grade whatever was declared.
+// What the classifier forces: a rename, a delete and the hotspots are stored as the exclusive grade whatever was declared, at their own place (CRW-431: no whole-repository hold, which only the declarer states).
 func TestClassifierFoldsIntoTheGrade(t *testing.T) {
 	f := newFixture(t)
 	f.putPlan("d", 0, "d-r1", addNode("impl", dag.NodeImplementation))
@@ -248,11 +248,11 @@ func TestClassifierFoldsIntoTheGrade(t *testing.T) {
 	for _, r := range declared.Regions {
 		byPath[r.Path] = r
 	}
-	if r := byPath["go.mod"]; !r.Exclusive || r.Grade != GradeExclusive || r.Rule != "" {
-		t.Errorf("go.mod = %+v, want a whole-repository hold stored exclusive with no rule", r)
+	if r := byPath["go.mod"]; r.Exclusive || r.Grade != GradeExclusive || r.Rule != "" {
+		t.Errorf("go.mod = %+v, want it stored exclusive with no rule and no hold of the repository", r)
 	}
-	if r := byPath["old.go"]; !r.Exclusive || r.Grade != GradeExclusive {
-		t.Errorf("old.go = %+v, want the delete stored exclusive", r)
+	if r := byPath["old.go"]; r.Exclusive || r.Grade != GradeExclusive {
+		t.Errorf("old.go = %+v, want the delete stored exclusive at its place", r)
 	}
 	if r := byPath["a.go"]; r.Exclusive || r.Grade != GradeLocal {
 		t.Errorf("a.go = %+v, want it as declared", r)
@@ -280,7 +280,7 @@ func TestSharedContractSurfacesAreExclusive(t *testing.T) {
 			t.Errorf("%s: ready = %q q = %+v %+v, want the second mechanical declaration cut", path, got, q, q.Release)
 		}
 	}
-	// the stored declaration says exclusive, with no rule, and no whole-repository hold except where the classifier already made one
+	// the stored declaration says exclusive, with no rule, and no whole-repository hold (only the declarer's word makes one)
 	f := newFixture(t)
 	f.putPlan("d", 0, "d-r1", addNode("impl", dag.NodeImplementation))
 	declared, err := f.sched.DeclareRegions(context.Background(), "d", "impl", "parent", []Region{gr("internal/relay/argparse/specs.json", "mechanical", "union"), gr("contract/golden/ack-proof.json", "local", "")})
@@ -320,7 +320,7 @@ func TestSharedContractSurfaceHoldsAnOlderRow(t *testing.T) {
 	}
 }
 
-// Declarations made before grades existed have no grade row. They read as independent (which is exactly how they were judged), and a running node's identical redeclaration is still a replay.
+// Declarations made before grades existed have no grade row. They read as independent (which is exactly how they were judged, except that a hotspot or a delete holds its own place and no longer the repository: CRW-431), and a running node's identical redeclaration is still a replay.
 func TestDeclarationsWithoutAGradeRowAreIndependent(t *testing.T) {
 	f := newFixture(t)
 	f.projectParent()
@@ -332,8 +332,8 @@ func TestDeclarationsWithoutAGradeRowAreIndependent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := loaded["p"]; len(got) != 2 || got[0].Grade != GradeIndependent || got[1].Grade != GradeExclusive || !got[1].Exclusive {
-		t.Fatalf("p = %+v, want a.go independent and the go.mod hold exclusive", got)
+	if got := loaded["p"]; len(got) != 2 || got[0].Grade != GradeIndependent || got[1].Grade != GradeExclusive || got[1].Exclusive {
+		t.Fatalf("p = %+v, want a.go independent and go.mod exclusive at its place, no longer a hold of the repository", got)
 	}
 	reading := f.read("g")
 	if got := strings.Join(reading.readyIDs(), ","); got != "p" || reading.node("q").Release.Rule != RuleDefer {

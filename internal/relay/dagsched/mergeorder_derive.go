@@ -168,6 +168,12 @@ func classify(left, right string, declarations map[string][]Region, names, files
 			if len(b) == 0 {
 				driftSet[right] = true
 			}
+			// a path a delete, a rename or a hotspot names is exclusive at that place for the node that declared it, whether or not the other node declared it (CRW-431: that hold is on the place and no longer on the repository)
+			for _, r := range append(append([]Region(nil), a...), b...) {
+				if placeHold(r) {
+					fileGrade = GradeExclusive
+				}
+			}
 		} else {
 			fileGrade = ""
 			for _, x := range a {
@@ -176,7 +182,7 @@ func classify(left, right string, declarations map[string][]Region, names, files
 				}
 			}
 		}
-		// a rename, a delete or a hotspot holds the whole repository (Region.Exclusive): a conflict anywhere in it is exclusive for that node's hold, whether or not the node declared the path (which is what drift says)
+		// a region the declarer stated as holding the whole repository (Region.Exclusive; a rename, a delete and a hotspot hold their own place only, which the pair grades above judge): a conflict anywhere in it is exclusive for that node's hold, whether or not the node declared the path (which is what drift says)
 		if holdsRepository(declarations[left], names) || holdsRepository(declarations[right], names) {
 			fileGrade = GradeExclusive
 		}
@@ -192,7 +198,7 @@ func classify(left, right string, declarations map[string][]Region, names, files
 	return grade, drift
 }
 
-// holdsRepository is whether a declaration holds the whole of a repository the observed checkout is known as: a region with the exclusive flag (a rename, a delete, a hotspot or the caller's word).
+// holdsRepository is whether a declaration holds the whole of a repository the observed checkout is known as: a region with the exclusive flag, which is the declarer's word (CRW-431: a rename, a delete and a hotspot are exclusive at their own place and no longer set it).
 func holdsRepository(regions []Region, names []string) bool {
 	for _, r := range regions {
 		if r.Exclusive && hasName(names, r.Repository) {

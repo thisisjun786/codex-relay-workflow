@@ -323,16 +323,21 @@ func turnOf(w *sweepWorld, id, relationship, head, requested string) {
 		id, "holder-"+id, relationship, head, requested, requested)
 }
 
-// A rename, a delete or a hotspot holds the whole repository, so a conflict anywhere in it is exclusive for that node's hold, whether or not the node declared the path; whether it declared the path is what drift
-// says, and stays by path.
+// A region the declarer states as holding the whole repository makes a conflict anywhere in it exclusive for that node's hold, whether or not the node declared the path; whether it declared the path is what
+// drift says, and stays by path. A rename, a delete or a hotspot that is not stated as such holds its own place only (CRW-431), so a conflict elsewhere in the repository is local and drift.
 func TestMergeOrderGradeFollowsARepositoryWideHold(t *testing.T) {
 	rename := Region{Repository: "owner/repo", Path: "old.go", Kind: "file", Change: "rename"}
+	statedRename := rename
+	statedRename.Exclusive = true
 	for name, c := range map[string]struct {
-		d        []Region
-		wantDrft []string
+		d         []Region
+		wantGrade string
+		wantDrft  []string
 	}{
-		"the node declared the conflicting path as well":  {[]Region{local("c.txt"), rename}, nil},
-		"the node declared only the rename, not the path": {[]Region{rename}, []string{"D"}},
+		"the node declared the conflicting path as well":            {[]Region{local("c.txt"), statedRename}, GradeExclusive, nil},
+		"the node declared only the stated hold, not the path":      {[]Region{statedRename}, GradeExclusive, []string{"D"}},
+		"a rename that is not stated holds its own place only":      {[]Region{rename}, GradeLocal, []string{"D"}},
+		"a rename not stated, beside the declared conflicting path": {[]Region{local("c.txt"), rename}, GradeLocal, nil},
 	} {
 		t.Run(name, func(t *testing.T) {
 			w := newSweepWorld(t)
@@ -347,8 +352,8 @@ func TestMergeOrderGradeFollowsARepositoryWideHold(t *testing.T) {
 			if len(drift) == 0 {
 				drift = nil
 			}
-			if row.Grade != GradeExclusive || !reflect.DeepEqual(drift, c.wantDrft) {
-				t.Fatalf("row = %+v, want an exclusive conflict with drift %v", row, c.wantDrft)
+			if row.Grade != c.wantGrade || !reflect.DeepEqual(drift, c.wantDrft) {
+				t.Fatalf("row = %+v, want a %s conflict with drift %v", row, c.wantGrade, c.wantDrft)
 			}
 		})
 	}

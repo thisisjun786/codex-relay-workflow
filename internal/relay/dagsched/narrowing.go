@@ -10,12 +10,22 @@ import (
 // holds, in the same repository spelling, and is held at least as strictly as every held region that covers it. The judgement reads declarations only; whether the node really stays inside
 // them is what the conflict sweeps' drift marks say.
 
-// wholeRepository is whether a region holds the whole of its repository: today a rename, a delete, a hotspot or the caller's word (Region.Exclusive, Overlaps). It is the only place this file
-// depends on what the flag means, so a change to what Classify marks changes it here and nowhere else.
+// wholeRepository is whether a region holds the whole of its repository: the declarer's word (Region.Exclusive, Overlaps). A rename, a delete and a hotspot are exclusive at their own place and hold
+// no more of the repository (CRW-431: foldedGrade, wholeFile). It is one of the two places this file depends on what a region holds, so a change to either changes it here and nowhere else.
 func wholeRepository(r Region) bool { return r.Exclusive }
 
+// footprintKind is the kind of place a region holds: a symbol region whose file is one place (wholeFile: a delete, a rename, a hotspot or a shared contract file) holds its file, as it does against any other
+// region, and every other region holds the place its kind says.
+func footprintKind(r Region) string {
+	if r.Kind == "symbol" && wholeFile(r) {
+		return "file"
+	}
+	return r.Kind
+}
+
 // holdCovers is whether the place of next lies inside the place held covers: a region that holds the whole repository covers every region of it; a tree covers what lies under it, a file itself
-// and the symbols in it, a symbol that symbol. A region that holds the whole repository is covered only by one that does. Different repository spellings are different repositories.
+// and the symbols in it, a symbol that symbol (a symbol that makes its file one place is the file). A region that holds the whole repository is covered only by one that does. Different repository
+// spellings are different repositories.
 func holdCovers(held, next Region) bool {
 	if held.Repository != next.Repository {
 		return false
@@ -27,13 +37,14 @@ func holdCovers(held, next Region) bool {
 		return false
 	}
 	hp, np := path.Clean(held.Path), path.Clean(next.Path)
-	switch held.Kind {
+	hk, nk := footprintKind(held), footprintKind(next)
+	switch hk {
 	case "tree":
 		return within(np, hp)
 	case "file":
-		return np == hp && next.Kind != "tree"
+		return np == hp && nk != "tree"
 	case "symbol":
-		return np == hp && next.Kind == "symbol" && next.Key == held.Key
+		return np == hp && nk == "symbol" && next.Key == held.Key
 	}
 	return false
 }

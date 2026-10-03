@@ -1,6 +1,6 @@
 {
   "name": "crw",
-  "version": "0.4.0+d1cd64febcb2",
+  "version": "0.4.0+1fbc372bc90e",
   "description": "Linear-driven workflow skills for Codex: define an initiative, plan projects and issues, run delivery, and check the result against its canonical criteria.",
   "author": {
     "name": "thisisjun786",

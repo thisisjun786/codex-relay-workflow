@@ -235,6 +235,14 @@
   {"flag":"--restoration","help":"the criterion id whose finding carries this correction's restoration block. The verdict is refused if that finding would not reach the child."},
   {"flag":"--reason","help":"why an aborted or unverified verdict could not conclude"},
   {"flag":"--expect-criteria-digest","help":"refuse unless the canonical criteria set still has this digest"}]},
+{"name":"decision-reply","summary":"record the parent's decision on a child's blocked_needs_input receipt and queue it to the child. answer and stop keep the generation; split_approval and scope_change open the next one and name the criteria digest registered for the relationship","options":[
+  {"flag":"--event","required":true,"help":"the blocked_needs_input receipt this answers"},
+  {"flag":"--decision","required":true,"choices":["answer","stop","split_approval","scope_change"]},
+  {"flag":"--decision-turn","required":true,"help":"the parent turn the decision was made in"},
+  {"flag":"--note","required":true,"help":"what the child is told, or @path to a file holding it"},
+  {"flag":"--criteria-digest","help":"split_approval and scope_change: the digest of the criteria set registered for the relationship (criteria-show)"}]},
+{"name":"decision-show","summary":"the decisions recorded for a relationship, each with where its delivery stands. A read: it records and sends nothing","options":[
+  {"flag":"--relationship","required":true}]},
 {"name":"criteria-register","options":[
   {"flag":"--relationship","required":true},
   {"flag":"--criterion","kind":"append","required":true,"help":"id=title, repeatable"},
@@ -804,7 +812,7 @@
 {"name":"dag-summary-retry","summary":"reopens a failed summary entry (parked by its eighth failure): back to pending with its attempts at zero. It touches only the entry it names; a confirmed or superseded entry is final and is refused","options":[
   {"flag":"--summary","required":true},
   {"flag":"--actor","required":true}]},
-{"name":"dag-region-declare","summary":"declares the edit regions of an implementation node before it is released: repository, path, kind (tree, file, symbol), change (edit, rename, delete) and grade (independent, the default; mechanical, which names its rule: union, renumber or regenerate:<command>; local; exclusive) for 1 to 64 regions. A node with no declaration counts as overlapping everything; renames, deletes, hotspots and the shared contract paths are exclusive whatever grade is declared. An identical declaration is a replay. Once the node holds its regions (its child runs, and its head is not accepted yet) a declaration may only narrow them: every new region inside a held one and held at least as strictly, which the answer marks narrowed; a widening is refused disposition_conflict naming the region","options":[
+{"name":"dag-region-declare","summary":"declares the edit regions of an implementation node before it is released: repository, path, kind (tree, file, symbol), change (edit, rename, delete) and grade (independent, the default; mechanical, which names its rule: union, renumber or regenerate:<command>; local; exclusive) for 1 to 64 regions. A node with no declaration counts as overlapping everything; renames, deletes, hotspots and the shared contract paths are exclusive whatever grade is declared, at their own place (the same path and the trees that cover it) and not across the repository; only a region declared with exclusive: true holds the whole repository. An identical declaration is a replay. Once the node holds its regions (its child runs, and its head is not accepted yet) a declaration may only narrow them: every new region inside a held one and held at least as strictly, which the answer marks narrowed; a widening is refused disposition_conflict naming the region","options":[
   {"flag":"--plan","required":true},
   {"flag":"--node","required":true},
   {"flag":"--actor","required":true},
