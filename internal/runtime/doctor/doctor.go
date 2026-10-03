@@ -827,7 +827,7 @@ func Diagnose(ctx context.Context, o Options) Object {
 			pyjson.Dumps(record.Get(summary, "scopeCommand"), pyjson.Options{}), connectedAt),
 		"deliveryAccepted":     field("not_applicable", "no trial was requested. This field requires an attempt that recorded a returned turn id, which means creating work, and this command creates none.", nil, ""),
 		"verificationComplete": field("not_applicable", "OPS-6.4 is a property of a verdict at a head, not of an installation. This command observes no verdict and never infers one from a completed turn or a green check.", nil, ""),
-		"alwaysActive":         field("not_verified", "no supervised runtime was enabled and no host restart was observed. Installation is not activation; this command enables no daemon.", nil, ""),
+		"alwaysActive":         field("not_verified", alwaysActiveEvidence(o.Env), nil, ""),
 		"settingsPreserved":    field("verified", "doctor writes nothing, so every table in config.toml, every hook entry and every settings record is unchanged by it.", nil, measured),
 	}
 

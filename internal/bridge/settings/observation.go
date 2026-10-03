@@ -10,7 +10,7 @@ const observationLimits = "These are the settings the host reported at this obse
 
 func Observed(response map[string]any) map[string]any {
 	out := map[string]any{}
-	for _, k := range []string{"approvalPolicy", "cwd", "model", "reasoningEffort", "runtimeWorkspaceRoots", "sandbox"} {
+	for _, k := range []string{"approvalPolicy", "cwd", "mcpServers", "model", "reasoningEffort", "runtimeWorkspaceRoots", "sandbox"} {
 		if v := response[k]; v != nil {
 			if k == "sandbox" {
 				if n := Normalise(v); n != nil {
@@ -35,7 +35,7 @@ func (c Contract) Findings(response map[string]any) []Finding {
 	}
 	asked, seen := c.Requested(), Observed(response)
 	found := []Finding{}
-	for _, field := range []string{"sandbox", "cwd", "runtimeWorkspaceRoots", "model", "reasoningEffort"} {
+	for _, field := range []string{"sandbox", "cwd", "runtimeWorkspaceRoots", "model", "reasoningEffort", "mcpServers"} {
 		expected, ok := asked[field]
 		if !ok {
 			continue

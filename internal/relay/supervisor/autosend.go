@@ -209,6 +209,10 @@ func (c *Channel) StageUnsent(ctx context.Context, project, at string, grace flo
 	return c.stageUnsentWithReadings(ctx, project, at, readings)
 }
 
+// obligationMessageSQL is the newest message an obligation has, which staging asks for each obligation it visits. The
+// obligation index (CRW-301) ends in staged_at so the newest comes without a sort.
+const obligationMessageSQL = "SELECT state,hold_reason,reading FROM supervisor_messages WHERE obligation_id=? ORDER BY staged_at DESC LIMIT 1"
+
 func (c *Channel) stageUnsentWithReadings(ctx context.Context, project, at string, readings []map[string]any) (map[string]any, error) {
 	values := make([]any, len(readings))
 	byObligation := make(map[string]map[string]any, len(readings))
@@ -236,7 +240,7 @@ func (c *Channel) stageUnsentWithReadings(ctx context.Context, project, at strin
 		reading := byObligation[o.ID]
 		var state string
 		var hold, frozen sql.NullString
-		err := c.Store.Q(ctx).QueryRowContext(ctx, "SELECT state,hold_reason,reading FROM supervisor_messages WHERE obligation_id=? ORDER BY staged_at DESC LIMIT 1", o.ID).Scan(&state, &hold, &frozen)
+		err := c.Store.Q(ctx).QueryRowContext(ctx, obligationMessageSQL, o.ID).Scan(&state, &hold, &frozen)
 		if err == nil && !(store.SupervisorUnsent(state) && (!hold.Valid || hold.String == store.SupervisorHoldSuperseded || hold.String == store.SupervisorHoldUnaddressed)) {
 			skipped++
 			continue

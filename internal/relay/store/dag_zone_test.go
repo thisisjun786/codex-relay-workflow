@@ -66,6 +66,8 @@ var zoneInventory = map[string][]string{
 	"dag_release_policy":      {"plan_id", "policy_seq", "window_size", "handling_seconds", "red_merges", "clean_run", "recorded_by", "coordinator_epoch", "recorded_at"},
 	"dag_landing_results":     {"result_id", "plan_id", "node_id", "kind", "commit_sha", "evidence", "recorded_by", "coordinator_epoch", "recorded_at"},
 	"dag_pass_release_policy": {"plan_id", "pass_seq", "policy_json"},
+	// CRW-468 (appended statement): the host memory bound a recorded pass saw.
+	"dag_pass_host_memory": {"plan_id", "pass_seq", "state", "reading_limit", "host_json"},
 }
 
 // rawDB opens path without any of the store's open rules, as an operator's sqlite3 would.
@@ -81,7 +83,10 @@ func zoneRawDB(t *testing.T, path string) *sql.DB {
 }
 
 // preDAGStore is a go-owned store built from the frozen v1 fixture (no dag_ object) and seeded with
-// rows in several v1 tables, closed and checkpointed so the file alone holds it.
+// rows in several v1 tables, closed and checkpointed so the file alone holds it. It is a store of this
+// version without the zone, so it holds the history indexes (testsupport.Create adds them): these tests
+// are about the zone. The upgrade of a store that lacks the indexes is tested from
+// testsupport.CreatePreviousVersion (history_index_test.go).
 func zonePreDAGStore(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "relay.sqlite3")
