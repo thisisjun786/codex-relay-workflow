@@ -1,0 +1,48 @@
+[
+  {
+    "id": "unreadable_marker",
+    "classification": "intentionally-changed",
+    "reason": "Refuse unreadable consent records instead of dropping healedKeys during replacement.",
+    "original": "{\"healedKeys\":[\"goals\"],\"checkedAt\":\"keep\"}\n",
+    "oracle": "{\n  \"optedOut\": true,\n  \"optedOutAt\": \"fixed\",\n  \"allEnabled\": false\n}\n",
+    "go": "error, original bytes preserved"
+  },
+  {
+    "id": "unreadable_config_no_table_keys",
+    "classification": "intentionally-changed",
+    "reason": "Refuse unreadable settings before a downstream feature CLI can overwrite settings.",
+    "original": "[memories]\ndedicated_tools = true\n# keep\n",
+    "oracle": "[features]\ngoals = false\n",
+    "calls": [
+      [
+        "features",
+        "list"
+      ],
+      [
+        "features",
+        "disable",
+        "goals"
+      ]
+    ],
+    "go": "error before features list/disable, original bytes preserved"
+  },
+  {
+    "id": "unreadable_config",
+    "classification": "intentionally-changed",
+    "reason": "Refuse unreadable settings before a downstream feature CLI can overwrite settings.",
+    "original": "[memories]\ndedicated_tools = true\n# keep\n",
+    "oracle": "[features]\ngoals = false\n",
+    "calls": [
+      [
+        "features",
+        "list"
+      ],
+      [
+        "features",
+        "disable",
+        "goals"
+      ]
+    ],
+    "go": "error before features list/disable, original bytes preserved"
+  }
+]

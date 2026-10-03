@@ -1,0 +1,6 @@
+interface:
+  display_name: "crw-interview"
+  short_description: "Persistent I-phase contradiction interview."
+  default_prompt: "Use $crw-interview to clarify this task before Plan, with recorded answers and readiness evidence."
+policy:
+  allow_implicit_invocation: true

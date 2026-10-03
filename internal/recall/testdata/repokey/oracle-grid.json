@@ -1,0 +1,764 @@
+[
+  {
+    "group": "ipv4",
+    "raw": "https://127.1/a.git",
+    "key": "127.0.0.1/a"
+  },
+  {
+    "group": "ipv4",
+    "raw": "https://127.1./a.git",
+    "key": "127.0.0.1/a"
+  },
+  {
+    "group": "ipv4",
+    "raw": "https://0x7f.1/a.git",
+    "key": "127.0.0.1/a"
+  },
+  {
+    "group": "ipv4",
+    "raw": "https://0177.0.0.1/a.git",
+    "key": "127.0.0.1/a"
+  },
+  {
+    "group": "ipv4",
+    "raw": "https://0x.1/a.git",
+    "key": "0.0.0.1/a"
+  },
+  {
+    "group": "ipv4",
+    "raw": "https://0/a.git",
+    "key": "0.0.0.0/a"
+  },
+  {
+    "group": "ipv4",
+    "raw": "https://4294967295/a.git",
+    "key": "255.255.255.255/a"
+  },
+  {
+    "group": "ipv4",
+    "raw": "https://4294967296/a.git",
+    "key": null
+  },
+  {
+    "group": "ipv4",
+    "raw": "https://256.1/a.git",
+    "key": null
+  },
+  {
+    "group": "ipv4",
+    "raw": "https://1.2.3.4.5/a.git",
+    "key": null
+  },
+  {
+    "group": "ipv4",
+    "raw": "https://09.1/a.git",
+    "key": null
+  },
+  {
+    "group": "ipv4",
+    "raw": "https://foo.09/a.git",
+    "key": null
+  },
+  {
+    "group": "ipv4",
+    "raw": "https://1e3/a.git",
+    "key": "1e3/a"
+  },
+  {
+    "group": "ipv4",
+    "raw": "https://0XFF.255.65535/a.git",
+    "key": "255.255.255.255/a"
+  },
+  {
+    "group": "ipv4",
+    "raw": "https://1.16777215/a.git",
+    "key": "1.255.255.255/a"
+  },
+  {
+    "group": "ipv4",
+    "raw": "https://1.16777216/a.git",
+    "key": null
+  },
+  {
+    "group": "ipv4",
+    "raw": "https://1.2.65535/a.git",
+    "key": "1.2.255.255/a"
+  },
+  {
+    "group": "ipv4",
+    "raw": "https://1.2.65536/a.git",
+    "key": null
+  },
+  {
+    "group": "ipv4",
+    "raw": "https://1.2.3.255/a.git",
+    "key": "1.2.3.255/a"
+  },
+  {
+    "group": "ipv4",
+    "raw": "https://1.2.3.256/a.git",
+    "key": null
+  },
+  {
+    "group": "ipv4",
+    "raw": "https://1..2/a.git",
+    "key": null
+  },
+  {
+    "group": "ipv4",
+    "raw": "https://127.0.0.1../a.git",
+    "key": "127.0.0.1../a"
+  },
+  {
+    "group": "ipv4",
+    "raw": "https://0x10000000000000000z/a.git",
+    "key": "0x10000000000000000z/a"
+  },
+  {
+    "group": "ipv4",
+    "raw": "https://0x10000000000000000g/a.git",
+    "key": "0x10000000000000000g/a"
+  },
+  {
+    "group": "ipv4",
+    "raw": "https://0x10000000000000000/a.git",
+    "key": null
+  },
+  {
+    "group": "ipv4",
+    "raw": "https://x.0x10000000000000000z/a.git",
+    "key": "x.0x10000000000000000z/a"
+  },
+  {
+    "group": "ipv4",
+    "raw": "https://0xffffffffffffffffffff/a.git",
+    "key": null
+  },
+  {
+    "group": "ipv4",
+    "raw": "https://00077777777777777777777777777/a.git",
+    "key": null
+  },
+  {
+    "group": "ipv4",
+    "raw": "https://a.0xffffffffffffffffffff/a.git",
+    "key": null
+  },
+  {
+    "group": "ipv6",
+    "raw": "https://[::]/a.git",
+    "key": "[::]/a"
+  },
+  {
+    "group": "ipv6",
+    "raw": "https://[::1]/a.git",
+    "key": "[::1]/a"
+  },
+  {
+    "group": "ipv6",
+    "raw": "https://[0:0:0:0:0:0:0:1]/a.git",
+    "key": "[::1]/a"
+  },
+  {
+    "group": "ipv6",
+    "raw": "https://[2001:DB8::1]/a.git",
+    "key": "[2001:db8::1]/a"
+  },
+  {
+    "group": "ipv6",
+    "raw": "https://[::ffff:192.0.2.1]/a.git",
+    "key": "[::ffff:c000:201]/a"
+  },
+  {
+    "group": "ipv6",
+    "raw": "https://[1:0:0:2:0:0:0:3]/a.git",
+    "key": "[1:0:0:2::3]/a"
+  },
+  {
+    "group": "ipv6",
+    "raw": "https://[1:0:0:2:0:0:3:4]/a.git",
+    "key": "[1::2:0:0:3:4]/a"
+  },
+  {
+    "group": "ipv6",
+    "raw": "https://[1:2:3:4:5:6:7:8]/a.git",
+    "key": "[1:2:3:4:5:6:7:8]/a"
+  },
+  {
+    "group": "ipv6",
+    "raw": "https://[::1%25eth0]/a.git",
+    "key": null
+  },
+  {
+    "group": "ipv6",
+    "raw": "https://[::ffff:01.2.3.4]/a.git",
+    "key": null
+  },
+  {
+    "group": "ipv6",
+    "raw": "https://[::1/a.git",
+    "key": null
+  },
+  {
+    "group": "ipv6",
+    "raw": "https://[1:2:3]/a.git",
+    "key": null
+  },
+  {
+    "group": "ipv6",
+    "raw": "https://[:::1]/a.git",
+    "key": null
+  },
+  {
+    "group": "ipv6",
+    "raw": "https://[1::2::3]/a.git",
+    "key": null
+  },
+  {
+    "group": "punycode",
+    "raw": "https://bücher.de/a.git",
+    "key": "xn--bcher-kva.de/a"
+  },
+  {
+    "group": "punycode",
+    "raw": "https://BÜCHER.de/a.git",
+    "key": "xn--bcher-kva.de/a"
+  },
+  {
+    "group": "punycode",
+    "raw": "https://mañana.com/a.git",
+    "key": "xn--maana-pta.com/a"
+  },
+  {
+    "group": "punycode",
+    "raw": "https://例え.テスト/a.git",
+    "key": "xn--r8jz45g.xn--zckzah/a"
+  },
+  {
+    "group": "punycode",
+    "raw": "https://İ.de/a.git",
+    "key": "xn--i-9bb.de/a"
+  },
+  {
+    "group": "punycode",
+    "raw": "https://ΣΣ.de/a.git",
+    "key": "xn--4xaa.de/a"
+  },
+  {
+    "group": "punycode",
+    "raw": "https://ẞ.de/a.git",
+    "key": "xn--zca.de/a"
+  },
+  {
+    "group": "punycode",
+    "raw": "https://😀.com/a.git",
+    "key": "xn--e28h.com/a"
+  },
+  {
+    "group": "punycode",
+    "raw": "https://xn--bcher-kva.de/a.git",
+    "key": "xn--bcher-kva.de/a"
+  },
+  {
+    "group": "punycode",
+    "raw": "https://a..b/a.git",
+    "key": "a..b/a"
+  },
+  {
+    "group": "punycode",
+    "raw": "https://host./a.git",
+    "key": "host./a"
+  },
+  {
+    "group": "punycode",
+    "raw": "https://a_b.c/a.git",
+    "key": "a_b.c/a"
+  },
+  {
+    "group": "punycode",
+    "raw": "https://a*b/a.git",
+    "key": "a*b/a"
+  },
+  {
+    "group": "punycode",
+    "raw": "https://a%41/a.git",
+    "key": "aa/a"
+  },
+  {
+    "group": "punycode",
+    "raw": "https://a%2Fb/a.git",
+    "key": null
+  },
+  {
+    "group": "punycode",
+    "raw": "https://%FF/a.git",
+    "key": null
+  },
+  {
+    "group": "punycode",
+    "raw": "https://%ZZ/a.git",
+    "key": null
+  },
+  {
+    "group": "states",
+    "raw": "file:/\\host/a://b",
+    "key": "host/a://b"
+  },
+  {
+    "group": "states",
+    "raw": "file:\\/host/a://b",
+    "key": "host/a://b"
+  },
+  {
+    "group": "states",
+    "raw": "file:\\\\host/a://b",
+    "key": "host/a://b"
+  },
+  {
+    "group": "states",
+    "raw": "file://host/a://b",
+    "key": "host/a://b"
+  },
+  {
+    "group": "states",
+    "raw": "https:///x/a",
+    "key": "x/a"
+  },
+  {
+    "group": "states",
+    "raw": "https:/x://y",
+    "key": "x/y"
+  },
+  {
+    "group": "states",
+    "raw": "https:x://y",
+    "key": "x/y"
+  },
+  {
+    "group": "states",
+    "raw": "a:b://c",
+    "key": null
+  },
+  {
+    "group": "states",
+    "raw": "://x/a",
+    "key": null
+  },
+  {
+    "group": "states",
+    "raw": "1x://x/a",
+    "key": null
+  },
+  {
+    "group": "states",
+    "raw": "https://a@b@c/a",
+    "key": "c/a"
+  },
+  {
+    "group": "states",
+    "raw": "https://@x/a",
+    "key": "x/a"
+  },
+  {
+    "group": "states",
+    "raw": "https://@/a",
+    "key": null
+  },
+  {
+    "group": "states",
+    "raw": "https://x:/a",
+    "key": "x/a"
+  },
+  {
+    "group": "states",
+    "raw": "https://x:0/a",
+    "key": "x/a"
+  },
+  {
+    "group": "states",
+    "raw": "https://x:65535/a",
+    "key": "x/a"
+  },
+  {
+    "group": "states",
+    "raw": "https://x:65536/a",
+    "key": null
+  },
+  {
+    "group": "states",
+    "raw": "ssh://x:99999/a",
+    "key": null
+  },
+  {
+    "group": "states",
+    "raw": "ssh://x:22:/a",
+    "key": null
+  },
+  {
+    "group": "states",
+    "raw": "https://[::1]:22/a",
+    "key": "[::1]/a"
+  },
+  {
+    "group": "states",
+    "raw": "https://[::1]x/a",
+    "key": null
+  },
+  {
+    "group": "states",
+    "raw": "thing://bücher/a",
+    "key": "b%c3%bccher/a"
+  },
+  {
+    "group": "states",
+    "raw": "thing://a%FF/a",
+    "key": "a%ff/a"
+  },
+  {
+    "group": "states",
+    "raw": "thing://a%ZZ/a",
+    "key": "a%zz/a"
+  },
+  {
+    "group": "states",
+    "raw": "thing://a b/a",
+    "key": null
+  },
+  {
+    "group": "states",
+    "raw": "git://HOST/a/../b",
+    "key": "host/b"
+  },
+  {
+    "group": "states",
+    "raw": "thing:///a",
+    "key": null
+  },
+  {
+    "group": "states",
+    "raw": "file://HOST/a",
+    "key": "host/a"
+  },
+  {
+    "group": "states",
+    "raw": "file://localhost/a",
+    "key": null
+  },
+  {
+    "group": "states",
+    "raw": "file://C:/a",
+    "key": null
+  },
+  {
+    "group": "states",
+    "raw": "file://host/C|/a/../b",
+    "key": "host/C:/b"
+  },
+  {
+    "group": "states",
+    "raw": "file://HOST\\a.git",
+    "key": "host/a"
+  },
+  {
+    "group": "states",
+    "raw": "file://user@host/a",
+    "key": null
+  },
+  {
+    "group": "states",
+    "raw": "file://host:0/a",
+    "key": null
+  },
+  {
+    "group": "states",
+    "raw": "file://host/C:/../b",
+    "key": "host/C:/b"
+  },
+  {
+    "group": "states",
+    "raw": "file://host//C|/a",
+    "key": "host/C|/a"
+  },
+  {
+    "group": "states",
+    "raw": "https://x/a/./b.git",
+    "key": "x/a/b"
+  },
+  {
+    "group": "states",
+    "raw": "https://x/a/.%2E/b.git",
+    "key": "x/b"
+  },
+  {
+    "group": "states",
+    "raw": "https://x/a/%2e./b",
+    "key": "x/b"
+  },
+  {
+    "group": "states",
+    "raw": "https://x/a/%2E%2e/b",
+    "key": "x/b"
+  },
+  {
+    "group": "states",
+    "raw": "https://x/a/../../b",
+    "key": "x/b"
+  },
+  {
+    "group": "states",
+    "raw": "https://x/a/%2e",
+    "key": "x/a"
+  },
+  {
+    "group": "states",
+    "raw": "https://x/..",
+    "key": null
+  },
+  {
+    "group": "states",
+    "raw": "https://x//a//../b",
+    "key": "x/a/b"
+  },
+  {
+    "group": "states",
+    "raw": "https://x/%20a.git",
+    "key": "x/ a"
+  },
+  {
+    "group": "states",
+    "raw": "https://x/a.git/.git",
+    "key": "x/a.git"
+  },
+  {
+    "group": "states",
+    "raw": "https://x/a.git/./",
+    "key": "x/a"
+  },
+  {
+    "group": "states",
+    "raw": "thing://x/a\\../b",
+    "key": "x/a/../b"
+  },
+  {
+    "group": "states",
+    "raw": "https://x/a\\../b",
+    "key": "x/b"
+  },
+  {
+    "group": "states",
+    "raw": "https://x/%00.git",
+    "key": "x/\u0000"
+  },
+  {
+    "group": "states",
+    "raw": "https://x/a%ED%A0%80",
+    "key": null
+  },
+  {
+    "group": "states",
+    "raw": "https://x/a%F4%90%80%80",
+    "key": null
+  },
+  {
+    "group": "states",
+    "raw": "https://x/%C0%AF",
+    "key": null
+  },
+  {
+    "group": "states",
+    "raw": "https://x/%E2%82%AC",
+    "key": "x/€"
+  },
+  {
+    "group": "states",
+    "raw": "https://x/%2F.git",
+    "key": null
+  },
+  {
+    "group": "states",
+    "raw": "https://x/%",
+    "key": null
+  },
+  {
+    "group": "states",
+    "raw": "https://x/%2",
+    "key": null
+  },
+  {
+    "group": "states",
+    "raw": "https://x/%ZZ",
+    "key": null
+  },
+  {
+    "group": "states",
+    "raw": "https://x/é😀",
+    "key": "x/é😀"
+  },
+  {
+    "group": "states",
+    "raw": "https://x/a\u0001b",
+    "key": "x/a\u0001b"
+  },
+  {
+    "group": "states",
+    "raw": "\u0001https://x/a.git\u0001",
+    "key": "x/a"
+  },
+  {
+    "group": "states",
+    "raw": "https://gi\thub.com/a",
+    "key": "gihub.com/a"
+  },
+  {
+    "group": "states",
+    "raw": "https://x/a\rb",
+    "key": "x/ab"
+  },
+  {
+    "group": "states",
+    "raw": "git@x:a",
+    "key": "x/a"
+  },
+  {
+    "group": "states",
+    "raw": "a@b@c:d",
+    "key": "b@c/d"
+  },
+  {
+    "group": "states",
+    "raw": "@x:y",
+    "key": "@x/y"
+  },
+  {
+    "group": "states",
+    "raw": "a/b@x:y",
+    "key": null
+  },
+  {
+    "group": "states",
+    "raw": "x:a\rb",
+    "key": null
+  },
+  {
+    "group": "states",
+    "raw": "x:a\nb",
+    "key": null
+  },
+  {
+    "group": "states",
+    "raw": "x:a b",
+    "key": null
+  },
+  {
+    "group": "states",
+    "raw": "x:a b",
+    "key": null
+  },
+  {
+    "group": "states",
+    "raw": "x:ab",
+    "key": "x/ab"
+  },
+  {
+    "group": "states",
+    "raw": "git@ΣΣ:a",
+    "key": "σς/a"
+  },
+  {
+    "group": "states",
+    "raw": "git@İ:a",
+    "key": "i̇/a"
+  },
+  {
+    "group": "states",
+    "raw": "git@x:a.GİT",
+    "key": "x/a.GİT"
+  },
+  {
+    "group": "states",
+    "raw": "git@x:a.gıt",
+    "key": "x/a.gıt"
+  },
+  {
+    "group": "states",
+    "raw": "git@x://a",
+    "key": null
+  },
+  {
+    "group": "states",
+    "raw": "git@x:/a",
+    "key": "x/a"
+  },
+  {
+    "group": "states",
+    "raw": "x:a:b",
+    "key": "x/a:b"
+  },
+  {
+    "group": "states",
+    "raw": "git@x: a\\b.GIT//",
+    "key": "x/a/b"
+  },
+  {
+    "group": "states",
+    "raw": "ws://HOST/a",
+    "key": "host/a"
+  },
+  {
+    "group": "states",
+    "raw": "wss://HOST/a",
+    "key": "host/a"
+  },
+  {
+    "group": "states",
+    "raw": "ftp://HOST/a",
+    "key": "host/a"
+  },
+  {
+    "group": "nfc",
+    "raw": "https://é.de/a",
+    "key": "xn--9ca.de/a",
+    "port": "xn--e-xbb.de/a",
+    "classification": "platform-difference"
+  },
+  {
+    "group": "compatibility",
+    "raw": "https://ſ.de/a",
+    "key": "s.de/a",
+    "port": "xn--kha.de/a",
+    "classification": "platform-difference"
+  },
+  {
+    "group": "compatibility",
+    "raw": "https://Ａ.de/a",
+    "key": "a.de/a",
+    "port": "xn--mi7c.de/a",
+    "classification": "platform-difference"
+  },
+  {
+    "group": "disallowed",
+    "raw": "https://a b.de/a",
+    "key": null,
+    "port": "xn--ab-1ca.de/a",
+    "classification": "platform-difference"
+  },
+  {
+    "group": "bidi",
+    "raw": "https://אa.de/a",
+    "key": null,
+    "port": "xn--a-zhc.de/a",
+    "classification": "platform-difference"
+  },
+  {
+    "group": "contextj",
+    "raw": "https://a‍b.de/a",
+    "key": null,
+    "port": "xn--ab-m1t.de/a",
+    "classification": "platform-difference"
+  },
+  {
+    "group": "ace-validation",
+    "raw": "https://xn--/a",
+    "key": "xn--/a"
+  }
+]
