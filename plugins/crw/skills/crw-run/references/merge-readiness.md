@@ -572,6 +572,11 @@ different one as `merge_candidate_moved`. Nothing in the product records a work 
 such a row naming P anyway refuses N there, when the turn is already held: return the turn and send
 the candidate back like any other refusal.
 
+Everything from the grant to the landing runs in the foreground of the turn and records its steps
+with `merge-turn-progress` ([Working inside a merge turn](relay.md#working-inside-a-merge-turn)). Never
+start the refresh, the CI wait or the merge in the background: a script that dies with the shell
+leaves the turn held by nobody, and a holding turn silent for the holding limit is passed on.
+
 **Record the refresh** where the merge is recorded. `assignment-mark merged --evidence` carries the
 check's `evidence:` line exactly as printed (previous head, dev tip, new head, tree OID and the rule
 applied), one line per step when the candidate was refreshed more than once, and the

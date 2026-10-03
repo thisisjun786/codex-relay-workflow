@@ -36,6 +36,9 @@ func notHolder(r store.MergeTurnsRow, actor, what string) *registry.Coordination
 
 // wrongState is MergeTurn._wrong_state.
 func wrongState(r store.MergeTurnsRow, actor, what string) *registry.CoordinationRefusal {
+	if r.State == Passed {
+		return coordination(r, contract.RefusalMergeTurnNotHeld, "turn "+pyvalue.StrRepr(r.TurnID)+" was passed on to the next waiter at "+r.ClosedAt.String+" and is no longer held by "+pyvalue.StrRepr(r.HolderTaskID)+", so it does not admit "+what+" ("+r.CloseReason.String+"); claim the target again with merge-turn-request if the candidate is still wanted", r.State, actor)
+	}
 	return coordination(r, contract.RefusalMergeTurnNotHeld, "turn "+pyvalue.StrRepr(r.TurnID)+" is "+r.State+", which does not admit "+what, r.State, actor)
 }
 

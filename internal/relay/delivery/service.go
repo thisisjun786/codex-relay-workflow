@@ -664,6 +664,9 @@ func (d *Service) render(ctx context.Context, row Row, record Obj, request strin
 		return "", err
 	}
 	if row.S("kind") == MergeTurnGrant {
+		if pyStr(fieldOf(record, "kind")) == mergeturn.ReturnRequestKind {
+			return renderReturnRequest(row.S("event_id"), record, request), nil
+		}
 		reading, err := grantRequired(ctx, d.Store, row, record)
 		if err != nil {
 			return "", err

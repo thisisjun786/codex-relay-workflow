@@ -703,6 +703,56 @@ its project. That task runs `merge-turn-restate-base` on the landing; the relay 
 again, records it, and keeps the replaced value beside it (`merge-turn-show --turn <landing>`,
 `baseRestatements`). Then the candidate checks again. Nobody edits the store to correct a base.
 
+## Working inside a merge turn
+
+Everything between the grant and the landing runs in the foreground of the turn you hold: refresh
+the head, wait for the jobs, `merge-turn-check`, merge, `merge-turn-land`. Work inside a merge turn
+never runs in the background. A `nohup` script, a detached job or a polling loop that outlives
+the shell that started it dies with that session and leaves the turn held by a task that is no
+longer doing anything: on 2026-10-03 that kept two pull requests waiting for 23 minutes. Wait for
+CI in your own turn, and say that you are alive while you wait.
+
+Record each step as you take it:
+
+    codex-session-relay --state "$RELAY_STATE" merge-turn-progress --turn <id> --actor <task> --step base_refresh|ci_started|ci_polled|ci_result|merge_attempt [--evidence <what>]
+
+- `base_refresh` right after you refresh the candidate (the new head in `--evidence`);
+  `ci_started` when its jobs start (the run ids); `ci_polled` each time you look at them while
+  they run, every few minutes, which is what tells another parent you are still there;
+  `ci_result` when they finish; `merge_attempt` when you request the merge. Only the holder
+  records, while the turn is holding or merging.
+- The grant acknowledgement, a restated head or readiness and `merge-turn-check` also count as
+  signs of life; the newest sign decides.
+- `merge-turn-show --repository <repo> --base-ref <ref>` shows every other parent `lastProgressAt`,
+  `lastProgress`, `stallsAt` and `stalled`. A holding turn silent for the holding limit, 1200
+  seconds (the longest hosted job, 15 minutes, plus a margin), reads `blocked.cause`
+  `holder_stalled`.
+
+**Passing a stalled turn on.** A parent that waits behind a stalled holding turn, or the supervisor,
+reads `merge-turn-show` first and then passes it:
+
+    codex-session-relay --state "$RELAY_STATE" merge-turn-pass --turn <the stalled turn> --actor <task> --evidence <what you read: the last progress, how long, why the holder is gone>
+
+The relay checks the silence again inside the call and refuses a turn that is not stalled
+(`merge_turn_not_held`, naming when it would stall). A pass closes the turn as `passed`, keeps the
+holder, head and last progress in the ledger beside who passed it and why, and grants the target to
+the next ready waiter in the usual order with its wake. It frees the target; it does not decide a
+merge: before you treat the passed candidate as unmerged, read its pull request, because a holder
+that died after merging never recorded it. A merging or unknown turn is never passed
+(`merge_turn_unresolved`); the supervisor routes it through `merge-turn-unknown` and
+`merge-turn-resolve`.
+
+**If you are the holder that was passed**, every call about that turn is refused
+`merge_turn_not_held` and says the turn was passed. Stop working it. Read whether your pull
+request merged, and claim the target again with `merge-turn-request` only if the candidate is still
+wanted.
+
+**Asking a holder for the target.** `merge-turn-request-return --turn <id> --actor <task> --evidence
+<why>` reaches the holder through the delivery engine and wakes it when it is idle; the answer's
+`returnNotice` says whether it was queued. A holder that gets one finishes and lands, records
+progress to show it is working, or releases the turn with `merge-turn-release --disposition returned`.
+Asking moves nothing by itself.
+
 ## Peer region agreements across a moving base
 
     codex-session-relay --state "$RELAY_STATE" region-propose --repository <repo> --revision <base branch tip now> --path <path> --kind file|symbol|data|tree [--key <name>] --left-project <key> --right-project <key> --peer-link <link> --task <you> --constraint <text> [--condition <yours>] [--issue <key>] [--next-owner <task>]

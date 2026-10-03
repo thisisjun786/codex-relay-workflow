@@ -746,7 +746,8 @@ After verification, the coordinator applies [Default dev integration](../crw-pla
 unless the assignment limits delivery. Read [Merge readiness](references/merge-readiness.md)
 to check current CI and reviewer evidence using the repository's actual configuration.
 Serialize integrations that share a target, verify the landing, and update the
-coordination record. A capable child owns its commits, push, pull request and the
+coordination record. Work inside a relay merge turn never runs in the background and records
+its steps ([Working inside a merge turn](references/relay.md#working-inside-a-merge-turn)). A capable child owns its commits, push, pull request and the
 review handling on it, and reports once the current head is clean; the coordinator
 decides and performs the merge, and the child never merges. Release and deployment
 still require the user. Delivery ownership and the fallback for a task that cannot
