@@ -1,0 +1,502 @@
+{
+  "oracle": "CXC v0.2.40 3c1459ac",
+  "cases": [
+    {
+      "id": "absent",
+      "raw": null,
+      "read": {
+        "plan": null,
+        "diagnostic": {
+          "kind": "absent",
+          "path": "${WS}/.crw/goalplans/demo/goalplan.json"
+        }
+      },
+      "lock": {
+        "kind": "unreadable",
+        "reason": "goalplan 'demo' does not exist"
+      },
+      "classification": "identical"
+    },
+    {
+      "id": "valid",
+      "raw": "{\"objective\":\"o\",\"slug\":\"demo\",\"workPhases\":[],\"criteria\":[],\"host\":{\"armed\":false,\"armedAt\":null,\"source\":\"none\"}}",
+      "read": {
+        "plan": {
+          "objective": "o",
+          "slug": "demo",
+          "createdAt": "1970-01-01T00:00:00.000Z",
+          "updatedAt": "1970-01-01T00:00:00.000Z",
+          "activeWorkPhaseId": null,
+          "workPhases": [],
+          "criteria": [],
+          "host": {
+            "armed": false,
+            "armedAt": null,
+            "source": "none"
+          }
+        },
+        "diagnostic": null
+      },
+      "lock": {
+        "kind": "ok",
+        "value": "entered"
+      },
+      "classification": "identical"
+    },
+    {
+      "id": "root_array",
+      "raw": "[]",
+      "read": {
+        "plan": null,
+        "diagnostic": {
+          "kind": "invalid-shape",
+          "path": "${WS}/.crw/goalplans/demo/goalplan.json",
+          "field": "(root: not an object)",
+          "detail": "the goalplan parsed as JSON but field '(root: not an object)' did not satisfy the schema"
+        }
+      },
+      "lock": {
+        "kind": "unreadable",
+        "reason": "the goalplan parsed as JSON but field '(root: not an object)' did not satisfy the schema"
+      },
+      "classification": "identical"
+    },
+    {
+      "id": "root_null",
+      "raw": "null",
+      "read": {
+        "plan": null,
+        "diagnostic": {
+          "kind": "invalid-shape",
+          "path": "${WS}/.crw/goalplans/demo/goalplan.json",
+          "field": "(root: not an object)",
+          "detail": "the goalplan parsed as JSON but field '(root: not an object)' did not satisfy the schema"
+        }
+      },
+      "lock": {
+        "kind": "unreadable",
+        "reason": "the goalplan parsed as JSON but field '(root: not an object)' did not satisfy the schema"
+      },
+      "classification": "identical"
+    },
+    {
+      "id": "objective",
+      "raw": "{\"objective\":3,\"slug\":\"demo\",\"workPhases\":[],\"criteria\":[],\"host\":{\"armed\":false,\"armedAt\":null,\"source\":\"none\"}}",
+      "read": {
+        "plan": null,
+        "diagnostic": {
+          "kind": "invalid-shape",
+          "path": "${WS}/.crw/goalplans/demo/goalplan.json",
+          "field": "objective",
+          "detail": "the goalplan parsed as JSON but field 'objective' did not satisfy the schema"
+        }
+      },
+      "lock": {
+        "kind": "unreadable",
+        "reason": "the goalplan parsed as JSON but field 'objective' did not satisfy the schema"
+      },
+      "classification": "identical"
+    },
+    {
+      "id": "slug",
+      "raw": "{\"objective\":\"o\",\"slug\":\"other\",\"workPhases\":[],\"criteria\":[],\"host\":{\"armed\":false,\"armedAt\":null,\"source\":\"none\"}}",
+      "read": {
+        "plan": null,
+        "diagnostic": {
+          "kind": "invalid-shape",
+          "path": "${WS}/.crw/goalplans/demo/goalplan.json",
+          "field": "(unknown)",
+          "detail": "the goalplan parsed as JSON but field '(unknown)' did not satisfy the schema"
+        }
+      },
+      "lock": {
+        "kind": "unreadable",
+        "reason": "the goalplan parsed as JSON but field '(unknown)' did not satisfy the schema"
+      },
+      "classification": "identical"
+    },
+    {
+      "id": "future",
+      "raw": "{\"objective\":\"o\",\"slug\":\"demo\",\"workPhases\":[],\"criteria\":[],\"host\":{\"armed\":false,\"armedAt\":null,\"source\":\"none\"},\"schemaVersion\":4}",
+      "read": {
+        "plan": null,
+        "diagnostic": {
+          "kind": "invalid-shape",
+          "path": "${WS}/.crw/goalplans/demo/goalplan.json",
+          "field": "schemaVersion",
+          "detail": "the goalplan parsed as JSON but field 'schemaVersion' did not satisfy the schema"
+        }
+      },
+      "lock": {
+        "kind": "unreadable",
+        "reason": "the goalplan parsed as JSON but field 'schemaVersion' did not satisfy the schema"
+      },
+      "classification": "identical"
+    },
+    {
+      "id": "phases",
+      "raw": "{\"objective\":\"o\",\"slug\":\"demo\",\"workPhases\":null,\"criteria\":[],\"host\":{\"armed\":false,\"armedAt\":null,\"source\":\"none\"}}",
+      "read": {
+        "plan": null,
+        "diagnostic": {
+          "kind": "invalid-shape",
+          "path": "${WS}/.crw/goalplans/demo/goalplan.json",
+          "field": "workPhases",
+          "detail": "the goalplan parsed as JSON but field 'workPhases' did not satisfy the schema"
+        }
+      },
+      "lock": {
+        "kind": "unreadable",
+        "reason": "the goalplan parsed as JSON but field 'workPhases' did not satisfy the schema"
+      },
+      "classification": "identical"
+    },
+    {
+      "id": "phase_title",
+      "raw": "{\"objective\":\"o\",\"slug\":\"demo\",\"workPhases\":[{\"id\":\"w\"}],\"criteria\":[],\"host\":{\"armed\":false,\"armedAt\":null,\"source\":\"none\"}}",
+      "read": {
+        "plan": null,
+        "diagnostic": {
+          "kind": "invalid-shape",
+          "path": "${WS}/.crw/goalplans/demo/goalplan.json",
+          "field": "workPhases[] entries (each needs id/title)",
+          "detail": "the goalplan parsed as JSON but field 'workPhases[] entries (each needs id/title)' did not satisfy the schema"
+        }
+      },
+      "lock": {
+        "kind": "unreadable",
+        "reason": "the goalplan parsed as JSON but field 'workPhases[] entries (each needs id/title)' did not satisfy the schema"
+      },
+      "classification": "identical"
+    },
+    {
+      "id": "phase_dep",
+      "raw": "{\"objective\":\"o\",\"slug\":\"demo\",\"workPhases\":[{\"id\":\"w\",\"title\":\"w\",\"dependsOn\":null}],\"criteria\":[],\"host\":{\"armed\":false,\"armedAt\":null,\"source\":\"none\"}}",
+      "read": {
+        "plan": null,
+        "diagnostic": {
+          "kind": "invalid-shape",
+          "path": "${WS}/.crw/goalplans/demo/goalplan.json",
+          "field": "workPhases[].dependsOn",
+          "detail": "the goalplan parsed as JSON but field 'workPhases[].dependsOn' did not satisfy the schema"
+        }
+      },
+      "lock": {
+        "kind": "unreadable",
+        "reason": "the goalplan parsed as JSON but field 'workPhases[].dependsOn' did not satisfy the schema"
+      },
+      "classification": "identical"
+    },
+    {
+      "id": "phase_await",
+      "raw": "{\"objective\":\"o\",\"slug\":\"demo\",\"workPhases\":[{\"id\":\"w\",\"title\":\"w\",\"awaitsDecision\":[null]}],\"criteria\":[],\"host\":{\"armed\":false,\"armedAt\":null,\"source\":\"none\"}}",
+      "read": {
+        "plan": null,
+        "diagnostic": {
+          "kind": "invalid-shape",
+          "path": "${WS}/.crw/goalplans/demo/goalplan.json",
+          "field": "workPhases[].awaitsDecision",
+          "detail": "the goalplan parsed as JSON but field 'workPhases[].awaitsDecision' did not satisfy the schema"
+        }
+      },
+      "lock": {
+        "kind": "unreadable",
+        "reason": "the goalplan parsed as JSON but field 'workPhases[].awaitsDecision' did not satisfy the schema"
+      },
+      "classification": "identical"
+    },
+    {
+      "id": "task_dep",
+      "raw": "{\"objective\":\"o\",\"slug\":\"demo\",\"workPhases\":[{\"id\":\"w\",\"title\":\"w\",\"tasks\":[{\"id\":\"t\",\"title\":\"t\",\"dependsOn\":[1]}]}],\"criteria\":[],\"host\":{\"armed\":false,\"armedAt\":null,\"source\":\"none\"}}",
+      "read": {
+        "plan": null,
+        "diagnostic": {
+          "kind": "invalid-shape",
+          "path": "${WS}/.crw/goalplans/demo/goalplan.json",
+          "field": "workPhases[].tasks[].dependsOn",
+          "detail": "the goalplan parsed as JSON but field 'workPhases[].tasks[].dependsOn' did not satisfy the schema"
+        }
+      },
+      "lock": {
+        "kind": "unreadable",
+        "reason": "the goalplan parsed as JSON but field 'workPhases[].tasks[].dependsOn' did not satisfy the schema"
+      },
+      "classification": "identical"
+    },
+    {
+      "id": "criteria",
+      "raw": "{\"objective\":\"o\",\"slug\":\"demo\",\"workPhases\":[],\"criteria\":null,\"host\":{\"armed\":false,\"armedAt\":null,\"source\":\"none\"}}",
+      "read": {
+        "plan": null,
+        "diagnostic": {
+          "kind": "invalid-shape",
+          "path": "${WS}/.crw/goalplans/demo/goalplan.json",
+          "field": "criteria",
+          "detail": "the goalplan parsed as JSON but field 'criteria' did not satisfy the schema"
+        }
+      },
+      "lock": {
+        "kind": "unreadable",
+        "reason": "the goalplan parsed as JSON but field 'criteria' did not satisfy the schema"
+      },
+      "classification": "identical"
+    },
+    {
+      "id": "criterion_scenario",
+      "raw": "{\"objective\":\"o\",\"slug\":\"demo\",\"workPhases\":[],\"criteria\":[{\"id\":\"c\"}],\"host\":{\"armed\":false,\"armedAt\":null,\"source\":\"none\"}}",
+      "read": {
+        "plan": null,
+        "diagnostic": {
+          "kind": "invalid-shape",
+          "path": "${WS}/.crw/goalplans/demo/goalplan.json",
+          "field": "criteria[] entries (each needs scenario/expectedEvidence/status)",
+          "detail": "the goalplan parsed as JSON but field 'criteria[] entries (each needs scenario/expectedEvidence/status)' did not satisfy the schema"
+        }
+      },
+      "lock": {
+        "kind": "unreadable",
+        "reason": "the goalplan parsed as JSON but field 'criteria[] entries (each needs scenario/expectedEvidence/status)' did not satisfy the schema"
+      },
+      "classification": "identical"
+    },
+    {
+      "id": "criterion_id",
+      "raw": "{\"objective\":\"o\",\"slug\":\"demo\",\"workPhases\":[],\"criteria\":[{\"scenario\":\"s\"}],\"host\":{\"armed\":false,\"armedAt\":null,\"source\":\"none\"}}",
+      "read": {
+        "plan": null,
+        "diagnostic": {
+          "kind": "invalid-shape",
+          "path": "${WS}/.crw/goalplans/demo/goalplan.json",
+          "field": "(unknown)",
+          "detail": "the goalplan parsed as JSON but field '(unknown)' did not satisfy the schema"
+        }
+      },
+      "lock": {
+        "kind": "unreadable",
+        "reason": "the goalplan parsed as JSON but field '(unknown)' did not satisfy the schema"
+      },
+      "classification": "identical"
+    },
+    {
+      "id": "decisions",
+      "raw": "{\"objective\":\"o\",\"slug\":\"demo\",\"workPhases\":[],\"criteria\":[],\"host\":{\"armed\":false,\"armedAt\":null,\"source\":\"none\"},\"decisions\":null}",
+      "read": {
+        "plan": null,
+        "diagnostic": {
+          "kind": "invalid-shape",
+          "path": "${WS}/.crw/goalplans/demo/goalplan.json",
+          "field": "decisions",
+          "detail": "the goalplan parsed as JSON but field 'decisions' did not satisfy the schema"
+        }
+      },
+      "lock": {
+        "kind": "unreadable",
+        "reason": "the goalplan parsed as JSON but field 'decisions' did not satisfy the schema"
+      },
+      "classification": "identical"
+    },
+    {
+      "id": "steering_shape",
+      "raw": "{\"objective\":\"o\",\"slug\":\"demo\",\"workPhases\":[],\"criteria\":[],\"host\":{\"armed\":false,\"armedAt\":null,\"source\":\"none\"},\"steeringLog\":{}}",
+      "read": {
+        "plan": null,
+        "diagnostic": {
+          "kind": "invalid-shape",
+          "path": "${WS}/.crw/goalplans/demo/goalplan.json",
+          "field": "steeringLog",
+          "detail": "the goalplan parsed as JSON but field 'steeringLog' did not satisfy the schema"
+        }
+      },
+      "lock": {
+        "kind": "unreadable",
+        "reason": "the goalplan parsed as JSON but field 'steeringLog' did not satisfy the schema"
+      },
+      "classification": "identical"
+    },
+    {
+      "id": "steering_entry",
+      "raw": "{\"objective\":\"o\",\"slug\":\"demo\",\"workPhases\":[],\"criteria\":[],\"host\":{\"armed\":false,\"armedAt\":null,\"source\":\"none\"},\"steeringLog\":[{}]}",
+      "read": {
+        "plan": null,
+        "diagnostic": {
+          "kind": "invalid-shape",
+          "path": "${WS}/.crw/goalplans/demo/goalplan.json",
+          "field": "(unknown)",
+          "detail": "the goalplan parsed as JSON but field '(unknown)' did not satisfy the schema"
+        }
+      },
+      "lock": {
+        "kind": "unreadable",
+        "reason": "the goalplan parsed as JSON but field '(unknown)' did not satisfy the schema"
+      },
+      "classification": "identical"
+    },
+    {
+      "id": "invalid_json",
+      "raw": "{not-json",
+      "read": {
+        "plan": null,
+        "diagnostic": {
+          "kind": "invalid-json",
+          "path": "${WS}/.crw/goalplans/demo/goalplan.json",
+          "detail": "Expected property name or '}' in JSON at position 1 (line 1 column 2)"
+        }
+      },
+      "lock": {
+        "kind": "unreadable",
+        "reason": "Expected property name or '}' in JSON at position 1 (line 1 column 2)"
+      },
+      "classification": "identical"
+    },
+    {
+      "id": "trailing_json",
+      "raw": "{\"objective\":\"o\",\"slug\":\"demo\",\"workPhases\":[],\"criteria\":[],\"host\":{\"armed\":false,\"armedAt\":null,\"source\":\"none\"}}{}",
+      "read": {
+        "plan": null,
+        "diagnostic": {
+          "kind": "invalid-json",
+          "path": "${WS}/.crw/goalplans/demo/goalplan.json",
+          "detail": "Unexpected non-whitespace character after JSON at position 115 (line 1 column 116)"
+        }
+      },
+      "lock": {
+        "kind": "unreadable",
+        "reason": "Unexpected non-whitespace character after JSON at position 115 (line 1 column 116)"
+      },
+      "classification": "identical"
+    },
+    {
+      "id": "lone_surrogate",
+      "raw": "{\"objective\":\"\\ud800\",\"slug\":\"demo\",\"workPhases\":[],\"criteria\":[],\"host\":{\"armed\":false,\"armedAt\":null,\"source\":\"none\"}}",
+      "read": {
+        "plan": {
+          "objective": "\ud800",
+          "slug": "demo",
+          "createdAt": "1970-01-01T00:00:00.000Z",
+          "updatedAt": "1970-01-01T00:00:00.000Z",
+          "activeWorkPhaseId": null,
+          "workPhases": [],
+          "criteria": [],
+          "host": {
+            "armed": false,
+            "armedAt": null,
+            "source": "none"
+          }
+        },
+        "diagnostic": null
+      },
+      "lock": {
+        "kind": "ok",
+        "value": "entered"
+      },
+      "classification": "intentionally-changed",
+      "reason": "data loss: refuse before an escaped lone surrogate becomes U+FFFD"
+    },
+    {
+      "id": "plan_symlink",
+      "raw": null,
+      "read": {
+        "plan": null,
+        "diagnostic": {
+          "kind": "unreadable",
+          "path": "${WS}/.crw/goalplans/demo/goalplan.json",
+          "detail": "goalplan state path must not be a symlink: ${WS}/.crw/goalplans/demo/goalplan.json"
+        }
+      },
+      "lock": {
+        "kind": "unreadable",
+        "reason": "goalplan state path must not be a symlink: ${WS}/.crw/goalplans/demo/goalplan.json"
+      },
+      "classification": "intentionally-changed",
+      "reason": "security: refuse non-following file access"
+    },
+    {
+      "id": "dangling_plan",
+      "raw": null,
+      "read": {
+        "plan": null,
+        "diagnostic": {
+          "kind": "absent",
+          "path": "${WS}/.crw/goalplans/demo/goalplan.json"
+        }
+      },
+      "lock": {
+        "kind": "unreadable",
+        "reason": "goalplan 'demo' does not exist"
+      },
+      "classification": "intentionally-changed",
+      "reason": "security: dangling link refused instead of absent"
+    },
+    {
+      "id": "dangling_root",
+      "raw": null,
+      "read": {
+        "plan": null,
+        "diagnostic": {
+          "kind": "absent",
+          "path": "${WS}/.crw/goalplans/demo/goalplan.json"
+        }
+      },
+      "lock": {
+        "kind": "unreadable",
+        "reason": "goalplan 'demo' does not exist"
+      },
+      "classification": "intentionally-changed",
+      "reason": "security: dangling ancestor refused instead of absent"
+    },
+    {
+      "id": "lock_symlink",
+      "raw": "{\"objective\":\"o\",\"slug\":\"demo\",\"workPhases\":[],\"criteria\":[],\"host\":{\"armed\":false,\"armedAt\":null,\"source\":\"none\"}}",
+      "read": {
+        "plan": {
+          "objective": "o",
+          "slug": "demo",
+          "createdAt": "1970-01-01T00:00:00.000Z",
+          "updatedAt": "1970-01-01T00:00:00.000Z",
+          "activeWorkPhaseId": null,
+          "workPhases": [],
+          "criteria": [],
+          "host": {
+            "armed": false,
+            "armedAt": null,
+            "source": "none"
+          }
+        },
+        "diagnostic": null
+      },
+      "lock": {
+        "kind": "locked",
+        "reason": "goalplan 'demo' is busy. Lock directory: ${WS}/.crw/goalplans/demo/.goalplan.lock. owner=secret. Inspect ${WS}/.crw/goalplans/demo/.goalplan.lock/owner.json. After verifying no writer is active, remove that lock directory with a tool for this platform."
+      },
+      "classification": "intentionally-changed",
+      "reason": "security: refuse linked lock and never read its owner"
+    },
+    {
+      "id": "owner_symlink",
+      "raw": "{\"objective\":\"o\",\"slug\":\"demo\",\"workPhases\":[],\"criteria\":[],\"host\":{\"armed\":false,\"armedAt\":null,\"source\":\"none\"}}",
+      "read": {
+        "plan": {
+          "objective": "o",
+          "slug": "demo",
+          "createdAt": "1970-01-01T00:00:00.000Z",
+          "updatedAt": "1970-01-01T00:00:00.000Z",
+          "activeWorkPhaseId": null,
+          "workPhases": [],
+          "criteria": [],
+          "host": {
+            "armed": false,
+            "armedAt": null,
+            "source": "none"
+          }
+        },
+        "diagnostic": null
+      },
+      "lock": {
+        "kind": "locked",
+        "reason": "goalplan 'demo' is busy. Lock directory: ${WS}/.crw/goalplans/demo/.goalplan.lock. owner=secret. Inspect ${WS}/.crw/goalplans/demo/.goalplan.lock/owner.json. After verifying no writer is active, remove that lock directory with a tool for this platform."
+      },
+      "classification": "intentionally-changed",
+      "reason": "security: owner diagnostic must not read outside"
+    }
+  ]
+}
