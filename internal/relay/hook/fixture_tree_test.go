@@ -42,7 +42,7 @@ func goldenDumps(t *testing.T, key string, value any, sorted bool, opts ...golde
 	if err != nil {
 		t.Fatal(err)
 	}
-	opts = append(opts, golden.Substitute(binary(t), "<runtime executable>"), golden.Substitute(executable, "<runtime executable>"))
+	opts = append(opts, golden.Substitute(binary(t), "<runtime executable>"), golden.Substitute(executable, "<test executable>"))
 	golden.Check(t, key, []byte(pyjson.Dumps(value, pyjson.Options{Indent: 2, SortKeys: sorted})+"\n"), opts...)
 }
 
