@@ -198,12 +198,12 @@ type policyRefusalHost struct {
 	refused bool
 }
 
-func (h *policyRefusalHost) SendMessage(id, thread, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
+func (h *policyRefusalHost) SendMessage(_ context.Context, id, thread, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
 	if h.refused {
 		h.refused = false
 		return delivery.Obj{{Key: "status", Value: "failed"}, {Key: "resumed", Value: delivery.Obj{{Key: "approvalPolicy", Value: "untrusted"}}}, {Key: "rpcError", Value: delivery.Obj{{Key: "code", Value: "unsupported_approval_policy"}}}}, nil
 	}
-	return h.SendAdapter.SendMessage(id, thread, message, settings)
+	return h.SendAdapter.SendMessage(context.Background(), id, thread, message, settings)
 }
 func Test24_SCH_58_ClaimOwnerSettlesAfterExpiredLease(t *testing.T) {
 	f := fixture24(t)
@@ -248,7 +248,7 @@ func Test24_SCH_58_LateRefusalAfterRecoveryKeepsUncertain(t *testing.T) {
 
 type presendRecoveryHost24 struct{ *sendHost }
 
-func (h *presendRecoveryHost24) SendMessage(id, thread, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
+func (h *presendRecoveryHost24) SendMessage(_ context.Context, id, thread, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
 	if h.beforeSend != nil {
 		h.beforeSend()
 	}

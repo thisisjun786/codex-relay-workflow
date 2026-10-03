@@ -178,7 +178,7 @@ func Test24_SCH_42_Capture(t *testing.T) {
 
 type set2UnknownHost struct{ captureHost4 }
 
-func (h *set2UnknownHost) SendMessage(id, thread, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
+func (h *set2UnknownHost) SendMessage(_ context.Context, id, thread, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
 	h.sends = append(h.sends, message)
 	return nil, errors.New("transport outcome unknown")
 }

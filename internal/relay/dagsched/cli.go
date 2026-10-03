@@ -56,14 +56,14 @@ func hostFailure(err error) error {
 // session holds (--expect-epoch, on the commands that decide) is the one every write of the command is fenced with.
 func openScheduler(ctx context.Context, services dispatch.Services, args dispatch.Args) (*Scheduler, func(), error) {
 	epoch := args.Integer("expect-epoch")
-	if !epoch.IsInt64() || epoch.Int64() < 0 {
+	if epoch < 0 {
 		return nil, nil, usage("--expect-epoch is a whole number, 0 or more")
 	}
 	s, err := store.Open(ctx, services.Selection.DBPath(), services.SocketPath)
 	if err != nil {
 		return nil, nil, err
 	}
-	return &Scheduler{Store: s, ExpectedEpoch: epoch.Int64()}, func() { _ = s.Close() }, nil
+	return &Scheduler{Store: s, ExpectedEpoch: epoch}, func() { _ = s.Close() }, nil
 }
 
 func runReady(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
@@ -229,7 +229,7 @@ func runAccept(ctx context.Context, services dispatch.Services, args dispatch.Ar
 		if !args.Given("repository") || !args.Given("pull-request") {
 			return nil, usage("--repository and --pull-request name a pull request together")
 		}
-		input.PullRequest = &PRRef{Repository: args.Text("repository"), Number: args.Integer("pull-request").Int64()}
+		input.PullRequest = &PRRef{Repository: args.Text("repository"), Number: args.Integer("pull-request")}
 	}
 	sched, closeStore, err := openScheduler(ctx, services, args)
 	if err != nil {
@@ -341,7 +341,7 @@ func namedPullRequest(args dispatch.Args) (*PRRef, error) {
 	if !args.Given("repository") || !args.Given("pull-request") {
 		return nil, usage("--repository and --pull-request name a pull request together")
 	}
-	return &PRRef{Repository: args.Text("repository"), Number: args.Integer("pull-request").Int64()}, nil
+	return &PRRef{Repository: args.Text("repository"), Number: args.Integer("pull-request")}, nil
 }
 
 func judgeObject(schema string, r JudgeResult) contract.OrderedObject {
@@ -417,7 +417,7 @@ func runCapBasis(ctx context.Context, services dispatch.Services, args dispatch.
 		return nil, err
 	}
 	defer closeStore()
-	basis := CapBasis{LimitID: args.Text("limit"), Revision: args.Integer("revision").Int64(), WMinutes: args.Float("w-minutes"), WSource: args.Text("w-source"),
+	basis := CapBasis{LimitID: args.Text("limit"), Revision: args.Integer("revision"), WMinutes: args.Float("w-minutes"), WSource: args.Text("w-source"),
 		SMinutes: args.Float("s-minutes"), SSource: args.Text("s-source"), DecidedBy: args.Text("actor"), Plan: args.Text("plan")}
 	if err := sched.RecordCapBasis(ctx, basis); err != nil {
 		return nil, hostFailure(err)

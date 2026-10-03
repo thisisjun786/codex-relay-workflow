@@ -223,10 +223,10 @@ func gate(ctx context.Context, rc *Reconciler, adapter Adapter, attempt Row) (bo
 	if err != nil {
 		return false, nil, err
 	}
-	receipt, readErr := adapter.GetOperation(id)
+	receipt, readErr := adapter.GetOperation(ctx, id)
 	var content string
 	if readErr == nil {
-		content, readErr = adapter.RecipientFingerprint(delivery.S("recipient_thread_id"))
+		content, readErr = adapter.RecipientFingerprint(ctx, delivery.S("recipient_thread_id"))
 	}
 	if readErr != nil {
 		return true, nil, markGate(ctx, rc, id, nil, true, readErr.Error())

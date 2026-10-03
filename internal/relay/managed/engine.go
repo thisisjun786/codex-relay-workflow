@@ -412,7 +412,10 @@ func (m *Start) registeredProblem(ctx context.Context, id Identity, row store.Ma
 	if err != nil {
 		return "", err
 	}
-	marker, unreadable := delivery.ReadAssignment(directory)
+	marker, unreadable := delivery.ReadAssignment(ctx, directory)
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	if len(unreadable) > 0 || delivery.Malformed(marker) != "" {
 		return "managed_marker_unreadable", nil
 	}

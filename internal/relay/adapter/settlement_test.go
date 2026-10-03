@@ -18,16 +18,21 @@ type cancelledDelivery struct {
 	err error
 }
 
-func (a cancelledDelivery) SendMessage(string, string, string, *delivery.TaskSettings) (delivery.Obj, error) {
+func (a cancelledDelivery) SendMessage(context.Context, string, string, string, *delivery.TaskSettings) (delivery.Obj, error) {
 	return nil, &delivery.HostError{Kind: "_ShutdownCancelled", Message: a.err.Error()}
 }
-func (a cancelledDelivery) IsArchived(string, any) (*bool, error) { value := false; return &value, nil }
-func (a cancelledDelivery) ReadGoalStatus(string) (any, error)    { return nil, nil }
-func (a cancelledDelivery) ReadThread(string) (delivery.ThreadFacts, error) {
+func (a cancelledDelivery) IsArchived(context.Context, string, any) (*bool, error) {
+	value := false
+	return &value, nil
+}
+func (a cancelledDelivery) ReadGoalStatus(context.Context, string) (any, error) { return nil, nil }
+func (a cancelledDelivery) ReadThread(context.Context, string) (delivery.ThreadFacts, error) {
 	value := true
 	return delivery.ThreadFacts{RuntimeStatus: "idle", CanAcceptInput: &value}, nil
 }
-func (a cancelledDelivery) ListTurnIDs(string, int) ([]any, error) { return []any{}, nil }
+func (a cancelledDelivery) ListTurnIDs(context.Context, string, int) ([]any, error) {
+	return []any{}, nil
+}
 
 func allTables(t *testing.T, s *store.Store) map[string]any {
 	t.Helper()
@@ -103,7 +108,7 @@ func Test28_BAD_14_ShutdownSettlesClaimedDelivery(t *testing.T) {
 	a := New(Options{RPC: rpc, Ledger: l, Drain: -1})
 	cancelled := make(chan error, 1)
 	go func() {
-		_, err := a.SendMessage("req-cancelled", "thread-a", "hello", &delivery.TaskSettings{Data: ordered(authorized()).(delivery.Obj)})
+		_, err := a.SendMessage(context.Background(), "req-cancelled", "thread-a", "hello", &delivery.TaskSettings{Data: ordered(authorized()).(delivery.Obj)})
 		cancelled <- err
 	}()
 	timer := time.NewTimer(5 * time.Second)

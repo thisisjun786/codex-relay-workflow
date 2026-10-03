@@ -56,17 +56,17 @@ type captureHost4 struct {
 	steered bool
 }
 
-func (h *captureHost4) ReadGoalStatus(string) (any, error) { return nil, nil }
-func (h *captureHost4) FindToken(thread, token string, limit int, all bool) (delivery.TokenScan, error) {
+func (h *captureHost4) ReadGoalStatus(context.Context, string) (any, error) { return nil, nil }
+func (h *captureHost4) FindToken(_ context.Context, thread, token string, limit int, all bool) (delivery.TokenScan, error) {
 	if h.failTranscript {
 		return delivery.TokenScan{}, errors.New("find_token unavailable")
 	}
-	return h.sendHost.FindToken(thread, token, limit, all)
+	return h.sendHost.FindToken(context.Background(), thread, token, limit, all)
 }
-func (h *captureHost4) ReadTurn(_ string, id string) (*delivery.TurnInfo, error) {
+func (h *captureHost4) ReadTurn(_ context.Context, _ string, id string) (*delivery.TurnInfo, error) {
 	return h.knownTurn(id, "turn-01supervisor-task-1", 1700000000)
 }
-func (h *captureHost4) SendMessage(id, thread, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
+func (h *captureHost4) SendMessage(_ context.Context, id, thread, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
 	turn := "turn-01supervisor-task-1"
 	if h.steered {
 		turn = "turn-01supervisor-task-2"
