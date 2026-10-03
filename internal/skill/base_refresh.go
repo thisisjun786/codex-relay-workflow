@@ -47,14 +47,27 @@ check reads the checkout and writes nothing to it, and it is evidence about the 
 it does not say that a job, a review or a merge happened on them. A pass prints the evidence line the
 merged mark and the merge record carry. Run it before the merge. A head that has landed is an
 ancestor of its base, so a replay afterwards names the base tip seen before the landing instead of
-the branch.`, commands: [][2]string{
+the branch.
+
+mechanical is the same check for a head whose update met conflicts and was resolved by the rules the
+plan declared for the places that conflict (union, regenerate:<command>). It passes only when every
+conflict lies in a mechanical region, the head differs from the clean three-way result only inside
+such regions, a union keeps every line of both sides, and a regeneration command, run twice on a
+checkout of the head, leaves the head's files as they are. A conflict or a difference anywhere else
+and a rule it cannot check (renumber) are refused. The regions come from the declarations of the
+nodes (--regions), and the pass prints the evidence the merged mark carries, with one line for each
+rule applied.`, commands: [][2]string{
 	{"check", "report whether the head is the previous head plus the base tip and nothing else; exit 1 when it is not"},
+	{"mechanical", "report whether the head is the previous head plus the base tip with every conflict settled by its declared mechanical rule and nothing else; exit 1 when it is not"},
 }}
 
 func runBaseRefresh(args []string, stdout, stderr io.Writer) int {
 	name, code, ok := baseRefresh.command(args, stdout, stderr)
 	if !ok {
 		return code
+	}
+	if name == "mechanical" {
+		return runBaseRefreshMechanical(args[1:], stdout, stderr)
 	}
 	line := newCommandLine("base-refresh", name, "Check that the head is the previous head merged with the base tip and nothing else.\n\nExit 0: it is. Exit 1: it is not (the first line names why). Exit 2: git could not answer.")
 	repo := line.String("repo", ".", "a checkout of the repository (a working tree, a linked working tree or a bare repository) that holds the three commits")
@@ -144,6 +157,7 @@ type refreshGit struct {
 	checkout string
 	dir      string
 	gitdir   string
+	objects  string   // the checkout's object directory, which the throwaway repository and the checkouts of the head borrow
 	env      []string // for the checkout: the caller's environment without GIT_*, replace objects off
 	isoEnv   []string // for the throwaway repository: no configuration of any kind
 }
@@ -224,7 +238,7 @@ func openRefreshGit(ctx context.Context, checkout string) (*refreshGit, error) {
 	if err != nil {
 		return nil, err
 	}
-	g := &refreshGit{checkout: checkout, dir: dir, gitdir: filepath.Join(dir, "g.git"), env: env}
+	g := &refreshGit{checkout: checkout, dir: dir, gitdir: filepath.Join(dir, "g.git"), objects: strings.TrimSpace(objects), env: env}
 	g.isoEnv = append(refreshEnv(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_ATTR_NOSYSTEM=1", "GIT_TEMPLATE_DIR=", "HOME="+dir, "XDG_CONFIG_HOME="+dir)
 	if _, _, err := gitAt(ctx, g.isoEnv, "init", "--bare", "-q", "--object-format="+format, g.gitdir); err != nil {
 		g.close()
@@ -343,29 +357,29 @@ func (g *refreshGit) differing(ctx context.Context, computed, actual string) (st
 	return strings.Join(names, ", "), nil
 }
 
-// prove decides whether head is previous merged with tip and nothing else: one merge commit whose
-// parents are exactly (previous, tip) in that order, whose tree is the tree git writes for merging
-// them. It returns the proof, or the reason the head is something else; an error means git could not
-// answer. The checks run in an order that gives the most specific reason: a reversed merge writes the
-// same tree as the right one under merge-ort, so the parent order is read before the tree.
-func (g *refreshGit) prove(ctx context.Context, previous, head, tip string) (*refreshProof, *refreshRefusal, error) {
+// shape decides whether head has the shape of an update of previous by tip: one merge commit whose
+// parents are exactly (previous, tip) in that order. It answers the facts read, or the reason the head
+// is something else; an error means git could not answer. The checks run in an order that gives the
+// most specific reason: a reversed merge writes the same tree as the right one under merge-ort, so the
+// parent order is read before any tree. prove and the mechanical check both start here.
+func (g *refreshGit) shape(ctx context.Context, previous, head, tip string) (refreshFacts, *refreshRefusal, error) {
 	if head == previous {
-		return nil, &refreshRefusal{code: "no_update", detail: "the head is the previous head: nothing was updated", safe: refreshSafeSide}, nil
+		return refreshFacts{}, &refreshRefusal{code: "no_update", detail: "the head is the previous head: nothing was updated", safe: refreshSafeSide}, nil
 	}
 	onBase, err := g.isAncestor(ctx, head, tip)
 	if err != nil {
-		return nil, nil, err
+		return refreshFacts{}, nil, err
 	}
 	if onBase {
-		return nil, &refreshRefusal{code: "not_built_on_previous", detail: fmt.Sprintf("%s is already on the base (%s): a head that has landed is checked by naming the base tip seen before the landing", head, tip), safe: refreshSafeSide}, nil
+		return refreshFacts{}, &refreshRefusal{code: "not_built_on_previous", detail: fmt.Sprintf("%s is already on the base (%s): a head that has landed is checked by naming the base tip seen before the landing", head, tip), safe: refreshSafeSide}, nil
 	}
 	parents, err := g.parents(ctx, head)
 	if err != nil {
-		return nil, nil, err
+		return refreshFacts{}, nil, err
 	}
 	facts := refreshFacts{parents: parents}
-	refuse := func(safe, code, format string, args ...any) (*refreshProof, *refreshRefusal, error) {
-		return nil, &refreshRefusal{code: code, detail: fmt.Sprintf(format, args...), safe: safe, facts: facts}, nil
+	refuse := func(safe, code, format string, args ...any) (refreshFacts, *refreshRefusal, error) {
+		return facts, &refreshRefusal{code: code, detail: fmt.Sprintf(format, args...), safe: safe, facts: facts}, nil
 	}
 	if len(parents) != 2 {
 		return refuse(refreshSafeSide, "not_a_merge", "%s has %d parent(s); an update is a merge of exactly two", head, len(parents))
@@ -377,7 +391,7 @@ func (g *refreshGit) prove(ctx context.Context, previous, head, tip string) (*re
 		}
 		contains, err := g.isAncestor(ctx, previous, first)
 		if err != nil {
-			return nil, nil, err
+			return refreshFacts{}, nil, err
 		}
 		if contains {
 			return refuse(refreshSafeSideChain, "not_built_on_previous", "the first parent %s of %s is not %s, but already contains it: an earlier update or a commit of its own lies between them. Prove an update one step at a time, with the head the earlier proof named as --previous", first, head, previous)
@@ -387,12 +401,27 @@ func (g *refreshGit) prove(ctx context.Context, previous, head, tip string) (*re
 	if second != tip {
 		fromBase, err := g.isAncestor(ctx, second, tip)
 		if err != nil {
-			return nil, nil, err
+			return refreshFacts{}, nil, err
 		}
 		if !fromBase {
 			return refuse(refreshSafeSideMoved, "not_from_base", "%s merges %s, which is not an ancestor of the commit named as the base tip (%s): a branch that is not the base, or a base that moved between reading its tip and the update", head, second, tip)
 		}
 		return refuse(refreshSafeSideMoved, "not_the_dev_tip", "%s merges %s, which is on the base but is not the commit named as its tip (%s): the base moved after the update, or the wrong tip was named", head, second, tip)
+	}
+	return facts, nil, nil
+}
+
+// prove decides whether head is previous merged with tip and nothing else: one merge commit whose
+// parents are exactly (previous, tip) in that order, whose tree is the tree git writes for merging
+// them. It returns the proof, or the reason the head is something else; an error means git could not
+// answer.
+func (g *refreshGit) prove(ctx context.Context, previous, head, tip string) (*refreshProof, *refreshRefusal, error) {
+	facts, why, err := g.shape(ctx, previous, head, tip)
+	if err != nil || why != nil {
+		return nil, why, err
+	}
+	refuse := func(safe, code, format string, args ...any) (*refreshProof, *refreshRefusal, error) {
+		return nil, &refreshRefusal{code: code, detail: fmt.Sprintf(format, args...), safe: safe, facts: facts}, nil
 	}
 	tree, conflicts, err := g.mergeTree(ctx, previous, tip)
 	if err != nil {
