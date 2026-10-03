@@ -184,3 +184,35 @@ func TestResolveTombstoneReportsAFailedSave(t *testing.T) {
 		t.Errorf("the file changed: %q", after)
 	}
 }
+
+// A link at the marker directory is refused whole: the write fails, the status denies, and nothing appears where it leads.
+func TestMarkerDirectoryLinkIsRefused(t *testing.T) {
+	cwd, out := caseDirs(t)
+	must(t, os.MkdirAll(filepath.Join(cwd, ".crw"), 0o777))
+	must(t, os.Symlink(out, filepath.Join(cwd, ".crw", UnrecordableSubdir)))
+	if WriteUnrecordableMarker(cwd, "s1", "a1") == nil {
+		t.Error("a marker was written through a link")
+	}
+	if got := UnrecordableVerdictStatus(cwd, "s1"); got != (VerdictStatus{Unreadable: true}) {
+		t.Errorf("%+v", got)
+	}
+	if entries, _ := os.ReadDir(out); len(entries) != 0 {
+		t.Errorf("files appeared outside the workspace: %v", entries)
+	}
+}
+
+// A resolve without an agent id clears nothing: the tombstones of agents without ids stay separate verdicts.
+func TestIdlessResolveClearsNothing(t *testing.T) {
+	cwd := t.TempDir()
+	for _, turn := range []string{"t1", "t2"} {
+		if !RecordTombstone(cwd, "s1", agent("", turn), MaxAttempts, nil) {
+			t.Fatal("no tombstone")
+		}
+	}
+	if ResolveTombstone(cwd, "s1", agent("", "t1")) {
+		t.Error("an identity-less resolve reported success")
+	}
+	if got := tombstones(cwd, "s1"); len(got) != 2 {
+		t.Errorf("tombstones left: %v", got)
+	}
+}

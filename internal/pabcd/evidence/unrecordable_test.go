@@ -197,6 +197,9 @@ func TestUnrecordableSubdir(t *testing.T) {
 }
 
 func TestWriteUnrecordableMarker(t *testing.T) {
+	// Intentionally changed (the security fix): the oracle follows a link at the state directory or at the marker directory and
+	// creates the marker, the directory and the probe in the directory it leads to, outside the workspace. The port refuses: the
+	// write fails, the status denies, and nothing appears outside.
 	c, g := loadUnrec(t)
 	fixUmask(t)
 	now := time.UnixMilli(1767225600000)
@@ -212,6 +215,12 @@ func TestWriteUnrecordableMarker(t *testing.T) {
 		}
 		restore()
 		want, wantThrew := g.Marker[k.ID], []bool{}
+		if linkFollowed(k.ID) {
+			want.Threw, want.Out = []any{true}, []treeEntry{}
+			if k.ID == "state_dir_is_symlink" {
+				want.Tree = []treeEntry{}
+			}
+		}
 		for _, v := range want.Threw {
 			wantThrew = append(wantThrew, v != false)
 		}
@@ -233,6 +242,12 @@ func TestUnrecordableVerdictStatus(t *testing.T) {
 		got := UnrecordableVerdictStatus(cwd, sessionOf(k.Session))
 		restore()
 		want := g.Status[k.ID]
+		if linkFollowed(k.ID) {
+			want.Present, want.Unreadable, want.Out = false, true, []treeEntry{}
+			if k.ID == "state_dir_is_symlink" {
+				want.Tree = []treeEntry{}
+			}
+		}
 		if got != (VerdictStatus{Present: want.Present, Unreadable: want.Unreadable}) {
 			t.Errorf("%s: %+v, want present %v unreadable %v", k.ID, got, want.Present, want.Unreadable)
 		}
@@ -277,9 +292,12 @@ func stateOf(raw []byte) map[string]any {
 	return m
 }
 
-// TestResolveTombstone replays the oracle's resolveTombstone. Three cases are intentionally changed (the data-loss fix): the oracle
-// writes back the verdicts its read kept, so the 65th and 66th of a list past the cap, and an entry it cannot parse, are lost
-// from the file; the port writes nothing when the file holds more verdicts than the read kept, and the call reports false.
+// TestResolveTombstone replays the oracle's resolveTombstone. Four cases are intentionally changed. Three are the data-loss fix:
+// the oracle writes back the verdicts its read kept, so the 65th and 66th of a list past the cap, and an entry it cannot parse,
+// are lost from the file; the port writes nothing when the file holds more verdicts than the read kept, and the call reports
+// false. The fourth, no_agent_id_clears_idless_tombstones, is the security fix: the oracle removes every tombstone with an empty
+// agent id and the turn of a payload that has no agent id, erasing the verdicts of other agents whose ids were missing; the port
+// refuses, writes nothing and reports false.
 func TestResolveTombstone(t *testing.T) {
 	c, g := loadUnrec(t)
 	for _, k := range c.Resolve {
@@ -318,7 +336,7 @@ func TestResolveTombstone(t *testing.T) {
 			}
 			slices.Sort(gotSessions)
 		}
-		if slices.Contains([]string{"sixty_six_entries_resolve_first", "malformed_entry_beside_resolved", "uppercase_key_hides_the_overflow"}, k.ID) {
+		if slices.Contains([]string{"sixty_six_entries_resolve_first", "malformed_entry_beside_resolved", "uppercase_key_hides_the_overflow", "no_agent_id_clears_idless_tombstones"}, k.ID) {
 			want.Returns, want.State = []bool{false}, stateOf(before)
 		}
 		if !slices.Contains(want.Returns, true) && before != nil && !bytes.Equal(after, before) {
@@ -328,4 +346,9 @@ func TestResolveTombstone(t *testing.T) {
 		same(t, k.ID+" state", gotState, want.State)
 		same(t, k.ID+" sessions", gotSessions, want.Sessions)
 	}
+}
+
+// linkFollowed names the recorded cases in which the oracle follows a symbolic link out of the workspace.
+func linkFollowed(id string) bool {
+	return slices.Contains([]string{"marker_dir_is_symlink_out", "marker_dir_symlink_to_dir", "state_dir_is_symlink"}, id)
 }

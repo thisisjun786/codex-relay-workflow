@@ -179,6 +179,40 @@
    ]
   },
   {
+   "id": "state_dir_is_symlink",
+   "setup": [
+    {
+     "symlink": "{S}",
+     "to": "<OUT>"
+    }
+   ],
+   "calls": [
+    {
+     "session": "s1",
+     "agent": "a1"
+    }
+   ]
+  },
+  {
+   "id": "marker_name_is_symlink",
+   "setup": [
+    {
+     "file": "<OUT>/target.json",
+     "text": "keep"
+    },
+    {
+     "symlink": "{S}/evidence-unrecordable/s1-a1-1767225600000.json",
+     "to": "<OUT>/target.json"
+    }
+   ],
+   "calls": [
+    {
+     "session": "s1",
+     "agent": "a1"
+    }
+   ]
+  },
+  {
    "id": "marker_dir_unwritable",
    "setup": [
     {
@@ -353,6 +387,15 @@
     },
     {
      "symlink": "{S}/evidence-unrecordable",
+     "to": "<OUT>"
+    }
+   ]
+  },
+  {
+   "id": "state_dir_is_symlink",
+   "setup": [
+    {
+     "symlink": "{S}",
      "to": "<OUT>"
     }
    ]

@@ -320,6 +320,61 @@
    ],
    "out": []
   },
+  "state_dir_is_symlink": {
+   "threw": [
+    false
+   ],
+   "tree": [
+    {
+     "path": "evidence-unrecordable",
+     "type": "dir",
+     "mode": "755"
+    },
+    {
+     "path": "evidence-unrecordable/s1-a1-1767225600000.json",
+     "type": "file",
+     "mode": "644",
+     "text": "{\"sessionId\":\"s1\",\"agentId\":\"a1\",\"at\":\"2026-01-01T00:00:00.000Z\"}\n"
+    }
+   ],
+   "out": [
+    {
+     "path": "evidence-unrecordable",
+     "type": "dir",
+     "mode": "755"
+    },
+    {
+     "path": "evidence-unrecordable/s1-a1-1767225600000.json",
+     "type": "file",
+     "mode": "644",
+     "text": "{\"sessionId\":\"s1\",\"agentId\":\"a1\",\"at\":\"2026-01-01T00:00:00.000Z\"}\n"
+    }
+   ]
+  },
+  "marker_name_is_symlink": {
+   "threw": [
+    "EEXIST"
+   ],
+   "tree": [
+    {
+     "path": "evidence-unrecordable",
+     "type": "dir",
+     "mode": "755"
+    },
+    {
+     "path": "evidence-unrecordable/s1-a1-1767225600000.json",
+     "type": "link",
+     "to": "<OUT>/target.json"
+    }
+   ],
+   "out": [
+    {
+     "path": "target.json",
+     "type": "file",
+     "mode": "644"
+    }
+   ]
+  },
   "marker_dir_unwritable": {
    "threw": [
     "EACCES"
@@ -602,6 +657,24 @@
     }
    ],
    "out": []
+  },
+  "state_dir_is_symlink": {
+   "present": false,
+   "unreadable": false,
+   "tree": [
+    {
+     "path": "evidence-unrecordable",
+     "type": "dir",
+     "mode": "755"
+    }
+   ],
+   "out": [
+    {
+     "path": "evidence-unrecordable",
+     "type": "dir",
+     "mode": "755"
+    }
+   ]
   },
   "marker_dir_unwritable_empty": {
    "present": false,
