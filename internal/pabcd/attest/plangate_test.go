@@ -207,6 +207,19 @@ func TestPlanGateRefusesWhenTheWorkingDirectoryCannotBeResolved(t *testing.T) {
 	reasonHas(t, ValidatePlanArtifacts(plan(unit), a), "working directory")
 }
 
+// An existing unit named absolutely needs no process directory, but the working directory it is judged against does: where getcwd
+// cannot answer for a relative one, the gate refuses (the base of containment cannot be known) instead of accepting the unit.
+func TestPlanGateRefusesAnExistingAbsoluteUnitWhenTheWorkingDirectoryCannotBeRead(t *testing.T) {
+	unit := t.TempDir()
+	write(t, filepath.Join(unit, "000_plan.md"))
+	t.Chdir(t.TempDir())
+	for i := 0; i < 24; i++ {
+		must(t, os.Mkdir(strings.Repeat("d", 200), 0o755))
+		must(t, os.Chdir(strings.Repeat("d", 200)))
+	}
+	reasonHas(t, ValidatePlanArtifacts(plan(unit), "."), "working directory")
+}
+
 // The unit handed back is persisted and read again as resolve(cwd, unit): it must name the directory the gate validated.
 func TestPlanGateReturnsTheDirectoryItValidated(t *testing.T) {
 	root := t.TempDir()
