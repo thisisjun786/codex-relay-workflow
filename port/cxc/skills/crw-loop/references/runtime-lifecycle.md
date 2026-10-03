@@ -31,7 +31,7 @@ for EVERY loop entry or re-entry:
    (ORCH-ARTIFACT-01). Every attest names the edge it advances with `from`/`to`,
    plus that edge's own keys (`planUnit` on P>A, `workPhaseId` on every gated edge
    under a bound goalplan, `testReceiptPath` on C>D) — canonical table and
-   copy-paste objects: [Phase control](../../pabcd/references/phase-control.md) (ATTEST-SHAPE-01).
+   copy-paste objects: [Phase control](../../crw-pabcd/references/phase-control.md) (ATTEST-SHAPE-01).
    Entry edges (IDLE→P, I→P) are explicit commands without an
    attest JSON — the shipped gate (`dist/attest.js` GATED_TRANSITIONS) gates exactly
    those four. A phase without its persisted transition did not happen — the

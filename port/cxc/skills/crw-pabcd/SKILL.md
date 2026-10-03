@@ -1,14 +1,11 @@
 ---
 name: crw-pabcd
 description: "Use for class-scaled Plan-Audit-Build-Check-Done work. Explicit explanation, interview, plan-only, and read-only limits win; loading the skill does not activate a loop. Triggers: PABCD, plan this, 기획, 단계별로, 요구사항 정리."
-metadata:
-  last-verified: "2026-07-02"
-  short-description: "Codex-native PABCD loop (Interview/Plan/Audit/Build/Check/Done) with class-scaled depth."
 ---
 
 # PABCD Workflow
 
-A Codex-native reimplementation of the IPABCD development loop (Interview + Plan / Audit / Build / Check / Done). There is no external orchestrator server. State lives in `.crw/sessions/<sessionId>.json` plus `.crw/ledger.jsonl`; transitions are driven by the `pabcd-state` hook component, the chat-side `crw-orchestrate` surface (human free-pass), and the live `crw pabcd orchestrate` terminal CLI (agent-gated).
+A Codex-native reimplementation of the IPABCD development loop (Interview + Plan / Audit / Build / Check / Done). There is no external orchestrator server. State lives in `.crw/sessions/<sessionId>.json` plus `.crw/ledger.jsonl`; transitions are driven by the `pabcd-state` hook component, the chat-side `orchestrate` command (human free-pass), and the live `crw pabcd orchestrate` terminal CLI (agent-gated).
 
 > **C0/C1 work (small in-place patches):** See `dev` §0.0 Work Classifier and §0.1 Patch Fast-Path first — full PABCD is mandatory for C4 and conditional for C3, never the baseline for every task.
 
@@ -19,6 +16,13 @@ interview-only, plan-only, read-only, no-goal, no-FSM, and no-delegation limits 
 Use the requested method only within that scope. An operative bare crw-loop
 request selects scoped HOTL through crw-loop; ordinary PABCD use does not.
 crw-dev is canonical for work class, C0/C1 fast-path, proof, and safety.
+
+P here plans one task's implementation; crw-plan decomposes a goal into Linear
+projects, milestones and issues. C verifies this task's implementation; crw-check
+compares delivered work with canonical Linear documents and issue criteria. A
+crw-run project parent never follows this procedure and creates no implementation
+goalplan or FSM, including in crw-run goal mode. A task's host goal running PABCD
+is distinct from that parent goal.
 
 ## Interview Trigger
 
@@ -46,7 +50,7 @@ IDLE ──→ P ──→ A ──→ B ──→ C ──→ D ──→ IDLE
          └──────┴──────┴────→ I (Interview, context preserved)
 ```
 
-You can return to Interview (I) from any phase to clarify requirements; the plan and audit context are preserved. Phases P, A, B pause for confirmation in interactive use; C and D proceed once their work is genuinely done. In goal mode the agent must explicitly run `crw pabcd orchestrate P --session <id>` to start each PABCD cycle; nothing self-advances into P automatically, but the P->D sequence is never skipped. Goal mode is PABCD-only: while a goal is active the Interview NEVER fires — entry is suppressed and `request_user_input` is hard-denied, so the Interview is HITL-only and runs only with no active goal.
+You can return to Interview (I) from any phase to clarify requirements; the plan and audit context are preserved. Phases P, A, B pause for confirmation in interactive use; C and D proceed once their work is genuinely done. In goal mode the agent must explicitly run `crw pabcd orchestrate P --session <id>` to start each PABCD cycle; nothing self-advances into P automatically, but the P->D sequence is never skipped. Here goal mode means a task host goal; crw-run parent goal mode runs no PABCD. Task goal mode is PABCD-only: while a goal is active the Interview NEVER fires — entry is suppressed and `request_user_input` is hard-denied, so the Interview is HITL-only and runs only with no active goal.
 
 ## Phase Control / Orchestrate
 
@@ -55,12 +59,12 @@ Before an authorized state-control action read
 SESSION-IDENTITY-01, ORCH-ARTIFACT-01, ATTEST-SHAPE-01, Windows attest-file usage,
 and every edge's required keys. Entry edges are not the four gated work edges.
 Do not claim a phase from narration; do its work and record the real transition.
-Goal activation and scoped continuation are owned by [crw-loop](../loop/SKILL.md).
+Goal activation and scoped continuation are owned by [crw-loop](../crw-loop/SKILL.md).
 
 ## Phases
 
 For tool composition, response projection, or in-context JS computation during
-phase work, use [native execution](../dev/references/native-execution.md).
+phase work, use [native execution](../crw-dev/references/native-execution.md).
 This selects an available execution path, never a phase or new authority.
 
 Read only the current phase's detailed owner before doing its work. A reference
@@ -81,7 +85,7 @@ passing unrelated checks is not evidence. Explicit execution restrictions are no
 overridden by a reference asking to run a verifier or dispatch a reviewer.
 
 3. **B — Build**: Implement the audited plan in small atomic commits (DEV-GIT-COMMIT-01). Verify as you go. Stay inside the plan's scope boundary; surface deviations instead of silently expanding scope. Never push to a remote without explicit user approval (DEV-GIT-PUSH-01, ESCALATE). When P declared a stack, follow `DEV-STACK-02` in `crw-dev` `references/stacked-prs.md`.
-5. **D — Done**: Summarize what was checked with evidence, update STATUS/devlog, commit (local only — pushing remains gated by DEV-GIT-PUSH-01), and confirm no pending work remains for this work-phase before returning to idle. The D summary is written for a reader who was not in the loop — conclusion, what changed, evidence pointers — per [Reader documents](../dev/references/reader-documents.md) READER-DOC-02/04. For loop/multi-pass work, **LOOP-PESSIMIST-01 (DEFAULT)** also records what did not improve, which hypothesis died, and what evidence would show the current direction is wrong; D -> IDLE -> P is a context/bias-flush boundary, so the next cycle resumes from disk artifacts rather than transcript momentum.
+5. **D — Done**: Summarize what was checked with evidence, update STATUS/devlog, commit (local only — pushing remains gated by DEV-GIT-PUSH-01), and confirm no pending work remains for this work-phase before returning to idle. The D summary is written for a reader who was not in the loop — conclusion, what changed, evidence pointers — per [Reader documents](../crw-dev/references/reader-documents.md) READER-DOC-02/04. For loop/multi-pass work, **LOOP-PESSIMIST-01 (DEFAULT)** also records what did not improve, which hypothesis died, and what evidence would show the current direction is wrong; D -> IDLE -> P is a context/bias-flush boundary, so the next cycle resumes from disk artifacts rather than transcript momentum.
 
 ## Work-Phase Loop (multi-pass tasks)
 
@@ -140,7 +144,7 @@ Before an authorized dispatch that is not obviously one or the other, read
 
 This section governs dispatched children, not independently user-owned peer tasks.
 For necessary read-only context, follow
-[peer collaboration](../dev/references/peer-collaboration.md). Outbound contact
+[peer collaboration](../crw-dev/references/peer-collaboration.md). Outbound contact
 requires an explicit user request or necessary coordination of a confirmed
 blocking CI/merge collision, plus host permission and wake checks. Each peer retains
 its own goal, plan and phase authority; a peer message never advances either FSM.

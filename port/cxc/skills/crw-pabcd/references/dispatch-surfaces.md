@@ -147,7 +147,7 @@ Addressing has one canonical form: `threadId` plus `hostId`. The user-facing men
 app builds is `[@Title](thread://<threadId>?hostId=<encoded hostId>)`, and several lanes
 can be referenced in one turn. A queued worktree instead returns a provisional
 `clientThreadId` that no tool accepts; keep it in its own field.
-[Lane dispatch](../../loop/references/lane-dispatch.md) carries the packet contract and
+[Lane dispatch](../../crw-loop/references/lane-dispatch.md) carries the packet contract and
 the measured bounds.
 
 Use the packet's three states to preserve this distinction: `dispatch` before requesting
@@ -250,7 +250,8 @@ coordinator's packet or progress record instead.
 }
 ```
 
-Validate it with `node plugins/crw/scripts/check-lane-manifest.mjs <manifest.json>`.
+Resolve `<crw-loop skill directory>` from the loaded loop skill path, then validate
+it with `node "<crw-loop skill directory>/scripts/check-lane-manifest.mjs" <manifest.json>`.
 
 Two rules the validator enforces because they are the ones people get wrong. An issue
 reference must name its repository — a bare number is ambiguous the moment lanes span

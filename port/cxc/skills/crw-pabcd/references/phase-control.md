@@ -17,7 +17,7 @@ edge needs a `did` narrative, which has spaces. Write the JSON first, then attes
 crw pabcd orchestrate A --session <id> --attest-file .crw/attest.json
 ```
 
-Accepted prefixes include `$crw:crw-orchestrate`, `$crw-pabcd`,
+Accepted prefixes include `$crw-pabcd`,
 `crw pabcd orchestrate`, `/orchestrate`, and bare `orchestrate`.
 
 ### Semantics
@@ -112,7 +112,7 @@ re-entry occurs.
 
 ### Loop / goal activation handoff
 
-Execution intent and HOTL activation belong to [crw-loop](../../loop/SKILL.md).
+Execution intent and HOTL activation belong to [crw-loop](../../crw-loop/SKILL.md).
 This reference owns phase commands and attestations, not permission to execute.
 
 ### Source worktrees

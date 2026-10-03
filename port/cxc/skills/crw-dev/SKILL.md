@@ -1,10 +1,6 @@
 ---
 name: crw-dev
 description: "MUST USE for coding, PR creation/review/merge, dependent branches, scaffolding, and QA. Classify C0-C5, preserve safety and fresh proof, and load the matching surface owner. Triggers: develop, fix, refactor, test, review, docs, browse, QA, stacked PR, 개발, 수정, 검토, 스택 PR."
-metadata:
-  last-verified: "2026-07-02"
-  short-description: "Universal dev discipline: work classifier, modular limits, verification gate, safety rules."
-  keywords: ["develop", "implement", "refactor", "feature", "code quality", "verification", "browse", "browser", "QA", "agbrowse", "stacked PR", "stacked pull request", "stacked diff", "PR stack", "restack", "브라우저", "페이지 확인", "화면 QA", "플레이라이트", "스택 PR", "PR 쪼개기"]
 ---
 
 # Dev — Common Development Guidelines
@@ -111,6 +107,11 @@ findings only) · docs-only work (no code gates, docs consistency checks instead
 PABCD, goal, divergence, and repeated work-phase mechanics are canonical in
 `pabcd` and `crw-loop`. Load those skills when the selected process requires
 them; classify each work-phase independently.
+Linear initiative definition, goal decomposition, delivery checks and project
+coordination route to crw-define, crw-plan, crw-check and crw-run respectively.
+The PABCD and task host-goal modes above govern a task's implementation; crw-run
+parent goal mode creates no implementation goalplan or FSM.
+
 Multi-cycle loops (2+ work-phases) enter docs-first: the first work-phase is a
 docs-only PABCD that locks the diff-level roadmap before any implementation cycle
 (LOOP-DOCS-FIRST-01, `crw-loop`).
@@ -181,7 +182,7 @@ Discovery is subagent work: an explorer is a leaf in this session's own working
 directory, and read-only lanes cannot collide because they write nothing. That is
 not a template for parallel write work. Anything needing its own branch, checkout
 or merge/CI lane is a separate Codex task, one per lane — see
-[Dispatch surfaces](../pabcd/references/dispatch-surfaces.md).
+[Dispatch surfaces](../crw-pabcd/references/dispatch-surfaces.md).
 
 Keep a narrow lookup local when its result immediately determines the next step,
 or when the work cannot be separated without duplicating the investigation.
@@ -194,7 +195,7 @@ requires broad rereading, or produces truncated output. Reclassify when scope
 changes. If delegation is unavailable, record the observed limitation and continue
 with bounded local reads.
 
-Use a bounded [discovery packet](../pabcd/references/delegation.md#discovery-packet)
+Use a bounded [discovery packet](../crw-pabcd/references/delegation.md#discovery-packet)
 with findings, source anchors and uncertainties, not full file dumps. Main checks
 only the spans needed to settle a cited claim, not every returned file by default.
 If a broader read is necessary, name the evidence gap and reassign that question

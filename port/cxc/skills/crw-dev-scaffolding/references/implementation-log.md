@@ -2,7 +2,7 @@
 
 Canonical placement and documentation routine for implementation units.
 Numbering and general residence belong to
-[Implementation units](../../pabcd/references/implementation-units.md);
+[Implementation units](../../crw-pabcd/references/implementation-units.md);
 folder introduction belongs to ../SKILL.md §2.1.
 Read this routine for C2+/multi-phase unit documentation, not every small edit.
 crw-dev §0.1 is canonical for the C0 exemption and existing-unit-only C1 record.
@@ -70,7 +70,7 @@ Two deliberate differences from common practice, kept on purpose:
 ## Reader narrative vs evidence
 
 `000_plan.md` carries the reader narrative: the answer, why, and what changed, per
-[Reader documents](../../dev/references/reader-documents.md). Evidence, receipts and
+[Reader documents](../../crw-dev/references/reader-documents.md). Evidence, receipts and
 probe logs live under `evidence/` or a numbered evidence doc and are linked from the
 narrative, never inlined into it. A reviewer who opens `000_plan.md` should be able
 to say what the unit decided without reading a single command transcript.

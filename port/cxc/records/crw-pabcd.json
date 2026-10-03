@@ -46,5 +46,234 @@
     "references/plan-output.md": {
       "original": "008afe31f5c350909f207d3e99a276adae4bda78fe42b28ae9020d2e13dd6795"
     }
-  }
+  },
+  "edits": [
+    {
+      "file": "SKILL.md",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Normalize frontmatter to the repository-supported name and description fields; preserve invocation description and record the removed oracle metadata. Distinguish task implementation P/C from Linear plan/check ownership and exclude the crw-run parent from implementation PABCD. Disambiguate task host-goal execution from crw-run parent goal mode beside the goal firewall. Remove the nonexistent orchestrate skill stub; keep the human chat command and the CRW CLI.",
+      "hunks": [
+        {
+          "line": 4,
+          "old": [
+            "metadata:\n",
+            "  last-verified: \"2026-07-02\"\n",
+            "  short-description: \"Codex-native PABCD loop (Interview/Plan/Audit/Build/Check/Done) with class-scaled depth.\"\n"
+          ]
+        },
+        {
+          "line": 11,
+          "old": [
+            "A Codex-native reimplementation of the IPABCD development loop (Interview + Plan / Audit / Build / Check / Done). There is no external orchestrator server. State lives in `.crw/sessions/<sessionId>.json` plus `.crw/ledger.jsonl`; transitions are driven by the `pabcd-state` hook component, the chat-side `crw-orchestrate` surface (human free-pass), and the live `crw pabcd orchestrate` terminal CLI (agent-gated).\n"
+          ],
+          "new": [
+            "A Codex-native reimplementation of the IPABCD development loop (Interview + Plan / Audit / Build / Check / Done). There is no external orchestrator server. State lives in `.crw/sessions/<sessionId>.json` plus `.crw/ledger.jsonl`; transitions are driven by the `pabcd-state` hook component, the chat-side `orchestrate` command (human free-pass), and the live `crw pabcd orchestrate` terminal CLI (agent-gated).\n"
+          ]
+        },
+        {
+          "line": 23,
+          "new": [
+            "P here plans one task's implementation; crw-plan decomposes a goal into Linear\n",
+            "projects, milestones and issues. C verifies this task's implementation; crw-check\n",
+            "compares delivered work with canonical Linear documents and issue criteria. A\n",
+            "crw-run project parent never follows this procedure and creates no implementation\n",
+            "goalplan or FSM, including in crw-run goal mode. A task's host goal running PABCD\n",
+            "is distinct from that parent goal.\n",
+            "\n"
+          ]
+        },
+        {
+          "line": 49,
+          "old": [
+            "You can return to Interview (I) from any phase to clarify requirements; the plan and audit context are preserved. Phases P, A, B pause for confirmation in interactive use; C and D proceed once their work is genuinely done. In goal mode the agent must explicitly run `crw pabcd orchestrate P --session <id>` to start each PABCD cycle; nothing self-advances into P automatically, but the P->D sequence is never skipped. Goal mode is PABCD-only: while a goal is active the Interview NEVER fires — entry is suppressed and `request_user_input` is hard-denied, so the Interview is HITL-only and runs only with no active goal.\n"
+          ],
+          "new": [
+            "You can return to Interview (I) from any phase to clarify requirements; the plan and audit context are preserved. Phases P, A, B pause for confirmation in interactive use; C and D proceed once their work is genuinely done. In goal mode the agent must explicitly run `crw pabcd orchestrate P --session <id>` to start each PABCD cycle; nothing self-advances into P automatically, but the P->D sequence is never skipped. Here goal mode means a task host goal; crw-run parent goal mode runs no PABCD. Task goal mode is PABCD-only: while a goal is active the Interview NEVER fires — entry is suppressed and `request_user_input` is hard-denied, so the Interview is HITL-only and runs only with no active goal.\n"
+          ]
+        },
+        {
+          "line": 58,
+          "old": [
+            "Goal activation and scoped continuation are owned by [crw-loop](../loop/SKILL.md).\n"
+          ],
+          "new": [
+            "Goal activation and scoped continuation are owned by [crw-loop](../crw-loop/SKILL.md).\n"
+          ]
+        },
+        {
+          "line": 63,
+          "old": [
+            "phase work, use [native execution](../dev/references/native-execution.md).\n"
+          ],
+          "new": [
+            "phase work, use [native execution](../crw-dev/references/native-execution.md).\n"
+          ]
+        },
+        {
+          "line": 84,
+          "old": [
+            "5. **D — Done**: Summarize what was checked with evidence, update STATUS/devlog, commit (local only — pushing remains gated by DEV-GIT-PUSH-01), and confirm no pending work remains for this work-phase before returning to idle. The D summary is written for a reader who was not in the loop — conclusion, what changed, evidence pointers — per [Reader documents](../dev/references/reader-documents.md) READER-DOC-02/04. For loop/multi-pass work, **LOOP-PESSIMIST-01 (DEFAULT)** also records what did not improve, which hypothesis died, and what evidence would show the current direction is wrong; D -> IDLE -> P is a context/bias-flush boundary, so the next cycle resumes from disk artifacts rather than transcript momentum.\n"
+          ],
+          "new": [
+            "5. **D — Done**: Summarize what was checked with evidence, update STATUS/devlog, commit (local only — pushing remains gated by DEV-GIT-PUSH-01), and confirm no pending work remains for this work-phase before returning to idle. The D summary is written for a reader who was not in the loop — conclusion, what changed, evidence pointers — per [Reader documents](../crw-dev/references/reader-documents.md) READER-DOC-02/04. For loop/multi-pass work, **LOOP-PESSIMIST-01 (DEFAULT)** also records what did not improve, which hypothesis died, and what evidence would show the current direction is wrong; D -> IDLE -> P is a context/bias-flush boundary, so the next cycle resumes from disk artifacts rather than transcript momentum.\n"
+          ]
+        },
+        {
+          "line": 143,
+          "old": [
+            "[peer collaboration](../dev/references/peer-collaboration.md). Outbound contact\n"
+          ],
+          "new": [
+            "[peer collaboration](../crw-dev/references/peer-collaboration.md). Outbound contact\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "agents/openai.yaml",
+      "reason": "Provide the default prompt required by CRW skill metadata while preserving the oracle invocation policy.",
+      "hunks": [
+        {
+          "line": 4,
+          "new": [
+            "  default_prompt: \"Use $crw-pabcd to plan, audit, build, check and close this task within its authorized scope.\"\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/delegation.md",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments.",
+      "hunks": [
+        {
+          "line": 141,
+          "old": [
+            "[Waiting on work](../../loop/references/waiting.md) rules in either HITL or HOTL.\n"
+          ],
+          "new": [
+            "[Waiting on work](../../crw-loop/references/waiting.md) rules in either HITL or HOTL.\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/dispatch-surfaces.md",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Relocate manifest validation to the loop skill that owns lane helper assets. Explain skill-directory resolution for the moved lane manifest helper. Quote the resolved helper path so a skill directory containing spaces is usable.",
+      "hunks": [
+        {
+          "line": 150,
+          "old": [
+            "[Lane dispatch](../../loop/references/lane-dispatch.md) carries the packet contract and\n"
+          ],
+          "new": [
+            "[Lane dispatch](../../crw-loop/references/lane-dispatch.md) carries the packet contract and\n"
+          ]
+        },
+        {
+          "line": 253,
+          "old": [
+            "Validate it with `node plugins/crw/scripts/check-lane-manifest.mjs <manifest.json>`.\n"
+          ],
+          "new": [
+            "Resolve `<crw-loop skill directory>` from the loaded loop skill path, then validate\n",
+            "it with `node \"<crw-loop skill directory>/scripts/check-lane-manifest.mjs\" <manifest.json>`.\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/implementation-units.md",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments.",
+      "hunks": [
+        {
+          "line": 5,
+          "old": [
+            "[Implementation log](../../dev-scaffolding/references/implementation-log.md).\n"
+          ],
+          "new": [
+            "[Implementation log](../../crw-dev-scaffolding/references/implementation-log.md).\n"
+          ]
+        },
+        {
+          "line": 28,
+          "old": [
+            "C0/C1 record behavior is canonically defined by [crw-dev §0.1](../../dev/SKILL.md):\n"
+          ],
+          "new": [
+            "C0/C1 record behavior is canonically defined by [crw-dev §0.1](../../crw-dev/SKILL.md):\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/loop-engineering.md",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments.",
+      "hunks": [
+        {
+          "line": 143,
+          "old": [
+            "Continuation belongs to [crw-loop](../../loop/SKILL.md);\n",
+            "divergence operation belongs to [Divergence tiers](../../loop/references/divergence-tiers.md).\n"
+          ],
+          "new": [
+            "Continuation belongs to [crw-loop](../../crw-loop/SKILL.md);\n",
+            "divergence operation belongs to [Divergence tiers](../../crw-loop/references/divergence-tiers.md).\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/phase-check.md",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments.",
+      "hunks": [
+        {
+          "line": 12,
+          "old": [
+            "   [Reader documents](../../dev/references/reader-documents.md) READER-DOC-05 and records\n"
+          ],
+          "new": [
+            "   [Reader documents](../../crw-dev/references/reader-documents.md) READER-DOC-05 and records\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/phase-control.md",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Remove the obsolete orchestrate skill invocation; the settled transition uses crw-pabcd and the chat/CLI commands.",
+      "hunks": [
+        {
+          "line": 20,
+          "old": [
+            "Accepted prefixes include `$crw:crw-orchestrate`, `$crw-pabcd`,\n"
+          ],
+          "new": [
+            "Accepted prefixes include `$crw-pabcd`,\n"
+          ]
+        },
+        {
+          "line": 115,
+          "old": [
+            "Execution intent and HOTL activation belong to [crw-loop](../../loop/SKILL.md).\n"
+          ],
+          "new": [
+            "Execution intent and HOTL activation belong to [crw-loop](../../crw-loop/SKILL.md).\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/plan-output.md",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments.",
+      "hunks": [
+        {
+          "line": 53,
+          "old": [
+            "[Reader documents](../../dev/references/reader-documents.md) READER-DOC-02: the\n"
+          ],
+          "new": [
+            "[Reader documents](../../crw-dev/references/reader-documents.md) READER-DOC-02: the\n"
+          ]
+        }
+      ]
+    }
+  ]
 }

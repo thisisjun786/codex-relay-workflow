@@ -102,7 +102,6 @@ This is the on-disk shape under `.crw/goalplans/<slug>/goalplan.json`
 - `crw pabcd loop decide --session <id> --id <id> --answer <text> [--cwd <path>]` — record the user reply. This changes only the decision record; phase status and blockedReason stay as they were.
 - `crw pabcd loop meet-criterion --session <id> --id <id> --evidence <text> [--cwd <path>]` — `--id` takes
   a generated `c-N` id; read it from `crw pabcd loop show` or the goalplan file.
-- `crw goalplan *` — deprecated alias for the same behavior during migration.
 
 The parser rejects unknown flags, stray positionals, missing values, and flags belonging to another verb before dispatch. Every value flag also accepts `--flag=value`, which is the way to pass a value that starts with `--`.
 

@@ -1,8 +1,6 @@
 ---
 name: crw-interview
 description: "Use for CRW Interview mode: persistent IPABCD I-phase requirements discovery, contradiction hunting, focused user questions, question/answer evidence recording, and readiness gating before Plan. Triggers: interview, 인터뷰, requirements clarification, ambiguity, contradiction scan, ask me questions, I phase, crw-interview."
-metadata:
-  short-description: "Persistent I-phase clarification with contradiction tracking."
 ---
 
 # crw-interview
@@ -12,12 +10,17 @@ a natural-language I hint does not enter the phase. Actual entry uses an explici
 user command or authorized `crw pabcd orchestrate I --session <id>` with the current
 SessionStart binding. No-FSM requests remain advisory without a transition.
 
+This Interview clarifies one task's requirements as its PABCD I phase. crw-define
+owns Linear initiative intent discovery: purpose, desired change, success
+evidence, scope and open decisions. Loading either owner does not enter a phase
+or authorize Linear writes.
+
 ## Contract
 
 - Interview questions use synchronous `request_user_input`, subject to the host's
   rules. Do not use `request_user_input_async` or a legacy async variant for
   Interview rounds: this workflow needs returned answers and ledger-backed readiness.
-  General mid-work questions follow [Async user questions](../dev/references/async-questions.md).
+  General mid-work questions follow [Async user questions](../crw-dev/references/async-questions.md).
 - The main session owns questions, user answers, tracker updates, and devlog
   records.
 - Subagents may search for contradictions and propose question candidates, but

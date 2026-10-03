@@ -5,7 +5,7 @@ Read while awaiting dispatched work or long external processes in either HITL or
 These continuation/dispatch rules concern this goal's own work and delegated
 subagents, not independent peer advice. Peer timeouts do not authorize retirement,
 replacement, forced wakeups, or an unconditional wait; use
-[peer collaboration](../../dev/references/peer-collaboration.md). Do not send
+[peer collaboration](../../crw-dev/references/peer-collaboration.md). Do not send
 unsolicited progress notices or nudges to independent tasks while waiting. Contact requires
 an explicit user request or necessary confirmed blocking CI/merge collision
 coordination, plus host permission and wake checks.
@@ -105,7 +105,7 @@ never as a provider failure.
 For managed stagnation or unusable final output, report `outcome:task_failed`
 with the matching `taskFailure.kind`, concrete `taskFailure.evidence`, the
 recorded child ID, `executionState:stopped` and termination/partial-work
-`reconciliation`. Follow the [report contract](../../pabcd/references/delegation.md#configured-first-fallback).
+`reconciliation`. Follow the [report contract](../../crw-pabcd/references/delegation.md#configured-first-fallback).
 Provider errors use `outcome:failed`; do not invent a provider code for a task
 failure or label cancellation or exhausted bounds as stagnation. Validate the
 final work before reporting `outcome:complete`, which closes the dispatch.

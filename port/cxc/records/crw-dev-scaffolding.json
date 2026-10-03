@@ -29,5 +29,66 @@
       "original": "314f907e37cf067ab781640e242e2c6dac4621855a863f24850f9004501b98e1",
       "exec": true
     }
-  }
+  },
+  "edits": [
+    {
+      "file": "SKILL.md",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Normalize frontmatter to the repository-supported name and description fields; preserve invocation description and record the removed oracle metadata.",
+      "hunks": [
+        {
+          "line": 4,
+          "old": [
+            "metadata:\n",
+            "  last-verified: \"2026-07-02\"\n",
+            "  short-description: \"Project and module scaffolding with repo-first convention reuse and structural audits.\"\n"
+          ]
+        },
+        {
+          "line": 116,
+          "old": [
+            "Phase naming is owned by [Implementation units](../pabcd/references/implementation-units.md)\n"
+          ],
+          "new": [
+            "Phase naming is owned by [Implementation units](../crw-pabcd/references/implementation-units.md)\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "agents/openai.yaml",
+      "reason": "Provide the default prompt required by CRW skill metadata while preserving the oracle invocation policy.",
+      "hunks": [
+        {
+          "line": 4,
+          "new": [
+            "  default_prompt: \"Use $crw-dev-scaffolding to scaffold within the existing repository conventions and authorized scope.\"\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/implementation-log.md",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments.",
+      "hunks": [
+        {
+          "line": 5,
+          "old": [
+            "[Implementation units](../../pabcd/references/implementation-units.md);\n"
+          ],
+          "new": [
+            "[Implementation units](../../crw-pabcd/references/implementation-units.md);\n"
+          ]
+        },
+        {
+          "line": 73,
+          "old": [
+            "[Reader documents](../../dev/references/reader-documents.md). Evidence, receipts and\n"
+          ],
+          "new": [
+            "[Reader documents](../../crw-dev/references/reader-documents.md). Evidence, receipts and\n"
+          ]
+        }
+      ]
+    }
+  ]
 }

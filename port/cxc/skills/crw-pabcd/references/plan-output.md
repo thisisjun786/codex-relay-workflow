@@ -50,7 +50,7 @@ the executable plan and final decisions; architect reflection is not A review.
 ## Reader summary
 
 A C2+ unit's `000_plan.md` opens with a reader-facing summary per
-[Reader documents](../../dev/references/reader-documents.md) READER-DOC-02: the
+[Reader documents](../../crw-dev/references/reader-documents.md) READER-DOC-02: the
 problem, the answer this unit gives, and what changes for whom, in one short
 paragraph before the loop-spec fields. Research and evidence stay in the 00x docs
 and evidence/ (LEXICO-SPLIT-01 is unchanged); the summary links them.

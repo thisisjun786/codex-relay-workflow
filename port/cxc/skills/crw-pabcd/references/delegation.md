@@ -138,7 +138,7 @@ If no discovery/spawn capability exists, report the gap. Fan out independent lan
 reuse the same reviewer throughout the A loop.
 
 Before waiting on dispatched work, read the mode-neutral
-[Waiting on work](../../loop/references/waiting.md) rules in either HITL or HOTL.
+[Waiting on work](../../crw-loop/references/waiting.md) rules in either HITL or HOTL.
 This route does not authorize an otherwise forbidden dispatch, wait, or mode transition.
 A wait timeout is an observation outcome, not a verdict: classify progress,
 suspected stagnation, confirmed failure and unavailable observation per that

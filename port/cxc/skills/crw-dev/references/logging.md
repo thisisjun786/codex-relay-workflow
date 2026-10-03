@@ -7,7 +7,7 @@ What to emit and where, for surfaces that are not production services.
 | Surface | Owner | Example |
 | --- | --- | --- |
 | One-shot CLI | this document | `crw map`, `crw doctor harness` |
-| Long-running local server | process stdout/stderr transport: this document's `LOG-CONSUMER-01`/`LOG-ONCE-01` only. HTTP and request instrumentation: `dev-backend` | `crw serve` |
+| Long-running local server | process stdout/stderr transport: this document's `LOG-CONSUMER-01`/`LOG-ONCE-01` only. HTTP and request instrumentation: `dev-backend` | a local long-running daemon |
 | Production-deployed service | `dev-backend` `references/core/observability.md` (JSON, traceId, OTel conventions) | a deployed API |
 
 Where they overlap on a deployed service, `dev-backend` wins.
@@ -22,14 +22,14 @@ module that had none — the absence is also a decision.
 may pipe: stdout is the successful command output, stderr is diagnostics, progress,
 warnings and errors. Do not put piped values on stderr, and do not mix diagnostics into
 stdout. (`--help` and `--version` are successful output and belong on stdout —
-`plugins/crw/skills/qa/references/cli-tui-qa.md:18-20`.)
+`crw-qa/references/cli-tui-qa.md:18-20`.)
 
 An expected usage error — a bad flag, bad input — is not error-level *telemetry*, but in a
 CLI it still gets **stderr plus a nonzero exit**. Do not conflate the two ideas.
 
-A long-running local server is outside this rule. `crw serve` sends its whole injected
-lifecycle logger to stdout today and that is fine: a server process's stdout is a log
-stream, not pipeline output. Do not apply this rule to it retroactively.
+A long-running local server is outside this rule: a server process's stdout is a
+log stream, not pipeline output, so a lifecycle logger writing to stdout is fine.
+Do not apply this rule to it retroactively.
 
 **LOG-ONCE-01 (DEFAULT).** Judge duplication by consumer and sink, not by event identity.
 The same event may be recorded once per distinct consumer — one durable telemetry/event
@@ -38,10 +38,9 @@ indistinguishable repetition into the same sink for the same consumer. Boundary
 log-and-rethrow that adds context is allowed (`dev-debugging/SKILL.md` explicitly permits
 it).
 
-Worked example — the `crw serve` adapter-failure path is NOT a violation:
-`components/messenger-bridge/src/bridge-controller.ts:191-196` records to the durable
-event log and rethrows; `components/messenger-bridge/src/cli.ts:83-92` tells the operator
-on stderr. Different sink, different consumer.
+Worked example — a server's adapter-failure path is NOT a violation when the
+controller records the event to the durable event log and rethrows, and the CLI
+entry point tells the operator on stderr. Different sink, different consumer.
 
 ## Owned elsewhere
 

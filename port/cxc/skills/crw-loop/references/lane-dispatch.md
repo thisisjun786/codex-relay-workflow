@@ -1,13 +1,17 @@
 # Lane dispatch — tasks that run their own loop
 
 Read when a request fans work out across parallel tasks, or when watching more lanes than
-one wait can hold. [Dispatch surfaces](../../pabcd/references/dispatch-surfaces.md) owns
+one wait can hold. [Dispatch surfaces](../../crw-pabcd/references/dispatch-surfaces.md) owns
 the choice between a thread and a subagent; this file owns what a lane is handed and what
 it is allowed to do with it.
 
 The numbers below were read from the Codex desktop bundle and the `codex-rs` sources on
-2026-09-20 and are recorded as data in `test/fixtures/host-thread-bounds.json`. Re-derive
-them with `scripts/check-host-bounds.mjs` rather than trusting this prose.
+2026-09-20 and are recorded as data in `examples/host-thread-bounds.json`. Re-derive
+them with `node "<crw-loop skill directory>/scripts/check-host-bounds.mjs"` rather
+than trusting this prose. Resolve the skill directory from the loaded SKILL.md;
+the example keeps the recorded values but omits the original personal source
+locator. Supply available artifacts through `checkBounds(fixture, options)`;
+missing artifacts remain NOT_RUN.
 
 ## LANE-LOOP-AUTH-01 (STRICT) — a lane may loop; a leaf never may
 
@@ -67,7 +71,7 @@ Offsets, normalized impossible dates and local timestamps are rejected. For exam
 
 This fragment accompanies the packet's required lane, work and reporting fields.
 
-Validate with `node plugins/crw/scripts/check-lane-packet.mjs <packet.json>
+Validate with `node "<crw-loop skill directory>/scripts/check-lane-packet.mjs" <packet.json>
 [--mode dispatch|pending|bound] [--json]`. Options may precede or follow the single file;
 missing values, duplicate options, unknown flags/modes and extra files are rejected.
 Single-packet JSON includes `resolved.mode`, and successful text output prints `mode=...`.

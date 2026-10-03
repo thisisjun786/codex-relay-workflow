@@ -140,7 +140,7 @@ Goal-mode (unattended) loop-specs must state: tool/credential scope (what the lo
 touch), token/cost budget, and a wall-clock bound. For C4 surfaces, an unattended loop
 with unstated scope is an ESCALATE-class omission — stop and ask before running it.
 
-Continuation belongs to [crw-loop](../../loop/SKILL.md);
-divergence operation belongs to [Divergence tiers](../../loop/references/divergence-tiers.md).
+Continuation belongs to [crw-loop](../../crw-loop/SKILL.md);
+divergence operation belongs to [Divergence tiers](../../crw-loop/references/divergence-tiers.md).
 Optimization meta-rules are in [Optimization rules](optimization.md).
 Read only the owner needed by the current action.

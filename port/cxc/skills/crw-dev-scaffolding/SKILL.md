@@ -1,9 +1,6 @@
 ---
 name: crw-dev-scaffolding
 description: "MUST USE for project setup, feature scaffolding, structural audits, or documentation scaffolding — applies feature-based layout, colocation, public boundary exports, repo-first convention reuse, and source-of-truth doc planning. Triggers: scaffold, scaffolding, new project, init project, new feature, add module, project setup, structure audit, architecture docs, source-of-truth docs, monorepo setup, API docs, 스캐폴딩, 새 프로젝트, 새 기능, 구조 점검, 모듈 추가."
-metadata:
-  last-verified: "2026-07-02"
-  short-description: "Project and module scaffolding with repo-first convention reuse and structural audits."
 ---
 
 # Dev Scaffolding
@@ -113,7 +110,7 @@ Implementation-unit devlog method:
 - Keep chat summaries short: explain the phase, show a compact tree/change map, then link the plan file.
 - Move completed plan folders to an archive/done area if the repo already uses that convention.
 
-Phase naming is owned by [Implementation units](../pabcd/references/implementation-units.md)
+Phase naming is owned by [Implementation units](../crw-pabcd/references/implementation-units.md)
 (LEXICO-SPLIT-01). Use the existing three-digit convention; do not mix two-digit names.
 
 Before creating any new source-of-truth folders, ask concisely: state that no durable docs were found,

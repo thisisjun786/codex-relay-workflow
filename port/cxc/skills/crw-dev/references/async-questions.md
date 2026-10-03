@@ -80,7 +80,7 @@ they do not question the user independently.
 
 The persisted CRW Interview currently captures synchronous `request_user_input`
 question IDs and returned answers. Async submission and later messages are not
-automatically captured by that path. See the [Interview owner](../../interview/SKILL.md)
+automatically captured by that path. See the [Interview owner](../../crw-interview/SKILL.md)
 before using questions as readiness evidence; never mark a pending async question as
 answered, manufacture ledger events, or assume the exact-name synchronous goal guard
 covers async variants. This reference is agent guidance, not new runtime enforcement.

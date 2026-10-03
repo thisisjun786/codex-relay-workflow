@@ -1,5 +1,6 @@
 interface:
   display_name: "crw-dev-scaffolding"
   short_description: "Project and module scaffolding with repo-first convention reuse and structural audits."
+  default_prompt: "Use $crw-dev-scaffolding to scaffold within the existing repository conventions and authorized scope."
 policy:
   allow_implicit_invocation: false

@@ -28,5 +28,240 @@
     "references/waiting.md": {
       "original": "66cffc33e851239e22489f0b9ee0d70e3c10f1c54d398d2dfc9c4610fc42574a"
     }
-  }
+  },
+  "edits": [
+    {
+      "file": "SKILL.md",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Normalize frontmatter to the repository-supported name and description fields; preserve invocation description and record the removed oracle metadata. Route Linear project coordination to crw-run goal mode before task activation and exclude project parents from the implementation loop. Replace the removed Node CLI fallback with the installer-owned Go runtime pointer.",
+      "hunks": [
+        {
+          "line": 4,
+          "old": [
+            "metadata:\n",
+            "  short-description: \"Agent-led scoped completion with durable plans and evidence.\"\n"
+          ]
+        },
+        {
+          "line": 28,
+          "new": [
+            "A `$crw-loop` request with a Linear project scope and coordination intent routes\n",
+            "to crw-run goal mode before activating this implementation loop. The project\n",
+            "parent never follows the crw-loop/crw-pabcd procedure: it creates no implementation\n",
+            "goalplan or FSM, including when it holds a parent goal. This skill runs one task's\n",
+            "authorized objective; a task host goal and a crw-run parent goal have different\n",
+            "procedures.\n",
+            "\n"
+          ]
+        },
+        {
+          "line": 42,
+          "old": [
+            "goal. Follow [peer collaboration](../dev/references/peer-collaboration.md) for\n"
+          ],
+          "new": [
+            "goal. Follow [peer collaboration](../crw-dev/references/peer-collaboration.md) for\n"
+          ]
+        },
+        {
+          "line": 46,
+          "old": [
+            "For useful mid-work questions, follow [Async user questions](../dev/references/async-questions.md)\n"
+          ],
+          "new": [
+            "For useful mid-work questions, follow [Async user questions](../crw-dev/references/async-questions.md)\n"
+          ]
+        },
+        {
+          "line": 69,
+          "old": [
+            "| Development or governed review | [crw-dev](../dev/SKILL.md), then its matching surface routers |\n",
+            "| Tool composition, response projection, or in-context JS computation | [Native execution](../dev/references/native-execution.md); prefer exposed Code Mode, not a forced runtime |\n",
+            "| Real PABCD work or a PABCD plan | [crw-pabcd](../pabcd/SKILL.md), then only the current phase references it selects |\n"
+          ],
+          "new": [
+            "| Development or governed review | [crw-dev](../crw-dev/SKILL.md), then its matching surface routers |\n",
+            "| Tool composition, response projection, or in-context JS computation | [Native execution](../crw-dev/references/native-execution.md); prefer exposed Code Mode, not a forced runtime |\n",
+            "| Real PABCD work or a PABCD plan | [crw-pabcd](../crw-pabcd/SKILL.md), then only the current phase references it selects |\n"
+          ]
+        },
+        {
+          "line": 74,
+          "old": [
+            "| Two or more work-phases, including scope discovered later | [Implementation units](../pabcd/references/implementation-units.md) |\n",
+            "| Repeated failure, reviewer FAIL, or unclear loop archetype | [Loop engineering](../pabcd/references/loop-engineering.md) |\n",
+            "| Score optimization, plateau, or mechanism comparison | [Optimization rules](../pabcd/references/optimization.md) and loop engineering |\n"
+          ],
+          "new": [
+            "| Two or more work-phases, including scope discovered later | [Implementation units](../crw-pabcd/references/implementation-units.md) |\n",
+            "| Repeated failure, reviewer FAIL, or unclear loop archetype | [Loop engineering](../crw-pabcd/references/loop-engineering.md) |\n",
+            "| Score optimization, plateau, or mechanism comparison | [Optimization rules](../crw-pabcd/references/optimization.md) and loop engineering |\n"
+          ]
+        },
+        {
+          "line": 78,
+          "old": [
+            "| Choosing between a thread and a subagent, or planning parallel lanes | [Dispatch surfaces](../pabcd/references/dispatch-surfaces.md) |\n"
+          ],
+          "new": [
+            "| Choosing between a thread and a subagent, or planning parallel lanes | [Dispatch surfaces](../crw-pabcd/references/dispatch-surfaces.md) |\n"
+          ]
+        },
+        {
+          "line": 80,
+          "old": [
+            "| Dispatch is authorized and needed | [Delegation](../pabcd/references/delegation.md) |\n"
+          ],
+          "new": [
+            "| Dispatch is authorized and needed | [Delegation](../crw-pabcd/references/delegation.md) |\n"
+          ]
+        },
+        {
+          "line": 105,
+          "old": [
+            "  Details and the measured evidence: [Dispatch surfaces](../pabcd/references/dispatch-surfaces.md).\n"
+          ],
+          "new": [
+            "  Details and the measured evidence: [Dispatch surfaces](../crw-pabcd/references/dispatch-surfaces.md).\n"
+          ]
+        },
+        {
+          "line": 113,
+          "old": [
+            "  If PATH resolves an older development CLI, invoke this installed plugin's\n",
+            "  `node \"<pluginRoot>/bin/crw.mjs\"` for these commands; preserve the development checkout.\n"
+          ],
+          "new": [
+            "  If PATH resolves an older development CLI, invoke the installed runtime's\n",
+            "  `\"$HOME/.local/share/crw-runtime/current/bin/crw\"` for these commands; preserve the development checkout.\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "agents/openai.yaml",
+      "reason": "Provide the default prompt required by CRW skill metadata while preserving the oracle invocation policy.",
+      "hunks": [
+        {
+          "line": 4,
+          "new": [
+            "  default_prompt: \"Use $crw-loop to complete this task with a scoped PABCD loop; route Linear project coordination to crw-run goal mode.\"\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "examples/host-thread-bounds.json",
+      "reason": "Carry the oracle-derived host-bound data required by the moved helper; preserve bounds/shapes/evidence and omit only the original personal source locator.",
+      "add": true,
+      "sha256": "3e7e151010ad1fb7784f490bf03fe7540688d1477b65a2d59c229f3c282502a3"
+    },
+    {
+      "file": "references/durable-goalplan.md",
+      "reason": "Remove the oracle deprecated goalplan alias from the no-alias CRW invocation table.",
+      "hunks": [
+        {
+          "line": 105,
+          "old": [
+            "- `crw goalplan *` — deprecated alias for the same behavior during migration.\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/lane-dispatch.md",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Colocate the recorded host-bound data with the moved skill helper. Point the host-bound helper at its owning skill and disclose the omitted personal locator without claiming live bound verification. Relocate the packet validation command into the loop skill scripts directory. Quote the resolved helper path so a skill directory containing spaces is usable.",
+      "hunks": [
+        {
+          "line": 4,
+          "old": [
+            "one wait can hold. [Dispatch surfaces](../../pabcd/references/dispatch-surfaces.md) owns\n"
+          ],
+          "new": [
+            "one wait can hold. [Dispatch surfaces](../../crw-pabcd/references/dispatch-surfaces.md) owns\n"
+          ]
+        },
+        {
+          "line": 9,
+          "old": [
+            "2026-09-20 and are recorded as data in `test/fixtures/host-thread-bounds.json`. Re-derive\n",
+            "them with `scripts/check-host-bounds.mjs` rather than trusting this prose.\n"
+          ],
+          "new": [
+            "2026-09-20 and are recorded as data in `examples/host-thread-bounds.json`. Re-derive\n",
+            "them with `node \"<crw-loop skill directory>/scripts/check-host-bounds.mjs\"` rather\n",
+            "than trusting this prose. Resolve the skill directory from the loaded SKILL.md;\n",
+            "the example keeps the recorded values but omits the original personal source\n",
+            "locator. Supply available artifacts through `checkBounds(fixture, options)`;\n",
+            "missing artifacts remain NOT_RUN.\n"
+          ]
+        },
+        {
+          "line": 70,
+          "old": [
+            "Validate with `node plugins/crw/scripts/check-lane-packet.mjs <packet.json>\n"
+          ],
+          "new": [
+            "Validate with `node \"<crw-loop skill directory>/scripts/check-lane-packet.mjs\" <packet.json>\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/runtime-lifecycle.md",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments.",
+      "hunks": [
+        {
+          "line": 34,
+          "old": [
+            "   copy-paste objects: [Phase control](../../pabcd/references/phase-control.md) (ATTEST-SHAPE-01).\n"
+          ],
+          "new": [
+            "   copy-paste objects: [Phase control](../../crw-pabcd/references/phase-control.md) (ATTEST-SHAPE-01).\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/waiting.md",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments.",
+      "hunks": [
+        {
+          "line": 8,
+          "old": [
+            "[peer collaboration](../../dev/references/peer-collaboration.md). Do not send\n"
+          ],
+          "new": [
+            "[peer collaboration](../../crw-dev/references/peer-collaboration.md). Do not send\n"
+          ]
+        },
+        {
+          "line": 108,
+          "old": [
+            "`reconciliation`. Follow the [report contract](../../pabcd/references/delegation.md#configured-first-fallback).\n"
+          ],
+          "new": [
+            "`reconciliation`. Follow the [report contract](../../crw-pabcd/references/delegation.md#configured-first-fallback).\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "scripts/check-host-bounds.mjs",
+      "reason": "Move the oracle plugin/scripts/check-host-bounds.mjs into the lane-owning loop skill; preserve validation behavior, rename diagnostic brand and relocate the fixture lookup to examples.",
+      "add": true,
+      "sha256": "7b69e749a066dbce524b07b213cdecf8578bd6928c41dc3ed284e9dde57205d2"
+    },
+    {
+      "file": "scripts/check-lane-manifest.mjs",
+      "reason": "Move the oracle plugin/scripts/check-lane-manifest.mjs into the lane-owning loop skill; preserve validation behavior, rename diagnostic brand.",
+      "add": true,
+      "sha256": "c3f5a499b282f1cbfdc910a80158efd3f1d550d2eec263d5736ccfad0f2da8ff"
+    },
+    {
+      "file": "scripts/check-lane-packet.mjs",
+      "reason": "Move the oracle plugin/scripts/check-lane-packet.mjs into the lane-owning loop skill; preserve validation behavior, rename diagnostic brand.",
+      "add": true,
+      "sha256": "7299551a840c7f375cbd9b1edd351103e8bac5b8080cf81c625dc9002911a227"
+    }
+  ]
 }

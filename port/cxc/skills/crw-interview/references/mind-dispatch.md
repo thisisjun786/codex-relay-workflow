@@ -7,7 +7,7 @@ read-only contradiction lenses: they never ask the user, edit files/plans, write
 state or spawn children. Inline reasoning is not independent Mind evidence.
 
 Before constructing a call, read the canonical
-[native transport owner](../../pabcd/references/delegation.md). Its live-schema
+[native transport owner](../../crw-pabcd/references/delegation.md). Its live-schema
 and actual-returned-handle rules apply; this is still Interview, not an A gate.
 
 ## MIND-SPAWN-SHAPE-01

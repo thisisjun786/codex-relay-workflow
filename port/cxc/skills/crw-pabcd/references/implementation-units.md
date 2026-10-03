@@ -2,7 +2,7 @@
 
 Full documentation routine (P concretizes the docs, A audits them as a hard gate, D
 archives to `_fin/`, plus the mainstream design-doc/RFC translation table):
-[Implementation log](../../dev-scaffolding/references/implementation-log.md).
+[Implementation log](../../crw-dev-scaffolding/references/implementation-log.md).
 
 **Difflevel roadmap plan (STRICT, DIFFLEVEL-ROADMAP-01):** for any multi-phase unit
 (2+ work-phases), the FIRST P — or the dedicated design-only Phase-0 pass — must
@@ -25,7 +25,7 @@ audit.
 
 **Unit residence (STRICT, UNIT-RESIDENCE-01):** C2+ development belongs to an
 implementation unit (devlog/_plan/YYMMDD_slug/). Ceremony scales with class.
-C0/C1 record behavior is canonically defined by [crw-dev §0.1](../../dev/SKILL.md):
+C0/C1 record behavior is canonically defined by [crw-dev §0.1](../../crw-dev/SKILL.md):
 C0 is exempt from numbered unit records; C1 records in the owning unit only when
 one already exists. Do not create a unit solely for a C0/C1 fast-path record.
 This exception does not waive verification, safety, or behavior-based promotion.

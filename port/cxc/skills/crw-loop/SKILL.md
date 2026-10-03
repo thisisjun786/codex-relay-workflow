@@ -1,8 +1,6 @@
 ---
 name: crw-loop
 description: "Use for scoped PABCD completion loops. Bare crw-loop means HOTL; explicit explanation, interview, plan-only, read-only, or HITL limits win. Triggers: crw-loop, continue until done, HOTL, repeated PABCD, 루프 돌려, 끝까지 해줘, docs-first."
-metadata:
-  short-description: "Agent-led scoped completion with durable plans and evidence."
 ---
 
 # crw-loop — Scoped completion
@@ -25,6 +23,13 @@ Apply the current request's authority before choosing a mode:
   If missing intent or authority prevents progress, report it; do not silently
   enlarge the scope. Do not enter Interview while a host goal is active.
 
+A `$crw-loop` request with a Linear project scope and coordination intent routes
+to crw-run goal mode before activating this implementation loop. The project
+parent never follows the crw-loop/crw-pabcd procedure: it creates no implementation
+goalplan or FSM, including when it holds a parent goal. This skill runs one task's
+authorized objective; a task host goal and a crw-run parent goal have different
+procedures.
+
 A **leaf** — a spawned subagent — never opens a host goal, runs `crw pabcd orchestrate`, or
 spawns; it follows its packet and reports. A dispatched **task** is not a leaf: it owns
 its own goal and PABCD state, and it runs a loop when its packet grants the objective,
@@ -39,11 +44,11 @@ Keep this goal's work local; do not send unsolicited progress or completion noti
 to other tasks. Peer contact is limited to explicit user requests or necessary confirmed
 blocking CI/merge collision coordination, subject to host permissions and wake
 checks. An incoming peer question is not a new loop request or permission to resume an old
-goal. Follow [peer collaboration](../dev/references/peer-collaboration.md) for
+goal. Follow [peer collaboration](../crw-dev/references/peer-collaboration.md) for
 question-only wakes and independent task authority; apply this loop only to work
 the user actually authorized.
 
-For useful mid-work questions, follow [Async user questions](../dev/references/async-questions.md)
+For useful mid-work questions, follow [Async user questions](../crw-dev/references/async-questions.md)
 when the tool is exposed and the host permits it. Leave optional questions without
 expecting replies, keep working and incorporate answers if they arrive. An unanswered
 optional question does not block completion. Interview retains its existing goal
@@ -66,18 +71,18 @@ preflight failure: resolve it or report the limitation before the governed actio
 
 | Condition | Read before the governed action |
 |---|---|
-| Development or governed review | [crw-dev](../dev/SKILL.md), then its matching surface routers |
-| Tool composition, response projection, or in-context JS computation | [Native execution](../dev/references/native-execution.md); prefer exposed Code Mode, not a forced runtime |
-| Real PABCD work or a PABCD plan | [crw-pabcd](../pabcd/SKILL.md), then only the current phase references it selects |
+| Development or governed review | [crw-dev](../crw-dev/SKILL.md), then its matching surface routers |
+| Tool composition, response projection, or in-context JS computation | [Native execution](../crw-dev/references/native-execution.md); prefer exposed Code Mode, not a forced runtime |
+| Real PABCD work or a PABCD plan | [crw-pabcd](../crw-pabcd/SKILL.md), then only the current phase references it selects |
 | Start/resume HOTL or diagnose its continuation/completion | [Runtime lifecycle](references/runtime-lifecycle.md) |
 | Create, register, amend, or inspect durable goalplan schema/CLI | [Durable goalplan](references/durable-goalplan.md) |
-| Two or more work-phases, including scope discovered later | [Implementation units](../pabcd/references/implementation-units.md) |
-| Repeated failure, reviewer FAIL, or unclear loop archetype | [Loop engineering](../pabcd/references/loop-engineering.md) |
-| Score optimization, plateau, or mechanism comparison | [Optimization rules](../pabcd/references/optimization.md) and loop engineering |
+| Two or more work-phases, including scope discovered later | [Implementation units](../crw-pabcd/references/implementation-units.md) |
+| Repeated failure, reviewer FAIL, or unclear loop archetype | [Loop engineering](../crw-pabcd/references/loop-engineering.md) |
+| Score optimization, plateau, or mechanism comparison | [Optimization rules](../crw-pabcd/references/optimization.md) and loop engineering |
 | Deliberate divergence/candidate comparison | [Divergence tiers](references/divergence-tiers.md) |
-| Choosing between a thread and a subagent, or planning parallel lanes | [Dispatch surfaces](../pabcd/references/dispatch-surfaces.md) |
+| Choosing between a thread and a subagent, or planning parallel lanes | [Dispatch surfaces](../crw-pabcd/references/dispatch-surfaces.md) |
 | Dispatching tasks that will run their own loop, or watching more than a few lanes | [Lane dispatch](references/lane-dispatch.md) |
-| Dispatch is authorized and needed | [Delegation](../pabcd/references/delegation.md) |
+| Dispatch is authorized and needed | [Delegation](../crw-pabcd/references/delegation.md) |
 | Waiting on dispatched work or long external processes, HITL or HOTL | [Waiting on work](references/waiting.md) |
 
 The installed skill listing and owner routers are the discovery path. crw skill
@@ -102,7 +107,7 @@ Keep explicit-only skills and leaf-safe delivery restrictions intact.
   threads needs — the lanes are the mechanism the work requires, so do not
   downgrade them onto the shared tree to avoid creating tasks. If the shape is
   unclear, ask once naming what you would create, then continue.
-  Details and the measured evidence: [Dispatch surfaces](../pabcd/references/dispatch-surfaces.md).
+  Details and the measured evidence: [Dispatch surfaces](../crw-pabcd/references/dispatch-surfaces.md).
 - ORCH-MANDATE-01 (STRICT): a claimed active loop needs real persisted FSM evidence,
   not narrated phase names. Read actual session state before entry or re-entry.
   SESSION-IDENTITY-01 uses your current SessionStart binding, corroborated with
@@ -110,8 +115,8 @@ Keep explicit-only skills and leaf-safe delivery restrictions intact.
   inherited or conflicting line, use `crw relay session current` then explicit
   `crw relay session bind` in the verified native cwd. Never set that environment ID,
   replay hook JSON or borrow a parent's/history ID. Binding does not verify hooks.
-  If PATH resolves an older development CLI, invoke this installed plugin's
-  `node "<pluginRoot>/bin/crw.mjs"` for these commands; preserve the development checkout.
+  If PATH resolves an older development CLI, invoke the installed runtime's
+  `"$HOME/.local/share/crw-runtime/current/bin/crw"` for these commands; preserve the development checkout.
   Phase-control details belong to crw-pabcd.
 - HOTL needs both an ACTIVE host goal and an in-flight PABCD cycle; HITL needs no
   host goal. If a required capability or binding is absent, report the preflight

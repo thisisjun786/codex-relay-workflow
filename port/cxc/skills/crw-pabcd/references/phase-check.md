@@ -9,7 +9,7 @@
 
    **C-READER-01 (DEFAULT):** when the work-phase delivers a document, report or
    visualization to a person, C includes the fresh-reader check from
-   [Reader documents](../../dev/references/reader-documents.md) READER-DOC-05 and records
+   [Reader documents](../../crw-dev/references/reader-documents.md) READER-DOC-05 and records
    where the reader stumbled and what was changed. For rendered output the reader
    works from the rendered pages, as READER-DOC-05 specifies.
 

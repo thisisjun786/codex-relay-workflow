@@ -1,8 +1,6 @@
 ---
 name: crw-qa
 description: "MUST USE after building or changing any user-facing surface (web UI, TUI, CLI, HTTP API, native desktop GUI) before claiming done — manual, surface-driving QA: real invocations on real surfaces, captured artifacts, adversarial classes, and teardown receipts feeding the PABCD C gate. Automated suites are dev-testing's job; this skill proves the surface actually works when driven. Triggers: manual QA, QA this, does it actually work, drive the UI, smoke test, visual QA, screenshot check, TUI alignment, CJK clipping, 수동 QA, 실제로 되는지 확인, 동작 확인, 직접 돌려봐."
-metadata:
-  short-description: "Manual surface-driving QA gate: faithful channels, evidence matrix, adversarial classes, teardown receipts."
 ---
 
 # crw-qa — Manual Surface QA Gate
@@ -24,7 +22,7 @@ crw's no-server, Codex-native-tool model.
 | `references/cli-tui-qa.md` | CLI or TUI surface scenarios | Session mechanics (QA-CLI-01): stdout/stderr separation, TTY-vs-pipe, env/config precedence, signal cleanup, tmux lifecycle + wait-for-marker driving |
 
 Browser selection (QA-TOOL-LADDER-01) is owned by
-[portable browser routing](../dev/references/browser-routing.md). Suitable available
+[portable browser routing](../crw-dev/references/browser-routing.md). Suitable available
 Aside, agbrowse and native browser capabilities may drive built UI; none is required.
 
 ## 0. Scope split (single ownership)
@@ -39,6 +37,11 @@ Aside, agbrowse and native browser capabilities may drive built UI; none is requ
   driven surface can still ship a broken border or a dead route; a driven
   surface without a suite has no regression guard. Promote a QA flow to a
   deterministic test (dev-testing §4.1) when it must stay guarded.
+
+- crw-check compares delivered work with canonical Linear documents and issue
+  criteria. This skill drives a built surface before the task's done claim; its
+  PASS is evidence that crw-check may read, not a delivery verdict. A delivery
+  check does not replace driven-surface QA.
 
 ## 1. Trust nothing
 
@@ -106,10 +109,11 @@ Rules:
   budget is terminal, so a mis-routed worker is released rather than trapped — but its
   verdict stays unresolved and blocks goal completion until a receipt settles it.
 
-After every scenario is done, emit the aggregate receipt:
+After every scenario is done, resolve `<crw-qa skill directory>` from the loaded
+skill path and emit the aggregate receipt:
 
 ```
-node plugins/crw/skills/qa/scripts/validate-evidence.mjs \
+node "<crw-qa skill directory>/scripts/validate-evidence.mjs" \
   .crw/evidence/<sessionId>/qa/ --emit-receipt
 ```
 

@@ -58,5 +58,143 @@
     "references/static-analysis.md": {
       "original": "1e3f3017b62b06af5ff3f44d030282811b4a0b96d0b0267380cd32380e378f36"
     }
-  }
+  },
+  "edits": [
+    {
+      "file": "SKILL.md",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Normalize frontmatter to the repository-supported name and description fields; preserve invocation description and record the removed oracle metadata. Route Linear-level work to its CRW owner and distinguish task modes from parent coordination.",
+      "hunks": [
+        {
+          "line": 4,
+          "old": [
+            "metadata:\n",
+            "  last-verified: \"2026-07-02\"\n",
+            "  short-description: \"Universal dev discipline: work classifier, modular limits, verification gate, safety rules.\"\n",
+            "  keywords: [\"develop\", \"implement\", \"refactor\", \"feature\", \"code quality\", \"verification\", \"browse\", \"browser\", \"QA\", \"agbrowse\", \"stacked PR\", \"stacked pull request\", \"stacked diff\", \"PR stack\", \"restack\", \"브라우저\", \"페이지 확인\", \"화면 QA\", \"플레이라이트\", \"스택 PR\", \"PR 쪼개기\"]\n"
+          ]
+        },
+        {
+          "line": 114,
+          "new": [
+            "Linear initiative definition, goal decomposition, delivery checks and project\n",
+            "coordination route to crw-define, crw-plan, crw-check and crw-run respectively.\n",
+            "The PABCD and task host-goal modes above govern a task's implementation; crw-run\n",
+            "parent goal mode creates no implementation goalplan or FSM.\n",
+            "\n"
+          ]
+        },
+        {
+          "line": 184,
+          "old": [
+            "[Dispatch surfaces](../pabcd/references/dispatch-surfaces.md).\n"
+          ],
+          "new": [
+            "[Dispatch surfaces](../crw-pabcd/references/dispatch-surfaces.md).\n"
+          ]
+        },
+        {
+          "line": 197,
+          "old": [
+            "Use a bounded [discovery packet](../pabcd/references/delegation.md#discovery-packet)\n"
+          ],
+          "new": [
+            "Use a bounded [discovery packet](../crw-pabcd/references/delegation.md#discovery-packet)\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "agents/openai.yaml",
+      "reason": "Provide the default prompt required by CRW skill metadata while preserving the oracle invocation policy.",
+      "hunks": [
+        {
+          "line": 4,
+          "new": [
+            "  default_prompt: \"Use $crw-dev to classify this task, load its surface owner and verify the result.\"\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/async-questions.md",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments.",
+      "hunks": [
+        {
+          "line": 83,
+          "old": [
+            "automatically captured by that path. See the [Interview owner](../../interview/SKILL.md)\n"
+          ],
+          "new": [
+            "automatically captured by that path. See the [Interview owner](../../crw-interview/SKILL.md)\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/logging.md",
+      "reason": "Replace the out-of-scope messenger serve command with a neutral long-running server example. Preserve the local-server stdout lesson without claiming a removed serve runtime. Retain distinct log consumers/sinks while removing out-of-scope messenger-bridge source claims. Update the CLI QA source-path citation to its renamed skill owner; original line span re-read.",
+      "hunks": [
+        {
+          "line": 10,
+          "old": [
+            "| Long-running local server | process stdout/stderr transport: this document's `LOG-CONSUMER-01`/`LOG-ONCE-01` only. HTTP and request instrumentation: `dev-backend` | `crw serve` |\n"
+          ],
+          "new": [
+            "| Long-running local server | process stdout/stderr transport: this document's `LOG-CONSUMER-01`/`LOG-ONCE-01` only. HTTP and request instrumentation: `dev-backend` | a local long-running daemon |\n"
+          ]
+        },
+        {
+          "line": 25,
+          "old": [
+            "`plugins/crw/skills/qa/references/cli-tui-qa.md:18-20`.)\n"
+          ],
+          "new": [
+            "`crw-qa/references/cli-tui-qa.md:18-20`.)\n"
+          ]
+        },
+        {
+          "line": 30,
+          "old": [
+            "A long-running local server is outside this rule. `crw serve` sends its whole injected\n",
+            "lifecycle logger to stdout today and that is fine: a server process's stdout is a log\n",
+            "stream, not pipeline output. Do not apply this rule to it retroactively.\n"
+          ],
+          "new": [
+            "A long-running local server is outside this rule: a server process's stdout is a\n",
+            "log stream, not pipeline output, so a lifecycle logger writing to stdout is fine.\n",
+            "Do not apply this rule to it retroactively.\n"
+          ]
+        },
+        {
+          "line": 41,
+          "old": [
+            "Worked example — the `crw serve` adapter-failure path is NOT a violation:\n",
+            "`components/messenger-bridge/src/bridge-controller.ts:191-196` records to the durable\n",
+            "event log and rethrows; `components/messenger-bridge/src/cli.ts:83-92` tells the operator\n",
+            "on stderr. Different sink, different consumer.\n"
+          ],
+          "new": [
+            "Worked example — a server's adapter-failure path is NOT a violation when the\n",
+            "controller records the event to the durable event log and rethrows, and the CLI\n",
+            "entry point tells the operator on stderr. Different sink, different consumer.\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/peer-collaboration.md",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments.",
+      "hunks": [
+        {
+          "line": 164,
+          "old": [
+            "| Unsure whether the work needs a peer task or a dispatched child | Read [Dispatch surfaces](../../pabcd/references/dispatch-surfaces.md); a child shares this working directory, a task gets its own |\n"
+          ],
+          "new": [
+            "| Unsure whether the work needs a peer task or a dispatched child | Read [Dispatch surfaces](../../crw-pabcd/references/dispatch-surfaces.md); a child shares this working directory, a task gets its own |\n"
+          ]
+        }
+      ]
+    }
+  ]
 }

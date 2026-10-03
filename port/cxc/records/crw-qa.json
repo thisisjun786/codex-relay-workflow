@@ -25,5 +25,70 @@
     "scripts/validate-evidence.mjs": {
       "original": "b06395832abee770c93905a9da1a1fd57b4845c2cbbd6fd094e3359f8e11b4f8"
     }
-  }
+  },
+  "edits": [
+    {
+      "file": "SKILL.md",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Normalize frontmatter to the repository-supported name and description fields; preserve invocation description and record the removed oracle metadata. Keep manual surface QA distinct from the Linear delivery-check verdict. Resolve the QA helper from its owning skill directory, including staging outside the plugin. Explain skill-directory placeholder resolution before invoking the staged QA helper. Quote the resolved helper path so a skill directory containing spaces is usable.",
+      "hunks": [
+        {
+          "line": 4,
+          "old": [
+            "metadata:\n",
+            "  short-description: \"Manual surface-driving QA gate: faithful channels, evidence matrix, adversarial classes, teardown receipts.\"\n"
+          ]
+        },
+        {
+          "line": 27,
+          "old": [
+            "[portable browser routing](../dev/references/browser-routing.md). Suitable available\n"
+          ],
+          "new": [
+            "[portable browser routing](../crw-dev/references/browser-routing.md). Suitable available\n"
+          ]
+        },
+        {
+          "line": 43,
+          "new": [
+            "- crw-check compares delivered work with canonical Linear documents and issue\n",
+            "  criteria. This skill drives a built surface before the task's done claim; its\n",
+            "  PASS is evidence that crw-check may read, not a delivery verdict. A delivery\n",
+            "  check does not replace driven-surface QA.\n",
+            "\n"
+          ]
+        },
+        {
+          "line": 109,
+          "old": [
+            "After every scenario is done, emit the aggregate receipt:\n"
+          ],
+          "new": [
+            "After every scenario is done, resolve `<crw-qa skill directory>` from the loaded\n",
+            "skill path and emit the aggregate receipt:\n"
+          ]
+        },
+        {
+          "line": 112,
+          "old": [
+            "node plugins/crw/skills/qa/scripts/validate-evidence.mjs \\\n"
+          ],
+          "new": [
+            "node \"<crw-qa skill directory>/scripts/validate-evidence.mjs\" \\\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "agents/openai.yaml",
+      "reason": "Provide the default prompt required by CRW skill metadata while preserving the oracle invocation policy.",
+      "hunks": [
+        {
+          "line": 4,
+          "new": [
+            "  default_prompt: \"Use $crw-qa to drive the built surface and capture evidence before claiming the task done.\"\n"
+          ]
+        }
+      ]
+    }
+  ]
 }
