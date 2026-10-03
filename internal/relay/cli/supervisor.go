@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"slices"
-	"strings"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
@@ -17,173 +15,52 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/supervisor"
 )
 
-// supervisorOrdered restores the order of each public Python record, not one
-// preferred-key order shared by unrelated record types. Persisted JSON is decoded
-// separately with decodeJSON, preserving its actual order and integer tokens.
-func supervisorOrdered(value any) any {
+// answerValue is a supervisor or merge-evidence answer as contract.Emit can write it. Emit prints a
+// map with its keys in sorted order, so no key order is rebuilt here (decision R3D-2). What is kept
+// is what a plain map would change or what Emit cannot write: a nil map is JSON null (an absent
+// record, not an empty one), and an obligation and a stage result are the plain maps they stand
+// for. A stored document decoded by decodeJSON (contract.OrderedObject) is left as it is, in its
+// stored order.
+func answerValue(value any) any {
 	switch v := value.(type) {
 	case *supervisor.Obligation:
 		if v == nil {
 			return nil
 		}
-		return supervisorOrdered(map[string]any{"schema": v.Schema, "obligationId": v.ID, "kind": v.Kind, "relationId": v.RelationID, "subject": v.Subject, "executionGeneration": v.Generation, "revisionHash": v.Revision, "issueKey": v.Issue, "basis": v.Basis, "detail": v.Detail})
+		return answerValue(map[string]any{"schema": v.Schema, "obligationId": v.ID, "kind": v.Kind, "relationId": v.RelationID, "subject": v.Subject, "executionGeneration": v.Generation, "revisionHash": optionalString(v.Revision), "issueKey": optionalString(v.Issue), "basis": v.Basis, "detail": v.Detail})
+	case supervisor.StageResult:
+		return answerValue(map[string]any(v))
 	case map[string]any:
 		if v == nil {
 			return nil
 		}
-		order := supervisorObjectKeys(v)
-		keys := strings.Fields(order)
-		var extra []string
-		for key := range v {
-			if !slices.Contains(keys, key) {
-				extra = append(extra, key)
-			}
+		out := make(map[string]any, len(v))
+		for key, item := range v {
+			out[key] = answerValue(item)
 		}
-		slices.Sort(extra)
-		keys = append(keys, extra...)
-		result := make(contract.OrderedObject, 0, len(v))
-		for _, key := range keys {
-			if item, ok := v[key]; ok {
-				result = append(result, contract.Field{Key: key, Value: supervisorOrdered(item)})
-			}
-		}
-		return result
+		return out
 	case []any:
-		result := make([]any, len(v))
+		out := make([]any, len(v))
 		for i, item := range v {
-			result[i] = supervisorOrdered(item)
+			out[i] = answerValue(item)
 		}
-		return result
-	case supervisor.StageResult:
-		return supervisorOrdered(map[string]any(v))
+		return out
 	case []map[string]any:
-		result := make([]any, len(v))
+		out := make([]any, len(v))
 		for i, item := range v {
-			result[i] = supervisorOrdered(item)
+			out[i] = answerValue(item)
 		}
-		return result
-	case []string:
-		result := make([]any, len(v))
-		for i, item := range v {
-			result[i] = item
-		}
-		return result
-	case *int:
-		if v == nil {
-			return nil
-		}
-		return *v
-	case *int64:
-		if v == nil {
-			return nil
-		}
-		return *v
-	case *string:
-		if v == nil {
-			return nil
-		}
-		return *v
-	default:
-		return value
+		return out
 	}
+	return value
 }
 
-func supervisorObjectKeys(v map[string]any) string {
-	present := func(key string) bool { _, ok := v[key]; return ok }
-	switch {
-	case present("message_id"):
-		return "message_id obligation_id obligation_kind relationship_id project_key purpose kind sender_task_id recipient_task_id subject packet state attempt_count next_eligible_at hold_reason lease_owner lease_until staged_at updated_at event_id submission_no reading"
-	case present("stagedAt"):
-		return "schema messageId obligationId kind relationshipId projectKey purpose sender recipient state turnOrigin readEstablishes holdReason stagedAt packet stagedFrom attempts readback reach limits"
-	case present("staged") && present("projectKey"):
-		return "schema projectKey staged refused gaps limits"
-	case present("staged"):
-		return "schema staged readdressed restated messageId from to fromEvent toEvent reason message recipient sender"
-	case present("recorded") && present("readTurnId"):
-		return "schema messageId recorded raced verified readTurnId turnOrigin detail delivered readAt assertedBy reconciled establishes limits"
-	case present("recorded"):
-		return "recorded seq obligation"
-	case present("relations"):
-		return "schema projectKey relations standing gaps limits projectState answeredBecause"
-	case present("relationId") && present("subject"):
-		return "schema obligationId kind relationId subject executionGeneration revisionHash issueKey basis detail decision relationshipStatus supersededBy"
-	case present("dischargeReason"):
-		return "schema obligationId kind standing dischargeReason priorReport recipient report reason obligation"
-	case present("candidate"):
-		return "schema report reason obligationId detail candidate"
-	case present("gap"):
-		return "schema gap relationId obligationIds reason detail"
-	case present("attached"):
-		return "state readable projectKey attached outstanding competingOwners unfinished basis limits"
-	case present("contactable"):
-		return "deliverable observedAt contactable asked ageSeconds reason"
-	case present("seq"):
-		return "seq at detail"
-	case present("table"):
-		return "table eventId outcome cxcStatus schema reason turn"
-	case present("attempted"):
-		return "attempted sent schema requestId messageId attemptNo recipientTaskId deliveryState sendAttempted retrySafe transportReceiptStatus failedOperation turnId observedAt messageState"
-	case present("attemptNo"):
-		return "requestId attemptNo state sendAttempted retrySafe turnId sentAt transportStartedAt observedAt message"
-	case present("readTurnId"):
-		return "readTurnId verified turnOrigin establishes requestId readAt detail"
-	case present("transport_accepted"):
-		return "transport_accepted received agreed applied verified"
-	case present("source") && present("state"):
-		return "state source detail"
-	case present("reading") && present("recheck"):
-		return "reading recheck note"
-	case present("sender") && present("projectKey"):
-		return "sender recipient projectKey"
-	case present("relationshipId") && present("state"):
-		return "relationshipId state"
-	case present("obligationId") && present("reason"):
-		return "obligationId kind reason detail"
-	case present("repository") && present("handoffGuidance"):
-		return "repository number url observation pinned reread handoffGuidance gates supersededRuns connections handoff findings checkDetail problems verdict provenance restatement"
-	case present("startedAt") && present("atomic"):
-		return "startedAt finishedAt atomic note"
-	case present("mergeStateStatus"):
-		return "number url state merged isDraft headSha baseSha baseRef mergeable mergeStateStatus verifiedAt"
-	case present("baseRefExists") && !present("threadResolutionNote"):
-		return "readable requiredDeclared strictBase baseRefExists threadResolutionRequired requiredProviders digest"
-	case present("baseRefExists"):
-		return "readable baseRefExists requiredDeclared requiredProviders strictBase threadResolutionRequired threadResolutionNote digest"
-	case present("connection") && present("pagesRead"):
-		return "connection pagesRead totalCount distinct complete pages"
-	case present("token") && present("returned"):
-		return "token returned totalCount"
-	case present("baseVerifiedAt"):
-		return "isDraft baseVerifiedAt baseSha baseRef reviewCoverage checks requiredDeclared requiredProviders threadDispositions criterionEvidence limitations"
-	case present("hasNextPage") && present("threadsSeen"):
-		return "hasNextPage pagesRead totalCount threadsSeen unresolved"
-	case v["kind"] == "reviewThread":
-		return "kind id resolved outdated path line author url excerpt"
-	case v["kind"] == "review":
-		return "kind id state author url submittedAt excerpt"
-	case v["kind"] == "comment":
-		return "kind id author url createdAt excerpt"
-	case present("source") && present("workflowRunUrl"):
-		return "source runId name superseded status conclusion attempt startedAt completedAt url workflowRunUrl workflowName"
-	case v["source"] == "check-run":
-		return "source runId name superseded status conclusion attempt startedAt completedAt url app provider"
-	case v["source"] == "commit-status":
-		return "source runId name superseded status conclusion attempt url updatedAt"
-	case present("runId") && present("provider"):
-		return "runId name headSha conclusion attempt provider"
-	case present("workflowId"):
-		return "runId workflowId event url conclusion"
-	case present("calls") && present("disabledReviewers"):
-		return "calls disabledReviewers conflictingRequiredReviewers"
-	case present("argv") && present("exitCode"):
-		return "argv exitCode"
-	case present("headSha") && present("current"):
-		return "headSha current problems"
-	case present("code") && present("detail"):
-		return "code detail incumbent"
-	default:
-		return ""
+// optionalString is a nullable string as JSON has it: the string, or null.
+func optionalString(s *string) any {
+	if s == nil {
+		return nil
 	}
+	return *s
 }
 
 // Prior report detail is persisted JSON, not a newly constructed public record.
@@ -224,7 +101,7 @@ func supervisorOutput(ctx context.Context, c *supervisor.Channel, answer map[str
 	if err := preserve(answer); err != nil {
 		return nil, err
 	}
-	return supervisorOrdered(answer), nil
+	return answerValue(answer), nil
 }
 
 // observationFile accepts any JSON value; its shape is the obligation reader's to interpret.
@@ -381,7 +258,7 @@ var supervisorReportRecordedCommand = dispatch.Command{Name: "supervisor-report-
 		return nil, supervisorResult(err)
 	}
 	result["obligation"] = o
-	return supervisorOrdered(result), nil
+	return answerValue(result), nil
 }}
 
 func supervisorChannel(ctx context.Context, services dispatch.Services) (*supervisor.Channel, func(), error) {
@@ -447,7 +324,7 @@ var supervisorStageCommand = dispatch.Command{
 			if err != nil {
 				return nil, err
 			}
-			return supervisorOrdered(answer), nil
+			return answerValue(answer), nil
 		}
 		var o *supervisor.Obligation
 		if hasObservation {
@@ -467,10 +344,10 @@ var supervisorStageCommand = dispatch.Command{
 		}
 		if hasObservation {
 			result, stageErr := c.StageWithReading(ctx, *o, readings[0], recipient, at)
-			return supervisorOrdered(result), supervisorResult(stageErr)
+			return answerValue(result), supervisorResult(stageErr)
 		}
 		result, err := c.Stage(ctx, *o, recipient, at)
-		return supervisorOrdered(result), supervisorResult(err)
+		return answerValue(result), supervisorResult(err)
 	},
 }
 var supervisorShowCommand = dispatch.Command{Name: "supervisor-show", ReadOnly: true, Run: func(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
@@ -518,7 +395,7 @@ var supervisorShowCommand = dispatch.Command{Name: "supervisor-show", ReadOnly: 
 			readback["detail"] = nil
 		}
 	}
-	return supervisorOrdered(result), nil
+	return answerValue(result), nil
 }}
 
 func requireSupervisorHost(services dispatch.Services, name, why string) error {
@@ -538,7 +415,7 @@ var SupervisorClock = clockNow
 
 func runSupervisorHost(ctx context.Context, command string, services dispatch.Services, args map[string]string) (any, error) {
 	result, err := SupervisorHostCommand(ctx, command, services.Selection.Path, services.SocketPath, services.Program, args, SupervisorClock())
-	return supervisorOrdered(result), supervisorResult(err)
+	return answerValue(result), supervisorResult(err)
 }
 
 var supervisorSendCommand = dispatch.Command{Name: "supervisor-send", Run: func(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {

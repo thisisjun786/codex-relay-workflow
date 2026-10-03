@@ -5,8 +5,8 @@ revision and whether it changed, why every node that is not moving is not moving
 it writes nothing. It follows the DAG execution contract (CRW-182) sections 1.3, 3.1, 7.4, 8 and 8.6; the plan is [the plan store](dag-plans.md) and the nodes' states are
 [the scheduler's reading](dag-scheduler.md), which this page projects and never derives again.
 
-The relay's log is the canonical plan and the execution records are the relay's (contract 1.3, decision D-13). This command is a read-only projection of them. Linear is a projection the later
-summary issue builds from this one: nothing here reads Linear.
+The relay's log is the canonical plan and the execution records are the relay's (contract 1.3, decision D-13). This command is a read-only projection of them. Linear is a projection that
+[the summary outbox](dag-outbox.md) builds from this one: nothing here reads Linear.
 
 ## The command
 
@@ -166,7 +166,7 @@ The scheduler's reading guarantees none of these happens; the check is what make
 
 ## Rebuilding the view
 
-A reader that keeps its own copy of the view (the Linear summary the next issue builds, a dashboard) has to resume from where it stopped, and what it assembles has to be what a live query prints. The rebuild is Go in `internal/relay/dagsched` (CRW-287). It adds no command, no table, no zone statement and no refusal reason, and it writes nothing: the readers are read transactions and the fold is a pure function. [DAG plans](dag-plans.md#events-cursors-and-snapshots) defines events, cursors and snapshots for the plan; this section applies the same boundary to the whole view.
+A reader that keeps its own copy of the view (a dashboard, say; the Linear summary of [the summary outbox](dag-outbox.md) states the live view and keeps no copy) has to resume from where it stopped, and what it assembles has to be what a live query prints. The rebuild is Go in `internal/relay/dagsched` (CRW-287). It adds no command, no table, no zone statement and no refusal reason, and it writes nothing: the readers are read transactions and the fold is a pure function. [DAG plans](dag-plans.md#events-cursors-and-snapshots) defines events, cursors and snapshots for the plan; this section applies the same boundary to the whole view.
 
 ### What an event is
 
@@ -217,6 +217,6 @@ No refusal reason is added. A cursor that names a revision the plan does not hav
 
 ## What is not here
 
-* The Linear summary is a later issue that calls the functions above and [the rebuild](#rebuilding-the-view). No command wraps the rebuild: a command that prints a delta would be a new document to specify and would add a command to the relay.
+* The Linear summary is [the summary outbox](dag-outbox.md): it states the live view, so it reads `Scheduler.Progress` in the transaction that appends its entry and compares digests, and writes its own table. It does not use the rebuild (a summary is a whole document, not a delta). No command wraps the rebuild: a command that prints a delta would be a new document to specify and would add a command to the relay.
 * The metrics contract 8.6 records for the evaluation (makespan, idle slot minutes, wake latencies) are not derived here, and no figure here is a target.
 * The byte checks of the artifacts are `dag-ready`'s ([the scheduler](dag-scheduler.md#input-checks)).
