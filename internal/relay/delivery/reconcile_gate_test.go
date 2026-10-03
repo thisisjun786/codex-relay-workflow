@@ -7,6 +7,7 @@ import (
 )
 
 func TestReconcilePass_receipt_gains_turn_id(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "")
 	event := f.queuedEvent(regOpts{})
 	f.host.script = []string{"in_progress"}

@@ -265,6 +265,7 @@ func storedCases() []storedCase {
 // would hold, both entry points must give the same whole answer, and what the case rewrote is put
 // back before the next one, with the normal receipt asked again at the end.
 func TestStoredReceiptIsJudgedByTheValuesItHolds(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := stageReceipt(t)
 	for _, c := range storedCases() {
