@@ -720,9 +720,11 @@ among its commands, the parent does not settle a conflict either.
      the result holds a line more often than the two sides give it (a line of its own, a repeated line, a conflict
      marker); `union_not_conflicted`: the path merged cleanly and N changed it; `union_result_not_a_file`: N
      removed the file or changed its mode.
-   - `regeneration_differs`: the command changes a file N has (the version suffix left at one side's value);
+   - `regeneration_differs`: the command changes a file N has (the version suffix left at one side's value), or
+     N holds the file with a mode that git's merge does not give it (a rule rebuilds bytes and leaves the mode alone);
      `regeneration_not_deterministic`: the two runs differ, or the result depends on what the file held before;
-     `regeneration_touches_outside`: the command changes a tracked file outside its regions;
+     `regeneration_touches_outside`: the command changes a tracked file outside its regions, its bytes or its
+     executable bit;
      `regeneration_failed`: it exits non-zero.
 
    Exit 2 means git or a command could not answer (a timeout, a command that cannot start, a declaration that

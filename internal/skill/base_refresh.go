@@ -158,6 +158,7 @@ type refreshGit struct {
 	dir      string
 	gitdir   string
 	objects  string   // the checkout's object directory, which the throwaway repository and the checkouts of the head borrow
+	format   string   // its object format (sha1 or sha256), which every repository that borrows those objects has to share
 	env      []string // for the checkout: the caller's environment without GIT_*, replace objects off
 	isoEnv   []string // for the throwaway repository: no configuration of any kind
 }
@@ -238,7 +239,7 @@ func openRefreshGit(ctx context.Context, checkout string) (*refreshGit, error) {
 	if err != nil {
 		return nil, err
 	}
-	g := &refreshGit{checkout: checkout, dir: dir, gitdir: filepath.Join(dir, "g.git"), objects: strings.TrimSpace(objects), env: env}
+	g := &refreshGit{checkout: checkout, dir: dir, gitdir: filepath.Join(dir, "g.git"), objects: strings.TrimSpace(objects), format: format, env: env}
 	g.isoEnv = append(refreshEnv(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_ATTR_NOSYSTEM=1", "GIT_TEMPLATE_DIR=", "HOME="+dir, "XDG_CONFIG_HOME="+dir)
 	if _, _, err := gitAt(ctx, g.isoEnv, "init", "--bare", "-q", "--object-format="+format, g.gitdir); err != nil {
 		g.close()

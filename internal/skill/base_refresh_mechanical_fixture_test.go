@@ -30,9 +30,11 @@ type mechFixture struct {
 	devTip   string // the tip of dev the update merges
 }
 
-func newMechFixture(t *testing.T) *mechFixture {
+func newMechFixture(t *testing.T) *mechFixture { return newMechFixtureFormat(t, "sha1") }
+
+func newMechFixtureFormat(t *testing.T, format string) *mechFixture {
 	t.Helper()
-	r := newRefreshRepoFormat(t, "sha1")
+	r := newRefreshRepoFormat(t, format)
 	f := &mechFixture{t: t, r: r}
 	f.put("backlog.md", backlogBase)
 	f.put("payload/one.txt", "one\n")

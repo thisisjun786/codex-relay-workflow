@@ -306,13 +306,34 @@ func (g *refreshGit) proveMechanical(ctx context.Context, previous, head, tip st
 			return refuse("conflict_not_content", "the conflict in %s is not one a rule settles: %s", p, problem)
 		}
 	}
-	var bases []string
+	headEntries, err := g.treeEntries(ctx, head)
+	if err != nil {
+		return nil, nil, err
+	}
 	if len(conflicted) > 0 {
-		if bases, err = g.mergeBases(ctx, previous, tip); err != nil {
+		bases, err := g.mergeBases(ctx, previous, tip)
+		if err != nil {
 			return nil, nil, err
 		}
 		if len(bases) != 1 {
 			return refuse("ambiguous_base", "%s and %s have %d merge bases, so the base git merged from is a virtual one and the stages of a conflict are not those of any commit", previous, tip, len(bases))
+		}
+		previousSide, err := g.sideChanges(ctx, bases[0], previous)
+		if err != nil {
+			return nil, nil, err
+		}
+		devSide, err := g.sideChanges(ctx, bases[0], tip)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, p := range conflicted {
+			code, detail, err := g.guardConflict(ctx, p, merged.conflicts[p], headEntries[p], previousSide, devSide)
+			if err != nil {
+				return nil, nil, err
+			}
+			if code != "" {
+				return refuse(code, "%s", detail)
+			}
 		}
 	}
 	var proof mechanicalProof
@@ -332,42 +353,41 @@ func (g *refreshGit) proveMechanical(ctx context.Context, previous, head, tip st
 	if len(renumberPaths) > 0 {
 		return refuse("rule_unchecked", "the rule of %s is renumber, which names no id and so has no check here: a renumbered clash is settled by the child", nameList(renumberPaths))
 	}
-	headEntries, err := g.treeEntries(ctx, head)
-	if err != nil {
-		return nil, nil, err
-	}
-	if len(unionPaths) > 0 {
-		var previousSide, devSide *sideChanges
-		if len(conflicted) > 0 {
-			if previousSide, err = g.sideChanges(ctx, bases[0], previous); err != nil {
-				return nil, nil, err
-			}
-			if devSide, err = g.sideChanges(ctx, bases[0], tip); err != nil {
-				return nil, nil, err
-			}
+	for _, p := range unionPaths {
+		applied, code, detail, err := g.checkUnionPath(ctx, p, merged.conflicts[p], headEntries[p])
+		if err != nil {
+			return nil, nil, err
 		}
-		for _, p := range unionPaths {
-			applied, code, detail, err := g.checkUnionPath(ctx, p, merged.conflicts[p], headEntries[p], previousSide, devSide)
-			if err != nil {
-				return nil, nil, err
-			}
-			if code != "" {
-				return refuse(code, "%s", detail)
-			}
-			proof.applied = append(proof.applied, appliedRule{p, applied})
+		if code != "" {
+			return refuse(code, "%s", detail)
 		}
+		proof.applied = append(proof.applied, appliedRule{p, applied})
 	}
 	if len(regenerate) > 0 {
+		var mergedEntries map[string]treeEntry
+		for _, command := range sortedCommands(regenerate) {
+			for _, p := range regenerate[command] {
+				want := ""
+				if stages := merged.conflicts[p]; stages != nil {
+					want, _ = plainTextConflict(stages)
+				} else {
+					if mergedEntries == nil {
+						if mergedEntries, err = g.treeEntries(ctx, merged.tree); err != nil {
+							return nil, nil, err
+						}
+					}
+					want = mergedEntries[p].mode
+				}
+				if got, ok := headEntries[p]; ok && want != "" && (got.kind != "blob" || got.mode != want) {
+					return refuse("regeneration_differs", "the head holds %s as a %s of mode %s, but git's merge has it with mode %s: a regeneration rule rebuilds the bytes of a file and leaves its mode alone", p, got.kind, got.mode, want)
+				}
+			}
+		}
 		devEntries, err := g.treeEntries(ctx, tip)
 		if err != nil {
 			return nil, nil, err
 		}
-		commands := make([]string, 0, len(regenerate))
-		for command := range regenerate {
-			commands = append(commands, command)
-		}
-		sort.Strings(commands)
-		for _, command := range commands {
+		for _, command := range sortedCommands(regenerate) {
 			rule := dagsched.RuleRegeneratePref + command
 			scope := func(p string) bool { r, ok := cov.ruleFor(p); return ok && r == rule }
 			result, err := g.regenerate(ctx, head, command, regenerate[command], scope, headEntries, devEntries, timeout)
@@ -387,27 +407,62 @@ func (g *refreshGit) proveMechanical(ctx context.Context, previous, head, tip st
 	return &proof, nil, nil
 }
 
-// checkUnionPath applies the union rule to one resolved path: it answers the pass line, or the code
-// and detail of a refusal. stages is nil for a path that merged cleanly, which a union does not settle.
-func (g *refreshGit) checkUnionPath(ctx context.Context, p string, stages *conflictStages, result treeEntry, previousSide, devSide *sideChanges) (applied, code, detail string, err error) {
-	if stages == nil {
-		return "", "union_not_conflicted", fmt.Sprintf("%s merged cleanly and the head changed it: a union rule settles a conflict, and a clean merge is kept as git made it", p), nil
+func sortedCommands(m map[string][]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
 	}
-	mode, _ := plainTextConflict(stages)
-	// git follows a rename that a plain diff may not (its detection stops at a limit), so a path that a
-	// side added is a possible rename target whenever that side deleted anything; a path a side did not
-	// touch under its own name was moved there by directory-rename detection
+	sort.Strings(keys)
+	return keys
+}
+
+// guardConflict applies to every conflicted path, whatever its rule, what makes a conflict one of text
+// that both sides changed under its own name: neither side may have moved the path, the stages and the
+// resolved file may not be binary. git follows a rename that a plain diff may not (its detection stops at
+// a limit), so a path that a side added is a possible rename target whenever that side deleted
+// anything; a path a side did not touch under its own name was moved there by directory-rename
+// detection. It answers the code and detail of a refusal, or none.
+func (g *refreshGit) guardConflict(ctx context.Context, p string, stages *conflictStages, result treeEntry, previousSide, devSide *sideChanges) (code, detail string, err error) {
 	for _, side := range []struct {
 		name    string
 		changes *sideChanges
 	}{{"previous head", previousSide}, {"dev tip", devSide}} {
 		if status := side.changes.status[p]; status != "A" && status != "M" {
-			return "", "conflict_not_content", fmt.Sprintf("the %s did not add or modify %s under its own name (status %q): a rename, a delete or a moved file is not a list that both sides extend", side.name, p, status), nil
+			return "conflict_not_content", fmt.Sprintf("the %s did not add or modify %s under its own name (status %q): a rename, a delete or a moved file is not a change both sides made to one file", side.name, p, status), nil
 		}
 	}
 	if previousSide.status[p] == "A" && devSide.status[p] == "A" && (previousSide.deleted || devSide.deleted) {
-		return "", "conflict_not_content", fmt.Sprintf("both sides added %s and one of them also deleted files: git may have followed a rename, which a union does not settle", p), nil
+		return "conflict_not_content", fmt.Sprintf("both sides added %s and one of them also deleted files: git may have followed a rename, which no rule settles", p), nil
 	}
+	var oids []string
+	for _, stage := range stages[1:] {
+		for _, entry := range stage {
+			oids = append(oids, entry.oid)
+		}
+	}
+	if result.kind == "blob" {
+		oids = append(oids, result.oid)
+	}
+	for _, oid := range oids {
+		content, err := g.blob(ctx, oid)
+		if err != nil {
+			return "", "", err
+		}
+		if strings.IndexByte(content, 0) >= 0 {
+			return "conflict_not_content", fmt.Sprintf("%s holds a NUL byte in a stage or in the head: it is a binary file, not text that both sides changed", p), nil
+		}
+	}
+	return "", "", nil
+}
+
+// checkUnionPath applies the union rule to one resolved path: it answers the pass line, or the code
+// and detail of a refusal. stages is nil for a path that merged cleanly, which a union does not settle.
+// The path has passed guardConflict, so its stages are those of one text file.
+func (g *refreshGit) checkUnionPath(ctx context.Context, p string, stages *conflictStages, result treeEntry) (applied, code, detail string, err error) {
+	if stages == nil {
+		return "", "union_not_conflicted", fmt.Sprintf("%s merged cleanly and the head changed it: a union rule settles a conflict, and a clean merge is kept as git made it", p), nil
+	}
+	mode, _ := plainTextConflict(stages)
 	if result.kind != "blob" || result.mode != mode {
 		return "", "union_result_not_a_file", fmt.Sprintf("the head does not hold %s as a regular file of mode %s (it has %q, mode %q)", p, mode, result.kind, result.mode), nil
 	}
@@ -425,11 +480,6 @@ func (g *refreshGit) checkUnionPath(ctx context.Context, p string, stages *confl
 	}
 	if got, err = g.blob(ctx, result.oid); err != nil {
 		return "", "", "", err
-	}
-	for _, text := range []string{base, ours, theirs, got} {
-		if strings.IndexByte(text, 0) >= 0 {
-			return "", "conflict_not_content", fmt.Sprintf("%s holds a NUL byte in a stage or in the head: it is not text a union can read line by line", p), nil
-		}
 	}
 	stats, failure := checkUnion([]byte(base), []byte(ours), []byte(theirs), []byte(got))
 	if failure != nil {

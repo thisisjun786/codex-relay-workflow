@@ -189,6 +189,17 @@ func TestMechanicalVersionRegeneration(t *testing.T) {
 		f.put("backlog.md", backlogBase+"- p1\n- p2\n- d1\n")
 		wantMechRefused(t, f.run(f.finish()), "regeneration_differs", "plugin.json")
 	})
+	t.Run("the manifest gains an executable bit that the command does not give it", func(t *testing.T) {
+		f := newMechFixture(t)
+		f.standard()
+		f.startMerge()
+		f.put("backlog.md", backlogBase+"- p1\n- p2\n- d1\n")
+		f.regen()
+		if err := os.Chmod(filepath.Join(f.r.path, "plugin.json"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		wantMechRefused(t, f.run(f.finish()), "regeneration_differs", "plugin.json", "mode")
+	})
 	t.Run("the version is recorded again on the merged tree", func(t *testing.T) {
 		f := newMechFixture(t)
 		head := f.merged()
@@ -339,6 +350,7 @@ func TestMechanicalRegeneration(t *testing.T) {
 		{"a command that leaves the file as it finds it", "true", "regeneration_not_deterministic", []string{"plugin.json"}},
 		{"a command that fails", "exit 3", "regeneration_failed", []string{"exit status 3"}},
 		{"a command that changes a tracked file outside the regions", "sh regen.sh; echo x >> other.txt", "regeneration_touches_outside", []string{"other.txt"}},
+		{"a command that makes a tracked file executable", "sh regen.sh; chmod +x other.txt", "regeneration_touches_outside", []string{"other.txt"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -365,6 +377,14 @@ func TestMechanicalRegeneration(t *testing.T) {
 		got := f.run(head, regions)
 		f.wantMechPasses(got, head, unionApplied)
 	})
+}
+
+const renamedUnion = "# Old\n- a\n- b\n- c\n- d\n- e\n- f\n- g\n- h\n# New\n- d\n"
+
+func TestMechanicalSha256Repository(t *testing.T) {
+	f := newMechFixtureFormat(t, "sha256")
+	head := f.merged()
+	f.wantMechPasses(f.run(head), head, unionApplied, regenApplied)
 }
 
 func TestMechanicalConflictsThatAreNotPlainText(t *testing.T) {
@@ -401,6 +421,15 @@ func TestMechanicalConflictsThatAreNotPlainText(t *testing.T) {
 		f.regen()
 		wantMechRefused(t, f.run(f.finish(), f.regionsFile(mechanical("plugin.json", "regenerate:sh regen.sh"))), "conflict_not_content", "plugin.json")
 	})
+	t.Run("a binary file that a regeneration command rebuilds", func(t *testing.T) {
+		f := newMechFixture(t)
+		f.previous = f.commitOn("feature", "previous binary", map[string]string{"asset.bin": "a\x00b\n"}, false)
+		f.devTip = f.commitOn("dev", "dev binary", map[string]string{"asset.bin": "c\x00d\n"}, false)
+		f.startMerge()
+		f.put("asset.bin", "x\x00y")
+		regions := f.regionsFile(mechanical("asset.bin", "regenerate:printf 'x\\000y' > asset.bin"))
+		wantMechRefused(t, f.run(f.finish(), regions), "conflict_not_content", "asset.bin")
+	})
 	t.Run("a binary file both sides added", func(t *testing.T) {
 		f := newMechFixture(t)
 		f.previous = f.commitOn("feature", "previous binary", map[string]string{"data.bin": "a\x00b\n"}, false)
@@ -409,7 +438,7 @@ func TestMechanicalConflictsThatAreNotPlainText(t *testing.T) {
 		f.put("data.bin", "a\x00b\nc\x00d\n")
 		wantMechRefused(t, f.run(f.finish(), union(f, "data.bin")), "conflict_not_content", "data.bin")
 	})
-	renamed := func(t *testing.T, bulk int) (*mechFixture, string) {
+	renamed := func(t *testing.T, bulk int, result string) (*mechFixture, string) {
 		f := newMechFixture(t)
 		f.r.git("checkout", "-q", "dev")
 		f.put("old.md", "# Old\n- a\n- b\n- c\n- d\n- e\n- f\n- g\n- h\n")
@@ -427,15 +456,20 @@ func TestMechanicalConflictsThatAreNotPlainText(t *testing.T) {
 		f.previous = f.r.git("rev-parse", "HEAD")
 		f.devTip = f.commitOn("dev", "dev adds the new name", map[string]string{"new.md": "# New\n- d\n"}, false)
 		f.startMerge()
-		f.put("new.md", "# Old\n- a\n- b\n- c\n- d\n- e\n- f\n- g\n- h\n# New\n- d\n")
+		f.put("new.md", result)
 		return f, f.finish()
 	}
 	t.Run("one side renamed the file the other side created", func(t *testing.T) {
-		f, head := renamed(t, 0)
+		f, head := renamed(t, 0, renamedUnion)
 		wantMechRefused(t, f.run(head, union(f, "new.md")), "conflict_not_content", "new.md")
 	})
+	t.Run("the same under a regeneration rule", func(t *testing.T) {
+		f, head := renamed(t, 0, "x\n")
+		regions := f.regionsFile(mechanical("new.md", "regenerate:printf 'x\\n' > new.md"))
+		wantMechRefused(t, f.run(head, regions), "conflict_not_content", "new.md")
+	})
 	t.Run("the same where rename detection of a plain diff is skipped", func(t *testing.T) {
-		f, head := renamed(t, 1001)
+		f, head := renamed(t, 1001, renamedUnion)
 		wantMechRefused(t, f.run(head, union(f, "new.md")), "conflict_not_content", "new.md")
 	})
 	t.Run("one side renamed a directory and the other added a file to it", func(t *testing.T) {

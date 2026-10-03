@@ -52,7 +52,7 @@ func (g *refreshGit) treeEntries(ctx context.Context, commit string) (map[string
 // commit's, with no configuration, hook or attribute but the commit's own: the throwaway repository's
 // objects are borrowed through alternates, so nothing is written to the checkout under check.
 func (g *refreshGit) checkoutTree(ctx context.Context, commit, dir string) error {
-	if _, _, err := gitAt(ctx, g.isoEnv, "init", "-q", dir); err != nil {
+	if _, _, err := gitAt(ctx, g.isoEnv, "init", "-q", "--object-format="+g.format, dir); err != nil {
 		return err
 	}
 	alternates := filepath.Join(dir, ".git", "objects", "info", "alternates")
@@ -66,8 +66,8 @@ func (g *refreshGit) checkoutTree(ctx context.Context, commit, dir string) error
 	return err
 }
 
-// snapshot is a hash of every file of dir outside .git, by path: a regular file by its bytes, a link
-// by its target.
+// snapshot is a hash of every file of dir outside .git, by path: a regular file by its bytes and
+// whether it is executable, a link by its target.
 func snapshot(dir string) (map[string]string, error) {
 	out := map[string]string{}
 	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
@@ -89,12 +89,20 @@ func snapshot(dir string) (map[string]string, error) {
 			}
 			out[rel] = "link:" + target
 		case d.Type().IsRegular():
+			info, err := d.Info()
+			if err != nil {
+				return err
+			}
 			data, err := os.ReadFile(p)
 			if err != nil {
 				return err
 			}
 			sum := sha256.Sum256(data)
-			out[rel] = "file:" + hex.EncodeToString(sum[:])
+			exec := "-"
+			if info.Mode().Perm()&0o111 != 0 {
+				exec = "x"
+			}
+			out[rel] = "file:" + exec + ":" + hex.EncodeToString(sum[:])
 		}
 		return nil
 	})
