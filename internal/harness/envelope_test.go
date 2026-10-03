@@ -49,11 +49,33 @@ func TestReadStdinBoundsTheInputAtTheLimit(t *testing.T) {
 		"exactly the limit":       {strings.NewReader(strings.Repeat("x", MaxStdinBytes)), strings.Repeat("x", MaxStdinBytes), false},
 		"one byte over the limit": {strings.NewReader(strings.Repeat("x", MaxStdinBytes+1)), "", true},
 		"far over the limit":      {strings.NewReader(strings.Repeat("x", 2*MaxStdinBytes)), "", true},
-		"a failing read":          {broken, "", false},                                        // what was read is dropped: the input reads as empty
-		"invalid UTF-8":           {strings.NewReader("a\xff\xfeb"), "a\uFFFD\uFFFDb", false}, // as Buffer.toString("utf8") has it: the replacement characters count in the string's byte length
+		"a failing read":          {broken, "", false}, // what was read is dropped: the input reads as empty
 	} {
 		if raw, overflow := ReadStdin(c.in); raw != c.raw || overflow != c.overflow {
 			t.Errorf("%s: %d bytes, overflow %v", name, len(raw), overflow)
+		}
+	}
+}
+
+// Expected values are what Node 24 prints for Buffer.from(bytes).toString("utf8"): one U+FFFD for each
+// maximal invalid subpart, which the WHATWG decoder defines.
+func TestReadStdinDecodesAsNodeDoes(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{"\xe2\x82\x41", "\U0000FFFDA"},
+		{"\xe2\x82", "\U0000FFFD"},
+		{"\xff\xfe", "\U0000FFFD\U0000FFFD"},
+		{"\xed\xa0\x80", "\U0000FFFD\U0000FFFD\U0000FFFD"},
+		{"\xf0\x80\x80\x80", "\U0000FFFD\U0000FFFD\U0000FFFD\U0000FFFD"},
+		{"\xf4\x90\x80\x80", "\U0000FFFD\U0000FFFD\U0000FFFD\U0000FFFD"},
+		{"\xc0\x80", "\U0000FFFD\U0000FFFD"},
+		{"\xe0\x80\x80", "\U0000FFFD\U0000FFFD\U0000FFFD"},
+		{"\xf0\x9f\x98", "\U0000FFFD"},
+		{"\x61\xe2\x82\xac\xe2", "a\U000020AC\U0000FFFD"},
+		{"\xf0\x9f\x98\x80\x80", "\U0001F600\U0000FFFD"},
+		{"\xc3\xa9", "\U000000E9"},
+	} {
+		if got, overflow := ReadStdin(strings.NewReader(c.in)); got != c.want || overflow {
+			t.Errorf("%q: got %q, want %q", c.in, got, c.want)
 		}
 	}
 }

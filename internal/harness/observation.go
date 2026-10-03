@@ -104,8 +104,11 @@ func RecordInvocation(raw, component, event string, env host.LookupEnv) (recorde
 			recorded = false
 		}
 	}()
+	if len(raw) > MaxStdinBytes || !slug(component) || !slug(event) {
+		return false
+	}
 	v, ok := decode(raw)
-	if len(raw) > MaxStdinBytes || !ok || !slug(component) || !slug(event) {
+	if !ok {
 		return false
 	}
 	o, _ := v.(map[string]any)

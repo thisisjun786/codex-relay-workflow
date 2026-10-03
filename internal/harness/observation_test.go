@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -94,6 +95,7 @@ func TestRecordInvocationRefusesWhatItCannotAttribute(t *testing.T) {
 		"agent_type without agent": `{"session_id":"s1","agent_type":"worker"}`,
 		"over 4 MiB":               `{"session_id":"s1","pad":"` + strings.Repeat(" ", MaxStdinBytes) + `"}`,
 		"truthy agent_type":        `{"session_id":"s1","agent_type":1}`,
+		"actor id with U+FFFD":     `{"session_id":"s1","agent_id":"a\ufffd"}`,
 		"lone surrogate actor":     `{"session_id":"s1","agent_id":"a\ud800"}`, // arrives as U+FFFD, which cannot tell two actors apart
 	} {
 		if RecordInvocation(raw, "pabcd-state", "stop", lookup(env)) {
@@ -135,5 +137,19 @@ func TestRecordInvocationNeedsAReadablePlugin(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(home, "crw")); err == nil {
 			t.Fatalf("%s: created %s/crw before the plugin was read", name, home)
 		}
+	}
+}
+
+// An input over the limit is refused before it is parsed: the oracle checks its byte length first, and a
+// parse of what the limit exists to refuse costs memory in proportion to its size.
+func TestRecordInvocationRefusesAnOversizedInputBeforeParsingIt(t *testing.T) {
+	env, _, _ := hookEnv(t)
+	raw := `{"session_id":"s1","pad":[` + strings.Repeat("1,", MaxStdinBytes/2) + `1]}`
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	recorded := RecordInvocation(raw, "pabcd-state", "stop", lookup(env))
+	runtime.ReadMemStats(&after)
+	if recorded || after.TotalAlloc-before.TotalAlloc > 1<<20 {
+		t.Errorf("recorded %v, allocated %d bytes", recorded, after.TotalAlloc-before.TotalAlloc)
 	}
 }
