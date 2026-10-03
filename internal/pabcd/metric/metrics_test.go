@@ -159,6 +159,24 @@ func TestDefaultClockWritesIsoTimestampsAndTheFirstRecordCreatesTheStateDirector
 	}
 }
 
+func TestRecordStartsANewLineAfterALedgerItCanNotReadToCheck(t *testing.T) {
+	cwd, row := t.TempDir(), "{\"ts\":\"t\",\"sessionId\":\"s\",\"workPhaseId\":\"default\",\"metricName\":\"m\",\"value\":1,\"baseline\":1,\"best\":1,\"source\":\"evaluate.sh\"}"
+	metricsWrite(t, cwd, MetricsFile, []byte(row)) // a valid final row without its newline
+	if err := os.Chmod(metricsPath(cwd), 0o200); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.ReadFile(metricsPath(cwd)); err == nil {
+		t.Skip("the ledger is readable despite mode 0200 (running as root)")
+	}
+	_, recordErr := RecordObjectiveMetric(cwd, RecordInput{SessionID: "s", MetricName: "m", Value: 2, Source: EvaluateSh})
+	if err := os.Chmod(metricsPath(cwd), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if rows := ReadObjectiveMetrics(cwd, "s"); recordErr != nil || len(rows) != 2 {
+		t.Errorf("record error %v, %d rows read after the append, want 2", recordErr, len(rows))
+	}
+}
+
 func TestWriteObjectiveKindRemovesItsTempFileWhenTheRenameFails(t *testing.T) {
 	cwd := t.TempDir()
 	if err := WriteObjectiveKind(cwd, "s", Maximize); err != nil {
@@ -462,7 +480,7 @@ func TestMetricsMatchTheRecordedOracle(t *testing.T) {
 					t.Errorf("op %d (%s): %s, want %s", i, sc.Ops[i].Op, g, w)
 				}
 			}
-			if !reflect.DeepEqual(got.Files, want.Files) {
+			if len(got.Files)+len(want.Files) > 0 && !reflect.DeepEqual(got.Files, want.Files) {
 				t.Errorf("files %q, want %q", got.Files, want.Files)
 			}
 		})

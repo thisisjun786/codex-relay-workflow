@@ -316,6 +316,20 @@
   ],
   "files": {"objective-kind/...json":"{\n  \"sessionId\": \"..\",\n  \"kind\": \"satisfy\",\n  \"updatedAt\": \"<TS>\"\n}","objective-kind/k-x.json":"{\n  \"sessionId\": \"k/x\",\n  \"kind\": \"maximize\",\n  \"updatedAt\": \"<TS>\"\n}","objective-kind/missing.json":"{\n  \"sessionId\": \"\",\n  \"kind\": \"satisfy\",\n  \"updatedAt\": \"<TS>\"\n}","objective-kind/q.json":"{\n  \"sessionId\": \"\u00e9 \ud55c\uae00\\n\\\"q\\\"\",\n  \"kind\": \"maximize\",\n  \"updatedAt\": \"<TS>\"\n}"}
  },
+ "kind_long_session_id": {
+  "results": [
+   {"kind":"maximize","explicit":"maximize"},
+   {"kind":"maximize","explicit":"maximize"}
+  ],
+  "files": {"objective-kind/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json":"{\n  \"sessionId\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"kind\": \"maximize\",\n  \"updatedAt\": \"<TS>\"\n}"}
+ },
+ "kind_session_id_too_long_for_the_temp_name": {
+  "results": [
+   {"error":true},
+   {"kind":"satisfy","explicit":null}
+  ],
+  "files": {}
+ },
  "kind_alias_collision": {
   "results": [
    {"kind":"maximize","explicit":"maximize"},

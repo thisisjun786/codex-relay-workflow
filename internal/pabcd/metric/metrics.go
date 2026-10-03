@@ -3,9 +3,10 @@
 // reading; the optional per-session kind file is .crw/objective-kind/<session>.json.
 //
 // Behaviour is ported as-is, oracle defects included (docs/port-cxc/known-defects.md, "Found by the objective metrics port"), except
-// two data-loss defects that are fixed: an append that finds the ledger not ending in a newline starts its row on a new line (the
-// oracle fuses the two into one line the reader drops), and WriteObjectiveKind does not replace a kind file it can not attribute to
-// the same session. Both writers hold a lock on the file they change, which excludes other writers of this package only.
+// two data-loss defects that are fixed: an append that finds the ledger not ending in a newline, or can not read it to see, starts its
+// row on a new line (the oracle fuses the two into one line the reader drops), and WriteObjectiveKind does not replace a kind file
+// that holds another session's id, holds U+FFFD, is not a regular file or can not be read (a file read without a string sessionId is
+// replaced). The appender locks the ledger and the kind writer the kind directory, which excludes other writers of this package only.
 //
 // Not literal: a string with a lone surrogate (an escape such as \ud800 in a ledger row) can not exist in Go and reads as U+FFFD, and
 // the oracle's RangeError for a plateau window of more than about 1.2e5 rows is not reproduced. Rows are spelled as JSON.stringify
@@ -13,7 +14,6 @@
 package metric
 
 import (
-	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -226,8 +226,9 @@ func RecordObjectiveMetric(cwd string, in RecordInput) (Record, error) {
 }
 
 // appendRow adds the row as one line, after a newline when the ledger does not end in one (the oracle appends the row to the
-// unterminated tail, and neither is read again). The check and the write run under a lock on the ledger, so a writer that fails after
-// part of a row is followed by one that sees the fragment. A ledger that can not be read is appended to as it is.
+// unterminated tail, and neither is read again). A ledger that can not be read may end that way too, so it gets the newline as well
+// (a blank line is skipped by the reader). The check and the write run under a lock on the ledger, so a writer that fails after part
+// of a row is followed by one that sees the fragment.
 func appendRow(path, row string) error {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o666)
 	if err != nil {
@@ -237,7 +238,7 @@ func appendRow(path, row string) error {
 		return errors.Join(err, f.Close())
 	}
 	line := row + "\n"
-	if raw, err := os.ReadFile(path); err == nil && len(raw) > 0 && raw[len(raw)-1] != '\n' {
+	if raw, err := os.ReadFile(path); err != nil || len(raw) > 0 && raw[len(raw)-1] != '\n' {
 		line = "\n" + line
 	}
 	_, err = f.WriteString(line)
@@ -331,7 +332,8 @@ func writeObjectiveKind(cwd, sessionID string, kind ObjectiveKind, now time.Time
 	if owner, named := ledgerDoc(string(raw))["sessionId"].(string); named && (owner != sessionID || strings.ContainsRune(owner, utf8.RuneError)) {
 		return fmt.Errorf("%s holds the objective kind of session %q, not %q", finalPath, owner, sessionID)
 	}
-	tmp := fmt.Sprintf("%s.%d.%s.tmp", finalPath, os.Getpid(), rand.Text())
+	// The oracle's temp name, so a long id fails or fits as it does there; the lock keeps two writers from sharing it.
+	tmp := fmt.Sprintf("%s.%d.%d.tmp", finalPath, os.Getpid(), now.UnixMilli())
 	defer os.Remove(tmp) // best effort; gone after a rename
 	body := fmt.Sprintf("{\n  \"sessionId\": %s,\n  \"kind\": %s,\n  \"updatedAt\": %s\n}", rowQuote(sessionID), rowQuote(string(kind)), rowQuote(now.UTC().Format(timestampLayout)))
 	if err = os.WriteFile(tmp, []byte(body), 0o666); err != nil {
