@@ -784,7 +784,7 @@
   {"flag":"--plan","required":true},
   {"flag":"--after","type":"int","help":"the last revision already seen; 0 reads from the first"},
   {"flag":"--limit","type":"int","help":"at most this many revisions (1 to 1000; 100 by default)"}]},
-{"name":"dag-ready","summary":"the ready set of a DAG plan, computed from the stored plan and the relay's execution records: the nodes whose every incoming edge is satisfied, ranked by hop-count critical path, descendants and age and cut by free slots and edit-region overlap, and one closed reason for every other live node. Reads only unless --record keeps the pass","options":[
+{"name":"dag-ready","summary":"the ready set of a DAG plan, computed from the stored plan and the relay's execution records: the nodes whose every incoming edge is satisfied, ranked by hop-count critical path, descendants and age and cut by free slots, edit-region overlap and the host's memory (defer:host_memory while MemAvailable, swap use or memory pressure is over its threshold), and one closed reason for every other live node. Reads only unless --record keeps the pass","options":[
   {"flag":"--plan","required":true},
   {"flag":"--record","kind":"true","help":"keep this reading as a pass (dag_passes); needs --actor"},
   {"flag":"--actor","help":"the task asking for the recorded pass"}]},
@@ -825,7 +825,7 @@
   {"flag":"--actor","required":true},
   {"flag":"--regions","required":true,"help":"the regions as a JSON list, or @file"},
   {"flag":"--expect-epoch","type":"int","help":"the coordinator epoch this session holds (dag-coordinator-claim answers it); a write from another epoch is refused stale_coordinator_epoch. 0 names none, which only a plan nobody claimed takes"}]},
-{"name":"dag-release","summary":"releases a ready DAG node to a Codex child through the managed-start engine: it re-verifies every input (artifact bytes re-hashed, pinned pull request heads read from the forge), writes the intent, the input manifest and a held execution slot together, starts the child with a request id derived from the node and the manifest, and binds the child to the node. Repeating it never creates a second child","options":[
+{"name":"dag-release","summary":"releases a ready DAG node to a Codex child through the managed-start engine: it re-verifies every input (artifact bytes re-hashed, pinned pull request heads read from the forge), writes the intent, the input manifest and a held execution slot together, starts the child with a request id derived from the node and the manifest, and binds the child to the node. A new release is refused capacity_exhausted while the host is short of memory (defer:host_memory). Repeating it never creates a second child","options":[
   {"flag":"--plan","required":true},
   {"flag":"--node","required":true},
   {"flag":"--actor","required":true,"help":"the project's registered parent, who owns the slot and the child"},

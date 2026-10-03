@@ -66,6 +66,8 @@ var zoneInventory = map[string][]string{
 	"dag_release_policy":      {"plan_id", "policy_seq", "window_size", "handling_seconds", "red_merges", "clean_run", "recorded_by", "coordinator_epoch", "recorded_at"},
 	"dag_landing_results":     {"result_id", "plan_id", "node_id", "kind", "commit_sha", "evidence", "recorded_by", "coordinator_epoch", "recorded_at"},
 	"dag_pass_release_policy": {"plan_id", "pass_seq", "policy_json"},
+	// CRW-468 (appended statement): the host memory bound a recorded pass saw.
+	"dag_pass_host_memory": {"plan_id", "pass_seq", "state", "reading_limit", "host_json"},
 }
 
 // rawDB opens path without any of the store's open rules, as an operator's sqlite3 would.

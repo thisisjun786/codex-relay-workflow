@@ -43,6 +43,9 @@ func refusalOfReading(n NodeReading) error {
 		return refuse(contract.RefusalDuplicateAssignment, "%s (%s): %s", n.NodeID, n.Reason, n.Detail)
 	case DeferCapacityUnmeasured:
 		return refuse(contract.RefusalCapacityUnmeasured, "%s (%s): %s", n.NodeID, n.Reason, n.Detail)
+	case DeferHostMemory:
+		// the host has no room for another child: the existing reason that means a bound is reached (D-02), with the closed reason and the values in the detail
+		return refuse(contract.RefusalCapacityExhausted, "%s (%s): %s", n.NodeID, n.Reason, n.Detail)
 	case DeferEditOverlap:
 		return refuse(contract.RefusalRegionOverlap, "%s (%s): %s", n.NodeID, n.Reason, n.Detail)
 	}
