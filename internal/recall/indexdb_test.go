@@ -206,7 +206,7 @@ func TestIndexVersionResetPreservesHistory(t *testing.T) {
 	if err := bumpHitCounts(db, []string{"thread:kept"}, "stamp"); err != nil {
 		t.Fatal(err)
 	}
-	recallSQL(t, db, "INSERT INTO files(path,mtime_ms,size,source,date) VALUES('old',1,1,'main','date'); UPDATE meta SET value='1' WHERE key='schema_version'")
+	recallSQL(t, db, "INSERT INTO files(path,mtime_ms,size,source,date) VALUES('old',1,1,'main','date'); INSERT INTO msgs(path,ord,ts,role,match_field,synthetic,text) VALUES('old',0,'ts','user','content',0,'quokka'); UPDATE meta SET value='1' WHERE key='schema_version'")
 	_ = db.Close()
 	db, err := openIndex(path)
 	if err != nil {
@@ -219,6 +219,11 @@ func TestIndexVersionResetPreservesHistory(t *testing.T) {
 	status, err := indexStatus(db, path)
 	if err != nil || status.Files != 0 || status.Msgs != 0 {
 		t.Fatal("derived cache not rebuilt", status, err)
+	}
+	for _, table := range []string{"msgs_fts", "msgs_tri"} {
+		if rows := indexRows(t, db, "SELECT rowid FROM "+table+" WHERE "+table+" MATCH 'quokka'"); len(rows) != 0 {
+			t.Fatal("reset retained FTS entries", table, rows)
+		}
 	}
 	if v := recallRow(t, recallStmt(t, db, "SELECT value FROM meta WHERE key='schema_version'"))["value"]; v != IndexSchemaVersion {
 		t.Fatal(v)
