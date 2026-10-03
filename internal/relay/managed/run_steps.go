@@ -380,14 +380,14 @@ type lifecycleChecker interface {
 	Lifecycle(context.Context, string, string) (bool, string, error)
 }
 
-// awaitStandby holds the business turn back until the standby turn has completed, the child may be sent to
-// and the worker policy is still ready.
+// awaitStandby waits for a known end of the inert standby. An interrupted or failed
+// standby keeps its original anchor; its business send also needs a ready host.
 func (r *startRun) awaitStandby(ctx context.Context) (contract.OrderedObject, error) {
 	turn, err := r.m.Adapter.ReadTurn(ctx, r.task, r.standby)
 	if err != nil {
 		return nil, err
 	}
-	if turn == nil || turn.Status != "completed" {
+	if turn == nil || (turn.Status != "completed" && turn.Status != "interrupted" && turn.Status != "failed") {
 		return r.answer(ctx, "incomplete", "standby", "standby_incomplete")
 	}
 	if check, ok := r.m.Adapter.(lifecycleChecker); ok {
@@ -405,6 +405,17 @@ func (r *startRun) awaitStandby(ctx context.Context) (contract.OrderedObject, er
 	}
 	if readiness != "" {
 		return r.answer(ctx, "refused", "business", readiness)
+	}
+	if turn.Status != "completed" {
+		// Observe before consuming the business operation id. The final guard still
+		// rechecks host readiness; neither observation is an atomic turn reservation.
+		code, err := hostReady(ctx, r.m.Adapter, r.task)
+		if err != nil {
+			return nil, err
+		}
+		if code != "" {
+			return r.answer(ctx, "incomplete", "business", code)
+		}
 	}
 	return nil, nil
 }

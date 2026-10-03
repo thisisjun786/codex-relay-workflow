@@ -356,6 +356,14 @@ This section supersedes the seeded `port: pending` statuses for native Write/Edi
 - `nativeEntries` trusts an injected native list without deduplicating it, and `buildCatalog` rejects only empty provider ids rather than blank ids, so native duplicates and a whitespace-only provider id survive (source `catalog.ts:112-121,144-151`; oracle cases `native-duplicates`/`whitespace`); port: kept.
 - `buildCatalog` and `readNativeCatalog` give the same cache entry different labels and only the latter retains its effort ladder (source `catalog.ts:102,119-120`; oracle native/build rows); port: kept.
 
+## CRW-488 — Render observation and artifact ledger
+
+- Appending a row to an unterminated render-ledger tail joins both records and the reader drops the joined line (source `pabcd-state/src/render-observations.ts:71-77`); port: fixed by CRW-488 (one guarded append preserves the tail; intentionally-changed oracle case `tail`).
+- State-directory and ledger links can direct append or reset outside the workspace, where reset truncates an external record (source `pabcd-state/src/render-observations.ts:67-77,126-132`); port: fixed by CRW-488 (workspace-confined opens preserve the external target; intentionally-changed ledger-link cases).
+- A QA declaration can name an outside screenshot, including through a symlink, and establish native evidence from it (source `pabcd-state/src/render-observations.ts:191-217`); port: fixed by CRW-488 (workspace-confined reads; intentionally-changed oracle case `outside`, internal absolute and relative links retained).
+- Failed observation calls still record an ordinary row, and a failed computer-use response still records a structured app signal (source `pabcd-state/src/render-observations.ts:250-275`); port: kept (the ledger records invocation and declared metadata, not successful semantic inspection).
+- The row reader trims JavaScript whitespace before parsing, but the native malformed checker parses the untrimmed line, so a BOM-prefixed valid row is readable and also malformed (source `pabcd-state/src/render-observations.ts:89-115,168-175`); port: kept.
+
 ## Found by the CRW-490 bg hooks port
 
 - Stop, prompt delivery and drain stamp records before handing their output to the caller, so discarded output or a broken stdout loses the notification while the job record/output files remain intact (source `plugins/codexclaw/components/bg-wake/src/hook.ts:67-70,85-87,101-103`, `cli.ts:72-77`); port: kept.
