@@ -200,3 +200,32 @@ func TestLoadedMCPMismatchNamesRecoveryUnderRecordedProfile(t *testing.T) {
 		})
 	}
 }
+
+func TestMCPRecoveryKeepsEarlierMismatchCodeAndRequiresLoadedDifference(t *testing.T) {
+	for _, free := range []bool{false, true} {
+		record := childRecord(free, "ui-qa")
+		record.Data = record.Data.Set("mcpServers", ordered(map[string]any{"disabled": []any{"oracle"}, "enabled": []any{"node_repl"}, "pluginsAbsent": []any{}}))
+		for _, scenario := range []struct {
+			status, field string
+			wantRecovery  bool
+		}{{"idle", "mcpServers", true}, {"notLoaded", "mcpServers", false}, {"idle", "unobservable", false}, {"idle", "model-only", false}} {
+			response := resume()
+			response["model"] = "changed-model"
+			switch scenario.field {
+			case "mcpServers":
+				response["mcpServers"] = map[string]any{"disabled": []any{}, "enabled": []any{"node_repl"}, "pluginsAbsent": []any{}}
+			case "model-only":
+				response["mcpServers"] = plain(record.Data.Get("mcpServers"))
+			}
+			rpc, findings, _ := verifyResume(*record, ordered(response), scenario.status)
+			code := registry.SettingsNotPreserved
+			if free {
+				code = registry.SettingsDifferAfterLoad
+			}
+			message, _ := rpc.Get("message").(string)
+			if rpc.Get("code") != code || len(findings) == 0 || strings.Contains(message, "Recovery:") != scenario.wantRecovery {
+				t.Errorf("free=%v scenario=%+v refusal=%v findings=%v", free, scenario, rpc, findings)
+			}
+		}
+	}
+}
