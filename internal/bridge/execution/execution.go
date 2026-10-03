@@ -79,7 +79,12 @@ func Optional(value string) any {
 
 type Authorized struct {
 	Model, Effort, Provenance string
-	Receipt                   map[string]any
+	// Pinned is whether the policy alone fixed this pair: the request matched the one pair its
+	// role declares. A role that lists several pairs leaves the choice to the task, so a request
+	// that matched one of them is a role_pair that is not Pinned: the user may have moved the task
+	// to another of them since, and a caller's stale statement would undo that.
+	Pinned  bool
+	Receipt map[string]any
 }
 
 func (p Policy) Mode() string {
@@ -144,6 +149,7 @@ func (p Policy) Authorize(in Input) (Authorized, error) {
 	role, declared := p.roles[in.Role]
 	provenance := "unverified"
 	var matched *RolePair
+	pinned := false
 	var overriddenBy any
 	if in.Exception != "" {
 		if err := p.exceptionCovers(in, model, effort); err != nil {
@@ -160,6 +166,7 @@ func (p Policy) Authorize(in Input) (Authorized, error) {
 			}
 			matched = &RolePair{Model: model, Effort: effort}
 			provenance = "role_pair"
+			pinned = len(role.Pairs) == 1
 		}
 	}
 	if in.Exception == "" && p.allowed != nil {
@@ -180,7 +187,7 @@ func (p Policy) Authorize(in Input) (Authorized, error) {
 		expectation["overriddenBy"] = overriddenBy
 		receipt["roleExpectation"] = expectation
 	}
-	return Authorized{model, effort, provenance, receipt}, nil
+	return Authorized{Model: model, Effort: effort, Provenance: provenance, Pinned: pinned, Receipt: receipt}, nil
 }
 
 func (p Policy) exceptionCovers(in Input, model, effort string) error {

@@ -98,9 +98,10 @@ A role entry states one pair with `model` and `reasoningEffort`, or several with
     ]}
 
 A request is judged against the whole pair. It passes when its model and its effort are both those of
-one pair in the list, and nothing else: `gpt-6.1-sol` at the effort Sonnet runs at is refused, and so is
-Sonnet at SOL's effort, because an effort name belongs to the model beside it. The list keeps the order
-the file declares, and that order carries no preference.
+one pair in the list, and nothing else. With the two pairs above, `gpt-6.1-sol` at `high` is refused and so
+is any other model at `xhigh`. Where the pairs of one role use different efforts, each effort goes only
+with the model beside it: Sonnet at SOL's effort is refused too, because an effort name belongs to its
+model. The list keeps the order the file declares, and that order carries no preference.
 
 The file is refused when it is read, not at the first creation, if a `pairs` list is empty or is not a
 list, names the same pair twice, holds an entry that is not exactly `{model, reasoningEffort}`, sits in
@@ -130,7 +131,10 @@ role that lists more than one pair is described differently:
   not which it does run on, and the user may have moved a task from one to another. So a relay delivery
   to such a task resumes it without transmitting the recorded pair and compares what the host reports
   with the record, the route a supervisor takes (see Changing an existing task), instead of restoring a
-  pair the user has since changed. A role with one pair keeps transmitting it.
+  pair the user has since changed. A role with one pair keeps transmitting it. The bridge's
+  `send_message_to_thread` holds the same line: a pair of such a role is authorized (`role_pair`) but is
+  withheld from a thread the host has not loaded, as `unverified_pair_for_unloaded_thread`, exactly as a
+  supervisor's or an exception's pair is.
 
 ## The file
 
