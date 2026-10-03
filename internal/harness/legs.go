@@ -87,7 +87,9 @@ func Legs() []Leg {
 		{"user-prompt-submit-guiding-worktree-rename", "user-prompt-submit", "worktree-guard", Generic, false, false, false, func(c Call) string {
 			return ContextOutput(pabcdhook.HandleWorktreeGuard(c.Raw, os.LookupEnv))
 		}},
-		{"pre-tool-use-guarding-managed-worktree-deletion", "pre-tool-use", "worktree-guard-pretool", Guard, true, false, false, nil},
+		{"pre-tool-use-guarding-managed-worktree-deletion", "pre-tool-use", "worktree-guard-pretool", Guard, true, false, false, func(c Call) string {
+			return pabcdhook.HandleWorktreeGuardPreTool(c.Raw, os.LookupEnv)
+		}},
 		{"pre-tool-use-guarding-memory-write", "pre-tool-use", "pre-tool-use-memory-write", Guard, true, false, false, nil},
 		{"pre-tool-use-guarding-automation-ownership", "pre-tool-use", "pre-tool-use-automation-ownership", Guard, false, false, false, nil},
 	}
