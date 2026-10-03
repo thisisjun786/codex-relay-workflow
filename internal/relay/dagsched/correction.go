@@ -258,7 +258,8 @@ func (s *Scheduler) RecordCorrection(ctx context.Context, plan, node, actor, sup
 			return s.recordHandOpened(txCtx, tx, plan, snap, n, rel, suppliedDigest, &out)
 		}
 		var previous string
-		if _, err := queryOne(txCtx, tx, "SELECT manifest_digest FROM dag_node_executions WHERE plan_id = ? AND node_id = ? AND relationship_id = ? AND execution_generation = ?", []any{plan, node, rel.ID, rel.Generation - 1}, &previous); err != nil {
+		// the manifest of the newest generation recorded before this one: the generation right before it, except after a recorded base refresh, which has no execution of its own and carries the manifest of the one before it
+		if _, err := queryOne(txCtx, tx, "SELECT manifest_digest FROM dag_node_executions WHERE plan_id = ? AND node_id = ? AND relationship_id = ? AND execution_generation < ? ORDER BY execution_generation DESC LIMIT 1", []any{plan, node, rel.ID, rel.Generation}, &previous); err != nil {
 			return err
 		}
 		digest, note, err := restorationDigest(findings.String)

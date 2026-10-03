@@ -742,3 +742,27 @@ func TestBaseRefreshReadsTheForgeFailClosed(t *testing.T) {
 		}
 	})
 }
+
+// A ruling that names no manifest leaves the previous one in force. After a recorded refresh the previous generation has no execution of its own, so the manifest carried over is the one before the refresh.
+func TestBaseRefreshThenARulingWithoutAManifestCarriesTheManifestOver(t *testing.T) {
+	s := newRefreshScenario(t)
+	s.openGeneration()
+	s.refreshBase()
+	if _, err := s.record("shared.json"); err != nil {
+		t.Fatal(err)
+	}
+	other := dig("the third edition of I's criteria after the refresh")
+	s.rvReregister("g", "I", "g-r3", s.rid, other, nil)
+	s.rvRule(s.rid, "needs_changes", other, restoration("rework it; no new manifest named"))
+	if got := s.count("SELECT COUNT(*) FROM generations WHERE relationship_id = ? AND execution_generation = 3", s.rid); got != 1 {
+		t.Fatalf("the relay's own writer did not open generation 3 (%d rows)", got)
+	}
+	res, err := s.sched.RecordCorrection(context.Background(), "g", "I", "parent", "")
+	if err != nil || res.Generation != 3 || !res.CarriedOver || res.ManifestDigest != s.accepted.Manifest || res.OpenedBy != OpenedByRuling {
+		t.Fatalf("dag-correct after the ruling = %v %+v, want generation 3 bound to the manifest %s carried over", err, res, s.accepted.Manifest)
+	}
+	var bound string
+	if err := s.s.DB.QueryRow("SELECT manifest_digest FROM dag_node_executions WHERE relationship_id = ? AND execution_generation = 3", s.rid).Scan(&bound); err != nil || bound != s.accepted.Manifest {
+		t.Fatalf("the execution row of generation 3 holds %q (%v)", bound, err)
+	}
+}
