@@ -2,10 +2,14 @@ package dagsched
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 )
 
 func (s *refreshScenario) refreshRows() int {
@@ -508,7 +512,7 @@ func TestBaseRefreshDoesNotOpenTheCorrectionRoute(t *testing.T) {
 	if _, err := s.record("shared.json"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.sched.RecordCorrection(context.Background(), "g", "I", "parent", ""); refusalReason(err) != "disposition_conflict" || !strings.Contains(err.Error(), "is not stale") {
+	if _, err := s.sched.RecordCorrection(context.Background(), "g", "I", "parent", ""); refusalReason(err) != "disposition_conflict" || !strings.Contains(err.Error(), "base refresh recorded") {
 		t.Fatalf("dag-correct = %v", err)
 	}
 }
@@ -593,4 +597,148 @@ func TestBaseRefreshAcceptsAConflictResolvedByKeepingASide(t *testing.T) {
 	if err != nil || len(res.Steps) != 1 || len(res.Steps[0].Resolved) != 1 || res.Steps[0].Resolved[0].Path != "data.bin" || res.Steps[0].Resolved[0].Blob != s.repo.git("rev-parse", s.head+":data.bin") {
 		t.Fatalf("record = %v %+v", err, res)
 	}
+}
+
+// Where the plan moves under a node whose base refresh is recorded, the node is handled like any other: the generation the refresh carried it to is not an open correction, the correction is the generation
+// after it and binds, and the reworked result is accepted in place of the first.
+func TestBaseRefreshThenAStaleNodeIsCorrectedAsAnyOther(t *testing.T) {
+	s := newRefreshScenario(t)
+	s.openGeneration()
+	s.refreshBase()
+	if _, err := s.record("shared.json"); err != nil {
+		t.Fatal(err)
+	}
+	s.invRevise("g", "I", "g-r3", invTitle("I revised after its base refresh"))
+	reading := s.read("g")
+	if n := reading.node("I"); n.Disposition != DispStale {
+		t.Fatalf("I = %+v, want stale", n)
+	}
+	if got := rvAction(t, reading, "I"); got != rvCorrect {
+		t.Fatalf("the route of the refreshed node whose slice changed = %q, want %q (a recorded refresh is not an open correction)", got, rvCorrect)
+	}
+	roots, err := relationshipRoots(context.Background(), s.s.Q(context.Background()), s.rid)
+	if err != nil || len(roots) == 0 {
+		t.Fatalf("the artifact roots of the child: %v %v", roots, err)
+	}
+	notes := writeFile(t, roots[0], "rework-notes.md", "the notes of the rework")
+	prepared, err := s.sched.PrepareCorrection(context.Background(), "g", "I", "parent", ManifestInput{Base: &BaseRef{Repository: s.repo.path, Ref: "dev"}, RuleVersion: s.request(false).RuleVersion,
+		Volatile: []Volatile{{Source: "linear:comment", SnapshotURI: notes, SHA256: shaOf([]byte("the notes of the rework")), CapturedAt: "2026-10-02T00:00:00Z"}}}, VerifyOptions{ArtifactRoots: roots})
+	if err != nil {
+		t.Fatalf("prepare I: %v", err)
+	}
+	if prepared.DispatchRequestID != CorrectionRequestID("g", "I", prepared.ManifestDigest, 3) {
+		t.Fatalf("prepared = %+v: the correction is the generation after the refresh", prepared)
+	}
+	reg := &registry.Registry{Store: s.s}
+	if _, err := reg.OpenGeneration(context.Background(), s.rid, prepared.DispatchRequestID, "needs_changes_revision", sql.NullString{}); err != nil {
+		t.Fatalf("generation-open: %v", err)
+	}
+	if _, err := reg.BindAnchor(context.Background(), s.rid, 3, "turn-dispatch-3-"+s.rid, "dispatch_receipt"); err != nil {
+		t.Fatalf("generation-bind: %v", err)
+	}
+	res, err := s.sched.RecordCorrection(context.Background(), "g", "I", "parent", prepared.ManifestDigest)
+	if err != nil || res.Generation != 3 || res.OpenedBy != OpenedByGenerationOpen || res.Replayed {
+		t.Fatalf("dag-correct after the refresh = %v %+v", err, res)
+	}
+	s.rvReportGeneration(s.rid, "I", 3, s.criteria)
+	second, err := s.accept("g", "I", AcceptInput{PullRequest: &PRRef{Repository: "owner/repo", Number: 7}, Supersedes: s.accepted.Acceptance.AcceptanceID})
+	if err != nil || second.Generation != 3 || second.SupersededID != s.accepted.Acceptance.AcceptanceID {
+		t.Fatalf("accept of the reworked result = %v %+v", err, second)
+	}
+	if n := s.read("g").node("I"); n.Disposition == DispStale {
+		t.Fatalf("I = %+v, still stale after its correction was accepted", n)
+	}
+}
+
+// A criteria change alone after a refresh ruled the same output again is a revalidation of the same acceptance, as it is for any node: the output the acceptance stands on is the refreshed generation's.
+func TestBaseRefreshThenACriteriaChangeIsRevalidatedAsAnyOther(t *testing.T) {
+	s := newRefreshScenario(t)
+	s.openGeneration()
+	s.refreshBase()
+	if _, err := s.record("shared.json"); err != nil {
+		t.Fatal(err)
+	}
+	other := dig("the second edition of I's criteria after the refresh")
+	s.rvReregister("g", "I", "g-r3", s.rid, other, nil)
+	reading := s.read("g")
+	if n := reading.node("I"); n.Disposition != DispStale {
+		t.Fatalf("I = %+v, want stale", n)
+	}
+	if got := rvAction(t, reading, "I"); got != rvRevalidate {
+		t.Fatalf("the route of the refreshed node whose criteria alone changed = %q, want %q", got, rvRevalidate)
+	}
+	s.rvRule(s.rid, "verified", other, rvVerified())
+	res, err := s.accept("g", "I", AcceptInput{PullRequest: &PRRef{Repository: "owner/repo", Number: 7}})
+	if err != nil || !res.Revalidated || res.Replayed || res.AcceptanceID != s.accepted.Acceptance.AcceptanceID {
+		t.Fatalf("accept after the review = %v %+v, want the same acceptance revalidated", err, res)
+	}
+	if n := s.read("g").node("I"); n.Disposition == DispStale {
+		t.Fatalf("I = %+v, still stale after the revalidation", n)
+	}
+}
+
+// The relay's own settling closes a merged relationship when nothing is owed and its plan node has an acceptance of the marked head. After a refresh the acceptance stands on the marked head, so a refreshed
+// relationship settles after its integration and not before the record.
+func TestBaseRefreshLetsTheRelationshipSettleAfterItsIntegration(t *testing.T) {
+	s := newRefreshScenario(t)
+	s.openGeneration()
+	s.refreshBase()
+	s.land()
+	reg := &registry.Registry{Store: s.s}
+	status := func() string {
+		var status string
+		if err := s.s.DB.QueryRow("SELECT status FROM relationships WHERE relationship_id = ?", s.rid).Scan(&status); err != nil {
+			t.Fatal(err)
+		}
+		return status
+	}
+	if _, err := reg.CloseMerged(context.Background(), "P-TEST", true, "parent", true); err != nil || status() != "active" {
+		t.Fatalf("settling before the record = %v, status %s, want it kept", err, status())
+	}
+	if _, err := s.record("shared.json"); err != nil {
+		t.Fatal(err)
+	}
+	if obs, err := s.observe(); err != nil || !obs.Integrated {
+		t.Fatalf("observe = %v %+v", err, obs)
+	}
+	if _, err := reg.CloseMerged(context.Background(), "P-TEST", true, "parent", true); err != nil || status() != "archived" {
+		t.Fatalf("settling after the integration = %v, status %s, want archived", err, status())
+	}
+}
+
+// The forge reading a refresh is proved against is read as an acceptance reads one: evidence the forge left incomplete is the host's failure and nothing is written. A merged pull request has the verdict unknown
+// by construction (candidate_not_open and candidate_unknown, because nothing is left to hand over), so it is readable when those are its only problems.
+func TestBaseRefreshReadsTheForgeFailClosed(t *testing.T) {
+	read := func(s *refreshScenario, state string, problems ...Problem) {
+		pr := openPR("owner/repo", 7, s.head)
+		pr.State, pr.Verdict, pr.Problems = state, "unknown", problems
+		s.forge.by["owner/repo#7"] = pr
+	}
+	ready := func(t *testing.T) *refreshScenario {
+		s := newRefreshScenario(t)
+		s.openGeneration()
+		s.refreshBase()
+		return s
+	}
+	t.Run("a merged pull request whose only problems are the merged ones", func(t *testing.T) {
+		s := ready(t)
+		read(s, "merged", Problem{Code: evidence.CandidateNotOpen}, Problem{Code: evidence.CandidateUnknown})
+		if _, err := s.record("shared.json"); err != nil || s.refreshRows() != 1 {
+			t.Fatalf("record = %v (rows %d)", err, s.refreshRows())
+		}
+	})
+	t.Run("a merged pull request with another problem", func(t *testing.T) {
+		s := ready(t)
+		read(s, "merged", Problem{Code: evidence.CandidateNotOpen}, Problem{Code: evidence.EnumerationTruncated, Detail: "the review list was cut"})
+		if _, err := s.record("shared.json"); err == nil || !strings.HasPrefix(refusalReason(err), "not a refusal") || !strings.Contains(err.Error(), "could not be read completely") || s.refreshRows() != 0 {
+			t.Fatalf("record = %v (rows %d), want the host's failure", err, s.refreshRows())
+		}
+	})
+	t.Run("an open pull request whose evidence is unknown", func(t *testing.T) {
+		s := ready(t)
+		read(s, "open", Problem{Code: evidence.EnumerationTruncated, Detail: "the review list was cut"})
+		if _, err := s.record("shared.json"); err == nil || !strings.HasPrefix(refusalReason(err), "not a refusal") || s.refreshRows() != 0 {
+			t.Fatalf("record = %v (rows %d), want the host's failure", err, s.refreshRows())
+		}
+	})
 }

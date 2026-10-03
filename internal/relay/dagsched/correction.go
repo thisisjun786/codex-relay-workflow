@@ -219,8 +219,24 @@ func (s *Scheduler) RecordCorrection(ctx context.Context, plan, node, actor, sup
 		if err := s.refuseLanded(txCtx, tx, plan, snap, n); err != nil {
 			return err
 		}
-		if !recorded.Valid || recorded.Int64 != rel.Generation-1 {
-			return refuse(contract.RefusalDispositionConflict, "generation %d of %s follows generation %d, and the last recorded execution of %s is %d", rel.Generation, rel.ID, rel.Generation-1, node, recorded.Int64)
+		// the generation a recorded base refresh carried the accepted result to counts as recorded for the chain of corrections (baserefresh.go): the next correction is the generation after it
+		chain := recorded.Int64
+		if acc, has, err := loadActiveAcceptance(txCtx, tx, plan, node); err != nil {
+			return err
+		} else if has {
+			stand, err := s.standOf(txCtx, tx, acc)
+			if err != nil {
+				return err
+			}
+			if stand.RefreshID != "" && stand.Generation == rel.Generation {
+				return refuse(contract.RefusalDispositionConflict, "generation %d of %s is the base refresh recorded for %s (%s), not a correction: a correction is the generation after it, opened when the result is stale", rel.Generation, rel.ID, node, short(stand.RefreshID))
+			}
+			if stand.Generation > chain {
+				chain = stand.Generation
+			}
+		}
+		if !recorded.Valid || chain != rel.Generation-1 {
+			return refuse(contract.RefusalDispositionConflict, "generation %d of %s follows generation %d, and the last recorded execution of %s is %d", rel.Generation, rel.ID, rel.Generation-1, node, chain)
 		}
 		var reason sql.NullString
 		if _, err := queryOne(txCtx, tx, "SELECT reason FROM generations WHERE relationship_id = ? AND execution_generation = ?", []any{rel.ID, rel.Generation}, &reason); err != nil {
