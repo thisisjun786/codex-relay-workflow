@@ -126,6 +126,3 @@ for (const words of RELAX) {
   add("relax", [words, RELAX_AT], [q.hasBoundaryTerm(groups), q.hasBoundaryTerm(relaxed), groupsJSON(relaxed), groups.map(q.groupTexts), RELAX_AT.map((idx) => groupsJSON(q.relaxGroupsAt(groups, new Set(idx))))]);
 }
 process.stdout.write(JSON.stringify(cases) + "\n");
-
-
-
