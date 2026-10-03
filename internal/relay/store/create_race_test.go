@@ -24,6 +24,7 @@ import (
 // CRW_CRASH_DB that prints "admitted" or "refused: <error>". With CRW30_PAUSE_POINT it
 // stops at that creation seam, prints "paused" and waits for a line on stdin.
 func Test30FirstOpenerProcess(t *testing.T) {
+	// Serial: child-process entry point (a parent test re-executes this binary for it); it assigns the createFault seam and returns at once otherwise.
 	path := os.Getenv("CRW_CRASH_DB")
 	if path == "" || os.Getenv("CRW30_FIRST_OPENER") == "" {
 		return
@@ -121,6 +122,7 @@ func (o *firstOpener) answer(t *testing.T) string {
 // openers race here since todo 44; the Python fence's took part until rollback to Python closed
 // at todo 43 (rollback_allowed=0).
 func Test30ConcurrentFirstOpenersNeverSeeAPartialStore(t *testing.T) {
+	// Serial: its first case asserts that the second opener says nothing for a fixed one-second window; under parallel load the opener may not have reached its wait yet and the check would pass vacuously.
 	judge := func(t *testing.T, path, creator string, answers map[string]string) {
 		t.Helper()
 		for runtime, answer := range answers {
@@ -214,6 +216,7 @@ func Test30ConcurrentFirstOpenersNeverSeeAPartialStore(t *testing.T) {
 // after placing its gate leaves a gate nobody holds, which the same preflight refuses as a
 // partial store, at once or once it has waited. A reader never probes the gate.
 func Test31StartPreflightWaitsForACreationAndRefusesAnAbandonedGate(t *testing.T) {
+	// Serial: assigns the package-level CreationWait seam, which every other running test would read.
 	partial := "partial store: write-gate.lock without a database"
 	bound := CreationWait
 	t.Cleanup(func() { CreationWait = bound })
@@ -375,6 +378,7 @@ func relayStart(t *testing.T, program, scopes string, argv ...string) <-chan rel
 // Since todo 44 only Go's relay acts on a store Go's first opener creates: the Python relay and
 // fence took the other roles until rollback to Python closed at todo 43 (rollback_allowed=0).
 func Test31ServiceFormsWaitForACreatorAndJudgeTheStoreItLeaves(t *testing.T) {
+	// Serial: it sleeps a fixed second and then asserts that no service form has answered; under parallel load a form may not have reached its wait yet and the check would pass vacuously.
 	// Go's relay alone: the Python relay acted and created here until todo 44.
 	relays := map[string]string{"go": relayCLI(t)}
 	foreign := "{\n  \"error\": \"refused\",\n  \"reason\": \"store_owned_by_other\",\n  \"detail\": \"the relay store belongs to another runtime\"\n}\n"

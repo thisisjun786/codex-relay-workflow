@@ -113,6 +113,7 @@ func unreferencedTables(tables, literals []string) []string {
 }
 
 func TestEverySchemaTable_has_a_go_query_referencing_it(t *testing.T) {
+	t.Parallel()
 	// Given: the frozen schema the store executes on open, parsed and cross-checked against the
 	// tables an opened store actually holds, so the parse cannot silently skip one.
 	tables := schemaTables(t)
@@ -141,6 +142,7 @@ func TestEverySchemaTable_has_a_go_query_referencing_it(t *testing.T) {
 }
 
 func TestEverySchemaTable_check_fails_when_a_reference_is_removed(t *testing.T) {
+	t.Parallel()
 	// Given: the production literals with the only statements naming fault_cursors removed.
 	tables := schemaTables(t)
 	literals := productionSQL(t, "fault_cursors")

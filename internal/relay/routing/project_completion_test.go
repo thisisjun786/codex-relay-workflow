@@ -48,6 +48,7 @@ func (r projectReader) Owners(context.Context, string, string) ([]contract.Order
 }
 func projectCompletionReplay(t *testing.T, id string) {
 	t.Helper()
+	t.Parallel()
 	var records []struct {
 		Args Object
 	}

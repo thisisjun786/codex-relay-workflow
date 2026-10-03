@@ -62,6 +62,7 @@ func restoreNumbers(value any) any {
 
 func pythonReplay(t *testing.T, property string) {
 	t.Helper()
+	t.Parallel()
 	var records []struct {
 		Operation string
 		Arguments []any

@@ -26,7 +26,6 @@ func fixture24(t *testing.T) *stageFixture {
 	t.Helper()
 	ctx := context.Background()
 	root := t.TempDir()
-	t.Setenv("HOME", root)
 	s, err := store.Open(ctx, filepath.Join(root, "state", "relay.sqlite3"), "")
 	if err != nil {
 		t.Fatal(err)
@@ -79,6 +78,7 @@ func (f *stageFixture) staged(t *testing.T) (Obligation, StageResult) {
 }
 
 func Test24_SCH_2_OneFactOneMessageAndStanding(t *testing.T) {
+	t.Parallel()
 	t.Run("prior_report", func(t *testing.T) {
 		supervisorMirror(t, "WhatMayBeStaged.test_staging_records_the_report_so_the_next_reading_converges", "event", func(c *Channel, s *store.Store) []any {
 			ctx := context.Background()
@@ -188,6 +188,7 @@ func Test24_SCH_2_OneFactOneMessageAndStanding(t *testing.T) {
 	}
 }
 func Test24_SCH_3_DurableStagedPacket(t *testing.T) {
+	t.Parallel()
 	supervisorMirror(t, "WhatMayBeStaged.test_the_staged_row_outlives_the_process_that_wrote_it", "event", func(c *Channel, s *store.Store) []any {
 		ctx := context.Background()
 		var event string
@@ -232,6 +233,7 @@ func Test24_SCH_3_DurableStagedPacket(t *testing.T) {
 	}
 }
 func Test24_SCH_4_OrdinaryAlreadyReportedAndWrongRecipient(t *testing.T) {
+	t.Parallel()
 	supervisorMirror(t, "WhatMayBeStaged.test_a_caller_naming_another_recipient_is_the_finding", "event", func(c *Channel, s *store.Store) []any {
 		ctx := context.Background()
 		var event string
@@ -284,6 +286,7 @@ func Test24_SCH_4_OrdinaryAlreadyReportedAndWrongRecipient(t *testing.T) {
 	}
 }
 func Test24_SCH_5_PacketPurposeAndEvidence(t *testing.T) {
+	t.Parallel()
 	supervisorMirror(t, "WhatTheMessageCarries.test_a_completion_names_the_issue_the_generation_and_where_to_read_it", "event", func(c *Channel, s *store.Store) []any {
 		ctx := context.Background()
 		var event string
@@ -331,6 +334,7 @@ func Test24_SCH_5_PacketPurposeAndEvidence(t *testing.T) {
 	}
 }
 func Test24_SCH_9_HandoverRefusesStaleStaging(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	o, _ := f.staged(t)
 	if err := storeseed.ArchiveScopeBinding(f.ctx, f.s, "b-supervisor", "archived", "b-next", f.at); err != nil {

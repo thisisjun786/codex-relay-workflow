@@ -106,7 +106,7 @@ func (k *releaseKit) rvReregister(plan, node, request, relationship, digest stri
 }
 
 // rvRule is the parent's ruling through the relay's own verdict writer on the newest ready_for_review event of a relationship. A ruling on an event that is already ruled verified is accepted only
-// as a re-review, which the relay opens when the criteria set changed since (the writer answers a replay otherwise), so each call names the set the review read.
+// as a re-review, which the relay opens when the criteria set changed since (the writer replays the same verdict and refuses a different one otherwise), so each call names the set the review read.
 func (k *releaseKit) rvRule(relationship, verdict, expected string, findings ...delivery.Obj) {
 	k.t.Helper()
 	var child, event string
@@ -406,9 +406,9 @@ func TestOutputReworkGoesToTheSameChildAsANewGeneration(t *testing.T) {
 	if got := rvAction(t, after, "C"); got != rvCorrect {
 		t.Fatalf("the route of C, which consumed the first acceptance of A = %q, want %q", got, rvCorrect)
 	}
-	// C was ruled under criteria that did not change, so the relay's verdict writer would answer a replay to another ruling and no generation could open: the reading says so, and the way the relay
+	// C was ruled under criteria that did not change and is accepted, so the relay's verdict writer refuses another ruling (disposition_conflict) and no generation could open: the reading says so, and the way the relay
 	// opens a review (the criteria registered for C change, which the plan revision that names the new digest does) is the one that goes through
-	if detail := rvDetail(t, after, "C"); !strings.Contains(detail, "replay") {
+	if detail := rvDetail(t, after, "C"); !strings.Contains(detail, "disposition_conflict") {
 		t.Fatalf("the route of C does not say that no ruling can open its generation yet: %q", detail)
 	}
 	ridC := accepted["C"].RelationshipID
@@ -769,7 +769,7 @@ func rvOpenByHand(t *testing.T, k *releaseKit, relationship, request string, bin
 }
 
 // Criterion c2, generation 2 of the packet: a node made stale because an input it consumed was replaced, its criteria untouched, is corrected by the same child through a generation the coordinator opens by hand
-// (the relay's generation-open and generation-bind, the verdict writer untouched). The relay's own writer answers a replay to a ruling on that head, which the test shows first; then dag-correct binds the hand-opened
+// (the relay's generation-open and generation-bind). The relay's own writer refuses a ruling on that accepted head with disposition_conflict and opens no generation, which the test shows first; then dag-correct binds the hand-opened
 // generation to the manifest it was prepared for, records how the instruction reached the child, and the reworked output is accepted with --supersedes. No relationship and no child is made.
 func TestReworkWithUnchangedCriteriaGoesThroughAGenerationOpenedByHand(t *testing.T) {
 	k, accepted, ridC, prepared := rvHandKit(t)
@@ -786,23 +786,19 @@ func TestReworkWithUnchangedCriteriaGoesThroughAGenerationOpenedByHand(t *testin
 	if invField(obj, "cause") != "input_changed" || rvAction(t, reading, "C") != rvCorrect {
 		t.Fatalf("C = %v, route %q", obj, rvAction(t, reading, "C"))
 	}
-	if detail := rvDetail(t, reading, "C"); !strings.Contains(detail, "generation-open") || !strings.Contains(detail, "replay") || !strings.Contains(detail, "generation-bind") {
+	if detail := rvDetail(t, reading, "C"); !strings.Contains(detail, "generation-open") || !strings.Contains(detail, "disposition_conflict") || !strings.Contains(detail, "generation-bind") {
 		t.Fatalf("the route of C does not name the generation opened by hand: %q", detail)
 	}
 
-	// the relay's own verdict writer takes no second ruling on that head: a replay, no generation
+	// the relay's own verdict writer takes no second ruling on that accepted head: a refusal that names the plan's acceptance and the route, no generation
 	var child string
 	if err := k.s.DB.QueryRow("SELECT child_task_id FROM relationships WHERE relationship_id = ?", ridC).Scan(&child); err != nil {
 		t.Fatal(err)
 	}
 	k.exec("UPDATE relationships SET allowed_recipients = ? WHERE relationship_id = ?", `["parent","`+child+`"]`, ridC)
 	record, err := delivery.NewAck(delivery.NewService(k.s, delivery.SystemClock{})).RecordVerdict(context.Background(), "evt-"+ridC, "needs_changes", "verdict-turn-probe", nil, []any{restoration("do it again")}, nil, releaseCriteriaDigest())
-	replayed := false
-	for _, f := range record {
-		replayed = replayed || f.Key == "_replay"
-	}
-	if err != nil || !replayed || k.count("SELECT COUNT(*) FROM generations WHERE relationship_id = ?", ridC) != 1 {
-		t.Fatalf("the relay's writer on C's settled head = %v %v (replayed %v): the premise of the hand-opened route does not hold", record, err, replayed)
+	if refusalReason(err) != "disposition_conflict" || record != nil || !strings.Contains(err.Error(), "accepted it as acceptance") || k.count("SELECT COUNT(*) FROM generations WHERE relationship_id = ?", ridC) != 1 {
+		t.Fatalf("the relay's writer on C's accepted head = %v %v: the premise of the hand-opened route does not hold", record, err)
 	}
 
 	// the coordinator opens the generation under the id the prepare printed, sends the instruction, binds the turn
@@ -1003,7 +999,7 @@ func TestAGenerationOpenedByHandIsBoundOnlyToTheManifestItWasOpenedFor(t *testin
 			t.Fatalf("the refusal does not name the route: %v", err)
 		}
 	})
-	t.Run("a node whose result is not stale is corrected by a ruling", func(t *testing.T) {
+	t.Run("a node whose accepted result is current has no hand-opened route", func(t *testing.T) {
 		k, accepted, _, _ := rvHandKit(t)
 		ridB := accepted["B"].RelationshipID
 		prepared := k.rvPrepare("sr", "B")

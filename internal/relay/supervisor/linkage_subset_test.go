@@ -13,9 +13,9 @@ import (
 )
 
 func Test24_SCH_1_StoreLiveHierarchy(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := t.TempDir()
-	t.Setenv("HOME", root)
 	s, err := store.Open(ctx, filepath.Join(root, "relay.sqlite3"), "")
 	if err != nil {
 		t.Fatal(err)

@@ -11,6 +11,7 @@ import (
 // Standing read every event of the project one statement at a time (three more for each), so the
 // statements a call sent grew with the events. They are one batched read now, whatever the events.
 func TestCRW299StandingStatementsDoNotGrowWithEvents(t *testing.T) {
+	t.Parallel()
 	const relationships = 6
 	cost := map[int]int64{}
 	for _, events := range []int{2, 20} {
@@ -30,6 +31,7 @@ func TestCRW299StandingStatementsDoNotGrowWithEvents(t *testing.T) {
 // daemon's visit must cost what the relationships that can still report cost, however many
 // archived ones the project holds.
 func TestCRW299VisitCostDoesNotGrowWithReleasedRelationships(t *testing.T) {
+	t.Parallel()
 	const active = 4
 	cost := map[int]int64{}
 	for _, released := range []int{0, 12} {
@@ -49,6 +51,7 @@ func TestCRW299VisitCostDoesNotGrowWithReleasedRelationships(t *testing.T) {
 // its issue's owner and edge released. An archived relationship its successor replaced still
 // reaches the level above through the successor's issue edge, so its report is still staged.
 func TestCRW299VisitSkipsReleasedRelationshipsAndKeepsSuperseded(t *testing.T) {
+	t.Parallel()
 	w := newStandingWorld(t, 3, 3)
 	w.archive(w.rels[0])
 	w.exec("UPDATE relationships SET status='archived', superseded_by=? WHERE relationship_id=?", w.rels[2], w.rels[1])
@@ -86,6 +89,7 @@ func (w *standingWorld) messageRelationships() []string {
 // report an addressee again, so the visit must go on raising it: archived alone does not release a
 // relationship.
 func TestCRW299VisitKeepsAnArchivedRelationshipWhoseIssueWasTakenAgain(t *testing.T) {
+	t.Parallel()
 	w := newStandingWorld(t, 2, 3)
 	w.archive(w.rels[0])
 	w.retake(w.rels[0])
@@ -103,6 +107,7 @@ func TestCRW299VisitKeepsAnArchivedRelationshipWhoseIssueWasTakenAgain(t *testin
 // the hold while nothing can be addressed, and re-addresses the report once the issue is taken
 // again.
 func TestCRW299VisitReleasesAHierarchyHoldWhenTheIssueIsTakenAgain(t *testing.T) {
+	t.Parallel()
 	w := newStandingWorld(t, 2, 3)
 	w.visit()
 	w.exec("UPDATE supervisor_messages SET hold_reason='hierarchy_unresolved' WHERE relationship_id=?", w.rels[0])

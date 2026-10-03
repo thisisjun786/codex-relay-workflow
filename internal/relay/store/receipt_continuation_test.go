@@ -10,11 +10,13 @@ import (
 // claim would admit the turn: a foreign thread is refused whatever it claims, and a claim that
 // names another anchor is answered by the anchor the generation really has.
 func TestContinuationRequired_marks_only_the_refusal_a_claim_would_cure(t *testing.T) {
+	t.Parallel()
 	later := TurnReference{ThreadID: fixtureChild, TurnID: "turn-goal-continuation-2", Status: "completed"}
 	claim := func(anchor string) AcceptOptions {
 		return AcceptOptions{Continuation: []byte(`{"anchorTurnId": "` + anchor + `", "actor": "` + fixtureChild + `", "reason": "goal-continuation turn of the same child"}`)}
 	}
 	t.Run("a later turn without a claim names the anchor it needs", func(t *testing.T) {
+		t.Parallel()
 		f := newIntakeFixture(t)
 		payload := f.readyPayload(f.relationship, []string{f.artifact("out.txt", "finished later")}, 1, later)
 		_, err := f.acceptPayload(payload)
@@ -25,6 +27,7 @@ func TestContinuationRequired_marks_only_the_refusal_a_claim_would_cure(t *testi
 		}
 	})
 	t.Run("a foreign thread is refused whatever it claims and is never told to claim", func(t *testing.T) {
+		t.Parallel()
 		f := newIntakeFixture(t)
 		foreign := TurnReference{ThreadID: "someone-else", TurnID: later.TurnID, Status: "completed"}
 		payload := f.readyPayload(f.relationship, []string{f.artifact("out.txt", "not mine")}, 1, foreign)
@@ -41,6 +44,7 @@ func TestContinuationRequired_marks_only_the_refusal_a_claim_would_cure(t *testi
 		}
 	})
 	t.Run("a claim naming another anchor is refused without the marker and admits nothing", func(t *testing.T) {
+		t.Parallel()
 		f := newIntakeFixture(t)
 		payload := f.readyPayload(f.relationship, []string{f.artifact("out.txt", "finished later")}, 1, later)
 		_, err := f.intake.AcceptChildReceiptWith(t.Context(), payload.bytes(t), later, claim("some-other-execution"))
@@ -54,6 +58,7 @@ func TestContinuationRequired_marks_only_the_refusal_a_claim_would_cure(t *testi
 		}
 	})
 	t.Run("a claim naming the anchor admits the turn and records the claim unverified", func(t *testing.T) {
+		t.Parallel()
 		f := newIntakeFixture(t)
 		payload := f.readyPayload(f.relationship, []string{f.artifact("out.txt", "finished later")}, 1, later)
 		if _, err := f.intake.AcceptChildReceiptWith(t.Context(), payload.bytes(t), later, claim(fixtureTurn)); err != nil {
@@ -68,6 +73,7 @@ func TestContinuationRequired_marks_only_the_refusal_a_claim_would_cure(t *testi
 		}
 	})
 	t.Run("a generation with no bound anchor has nothing to claim against", func(t *testing.T) {
+		t.Parallel()
 		f := newIntakeFixture(t)
 		unbound := f.register(registerOptions{issue: "REL-2"})
 		payload := f.readyPayload(unbound, []string{f.artifact("out.txt", "finished later")}, 1, later)

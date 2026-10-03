@@ -65,6 +65,7 @@ func requireStillThere(t *testing.T, path string) {
 }
 
 func TestUnlinkPinnedRemovesAfterDecide(t *testing.T) {
+	t.Parallel()
 	tree := newPinnedTree(t, "the manifest")
 	var seen string
 	got, err := tree.remove(1024, func(raw []byte) (bool, error) { seen = string(raw); return true, nil })
@@ -77,6 +78,7 @@ func TestUnlinkPinnedRemovesAfterDecide(t *testing.T) {
 }
 
 func TestUnlinkPinnedKeepsWhatDecideKeeps(t *testing.T) {
+	t.Parallel()
 	tree := newPinnedTree(t, "the manifest")
 	if got, err := tree.remove(1024, func([]byte) (bool, error) { return false, nil }); err != nil || got != PinnedKept {
 		t.Fatalf("remove = %v %v", got, err)
@@ -90,6 +92,7 @@ func TestUnlinkPinnedKeepsWhatDecideKeeps(t *testing.T) {
 }
 
 func TestUnlinkPinnedAbsent(t *testing.T) {
+	t.Parallel()
 	tree := newPinnedTree(t, "x")
 	if err := os.Remove(tree.file); err != nil {
 		t.Fatal(err)
@@ -119,6 +122,7 @@ func TestUnlinkPinnedAbsent(t *testing.T) {
 
 // A link in any component, or as the file, is refused before decide is asked, and what it points to is untouched.
 func TestUnlinkPinnedRefusesALinkInAnyComponent(t *testing.T) {
+	t.Parallel()
 	cases := map[string]struct {
 		plant  func(tree *pinnedTree, outside string)
 		reason string
@@ -162,6 +166,7 @@ func replaceWithLink(t *testing.T, path, target string) {
 
 // While the caller decides, an ancestor, the directory or the file is swapped. Every name was opened by descriptor, so the unlink lands on the directory that was read, and the tree behind the link is untouched.
 func TestUnlinkPinnedIsNotRedirectedByASwapWhileDeciding(t *testing.T) {
+	t.Parallel()
 	for name, swap := range map[string]func(tree *pinnedTree, outside string){
 		"an ancestor": func(tree *pinnedTree, outside string) { replaceWithLink(t, tree.parent, outside) },
 		"the root": func(tree *pinnedTree, outside string) {
@@ -198,6 +203,7 @@ func TestUnlinkPinnedIsNotRedirectedByASwapWhileDeciding(t *testing.T) {
 // While the walk itself is under way, an ancestor is swapped for a link right after it was opened: the next component is opened relative to the descriptor that was already open, so the removal still lands on the
 // original tree. A walk that opened components by path would be redirected to the victim.
 func TestUnlinkPinnedIsNotRedirectedByASwapDuringTheWalk(t *testing.T) {
+	// Serial: assigns the package-level afterPinnedComponent seam, which every other running test would reach.
 	tree := newPinnedTree(t, "the manifest")
 	outside, victim := outsideTree(t, "the manifest")
 	afterPinnedComponent = func(path string) {
@@ -219,6 +225,7 @@ func TestUnlinkPinnedIsNotRedirectedByASwapDuringTheWalk(t *testing.T) {
 
 // A FIFO opens at once (O_NONBLOCK), is not a regular file and is refused; the call does not wait for a writer.
 func TestUnlinkPinnedDoesNotBlockOnAFifo(t *testing.T) {
+	t.Parallel()
 	tree := newPinnedTree(t, "x")
 	if err := os.Remove(tree.file); err != nil {
 		t.Fatal(err)
@@ -248,6 +255,7 @@ func TestUnlinkPinnedDoesNotBlockOnAFifo(t *testing.T) {
 }
 
 func TestUnlinkPinnedRefusesAFileOverTheLimit(t *testing.T) {
+	t.Parallel()
 	tree := newPinnedTree(t, "0123456789")
 	calls := 0
 	got, err := tree.remove(4, func([]byte) (bool, error) { calls++; return true, nil })
@@ -259,6 +267,7 @@ func TestUnlinkPinnedRefusesAFileOverTheLimit(t *testing.T) {
 
 // The name is checked against the file that was read just before the unlink: a file put in its place while the caller decided is not removed.
 func TestUnlinkPinnedKeepsAFileThatReplacedTheOneThatWasRead(t *testing.T) {
+	t.Parallel()
 	tree := newPinnedTree(t, "the manifest")
 	got, err := tree.remove(1024, func([]byte) (bool, error) {
 		if err := os.Rename(tree.file, tree.file+".old"); err != nil {
@@ -276,6 +285,7 @@ func TestUnlinkPinnedKeepsAFileThatReplacedTheOneThatWasRead(t *testing.T) {
 }
 
 func TestUnlinkPinnedRefusesARelativeRoot(t *testing.T) {
+	t.Parallel()
 	if _, err := UnlinkPinned("artifacts", "dag-input-manifests", "copy.json", 1024, yes); err == nil {
 		t.Fatal("a relative root was accepted")
 	}

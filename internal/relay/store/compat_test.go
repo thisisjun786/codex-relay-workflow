@@ -15,6 +15,7 @@ import (
 )
 
 func TestSchema_embeds_frozen_contract(t *testing.T) {
+	t.Parallel()
 	given, err := os.ReadFile(filepath.Join(repositoryRoot(t), "contract/schema/relay-sqlite.sql"))
 	if err != nil {
 		t.Fatal(err)
@@ -35,6 +36,7 @@ func TestSchema_embeds_frozen_contract(t *testing.T) {
 // be refused on every store that holds it. Until todo 44 it sat in scripts/ci/tests beside the
 // Python store's twin of this test.
 func TestOpen_preserves_shipped_schema(t *testing.T) {
+	t.Parallel()
 	data, err := os.ReadFile(filepath.Join("testdata", "relay_schema_shipped.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -110,6 +112,7 @@ func normalizeSQL(s string) string {
 	return out.String()
 }
 func TestSQLiteOpen_uses_bounded_pool(t *testing.T) {
+	t.Parallel()
 	files, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)
@@ -174,6 +177,7 @@ func TestSQLiteOpen_uses_bounded_pool(t *testing.T) {
 	}
 }
 func TestStoreSocket_uses_five_second_timeout(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "relay.sqlite3")
 	s, err := fixtureOpen(context.Background(), path, "socket")
 	if err != nil {
