@@ -81,4 +81,3 @@ func TestWorktreeLegsAnswerThroughTheEnvelope(t *testing.T) {
 		t.Errorf("a long context is not cut: %d units, ends %q", len(utf16.Encode([]rune(long))), long[len(long)-40:])
 	}
 }
-
