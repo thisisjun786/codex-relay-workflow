@@ -264,3 +264,84 @@ func TestAppendInterviewEventMapAttributions(t *testing.T) {
 		}
 	}
 }
+
+// The scan ledger is the file the interview answer ledger writes its question and answer rows to as well. The oracle appends after a
+// final line that has no line feed without a separator, so the new row is joined to that line and the reader drops both (known
+// defect, repaired by CRW-474: port: fixed). AppendInterviewEvent starts the row on a line of its own instead; the transition ledger
+// is not part of this repair.
+
+const answerLedgerRow = `{"ts":"t","sessionId":"s","turnId":"t1","event":"question_asked","questionId":"q","eventId":"t1:q:question_asked","question":"?"}`
+
+// seedInterviews writes content as the session's scan ledger, with the directories the appender would make.
+func seedInterviews(t *testing.T, cwd, session, content string) {
+	t.Helper()
+	p := interviewLedgerPath(cwd, session)
+	if err := os.MkdirAll(filepath.Dir(p), 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAppendInterviewEventKeepsAFinalLineThatHasNoLineFeed(t *testing.T) {
+	ev := InterviewEvent{TS: "t", SessionID: "s", Event: ScanCompleted, RoundID: 2}
+	row := appendedRow(t, ev)
+	scan := strings.TrimSuffix(appendedRow(t, InterviewEvent{TS: "t", SessionID: "s", Event: ScanStarted, RoundID: 1}), "\n")
+	for name, c := range map[string]struct {
+		before, separator string
+		scans             int // the scan rows ReadInterviewEvents returns afterwards
+	}{
+		"scan row":          {scan, "\n", 2},
+		"answer ledger row": {answerLedgerRow, "\n", 1},
+		"partial row":       {`{"partial":`, "\n", 1},
+		"lone CR":           {answerLedgerRow + "\r", "\n", 1},
+		"terminated row":    {answerLedgerRow + "\n", "", 1}, // a complete line gets no blank line before the row
+		"empty file":        {"", "", 1},
+	} {
+		cwd := t.TempDir()
+		seedInterviews(t, cwd, "s", c.before)
+		if err := AppendInterviewEvent(cwd, ev); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if got, want := fileText(t, interviewLedgerPath(cwd, "s")), c.before+c.separator+row; got != want {
+			t.Errorf("%s:\n got %q\nwant %q", name, got, want)
+		}
+		if got := ReadInterviewEvents(cwd, "s"); len(got) != c.scans || got[len(got)-1].RoundID != 2 {
+			t.Errorf("%s: read %+v, want %d scan rows ending with round 2", name, got, c.scans)
+		}
+	}
+}
+
+func TestAppendInterviewEventToAFileWhoseTailCannotBeRead(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a write-only file")
+	}
+	ev := InterviewEvent{TS: "t", SessionID: "s", Event: ScanCompleted, RoundID: 2}
+	row := appendedRow(t, ev)
+	for name, c := range map[string]struct{ before, want string }{
+		"unterminated": {answerLedgerRow, answerLedgerRow + "\n" + row}, // the tail is unknown, so the row starts on a new line
+		"empty":        {"", row},                                       // an empty file has no tail to protect
+	} {
+		cwd := t.TempDir()
+		seedInterviews(t, cwd, "s", c.before)
+		p := interviewLedgerPath(cwd, "s")
+		if err := os.Chmod(p, 0o200); err != nil {
+			t.Fatal(err)
+		}
+		if f, err := os.Open(p); err == nil {
+			_ = f.Close()
+			t.Skip("the file stays readable")
+		}
+		err := AppendInterviewEvent(cwd, ev)
+		if chmodErr := os.Chmod(p, 0o600); chmodErr != nil {
+			t.Fatal(chmodErr)
+		}
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if got := fileText(t, p); got != c.want {
+			t.Errorf("%s:\n got %q\nwant %q", name, got, c.want)
+		}
+	}
+}
