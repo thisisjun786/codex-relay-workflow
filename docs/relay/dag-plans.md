@@ -185,8 +185,8 @@ tables (decision D-01):
   `SchemaVersion` stays `1`; no existing table or column changes;
 * the zone is the twelve `dag_*` tables of the contract: `dag_plans`, `dag_plan_revisions`, `dag_nodes`, `dag_edges`,
   `dag_input_manifests`, and the tables the scheduler writes (`dag_node_executions`, `dag_releases`,
-  `dag_acceptances`, `dag_integration_observations`, `dag_decisions`, `dag_cap_basis`; `dag_coordinator_claims` is written by `dag-coordinator-claim`, and the scheduler's writes check it), and ten tables the scheduler appended to it (`dag_merge_checks`, `dag_acceptance_revalidations`, `dag_acceptance_forge`,
-  `dag_passes`, `dag_node_regions`, `dag_node_region_grades`, `dag_release_requests`, `dag_conflict_observations`, `dag_conflict_observation_files`, `dag_release_recoveries`; see [the scheduler's store](dag-scheduler.md#the-store)), and one for the project's
+  `dag_acceptances`, `dag_integration_observations`, `dag_decisions`, `dag_cap_basis`; `dag_coordinator_claims` is written by `dag-coordinator-claim`, and the scheduler's writes check it), and fifteen tables the scheduler appended to it (`dag_merge_checks`, `dag_acceptance_revalidations`, `dag_acceptance_forge`,
+  `dag_passes`, `dag_node_regions`, `dag_node_region_grades`, `dag_release_requests`, `dag_conflict_observations`, `dag_conflict_observation_files`, `dag_tip_conflict_observations`, `dag_tip_conflict_observation_files`, `dag_conflict_drift`, `dag_conflict_sweeps`, `dag_conflict_sweep_members`, `dag_release_recoveries`; see [the scheduler's store](dag-scheduler.md#the-store)), and one for the project's
   Linear summary queue (`dag_summary_outbox`, with an index and five triggers: [the summary outbox](dag-outbox.md)). Node-keyed
   tables carry `plan_id`, so node ids need only be unique within a plan;
 * a command that declares itself read-only never creates the zone: it arrives with the first write open;
