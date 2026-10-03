@@ -230,15 +230,57 @@ func runReceiptCommand(argv []string, cwd string, o ReceiptRunOptions) error {
 	cmd.Args[0] = argv[0]
 	cmd.Dir, cmd.Env = cwd, source.GitEnv(nil)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = o.Stdin, o.Stdout, o.Stderr
-	if o.Context != nil {
-		// Buffer/writer adapters use pipes: a descendant can hold them after the owned child is killed. Bound the drain,
-		// closing only Cmd's own descriptors, while leaving that descendant's process untouched.
-		cmd.WaitDelay = receiptPipeDrainWait
+	// Own non-file output adapters rather than let Cmd wait indefinitely for a descendant's inherited descriptors.
+	// Normal completion drains through EOF without a timeout; only actual cancellation closes these readers.
+	var pipes []receiptOutputPipe
+	for _, slot := range []*io.Writer{&cmd.Stdout, &cmd.Stderr} {
+		if _, file := (*slot).(*os.File); file {
+			continue
+		}
+		r, w, err := os.Pipe()
+		if err != nil {
+			return err
+		}
+		defer r.Close()
+		defer w.Close()
+		pipes = append(pipes, receiptOutputPipe{r, w, *slot})
+		*slot = w
 	}
-	return cmd.Run()
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	drained := make(chan error, len(pipes))
+	for _, p := range pipes {
+		_ = p.child.Close()
+		go func() { _, err := io.Copy(p.destination, p.reader); drained <- err }()
+	}
+	stop := make(chan struct{})
+	defer close(stop)
+	if len(pipes) > 0 && o.Context != nil {
+		go func() {
+			select {
+			case <-ctx.Done():
+				for _, p := range pipes {
+					_ = p.reader.Close()
+				}
+			case <-stop:
+			}
+		}()
+	}
+	err = cmd.Wait()
+	for range pipes {
+		copyErr := <-drained
+		if err == nil && copyErr != nil {
+			err = copyErr
+		}
+	}
+	return err
 }
 
-const receiptPipeDrainWait = 100 * time.Millisecond
+type receiptOutputPipe struct {
+	reader, child *os.File
+	destination   io.Writer
+}
 
 // Node's POSIX PATH search resolves relative entries in the command cwd, whereas exec.LookPath uses the caller cwd and
 // rejects relative results with ErrDot. Resolve before constructing Cmd so its own lookup cannot silently change that.

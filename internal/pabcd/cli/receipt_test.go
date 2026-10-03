@@ -60,13 +60,16 @@ func receiptHelper(a []string) {
 		_, _ = io.Copy(io.Discard, os.Stdin)
 	case "hold":
 		_, _ = io.Copy(io.Discard, os.Stdin)
-	case "descendant":
+	case "descendant", "descendant-exit":
 		child := exec.Command(os.Args[0], "--receipt-helper", "hold")
 		child.Stdin, child.Stdout, child.Stderr = os.Stdin, os.Stdout, os.Stderr
 		if err := child.Start(); err != nil {
 			panic(err)
 		}
 		fmt.Fprintln(os.Stdout, child.Process.Pid)
+		if a[0] == "descendant-exit" {
+			return
+		}
 		_, _ = io.Copy(io.Discard, os.Stdin)
 	case "atomic-failure":
 		// git status must not refresh its index under the helper's file-size limit: the failure belongs to receipt publication.
@@ -542,9 +545,44 @@ func (w receiptPIDWriter) Write(b []byte) (int, error) {
 	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
 	if err == nil {
 		w.ids <- pid
-		w.cancel()
+		if w.cancel != nil {
+			w.cancel()
+		}
 	}
 	return len(b), nil
+}
+
+func TestReceiptUncancelledInheritedStream(t *testing.T) {
+	root := receiptRepo(t)
+	inR, inW, err := os.Pipe()
+	receiptMust(t, err)
+	defer inR.Close()
+	defer inW.Close()
+	ids := make(chan int, 1)
+	result := make(chan ReceiptCLIResult, 1)
+	a := ReceiptCLIArgs{Verb: "test", Cwd: root, Session: "s1", Command: receiptCommand(t, "descendant-exit")}
+	go func() {
+		got, err := RunReceiptCLI(a, ReceiptRunOptions{Context: context.Background(), Stdin: inR, Stdout: receiptPIDWriter{ids: ids}, Stderr: io.Discard})
+		if err != nil {
+			got.Output = err.Error()
+		}
+		result <- got
+	}()
+	pid := <-ids
+	holder, err := os.FindProcess(pid)
+	receiptMust(t, err)
+	defer holder.Kill()
+	// The ready PID proves a live descriptor holder. Keep its input open beyond the rejected 100ms cutoff, then release it.
+	select {
+	case got := <-result:
+		t.Fatalf("returned before inherited stream EOF: %#v", got)
+	case <-time.After(300 * time.Millisecond):
+		_ = inW.Close()
+		got := <-result
+		if got.Code != 0 {
+			t.Fatal(got)
+		}
+	}
 }
 
 func TestReceiptCancellationWithInheritedStream(t *testing.T) {
