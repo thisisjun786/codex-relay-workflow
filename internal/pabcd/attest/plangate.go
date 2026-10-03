@@ -8,7 +8,8 @@ import (
 )
 
 // PlanResult is plan-gate.ts PlanArtifactResult: on success Unit is the validated plan unit, normalised relative to cwd, so the
-// caller persists exactly what was validated (REVIEW-BINDING-01); on refusal Reason says why.
+// caller persists exactly what was validated (REVIEW-BINDING-01); on refusal Reason says why. Unit is the spelling that resolves
+// from cwd to the directory the gate validated: the lexical relative one, else the physical relative one, else the absolute real path.
 type PlanResult struct {
 	OK     bool
 	Unit   string
@@ -47,7 +48,7 @@ func ValidatePlanArtifacts(att *Attestation, cwd string) PlanResult {
 	}
 	realUnit, err := filepath.EvalSymlinks(unit)
 	if err != nil {
-		return missing
+		return unresolved("planUnit " + att.PlanUnit)
 	}
 	base, err := resolve("", cwd)
 	if err != nil {
@@ -85,7 +86,7 @@ func ValidatePlanArtifacts(att *Attestation, cwd string) PlanResult {
 		}
 		phys, err := filepath.EvalSymlinks(path)
 		if err != nil {
-			return gone
+			return unresolved("planPaths entry " + p)
 		}
 		if _, ok := within(realBase, phys); !ok {
 			return PlanResult{Reason: "planPaths entry " + p + " resolves outside the working directory (symlinks followed)."}
@@ -131,6 +132,13 @@ func names(cwd, spelling, phys string) bool {
 // unreadable is the refusal for the oracle's exception: the working directory cannot be read.
 func unreadable(err error) PlanResult {
 	return PlanResult{Reason: "the working directory cannot be read: " + err.Error()}
+}
+
+// unresolved is the refusal for an entry that exists but whose real path cannot be named: a real path past the system's length limit
+// (only a shorter spelling through a symlink reaches it, which the oracle's statSync accepts), or one changed while it was checked.
+// Containment cannot be shown for it, so the gate refuses instead of guessing.
+func unresolved(what string) PlanResult {
+	return PlanResult{Reason: what + " could not be resolved to a real path, so it cannot be shown to lie inside the working directory (its real path is longer than the system allows, or it changed while it was checked)."}
 }
 
 // resolve is path.isAbsolute(p) ? p : path.resolve(cwd, p). A relative result is made absolute against the process's physical

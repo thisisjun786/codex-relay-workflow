@@ -220,6 +220,35 @@ func TestPlanGateRefusesAnExistingAbsoluteUnitWhenTheWorkingDirectoryCannotBeRea
 	reasonHas(t, ValidatePlanArtifacts(plan(unit), "."), "working directory")
 }
 
+// A real path past the system's length limit cannot be named by a path-based check, so an entry that only a shorter spelling through a
+// symlink reaches is refused as unresolved, where the oracle's statSync accepts it: containment cannot be shown, and the gate does not
+// guess (the refusal is the fail-closed direction; os.Root would answer without the limit).
+func TestPlanGateRefusesAnEntryWhoseRealPathIsTooLongToResolve(t *testing.T) {
+	root := t.TempDir()
+	cwd := filepath.Join(root, "ws")
+	must(t, os.Mkdir(cwd, 0o755))
+	write(t, filepath.Join(cwd, "unit", "000_plan.md"))
+	t.Chdir(cwd)
+	name := strings.Repeat("d", 200)
+	short := ""
+	for i := 1; i <= 24; i++ {
+		must(t, os.Mkdir(name, 0o755))
+		must(t, os.Chdir(name))
+		if i == 19 {
+			wd, err := os.Getwd()
+			if err != nil {
+				t.Skip("this system cannot name a directory that deep:", err)
+			}
+			short = wd
+		}
+	}
+	write(t, "000_plan.md")
+	must(t, os.Symlink(short, filepath.Join(cwd, "shortcut")))
+	entry := cwd + "/shortcut/" + strings.TrimSuffix(strings.Repeat(name+"/", 5), "/") // 1,000 bytes written, 4,800 real
+	reasonHas(t, ValidatePlanArtifacts(plan(entry), cwd), "planUnit "+entry+" could not be resolved to a real path")
+	reasonHas(t, ValidatePlanArtifacts(plan("unit", entry+"/000_plan.md"), cwd), "planPaths entry "+entry+"/000_plan.md could not be resolved to a real path")
+}
+
 // The unit handed back is persisted and read again as resolve(cwd, unit): it must name the directory the gate validated.
 func TestPlanGateReturnsTheDirectoryItValidated(t *testing.T) {
 	root := t.TempDir()
