@@ -295,6 +295,7 @@ func TestResolveTombstone(t *testing.T) {
 		}
 		var gotSessions []string
 		if entries, err := os.ReadDir(sessions); err == nil {
+			gotSessions = []string{}
 			for _, e := range entries {
 				gotSessions = append(gotSessions, e.Name())
 			}

@@ -2,12 +2,13 @@
 // lies inside the evidence directory, and the tombstone recorded in session state when its attempts run out. It is the Go form
 // of CXC v0.2.40 pabcd-state/src/subagent-evidence.ts lines 1-325 (commit 3c1459ac) under the CRW names of
 // contract/schema/cxc/name-substitution.json: .crw/evidence, .crw/evidence-attempts, and the tombstone in the session file.
-// The unrecordable-verdict marker, the spent budget, resolution and the directives (lines 326-475) and the gate itself (476
-// on) belong to other issues and import this package.
+// The unrecordable-verdict marker, the spent budget, resolution and the directives (lines 326-470) are unrecordable.go,
+// budget.go and directives.go of this package; the gate itself (472 on) belongs to another issue and imports it.
 //
-// Behaviour is ported as-is, oracle defects included (docs/port-cxc/known-defects.md). One defect is fixed: when the session
-// file cannot be read, the oracle's second tier replaces it with a default state carrying the corruption sentinel, and the
-// bytes it held are lost. Here nothing is written over an unreadable file; the verdict goes to the MarkerWriter instead.
+// Behaviour is ported as-is, oracle defects included (docs/port-cxc/known-defects.md). One kind of defect is fixed, the loss
+// of state: when the session file cannot be read, the oracle's second tier replaces it with a default state carrying the
+// corruption sentinel, and the bytes it held are lost. Here nothing is written over an unreadable file; the verdict goes to the
+// MarkerWriter instead. The same rule holds in ResolveTombstone (budget.go): a list the read cut or repaired is not written back.
 //
 // Differences that no recorded case or fixture shows:
 //
@@ -18,8 +19,8 @@
 //   - Payload is this package's value type, not harness.SubagentStop, so that the hook registration in package harness can
 //     import this package. The hook issue converts; an absent field is "".
 //   - RecordTombstone takes the last-resort marker writer as an argument. After the fix above it is the only durable denial
-//     when the session file is unreadable, so a nil writer is not a supported production value; until the issue that ports the
-//     writer and the gate's caller both land, that last resort does nothing.
+//     when the session file is unreadable, so a nil writer is not a supported production value: the gate passes
+//     WriteUnrecordableMarker. Until the gate lands, nothing passes it.
 //   - A temp file is named by the pid and a random string, where the oracle uses Date.now().
 package evidence
 
