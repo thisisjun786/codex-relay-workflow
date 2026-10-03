@@ -114,22 +114,15 @@ func textOf(o contract.OrderedObject, key string) string {
 	return ""
 }
 
-// Result is what Execute answers: the relationship and the cleanup report.
-type Result struct {
-	RelationshipID string
-	Report
-}
-
 // Execute cleans up the child of a relationship: it reads the facts and judges them (a refusal before any App Server call), reads them again right before the first archive, and then runs Clean. Nothing
 // keeps the relationship from changing after that second reading; an archive is undone with codex unarchive.
-func Execute(ctx context.Context, st *store.Store, host Host, relationship, actor string, dryRun bool) (Result, error) {
-	result := Result{RelationshipID: relationship}
+func Execute(ctx context.Context, st *store.Store, host Host, relationship, actor string, dryRun bool) (Report, error) {
 	facts, err := ReadFacts(ctx, st, relationship)
 	if err == nil {
 		err = Judge(facts, actor)
 	}
 	if err != nil {
-		return result, err
+		return Report{}, err
 	}
 	recheck := func(ctx context.Context) error {
 		again, err := ReadFacts(ctx, st, relationship)
@@ -141,6 +134,5 @@ func Execute(ctx context.Context, st *store.Store, host Host, relationship, acto
 		}
 		return err
 	}
-	result.Report, err = Clean(ctx, host, facts.ChildTaskID, Options{DryRun: dryRun, Recheck: recheck})
-	return result, err
+	return Clean(ctx, host, facts.ChildTaskID, Options{DryRun: dryRun, Recheck: recheck})
 }

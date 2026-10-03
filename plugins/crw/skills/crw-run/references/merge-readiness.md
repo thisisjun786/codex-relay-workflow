@@ -423,8 +423,8 @@ them yourself once the work is over, after `assignment-mark merged` and, for a p
 
 It refuses, before any App Server call, unless no correction can still be sent to the child: you are the relationship's parent; it is live or closed (not paused, cancelled or handed to another
 relationship); a `merged` mark counts for its current head, generation, revision and criteria; no other live relationship names the child; nothing is still owed; and, for a plan node, the accepted head
-stands on that mark and has landed on every target. It then archives the loaded threads of the child's subtree (`thread/archive`), deepest sub-threads first and the child last, and touches nothing that
-is not loaded; `codex unarchive <thread id>` undoes it. Exit 2 carries the report with `ok` false: `held_active` or `held_incomplete` (something in the subtree is running, or it could not be established
+stands on that mark and has landed on every target. It then archives the loaded threads of the child's subtree (`thread/archive`), deepest sub-threads first and the child last, after reading the subtree
+a second time right before the first archive, and touches nothing that is not loaded; `codex unarchive <thread id>` undoes it. Exit 2 carries the report with `ok` false: `held_active` or `held_incomplete` (something in the subtree is running, or it could not be established
 exactly, so nothing was archived: run it again later), `failed`, or `no_rollout_left_loaded` (a sub-thread that never ran a turn cannot be archived and unloads about a minute after its owner's connection
 closes; the relay never deletes it). A repeat after a complete cleanup changes nothing. Record in the coordination record which threads were released and which stayed.
 

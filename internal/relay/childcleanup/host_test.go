@@ -18,6 +18,7 @@ import (
 type thread struct {
 	id, parent, status          string
 	loaded, rollout, unreadable bool
+	malformed                   string // thread/read answers without a status ("status") or for another thread ("id")
 	refuse                      string // thread/archive fails with this message
 	unloadWhenRefused           bool
 }
@@ -106,7 +107,13 @@ func (s *scripted) read(raw json.RawMessage) fakehost.Reply {
 	if th.parent != "" {
 		parent = th.parent
 	}
-	return fakehost.Reply{Result: map[string]any{"thread": map[string]any{"id": th.id, "parentThreadId": parent, "status": map[string]any{"type": th.status}}}}
+	status, id := th.status, th.id
+	if th.malformed == "status" {
+		status = ""
+	} else if th.malformed == "id" {
+		id = "another-thread"
+	}
+	return fakehost.Reply{Result: map[string]any{"thread": map[string]any{"id": id, "parentThreadId": parent, "status": map[string]any{"type": status}}}}
 }
 
 func (s *scripted) archive(raw json.RawMessage) fakehost.Reply {
@@ -133,4 +140,20 @@ func (s *scripted) archived() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]string(nil), s.archives...)
+}
+
+// afterCall runs then once, right after the first answer to method.
+type afterCall struct {
+	Host
+	method string
+	then   func()
+}
+
+func (h *afterCall) Call(ctx context.Context, method string, params map[string]any) (json.RawMessage, error) {
+	raw, err := h.Host.Call(ctx, method, params)
+	if then := h.then; method == h.method && then != nil {
+		h.then = nil
+		then()
+	}
+	return raw, err
 }

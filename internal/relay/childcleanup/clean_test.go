@@ -78,7 +78,9 @@ func TestCleanArchivesNothingWhenDiscoveryIsNotExact(t *testing.T) {
 	unreadable := family()
 	unreadable[2].unreadable = true // may be an active descendant: archiving its ancestor would unload it too
 	cycle := append(family(), thread{id: "loop-a", parent: "loop-b", loaded: true, rollout: true}, thread{id: "loop-b", parent: "loop-a", loaded: true, rollout: true})
-	for name, threads := range map[string][]thread{"an unreadable thread": unreadable, "a parent cycle": cycle} {
+	noStatus, otherThread := family(), family()
+	noStatus[2].malformed, otherThread[2].malformed = "status", "id" // an answer with no status, or for another thread, is no evidence the thread is idle
+	for name, threads := range map[string][]thread{"an unreadable thread": unreadable, "a parent cycle": cycle, "an answer without a status": noStatus, "an answer for another thread": otherThread} {
 		s := newScripted(t, threads...)
 		if report, err := run(t, s, Options{}); err != nil || report.Complete() || len(report.Unresolved) == 0 || len(s.archived()) != 0 {
 			t.Fatalf("%s: err=%v report=%+v archived=%v", name, err, report, s.archived())
@@ -128,5 +130,25 @@ func TestCleanDryRunAndRecheckMutateNothing(t *testing.T) {
 	_, err := run(t, s, Options{Recheck: func(context.Context) error { return changed }})
 	if report, err2 := run(t, s, Options{DryRun: true}); !errors.Is(err, changed) || err2 != nil || !report.Complete() || strings.Count(outcomes(report), OutcomePlanned) != 4 || len(s.archived()) != 0 {
 		t.Fatalf("recheck err=%v, dry run err=%v report=%+v archived=%v", err, err2, report, s.archived())
+	}
+}
+
+func TestCleanJudgesTheSubtreeAgainRightBeforeTheFirstArchive(t *testing.T) {
+	s := newScripted(t, family()...)
+	// a thread of the subtree starts running after the first reading, as Recheck passes
+	started := func(context.Context) error { s.mu.Lock(); s.byID["sub-2"].status = "active"; s.mu.Unlock(); return nil }
+	report, err := run(t, s, Options{Recheck: started})
+	if got := outcomes(report); err != nil || report.Complete() || len(s.archived()) != 0 || strings.Count(got, OutcomeHeldActive) != 4 {
+		t.Fatalf("err=%v outcomes=%q archived=%v", err, got, s.archived())
+	}
+}
+
+func TestCleanKeepsWhatItDidWhenTheContextEnds(t *testing.T) {
+	s := newScripted(t, family()...)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	report, err := Clean(ctx, &afterCall{Host: s.client(t), method: "thread/archive", then: cancel}, "child", Options{})
+	if !errors.Is(err, context.Canceled) || outcomes(report) != "grand:archived" {
+		t.Fatalf("err=%v outcomes=%q: the first archive is reported with the error", err, outcomes(report))
 	}
 }

@@ -146,21 +146,6 @@ func TestReadFactsAndJudgeOverARealStore(t *testing.T) {
 	}
 }
 
-// afterListing runs then once, right after the first thread/loaded/list answer.
-type afterListing struct {
-	Host
-	then func()
-}
-
-func (h *afterListing) Call(ctx context.Context, method string, params map[string]any) (json.RawMessage, error) {
-	raw, err := h.Host.Call(ctx, method, params)
-	if then := h.then; method == "thread/loaded/list" && then != nil {
-		h.then = nil
-		then()
-	}
-	return raw, err
-}
-
 func TestExecuteCleansAMergedChildAndLeavesTheOthersAlone(t *testing.T) {
 	s := newScripted(t, family()...)
 	w := newWorld(t, s.srv.SocketPath)
@@ -178,7 +163,7 @@ func TestExecuteCleansAMergedChildAndLeavesTheOthersAlone(t *testing.T) {
 	s = newScripted(t, family()...)
 	again := w.assign("ISSUE-3", "child")
 	w.merge(again)
-	hook := &afterListing{Host: s.client(t), then: func() { w.exec("UPDATE relationships SET status = 'cancelled' WHERE relationship_id = ?", again) }}
+	hook := &afterCall{Host: s.client(t), method: "thread/loaded/list", then: func() { w.exec("UPDATE relationships SET status = 'cancelled' WHERE relationship_id = ?", again) }}
 	if _, err := Execute(ctx, w.st, hook, again, parent, false); err == nil || s.srv.Count("thread/loaded/list") == 0 || len(s.archived()) != 0 {
 		t.Fatalf("err=%v listings=%d archived=%v, want a refusal after the listing and no archive", err, s.srv.Count("thread/loaded/list"), s.archived())
 	}
@@ -199,14 +184,14 @@ func TestTheCommandIsRegisteredAndAnswersTheReport(t *testing.T) {
 		}
 		return code, answer
 	}
+	if code, answer := call("--actor", "someone-else"); code != contract.ExitRefused || answer["ok"] == true || len(s.srv.Requests()) != 0 {
+		t.Fatalf("another actor is refused with exit %d before the App Server is contacted: got %d %v, %d requests", contract.ExitRefused, code, answer, len(s.srv.Requests()))
+	}
 	if code, answer := call("--dry-run"); code != 0 || answer["ok"] != true || answer["dry_run"] != true || len(s.archived()) != 0 {
 		t.Fatalf("dry run: exit %d %v", code, answer)
 	}
 	code, answer := call()
 	if items, _ := answer["items"].([]any); code != 0 || answer["ok"] != true || answer["complete"] != true || answer["schema"] != "child-cleanup/1" || len(items) != 4 || fmt.Sprint(s.archived()) != "[grand sub-2 sub-1 child]" {
 		t.Fatalf("exit %d %v archived=%v", code, answer, s.archived())
-	}
-	if code, answer = call("--actor", "someone-else"); code != contract.ExitRefused || answer["ok"] == true {
-		t.Fatalf("another actor is refused with exit %d: got %d %v", contract.ExitRefused, code, answer)
 	}
 }

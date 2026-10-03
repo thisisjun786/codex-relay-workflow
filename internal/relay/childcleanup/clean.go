@@ -9,6 +9,7 @@ package childcleanup
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -89,6 +90,7 @@ type member struct {
 
 type reading struct{ parent, status string }
 
+// discovery is one reading of the App Server: scan resets its caches.
 type discovery struct {
 	host  Host
 	cache map[string]reading
@@ -98,19 +100,51 @@ type discovery struct {
 
 // Clean releases the loaded threads of child's subtree, the child included when it is loaded: it reads thread/loaded/list, walks every loaded thread's parentThreadId up to the child and archives the
 // members deepest first with the child last. Threads that are not loaded hold no helpers and are never touched. Any member that is running, and any loaded thread whose ancestry cannot be established,
-// holds the whole subtree: nothing is archived. A repeat finds nothing loaded and changes nothing. The caller decides whether the child may be cleaned up at all (Judge).
+// holds the whole subtree: nothing is archived. The subtree is read a second time right after Recheck and before the first archive, and that reading decides; the App Server has no fence against a thread
+// starting to run after it, so the archive is undone with codex unarchive. A repeat finds nothing loaded and changes nothing. The caller decides whether the child may be cleaned up (Judge).
 func Clean(ctx context.Context, host Host, child string, opts Options) (Report, error) {
 	report := Report{Child: child, DryRun: opts.DryRun}
-	d := &discovery{host: host, cache: map[string]reading{}, fail: map[string]bool{}}
-	loaded, err := d.loadedIDs(ctx)
+	d := &discovery{host: host}
+	members, hold, detail, err := d.scan(ctx, child, &report)
+	if err == nil && hold == "" && !opts.DryRun && len(members) > 0 {
+		if opts.Recheck != nil {
+			err = opts.Recheck(ctx)
+		}
+		if err == nil {
+			members, hold, detail, err = d.scan(ctx, child, &report)
+		}
+	}
 	if err != nil {
 		return report, err
 	}
-	var members []member
+	for _, m := range members {
+		switch {
+		case hold != "":
+			report.Items = append(report.Items, Item{ThreadID: m.id, ParentID: m.parent, Outcome: hold, Detail: detail})
+		case opts.DryRun:
+			report.Items = append(report.Items, Item{ThreadID: m.id, ParentID: m.parent, Outcome: OutcomePlanned, Detail: "thread/archive"})
+		default:
+			outcome, detail, err := d.archive(ctx, m.id)
+			if err != nil {
+				return report, err
+			}
+			report.Items = append(report.Items, Item{ThreadID: m.id, ParentID: m.parent, Outcome: outcome, Detail: detail})
+		}
+	}
+	return report, nil
+}
+
+// scan reads the loaded threads afresh and finds the members of child's subtree, deepest first. hold names the outcome that keeps the whole subtree from being archived, if any.
+func (d *discovery) scan(ctx context.Context, child string, report *Report) (members []member, hold, detail string, err error) {
+	d.cache, d.fail, d.reads, report.Unresolved = map[string]reading{}, map[string]bool{}, 0, nil
+	loaded, err := d.loadedIDs(ctx)
+	if err != nil {
+		return nil, "", "", err
+	}
 	for _, id := range loaded {
 		switch m, found, resolved, err := d.locate(ctx, id, child); {
 		case err != nil:
-			return report, err
+			return nil, "", "", err
 		case !resolved:
 			report.Unresolved = append(report.Unresolved, id)
 		case found:
@@ -124,10 +158,6 @@ func Clean(ctx context.Context, host Host, child string, opts Options) (Report, 
 		}
 		return strings.Compare(a.id, b.id)
 	})
-	add := func(m member, outcome, detail string) {
-		report.Items = append(report.Items, Item{ThreadID: m.id, ParentID: m.parent, Outcome: outcome, Detail: detail})
-	}
-	hold, detail := "", ""
 	if len(report.Unresolved) > 0 {
 		hold, detail = OutcomeHeldIncomplete, "the ancestry of a loaded thread could not be established; nothing was archived"
 	}
@@ -136,26 +166,7 @@ func Clean(ctx context.Context, host Host, child string, opts Options) (Report, 
 			hold, detail = OutcomeHeldActive, m.id+" in this subtree is running; nothing was archived"
 		}
 	}
-	if hold == "" && !opts.DryRun && opts.Recheck != nil && len(members) > 0 {
-		if err := opts.Recheck(ctx); err != nil {
-			return report, err
-		}
-	}
-	for _, m := range members {
-		switch {
-		case hold != "":
-			add(m, hold, detail)
-		case opts.DryRun:
-			add(m, OutcomePlanned, "thread/archive")
-		default:
-			outcome, detail, err := d.archive(ctx, m.id)
-			if err != nil {
-				return report, err
-			}
-			add(m, outcome, detail)
-		}
-	}
-	return report, nil
+	return members, hold, detail, nil
 }
 
 // archive asks the host to archive one thread and classifies the answer. "no rollout found" is also what a thread an ancestor's archive already took answers, so the loaded set is read again first.
@@ -220,6 +231,7 @@ func (d *discovery) read(ctx context.Context, id string) (r reading, ok bool, er
 	raw, err := d.host.Call(ctx, "thread/read", map[string]any{"threadId": id, "includeTurns": false})
 	var out struct {
 		Thread struct {
+			ID     string  `json:"id"`
 			Parent *string `json:"parentThreadId"`
 			Status struct {
 				Type string `json:"type"`
@@ -228,6 +240,10 @@ func (d *discovery) read(ctx context.Context, id string) (r reading, ok bool, er
 	}
 	if err == nil {
 		err = json.Unmarshal(raw, &out)
+	}
+	// an answer that does not name this thread or a status the host defines is not evidence of anything: the thread is unresolved
+	if err == nil && (out.Thread.ID != id || !slices.Contains([]string{"idle", "active", "systemError", "notLoaded"}, out.Thread.Status.Type)) {
+		err = errors.New("unusable thread/read answer")
 	}
 	if err != nil {
 		d.fail[id] = true
