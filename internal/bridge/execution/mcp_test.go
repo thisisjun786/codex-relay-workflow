@@ -69,7 +69,7 @@ func TestMCPProfilesAreRefusedWhenReadWithTheirOwnReason(t *testing.T) {
 		"no profiles":                      {doc{"profiles": doc{}}, "must be a non-empty object of named profiles"},
 		"profiles of the wrong type":       {doc{"profiles": []any{}}, "must be a non-empty object of named profiles"},
 		"a default that is no profile":     {section(func(s doc) { s["default"] = "nope" }), "default \"nope\" names no declared profile"},
-		"servers that are no list":         {section(profile("ui-qa", doc{"servers": "node_repl"})), "servers of profile \"ui-qa\" must be a list of server names"},
+		"servers that are no list":         {section(profile("ui-qa", doc{"servers": "node_repl"})), "servers of profile \"ui-qa\" of role \"child\" must be a list of names"},
 		"a blank server name":              {section(profile("ui-qa", doc{"servers": []any{" "}})), "must be a non-empty string"},
 		"a server named twice":             {section(profile("ui-qa", doc{"servers": []any{"node_repl", "node_repl"}})), "lists \"node_repl\" twice"},
 		"a plugin named twice":             {section(profile("ui-qa", doc{"disablePlugins": []any{"a@b", "a@b"}})), "lists \"a@b\" twice"},

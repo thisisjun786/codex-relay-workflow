@@ -154,7 +154,7 @@ func (b *Bridge) mutate(ctx context.Context, op mutation) (ledger.Receipt, error
 	effects := []string{}
 	tracked := appserver.WithSendHook(ctx, func(method string) {
 		switch method {
-		case "initialize", "project/read", "thread/read", "thread/list", "thread/turns/list", "thread/items/list", "thread/goal/get":
+		case "initialize", "project/read", "config/read", "plugin/installed", "mcpServerStatus/list", "thread/read", "thread/list", "thread/turns/list", "thread/items/list", "thread/goal/get":
 			// A lost observation cannot imply that a mutation reached the host.
 		default:
 			effects = append(effects, method)

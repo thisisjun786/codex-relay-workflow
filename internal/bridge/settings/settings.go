@@ -180,6 +180,9 @@ func (c Contract) Requested() map[string]any {
 	} else if c.Sandbox != "" {
 		asked["sandbox"] = map[string]any{"type": modes[c.Sandbox]}
 	}
+	if c.MCP != nil {
+		asked["mcpServers"] = c.MCP.Shape()
+	}
 	return asked
 }
 
@@ -199,6 +202,11 @@ func (c Contract) Config() map[string]any {
 		}
 		if len(fields) > 0 {
 			config["sandbox_workspace_write"] = fields
+		}
+	}
+	if c.MCP != nil {
+		for key, section := range c.MCP.Overrides() {
+			config[key] = section
 		}
 	}
 	return config

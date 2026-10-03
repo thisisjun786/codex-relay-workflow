@@ -115,12 +115,20 @@ func parseRoles(declared any) (map[string]Role, error) {
 		if !ok {
 			return nil, &PolicyError{fmt.Sprintf("role %s must be an object", repr(name))}
 		}
-		if err := only(entry, []string{"expectation", "model", "pairs", "reasoningEffort"}, "role "+repr(name)); err != nil {
+		if err := only(entry, []string{"expectation", "mcp", "model", "pairs", "reasoningEffort"}, "role "+repr(name)); err != nil {
 			return nil, err
 		}
 		role, err := parseRole(name, entry)
 		if err != nil {
 			return nil, err
+		}
+		if has(entry, "mcp") {
+			if name == Supervisor {
+				return nil, &PolicyError{"role 'supervisor' cannot declare \"mcp\": a supervisor's thread is the user's own, so no profile switches anything off in it"}
+			}
+			if role.MCP, err = parseMCP(name, entry.Get("mcp")); err != nil {
+				return nil, err
+			}
 		}
 		parsed[name] = role
 	}
