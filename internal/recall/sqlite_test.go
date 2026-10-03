@@ -225,3 +225,57 @@ func TestRecallSQLiteMinimumIntegerOracleOverflow(t *testing.T) {
 		t.Fatal("neighboring unsafe integer must still fail")
 	}
 }
+
+func TestRecallSQLiteNamedOrderAndCachedAmbiguity(t *testing.T) {
+	d := recallDB(t, ":memory:")
+	s := recallStmt(t, d, "SELECT $x AS x")
+	for _, c := range []struct {
+		args NamedParams
+		want float64
+	}{
+		{NamedParams{{"x", 1}, {"$x", 2}}, 2}, {NamedParams{{"$x", 2}, {"x", 1}}, 1},
+	} {
+		if got := recallRow(t, s, c.args)["x"]; got != c.want {
+			t.Fatal(got, c.want)
+		}
+	}
+	if _, err := s.Get(map[string]any{"x": 1, "$x": 2}); err == nil {
+		t.Fatal("unordered aliases silently chose a write value")
+	}
+	for _, q := range []string{"SELECT $$x AS b,$x AS a", "SELECT $x AS a,$$x AS b"} {
+		for _, args := range []any{NamedParams{{"$x", 7}}, map[string]any{"$x": 7}} {
+			r := recallRow(t, recallStmt(t, d, q), args)
+			if r["a"] != float64(7) || r["b"] != nil {
+				t.Fatal("exact name lost to bare alias", r)
+			}
+		}
+	}
+	for _, mode := range []string{"get", "all", "run"} {
+		a := recallStmt(t, d, "SELECT :x AS x,@x AS y")
+		call := func() error {
+			switch mode {
+			case "get":
+				_, err := a.Get(NamedParams{{"x", 2}})
+				return err
+			case "all":
+				_, err := a.All(NamedParams{{"x", 2}})
+				return err
+			default:
+				_, err := a.Run(NamedParams{{"x", 2}})
+				return err
+			}
+		}
+		if err := call(); err == nil {
+			t.Fatal("first ambiguity did not throw")
+		}
+		if err := call(); err != nil {
+			t.Fatal("partial alias cache was lost", err)
+		}
+		if row := recallRow(t, a, NamedParams{{"x", 3}}); row["x"] != float64(3) || row["y"] != nil {
+			t.Fatal(row)
+		}
+	}
+	if _, err := recallStmt(t, d, "SELECT 1").Get(true); err == nil || err.Error() != "Provided value cannot be bound to SQLite parameter 1." {
+		t.Fatal(err)
+	}
+}

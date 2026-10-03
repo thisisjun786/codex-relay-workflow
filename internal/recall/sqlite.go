@@ -32,7 +32,17 @@ type RwDb struct {
 type Stmt struct {
 	db     *RwDb
 	handle uintptr
+	bare   map[string]string
 }
+
+// NamedParam is one entry in a JavaScript binding object's enumeration order.
+type NamedParam struct {
+	Name  string
+	Value any
+}
+
+// NamedParams preserves enumeration order; Go maps cannot carry alias-write order.
+type NamedParams []NamedParam
 
 // RunResult has JavaScript number semantics, including lastInsertRowid rounding.
 type RunResult struct{ Changes, LastInsertRowid float64 }
@@ -44,6 +54,7 @@ func openDbReadWrite(path string) (*RwDb, error) {
 
 func openDb(path string, flags int32) (*RwDb, error) {
 	if strings.ContainsRune(path, 0) {
+		//lint:ignore ST1005 Exact node:sqlite diagnostic, pinned by the oracle.
 		return nil, errors.New(`The "path" argument must be a string, Uint8Array, or URL without null bytes.`)
 	}
 	d := &RwDb{tls: libc.NewTLS()}
@@ -235,6 +246,7 @@ func (s *Stmt) row() (map[string]any, error) {
 			n := sqlite.Xsqlite3_column_int64(s.db.tls, s.handle, i)
 			// Node's absolute-value check overflows for int64's minimum; parity keeps it.
 			if n != -1<<63 && (n > 9007199254740991 || n < -9007199254740991) {
+				//lint:ignore ST1005 Exact node:sqlite diagnostic, pinned by the oracle.
 				return nil, fmt.Errorf("Value is too large to be represented as a JavaScript number: %d", n)
 			}
 			value = float64(n)
@@ -261,32 +273,64 @@ func (s *Stmt) bind(params []any) error {
 	sqlite.Xsqlite3_clear_bindings(s.db.tls, s.handle)
 	count := sqlite.Xsqlite3_bind_parameter_count(s.db.tls, s.handle)
 	if len(params) > 0 {
-		if named, ok := params[0].(map[string]any); ok {
-			indexes := map[string]int32{}
-			originals := map[string]string{}
-			for i := int32(1); i <= count; i++ {
-				name := s.parameterName(i)
-				if name == "" {
-					continue
-				}
-				bare := name[1:]
-				if prior := originals[bare]; prior != "" && prior != name {
-					return fmt.Errorf("Cannot create bare named parameter '%s' because of conflicting names '%s' and '%s'.", bare, prior, name)
-				}
-				originals[bare] = name
-				indexes[name], indexes[bare] = i, i
-			}
-			keys := make([]string, 0, len(named))
-			for k := range named {
-				keys = append(keys, k)
+		var named NamedParams
+		_, ordered := params[0].(NamedParams)
+		if ordered {
+			named = params[0].(NamedParams)
+		}
+		if values, ok := params[0].(map[string]any); ok {
+			keys := make([]string, 0, len(values))
+			for key := range values {
+				keys = append(keys, key)
 			}
 			sort.Strings(keys)
 			for _, key := range keys {
-				index := indexes[key]
+				named = append(named, NamedParam{key, values[key]})
+			}
+			ordered = true
+		}
+		if ordered {
+			// The oracle retains this partial cache if alias construction throws.
+			if s.bare == nil {
+				s.bare = map[string]string{}
+				for i := int32(1); i <= count; i++ {
+					name := s.parameterName(i)
+					if name == "" {
+						continue
+					}
+					bare := name[1:]
+					if prior := s.bare[bare]; prior != "" && prior != name {
+						//lint:ignore ST1005 Exact node:sqlite diagnostic, pinned by the oracle.
+						return fmt.Errorf("Cannot create bare named parameter '%s' because of conflicting names '%s' and '%s'.", bare, prior, name)
+					}
+					s.bare[bare] = name
+				}
+			}
+			seen := map[int32]bool{}
+			_, unordered := params[0].(map[string]any)
+			for _, arg := range named {
+				key := arg.Name
+				alias := s.bare[key]
+				index := int32(0)
+				for i := int32(1); i <= count; i++ {
+					name := s.parameterName(i)
+					if name == key {
+						index = i
+						break
+					}
+					if alias != "" && name == alias {
+						index = i
+					}
+				}
 				if index == 0 {
+					//lint:ignore ST1005 Exact node:sqlite diagnostic, pinned by the oracle.
 					return fmt.Errorf("Unknown named parameter '%s'", key)
 				}
-				if err := s.bindValue(index, named[key]); err != nil {
+				if unordered && seen[index] {
+					return errors.New("use NamedParams to preserve the order of aliases for one SQLite parameter")
+				}
+				seen[index] = true
+				if err := s.bindValue(index, arg.Value); err != nil {
 					return err
 				}
 			}
@@ -301,9 +345,6 @@ func (s *Stmt) bind(params []any) error {
 				break
 			}
 			index++
-		}
-		if index > count {
-			return errors.New("column index out of range")
 		}
 		if err := s.bindValue(index, value); err != nil {
 			return err
@@ -338,6 +379,7 @@ func (s *Stmt) bindValue(index int32, value any) error {
 		libc.Xfree(tls, p)
 	case *big.Int:
 		if v == nil || !v.IsInt64() {
+			//lint:ignore ST1005 Exact node:sqlite diagnostic, pinned by the oracle.
 			return errors.New("BigInt value is too large to bind.")
 		}
 		rc = sqlite.Xsqlite3_bind_int64(tls, s.handle, index, v.Int64())
@@ -352,6 +394,7 @@ func (s *Stmt) bindValue(index int32, value any) error {
 		case reflect.Float32, reflect.Float64:
 			n = number.Float()
 		default:
+			//lint:ignore ST1005 Exact node:sqlite diagnostic, pinned by the oracle.
 			return fmt.Errorf("Provided value cannot be bound to SQLite parameter %d.", index)
 		}
 		rc = sqlite.Xsqlite3_bind_double(tls, s.handle, index, n)
