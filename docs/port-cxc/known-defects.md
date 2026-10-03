@@ -244,6 +244,11 @@ Behavior of CXC v0.2.40 that looks unintended and that the recorded corpus ([con
 - A `model` of the wrong JSON type is accepted in default mode and stored as null, where the same value in model mode is refused as a missing model (source `store.ts:276-289` and `:212`; case `update_wrong_types`); port: kept.
 - `updateSettings` publishes through `setRole` or `resetRole` and then reads the settings again with `readSettings`, so when two updates run at once the answer to one request can describe the state the other produced, although both writes are kept (source `plugins/codexclaw/components/subagent-config/src/settings-api.ts:19-25`; read from the source, not exercised); port: kept (a review finding on the port, answered as parity: the lock keeps the updates, not the snapshot each request returns).
 
+## Found by the CRW-442 config-guard features and managed keys port
+
+- A malformed duplicate row is ignored without clearing a prior valid value, so `hooks stable true\nhooks unknown` stays true even though the last row is unreadable (source `plugins/codexclaw/components/config-guard/src/features.ts:64-74`; recorded test `TestParseFeaturesListRecordedEdges/invalid_duplicate_keeps_prior`); port: kept.
+- The feature-list parser validates only the first and last fields: middle columns can be arbitrary, a comment tail drops an otherwise valid row, and a bare CR or U+2028 separates fields rather than rows (`hooks false\rgoals true` reads hooks=true, and `hooks stable true<U+2028>goals stable false` reads hooks=false and omits goals) (source `plugins/codexclaw/components/config-guard/src/features.ts:64-71`; recorded tests `crlf_two_columns`, `comment_tail`, `bare_cr_joins_rows` and `unicode_separator_joins_rows`); port: kept.
+
 ## Found by the divergence mode and candidate archive port
 
 - `readDivergenceCandidates` accepts a row whose `sourceUrls` is an empty array, although `recordDivergenceCandidate` refuses to write one, and it keeps the `worktree`, `metricName` and `note` of an empty string that the recorder never writes, so a hand-written row needs no grounding source (source `plugins/codexclaw/components/pabcd-state/src/divergence.ts:171` against `:222-239`; port scenario `cand_reader_tolerance`); port: kept (the Go candidate carries those three as pointers so that the empty string survives).
