@@ -3,7 +3,7 @@
 Behavior of CXC v0.2.40 that looks unintended and that the recorded corpus ([contract/schema/cxc](../../contract/schema/cxc/README.md); fixtures in `contract/fixtures/cxc`) keeps exactly as the oracle printed it. The port reproduces behavior first: parity with the oracle wins over repair, and a replay never takes a defect for the right answer.
 
 - A port issue that finds a defect adds one line here and does not fix it. A defect the port reproduces on purpose keeps its line with `port: kept`. No line is deleted; a later change that repairs one edits its line to `port: fixed` and names that change.
-- The one exception is `reset --help`, which deletes session state instead of printing help. The port fixes it (decision 9 of the port's Wave 0 decisions, recorded in Linear).
+- Exceptions, where the port fixes a defect instead of keeping it: `reset --help`, which deletes session state instead of printing help (decision 9 of the port's Wave 0 decisions, recorded in Linear); and, under the parity rule revision of 2026-10-03, a defect that a review finding of kind security names and a defect that loses or truncates settings, state or record files. A fix under the revision tags its recorded cases intentionally-changed in the replay and marks its line `port: fixed` with the change that made it.
 - Line shape: `- <what the oracle does> (<pointer>); port: <pending|kept|fixed>.` A fixture pointer is an id under `contract/fixtures/cxc/`; a source pointer is a path in the upstream repository at tag v0.2.40, with a line where one line carries the behavior.
 - The defects of the earlier Python-to-Go port of the bridge and relay are in [docs/port/known-defects.md](../port/known-defects.md).
 
