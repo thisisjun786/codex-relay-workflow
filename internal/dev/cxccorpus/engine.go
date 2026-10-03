@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
@@ -40,6 +41,12 @@ var gitEnv = []string{
 	"GIT_AUTHOR_NAME=fixture", "GIT_AUTHOR_EMAIL=fixture@example.invalid", "GIT_AUTHOR_DATE=2026-01-01T00:00:00Z",
 	"GIT_COMMITTER_NAME=fixture", "GIT_COMMITTER_EMAIL=fixture@example.invalid", "GIT_COMMITTER_DATE=2026-01-01T00:00:00Z",
 }
+
+// caseGitConfig is the case's global git configuration (GIT_CONFIG_GLOBAL). Automatic maintenance is
+// off: after a commit git otherwise starts a detached `git maintenance run --auto`, which creates and
+// removes files under .git (objects/maintenance.lock) while the case is stamped, run and removed.
+const caseGitConfig = "[user]\n\tname = fixture\n\temail = fixture@example.invalid\n[init]\n\tdefaultBranch = main\n" +
+	"[maintenance]\n\tauto = false\n[gc]\n\tauto = 0\n"
 
 // Case is one scenario's isolated tree: its root, the environment every process of the case starts
 // with, and the placeholder paths the runtime bound for it.
@@ -94,7 +101,7 @@ func NewCase(scratch, homeVar string, g Given) (*Case, error) {
 			return c, err
 		}
 	}
-	if err := writeFile(filepath.Join(root, "gitconfig"), []byte("[user]\n\tname = fixture\n\temail = fixture@example.invalid\n[init]\n\tdefaultBranch = main\n")); err != nil {
+	if err := writeFile(filepath.Join(root, "gitconfig"), []byte(caseGitConfig)); err != nil {
 		return c, err
 	}
 	if len(g.Fetch) > 0 {
@@ -507,14 +514,7 @@ func setUp(c *Case, g Given, rt Runtime) error {
 	}
 	// Every given entry carries the frozen clock's time, so age and staleness readings agree
 	// with the oracle's Date.
-	epoch := Epoch()
-	err := filepath.WalkDir(c.Root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.Type()&fs.ModeSymlink != 0 {
-			return err
-		}
-		return os.Chtimes(path, epoch, epoch)
-	})
-	if err != nil {
+	if err := freezeTimes(c.Root, Epoch(), os.Chtimes); err != nil {
 		return err
 	}
 	for _, rel := range sortedKeys(g.Mtimes) {
@@ -531,6 +531,29 @@ func setUp(c *Case, g Given, rt Runtime) error {
 		}
 	}
 	return nil
+}
+
+// freezeTimes gives every entry under root, symlinks apart, the time when through set (os.Chtimes
+// in a run; a test passes a set that makes an entry vanish first). A walk or set error fails it,
+// except an entry that is gone by the time the walk reaches it when it lies inside a .git
+// directory: git's own processes create and remove files there at any moment. A missing given is
+// not that (it is stamped or chmod-ed by name elsewhere in setUp and fails there).
+func freezeTimes(root string, when time.Time, set func(path string, atime, mtime time.Time) error) error {
+	return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err == nil && d.Type()&fs.ModeSymlink == 0 {
+			err = set(path, when, when)
+		}
+		if errors.Is(err, fs.ErrNotExist) && inGitDir(root, path) {
+			return nil
+		}
+		return err
+	})
+}
+
+// inGitDir reports whether path lies inside a directory named .git below root.
+func inGitDir(root, path string) bool {
+	rel, err := filepath.Rel(root, filepath.Dir(path))
+	return err == nil && slices.Contains(strings.Split(rel, string(filepath.Separator)), ".git")
 }
 
 // rawResult is one step before normalisation.
