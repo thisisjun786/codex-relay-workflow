@@ -25,6 +25,7 @@ func returnNotice(t *testing.T) (*fixture, *mergeturn.Service, string, string) {
 }
 
 func Test408_c4_real_sender_wakes_the_idle_holder_with_the_return_request(t *testing.T) {
+	t.Parallel()
 	f, _, turn, event := returnNotice(t)
 	before := len(f.host.threads[parent].turns)
 	sent, err := f.delivery.Attempt(f.ctx, event, f.host, nil, "")
@@ -54,6 +55,7 @@ func Test408_c4_real_sender_wakes_the_idle_holder_with_the_return_request(t *tes
 }
 
 func Test408_c4_acknowledging_the_grant_does_not_suppress_the_return_request(t *testing.T) {
+	t.Parallel()
 	f, m, turn, event := returnNotice(t)
 	record, err := m.Turn(f.ctx, turn)
 	mustDo(t, err)
@@ -68,6 +70,7 @@ func Test408_c4_acknowledging_the_grant_does_not_suppress_the_return_request(t *
 }
 
 func Test408_c4_a_return_request_for_a_closed_turn_is_suppressed_before_send(t *testing.T) {
+	t.Parallel()
 	f, m, turn, event := returnNotice(t)
 	_, err := m.Release(f.ctx, turn, parent, "returned", "giving it back", "")
 	mustDo(t, err)

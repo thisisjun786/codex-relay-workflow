@@ -70,6 +70,7 @@ func outerText(steps []planStep) string {
 // c1: a due delivery is found by its state, then its event is read by key. Starting from the events
 // of stage 'final' reads every event the store has ever held.
 func TestDueDeliveriesAreFoundByStateAndNotByEventStage(t *testing.T) {
+	t.Parallel()
 	w := newHotWorld(t, "plan", 2000, 2, hotRevisionEvery)
 	check := func(name string, steps []planStep) {
 		t.Helper()
@@ -93,6 +94,7 @@ var scansAttemptsOrDeliveries = regexp.MustCompile("(?m)^SCAN (a|d)( |$)")
 // c1: an open attempt is found by its internal state (attempts_open), or by the state of its delivery
 // (deliveries_state), and never by reading every attempt.
 func TestOpenParentsAreFoundThroughTheirIndexes(t *testing.T) {
+	t.Parallel()
 	w := newHotWorld(t, "plan", 2000, 2, hotRevisionEvery)
 	text := planText(w.plan(openParentsSQL, HeldUncertain, HeldUncertain, Sending))
 	if scansAttemptsOrDeliveries.MatchString(text) {
@@ -108,6 +110,7 @@ func TestOpenParentsAreFoundThroughTheirIndexes(t *testing.T) {
 // c1: the anchors to bind are found from the few generations that wait for one, and not from every
 // delivery that was dispatched.
 func TestPendingAnchorsAreFoundFromTheGenerationsThatWait(t *testing.T) {
+	t.Parallel()
 	w := newHotWorld(t, "plan", 2000, 2, hotRevisionEvery)
 	steps := w.plan(pendingAnchorsSQL, Revision, Dispatched, Acknowledged, "anchor_pending", pendingAnchorsLimit)
 	if got := outerLoop(steps); !strings.HasPrefix(got, "SCAN g") {
@@ -361,6 +364,7 @@ func TestHotQueriesReturnTheSameRowsAtTheIssuesScale(t *testing.T) {
 // rest of the list is as many of the tied deliveries as the limit leaves room for, none of them
 // from outside the set the old statement selected.
 func TestPendingAnchorsKeepTheOldestStampsAndCutTiesAtTheLimit(t *testing.T) {
+	t.Parallel()
 	w := newHotWorld(t, "ties", 3000, 2, 2)
 	w.exec("UPDATE generations SET anchor_state = 'anchor_pending'")
 	const first = 10
