@@ -192,7 +192,7 @@ func verifyEntries(ctx context.Context, entries []FrozenEntry, roots []string) (
 	for _, e := range entries {
 		path, _ := e.Path.(string)
 		claimed, _ := e.SHA256.(string)
-		digest, size, _, err := HashArtifactContext(ctx, path, roots, false)
+		digest, size, _, err := HashArtifact(ctx, path, roots, false)
 		message := ""
 		switch {
 		case err != nil:

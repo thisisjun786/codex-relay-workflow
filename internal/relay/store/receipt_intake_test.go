@@ -108,7 +108,7 @@ func TestReceiptIntake_python_execution_only_and_daemon(t *testing.T) {
 	})
 	t.Run("test_a_child_failure_carrying_a_manifest_is_refused", func(t *testing.T) {
 		f := newIntakeFixture(t)
-		entries, err := BuildManifest([]string{f.artifact("out.txt", "payload")}, []string{f.root})
+		entries, err := BuildManifest(context.Background(), []string{f.artifact("out.txt", "payload")}, []string{f.root})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -214,7 +214,7 @@ func TestReceiptIntake_python_duplicates_generations_and_scope(t *testing.T) {
 		if first.EventID == second.EventID || f.count(`SELECT COUNT(*) FROM events`) != 2 {
 			t.Fatalf("revisions collapsed: %s %s", first.EventID, second.EventID)
 		}
-		if problems, err := VerifyFrozen(reference, first.Manifest); err != nil || len(problems) != 0 {
+		if problems, err := VerifyFrozen(context.Background(), reference, first.Manifest); err != nil || len(problems) != 0 {
 			t.Fatalf("older revision no longer verifiable: %v %v", problems, err)
 		}
 		if revision, err := ManifestRevision(first.Manifest); err != nil || revision != first.RevisionHash {

@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"errors"
 	"slices"
 	"strings"
@@ -28,14 +29,14 @@ type timedHost struct {
 	fail     func(turn string) bool
 }
 
-func (h *timedHost) ReadTurn(thread, turn string) (*delivery.TurnInfo, error) {
+func (h *timedHost) ReadTurn(ctx context.Context, thread, turn string) (*delivery.TurnInfo, error) {
 	h.watch.seconds += h.cost(turn)
 	h.wall.T += h.wallStep
 	if h.fail != nil && h.fail(turn) {
 		h.reads = append(h.reads, turn)
 		return nil, errors.New("deadline exceeded")
 	}
-	return h.observationHost.ReadTurn(thread, turn)
+	return h.observationHost.ReadTurn(ctx, thread, turn)
 }
 
 // slowObservation seeds one relationship per entry of staged (true: a staged claim waits on its running anchor)

@@ -33,7 +33,7 @@ func cmdEmit(c *cliRun) (any, error) {
 	digest := store.NoDeliverable
 	var entries []store.ManifestEntry
 	if paths := c.list("--artifact"); len(paths) > 0 {
-		if entries, err = store.BuildManifest(paths, relationship.ArtifactRoots); err != nil {
+		if entries, err = store.BuildManifest(c.ctx, paths, relationship.ArtifactRoots); err != nil {
 			return nil, err
 		}
 		if digest, err = store.ManifestRevision(entries); err != nil {

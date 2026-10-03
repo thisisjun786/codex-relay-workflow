@@ -30,9 +30,11 @@ type reportScriptHost struct {
 	script string
 }
 
-func (h *reportScriptHost) ListTurnIDs(string, int) ([]any, error) { return []any{}, nil }
+func (h *reportScriptHost) ListTurnIDs(context.Context, string, int) ([]any, error) {
+	return []any{}, nil
+}
 
-func (h *reportScriptHost) SendMessage(id, thread, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
+func (h *reportScriptHost) SendMessage(_ context.Context, id, thread, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
 	if h.script == "busy" {
 		return delivery.Obj{{Key: "requestId", Value: id}, {Key: "operation", Value: "send_message_to_thread"}, {Key: "status", Value: "failed"}, {Key: "threadId", Value: thread}, {Key: "retrySafe", Value: false}, {Key: "error", Value: "thread/read: Thread is active; message withheld. Wait for completion."}, {Key: "rpcError", Value: delivery.Obj{{Key: "code", Value: "thread_busy"}, {Key: "message", Value: "Thread is active"}}}}, nil
 	}

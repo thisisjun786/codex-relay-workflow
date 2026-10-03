@@ -33,16 +33,16 @@ func captureStage57(t *testing.T, c *Channel, s *store.Store) (Obligation, strin
 
 type captureHost57 struct{ *sendHost }
 
-func (h *captureHost57) ReadGoalStatus(string) (any, error) { return nil, nil }
-func (h *captureHost57) ReadTurn(_ string, id string) (*delivery.TurnInfo, error) {
+func (h *captureHost57) ReadGoalStatus(context.Context, string) (any, error) { return nil, nil }
+func (h *captureHost57) ReadTurn(_ context.Context, _ string, id string) (*delivery.TurnInfo, error) {
 	if id == "turn-01supervisor-task-1" {
 		at := float64(1700000000)
 		return &delivery.TurnInfo{TurnID: id, StartedAt: &at}, nil
 	}
-	return h.sendHost.ReadTurn("", id)
+	return h.sendHost.ReadTurn(context.Background(), "", id)
 }
-func (h *captureHost57) SendMessage(id, thread, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
-	result, err := h.sendHost.SendMessage(id, thread, message, settings)
+func (h *captureHost57) SendMessage(_ context.Context, id, thread, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
+	result, err := h.sendHost.SendMessage(context.Background(), id, thread, message, settings)
 	if err != nil {
 		return result, err
 	}

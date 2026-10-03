@@ -144,13 +144,13 @@ func (d *markerDriver) run(op markerOp) (any, error) {
 		if p, ok := op["db_path"]; ok {
 			decl.DBPath = d.path(p)
 		}
-		return DeclareIntent(d.root(), decl)
+		return DeclareIntent(context.Background(), d.root(), decl)
 	case "attempt":
-		return RecordAttempt(d.root(), d.work(), d.assignment(op), op["outcome"].(string), at, op["task_id"])
+		return RecordAttempt(context.Background(), d.root(), d.work(), d.assignment(op), op["outcome"].(string), at, op["task_id"])
 	case "claim":
-		return PublishClaim(d.root(), d.work(), d.assignment(op), op["session"], opString(op, "claim_dispatch", "dispatch-request-1"), "turn-1", at)
+		return PublishClaim(context.Background(), d.root(), d.work(), d.assignment(op), op["session"], opString(op, "claim_dispatch", "dispatch-request-1"), "turn-1", at)
 	case "bind":
-		return BindIdentity(d.root(), d.work(), d.assignment(op), op["session"], op["task"], at)
+		return BindIdentity(context.Background(), d.root(), d.work(), d.assignment(op), op["session"], op["task"], at)
 	case "open_generation":
 		rid := op["relationship_id"].(string)
 		generation := int64(1)
@@ -198,7 +198,7 @@ func (d *markerDriver) run(op markerOp) (any, error) {
 		mustDo(d.t, err)
 		return map[string]any{"relationships": relationships, "generations": generations, "journal": journal.I("n")}, nil
 	case "resolution":
-		found, _ := ReadAssignment(d.adir(op))
+		found, _ := ReadAssignment(context.Background(), d.adir(op))
 		var entries []Obj
 		pool := append(append(markerFactList(found, "attempts"), markerFactList(found, "claims")...), markerFactList(found, "conflicts")...)
 		ids, _ := op["facts"].([]any)
@@ -214,13 +214,13 @@ func (d *markerDriver) run(op markerOp) (any, error) {
 				}
 			}
 		}
-		return PublishResolution(d.root(), d.work(), d.assignment(op), op["task"], op["session"], opOr(op, "reason", "r"), "2026-01-01T00:05:00+00:00", entries)
+		return PublishResolution(context.Background(), d.root(), d.work(), d.assignment(op), op["task"], op["session"], opOr(op, "reason", "r"), "2026-01-01T00:05:00+00:00", entries)
 	case "publish":
 		root := ""
 		if op["confined"] == true {
 			root = d.root()
 		}
-		return Publish(d.target(op), fromJSON(op["payload"]), root)
+		return Publish(context.Background(), d.target(op), fromJSON(op["payload"]), root)
 	case "write_raw":
 		target := d.target(op)
 		mustDo(d.t, os.MkdirAll(filepath.Dir(target), 0o700))
@@ -248,21 +248,21 @@ func (d *markerDriver) run(op markerOp) (any, error) {
 		mustDo(d.t, err)
 		return loads(string(data))
 	case "facts":
-		found, unreadable := ReadAssignment(d.adir(op))
+		found, unreadable := ReadAssignment(context.Background(), d.adir(op))
 		return map[string]any{"facts": found, "unreadable": unreadable}, nil
 	case "state":
-		found, _ := ReadAssignment(d.adir(op))
+		found, _ := ReadAssignment(context.Background(), d.adir(op))
 		return DeriveAssignmentState(found, opOr(op, "now", "2026-01-01T00:05:00+00:00")), nil
 	case "malformed":
-		found, _ := ReadAssignment(d.adir(op))
+		found, _ := ReadAssignment(context.Background(), d.adir(op))
 		return noneIfEmpty(Malformed(found)), nil
 	case "counters":
 		return noneIfEmpty(MalformedCounters(fromJSON(op["value"]))), nil
 	case "contested":
-		found, _ := ReadAssignment(d.adir(op))
+		found, _ := ReadAssignment(context.Background(), d.adir(op))
 		return IdentityContested(found), nil
 	case "covered":
-		found, _ := ReadAssignment(d.adir(op))
+		found, _ := ReadAssignment(context.Background(), d.adir(op))
 		for _, raw := range markerFactList(found, "claims") {
 			if fieldOf(raw.(Obj), "factId") == op["fact"] {
 				return FactCovered(raw.(Obj), resolutionsOf(found)), nil
@@ -270,7 +270,7 @@ func (d *markerDriver) run(op markerOp) (any, error) {
 		}
 		d.t.Fatalf("no fact %v", op["fact"])
 	case "claimant":
-		found, _ := ReadAssignment(d.adir(op))
+		found, _ := ReadAssignment(context.Background(), d.adir(op))
 		for _, raw := range markerFactList(found, "claims") {
 			if fieldOf(raw.(Obj), "factId") == op["fact"] {
 				return Claimant(raw.(Obj)), nil
@@ -289,14 +289,14 @@ func (d *markerDriver) run(op markerOp) (any, error) {
 		marker := Obj{{Key: "claims", Value: []any{Obj{{Key: "factId", Value: "claims/" + session + "/claim.json"}, {Key: "sessionId", Value: session}, {Key: "dispatchRequestId", Value: string([]byte{0xed, 0xa0, 0x80})}}}}}
 		return selectingClaim(marker, session, op["assignment"].(string)) != nil, nil
 	case "correlated":
-		found, _ := ReadAssignment(d.adir(op))
+		found, _ := ReadAssignment(context.Background(), d.adir(op))
 		return Correlated(found, op["session"], nil), nil
 	case "select":
 		workspace := d.work()
 		if w, ok := op["workspace"]; ok {
 			workspace = d.path(w)
 		}
-		directory, found, unreadable, err := SelectAssignment(d.root(), workspace, op["session"])
+		directory, found, unreadable, err := SelectAssignment(context.Background(), d.root(), workspace, op["session"])
 		if err != nil {
 			return nil, err
 		}
@@ -306,9 +306,9 @@ func (d *markerDriver) run(op markerOp) (any, error) {
 		}
 		return map[string]any{"assignment": name, "facts": facts, "unreadable": unreadable}, nil
 	case "disposition":
-		return PublishDisposition(d.root(), d.work(), d.assignment(op), op["session"], op["turn"], op["outcome"].(string), t0)
+		return PublishDisposition(context.Background(), d.root(), d.work(), d.assignment(op), op["session"], op["turn"], op["outcome"].(string), t0)
 	case "read_disposition":
-		found, readable := ReadDisposition(d.adir(op), op["session"], op["turn"])
+		found, readable := ReadDisposition(context.Background(), d.adir(op), op["session"], op["turn"])
 		return map[string]any{"found": found, "readable": readable}, nil
 	case "digest":
 		return FactDigest(fromJSON(op["payload"]).(Obj)), nil
