@@ -21,12 +21,13 @@ import (
 // has its own final receipt) owes nothing; the same turn with neither is an omission.
 
 // daemonSweepWorld seeds one attached managed child whose turn-9 ended without a report (the Stop hook
-// witnessed the end), then adds what makes the turn past: a later admitted turn (past is
-// "later_turn_admitted"), a final receipt of its own ("own_receipt"), or nothing (""). It builds the daemon
-// over that store with daemonFactory, as the relay service does, and returns the sweeper and fault ledger
-// the daemon would sweep and record with, and the store. State, markers and workspace live in a temporary
-// directory, and the process environment is pointed there, so no real relay state is read.
-func daemonSweepWorld(t *testing.T, ctx context.Context, past string) (*faults.Sweeper, *faults.Ledger, *store.Store) {
+// witnessed the end), then adds what the variant names: "later_turn_admitted" (a later turn was admitted to
+// the generation), "own_receipt" (the turn has a final receipt of its own), "other_claim_unreadable" (the
+// claim file of another session in the same assignment cannot be read), or "" (nothing). It builds the
+// daemon over that store with daemonFactory, as the relay service does, and returns the sweeper and fault
+// ledger the daemon would sweep and record with, and the store. State, markers and workspace live in a
+// temporary directory, and the process environment is pointed there, so no real relay state is read.
+func daemonSweepWorld(t *testing.T, ctx context.Context, variant string) (*faults.Sweeper, *faults.Ledger, *store.Store) {
 	t.Helper()
 	dir, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -51,7 +52,7 @@ func daemonSweepWorld(t *testing.T, ctx context.Context, past string) (*faults.S
 		"INSERT INTO assignment_settlements VALUES('rel','child','standby-1','completed','stamp')",
 		"INSERT INTO assignment_settlements VALUES('rel','child','turn-9','completed','stamp')",
 	}
-	switch past {
+	switch variant {
 	case "later_turn_admitted":
 		seed = append(seed, "INSERT INTO generation_turns(relationship_id,execution_generation,turn_id,evidence,actor,detail,admitted_at) VALUES('rel',1,'turn-10','explicit_admission_bound:turn-9','child','admitted','stamp')")
 	case "own_receipt":
@@ -86,6 +87,15 @@ func daemonSweepWorld(t *testing.T, ctx context.Context, past string) (*faults.S
 			t.Fatal(err)
 		}
 	}
+	if variant == "other_claim_unreadable" {
+		other := filepath.Join(marker, "claims", "other", "claim.json")
+		if err = os.MkdirAll(filepath.Dir(other), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err = os.WriteFile(other, []byte("{not json"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	d, err := daemonFactory(ctx, dispatch.Services{Selection: store.StateSelection{Path: state}, SocketPath: filepath.Join(dir, "app.sock")}, s)
 	if err != nil {
 		t.Fatal(err)
@@ -115,17 +125,23 @@ func (r *recordingObserver) Observe(ctx context.Context, request faults.ManagedR
 
 func TestDaemonSweepFilesAnOmissionOnlyForATurnThatStillOwesItsReport(t *testing.T) {
 	for _, c := range []struct {
-		name, past string
-		owedReason string
-		owed       bool
+		name, variant string
+		state, reason string // the reading of turn-9
+		owedReason    string
+		owed          bool
+		notice        bool // an observation_unmeasured notice is filed for turn-9
 	}{
-		{"a turn that still owes its report", "", "terminal_without_report", true},
-		{"a later turn was admitted", "later_turn_admitted", "later_turn_admitted", false},
-		{"the turn has its own final receipt", "own_receipt", "turn_receipted", false},
+		{"a turn that still owes its report", "", "unreported", "terminal_without_report", "terminal_without_report", true, false},
+		{"a later turn was admitted", "later_turn_admitted", "unreported", "terminal_without_report", "later_turn_admitted", false, false},
+		{"the turn has its own final receipt", "own_receipt", "unreported", "terminal_without_report", "turn_receipted", false, false},
+		// Delivery's reader validates every fact of the assignment's marker tree, not only the session's own: a
+		// claim of another session that cannot be read leaves the turn unmeasured, where the copy it replaced
+		// read the session's own files alone and filed the omission.
+		{"another session's claim cannot be read", "other_claim_unreadable", "unmeasured", "marker_unreadable", "not_an_omission", false, true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			ctx := context.Background()
-			sweeper, ledger, s := daemonSweepWorld(t, ctx, c.past)
+			sweeper, ledger, s := daemonSweepWorld(t, ctx, c.variant)
 			// The daemon reads its settled managed turns through delivery's omission judgment.
 			if _, ok := sweeper.ManagedObserver.(supervisor.OmissionObserver); !ok {
 				t.Fatalf("the daemon's sweeper reads managed turns through %T, want supervisor.OmissionObserver", sweeper.ManagedObserver)
@@ -145,14 +161,15 @@ func TestDaemonSweepFilesAnOmissionOnlyForATurnThatStillOwesItsReport(t *testing
 				t.Fatalf("the sweep read %d managed turns, want 1: %v", len(recorder.readings), recorder.readings)
 			}
 			reading := recorder.readings[0]
-			if selectors, _ := reading["selectors"].(map[string]any); selectors["turn"] != "turn-9" || reading["reportingState"] != "unreported" || reading["owed"] != c.owed || reading["owedReason"] != c.owedReason {
-				t.Fatalf("turn-9 reads %v / owed %v (%v), want unreported / owed %v (%s)", reading["reportingState"], reading["owed"], reading["owedReason"], c.owed, c.owedReason)
+			selectors, _ := reading["selectors"].(map[string]any)
+			if selectors["turn"] != "turn-9" || reading["reportingState"] != c.state || reading["reason"] != c.reason || reading["owed"] != c.owed || reading["owedReason"] != c.owedReason {
+				t.Fatalf("turn-9 reads %v / %v, owed %v (%v); want %s / %s, owed %v (%s)", reading["reportingState"], reading["reason"], reading["owed"], reading["owedReason"], c.state, c.reason, c.owed, c.owedReason)
 			}
 			want := 0
 			if c.owed {
 				want = 1
 			}
-			filed := 0
+			filed, notices := 0, 0
 			for _, o := range batch.Observations {
 				if o.Signature["turn"] != "turn-9" || o.Cleared {
 					continue
@@ -161,11 +178,14 @@ func TestDaemonSweepFilesAnOmissionOnlyForATurnThatStillOwesItsReport(t *testing
 				case "report_omitted":
 					filed++
 				case "observation_unmeasured":
-					t.Fatalf("the turn was left unmeasured: %s", o.Detail)
+					notices++
 				}
 			}
 			if filed != want {
 				t.Fatalf("the sweep files %d report_omitted observations for turn-9, want %d", filed, want)
+			}
+			if (notices > 0) != c.notice {
+				t.Fatalf("the sweep files %d observation_unmeasured notices for turn-9, want a notice: %v", notices, c.notice)
 			}
 			if _, err = sweeper.RecordAll(ctx, ledger, batch); err != nil {
 				t.Fatal(err)
