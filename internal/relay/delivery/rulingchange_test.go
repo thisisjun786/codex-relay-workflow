@@ -104,6 +104,7 @@ func rcMentions(t *testing.T, text string, words ...string) {
 
 // c1: needs_changes after verified, with nothing accepted, is a ruling and not a replay.
 func TestRC01_needs_changes_after_verified_replaces_the_ruling_and_opens_the_correction(t *testing.T) {
+	t.Parallel()
 	h := newRulingHL(t)
 	event := h.managedVerified()
 	record, err := h.rule(event, "needs_changes", "v2", rcRestoration(), nil, nil)
@@ -154,6 +155,7 @@ func TestRC01_needs_changes_after_verified_replaces_the_ruling_and_opens_the_cor
 
 // c2: the same verdict again stays an idempotent replay and writes nothing.
 func TestRC02_the_same_verdict_again_is_an_idempotent_replay(t *testing.T) {
+	t.Parallel()
 	for _, verdict := range []string{"verified", "needs_changes", "unverified", "aborted"} {
 		t.Run(verdict, func(t *testing.T) {
 			h := newRulingHL(t)
@@ -182,6 +184,7 @@ func TestRC02_the_same_verdict_again_is_an_idempotent_replay(t *testing.T) {
 
 // c1: every other different verdict is refused and writes nothing, never answered with the old one.
 func TestRC03_a_different_verdict_that_cannot_replace_the_recorded_one_is_refused(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		recorded, asked string
 		route           []string
@@ -226,6 +229,7 @@ func TestRC03_a_different_verdict_that_cannot_replace_the_recorded_one_is_refuse
 // c1: once the plan accepted the verified result, or the work was marked merged, a second ruling
 // is refused with the route that remains, which depends on the node's own reading.
 func TestRC04_acceptance_and_a_merge_mark_close_the_change(t *testing.T) {
+	t.Parallel()
 	t.Run("accepted", func(t *testing.T) {
 		h := newRulingHL(t)
 		event := h.managedVerified()
@@ -245,6 +249,7 @@ func TestRC04_acceptance_and_a_merge_mark_close_the_change(t *testing.T) {
 // c1: the ruling is replaced only on the head of the generation the relationship stands on, and a
 // refusal of the existing path keeps its reason and says what to do.
 func TestRC05_a_ruling_on_an_event_the_generation_left_behind_is_refused_with_the_route(t *testing.T) {
+	t.Parallel()
 	h := newRulingHL(t)
 	event := h.managedVerified()
 	h.openGeneration("later", "needs_changes_revision", "later-turn")
@@ -253,6 +258,7 @@ func TestRC05_a_ruling_on_an_event_the_generation_left_behind_is_refused_with_th
 }
 
 func TestRC05_the_other_currency_refusals_keep_their_reason_and_name_the_route(t *testing.T) {
+	t.Parallel()
 	refused := func(t *testing.T, v *vcu, event, want string) string {
 		t.Helper()
 		before := rcFootprint(t, v.fixture)
@@ -298,6 +304,7 @@ func TestRC05_the_other_currency_refusals_keep_their_reason_and_name_the_route(t
 // c1: the relationship must be able to carry the correction, as for a first needs_changes ruling,
 // and a refusal keeps the verified ruling.
 func TestRC06_a_correction_nobody_can_receive_is_refused_and_keeps_the_verified_ruling(t *testing.T) {
+	t.Parallel()
 	h := newRulingHL(t)
 	event := h.managedVerified()
 	h.rcExec("UPDATE relationships SET allowed_recipients = ? WHERE relationship_id = ?", "[\""+parent+"\"]", h.rid)
@@ -309,6 +316,7 @@ func TestRC06_a_correction_nobody_can_receive_is_refused_and_keeps_the_verified_
 
 // The coordination summary owed for the changed ruling is a new job that says it is the second.
 func TestRC07_the_changed_ruling_enqueues_its_own_summary_with_the_ordinal(t *testing.T) {
+	t.Parallel()
 	t.Run("managed", func(t *testing.T) {
 		h := newRulingHL(t)
 		event := h.claimed(true)
@@ -358,6 +366,7 @@ func TestRC07_the_changed_ruling_enqueues_its_own_summary_with_the_ordinal(t *te
 // way to or already on the target; one that only holds the lane does not (the parent that found
 // the base conflict holds it).
 func TestRC08_a_merge_turn_that_acts_on_the_verified_work_closes_the_change(t *testing.T) {
+	t.Parallel()
 	for _, state := range []string{"merging", "unknown", "landed"} {
 		t.Run(state, func(t *testing.T) {
 			h := newRulingHL(t)
@@ -396,6 +405,7 @@ func TestRC08_a_merge_turn_that_acts_on_the_verified_work_closes_the_change(t *t
 // A re-review is the DAG's ruling route for an accepted head: it runs before the transition rule and
 // is not stopped by the acceptance it exists to re-examine.
 func TestRC09_an_open_re_review_still_takes_a_needs_changes_ruling_on_an_accepted_head(t *testing.T) {
+	t.Parallel()
 	h := newRulingHL(t)
 	event := h.managedVerified()
 	h.rcAccept(event)
@@ -413,6 +423,7 @@ func TestRC09_an_open_re_review_still_takes_a_needs_changes_ruling_on_an_accepte
 // The parent may give both rulings in one turn: the verified ruling opened no revision request, so
 // the derived ids cannot collide.
 func TestRC10_both_rulings_from_one_verdict_turn_replace_cleanly(t *testing.T) {
+	t.Parallel()
 	h := newRulingHL(t)
 	event := h.managedVerified()
 	record, err := h.rule(event, "needs_changes", "v1", rcRestoration(), nil, nil)
@@ -427,6 +438,7 @@ func TestRC10_both_rulings_from_one_verdict_turn_replace_cleanly(t *testing.T) {
 // A failure after the ruling was written, such as the summary owed to the coordination document,
 // rolls the whole replacement back: the verified ruling, the generation and the queues stay.
 func TestRC11_a_failure_inside_the_ruling_keeps_the_verified_ruling(t *testing.T) {
+	t.Parallel()
 	h := newRulingHL(t)
 	event := h.managedVerified()
 	h.ack.Sync = func(context.Context, Relationship, Row, string, []any, Obj, any, int64) error {
