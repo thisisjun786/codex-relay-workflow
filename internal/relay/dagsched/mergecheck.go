@@ -2,11 +2,8 @@ package dagsched
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"fmt"
-	"strconv"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -74,10 +71,9 @@ func (s *Scheduler) appendMergeCheck(ctx context.Context, q store.Querier, m mer
 	if m.ChecksBase != "" {
 		checksBase = m.ChecksBase
 	}
-	sum := sha256.Sum256([]byte(m.Acceptance.AcceptanceID + "|" + strconv.FormatInt(seq, 10)))
 	_, err = q.ExecContext(ctx, "INSERT INTO dag_merge_checks (check_id, acceptance_id, check_seq, head_sha, observed_head_sha, base_tip_sha, checks_base_sha, checks_digest, evidence_json,"+
 		" failed_required_json, round_no, outcome, reason, recorded_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-		"dmc-"+hex.EncodeToString(sum[:])[:32], m.Acceptance.AcceptanceID, seq, m.Acceptance.HeadSHA, m.Observed.HeadSHA, m.BaseTip, checksBase, digest, body.JSON(),
+		mergeCheckID(m.Acceptance.AcceptanceID, seq), m.Acceptance.AcceptanceID, seq, m.Acceptance.HeadSHA, m.Observed.HeadSHA, m.BaseTip, checksBase, digest, body.JSON(),
 		failed, m.Round, m.Outcome, m.Reason, s.now())
 	return seq, err == nil, err
 }
