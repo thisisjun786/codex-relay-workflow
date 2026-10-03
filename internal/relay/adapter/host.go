@@ -12,12 +12,12 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
-	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/managed"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 )
 
 // Open uses only explicit selectors. Environment resolution belongs to the CLI;
@@ -39,7 +39,7 @@ func Open(socket, directory string, options Options) (*Adapter, error) {
 		options.RPC = appserver.New(canonical, appserver.DefaultBounds)
 	}
 	if options.Policy == nil {
-		options.Policy = execution.Policy{}
+		options.Policy = registry.EnvironmentRolePolicy().BridgePolicy()
 	}
 	a := New(options)
 	identity, err := LedgerIdentity(path)
@@ -177,7 +177,7 @@ func (a Managed) CreateThread(ctx context.Context, in managed.CreateThreadReques
 		return nil, err
 	}
 	defer release()
-	_, err = a.bridge.CreateThread(run, bridge.CreateThread{RequestID: in.RequestID, CWD: in.CWD, Prompt: in.Prompt, Title: in.Title, Sandbox: in.Sandbox, Model: in.Model, Effort: in.ReasoningEffort, Role: in.Role, Roots: in.RuntimeWorkspaceRoots, Policy: in.ExpectedSandboxPolicy})
+	_, err = a.bridge.CreateThread(run, bridge.CreateThread{RequestID: in.RequestID, CWD: in.CWD, Prompt: in.Prompt, Title: in.Title, Sandbox: in.Sandbox, Model: in.Model, Effort: in.ReasoningEffort, Role: in.Role, MCPProfile: in.MCPProfile, Roots: in.RuntimeWorkspaceRoots, Policy: in.ExpectedSandboxPolicy})
 	if err != nil {
 		return nil, err
 	}
