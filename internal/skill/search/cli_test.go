@@ -320,3 +320,50 @@ func TestHTTPFetch(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestCLIReviewRegressions(t *testing.T) {
+	for _, c := range []struct {
+		value string
+		want  float64
+	}{{"1e2147483648", math.Inf(1)}, {"-1e2147483648", 1}} {
+		if got := ParseFlags([]string{"--limit", c.value}); got.Limit != c.want {
+			t.Errorf("%s limit=%g want=%g", c.value, got.Limit, c.want)
+		}
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte{0xe2, 0x82, 0x41}) }))
+	defer server.Close()
+	if body, err := fetchHTTP(server.URL); err != nil || body != "�A" {
+		t.Errorf("body=%q err=%v, want �A", body, err)
+	}
+}
+
+func TestHTTPTruncatedUTF8(t *testing.T) {
+	for _, c := range []struct {
+		bytes []byte
+		want  string
+	}{
+		{[]byte{0xe2, 0x82}, "�"}, {[]byte{0xf0, 0x9f, 0x92, 0x41}, "�A"},
+		{[]byte{0xed, 0xa0, 0x80}, "���"}, {[]byte{0xe0, 0x80, 0x41}, "��A"},
+		{[]byte{0xef, 0xbb, 0xbf, 0xe2, 0x82, 0x41}, "�A"},
+	} {
+		t.Run(fmt.Sprintf("%x", c.bytes), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(c.bytes) }))
+			defer server.Close()
+			if body, err := fetchHTTP(server.URL); err != nil || body != c.want {
+				t.Fatalf("%q %v want %q", body, err, c.want)
+			}
+		})
+	}
+}
+
+func TestGHBufferOverflow(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PATH", dir)
+	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte("#!/bin/sh\nprintf '%1048577s' ''\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	var errOut bytes.Buffer
+	if rows := GHSearch("x", 10, nil, &errOut); len(rows) != 0 || errOut.String() != "skill-search: gh could not be launched: spawnSync gh ENOBUFS\n" {
+		t.Fatalf("%+v %q", rows, errOut.String())
+	}
+}

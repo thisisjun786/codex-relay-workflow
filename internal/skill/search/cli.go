@@ -15,11 +15,13 @@ import (
 	"os/exec"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"unicode/utf16"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 	"github.com/thisisjun786/codex-relay-workflow/internal/role"
 )
@@ -79,9 +81,9 @@ func numberLimit(token string) float64 {
 			n, _ = v.Float64()
 		}
 	case regexp.MustCompile(`^[+-]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$`).MatchString(s):
-		v, _, err := big.ParseFloat(s, 10, 53, big.ToNearestEven)
-		if err == nil {
-			n, _ = v.Float64()
+		v, err := strconv.ParseFloat(s, 64)
+		if err == nil || errors.Is(err, strconv.ErrRange) {
+			n = v
 		}
 	}
 	if n == 0 || math.IsNaN(n) {
@@ -203,7 +205,7 @@ type ghBudget struct {
 }
 type ghCapture struct {
 	budget *ghBudget
-	bytes.Buffer
+	buffer bytes.Buffer // Do not promote ReadFrom: io.Copy must pass through Write's budget.
 }
 
 func (w *ghCapture) Write(p []byte) (int, error) {
@@ -211,7 +213,7 @@ func (w *ghCapture) Write(p []byte) (int, error) {
 	defer w.budget.mu.Unlock()
 	const maxBuffer = 1 << 20
 	n := max(0, min(len(p), maxBuffer-w.budget.used))
-	_, _ = w.Buffer.Write(p[:n])
+	_, _ = w.buffer.Write(p[:n])
 	w.budget.used += len(p)
 	if w.budget.used > maxBuffer {
 		w.budget.overflow = true
@@ -228,7 +230,7 @@ func runGH(file string, args []string) GHResult {
 	cmd := exec.CommandContext(ctx, file, args...)
 	cmd.Stdout, cmd.Stderr = &out, &errOut
 	err := cmd.Run() // Run waits and reaps the process even when the buffer cancels it.
-	r := GHResult{Stdout: out.String(), Stderr: errOut.String()}
+	r := GHResult{Stdout: out.buffer.String(), Stderr: errOut.buffer.String()}
 	if budget.overflow {
 		r.Error = errors.New("spawnSync gh ENOBUFS")
 		return r
@@ -424,5 +426,5 @@ func fetchHTTP(url string) (string, error) {
 	}
 	// Response.text strips a UTF-8 BOM and replaces invalid UTF-8. Catalog bounds
 	// belong to the existing library; show bodies remain uncapped as in the oracle.
-	return strings.Map(func(r rune) rune { return r }, strings.TrimPrefix(string(body), "\uFEFF")), nil
+	return strings.TrimPrefix(source.DecodeUTF8(body), "\uFEFF"), nil
 }
