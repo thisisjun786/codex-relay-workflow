@@ -153,6 +153,8 @@ thread is created under one of its profiles:
   defines is switched off for the thread. A profile with none is the minimal one. A kept server that
   config.toml does not define is refused before the thread starts (`execution_mcp_server_unknown`,
   naming it and the servers the host does define), because an override naming it would fail the start.
+  A kept server that config.toml disables is refused the same way (`execution_mcp_server_disabled`),
+  because no override turns it on.
 - `disablePlugins` switches whole plugins off. A plugin's server has no switch of its own on Codex 0.154:
   an override naming it fails the start, and the per-thread control of the plugin takes its skills and
   hooks with it, so a profile names only plugins a child can do without. An id that is not installed
@@ -176,13 +178,31 @@ list is `setting_unobservable`. The profile's reads are not effects: if one is l
 stays retry-safe. The receipt records the profile as `mcpProfile` and the raw list as `mcpServerStatus`.
 `create_thread` takes the role's default, since it has no input to name another profile.
 
-Not covered yet. The host keeps no overrides with a thread, so a resume of a thread it has unloaded
-starts every server again unless the overrides are sent; applying a profile on
-`send_message_to_thread`, on the relay's resume and in managed start's admission is left to a follow-up
-change, as are `create_worktree_thread`, an input to name a profile on `create_thread` and the
-crw-run text that chooses one. A policy should not declare `mcp` for a role until that follow-up
-lands: a created thread would start under the profile and a later send or relay resume would not
-carry it.
+Which profile a thread runs under. Managed start takes `child.settings.mcpProfile`. A host whose policy declares
+profiles for the child role admits a child only when its request states one of them: `mcp_profile_required`
+and `mcp_profile_unknown` refuse at the preflight, before any thread exists, so such a child's record always
+states its profile. A request that states a profile for a role that declares none is refused as
+`mcp_profile_unknown`; a request that states none is unchanged. `send_message_to_thread` applies a
+profile only when `expected_settings.mcp_profile` names one, and a send that names none resumes as before.
+Sub-agents inherit the overrides of the thread that spawns them, so one profile covers a child and its
+sub-threads.
+
+How a resume applies it. The host keeps no overrides with a thread, so every resume of a thread it has not
+loaded sends them again: the bridge's send, and the relay's delivery, supervisor send and managed start's
+business and recovery sends for a record that states a profile under a role the host's policy declares
+profiles for. A settings-free resume of a role with several pairs sends the overrides and no pair. The relay
+resolves the profile against the host on each such send, on a copy of the record that carries no stored
+`mcpServers` key, and compares the thread's `mcpServerStatus/list` afterwards: a difference withholds the
+message as `settings_not_preserved` on the field `mcpServers` (the code a settings-free resume keeps,
+because something was sent) and an unreadable list is `setting_unobservable`. A profile the host cannot
+resolve is refused before anything is sent, as `not_attempted` and retry-safe. A resume of a thread the host
+already has loaded ignores the overrides.
+
+Not covered yet. `create_worktree_thread` sends no overrides, and `create_thread` has no input to name a
+profile. A thread created outside managed start, or before a policy declared profiles, resumes under what
+its record states: no default is applied on a resume, so a record with no profile keeps the whole bundle.
+A server added to config.toml between the host's `config/read` and `thread/start` is neither switched off
+nor flagged.
 
 ## The file
 
