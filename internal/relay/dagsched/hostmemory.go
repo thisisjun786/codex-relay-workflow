@@ -23,7 +23,7 @@ const (
 	EnvHostProcRoot        = "CRW_DAG_HOST_PROC_ROOT"               // where meminfo and pressure/memory are read (default /proc)
 	EnvHostMinAvailableGiB = "CRW_DAG_HOST_MIN_AVAILABLE_GIB"       // floor of MemAvailable in GiB (default 15; 0 never trips)
 	EnvHostMaxSwapPercent  = "CRW_DAG_HOST_MAX_SWAP_PERCENT"        // ceiling of the swap in use, percent of SwapTotal (default 50; 100 never trips)
-	EnvHostMaxPressure     = "CRW_DAG_HOST_MAX_PRESSURE_SOME_AVG10" // ceiling of the some avg10 of the memory pressure (default 10; 100 never trips)
+	EnvHostMaxPressure     = "CRW_DAG_HOST_MAX_PRESSURE_SOME_AVG60" // ceiling of the some avg10 of the memory pressure (default 10; 100 never trips)
 )
 
 // The states of the bound (within: something was read and nothing is over; deferring: something is over; unmeasured: nothing could be read), where the limits came from, and the dimensions.
@@ -42,19 +42,19 @@ const (
 // HostMemory is one sample of the host. A nil field is a dimension nobody could read (Unread says why, "<dimension>: <cause>"); the swap is read only when both its total and its free bytes are.
 type HostMemory struct {
 	AvailableBytes, SwapTotalBytes, SwapFreeBytes *int64
-	PressureSomeAvg10                             *float64
+	PressureSomeAvg60, PressureSomeAvg10          *float64
 	Unread                                        []string
 }
 
-// HostMemoryLimits are the thresholds, all strict: available under MinAvailableBytes, swap use over MaxSwapPercent or pressure over MaxPressureSomeAvg10 holds releases.
+// HostMemoryLimits are the thresholds, all strict: available under MinAvailableBytes, swap use over MaxSwapPercent or pressure over MaxPressureSomeAvg60 holds releases.
 type HostMemoryLimits struct {
 	MinAvailableBytes                    int64
-	MaxSwapPercent, MaxPressureSomeAvg10 float64
+	MaxSwapPercent, MaxPressureSomeAvg60 float64
 }
 
 // DefaultHostMemoryLimits are the starting values: 15 GiB available, half of the swap, a some avg10 of 10.
 func DefaultHostMemoryLimits() HostMemoryLimits {
-	return HostMemoryLimits{MinAvailableBytes: 15 * gib, MaxSwapPercent: 50, MaxPressureSomeAvg10: 10}
+	return HostMemoryLimits{MinAvailableBytes: 15 * gib, MaxSwapPercent: 50, MaxPressureSomeAvg60: 10}
 }
 
 // HostMemoryBound is the sample a command took and the limits it judges it by; Scheduler.Host nil means no bound.
@@ -102,8 +102,8 @@ func ReadHostMemory(root string) HostMemory {
 		}
 	}
 	raw, err := os.ReadFile(filepath.Join(root, "pressure", "memory"))
-	if v, ok := somePressure(string(raw)); err == nil && ok {
-		m.PressureSomeAvg10 = &v
+	if v, ok := somePressure(string(raw), "avg10"); err == nil && ok {
+		m.PressureSomeAvg60 = &v
 	} else if errors.Is(err, fs.ErrNotExist) {
 		unread(hostPressure, "no memory pressure file (a kernel without it)")
 	} else if err != nil {
@@ -140,14 +140,14 @@ func meminfoFields(text string) map[string]int64 {
 }
 
 // somePressure is the avg10 of the "some" line of the memory pressure file.
-func somePressure(text string) (float64, bool) {
+func somePressure(text, window string) (float64, bool) {
 	for _, line := range strings.Split(text, "\n") {
 		fields := strings.Fields(line)
 		if len(fields) == 0 || fields[0] != "some" {
 			continue
 		}
 		for _, f := range fields[1:] {
-			if value, ok := strings.CutPrefix(f, "avg10="); ok {
+			if value, ok := strings.CutPrefix(f, window+"="); ok {
 				v, err := strconv.ParseFloat(value, 64)
 				return v, err == nil && v >= 0 && v <= 100
 			}
@@ -183,7 +183,7 @@ func (b HostMemoryBound) Judge() HostMemoryVerdict {
 	used, haveSwap := v.SwapUsedPercent()
 	over(hostAvailable, m.AvailableBytes != nil, m.AvailableBytes != nil && *m.AvailableBytes < b.Limits.MinAvailableBytes)
 	over(hostSwap, haveSwap, haveSwap && used > b.Limits.MaxSwapPercent)
-	over(hostPressure, m.PressureSomeAvg10 != nil, m.PressureSomeAvg10 != nil && *m.PressureSomeAvg10 > b.Limits.MaxPressureSomeAvg10)
+	over(hostPressure, m.PressureSomeAvg60 != nil, m.PressureSomeAvg60 != nil && *m.PressureSomeAvg60 > b.Limits.MaxPressureSomeAvg60)
 	switch {
 	case len(v.Exceeded) > 0:
 		v.State = HostMemoryDeferring
@@ -205,7 +205,7 @@ func (v HostMemoryVerdict) Detail() string {
 		case hostSwap:
 			parts = append(parts, fmt.Sprintf("swap use %.2f percent is over the %.2f percent ceiling", used, v.Limits.MaxSwapPercent))
 		case hostPressure:
-			parts = append(parts, fmt.Sprintf("pressure some avg10 %.2f is over the %.2f ceiling", *v.Sample.PressureSomeAvg10, v.Limits.MaxPressureSomeAvg10))
+			parts = append(parts, fmt.Sprintf("pressure some avg60 %.2f is over the %.2f ceiling", *v.Sample.PressureSomeAvg60, v.Limits.MaxPressureSomeAvg60))
 		}
 	}
 	return "the host is short of memory, so no new release is made: " + strings.Join(parts, "; ")
@@ -220,15 +220,18 @@ func optionalInt(p *int64) any {
 
 // object is the verdict as the reading prints it (pass.host_memory) and a recorded pass keeps it (dag_pass_host_memory); the input digest covers it.
 func (v HostMemoryVerdict) object() contract.OrderedObject {
-	var used, pressure any
+	var used, avg60, avg10 any
 	if percent, ok := v.SwapUsedPercent(); ok {
 		used = percent
 	}
-	if v.Sample.PressureSomeAvg10 != nil {
-		pressure = *v.Sample.PressureSomeAvg10
+	if v.Sample.PressureSomeAvg60 != nil {
+		avg60 = *v.Sample.PressureSomeAvg60
 	}
-	limits := contract.OrderedObject{{Key: "min_available_bytes", Value: v.Limits.MinAvailableBytes}, {Key: "max_swap_percent", Value: v.Limits.MaxSwapPercent}, {Key: "max_pressure_some_avg10", Value: v.Limits.MaxPressureSomeAvg10}}
-	measured := contract.OrderedObject{{Key: "available_bytes", Value: optionalInt(v.Sample.AvailableBytes)}, {Key: "swap_total_bytes", Value: optionalInt(v.Sample.SwapTotalBytes)}, {Key: "swap_free_bytes", Value: optionalInt(v.Sample.SwapFreeBytes)}, {Key: "swap_used_percent", Value: used}, {Key: "pressure_some_avg10", Value: pressure}}
+	if v.Sample.PressureSomeAvg10 != nil {
+		avg10 = *v.Sample.PressureSomeAvg10
+	}
+	limits := contract.OrderedObject{{Key: "min_available_bytes", Value: v.Limits.MinAvailableBytes}, {Key: "max_swap_percent", Value: v.Limits.MaxSwapPercent}, {Key: "max_pressure_some_avg60", Value: v.Limits.MaxPressureSomeAvg60}}
+	measured := contract.OrderedObject{{Key: "available_bytes", Value: optionalInt(v.Sample.AvailableBytes)}, {Key: "swap_total_bytes", Value: optionalInt(v.Sample.SwapTotalBytes)}, {Key: "swap_free_bytes", Value: optionalInt(v.Sample.SwapFreeBytes)}, {Key: "swap_used_percent", Value: used}, {Key: "pressure_some_avg60", Value: avg60}, {Key: "pressure_some_avg10", Value: avg10}}
 	return contract.OrderedObject{{Key: "state", Value: v.State}, {Key: "limits_from", Value: v.LimitsFrom}, {Key: "limits", Value: limits}, {Key: "measured", Value: measured},
 		{Key: "exceeded", Value: listOf(v.Exceeded)}, {Key: "unmeasured", Value: listOf(v.Unmeasured)}, {Key: "unread", Value: listOf(v.Sample.Unread)}}
 }
@@ -244,7 +247,7 @@ func HostMemoryFromEnvironment(getenv func(string) string) (*HostMemoryBound, er
 	}{
 		{EnvHostMinAvailableGiB, 1 << 20, func(n float64) { limits.MinAvailableBytes = int64(math.Round(n * gib)) }},
 		{EnvHostMaxSwapPercent, 100, func(n float64) { limits.MaxSwapPercent = n }},
-		{EnvHostMaxPressure, 100, func(n float64) { limits.MaxPressureSomeAvg10 = n }},
+		{EnvHostMaxPressure, 100, func(n float64) { limits.MaxPressureSomeAvg60 = n }},
 	} {
 		value := strings.TrimSpace(getenv(t.name))
 		if value == "" {

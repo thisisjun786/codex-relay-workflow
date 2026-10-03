@@ -30,8 +30,8 @@ var shortHosts = []struct {
 	exceeded []string
 }{
 	{"available", fixedMemory(9<<30, 8<<30, 8<<30, 0), "available 9.00 GiB is under the 15.00 GiB floor", []string{"available"}},
-	{"swap", fixedMemory(40<<30, 8<<30, 2<<30, 0), "swap use 75.00 percent is over the 50.00 percent ceiling", []string{"swap"}},
-	{"pressure", fixedMemory(40<<30, 8<<30, 8<<30, 12.5), "pressure some avg10 12.50 is over the 10.00 ceiling", []string{"pressure"}},
+	{"swap", fixedMemory(40<<30, 8<<30, 1<<30, 0), "swap use 87.50 percent is over the 85.00 percent ceiling", []string{"swap"}},
+	{"pressure", fixedMemory(40<<30, 8<<30, 8<<30, 12.5), "pressure some avg60 12.50 is over the 10.00 ceiling", []string{"pressure"}},
 }
 
 func (f *fixture) threeNodes(plan string) {
@@ -98,8 +98,8 @@ func TestReadyDefersEveryCandidateWhileHostMemoryIsShort(t *testing.T) {
 			printed := asJSON(t, short.Object())["pass"].(map[string]any)["host_memory"].(map[string]any)
 			measured := printed["measured"].(map[string]any)
 			limits := printed["limits"].(map[string]any)
-			if printed["state"] != "deferring" || printed["limits_from"] != "default" || limits["min_available_bytes"] != float64(15<<30) || limits["max_swap_percent"] != float64(50) || limits["max_pressure_some_avg10"] != float64(10) ||
-				measured["available_bytes"] != float64(*c.sample.AvailableBytes) || measured["pressure_some_avg10"] != *c.sample.PressureSomeAvg10 {
+			if printed["state"] != "deferring" || printed["limits_from"] != "default" || limits["min_available_bytes"] != float64(15<<30) || limits["max_swap_percent"] != float64(85) || limits["max_pressure_some_avg60"] != float64(10) ||
+				measured["available_bytes"] != float64(*c.sample.AvailableBytes) || measured["pressure_some_avg60"] != *c.sample.PressureSomeAvg60 {
 				t.Fatalf("host_memory = %v", printed)
 			}
 
@@ -179,6 +179,14 @@ func TestHostMemoryIsInTheInputDigest(t *testing.T) {
 	f.sched.Host = hostBound(fixedMemory(41<<30, 8<<30, 8<<30, 0))
 	if other := f.read("hm"); other.InputDigest == first.InputDigest {
 		t.Fatal("two samples with the same verdict and other values digest alike: the digest does not cover the sample")
+	}
+	calm, busy := 1.0, 2.0
+	withAvg10 := func(v *float64) *HostMemoryBound { s := healthyHost(); s.PressureSomeAvg10 = v; return hostBound(s) }
+	f.sched.Host = withAvg10(&calm)
+	one := f.read("hm").InputDigest
+	f.sched.Host = withAvg10(&busy)
+	if f.read("hm").InputDigest == one {
+		t.Fatal("two samples that differ only in the information avg10 digest alike")
 	}
 	f.sched.Host = hostBound(shortHosts[0].sample)
 	if short := f.read("hm"); short.InputDigest == first.InputDigest {
@@ -297,7 +305,7 @@ func TestPassRecordsTheHostMemoryBound(t *testing.T) {
 		t.Fatal(err)
 	}
 	values := doc["measured"].(map[string]any)
-	if doc["state"] != "deferring" || !reflect.DeepEqual(doc["exceeded"], []any{"swap"}) || values["swap_used_percent"] != float64(75) || values["swap_free_bytes"] != float64(2<<30) {
+	if doc["state"] != "deferring" || !reflect.DeepEqual(doc["exceeded"], []any{"swap"}) || values["swap_used_percent"] != float64(87.5) || values["swap_free_bytes"] != float64(1<<30) {
 		t.Fatalf("the kept values = %v", doc)
 	}
 	if rows[2].dispositions == "" || !strings.Contains(rows[2].dispositions, DeferHostMemory) {
@@ -330,7 +338,7 @@ func TestMeasurementsReadAStoreWithoutTheHostMemoryTable(t *testing.T) {
 // The commands: the built binary reads the host through the environment. A fake proc root stands for the host.
 func TestCLIReadyAndRecordUnderAFakeHost(t *testing.T) {
 	state, _ := cliState(t)
-	t.Setenv(EnvHostProcRoot, fakeProc(t, memInfo(9*kibPerGiB, 8*kibPerGiB, 8*kibPerGiB), psi("0.00")))
+	t.Setenv(EnvHostProcRoot, fakeProc(t, memInfo(9*kibPerGiB, 8*kibPerGiB, 8*kibPerGiB), psi("7.00", "0.00")))
 	out, code := crw(t, state, "dag-ready", "--plan", "p1")
 	if code != 0 {
 		t.Fatalf("exit %d\n%s", code, out)
@@ -339,6 +347,9 @@ func TestCLIReadyAndRecordUnderAFakeHost(t *testing.T) {
 	host, _ := reading["pass"].(map[string]any)["host_memory"].(map[string]any)
 	if host["state"] != "deferring" || reading["pass"].(map[string]any)["deciding_limit"] != LimitHostMemory || len(reading["ready"].([]any)) != 0 {
 		t.Fatalf("a short fake host:\n%s", out)
+	}
+	if values, _ := host["measured"].(map[string]any); values["pressure_some_avg60"] != float64(0) || values["pressure_some_avg10"] != float64(7) {
+		t.Fatalf("the judged avg60 and the information avg10 are both in the reading: %v", values)
 	}
 	for _, n := range reading["nodes"].([]any) {
 		if m := n.(map[string]any); m["node_id"] == "design" && m["reason"] != DeferHostMemory {
@@ -356,7 +367,7 @@ func TestCLIReadyAndRecordUnderAFakeHost(t *testing.T) {
 		t.Fatalf("kept %q %q %v", kept, limit, err)
 	}
 
-	t.Setenv(EnvHostProcRoot, fakeProc(t, memInfo(40*kibPerGiB, 8*kibPerGiB, 8*kibPerGiB), psi("0.00")))
+	t.Setenv(EnvHostProcRoot, fakeProc(t, memInfo(40*kibPerGiB, 8*kibPerGiB, 8*kibPerGiB), psi("60.00", "1.00"))) // a spike of the avg10 alone holds nothing
 	out, _ = crw(t, state, "dag-ready", "--plan", "p1")
 	if ready := parseOut(t, out)["ready"].([]any); len(ready) != 1 || ready[0].(map[string]any)["node_id"] != "design" {
 		t.Fatalf("a healthy fake host:\n%s", out)
