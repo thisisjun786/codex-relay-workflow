@@ -15,7 +15,7 @@ func TestWorkDirIsEmptyAndRemoved(t *testing.T) {
 		spec fakeSpec
 		want Class
 	}{
-		{"normal", fakeSpec{Stdout: `{"status":"SUCCESS","response":"PONG"}`}, ClassNormal},
+		{"normal", fakeSpec{Stdout: testdata(t, "success_schema.json")}, ClassNormal},
 		{"invalid", fakeSpec{Stdout: testdata(t, "denied_actions.json")}, ClassInvalid},
 		{"unavailable", fakeSpec{Exit: 2, Stderr: "panic: boom"}, ClassUnavailable},
 		{"time limit kill", fakeSpec{Sleep: time.Minute}, ClassInvalid},
