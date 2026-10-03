@@ -8,14 +8,32 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
 )
 
 // GitAncestry is the production Ancestry: whether a commit is contained in a branch tip. A local checkout is asked git (merge-base --is-ancestor: exit 0 contained, 1 not, anything else
 // an error and no answer); a forge repository is asked the compare API (contained when the tip is not behind the commit, behind_by = 0, and the commits are identical or the tip is ahead). A
 // squash or rebase landing is never an ancestor: the head the parent accepted is not in the history of the branch, which is the finding the reading names integration_unprovable.
-type GitAncestry struct{ Git, GH string }
+type GitAncestry struct {
+	Git, GH string
+	// Timeout bounds the forge call; zero is mergeturn.ForgeCallTimeout, the bound of the other forge read.
+	Timeout time.Duration
+}
+
+// forgeTimeout is the bound of one compare call.
+func (g GitAncestry) forgeTimeout() time.Duration {
+	if g.Timeout > 0 {
+		return g.Timeout
+	}
+	return mergeturn.ForgeCallTimeout
+}
+
+// forgeWaitDelay is how long the call waits for a process that outlived the kill (a child of gh that kept the output pipe open) before it gives up on it, so a stuck process tree cannot hold the
+// call past its bound.
+const forgeWaitDelay = 5 * time.Second
 
 // Ancestry reports whether subject is an ancestor of tip in repository, and the method that said so.
 func (g GitAncestry) Ancestry(ctx context.Context, repository, subject, tip string) (bool, string, error) {
@@ -63,11 +81,19 @@ func (g GitAncestry) forge(ctx context.Context, owner, name, subject, tip string
 	if gh == "" {
 		gh = "gh"
 	}
-	cmd := exec.CommandContext(ctx, gh, "api", "--method", "GET", fmt.Sprintf("repos/%s/%s/compare/%s...%s", owner, name, subject, tip))
+	// the call is bounded like the other forge read, the branch tip of the merge lane (mergeturn.ForgeCallTimeout): a forge that does not answer is no answer, and never a call that waits for good
+	timeout := g.forgeTimeout()
+	runCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	cmd := exec.CommandContext(runCtx, gh, "api", "--method", "GET", fmt.Sprintf("repos/%s/%s/compare/%s...%s", owner, name, subject, tip))
 	cmd.Env = cleanGitEnv()
+	cmd.WaitDelay = forgeWaitDelay
 	raw, err := cmd.Output()
 	method := "gh api compare behind_by"
 	if err != nil {
+		if ctx.Err() == nil && runCtx.Err() == context.DeadlineExceeded {
+			return false, method, fmt.Errorf("%s %s...%s in %s/%s: the forge call exceeded the timeout of %s, so no answer was observed", method, subject, tip, owner, name, timeout)
+		}
 		return false, method, fmt.Errorf("%s %s...%s in %s/%s: %w", method, subject, tip, owner, name, err)
 	}
 	var compare struct {

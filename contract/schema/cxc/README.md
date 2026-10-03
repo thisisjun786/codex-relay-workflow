@@ -176,7 +176,8 @@ issue claims it:
    helper roles, doctor).
 2. Builds the same `given` with the CRW names: `name-substitution.json` is applied to every path
    and text of `given` (`.codexclaw/` becomes `.crw/`, `codexclaw.json` becomes `crw.json`,
-   `CODEXCLAW_HOME` becomes `CRW_HOME` bound to the `${CXC_HOME}` root).
+   `CODEXCLAW_HOME` becomes `CRW_HOME` bound to the `${CXC_HOME}` root). An intentionally-changed claim can
+   then override the given where crw has no counterpart of it (the status-file format).
 3. Runs the Go build with the same isolation, normalises its output with `normalisation.json`
    (binding `${PLUGIN_ROOT}` to the crw plugin root), and applies `name-substitution.json` to the
    fixture's expected text, tree paths and tree contents, in rule order (regex rules with Go

@@ -15,6 +15,11 @@ import (
 )
 
 // Tip is the branch's current full object name, not a caller's restatement.
+
+// ForgeCallTimeout is how long one forge read (a single gh api GET) may take before no answer is taken from it. The branch-tip read below and the compare call behind the DAG ancestry
+// check share it, so a stalled forge stops both at the same bound.
+const ForgeCallTimeout = 30 * time.Second
+
 type Tip struct {
 	SHA        string `json:"sha"`
 	Source     string `json:"source"`
@@ -141,13 +146,13 @@ func (r TargetReader) github(ctx context.Context, repository, base string) (Tip,
 		gh = "gh"
 	}
 	argv := []string{"api", "--method", "GET", "-H", "Accept: application/vnd.github+json", "repos/" + repository + "/git/ref/heads/" + base}
-	timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	timeoutCtx, cancel := context.WithTimeout(ctx, ForgeCallTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(timeoutCtx, gh, argv...)
 	output, err := cmd.Output()
 	if err != nil {
 		if timeoutCtx.Err() == context.DeadlineExceeded {
-			return Tip{}, unreadable("reading the base branch exceeded the timeout of 30 seconds, so no answer was observed")
+			return Tip{}, unreadable("reading the base branch exceeded the timeout of %d seconds, so no answer was observed", int(ForgeCallTimeout/time.Second))
 		}
 		if e, ok := err.(*exec.ExitError); ok {
 			detail := excerpt(strings.TrimSpace(string(e.Stderr)))
