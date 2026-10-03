@@ -167,7 +167,7 @@ func TestSchemaMatchesTypes(t *testing.T) {
 	}
 	enums := map[reflect.Type][]string{reflect.TypeFor[Grade](): append([]string{""}, names(allGrades)...), reflect.TypeFor[Verdict](): names(allVerdicts),
 		reflect.TypeFor[DropReason](): names(allReasons), reflect.TypeFor[Status](): names(allStatuses)}
-	scalars := map[reflect.Kind]string{reflect.Int: "integer", reflect.String: "string", reflect.Bool: "boolean"}
+	scalars := map[reflect.Kind]string{reflect.Int: "integer", reflect.Int64: "integer", reflect.String: "string", reflect.Bool: "boolean"}
 	strs := func(v any) (out []string) {
 		for _, s := range v.([]any) {
 			out = append(out, s.(string))
