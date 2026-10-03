@@ -1,34 +1,30 @@
-// Package state is the PABCD session state model and its read path: the Go form of CXC v0.2.40
-// pabcd-state/src/state.ts (commit 3c1459ac) from the top of the file to readStateStrict, under the CRW names of
-// contract/schema/cxc/name-substitution.json (the session file .codexclaw/sessions/<id>.json is
-// .crw/sessions/<id>.json). It reads and rebuilds; it writes nothing. Left to the state-writes issue: writeState, the
-// session lock, the ledgers (LedgerEntry, appendLedger, the interview scan events) and ensureState, the exclusive
-// create of a fresh session file.
+// Package state is the PABCD session state model and its read path: the Go form of CXC v0.2.40 pabcd-state/src/state.ts
+// (commit 3c1459ac) from the top of the file to readStateStrict, with the session file at .crw/sessions/<id>.json
+// (name-substitution R26). It reads and rebuilds; it writes nothing. The state-writes issue owns writeState, the session
+// lock, the ledgers (LedgerEntry, appendLedger, the interview scan events) and ensureState, the exclusive create of a file.
 //
-// Behaviour is ported as-is, oracle defects included. A persisted file never becomes a State by decoding it into the
-// struct: ReadStateStrict rebuilds every field from the decoded value, keeps only known keys and defaults or drops
-// what is malformed, so a file written by hand or by another version cannot widen what a session may do. A file that
-// cannot be read or decoded is reported as unreadable: a fail-closed caller must treat that as a denial, any other
-// caller as a fresh session.
+// Behaviour is ported as-is, oracle defects included. A file never becomes a State by decoding it into the struct:
+// ReadStateStrict rebuilds every field from known keys and defaults or drops what is malformed, so a hand-written or
+// foreign-version file cannot widen what a session may do. A file that cannot be read or decoded is reported unreadable: a
+// fail-closed caller must treat that as a denial, any other caller as a fresh session.
 //
-// Encode is JSON.stringify(state, null, 2). Its keys follow the object readStateStrict builds, the order of State's
-// fields. Two details belong to the writer: the oracle appends boundSourceRoot last, and keeps the capture order of
-// phaseEntrySource (treeHash before capturedAt), when it sets either on a state it did not read back; Encode always
-// writes the order a read-back produces.
+// Encode is JSON.stringify(state, null, 2) in the order of State's fields, the order readStateStrict builds. The oracle
+// appends boundSourceRoot last, and keeps the capture order of phaseEntrySource (treeHash before capturedAt), when it sets
+// either on a state it did not read back; that is a writer's detail, and Encode always writes the read-back order.
 //
-// Representations that are not literal:
-//   - A string holding a lone surrogate cannot exist in Go. One persisted as an escape such as \ud800, or made by
-//     cutting receiptClaimed inside an astral character, becomes U+FFFD; so does each invalid UTF-8 byte.
-//   - The clock behind updatedAt defaults is time.Now; the writes issue stamps updatedAt itself and needs its own.
+// Not literal: a string holding a lone surrogate (an escape such as \ud800 in a file, or receiptClaimed cut inside an astral
+// character) cannot exist in Go and becomes U+FFFD, as does each invalid UTF-8 byte. Defaulted updatedAt values come from
+// time.Now; the writes issue stamps updatedAt itself and needs its own clock.
 package state
 
 import (
+	"bytes"
 	"encoding/json"
+	"os"
 	"path/filepath"
-
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/interview"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 )
@@ -133,8 +129,7 @@ type State struct {
 	OrchestrationActive bool               `json:"orchestrationActive"` // false whenever Phase is IDLE
 	Interview           *interview.Tracker `json:"interview"`
 
-	// Stop-continuation stagnation guard (L6): the phase and work phase the Stop hook last blocked on, the consecutive
-	// blocks there, the objective-metric high-water mark and the blocks of the current turn.
+	// Stop-continuation stagnation guard (L6): where the Stop hook last blocked, how often, the metric high-water mark.
 	StopBlockPhase       *Phase  `json:"stopBlockPhase"`
 	StopBlockCount       float64 `json:"stopBlockCount"`
 	StopBlockWorkPhaseID *string `json:"stopBlockWorkPhaseId"`
@@ -143,8 +138,7 @@ type State struct {
 	StopBlockTurnID      *string `json:"stopBlockTurnId"`
 	StopBlockCapNotified bool    `json:"stopBlockCapNotified"`
 
-	// IDLE-edit advisory (a loop-arm request seen, the gated-edit counter) and the memory-write gate (an explicit remember
-	// request, the turn that raised it, an operator grant).
+	// IDLE-edit advisory and the memory-write gate (a remember request, its turn, an operator grant).
 	LoopArmSeen          bool    `json:"loopArmSeen"`
 	IdleEditNudges       float64 `json:"idleEditNudges"`
 	MemoryWriteRequested bool    `json:"memoryWriteRequested"`
@@ -154,35 +148,104 @@ type State struct {
 	UnverifiedSubagents []UnverifiedSubagent `json:"unverifiedSubagents"`
 	UnverifiedCorrupt   bool                 `json:"unverifiedCorrupt"` // the list could not be trusted
 
-	// PhaseEntrySource is the source identity captured on entry to B, read back only while the phase is B (SOURCE-DELTA-01);
-	// BoundSourceRoot the worktree root pinned then, omitted when absent.
+	// PhaseEntrySource is the source identity captured on entry to B, read back only in B (SOURCE-DELTA-01); BoundSourceRoot
+	// the worktree root pinned then.
 	PhaseEntrySource *SourceIdentity `json:"phaseEntrySource"`
 	BoundSourceRoot  *string         `json:"boundSourceRoot,omitempty"`
 
-	// PlanUnit and PlanEpoch bind a review to the plan P>A validated, read back only in A (REVIEW-BINDING-01); CheckEpoch
-	// binds a test receipt to one check, read back only in C, or in IDLE with a D-close marker (CHECK-BINDING-01).
+	// PlanUnit and PlanEpoch bind a review to a plan, read back only in A (REVIEW-BINDING-01); CheckEpoch binds a test
+	// receipt to one check, read back only in C, or in IDLE with a D-close marker (CHECK-BINDING-01).
 	PlanUnit       *string               `json:"planUnit"`
 	PlanEpoch      *string               `json:"planEpoch"`
 	CheckEpoch     *string               `json:"checkEpoch"`
 	DcloseRecovery *DcloseRecoveryMarker `json:"dcloseRecovery"`
 }
 
-// The functions below are the skeleton the tests were first run against: every body answers the empty value.
-
-func SanitizeKey(value string) string { return value }
-
-func IsCanonicalSessionID(id string) bool { return false }
-
-func DefaultState(sessionID, slug string) State { return State{} }
-
-func defaultState(sessionID, slug string, now time.Time) State { return State{} }
-
-func StatePath(cwd, sessionID string) string {
-	return filepath.Join(cwd, crwdir.DirName, SessionsSubdir, sessionID+".json")
+// SanitizeKey makes a session id usable as a file name: each run of characters outside [A-Za-z0-9._-] becomes one "-",
+// leading and trailing "-" are dropped, and nothing left is "missing".
+func SanitizeKey(value string) string {
+	var b []byte
+	inRun := false
+	for _, r := range value {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '.' || r == '_' || r == '-' {
+			b, inRun = append(b, byte(r)), false
+		} else if !inRun {
+			b, inRun = append(b, '-'), true
+		}
+	}
+	if s := string(bytes.Trim(b, "-")); s != "" {
+		return s
+	}
+	return "missing"
 }
 
-func FindForeignSessionCopies(cwd, sessionID string, candidates []string) []string { return nil }
+// IsCanonicalSessionID reports whether sanitising leaves id unchanged, so a state file is never published under a
+// different or colliding key.
+func IsCanonicalSessionID(id string) bool { return id != "" && SanitizeKey(id) == id }
 
-func MatchesDcloseRecovery(s State, closePhaseID string) bool { return false }
+// DefaultState is a fresh IDLE session.
+func DefaultState(sessionID, slug string) State { return defaultState(sessionID, slug, time.Now()) }
 
-func Encode(s State) ([]byte, error) { return json.MarshalIndent(s, "", "  ") }
+func defaultState(sessionID, slug string, now time.Time) State {
+	return State{
+		Phase: PhaseIdle, SessionID: sessionID, Slug: slug, UpdatedAt: now.UTC().Format("2006-01-02T15:04:05.000Z"),
+		InjectedTurns: []string{}, UnverifiedSubagents: []UnverifiedSubagent{},
+	}
+}
+
+// StatePath is cwd/.crw/sessions/<sanitised id>.json.
+func StatePath(cwd, sessionID string) string {
+	return filepath.Join(cwd, crwdir.DirName, SessionsSubdir, SanitizeKey(sessionID)+".json")
+}
+
+// FindForeignSessionCopies lists the state files of candidates' trees that hold the same session id as cwd's own, so a
+// thread whose cwd is one tree while its work is in another can see the split (#48). Detection only: nothing is read from
+// or written to the other trees. cwd itself and duplicates are skipped.
+func FindForeignSessionCopies(cwd, sessionID string, candidates []string) []string {
+	abs := func(root string) string { p, _ := filepath.Abs(StatePath(root, sessionID)); return p }
+	seen, found := map[string]bool{abs(cwd): true}, []string{}
+	for _, root := range candidates {
+		if candidate := abs(root); root != "" && !seen[candidate] {
+			seen[candidate] = true
+			if _, err := os.Stat(candidate); err == nil {
+				found = append(found, candidate)
+			}
+		}
+	}
+	return found
+}
+
+// MatchesDcloseRecovery reports whether s holds a D-close marker of its own session and current check epoch that closes the
+// work phase closePhaseID.
+func MatchesDcloseRecovery(s State, closePhaseID string) bool {
+	m := s.DcloseRecovery
+	return m != nil && m.SessionID == s.SessionID && s.CheckEpoch != nil && m.CheckEpoch == *s.CheckEpoch && m.ClosedWorkPhaseID == closePhaseID
+}
+
+// Encode is JSON.stringify(s, null, 2): the bytes the oracle publishes for a state, without a trailing newline. HTML is
+// not escaped, and U+2028 and U+2029 are written literally.
+func Encode(s State) ([]byte, error) {
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(s); err != nil {
+		return nil, err
+	}
+	in, out := bytes.TrimSuffix(b.Bytes(), []byte("\n")), make([]byte, 0, b.Len())
+	// encoding/json always escapes U+2028 and U+2029, JSON.stringify never does. A backslash and the byte after it are copied
+	// together, so an escaped backslash before "u2028" stays text.
+	for i := 0; i < len(in); i++ {
+		switch {
+		case in[i] != '\\':
+			out = append(out, in[i])
+		case bytes.HasPrefix(in[i:], []byte(`\u2028`)):
+			out, i = append(out, "\u2028"...), i+5
+		case bytes.HasPrefix(in[i:], []byte(`\u2029`)):
+			out, i = append(out, "\u2029"...), i+5
+		default:
+			out, i = append(out, in[i], in[i+1]), i+1
+		}
+	}
+	return out, nil
+}

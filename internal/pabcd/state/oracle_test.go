@@ -8,8 +8,9 @@ import (
 )
 
 // testdata/oracle-restore.json holds what the CXC v0.2.40 oracle's readStateStrict answered for each persisted text, recorded
-// once by testdata/record-oracle.mjs under Node 24 (no Node runs here): whether it called the file unreadable and the state
-// it rebuilt, as compact JSON. Restore must agree on both, and an encoded state must restore to itself.
+// once by testdata/record-oracle.mjs under Node 24 (no Node runs here): whether it called the file unreadable and the state it
+// rebuilt, as JSON. Restore must agree on both. Written and read again, a state must give the oracle's second answer too, which
+// is the state itself except for the D-close markers that lose their legacy flag ("again").
 func TestRestoreMatchesTheRecordedOracle(t *testing.T) {
 	data, err := os.ReadFile("testdata/oracle-restore.json")
 	if err != nil {

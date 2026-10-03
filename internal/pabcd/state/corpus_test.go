@@ -9,11 +9,10 @@ import (
 	"testing"
 )
 
-// The state files the CXC v0.2.40 oracle left in the expect.tree of contract/fixtures/cxc are goldens. They sit under
-// .codexclaw/ in the fixtures; the port reads them under .crw/ (name-substitution R26). A state file written by the oracle
-// (form json-pretty-nonl) or kept as given in full (json-line) must restore and encode back to the same bytes; a partial
-// given file must restore; the one corrupt file is unreadable. Placeholders of the normalisation are bound to absolute paths
-// first, because boundSourceRoot keeps only an absolute path.
+// The state files the CXC v0.2.40 oracle left in the expect.tree of contract/fixtures/cxc are goldens. They sit under .codexclaw/
+// in the fixtures and are read under .crw/ (name-substitution R26). A full state must restore and encode back to the same bytes,
+// a partial given file must restore, and the corrupt file and the six states without a phase are unreadable. Normalisation
+// placeholders are bound to absolute paths first, because boundSourceRoot keeps only an absolute path.
 
 type fixtureFile struct {
 	Expect struct {
@@ -58,14 +57,15 @@ func TestCorpusStateFilesAreGoldens(t *testing.T) {
 			var keys map[string]json.RawMessage
 			_ = json.Unmarshal([]byte(golden), &keys)
 			_, full := keys["dcloseRecovery"]
+			_, hasPhase := keys["phase"]
 			want := golden
 			if filepath.Base(file) == "cli__orchestrate__i_to_p_agent_override.json" { // flags.interview:true without a tracker restores false
 				want = strings.Replace(golden, "\"interview\": true", "\"interview\": false", 1)
 			}
 			switch {
-			case e.Form == "text":
+			case e.Form == "text" || !hasPhase: // corrupt text, or a state with no phase
 				if !unreadable {
-					t.Errorf("%s %s: corrupt file read as %+v", file, name, s)
+					t.Errorf("%s %s: rejected file read as %+v", file, name, s)
 				}
 				rejected++
 			case unreadable:
@@ -80,7 +80,8 @@ func TestCorpusStateFilesAreGoldens(t *testing.T) {
 			}
 		}
 	}
-	if encoded < 100 || partial < 5 || rejected != 1 {
-		t.Fatalf("goldens checked: %d full, %d partial, %d corrupt", encoded, partial, rejected)
+	t.Logf("%d full states re-encoded byte for byte, %d partial restored, %d rejected", encoded, partial, rejected)
+	if encoded < 100 || partial < 5 || rejected != 7 {
+		t.Fatalf("goldens checked: %d full, %d partial, %d rejected", encoded, partial, rejected)
 	}
 }

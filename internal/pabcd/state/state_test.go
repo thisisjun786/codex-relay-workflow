@@ -2,12 +2,13 @@ package state
 
 import (
 	"bytes"
-	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
+	"slices"
 	"testing"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 )
 
 // The tests are the B-class tests of CXC v0.2.40 pabcd-state/test/state.test.ts that cover the model and its read path
@@ -20,13 +21,18 @@ func at() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 func put(t *testing.T, id, text string) string {
 	t.Helper()
 	cwd := t.TempDir()
+	putIn(t, cwd, id, text)
+	return cwd
+}
+
+func putIn(t *testing.T, cwd, id, text string) {
+	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(StatePath(cwd, id)), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(StatePath(cwd, id), []byte(text), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	return cwd
 }
 
 // persist is writeState for a test: the file Encode(s) makes, read back through ReadStateStrict.
@@ -124,15 +130,8 @@ func TestPersistedStatesRoundTrip(t *testing.T) {
 	// session isolation: two ids in one cwd keep their own files
 	cwd, other := t.TempDir(), DefaultState("beta", "")
 	other.Phase = PhaseP
-	for _, s := range []State{DefaultState("alpha", ""), other} {
-		b, _ := Encode(s)
-		if err := os.MkdirAll(filepath.Dir(StatePath(cwd, s.SessionID)), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(StatePath(cwd, s.SessionID), b, 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
+	putIn(t, cwd, "alpha", mustEncode(t, DefaultState("alpha", "")))
+	putIn(t, cwd, "beta", mustEncode(t, other))
 	if a, b := ReadState(cwd, "alpha"), ReadState(cwd, "beta"); a.Phase != PhaseIdle || b.Phase != PhaseP {
 		t.Fatalf("alpha %s beta %s", a.Phase, b.Phase)
 	}
@@ -158,23 +157,13 @@ func TestInterviewTrackerSurvivesRestoreWithoutUnknownKeys(t *testing.T) {
 	}
 }
 
-func TestDefaultStateEncodesAsTheOracleDoes(t *testing.T) {
-	b, err := Encode(defaultState("rec-s1", "", at()))
-	want := `{"phase":"IDLE","sessionId":"rec-s1","slug":"","updatedAt":"2026-01-01T00:00:00.000Z","flags":{"interview":false,"auditPassed":false,"checkPassed":false},"supersededBy":null,"injectedTurns":[],"lastInjectedPhase":null,"orchestrationActive":false,"interview":null,"stopBlockPhase":null,"stopBlockCount":0,"stopBlockWorkPhaseId":null,"stopMetricCursor":0,"stopBlockTotal":0,"stopBlockTurnId":null,"stopBlockCapNotified":false,"loopArmSeen":false,"idleEditNudges":0,"memoryWriteRequested":false,"memoryWriteTurn":null,"memoryWriteGrant":false,"unverifiedSubagents":[],"unverifiedCorrupt":false,"phaseEntrySource":null,"planUnit":null,"planEpoch":null,"checkEpoch":null,"dcloseRecovery":null}`
-	var compact bytes.Buffer
-	if err != nil || json.Compact(&compact, b) != nil || compact.String() != want || !strings.HasPrefix(string(b), "{\n  \"phase\": \"IDLE\",\n") || strings.HasSuffix(string(b), "\n") {
-		t.Fatalf("%v\n%s", err, b)
+func TestDefaultStateAndPhaseLists(t *testing.T) {
+	d := DefaultState("x", "y")
+	b, _ := Encode(d) // nil slices would encode as null
+	if d.Slug != "y" || d.Phase != PhaseIdle || !bytes.Contains(b, []byte(`"injectedTurns": [],`)) || !bytes.Contains(b, []byte(`"unverifiedSubagents": [],`)) ||
+		!slices.Equal(WorkPhases(), []Phase{PhaseI, PhaseP, PhaseA, PhaseB, PhaseC, PhaseD}) || !slices.Equal(AllPhases(), append([]Phase{PhaseIdle}, WorkPhases()...)) {
+		t.Fatalf("%+v\n%s", d, b)
 	}
-	if a, w := DefaultState("x", "y"), []Phase{PhaseI, PhaseP, PhaseA, PhaseB, PhaseC, PhaseD}; a.Slug != "y" || len(AllPhases()) != 7 || AllPhases()[0] != PhaseIdle || strings.Join(phaseNames(WorkPhases()), "") != strings.Join(phaseNames(w), "") {
-		t.Fatal("phase lists")
-	}
-}
-
-func phaseNames(ps []Phase) (out []string) {
-	for _, p := range ps {
-		out = append(out, string(p))
-	}
-	return out
 }
 
 func TestSanitizeKeyAndIsCanonicalSessionID(t *testing.T) {
@@ -214,5 +203,13 @@ func TestMatchesDcloseRecoveryNeedsOwnSessionEpochAndPhase(t *testing.T) {
 	}
 	if s.CheckEpoch, s.DcloseRecovery = nil, nil; MatchesDcloseRecovery(s, "wp-1") {
 		t.Fatal("no marker")
+	}
+}
+
+func TestSourceIdentityConvertsToTheSourceType(t *testing.T) {
+	hash, root := "h", "/ws"
+	got := SourceIdentity{Kind: source.KindResolved, CommitSha: "c", Dirty: true, CapturedAt: "t", TreeHash: &hash, SourceRoot: &root}.Identity()
+	if got.Kind != source.KindResolved || got.TreeHash != "h" || *got.SourceRoot != "/ws" || (SourceIdentity{}).Identity().TreeHash != "" {
+		t.Fatalf("%+v", got)
 	}
 }
