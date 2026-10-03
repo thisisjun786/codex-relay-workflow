@@ -24,6 +24,8 @@ const (
 	lockWaitBound = 10 * time.Second
 	// lockWaitUnfinishedFor is how long the waiter must stay unfinished where there is no /proc/locks.
 	lockWaitUnfinishedFor = 500 * time.Millisecond
+	// lockPollEvery is how often the test looks again for the waiter in /proc/locks.
+	lockPollEvery = 5 * time.Millisecond
 )
 
 // lockRow is one flock line of /proc/locks.
@@ -33,18 +35,14 @@ type lockRow struct {
 	file    string // "major:minor:inode": the device in hex, the inode in decimal
 }
 
-// flockRows lists the flock lines of /proc/locks. The holder of a lock and a request blocked behind it
-// read alike, except for the arrow:
+// parseFlockRows lists the flock lines of one /proc/locks snapshot. The holder of a lock and a request
+// blocked behind it read alike, except for the arrow:
 //
 //	68: FLOCK  ADVISORY  WRITE 3108925 103:07:31462887 0 EOF
 //	68: -> FLOCK  ADVISORY  WRITE 3108925 103:07:31462887 0 EOF
-func flockRows() ([]lockRow, error) {
-	raw, err := os.ReadFile("/proc/locks")
-	if err != nil {
-		return nil, err
-	}
+func parseFlockRows(raw string) []lockRow {
 	var rows []lockRow
-	for _, line := range strings.Split(string(raw), "\n") {
+	for _, line := range strings.Split(raw, "\n") {
 		fields := strings.Fields(line)
 		blocked := len(fields) > 1 && fields[1] == "->"
 		if blocked {
@@ -54,32 +52,88 @@ func flockRows() ([]lockRow, error) {
 			rows = append(rows, lockRow{blocked: blocked, pid: fields[4], file: fields[5]})
 		}
 	}
-	return rows, nil
+	return rows
 }
 
-// holderFile returns how /proc/locks names the sidecar this process holds a flock on. The inode and the
-// process pick the holder's line out of the system's locks, and the name it prints, device included, is
-// what the waiter's line must match, so a request blocked on another file never counts.
-func holderFile(sidecar os.FileInfo) (string, error) {
-	stat, ok := sidecar.Sys().(*syscall.Stat_t)
-	if !ok {
-		return "", fmt.Errorf("no inode in %T", sidecar.Sys())
-	}
-	rows, err := flockRows()
+// flockRows reads one snapshot of the system's flocks.
+func flockRows() ([]lockRow, error) {
+	raw, err := os.ReadFile("/proc/locks")
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	pid, suffix := strconv.Itoa(os.Getpid()), ":"+strconv.FormatUint(stat.Ino, 10)
-	var files []string
+	return parseFlockRows(string(raw)), nil
+}
+
+// sidecarView is what one snapshot shows about the flock this process holds on the sidecar.
+type sidecarView struct {
+	held    []string  // the files with the sidecar's inode number that this process holds a flock on, as /proc/locks names them, one per row
+	blocked bool      // a request of this process is blocked behind the lock it holds on the only such file
+	own     []lockRow // every flock row of this process in the snapshot, for failure messages
+}
+
+// observeSidecar reads what rows show about the lock pid holds on the file with inode number ino. The inode
+// and the process pick the holder's line out of the system's locks, and the name it prints, device included,
+// is what the waiter's line must match, so a request blocked on another file never counts.
+func observeSidecar(rows []lockRow, pid string, ino uint64) sidecarView {
+	suffix := ":" + strconv.FormatUint(ino, 10)
+	var view sidecarView
 	for _, row := range rows {
-		if !row.blocked && row.pid == pid && strings.HasSuffix(row.file, suffix) {
-			files = append(files, row.file)
+		if row.pid != pid {
+			continue
+		}
+		view.own = append(view.own, row)
+		if !row.blocked && strings.HasSuffix(row.file, suffix) {
+			view.held = append(view.held, row.file)
 		}
 	}
-	if len(files) != 1 {
-		return "", fmt.Errorf("/proc/locks lists %d flocks held by pid %s on inode %d, want the holder's one", len(files), pid, stat.Ino)
+	if len(view.held) == 1 {
+		for _, row := range view.own {
+			if row.blocked && row.file == view.held[0] {
+				view.blocked = true
+				break
+			}
+		}
 	}
-	return files[0], nil
+	return view
+}
+
+// errWaiterReturned is the failure of a waiter that finished while the holder still held the sidecar lock.
+func errWaiterReturned(e error) error {
+	return fmt.Errorf("WithLedgerLock returned (%v) while another holder still held the sidecar lock", e)
+}
+
+// awaitBlockedWaiter returns nil once a snapshot shows the waiter blocked behind the holder's lock on the file
+// with inode number ino, and an error when the waiter returns first, when snapshot fails, or when bound passes
+// without that sight. The first snapshot must list the holder.
+func awaitBlockedWaiter(snapshot func() ([]lockRow, error), pid string, ino uint64, bound, tick time.Duration, done <-chan error) error {
+	rows, err := snapshot()
+	if err != nil {
+		return fmt.Errorf("cannot observe the waiter: %w", err)
+	}
+	view := observeSidecar(rows, pid, ino)
+	if len(view.held) != 1 {
+		return fmt.Errorf("cannot observe the waiter: /proc/locks lists %d flocks held by pid %s on inode %d, want the holder's one", len(view.held), pid, ino)
+	}
+	deadline := time.NewTimer(bound)
+	defer deadline.Stop()
+	poll := time.NewTicker(tick)
+	defer poll.Stop()
+	for {
+		select {
+		case e := <-done:
+			return errWaiterReturned(e)
+		case <-deadline.C:
+			return fmt.Errorf("no request blocked behind the sidecar lock (%s) was listed in /proc/locks within %v: WithLedgerLock did not wait for its holder", view.held[0], bound)
+		case <-poll.C:
+			rows, err := snapshot()
+			if err != nil {
+				return fmt.Errorf("cannot observe the waiter: %w", err)
+			}
+			if observeSidecar(rows, pid, ino).blocked {
+				return nil
+			}
+		}
+	}
 }
 
 // waitForWaiterToBlock returns once the waiter is seen blocked behind the holder's lock on the sidecar,
@@ -89,45 +143,21 @@ func holderFile(sidecar os.FileInfo) (string, error) {
 // than that but never fails one that waits.
 func waitForWaiterToBlock(t *testing.T, sidecar os.FileInfo, done <-chan error) {
 	t.Helper()
-	returned := func(e error) {
-		t.Helper()
-		t.Fatalf("WithLedgerLock returned (%v) while another holder still held the sidecar lock", e)
-	}
 	if runtime.GOOS != "linux" {
 		t.Logf("no /proc/locks here: checking only that the waiter has not returned after %v", lockWaitUnfinishedFor)
 		select {
 		case e := <-done:
-			returned(e)
+			t.Fatal(errWaiterReturned(e))
 		case <-time.After(lockWaitUnfinishedFor):
 		}
 		return
 	}
-	file, err := holderFile(sidecar)
-	if err != nil {
-		t.Fatalf("cannot observe the waiter: %v", err)
+	stat, ok := sidecar.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Fatalf("cannot observe the waiter: no inode in %T", sidecar.Sys())
 	}
-	pid := strconv.Itoa(os.Getpid())
-	deadline := time.NewTimer(lockWaitBound)
-	defer deadline.Stop()
-	tick := time.NewTicker(5 * time.Millisecond)
-	defer tick.Stop()
-	for {
-		select {
-		case e := <-done:
-			returned(e)
-		case <-deadline.C:
-			t.Fatalf("no request blocked behind the sidecar lock (%s) was listed in /proc/locks within %v: WithLedgerLock did not wait for its holder", file, lockWaitBound)
-		case <-tick.C:
-			rows, err := flockRows()
-			if err != nil {
-				t.Fatalf("cannot observe the waiter: %v", err)
-			}
-			for _, row := range rows {
-				if row.blocked && row.pid == pid && row.file == file {
-					return
-				}
-			}
-		}
+	if err := awaitBlockedWaiter(flockRows, strconv.Itoa(os.Getpid()), stat.Ino, lockWaitBound, lockPollEvery, done); err != nil {
+		t.Fatal(err)
 	}
 }
 
