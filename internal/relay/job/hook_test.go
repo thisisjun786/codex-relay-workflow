@@ -34,7 +34,7 @@ func hookJSON(t *testing.T, raw string) map[string]any {
 	return v
 }
 
-// The ten B-class scenarios are bg-wake/test/hook.test.ts:44-148.
+// The ten B-class scenarios are bg-wake/test/hook.test.ts:46-136.
 func TestBgHookStopOnceAndPromptNeverDecides(t *testing.T) {
 	for _, event := range []string{"stop", "user-prompt-submit"} {
 		t.Run(event, func(t *testing.T) {
