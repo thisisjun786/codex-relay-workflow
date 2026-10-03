@@ -256,10 +256,10 @@ func (g *refreshRepo) blobAt(ctx context.Context, commit, path string) (string, 
 	return "", nil
 }
 
-// scanConflictMarkers reads a file and says whether it holds the start line and the end line of a conflict: a line that begins with seven or more of the same marker character (< or >) and then ends or
-// goes on with a space, the width being the conflict-marker-size attribute's (seven by default). It reads byte by byte through a bounded buffer, so a file or a line of any length is read to its end or to
+// scanConflictMarkers reads a file and says whether it holds the start line and the end line of a conflict: a line that begins with width or more of the same marker character (< or >) and then ends or goes
+// on with a space. The width is the conflict-marker-size attribute's, seven by default (markerWidth). It reads byte by byte through a bounded buffer, so a file or a line of any length is read to its end or to
 // the second marker, and a run of marker characters that goes on past a buffer is judged by what follows it.
-func scanConflictMarkers(r io.Reader) (started, ended bool) {
+func scanConflictMarkers(r io.Reader, width int) (started, ended bool) {
 	reader := bufio.NewReaderSize(r, 64<<10)
 	atStart, inRun := true, false
 	var c byte
@@ -271,14 +271,14 @@ func scanConflictMarkers(r io.Reader) (started, ended bool) {
 	for !(started && ended) {
 		b, err := reader.ReadByte()
 		if err != nil {
-			if inRun && run >= 7 {
+			if inRun && run >= width {
 				mark()
 			}
 			break
 		}
 		switch {
 		case b == '\n' || b == '\r':
-			if inRun && run >= 7 {
+			if inRun && run >= width {
 				mark()
 			}
 			atStart, inRun, run = b == '\n', false, 0
@@ -290,7 +290,7 @@ func scanConflictMarkers(r io.Reader) (started, ended bool) {
 		case inRun && b == c:
 			run++
 		case inRun:
-			if run >= 7 && b == ' ' {
+			if run >= width && b == ' ' {
 				mark()
 			}
 			inRun = false
@@ -301,7 +301,7 @@ func scanConflictMarkers(r io.Reader) (started, ended bool) {
 
 // hasConflictMarkers is whether a resolved file still holds a conflict's start and end line (git's own labels differ from the working tree's, so the tree comparison alone cannot tell a file that was
 // committed with its markers from one that was edited). The blob is streamed and the read stops at the second marker.
-func (g *refreshRepo) hasConflictMarkers(ctx context.Context, blob string) (bool, error) {
+func (g *refreshRepo) hasConflictMarkers(ctx context.Context, blob string, width int) (bool, error) {
 	if blob == "" {
 		return false, nil
 	}
@@ -318,7 +318,7 @@ func (g *refreshRepo) hasConflictMarkers(ctx context.Context, blob string) (bool
 	if err := cmd.Start(); err != nil {
 		return false, err
 	}
-	started, ended := scanConflictMarkers(out)
+	started, ended := scanConflictMarkers(out, width)
 	if started && ended {
 		cancel()
 		_ = cmd.Wait()
@@ -393,7 +393,6 @@ func proveBaseRefresh(ctx context.Context, g *refreshRepo, accepted, head, baseT
 			return nil, nil, err
 		}
 		step := RefreshStep{Previous: previous, BaseParent: merged, Head: cur, Tree: headTree}
-		differs := map[string]bool{}
 		var outside []string
 		if headTree != tree {
 			names, err := g.differing(ctx, tree, headTree)
@@ -405,7 +404,6 @@ func proveBaseRefresh(ctx context.Context, g *refreshRepo, accepted, head, baseT
 				conflicted[c] = true
 			}
 			for _, d := range names {
-				differs[d] = true
 				if !conflicted[d] {
 					outside = append(outside, d)
 				}
@@ -418,22 +416,18 @@ func proveBaseRefresh(ctx context.Context, g *refreshRepo, accepted, head, baseT
 			}
 			return refuse(RefreshTreeDiffers, "the tree of %s is not what git merges from %s and %s; paths that differ%s: %s", cur, previous, merged, where, refreshPathsText(outside))
 		}
-		// a file git could not merge that the commit holds exactly as git wrote it (with its conflict markers) was never resolved
-		var unresolved []string
-		for _, c := range conflicts {
-			if !differs[c] {
-				unresolved = append(unresolved, c)
-			}
-		}
-		if len(unresolved) > 0 {
-			return refuse(RefreshTreeDiffers, "%s commits git's own conflict markers for %s, which no one resolved", cur, refreshPathsText(unresolved))
-		}
 		for _, c := range conflicts {
 			blob, err := g.blobAt(ctx, cur, c)
 			if err != nil {
 				return nil, nil, err
 			}
-			if marked, err := g.hasConflictMarkers(ctx, blob); err != nil {
+			// a file git could not merge that still holds the start and the end line of a conflict, at the width the attributes of the first parent give, was never resolved, whether or not it differs from
+			// what git wrote; a conflict that has no markers (a binary file, a file under a merge driver) is resolved by keeping git's own side as well as by an edit
+			width, err := g.markerWidth(ctx, previous, c)
+			if err != nil {
+				return nil, nil, err
+			}
+			if marked, err := g.hasConflictMarkers(ctx, blob, width); err != nil {
 				return nil, nil, err
 			} else if marked {
 				return refuse(RefreshTreeDiffers, "%s commits %s with conflict markers in it, which no one resolved", cur, c)
@@ -455,4 +449,19 @@ func refreshFirstLine(s string) string {
 		return s[:i]
 	}
 	return s
+}
+
+// markerWidth is the width of the conflict markers git writes for a path: the conflict-marker-size attribute committed in the commit the merge takes its attributes from, seven when there is none or it is
+// not a positive number.
+func (g *refreshRepo) markerWidth(ctx context.Context, commit, path string) (int, error) {
+	_, out, err := g.run(ctx, nil, "check-attr", "--source", commit, "conflict-marker-size", "--", path)
+	if err != nil {
+		return 0, err
+	}
+	value := strings.TrimSpace(out[strings.LastIndex(out, ": ")+1:])
+	var width int
+	if _, err := fmt.Sscanf(value, "%d", &width); err != nil || width < 1 {
+		return 7, nil
+	}
+	return width, nil
 }

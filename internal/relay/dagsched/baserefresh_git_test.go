@@ -27,8 +27,19 @@ func TestScanConflictMarkers(t *testing.T) {
 		{"markers after a large file", strings.Repeat("line of a large file\n", 500000) + "<<<<<<< a\n=======\n>>>>>>> b\n", true, true},
 	}
 	for _, c := range cases {
-		if started, ended := scanConflictMarkers(strings.NewReader(c.body)); started != c.started || ended != c.ended {
+		if started, ended := scanConflictMarkers(strings.NewReader(c.body), 7); started != c.started || ended != c.ended {
 			t.Errorf("%s: started=%v ended=%v, want %v %v", c.name, started, ended, c.started, c.ended)
 		}
+	}
+}
+
+// The width of a marker is the conflict-marker-size attribute's: three characters are a marker where the attribute says three, and not where it says seven.
+func TestScanConflictMarkersFollowTheWidth(t *testing.T) {
+	body := "<<< a\nx\n=== \n>>> b\n"
+	if started, ended := scanConflictMarkers(strings.NewReader(body), 3); !started || !ended {
+		t.Errorf("width 3: started=%v ended=%v, want both", started, ended)
+	}
+	if started, ended := scanConflictMarkers(strings.NewReader(body), 7); started || ended {
+		t.Errorf("width 7: started=%v ended=%v, want neither", started, ended)
 	}
 }

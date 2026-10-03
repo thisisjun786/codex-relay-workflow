@@ -3,6 +3,7 @@ package dagsched
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -536,5 +537,60 @@ func TestCLIBaseRefreshRefusals(t *testing.T) {
 	}
 	if out, code := crw(t, state, "dag-base-refresh", "--plan", "p1", "--actor", "parent"); code != 2 {
 		t.Fatalf("without --node: exit %d\n%s", code, out)
+	}
+}
+
+// A conflict marker is as wide as the conflict-marker-size attribute of the first parent says: a file committed with three-character markers is as unresolved as one with seven.
+func TestBaseRefreshRefusesCommittedMarkersOfTheWidthTheAttributesSet(t *testing.T) {
+	s := newRefreshScenarioWith(t, func(repo *gitRepo) {
+		repo.write(".gitattributes", "shared.json conflict-marker-size=3\n")
+		repo.git("add", ".gitattributes")
+	})
+	s.openGeneration()
+	s.repo.write("shared.json", "version of dev\n")
+	s.repo.git("add", "shared.json")
+	s.repo.git("commit", "-q", "-m", "dev changes shared.json")
+	s.repo.git("checkout", "-q", "feature")
+	if _, err := s.repo.tryGit("merge", "-q", "--no-ff", "-m", "merge dev", "dev"); err == nil {
+		t.Fatal("the merge was expected to conflict")
+	}
+	if raw, err := os.ReadFile(filepath.Join(s.repo.path, "shared.json")); err != nil || !strings.Contains(string(raw), "<<< ") || strings.Contains(string(raw), "<<<<<<<") {
+		t.Fatalf("git did not write three character markers: %q (%v)", raw, err)
+	}
+	s.repo.git("add", "shared.json")
+	s.repo.git("commit", "-q", "-m", "merge dev")
+	s.head = s.repo.git("rev-parse", "HEAD")
+	s.repo.git("checkout", "-q", "dev")
+	s.forge.by["owner/repo#7"] = openPR("owner/repo", 7, s.head)
+	if _, err := s.record("shared.json"); refusalReason(err) != "disposition_conflict" || !strings.Contains(err.Error(), "conflict markers") || s.refreshRows() != 0 {
+		t.Fatalf("record = %v (rows %d)", err, s.refreshRows())
+	}
+}
+
+// A conflict that has no markers (a file under the binary merge) is resolved by keeping one side: the resolved file is then the one git wrote, and it is a resolution all the same, named by the parent.
+func TestBaseRefreshAcceptsAConflictResolvedByKeepingASide(t *testing.T) {
+	s := newRefreshScenarioWith(t, func(repo *gitRepo) {
+		repo.write(".gitattributes", "data.bin merge=binary\n")
+		repo.write("data.bin", "from the feature")
+		repo.git("add", ".gitattributes", "data.bin")
+	})
+	s.openGeneration()
+	s.repo.commit("data.bin", "from dev")
+	s.repo.git("checkout", "-q", "feature")
+	if _, err := s.repo.tryGit("merge", "-q", "--no-ff", "-m", "merge dev", "dev"); err == nil {
+		t.Fatal("the merge was expected to conflict")
+	}
+	s.repo.git("checkout", "--ours", "data.bin")
+	s.repo.git("add", "data.bin")
+	s.repo.git("commit", "-q", "-m", "merge dev, the feature's data.bin kept")
+	s.head = s.repo.git("rev-parse", "HEAD")
+	s.repo.git("checkout", "-q", "dev")
+	s.forge.by["owner/repo#7"] = openPR("owner/repo", 7, s.head)
+	if _, err := s.record(); refusalReason(err) != "disposition_conflict" || !strings.Contains(err.Error(), "[data.bin]") {
+		t.Fatalf("record without naming the file = %v", err)
+	}
+	res, err := s.record("data.bin")
+	if err != nil || len(res.Steps) != 1 || len(res.Steps[0].Resolved) != 1 || res.Steps[0].Resolved[0].Path != "data.bin" || res.Steps[0].Resolved[0].Blob != s.repo.git("rev-parse", s.head+":data.bin") {
+		t.Fatalf("record = %v %+v", err, res)
 	}
 }

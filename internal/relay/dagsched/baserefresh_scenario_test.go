@@ -40,7 +40,10 @@ func (r *gitRepo) write(file, content string) {
 }
 
 // newRefreshScenario is the node accepted at generation 1 with its slot held, before anything else happened.
-func newRefreshScenario(t *testing.T) *refreshScenario {
+func newRefreshScenario(t *testing.T) *refreshScenario { return newRefreshScenarioWith(t, nil) }
+
+// newRefreshScenarioWith is newRefreshScenario with a step on the branch of the pull request before the head the parent accepts is committed (a file to add, an attribute to commit).
+func newRefreshScenarioWith(t *testing.T, onBranch func(repo *gitRepo)) *refreshScenario {
 	t.Helper()
 	k := newIntegrationKit(t)
 	repo := k.repo
@@ -48,6 +51,9 @@ func newRefreshScenario(t *testing.T) *refreshScenario {
 	repo.git("checkout", "-q", "-b", "feature")
 	repo.write("shared.json", "version of the feature\n")
 	repo.git("add", "shared.json")
+	if onBranch != nil {
+		onBranch(repo)
+	}
 	h1 := repo.commit("feature.txt", "feature")
 	repo.git("checkout", "-q", "dev")
 	// a node that waits for I's verified result (an artifact edge), beside K, which waits for its landing
