@@ -64,6 +64,12 @@ func (s *Scheduler) Ready(ctx context.Context, q store.Querier, plan string, opt
 	if err != nil {
 		return Reading{}, err
 	}
+	// the host memory bound (CRW-468, hostmemory.go): judged once per reading, and not by a store-only reading, which stays a function of the store alone
+	var host *HostMemoryVerdict
+	if s.Host != nil && !storeOnly(ctx) {
+		verdict := s.Host.Judge()
+		host = &verdict
+	}
 	declarations, err := loadDeclarations(ctx, q, plan)
 	if err != nil {
 		return Reading{}, err
@@ -177,7 +183,7 @@ func (s *Scheduler) Ready(ctx context.Context, q store.Querier, plan string, opt
 		return a.node.NodeID < b.node.NodeID
 	})
 
-	pass := PassSummary{FreeSlots: capacity.Free, Ceiling: capacity.Ceiling, Held: capacity.Held, CeilingSource: capacity.Source, DecidingLimit: LimitNone}
+	pass := PassSummary{FreeSlots: capacity.Free, Ceiling: capacity.Ceiling, Held: capacity.Held, CeilingSource: capacity.Source, DecidingLimit: LimitNone, HostMemory: host}
 	observed := &observations{ctx: ctx, q: q, plan: plan}
 	var ready []NodeReading
 	selected := 0
@@ -202,6 +208,10 @@ func (s *Scheduler) Ready(ctx context.Context, q store.Querier, plan string, opt
 				reading.Disposition, reading.Reason = DispDefer, DeferEditOverlap
 				reading.Detail = judged.deferDetail()
 			}
+		}
+		// a host short of memory holds every candidate that is not cut by an edit overlap, whatever the slots say; a release already decided is replayed before any reading, so it is not held
+		if limit == "" && host != nil && host.State == HostMemoryDeferring {
+			limit, reading.Disposition, reading.Reason, reading.Detail = LimitHostMemory, DispDefer, DeferHostMemory, host.Detail()
 		}
 		if limit == "" && selected >= capacity.Free {
 			limit, reading.Disposition = LimitNoCapacity, DispDefer
@@ -370,6 +380,10 @@ func inputDigest(r Reading, c Capacity, hashes []string) string {
 	if r.ReleasePolicy != nil {
 		// absent when the plan has no policy, for the same reason: the state depends on landings and settings that nothing else in the digest carries
 		digest["release_policy"] = r.ReleasePolicy.canonical()
+	}
+	if r.Pass.HostMemory != nil {
+		// absent when the scheduler carries no bound; the sample is part of what the reading saw, so a changed value is a changed digest
+		digest["host_memory"] = r.Pass.HostMemory.object()
 	}
 	return digestOf(digest)
 }

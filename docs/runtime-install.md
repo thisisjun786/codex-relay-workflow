@@ -353,6 +353,20 @@ The one release that changes the schema is the one that adds the DAG zone ([DAG 
 `dag_*` tables are created by the first write-open and are declared by that build. That decision is made (D-01), so the gate has an answer of
 its own for the zone and, below, for ordinary indexes, and for nothing else, and the supported install command has a route through both.
 
+**The history indexes (CRW-301).** A second change reaches the frozen v1 schema script itself: six `CREATE INDEX IF NOT EXISTS` statements
+for the tables that only grow (`attempts`, `supervisor_attempts`, `acks`, `sync_outbox`, `supervisor_messages`,
+`managed_start_requests`; the list and the reason for each are in `contract/schema/relay-sqlite-history-indexes.json`). They are not zone
+objects. Each is an ordinary index, non-unique and without a SQL function (the partial index on `acks` compares a column with a literal), on a table
+both sides declare, so the gate gives them the answers of the paragraph on ordinary indexes below (pull request #397). A candidate that declares
+them over a store that lacks them reads `EXTENDS_INDEX`, which refuses without `--backup-state-to` and passes with it; a store that holds them
+against a candidate that does not declare them reads `NARROWS_INDEX`, which is allowed. The ratchet test
+`TestEveryNonUniqueIndexOfTheShippedSchemaIsOrdinaryButOne` keeps the six ordinary. A store that lacks the zone as well, meeting a build that
+brings the zone and these indexes together, is the case that paragraph leaves out: the zone beside an index is a plain `EXTENDS`, and
+`--backup-state-to` does not release it. The build itself creates the indexes: the schema script runs on every write-open, so the first command to
+open a store of the previous version builds them, one index in a transaction of its own, and a command that declares itself read-only builds them
+too, since it tries the writable open first (a read that opens nothing for writing builds nothing). The swap gate tests
+`TestTheHistoryIndexesArriveAsAnIndexExtendsAndLeaveAsAnIndexNarrows` and `TestTheHistoryIndexesAgainstRealStores` pin this reading.
+
 **The zone arrives (`EXTENDS_ZONE`).** Installing a build that declares the zone onto a store that has none (every store there is) refuses,
 and the refusal names the route: `crw install update --from ... --backup-state-to DIR` (the same flag is on `install` and `rollback`). The flag is the
 operator's acknowledgement, and under it the command itself takes the OPS-4.5 backup, so the backup is guaranteed by the route and not by
