@@ -766,6 +766,35 @@
   {"flag":"--actor","help":"the task asking for the recorded pass"}]},
 {"name":"dag-progress","summary":"how far a DAG plan has come, read from the relay store alone and opened read-only: the live nodes partitioned into stages (waiting on a predecessor, a decision or a resource, ready, releasing, running, reported, verifying, correcting, accepted, integrated, stale, paused and the rest), a blocked overlay with one closed reason per node, cumulative accepted and integrated counts kept apart from the stages, the denominator at every plan revision and whether it changed, and the exact relationship, thread and pull request of each node. Writes nothing and reads no clock, artifact or forge","options":[
   {"flag":"--plan","required":true}]},
+{"name":"dag-summary-enqueue","summary":"records the Linear summary a DAG plan owes a document, as the plan stands now: it reads the plan's progress in the transaction it writes in, appends the next entry of the (plan, document) stream and supersedes the entries of the stream that were not confirmed, so an older summary is never written after a newer one. The same state of the plan is one entry (a replay); --again records it anew when the confirmed summary is no longer in the document. Only the project's registered parent enqueues. The relay holds no Linear credential: the parent writes the entry with its own connector","options":[
+  {"flag":"--plan","required":true},
+  {"flag":"--actor","required":true,"help":"the project's registered parent"},
+  {"flag":"--document","required":true,"help":"the Linear document the summary is written to (its id or URL; opaque text, one line)"},
+  {"flag":"--again","kind":"true","help":"record the plan's current state as a new entry even when the newest entry is confirmed and already states it"}]},
+{"name":"dag-summary-status","summary":"the summary queue of a DAG plan, read from the relay store alone and opened read-only: per document its newest entry, whether a write is owed, whether that entry states the plan as it is now, and the number of entries in each state; --history lists every entry. Writes nothing","options":[
+  {"flag":"--plan","required":true},
+  {"flag":"--document","help":"one document of the plan"},
+  {"flag":"--history","kind":"true","help":"list every entry of each document, oldest first"}]},
+{"name":"dag-summary-claim","summary":"takes the newest open summary entry of a document to write: gives a fresh claim token (the one before it stops working), the exact block, the exact container text to replace the document's current container with, the empty container to create once, and the protocol. Only the newest open entry can be claimed, and only by the project's registered parent","options":[
+  {"flag":"--summary","required":true,"help":"the entry id (dag-summary-status prints it)"},
+  {"flag":"--actor","required":true}]},
+{"name":"dag-summary-reconcile","summary":"says what a document the parent read holds of one summary entry: already_written (the entry's block is there, alone in the plan's container), absent, stale (another entry's block, older or newer, or this entry's with other text), duplicate or malformed; and whether the entry may be written. Reads the store read-only and writes nothing","options":[
+  {"flag":"--summary","required":true},
+  {"flag":"--observed","required":true,"help":"the document text as read from Linear, or @path"}]},
+{"name":"dag-summary-complete","summary":"confirms a summary entry from the document read back after the write: the claim token must be the one held, the document the entry's, and the plan's container must hold this entry's block exactly and nothing else (else readback_mismatch and the entry stays claimed). Confirming a confirmed entry answers its record","options":[
+  {"flag":"--summary","required":true},
+  {"flag":"--actor","required":true},
+  {"flag":"--claim-token","required":true},
+  {"flag":"--document","required":true,"help":"the document that was read back"},
+  {"flag":"--readback","required":true,"help":"the document text as read back from Linear, or @path"}]},
+{"name":"dag-summary-fail","summary":"records that writing or reading back a summary entry failed: the entry goes back to pending with the failure kept and its claim gone, and the eighth failure parks it as failed until dag-summary-retry. Only the holder of the claim can record it","options":[
+  {"flag":"--summary","required":true},
+  {"flag":"--actor","required":true},
+  {"flag":"--claim-token","required":true},
+  {"flag":"--error","required":true,"help":"what failed (at most 2000 characters)"}]},
+{"name":"dag-summary-retry","summary":"reopens a failed summary entry (parked by its eighth failure): back to pending with its attempts at zero. It touches only the entry it names; a confirmed or superseded entry is final and is refused","options":[
+  {"flag":"--summary","required":true},
+  {"flag":"--actor","required":true}]},
 {"name":"dag-region-declare","summary":"declares the edit regions of an implementation node before it is released: repository, path, kind (tree, file, symbol) and change (edit, rename, delete) for 1 to 64 regions. A node with no declaration counts as overlapping everything; renames, deletes and hotspots are exclusive. An identical declaration is a replay","options":[
   {"flag":"--plan","required":true},
   {"flag":"--node","required":true},
