@@ -98,6 +98,15 @@ func assertArgs(t *testing.T, argv []string, cwd string, want recordedArgs) {
 		if !strings.HasPrefix(got.AttestError, prefix+" (") || strings.HasSuffix(got.AttestError, " ()") {
 			t.Errorf("file refusal: got %q, want prefix %q and non-empty cause", got.AttestError, prefix)
 		}
+		if strings.Contains(want.AttestError, "ENOENT") && !strings.Contains(got.AttestError, "no such file") {
+			t.Errorf("missing-file cause: %q", got.AttestError)
+		}
+		if strings.Contains(want.AttestError, "EISDIR") && !strings.Contains(got.AttestError, "directory") {
+			t.Errorf("directory cause: %q", got.AttestError)
+		}
+		if strings.Contains(want.AttestError, "JSON") && !strings.Contains(got.AttestError, "invalid") && !strings.Contains(got.AttestError, "unexpected") {
+			t.Errorf("JSON cause: %q", got.AttestError)
+		}
 		got.AttestError = want.AttestError
 	}
 	if !reflect.DeepEqual(got, want) {
