@@ -83,6 +83,7 @@ writeFileSync(join(outDir, "oracle-attest.json"), "{" + [lines("texts", texts), 
 
 // plan gate: each case builds a tree under <root>/ws and names the unit with placeholders
 const plan = [];
+const home = process.cwd();
 let m = 0;
 const add = (id, tree, input, o = {}) => {
   const root = mkdtempSync(join(workRoot, "r"));
@@ -101,9 +102,12 @@ const add = (id, tree, input, o = {}) => {
   for (const p of unreadable) chmodSync(p, 0);
   const raw = expand(input);
   const att = o.direct ? JSON.parse(raw) : A.coerceAttest(JSON.parse(raw));
-  const r = G.validatePlanArtifacts(att, cwd);
+  // chdir: run from that directory (relative to the case root) and pass cwdArg, a relative cwd, as the working directory
+  if (o.chdir) process.chdir(join(root, o.chdir));
+  const r = G.validatePlanArtifacts(att, o.cwdArg ?? cwd);
+  process.chdir(home);
   for (const p of unreadable) chmodSync(p, 0o755);
-  plan.push({ id: "p" + m++ + "_" + id, direct: !!o.direct, tree, input, result: { ok: r.ok, ...(r.unit !== undefined ? { unit: unexpand(r.unit) } : {}), ...(r.reason !== undefined ? { reason: unexpand(r.reason) } : {}) } });
+  plan.push({ id: "p" + m++ + "_" + id, direct: !!o.direct, chdir: o.chdir ?? "", cwdArg: o.cwdArg ?? "", tree, input, result: { ok: r.ok, ...(r.unit !== undefined ? { unit: unexpand(r.unit) } : {}), ...(r.reason !== undefined ? { reason: unexpand(r.reason) } : {}) } });
   rmSync(root, { recursive: true, force: true });
 };
 const A0 = (u, extra = {}) => obj({ from: "P", to: "A", did: "x", planUnit: u, ...extra });
@@ -151,5 +155,12 @@ add("unicode_unit_name", [doc("d\u00e9j\u00e0")], A0("d\u00e9j\u00e0"));
 add("space_in_unit_name", [doc("my unit")], A0("my unit"));
 add("backslash_in_unit", [doc("a\\b")], A0("a\\b"));
 add("tilde_unit", [doc("~")], A0("~"));
+// a relative working directory is resolved against the process's physical directory (process.cwd), not a symlinked $PWD
+const alias = [{ path: "fs/other/target", type: "dir" }, { path: "fs/alias", type: "symlink", target: "${ROOT}/fs/other/target" }];
+add("cwd_symlink_logical_has_unit", [...alias, { path: "fs/unit/000_plan.md", type: "file" }], A0("../unit"), { chdir: "fs/alias", cwdArg: "." });
+add("cwd_symlink_physical_has_unit", [...alias, { path: "fs/other/unit/000_plan.md", type: "file" }], A0("../unit"), { chdir: "fs/alias", cwdArg: "." });
+add("relative_cwd_dot", [doc("unit")], A0("unit"), { chdir: "ws", cwdArg: "." });
+add("relative_cwd_name", [doc("unit")], A0("unit"), { chdir: ".", cwdArg: "ws" });
+add("relative_cwd_dotdot_unit", [doc("unit")], A0("../ws/unit"), { chdir: "ws", cwdArg: "." });
 writeFileSync(join(outDir, "oracle-plan-gate.json"), "{" + lines("plan", plan) + "}\n");
 console.log(JSON.stringify({ attest: attest.length, tails: tails.length, bindings: bindings.length, plan: plan.length }));

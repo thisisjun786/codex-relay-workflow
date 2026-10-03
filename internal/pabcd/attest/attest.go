@@ -167,7 +167,7 @@ func Validate(from, to state.Phase, att *Attestation) Result {
 	if !IsGated(from, to) {
 		return Result{OK: true}
 	}
-	// With no attestation, or one for another edge, every other field check would be about the wrong edge.
+	// With none, or one for another edge, every other field check would be about the wrong edge.
 	if att == nil {
 		return refuse(fmt.Sprintf(`%s -> %s requires an attestation with a non-empty "did". Pass --attest-file <path> (required on Windows) or --attest '{"from":"%s","to":"%s","did":"..."}'.`, from, to, from, to))
 	}

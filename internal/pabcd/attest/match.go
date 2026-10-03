@@ -44,9 +44,8 @@ func verdictBody(line string) (string, bool) {
 	return rest[1:], true
 }
 
-// HasFailVerdictTail is attest.ts hasFailVerdictTail: true when the last verdict-shaped line among the final five non-empty
-// lines of auditOutput reads /^verdict\s*[:=]\s*fail\b/i. An earlier FAIL corrected by a later PASS does not count, nor does a
-// mention of FAIL in prose.
+// HasFailVerdictTail is attest.ts hasFailVerdictTail: true when the last verdict-shaped line of the final five non-empty lines
+// of auditOutput reads /^verdict\s*[:=]\s*fail\b/i (an earlier FAIL corrected by a later PASS, or FAIL in prose, does not count).
 func HasFailVerdictTail(auditOutput string) bool {
 	var lines []string
 	for _, l := range text.SplitLines(auditOutput) {
@@ -86,8 +85,7 @@ func isNumberedDoc(name string) bool {
 	return true
 }
 
-// jsNumber is a number inside a template literal. encoding/json prints a float64 as ECMAScript does, so only what JSON cannot
-// carry and negative zero are handled here.
+// jsNumber is a number in a template literal: encoding/json prints a float64 as ECMAScript does, bar NaN, Infinity and -0.
 func jsNumber(f float64) string {
 	switch {
 	case math.IsNaN(f):
@@ -103,8 +101,8 @@ func jsNumber(f float64) string {
 	return string(b)
 }
 
-// lowerJS is String.prototype.toLowerCase: the simple case mapping, except U+0130 which becomes "i" and a combining dot above,
-// and capital sigma, which becomes the final form at the end of a word (Unicode Final_Sigma).
+// lowerJS is String.prototype.toLowerCase: the simple case mapping, with U+0130 as "i" and a combining dot above, and capital
+// sigma in its final form at the end of a word (Unicode Final_Sigma).
 func lowerJS(s string) string {
 	rs := []rune(s)
 	var b strings.Builder
@@ -143,8 +141,8 @@ func cased(r rune) bool {
 }
 
 // caseIgnorable is the Unicode Case_Ignorable property: the categories Mn, Me, Cf, Lm and Sk, and the Word_Break classes
-// MidLetter, MidNumLet and Single_Quote, which Go's tables do not carry. The data is Go's, so a character assigned after the
-// Unicode version of Go's tables or of the oracle's runtime may differ.
+// MidLetter, MidNumLet and Single_Quote, which Go's tables do not carry. The data is Go's: a character assigned after the Unicode
+// version of Go's tables or of the oracle's runtime may differ.
 func caseIgnorable(r rune) bool {
 	return unicode.In(r, unicode.Mn, unicode.Me, unicode.Cf, unicode.Lm, unicode.Sk) ||
 		strings.ContainsRune("'.:\u00b7\u0387\u055f\u05f4\u2018\u2019\u2024\u2027\ufe13\ufe52\ufe55\uff07\uff0e\uff1a", r)

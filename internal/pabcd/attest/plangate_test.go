@@ -6,8 +6,7 @@ import (
 	"testing"
 )
 
-// The 3 B-class tests of CXC v0.2.40 pabcd-state/test/plan-gate.test.ts. Where the oracle matches /cxc plan init/ the port
-// matches its CRW name, crw pabcd plan init (name-substitution R33 and the cli table).
+// The 3 B-class tests of CXC v0.2.40 test/plan-gate.test.ts; /cxc plan init/ becomes its CRW name, crw pabcd plan init.
 
 func plan(unit string, paths ...string) *Attestation {
 	return &Attestation{From: "P", To: "A", Did: "x", PlanUnit: unit, PlanPaths: paths}

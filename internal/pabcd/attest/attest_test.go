@@ -9,8 +9,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 )
 
-// The 18 B-class tests of CXC v0.2.40 pabcd-state/test/attest.test.ts, one Test function per oracle test and the same
-// assertions. A reason is matched against its CRW wording where the oracle's text names a cxc command.
+// The 18 B-class tests of CXC v0.2.40 test/attest.test.ts, one Test per oracle test with its assertions (CRW names for cxc ones).
 
 func at(from, to, did string) *Attestation {
 	return &Attestation{From: state.Phase(from), To: state.Phase(to), Did: did}

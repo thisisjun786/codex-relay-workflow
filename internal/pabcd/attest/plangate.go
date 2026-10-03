@@ -3,6 +3,7 @@ package attest
 import (
 	"os"
 	"path/filepath"
+	"syscall"
 )
 
 // PlanResult is plan-gate.ts PlanArtifactResult: on success Unit is the validated plan unit, normalised relative to cwd, so the
@@ -45,22 +46,22 @@ func ValidatePlanArtifacts(att *Attestation, cwd string) PlanResult {
 		}
 	}
 	// Relative to cwd: the round binding compares paths, and an absolute and a relative attestation naming one unit must agree.
-	base, _ := filepath.Abs(cwd)
-	abs, _ := filepath.Abs(unit)
-	rel, err := filepath.Rel(base, abs)
+	rel, err := filepath.Rel(resolve("", cwd), unit)
 	if err != nil {
-		rel = abs
+		rel = unit
 	}
 	return PlanResult{OK: true, Unit: rel}
 }
 
-// resolve is path.isAbsolute(p) ? p : path.resolve(cwd, p).
+// resolve is path.isAbsolute(p) ? p : path.resolve(cwd, p). A relative result is made absolute against the process's physical
+// working directory, which is what process.cwd() answers; os.Getwd and filepath.Abs would follow a symlinked $PWD instead.
 func resolve(cwd, p string) string {
 	if filepath.IsAbs(p) {
 		return p
 	}
-	if abs, err := filepath.Abs(filepath.Join(cwd, p)); err == nil {
-		return abs
+	p = filepath.Join(cwd, p)
+	if wd, err := syscall.Getwd(); err == nil && !filepath.IsAbs(p) {
+		p = filepath.Join(wd, p)
 	}
-	return filepath.Join(cwd, p)
+	return p
 }

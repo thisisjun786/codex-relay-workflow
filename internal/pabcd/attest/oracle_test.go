@@ -110,11 +110,12 @@ func TestAttestMatchesTheRecordedOracle(t *testing.T) {
 func TestPlanGateMatchesTheRecordedOracle(t *testing.T) {
 	var fx struct {
 		Plan []struct {
-			ID     string
-			Direct bool
-			Tree   []struct{ Path, Type, Target string }
-			Input  string
-			Result struct {
+			ID            string
+			Direct        bool
+			Chdir, CwdArg string
+			Tree          []struct{ Path, Type, Target string }
+			Input         string
+			Result        struct {
 				OK           bool
 				Unit, Reason string
 			}
@@ -162,7 +163,14 @@ func TestPlanGateMatchesTheRecordedOracle(t *testing.T) {
 		} else {
 			att = Coerce(parse(t, expand(c.Input)))
 		}
-		got, want := ValidatePlanArtifacts(att, cwd), PlanResult{OK: c.Result.OK, Unit: c.Result.Unit, Reason: sub.Expected(c.Result.Reason)}
+		// A relative working directory is resolved against the process's physical directory; t.Chdir also points $PWD at the
+		// directory as named, which for a symlink is the logical path os.Getwd would answer with.
+		dir := cwd
+		if c.Chdir != "" {
+			t.Chdir(filepath.Join(root, c.Chdir))
+			dir = c.CwdArg
+		}
+		got, want := ValidatePlanArtifacts(att, dir), PlanResult{OK: c.Result.OK, Unit: c.Result.Unit, Reason: sub.Expected(c.Result.Reason)}
 		got.Unit, got.Reason = unexpand(got.Unit), unexpand(got.Reason)
 		if got != want {
 			t.Errorf("%s: %s\n got %+v\nwant %+v", c.ID, c.Input, got, want)
