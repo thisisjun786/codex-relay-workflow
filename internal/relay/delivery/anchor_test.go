@@ -146,6 +146,7 @@ func TestANB01_every_route_to_dispatched_binds_the_new_anchor(t *testing.T) {
 }
 
 func TestBindAnchor_concurrent_turns_never_replace_the_winner(t *testing.T) {
+	t.Parallel()
 	a := newANB(t, t.TempDir())
 	a.revisionPending()
 	var start sync.WaitGroup
@@ -185,6 +186,7 @@ func TestBindAnchor_concurrent_turns_never_replace_the_winner(t *testing.T) {
 }
 
 func TestBindPendingAnchors_recovers_acknowledged_revision(t *testing.T) {
+	t.Parallel()
 	a := newANB(t, t.TempDir())
 	rev := a.dispatchRevision("")
 	a.clock.Advance(3600)
@@ -296,6 +298,7 @@ func TestANB06_binding_is_idempotent_and_needs_a_dispatch(t *testing.T) {
 }
 
 func TestANB07_a_revision_promoted_during_a_tick_binds_in_that_tick(t *testing.T) {
+	t.Parallel()
 	var order []string
 	report := &AnchorReport{}
 	f := newANB(t, "")
@@ -309,6 +312,7 @@ func TestANB07_a_revision_promoted_during_a_tick_binds_in_that_tick(t *testing.T
 }
 
 func TestANB08_both_binding_passes_are_counted(t *testing.T) {
+	t.Parallel()
 	calls := 0
 	report := &AnchorReport{}
 	f := newANB(t, "")

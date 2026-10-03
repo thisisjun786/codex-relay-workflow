@@ -50,6 +50,7 @@ func resolveCase(t *testing.T, f *fixture, cases Obj, name string) map[string]an
 }
 
 func TestDRL01_an_unwired_service_uses_the_relationship_row(t *testing.T) {
+	t.Parallel()
 	tree := t.TempDir()
 	expected := expectScenario(t, tree, "drl")
 	f := newFixture(t, tree)
@@ -62,6 +63,7 @@ func TestDRL01_an_unwired_service_uses_the_relationship_row(t *testing.T) {
 }
 
 func TestDRL02_an_agreeing_owner_resolves_verified_at_the_right_level(t *testing.T) {
+	t.Parallel()
 	tree := t.TempDir()
 	expected := expectScenario(t, tree, "drl")
 	f := newFixture(t, tree)
@@ -76,6 +78,7 @@ func TestDRL02_an_agreeing_owner_resolves_verified_at_the_right_level(t *testing
 }
 
 func TestDRL03_linkage_refusals_keep_distinct_reasons_and_never_fall_back(t *testing.T) {
+	t.Parallel()
 	tree := t.TempDir()
 	expected := expectScenario(t, tree, "drl")
 	f := newFixture(t, tree)
@@ -94,6 +97,7 @@ func TestDRL03_linkage_refusals_keep_distinct_reasons_and_never_fall_back(t *tes
 }
 
 func TestDRL04_a_retained_audit_conflict_does_not_block_a_healthy_delivery(t *testing.T) {
+	t.Parallel()
 	tree := t.TempDir()
 	expected := expectScenario(t, tree, "drl")
 	f := newFixture(t, tree)
