@@ -1,0 +1,984 @@
+{
+  "source": "CXC v0.2.40 3c1459ac plan-cli.ts",
+  "classification": "identical (command names substituted at comparison)",
+  "helpers": [
+    {
+      "input": "my_slug",
+      "split": {
+        "date": null,
+        "rest": "my_slug"
+      },
+      "slug": "my_slug"
+    },
+    {
+      "input": " My Big Feature! ",
+      "split": {
+        "date": null,
+        "rest": "My Big Feature!"
+      },
+      "slug": "my-big-feature"
+    },
+    {
+      "input": "260821_win-linux",
+      "split": {
+        "date": "260821",
+        "rest": "win-linux"
+      },
+      "slug": "260821_win-linux"
+    },
+    {
+      "input": "260821-win-linux",
+      "split": {
+        "date": "260821",
+        "rest": "win-linux"
+      },
+      "slug": "260821-win-linux"
+    },
+    {
+      "input": "12345_thing",
+      "split": {
+        "date": null,
+        "rest": "12345_thing"
+      },
+      "slug": "12345_thing"
+    },
+    {
+      "input": "1234567_thing",
+      "split": {
+        "date": null,
+        "rest": "1234567_thing"
+      },
+      "slug": "1234567_thing"
+    },
+    {
+      "input": "260821_",
+      "split": {
+        "date": "260821",
+        "rest": ""
+      },
+      "slug": "260821_"
+    },
+    {
+      "input": "---",
+      "split": {
+        "date": null,
+        "rest": "---"
+      },
+      "slug": ""
+    },
+    {
+      "input": "foo.bar",
+      "split": {
+        "date": null,
+        "rest": "foo.bar"
+      },
+      "slug": "foo-bar"
+    },
+    {
+      "input": "İx",
+      "split": {
+        "date": null,
+        "rest": "İx"
+      },
+      "slug": "i-x"
+    },
+    {
+      "input": "Kelvin",
+      "split": {
+        "date": null,
+        "rest": "Kelvin"
+      },
+      "slug": "kelvin"
+    },
+    {
+      "input": "﻿hello﻿",
+      "split": {
+        "date": null,
+        "rest": "hello"
+      },
+      "slug": "hello"
+    },
+    {
+      "input": "hello",
+      "split": {
+        "date": null,
+        "rest": "hello"
+      },
+      "slug": "hello"
+    },
+    {
+      "input": "123456_x\nrest",
+      "split": {
+        "date": null,
+        "rest": "123456_x\nrest"
+      },
+      "slug": "123456_x-rest"
+    },
+    {
+      "input": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "split": {
+        "date": null,
+        "rest": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      },
+      "slug": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    },
+    {
+      "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-x",
+      "split": {
+        "date": null,
+        "rest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-x"
+      },
+      "slug": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-"
+    },
+    {
+      "input": "999999_name",
+      "split": {
+        "date": "999999",
+        "rest": "name"
+      },
+      "slug": "999999_name"
+    },
+    {
+      "input": "２６０８２１_x",
+      "split": {
+        "date": null,
+        "rest": "２６０８２１_x"
+      },
+      "slug": "_x"
+    },
+    {
+      "input": "260821_a\rb",
+      "split": {
+        "date": null,
+        "rest": "260821_a\rb"
+      },
+      "slug": "260821_a-b"
+    },
+    {
+      "input": "260821_a b",
+      "split": {
+        "date": null,
+        "rest": "260821_a b"
+      },
+      "slug": "260821_a-b"
+    },
+    {
+      "input": "260821_a b",
+      "split": {
+        "date": null,
+        "rest": "260821_a b"
+      },
+      "slug": "260821_a-b"
+    }
+  ],
+  "parse": [
+    {
+      "argv": [],
+      "result": {
+        "verb": "help",
+        "slug": "",
+        "phases": 1,
+        "cwd": "WORKSPACE",
+        "date": null
+      }
+    },
+    {
+      "argv": [
+        "help"
+      ],
+      "result": {
+        "verb": "help",
+        "slug": "",
+        "phases": 1,
+        "cwd": "WORKSPACE",
+        "date": null
+      }
+    },
+    {
+      "argv": [
+        "--help"
+      ],
+      "result": {
+        "verb": "help",
+        "slug": "",
+        "phases": 1,
+        "cwd": "WORKSPACE",
+        "date": null
+      }
+    },
+    {
+      "argv": [
+        "-h"
+      ],
+      "result": {
+        "verb": "help",
+        "slug": "",
+        "phases": 1,
+        "cwd": "WORKSPACE",
+        "date": null
+      }
+    },
+    {
+      "argv": [
+        "INIT",
+        "x"
+      ],
+      "result": {
+        "verb": "init",
+        "slug": "x",
+        "phases": 1,
+        "cwd": "WORKSPACE",
+        "date": null
+      }
+    },
+    {
+      "argv": [
+        "nope"
+      ],
+      "result": {
+        "error": "unknown plan verb 'nope' (expected init)"
+      }
+    },
+    {
+      "argv": [
+        "init"
+      ],
+      "result": {
+        "error": "plan init requires a <slug> argument"
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "x",
+        "--phases",
+        "0"
+      ],
+      "result": {
+        "error": "--phases expects an integer 1-9"
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "My Big Feature!",
+        "--phases",
+        "3"
+      ],
+      "result": {
+        "verb": "init",
+        "slug": "my-big-feature",
+        "phases": 3,
+        "cwd": "WORKSPACE",
+        "date": null
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "my_slug"
+      ],
+      "result": {
+        "verb": "init",
+        "slug": "my_slug",
+        "phases": 1,
+        "cwd": "WORKSPACE",
+        "date": null
+      }
+    },
+    {
+      "argv": [
+        "init",
+        " My Big Feature! "
+      ],
+      "result": {
+        "verb": "init",
+        "slug": "my-big-feature",
+        "phases": 1,
+        "cwd": "WORKSPACE",
+        "date": null
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "260821_win-linux"
+      ],
+      "result": {
+        "verb": "init",
+        "slug": "win-linux",
+        "phases": 1,
+        "cwd": "WORKSPACE",
+        "date": "260821"
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "260821-win-linux"
+      ],
+      "result": {
+        "verb": "init",
+        "slug": "win-linux",
+        "phases": 1,
+        "cwd": "WORKSPACE",
+        "date": "260821"
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "12345_thing"
+      ],
+      "result": {
+        "verb": "init",
+        "slug": "12345_thing",
+        "phases": 1,
+        "cwd": "WORKSPACE",
+        "date": null
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "1234567_thing"
+      ],
+      "result": {
+        "verb": "init",
+        "slug": "1234567_thing",
+        "phases": 1,
+        "cwd": "WORKSPACE",
+        "date": null
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "260821_"
+      ],
+      "result": {
+        "error": "plan init: '260821_' has no usable slug once its date prefix is removed"
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "---"
+      ],
+      "result": {
+        "error": "plan init requires a <slug> argument"
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "foo.bar"
+      ],
+      "result": {
+        "verb": "init",
+        "slug": "foo-bar",
+        "phases": 1,
+        "cwd": "WORKSPACE",
+        "date": null
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "İx"
+      ],
+      "result": {
+        "verb": "init",
+        "slug": "i-x",
+        "phases": 1,
+        "cwd": "WORKSPACE",
+        "date": null
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "Kelvin"
+      ],
+      "result": {
+        "verb": "init",
+        "slug": "kelvin",
+        "phases": 1,
+        "cwd": "WORKSPACE",
+        "date": null
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "﻿hello﻿"
+      ],
+      "result": {
+        "verb": "init",
+        "slug": "hello",
+        "phases": 1,
+        "cwd": "WORKSPACE",
+        "date": null
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "hello"
+      ],
+      "result": {
+        "verb": "init",
+        "slug": "hello",
+        "phases": 1,
+        "cwd": "WORKSPACE",
+        "date": null
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "123456_x\nrest"
+      ],
+      "result": {
+        "verb": "init",
+        "slug": "123456_x-rest",
+        "phases": 1,
+        "cwd": "WORKSPACE",
+        "date": null
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      ],
+      "result": {
+        "verb": "init",
+        "slug": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "phases": 1,
+        "cwd": "WORKSPACE",
+        "date": null
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-x"
+      ],
+      "result": {
+        "verb": "init",
+        "slug": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-",
+        "phases": 1,
+        "cwd": "WORKSPACE",
+        "date": null
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "999999_name"
+      ],
+      "result": {
+        "verb": "init",
+        "slug": "name",
+        "phases": 1,
+        "cwd": "WORKSPACE",
+        "date": "999999"
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "２６０８２１_x"
+      ],
+      "result": {
+        "verb": "init",
+        "slug": "_x",
+        "phases": 1,
+        "cwd": "WORKSPACE",
+        "date": null
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "260821_a\rb"
+      ],
+      "result": {
+        "verb": "init",
+        "slug": "260821_a-b",
+        "phases": 1,
+        "cwd": "WORKSPACE",
+        "date": null
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "260821_a b"
+      ],
+      "result": {
+        "verb": "init",
+        "slug": "260821_a-b",
+        "phases": 1,
+        "cwd": "WORKSPACE",
+        "date": null
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "260821_a b"
+      ],
+      "result": {
+        "verb": "init",
+        "slug": "260821_a-b",
+        "phases": 1,
+        "cwd": "WORKSPACE",
+        "date": null
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "x",
+        "--phases",
+        "1"
+      ],
+      "result": {
+        "verb": "init",
+        "slug": "x",
+        "phases": 1,
+        "cwd": "WORKSPACE",
+        "date": null
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "x",
+        "--phases",
+        "9"
+      ],
+      "result": {
+        "verb": "init",
+        "slug": "x",
+        "phases": 9,
+        "cwd": "WORKSPACE",
+        "date": null
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "x",
+        "--phases",
+        "10"
+      ],
+      "result": {
+        "error": "--phases expects an integer 1-9"
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "x",
+        "--phases",
+        "1.5"
+      ],
+      "result": {
+        "error": "--phases expects an integer 1-9"
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "x",
+        "--phases",
+        "NaN"
+      ],
+      "result": {
+        "error": "--phases expects an integer 1-9"
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "x",
+        "--phases",
+        "Infinity"
+      ],
+      "result": {
+        "error": "--phases expects an integer 1-9"
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "x",
+        "--phases",
+        "1e0"
+      ],
+      "result": {
+        "verb": "init",
+        "slug": "x",
+        "phases": 1,
+        "cwd": "WORKSPACE",
+        "date": null
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "x",
+        "--phases",
+        "0x2"
+      ],
+      "result": {
+        "verb": "init",
+        "slug": "x",
+        "phases": 2,
+        "cwd": "WORKSPACE",
+        "date": null
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "x",
+        "--phases",
+        "0b11"
+      ],
+      "result": {
+        "verb": "init",
+        "slug": "x",
+        "phases": 3,
+        "cwd": "WORKSPACE",
+        "date": null
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "x",
+        "--phases",
+        "0o4"
+      ],
+      "result": {
+        "verb": "init",
+        "slug": "x",
+        "phases": 4,
+        "cwd": "WORKSPACE",
+        "date": null
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "x",
+        "--phases",
+        "+2"
+      ],
+      "result": {
+        "verb": "init",
+        "slug": "x",
+        "phases": 2,
+        "cwd": "WORKSPACE",
+        "date": null
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "x",
+        "--phases",
+        "2.0"
+      ],
+      "result": {
+        "verb": "init",
+        "slug": "x",
+        "phases": 2,
+        "cwd": "WORKSPACE",
+        "date": null
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "x",
+        "--phases",
+        " 2 "
+      ],
+      "result": {
+        "verb": "init",
+        "slug": "x",
+        "phases": 2,
+        "cwd": "WORKSPACE",
+        "date": null
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "x",
+        "--phases",
+        "1_0"
+      ],
+      "result": {
+        "error": "--phases expects an integer 1-9"
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "x",
+        "--phases",
+        "0x1p0"
+      ],
+      "result": {
+        "error": "--phases expects an integer 1-9"
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "x",
+        "--cwd"
+      ],
+      "result": {
+        "verb": "init",
+        "slug": "x",
+        "phases": 1,
+        "cwd": "WORKSPACE",
+        "date": null
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "x",
+        "--cwd",
+        ""
+      ],
+      "result": {
+        "verb": "init",
+        "slug": "x",
+        "phases": 1,
+        "cwd": "",
+        "date": null
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "--slug",
+        "wrong",
+        "--date",
+        "260101"
+      ],
+      "result": {
+        "verb": "init",
+        "slug": "wrong",
+        "phases": 1,
+        "cwd": "WORKSPACE",
+        "date": null
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "--unknown",
+        "x",
+        "ignored"
+      ],
+      "result": {
+        "verb": "init",
+        "slug": "x",
+        "phases": 1,
+        "cwd": "WORKSPACE",
+        "date": null
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "x",
+        "--phases"
+      ],
+      "result": {
+        "error": "--phases expects an integer 1-9"
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "x",
+        "--phases",
+        "2",
+        "--phases",
+        "3"
+      ],
+      "result": {
+        "verb": "init",
+        "slug": "x",
+        "phases": 3,
+        "cwd": "WORKSPACE",
+        "date": null
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "-h"
+      ],
+      "result": {
+        "verb": "init",
+        "slug": "h",
+        "phases": 1,
+        "cwd": "WORKSPACE",
+        "date": null
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "--help"
+      ],
+      "result": {
+        "error": "plan init requires a <slug> argument"
+      }
+    },
+    {
+      "argv": [
+        "İNİT",
+        "x"
+      ],
+      "result": {
+        "error": "unknown plan verb 'İNİT' (expected init)"
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "x",
+        "--phases",
+        "9."
+      ],
+      "result": {
+        "verb": "init",
+        "slug": "x",
+        "phases": 9,
+        "cwd": "WORKSPACE",
+        "date": null
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "x",
+        "--phases",
+        ".9e1"
+      ],
+      "result": {
+        "verb": "init",
+        "slug": "x",
+        "phases": 9,
+        "cwd": "WORKSPACE",
+        "date": null
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "x",
+        "--phases",
+        " 3﻿"
+      ],
+      "result": {
+        "verb": "init",
+        "slug": "x",
+        "phases": 3,
+        "cwd": "WORKSPACE",
+        "date": null
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "x",
+        "--cwd",
+        "--phases",
+        "3"
+      ],
+      "result": {
+        "verb": "init",
+        "slug": "x",
+        "phases": 1,
+        "cwd": "--phases",
+        "date": null
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "--date",
+        "260101",
+        "--slug",
+        "demo"
+      ],
+      "result": {
+        "verb": "init",
+        "slug": "260101",
+        "phases": 1,
+        "cwd": "WORKSPACE",
+        "date": null
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "x",
+        "--phases",
+        "+0x2"
+      ],
+      "result": {
+        "error": "--phases expects an integer 1-9"
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "x",
+        "--phases",
+        "0x0000000000000000000002"
+      ],
+      "result": {
+        "verb": "init",
+        "slug": "x",
+        "phases": 2,
+        "cwd": "WORKSPACE",
+        "date": null
+      }
+    }
+  ],
+  "help": {
+    "code": 0,
+    "output": "cxc plan — scaffold a devlog plan unit (DIFFLEVEL-ROADMAP-01)\n\nUsage:\n  cxc plan init --slug <slug> [--phases <n>] [--date <YYMMDD>] [--cwd <path>]\n  cxc plan --help\n\nNotes:\n  Creates devlog/_plan/<YYMMDD>_<slug>/ with 000_plan.md plus one decade doc\n  (010, 020, ...) per phase. P>A requires such a unit to exist on disk with\n  numbered docs — a chat-message plan does not satisfy Plan.\n  --date is for callers that already carry their own prefix; omit it to stamp today.\n  init refuses to overwrite an existing unit."
+  },
+  "creation": {
+    "output": "plan init: scaffolded devlog/_plan/260821_oracle_unit (000_plan.md + 9 phase doc(s)).\nWrite every doc to diff-level BEFORE P -> A; the P>A gate requires planUnit to carry numbered docs.",
+    "code": 0
+  },
+  "docs": {
+    "000_plan.md": "# 000 — oracle_unit: Plan\n\n> DIFFLEVEL-ROADMAP-01: write this doc to full diff-level precision (exact paths,\n> NEW/MODIFY/DELETE, before/after diffs) BEFORE P -> A. An empty scaffold does not\n> satisfy the rule; the A-phase reviewer FAILS outline-only phase docs.\n\n## Objective\n\n(fill in: the concrete outcome, the observed failure, the evidence base)\n\n## Loop-spec\n\n- Loop archetype: (verifier-defined | judged)\n- Write scope / out-of-scope:\n- Budget / bounds:\n\n## Work-phase map (one phase = one full PABCD cycle)\n\n| WP | Doc | Slice | Depends on |\n|----|-----|-------|------------|\n\n## Accept criteria\n\n- (mirror into the goalplan criteria[])\n",
+    "010_phase1.md": "# 010 — Phase 1 (oracle_unit)\n\n> DIFFLEVEL-ROADMAP-01: write this doc to full diff-level precision (exact paths,\n> NEW/MODIFY/DELETE, before/after diffs) BEFORE P -> A. An empty scaffold does not\n> satisfy the rule; the A-phase reviewer FAILS outline-only phase docs.\n\n## MODIFY / NEW / DELETE map\n\n(fill in: exact file paths with before/after diffs — a copy-paste-executable PRD)\n\n## TESTS\n\n(fill in: test files + cases)\n\n## Verification (C)\n\n(fill in: exact commands + expected exit codes)\n",
+    "020_phase2.md": "# 020 — Phase 2 (oracle_unit)\n\n> DIFFLEVEL-ROADMAP-01: write this doc to full diff-level precision (exact paths,\n> NEW/MODIFY/DELETE, before/after diffs) BEFORE P -> A. An empty scaffold does not\n> satisfy the rule; the A-phase reviewer FAILS outline-only phase docs.\n\n## MODIFY / NEW / DELETE map\n\n(fill in: exact file paths with before/after diffs — a copy-paste-executable PRD)\n\n## TESTS\n\n(fill in: test files + cases)\n\n## Verification (C)\n\n(fill in: exact commands + expected exit codes)\n",
+    "030_phase3.md": "# 030 — Phase 3 (oracle_unit)\n\n> DIFFLEVEL-ROADMAP-01: write this doc to full diff-level precision (exact paths,\n> NEW/MODIFY/DELETE, before/after diffs) BEFORE P -> A. An empty scaffold does not\n> satisfy the rule; the A-phase reviewer FAILS outline-only phase docs.\n\n## MODIFY / NEW / DELETE map\n\n(fill in: exact file paths with before/after diffs — a copy-paste-executable PRD)\n\n## TESTS\n\n(fill in: test files + cases)\n\n## Verification (C)\n\n(fill in: exact commands + expected exit codes)\n",
+    "040_phase4.md": "# 040 — Phase 4 (oracle_unit)\n\n> DIFFLEVEL-ROADMAP-01: write this doc to full diff-level precision (exact paths,\n> NEW/MODIFY/DELETE, before/after diffs) BEFORE P -> A. An empty scaffold does not\n> satisfy the rule; the A-phase reviewer FAILS outline-only phase docs.\n\n## MODIFY / NEW / DELETE map\n\n(fill in: exact file paths with before/after diffs — a copy-paste-executable PRD)\n\n## TESTS\n\n(fill in: test files + cases)\n\n## Verification (C)\n\n(fill in: exact commands + expected exit codes)\n",
+    "050_phase5.md": "# 050 — Phase 5 (oracle_unit)\n\n> DIFFLEVEL-ROADMAP-01: write this doc to full diff-level precision (exact paths,\n> NEW/MODIFY/DELETE, before/after diffs) BEFORE P -> A. An empty scaffold does not\n> satisfy the rule; the A-phase reviewer FAILS outline-only phase docs.\n\n## MODIFY / NEW / DELETE map\n\n(fill in: exact file paths with before/after diffs — a copy-paste-executable PRD)\n\n## TESTS\n\n(fill in: test files + cases)\n\n## Verification (C)\n\n(fill in: exact commands + expected exit codes)\n",
+    "060_phase6.md": "# 060 — Phase 6 (oracle_unit)\n\n> DIFFLEVEL-ROADMAP-01: write this doc to full diff-level precision (exact paths,\n> NEW/MODIFY/DELETE, before/after diffs) BEFORE P -> A. An empty scaffold does not\n> satisfy the rule; the A-phase reviewer FAILS outline-only phase docs.\n\n## MODIFY / NEW / DELETE map\n\n(fill in: exact file paths with before/after diffs — a copy-paste-executable PRD)\n\n## TESTS\n\n(fill in: test files + cases)\n\n## Verification (C)\n\n(fill in: exact commands + expected exit codes)\n",
+    "070_phase7.md": "# 070 — Phase 7 (oracle_unit)\n\n> DIFFLEVEL-ROADMAP-01: write this doc to full diff-level precision (exact paths,\n> NEW/MODIFY/DELETE, before/after diffs) BEFORE P -> A. An empty scaffold does not\n> satisfy the rule; the A-phase reviewer FAILS outline-only phase docs.\n\n## MODIFY / NEW / DELETE map\n\n(fill in: exact file paths with before/after diffs — a copy-paste-executable PRD)\n\n## TESTS\n\n(fill in: test files + cases)\n\n## Verification (C)\n\n(fill in: exact commands + expected exit codes)\n",
+    "080_phase8.md": "# 080 — Phase 8 (oracle_unit)\n\n> DIFFLEVEL-ROADMAP-01: write this doc to full diff-level precision (exact paths,\n> NEW/MODIFY/DELETE, before/after diffs) BEFORE P -> A. An empty scaffold does not\n> satisfy the rule; the A-phase reviewer FAILS outline-only phase docs.\n\n## MODIFY / NEW / DELETE map\n\n(fill in: exact file paths with before/after diffs — a copy-paste-executable PRD)\n\n## TESTS\n\n(fill in: test files + cases)\n\n## Verification (C)\n\n(fill in: exact commands + expected exit codes)\n",
+    "090_phase9.md": "# 090 — Phase 9 (oracle_unit)\n\n> DIFFLEVEL-ROADMAP-01: write this doc to full diff-level precision (exact paths,\n> NEW/MODIFY/DELETE, before/after diffs) BEFORE P -> A. An empty scaffold does not\n> satisfy the rule; the A-phase reviewer FAILS outline-only phase docs.\n\n## MODIFY / NEW / DELETE map\n\n(fill in: exact file paths with before/after diffs — a copy-paste-executable PRD)\n\n## TESTS\n\n(fill in: test files + cases)\n\n## Verification (C)\n\n(fill in: exact commands + expected exit codes)\n"
+  }
+}
