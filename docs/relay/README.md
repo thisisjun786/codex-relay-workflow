@@ -404,7 +404,8 @@ was attempted, retry resumes that same task with a separately retained standby o
 A creation whose outcome is unknown (the bridge receipt is `outcome_unknown`, or
 `in_progress_or_unknown` when the process stopped inside it) is reconciled by the next retry of the same
 request, which observes the App Server before it answers. A thread that exists with no turn is continued
-under the same request (the standby turn under a standby operation of its own, then the title). When no thread
+under the same request (the standby turn under a standby operation of its own, then the title), after taking the project's lock and
+asking the scope decision again, as a creation does. When no thread
 is shown, the retry waits 2 minutes from the receipt's last update (`pending`, with `repeatAfter`) and then
 creates again under the same request with a derived bridge operation id, at most three creations in all. A thread that has a turn,
 a creation whose `turn/start` may have been sent, several threads that fit, a thread or a listing the host cannot read, a standby
