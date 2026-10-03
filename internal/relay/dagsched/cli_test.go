@@ -161,8 +161,8 @@ func TestCLIRegionDeclare(t *testing.T) {
 		t.Fatalf("declare: exit %d\n%s", code, out)
 	}
 	got := m["regions"].([]any)
-	if len(got) != 2 || got[0].(map[string]any)["path"] != "go.mod" || got[0].(map[string]any)["exclusive"] != true || got[1].(map[string]any)["exclusive"] != false {
-		t.Fatalf("regions = %v, want sorted with go.mod exclusive", got)
+	if len(got) != 2 || got[0].(map[string]any)["path"] != "go.mod" || got[0].(map[string]any)["exclusive"] != false || got[0].(map[string]any)["grade"] != "exclusive" || got[1].(map[string]any)["exclusive"] != false {
+		t.Fatalf("regions = %v, want sorted with go.mod exclusive at its place and holding no more of the repository", got)
 	}
 	file := filepath.Join(t.TempDir(), "regions.json")
 	if err := os.WriteFile(file, []byte(regions), 0o600); err != nil {

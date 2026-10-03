@@ -39,7 +39,7 @@ const (
 )
 
 // The shared contract surfaces (contract schema, CLI spec, contract goldens): exclusive whatever grade is declared, because two branches cannot both change a contract and be merged by a rule. They are
-// places, not repositories: the list is matched by path in any repository. Contract/schema is also a whole-repository hotspot (a schema directory, Classify); the list adds the rest at the place alone.
+// places, not repositories: the list is matched by path in any repository. Contract/schema is also a hotspot (a schema directory, Classify), exclusive at its own place like the rest of the list.
 var (
 	sharedTrees = []string{"contract/schema", "contract/golden", "contract/fixtures"}
 	sharedFiles = []string{"internal/relay/argparse/specs.json"}
@@ -118,12 +118,12 @@ func gradeName(g string) string {
 	return g
 }
 
-// foldedGrade is the grade and rule a region is judged at: a whole-repository hold (the Exclusive flag: a rename, a delete, a hotspot or the caller's word) and a shared contract surface are exclusive
-// whatever was declared, an absent grade is independent, and a rule survives only on a mechanical grade. Declaring, reading back and judging all go through it, so a row stored before the list
-// grew, or by another build, cannot sit below it.
+// foldedGrade is the grade and rule a region is judged at: a whole-repository hold (the Exclusive flag, the declarer's word), a shared contract surface and a delete, a rename or a hotspot (Classify; CRW-431) are
+// exclusive whatever was declared, the last two at their own place only, an absent grade is independent, and a rule survives only on a mechanical grade. Declaring, reading back and judging all go through it,
+// so a row stored before the list grew, or by another build, cannot sit below it.
 func foldedGrade(r Region) (grade, rule string) {
 	switch {
-	case r.Exclusive, SharedSurface(r.Path):
+	case r.Exclusive, SharedSurface(r.Path), placeHold(r):
 		return GradeExclusive, ""
 	case r.Grade == "":
 		return GradeIndependent, ""
@@ -139,8 +139,12 @@ func EffectiveGrade(r Region) string {
 	return g
 }
 
+// wholeFile is whether a region makes its file one place, whatever symbol it names: a shared contract file, or a delete, a rename or a hotspot (CRW-431). A symbol key is a smaller place only for the ordinary edit;
+// a hotspot file is one place by what it is, and a symbol that is deleted or renamed moves a name the rest of the file refers to.
+func wholeFile(r Region) bool { return SharedSurface(r.Path) || placeHold(r) }
+
 // commonPlace is the place two regions of one repository share by the place rules: a tree contains what lies under it, a path is itself, and two symbols of one file overlap only when they
-// are the same symbol. tree says whether the shared place is a directory (the deeper side is a tree).
+// are the same symbol, unless either makes the file one place (wholeFile). tree says whether the shared place is a directory (the deeper side is a tree).
 func commonPlace(a, b Region) (place string, tree, ok bool) {
 	ap, bp := path.Clean(a.Path), path.Clean(b.Path)
 	switch {
@@ -150,15 +154,15 @@ func commonPlace(a, b Region) (place string, tree, ok bool) {
 		return ap, a.Kind == "tree", true
 	case ap != bp:
 		return "", false, false
-	case a.Kind == "symbol" && b.Kind == "symbol" && a.Key != b.Key:
+	case a.Kind == "symbol" && b.Kind == "symbol" && a.Key != b.Key && !wholeFile(a) && !wholeFile(b):
 		return "", false, false
 	}
 	return ap, false, true
 }
 
-// PairGrade is the grade of the overlap of two regions, or "" when they do not overlap. A whole-repository hold overlaps everything of its repository and is exclusive. Otherwise the overlap is judged on the
+// PairGrade is the grade of the overlap of two regions, or "" when they do not overlap. A whole-repository hold (the declarer's word) overlaps everything of its repository and is exclusive. Otherwise the overlap is judged on the
 // place the regions share: exclusive when that place is, or for a directory holds, a shared contract surface (and a symbol key means nothing on one: two symbols of a listed file share the file), or when
-// either side is exclusive, or when either side claims independence that the overlap contradicts; mechanical when both sides name one rule; local for every other mix.
+// either side is exclusive (a delete, a rename and a hotspot are, at their place), or when either side claims independence that the overlap contradicts; mechanical when both sides name one rule; local for every other mix.
 func PairGrade(a, b Region) string {
 	if a.Repository != b.Repository {
 		return ""
@@ -168,9 +172,6 @@ func PairGrade(a, b Region) string {
 	}
 	place, tree, ok := commonPlace(a, b)
 	if !ok {
-		if ap := path.Clean(a.Path); a.Kind == "symbol" && b.Kind == "symbol" && ap == path.Clean(b.Path) && SharedSurface(ap) {
-			return GradeExclusive
-		}
 		return ""
 	}
 	if (tree && holdsSharedSurface(place)) || (!tree && SharedSurface(place)) {
