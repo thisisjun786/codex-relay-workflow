@@ -2,6 +2,8 @@ package affordance
 
 import (
 	"context"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -109,3 +111,42 @@ func TestCancellationReturnsAndLateReadDoesNotWrite(t *testing.T) {
 		t.Fatal("late read created marker")
 	}
 }
+
+func TestIngressInvalidUTF8MatchesNodeOracle(t *testing.T) {
+	data, err := os.ReadFile("testdata/invalid-utf8.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases []struct{ Hex, Sid, Marker string }
+	if err := json.Unmarshal(data, &cases); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range cases {
+		t.Run(tc.Hex, func(t *testing.T) {
+			ws := t.TempDir()
+			bytes, err := hex.DecodeString(tc.Hex)
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw := `{"cwd":` + fmtQuote(ws) + `,"session_id":"` + string(bytes) + `","hook_event_name":"SessionStart"}`
+			var out strings.Builder
+			if RunHook(context.Background(), "session-start", strings.NewReader(raw), &out, testEnv, ws) != 0 {
+				t.Fatal("exit")
+			}
+			ctx := contextOf(t, out.String(), "SessionStart")
+			if strings.Split(ctx, "\n\n")[0] != RenderSessionBinding(tc.Sid, testEnv) {
+				t.Fatal("raw UTF8 binding")
+			}
+			raw = strings.Replace(raw, "SessionStart", "PostCompact", 1)
+			if RunHook(context.Background(), "post-compact", strings.NewReader(raw), io.Discard, testEnv, ws) != 0 {
+				t.Fatal("queue exit")
+			}
+			entries, err := os.ReadDir(filepath.Join(ws, ".crw", "affordance-recovery"))
+			if err != nil || len(entries) != 1 || entries[0].Name() != tc.Marker {
+				t.Fatal("Node marker identity", err)
+			}
+		})
+	}
+}
+
+func fmtQuote(s string) string { b, _ := json.Marshal(s); return string(b) }

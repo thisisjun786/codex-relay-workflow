@@ -174,7 +174,7 @@ func runHook(ctx context.Context, event string, in io.Reader, out io.Writer, env
 	}
 	raw := ""
 	if err == nil {
-		raw = strings.ToValidUTF8(string(data), "\ufffd")
+		raw = nodeUTF8(data)
 	}
 	harness.RecordInvocation(raw, "cxc-ops", event, env)
 	var answer string
