@@ -405,3 +405,7 @@ No new oracle defect was identified in the directive text and assembly of `pabcd
 - The first triple closing mark ends a string, so the TOML four/five-quote closing forms are rejected (source `agent-thread-permissions.ts:245`; recorded adjacent closing quotes); port: kept.
 - JavaScript whitespace such as vertical tab, form feed and non-ASCII spaces is accepted between value tokens although TOML whitespace is narrower (source `agent-thread-permissions.ts:230`; recorded whitespace arrays); port: kept.
 - A table implicitly created by a dotted assignment may later be explicitly declared, which TOML forbids (source `agent-thread-permissions.ts:182-188,212-216`; recorded dotted-assignment/table sequence); port: kept.
+
+## Found by the agent-thread permission hook port (CRW-494)
+
+- The config containment check treats project children whose names begin with `..` as outside the project, letting a project-controlled opt-in or full-access config grant permission (source `plugins/codexclaw/components/pabcd-state/src/agent-thread-permissions.ts:98-99`; reproduced for both config readers, regression `TestAgentThreadBoundaries/intentionally-changed_project_child_starting_with_two_dots`); port: fixed (security: compare path components, preserving the literal default-at-home exception; oracle cases intentionally-changed).

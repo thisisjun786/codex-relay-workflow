@@ -421,6 +421,12 @@ func (f *threadFixture) grammar(variants []string) {
 }
 
 func TestAgentThreadBoundaries(t *testing.T) {
+	t.Run("empty HOME realpath fails closed", func(t *testing.T) {
+		f := threadSetup(t)
+		t.Setenv("HOME", "")
+		f.want(false, nil, "")
+		f.want(true, nil, "")
+	})
 	t.Run("intentionally-changed project child starting with two dots", func(t *testing.T) {
 		for _, key := range []string{"CODEX_HOME", "CRW_HOME"} {
 			t.Run(key, func(t *testing.T) {
