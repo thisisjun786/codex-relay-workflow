@@ -72,6 +72,8 @@
   {"flag":"--turn","required":true},
   {"flag":"--actor","required":true},
   {"flag":"--reason"}]},
+{"name":"intervention-show","summary":"the direct parent interventions recorded for a relationship: turns its registered parent admitted with admit-turn, oldest first. A read: it records and sends nothing. A message sent to the child over the thread bridge and never admitted is not visible here","options":[
+  {"flag":"--relationship","required":true}]},
 {"name":"relationship-status","options":[
   {"flag":"--relationship","required":true},
   {"flag":"--status","required":true,"choices":["paused","cancelled","archived"]},

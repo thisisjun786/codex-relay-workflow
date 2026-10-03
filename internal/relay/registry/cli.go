@@ -78,6 +78,9 @@ var commands = []command{
 		return g.Record(), err
 	}},
 	{Command: dispatch.Command{Name: "admit-turn"}, run: cmdAdmitTurn},
+	{Command: dispatch.Command{Name: "intervention-show", ReadOnly: true}, run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
+		return r.InterventionsOf(ctx, p.text("relationship"))
+	}},
 	{Command: dispatch.Command{Name: "relationship-status"}, run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
 		x, err := r.SetStatus(ctx, p.text("relationship"), p.text("status"), p.text("actor"))
 		return x.ContractRecord(), err
@@ -399,7 +402,11 @@ func (r *Registry) AdmitExplicitly(ctx context.Context, rid string, generation i
 			rid, generation, turn, BoundExplicitPrefix+anchor.String, actor, detail, now); err != nil {
 			return err
 		}
-		return journal(ctx, r.Store, "turn_admitted", turn, contract.OrderedObject{{Key: "relationship", Value: rid},
-			{Key: "generation", Value: generation}, {Key: "actor", Value: actor}}, now)
+		if err := journal(ctx, r.Store, "turn_admitted", turn, contract.OrderedObject{{Key: "relationship", Value: rid},
+			{Key: "generation", Value: generation}, {Key: "actor", Value: actor}}, now); err != nil {
+			return err
+		}
+		// an admission by the relationship's registered parent also states that the parent's message reached the child outside the routes the relay carries (intervention.go)
+		return r.recordParentIntervention(ctx, rid, generation, turn, anchor.String, actor, detail, now)
 	})
 }
