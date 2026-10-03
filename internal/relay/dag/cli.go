@@ -30,7 +30,8 @@ func init() {
 // pageDefault is the page size of dag-plan-log when --limit is not given.
 const pageDefault = 100
 
-// ReadDocument is a JSON option's value: the text itself, or @file (at most MaxDocumentBytes of it). Anything it cannot read or that is not UTF-8 is a usage error.
+// ReadDocument is a JSON option's value: the text itself, or @file. Text that is not UTF-8 and a file that cannot be opened or read are usage errors; a file is read up to MaxDocumentBytes+1 bytes,
+// so that the decoder can tell a document that is too large from one that is not.
 func ReadDocument(input string) ([]byte, error) {
 	if !strings.HasPrefix(input, "@") {
 		if err := store.EncodeUTF8(input); err != nil {

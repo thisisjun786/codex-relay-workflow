@@ -10,8 +10,8 @@ import (
 // What a command checks of the relationship and the parent it acts through. Three rules about the relationship stay in the commands that hold them, because the rules differ and a shared gate
 // would have to take every difference as a parameter:
 //
-//   - a result is accepted, corrected or withdrawn only while its child's relationship is active and not superseded (accept.go, correction.go, withdraw.go); withdraw reads the relationship
-//     after the replay lookup, which is its own order;
+//   - a result is accepted, corrected or withdrawn only while its child's relationship is active and not superseded (accept.go, correction.go, withdraw.go); withdraw reads the relationship and the parent
+//     before its replay lookup and checks the status after it, which is its own order;
 //   - a pull request is judged for merge, or asked a merge turn for, unless the relationship is paused, cancelled or superseded (mergeable in mergejudge.go): an archived relationship is
 //     fine, the child's work ended and the pull request still has to land;
 //   - an integration is observed unless the relationship is paused or cancelled (observableRelationship in integration.go). A superseded relationship is not refused there. That is how the
