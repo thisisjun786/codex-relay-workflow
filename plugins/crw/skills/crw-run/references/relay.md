@@ -43,7 +43,12 @@ Every command prints JSON. Exit 0 success, 2 a refusal carrying a machine-readab
 
 `doctor` reports `actorReachability`: whether the state directory is writable, whether a socket is
 configured, and what connecting to it actually returned. Read it from the process that will run
-the work. What a given task can do is a property of that task's profile on that host, not a fixed
+the work. By default `doctor` only reads: it creates no probe file, never opens `write-gate.lock` and
+makes no read-write connection, so "writable" is judged from file permissions, the ownership stamp
+and the gate's presence (`writeProbe.judgedBy` is `permission`). `doctor --probe-write` measures it
+by writing a temporary file in the state directory and beginning and rolling back a write
+transaction under the write gate (`judgedBy` is `measured`); only that sees a sandbox that denies
+writes without changing permissions. What a given task can do is a property of that task's profile on that host, not a fixed
 fact about the relay, so discover it rather than assuming it.
 
 Its `offlineCommands` and `hostRequiredCommands` lists are curated capability GUIDANCE, not an
@@ -103,8 +108,8 @@ recorded rather than re-derived from a single lookup.
 
 An unreadable database answers `readable: false` and `holds: null`, never `holds: false`. Those
 are different answers and only one of them is safe to act on. Like the rest of `doctor`, this
-constructs no store: it reads through the probe's own read-only connection, so a diagnosis cannot
-create the database it was asked to look at, and a rename during the read returns no rows rather
+constructs no store and, without `--probe-write`, writes nothing of its own: it reads through the
+probe's own read-only connection, so a diagnosis cannot create the database it was asked to look at, and a rename during the read returns no rows rather
 than rows attributed to the wrong file.
 
 `assignment-find --issue` carries the same provenance under `relay`: `holds`, and a `store`
