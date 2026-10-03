@@ -823,6 +823,9 @@ func (f *managedFake) HostCall(_ context.Context, method string, params map[stri
 		}
 		return map[string]any{"goal": nil}, nil
 	case "thread/read":
+		if f.hostScenario == "lifecycle_unknown" {
+			return nil, fmt.Errorf("thread/read: thread not found")
+		}
 		accept := f.hostScenario != "recipient_cannot_accept_input"
 		status := "idle"
 		if f.hostScenario == "recipient_not_idle" {
