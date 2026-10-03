@@ -48,8 +48,6 @@ func regionControl(s string) bool {
 	return false
 }
 
-func within(p, dir string) bool { return p == dir || strings.HasPrefix(p, dir+"/") }
-
 // mechanicalRule is whether a rule is one a mechanical region may name: union, renumber, or
 // regenerate: followed by a command.
 func mechanicalRule(rule string) bool {
@@ -150,61 +148,14 @@ func readRegionSets(files []string, repository string) (coverage, error) {
 	return sets, nil
 }
 
-// touching are the regions that say something about a path: a file or symbol region on it, and a tree
-// region above it.
-func (s regionSet) touching(p string) []dagsched.Region {
-	var out []dagsched.Region
-	for _, r := range s.regions {
-		if (r.Kind == "tree" && within(p, r.Path)) || (r.Kind != "tree" && r.Path == p) {
-			out = append(out, r)
-		}
-	}
-	return out
-}
-
-// ruleFor is the rule that settles a conflict on a path, and whether there is one. There is one only
-// when, in every declaration given, a region touches the path and every region that touches it is
-// mechanical and names that rule: a region of any other grade (an independent claim the overlap
-// contradicts, a local or exclusive one), a symbol (a part of a file is not a file), a disagreement
-// between regions or between declarations, and no region at all leave the path uncovered. A shared
-// contract surface is never covered, and between the regions of two declarations the scheduler's own
-// judgement of the overlap has to be mechanical, which it is not for two trees that hold a shared
-// surface. A single declaration is taken as it stands: it cannot show what the other node declared.
+// ruleFor delegates to the scheduler's common selector; a single declaration says
+// nothing about another node's declaration.
 func (c coverage) ruleFor(p string) (string, bool) {
-	if len(c) == 0 || dagsched.SharedSurface(p) {
-		return "", false
+	sets := make([][]dagsched.Region, len(c))
+	for i, set := range c {
+		sets[i] = set.regions
 	}
-	rule := ""
-	perSet := make([][]dagsched.Region, 0, len(c))
-	for _, set := range c {
-		touching := set.touching(p)
-		if len(touching) == 0 {
-			return "", false
-		}
-		for _, r := range touching {
-			if r.Kind == "symbol" || dagsched.EffectiveGrade(r) != dagsched.GradeMechanical {
-				return "", false
-			}
-			if rule == "" {
-				rule = r.Rule
-			} else if r.Rule != rule {
-				return "", false
-			}
-		}
-		perSet = append(perSet, touching)
-	}
-	for i := range perSet {
-		for j := i + 1; j < len(perSet); j++ {
-			for _, a := range perSet[i] {
-				for _, b := range perSet[j] {
-					if dagsched.PairGrade(a, b) != dagsched.GradeMechanical {
-						return "", false
-					}
-				}
-			}
-		}
-	}
-	return rule, rule != ""
+	return dagsched.MechanicalRuleFor(sets, p)
 }
 
 // regenerateCommands are the commands of every regenerate rule the declarations name, sorted: the

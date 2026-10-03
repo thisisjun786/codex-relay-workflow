@@ -296,9 +296,25 @@ func (g *refreshGit) proveMechanical(ctx context.Context, previous, head, tip st
 	if len(openDifferences) > 0 {
 		return refuse("differs_outside_mechanical", "the tree of %s differs from the clean three-way result of %s and %s in %s, which no declared mechanical region covers with one rule", head, previous, tip, nameList(openDifferences))
 	}
+	return g.settleMechanical(ctx, facts, previous, head, tip, cov, resolved, merged, timeout)
+}
+
+// settleMechanical evaluates selected paths with the same guards and rules as the full skill check.
+// The relay has separately proved that all other changes are confined to conflict files.
+func (g *refreshGit) settleMechanical(ctx context.Context, facts refreshFacts, previous, head, tip string, cov coverage, resolved []string, merged *mergeOutcome, timeout time.Duration) (*mechanicalProof, *refreshRefusal, error) {
+	refuse := func(code, format string, args ...any) (*mechanicalProof, *refreshRefusal, error) {
+		return nil, &refreshRefusal{code: code, detail: fmt.Sprintf(format, args...), safe: mechanicalSafeSide, facts: facts}, nil
+	}
+	var err error
+	rules := map[string]string{}
+	for _, p := range resolved {
+		rules[p], _ = cov.ruleFor(p)
+	}
 	conflicted := make([]string, 0, len(merged.conflicts))
-	for p := range merged.conflicts {
-		conflicted = append(conflicted, p)
+	for _, p := range resolved {
+		if _, ok := merged.conflicts[p]; ok {
+			conflicted = append(conflicted, p)
+		}
 	}
 	sort.Strings(conflicted)
 	for _, p := range conflicted {
@@ -403,7 +419,7 @@ func (g *refreshGit) proveMechanical(ctx context.Context, previous, head, tip st
 		}
 	}
 	sort.Slice(proof.applied, func(i, j int) bool { return proof.applied[i].path < proof.applied[j].path })
-	proof.previous, proof.devTip, proof.head, proof.tree = previous, tip, head, headTree
+	proof.previous, proof.devTip, proof.head, proof.tree = previous, tip, head, facts.headTree
 	return &proof, nil, nil
 }
 
