@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -48,7 +49,7 @@ func Test24ManagedReceiptAccessorPython(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			host := &jsonReceiptHost{managedFake: &managedFake{operations: map[string]map[string]any{}, settings: obj(obj(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, standby: "completed"}, value: value}
+			host := &jsonReceiptHost{managedFake: &managedFake{operations: map[string]map[string]any{}, settings: pyjson.Map(pyjson.Map(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, standby: "completed"}, value: value}
 			start := &Start{Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
 			for range 2 {
 				result, err := start.Run(ctx, request)

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -20,7 +21,7 @@ func TestDEL31_a_restart_keeps_every_durable_record_and_resends_nothing(t *testi
 	payload := f.readyPayload(f.rid, 1, []string{f.artifact("second.txt", "still in flight")}, 2, assigned("completed"))
 	_, err := f.accept(payload, store.AcceptOptions{})
 	mustDo(t, err)
-	second := str(payload, "eventId")
+	second := pyjson.Text(payload.Get("eventId"))
 	_, err = f.delivery.Enqueue(f.ctx, second, "", "")
 	mustDo(t, err)
 	f.host.script = []string{"transport_unknown"}
@@ -47,7 +48,7 @@ func TestDEL31_a_restart_keeps_every_durable_record_and_resends_nothing(t *testi
 	if len(f.host.sends) != sends {
 		t.Fatal("recovery sent")
 	}
-	awaiting, _ := get(recovered, "awaitingAck")
+	awaiting, _ := recovered.Lookup("awaitingAck")
 	if len(awaiting.([]any)) != 1 || awaiting.([]any)[0] != first {
 		t.Fatalf("awaitingAck %v", awaiting)
 	}
@@ -65,7 +66,7 @@ func TestDEL32_a_stray_declaration_on_a_completion_is_not_labelled(t *testing.T)
 	event := f.queuedEvent(regOpts{})
 	receipt, err := f.delivery.Receipt(f.ctx, event)
 	mustDo(t, err)
-	receipt = set(receipt, "criteria", []any{Obj{{Key: "id", Value: "c1"}, {Key: "verdict", Value: "verified"}, {Key: "restoration", Value: "false"}}, Obj{{Key: "id", Value: "c2"}, {Key: "verdict", Value: "verified"}, {Key: "restoration", Value: true}}})
+	receipt = receipt.Set("criteria", []any{Obj{{Key: "id", Value: "c1"}, {Key: "verdict", Value: "verified"}, {Key: "restoration", Value: "false"}}, Obj{{Key: "id", Value: "c2"}, {Key: "verdict", Value: "verified"}, {Key: "restoration", Value: true}}})
 	_, err = execSQL(f.ctx, f.store, "UPDATE events SET receipt = ? WHERE event_id = ?", dumps(receipt), event)
 	mustDo(t, err)
 	message, err := f.delivery.PreviewMessage(f.ctx, event)
@@ -125,7 +126,7 @@ func TestDEL34_exec_source_recipients_deliver_or_withhold_with_their_relationshi
 			expected.same("record", record)
 			failure := f.one("SELECT * FROM failed_operations WHERE scope_key = ? AND operation = 'lifecycle_read'", correction)
 			if mode == "live" {
-				if str(record, "deliveryState") != Dispatched || failure != nil || f.one("SELECT archived FROM recipient_lifecycle WHERE task_id = ?", child).I("archived") != 0 {
+				if pyjson.Text(record.Get("deliveryState")) != Dispatched || failure != nil || f.one("SELECT archived FROM recipient_lifecycle WHERE task_id = ?", child).I("archived") != 0 {
 					t.Fatal("a live exec child is delivered")
 				}
 			} else if f.row(correction).S("state") != WithheldPreSend || failure.S("error_code") != RecipientArchived || failure.S("relationship_id") != f.rid || failure.S("parent_task_id") != parent {

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -43,7 +44,7 @@ func (h *profileHost) CreateThread(ctx context.Context, in CreateThreadRequest) 
 	if err != nil {
 		return nil, err
 	}
-	created := obj(receipt["creation"])
+	created := pyjson.Map(receipt["creation"])
 	delete(created, "expectedPermissionProfile")
 	if h.reported != "" {
 		created["activePermissionProfile"] = jsonValue(h.reported)
@@ -68,7 +69,7 @@ func profileRequest(t *testing.T, base []byte, requested string) []byte {
 		t.Fatal(err)
 	}
 	for _, role := range []string{"parent", "child"} {
-		settings := obj(obj(request[role])["settings"])
+		settings := pyjson.Map(pyjson.Map(request[role])["settings"])
 		delete(settings, "expectedPermissionProfile")
 		if requested != "" {
 			settings["expectedPermissionProfile"] = json.RawMessage(requested)
@@ -103,7 +104,7 @@ func newProfileRun(t *testing.T, base []byte, reported string) *profileRun {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fake := &managedFake{operations: map[string]map[string]any{}, settings: obj(obj(parsed["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, standby: "completed"}
+	fake := &managedFake{operations: map[string]map[string]any{}, settings: pyjson.Map(pyjson.Map(parsed["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, standby: "completed"}
 	host := &profileHost{managedFake: fake, reported: reported}
 	return &profileRun{t: t, ctx: ctx, store: s, host: host, start: &Start{Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}}
 }
@@ -193,7 +194,7 @@ func TestPermissionProfileObjectIsRecordedAsRequested(t *testing.T) {
 func findingCodes(found []contract.OrderedObject) []string {
 	codes := []string{}
 	for _, f := range found {
-		codes = append(codes, str(field(f, "code")))
+		codes = append(codes, pyjson.Text(f.Get("code")))
 	}
 	return codes
 }
@@ -218,7 +219,7 @@ func TestPermissionProfileResumeIsCheckedAgainstTheRecordedObject(t *testing.T) 
 	}
 	resume := func(reported string) []string {
 		answer := map[string]any{}
-		for key, value := range obj(x.host.creationReceipt["creation"]) {
+		for key, value := range pyjson.Map(x.host.creationReceipt["creation"]) {
 			if key != "activePermissionProfile" {
 				answer[key] = value
 			}
@@ -279,7 +280,7 @@ func TestPermissionProfileShapeIsChecked(t *testing.T) {
 				t.Fatalf("%s refused: %v", requested, err)
 			}
 			for _, role := range []string{"parent", "child"} {
-				got := obj(obj(parsed[role])["settings"])["expectedPermissionProfile"]
+				got := pyjson.Map(pyjson.Map(parsed[role])["settings"])["expectedPermissionProfile"]
 				if !reflect.DeepEqual(got, jsonValue(requested)) {
 					t.Fatalf("%s's profile parsed to %v, not %s", role, got, requested)
 				}
@@ -325,7 +326,7 @@ func TestPermissionProfileShapeIsChecked(t *testing.T) {
 	if err := json.Unmarshal(profileRequest(t, base, profileTrusted), &request); err != nil {
 		t.Fatal(err)
 	}
-	obj(obj(request["child"])["settings"])["expectedPermissionProfile"] = map[string]any{"extends": nil}
+	pyjson.Map(pyjson.Map(request["child"])["settings"])["expectedPermissionProfile"] = map[string]any{"extends": nil}
 	raw, err := json.Marshal(request)
 	if err != nil {
 		t.Fatal(err)

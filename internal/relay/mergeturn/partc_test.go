@@ -40,7 +40,7 @@ func malformedReviews() []any {
 
 func Test26_MTN_11_malformed_review_refused_before_anything_is_read_or_recorded(t *testing.T) {
 	w := newFx(t)
-	fragments := []string{"threadsSeen is a list of thread identifiers, not a int", "threadsSeen is a list of thread identifiers, not a str", "threadsSeen entry 0 is a thread identifier string, not a int", "unresolved is a whole number, not a list", "unresolved is a whole number, not a list", "pagesRead is a whole number, not a str", "hasNextPage is true or false, not a str", "the review record is an object stating", "the review record is an object stating"}
+	fragments := []string{"threadsSeen is a list of thread identifiers, not a number", "threadsSeen is a list of thread identifiers, not a string", "threadsSeen entry 0 is a thread identifier string, not a number", "unresolved is a whole number, not an array", "unresolved is a whole number, not an array", "pagesRead is a whole number, not a string", "hasNextPage is true or false, not a string", "the review record is an object stating", "the review record is an object stating"}
 	for index, stated := range malformedReviews() {
 		branch := fmt.Sprintf("dev-%d", index)
 		w.target.set(fxRepo, branch, "base-0")

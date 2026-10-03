@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -114,8 +115,8 @@ func newRoutingRun(t *testing.T) *routingRun {
 	if err != nil {
 		t.Fatal(err)
 	}
-	host := &managedFake{operations: map[string]map[string]any{}, settings: obj(obj(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, standby: "completed"}
-	return &routingRun{t: t, ctx: ctx, store: s, host: host, raw: raw, issueKey: str(req["issueKey"]),
+	host := &managedFake{operations: map[string]map[string]any{}, settings: pyjson.Map(pyjson.Map(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, standby: "completed"}
+	return &routingRun{t: t, ctx: ctx, store: s, host: host, raw: raw, issueKey: pyjson.Text(req["issueKey"]),
 		start: &Start{Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}}
 }
 
@@ -169,7 +170,7 @@ func TestRoutingText_ALaterGenerationIsNeverSent(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		verdict = str(refused["code"])
+		verdict = pyjson.Text(refused["code"])
 	}
 	got := x.run()
 	if verdict != "stale_generation" || got["state"] == "admitted" || x.host.sent != 0 {

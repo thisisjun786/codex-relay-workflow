@@ -1,6 +1,9 @@
 package registry
 
-import "github.com/thisisjun786/codex-relay-workflow/internal/contract"
+import (
+	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+)
 
 // Who recovers a settings hold, and how (settings.py settings_hold_recovery, CRW-235). The
 // texts are caller-visible and kept byte-identical to settings.py.
@@ -113,23 +116,21 @@ const (
 	ActionCorrectionAnswered       = "parent_reads_child_disposition"
 )
 
-func obj(v any) map[string]any { m, _ := v.(map[string]any); return m }
-
 // neverReopens is assignment.never_reopens: a cap of zero.
 func neverReopens(pacing any) bool {
-	p := obj(pacing)
+	p := pyjson.Map(pacing)
 	return len(p) > 0 && p["reason"] == "hourly_cap" && p["reopensAt"] == nil
 }
 
 // operatorRestoresSettings is assignment.operator_restores_settings.
 func operatorRestoresSettings(delivery map[string]any) bool {
-	hold := obj(delivery["settingsHold"])
+	hold := pyjson.Map(delivery["settingsHold"])
 	source, _ := hold["source"].(string)
 	if delivery["state"] != "withheld_pre_send" || hold["kind"] != "withheld" || (source != "attempt" && source != "pre_send") {
 		return false
 	}
 	reason, _ := hold["reason"].(string)
-	actor, _ := getField(SettingsHoldRecovery("withheld", reason, source, false), "actor")
+	actor, _ := SettingsHoldRecovery("withheld", reason, source, false).Lookup("actor")
 	return actor == "operator"
 }
 
@@ -139,14 +140,14 @@ func CompletionNextAction(state string, projection map[string]any) string {
 	if state != "received" && state != "corrected" && state != "verifying" {
 		return ""
 	}
-	completion := obj(projection["completion"])
-	delivery := obj(completion["delivery"])
+	completion := pyjson.Map(projection["completion"])
+	delivery := pyjson.Map(completion["delivery"])
 	if delivery == nil {
 		return ""
 	}
-	ack := obj(completion["ack"])
+	ack := pyjson.Map(completion["ack"])
 	lost, _ := delivery["hostLostAttempts"].(float64)
-	settingsHold := obj(delivery["settingsHold"])
+	settingsHold := pyjson.Map(delivery["settingsHold"])
 	settlement := ack["settlement"]
 	if settlement == "verified" {
 		if state == "received" && ack["accepted"] == true {
@@ -200,8 +201,8 @@ func CompletionNextAction(state string, projection map[string]any) string {
 
 // CorrectionNextAction is assignment.correction_next_action; "" is None.
 func CorrectionNextAction(state string, projection map[string]any) string {
-	correction := obj(projection["correction"])
-	delivery := obj(correction["delivery"])
+	correction := pyjson.Map(projection["correction"])
+	delivery := pyjson.Map(correction["delivery"])
 	if state != "needs_changes" || delivery == nil {
 		return ""
 	}
@@ -212,7 +213,7 @@ func CorrectionNextAction(state string, projection map[string]any) string {
 	case "dispatched", "acknowledged":
 		return ""
 	}
-	reason := obj(correction["undeliveredReason"])
+	reason := pyjson.Map(correction["undeliveredReason"])
 	if delivery["state"] == "inbox_only" || reason["source"] == "deliveries.hold_reason" {
 		return ActionCorrectionHeld
 	}
@@ -261,9 +262,9 @@ func unpack(value string) *packedRow {
 	if err != nil || !ok {
 		return nil
 	}
-	seq, _ := getField(object, "seq")
+	seq, _ := object.Lookup("seq")
 	out := &packedRow{seq: seq, detail: contract.OrderedObject{}}
-	if raw, _ := getField(object, "detail"); raw != nil && raw != "" {
+	if raw, _ := object.Lookup("detail"); raw != nil && raw != "" {
 		text, ok := raw.(string)
 		if !ok {
 			return nil
@@ -320,7 +321,7 @@ func SettingsHoldReading(row *HoldColumns) contract.OrderedObject {
 	if kind == "" {
 		return reading
 	}
-	reading = setField(reading, "kind", kind)
+	reading = reading.Set("kind", kind)
 	var settlement *packedRow
 	for _, one := range []*packedRow{unpack(row.SettledSent), unpack(row.SettledReconciled)} {
 		if one != nil && (settlement == nil || seqValue(one.seq) > seqValue(settlement.seq)) {
@@ -329,48 +330,51 @@ func SettingsHoldReading(row *HoldColumns) contract.OrderedObject {
 	}
 	presend := unpack(row.Presend)
 	if presend != nil && (settlement == nil || seqValue(presend.seq) > seqValue(settlement.seq)) {
-		operation, _ := getField(presend.detail, "operation")
-		reason, _ := getField(presend.detail, "reason")
-		reading = setField(reading, "chosen", "pre_send")
-		reading = setField(reading, "definitive", true)
+		operation, _ := presend.detail.Lookup("operation")
+		reason, _ := presend.detail.Lookup("reason")
+		reading = reading.Set("chosen", "pre_send")
+		reading = reading.Set("definitive", true)
 		if text, ok := operation.(string); ok {
-			reading = setField(reading, "presendOperation", text)
+			reading = reading.Set("presendOperation", text)
 		}
 		if text, ok := reason.(string); ok && contains(presendSettingsRefusals, text) {
-			refusal, _ := getField(presend.detail, "detail")
+			refusal, _ := presend.detail.Lookup("detail")
 			if _, ok := refusal.(string); !ok {
 				refusal = nil
 			}
-			reading = setField(reading, "hold", contract.OrderedObject{{Key: "source", Value: "pre_send"}, {Key: "reason", Value: text},
+			reading = reading.Set("hold", contract.OrderedObject{{Key: "source", Value: "pre_send"}, {Key: "reason", Value: text},
 				{Key: "field", Value: nil}, {Key: "requestId", Value: nil}, {Key: "detail", Value: refusal}})
+
 		}
 		return reading
 	}
 	if settlement != nil {
-		if refusal, present := getField(settlement.detail, "settingsRefusal"); present {
-			reading = setField(reading, "chosen", "attempt")
-			reading = setField(reading, "definitive", true)
+		if refusal, present := settlement.detail.Lookup("settingsRefusal"); present {
+			reading = reading.Set("chosen", "attempt")
+			reading = reading.Set("definitive", true)
 			object, _ := refusal.(contract.OrderedObject)
-			reason, _ := getField(object, "reason")
+			reason, _ := object.Lookup("reason")
 			if text, ok := reason.(string); ok {
-				field, _ := getField(object, "field")
+				field, _ := object.Lookup("field")
 				if _, ok := field.(string); !ok {
 					field = nil
 				}
-				reading = setField(reading, "hold", contract.OrderedObject{{Key: "source", Value: "attempt"}, {Key: "reason", Value: text},
+				reading = reading.Set("hold", contract.OrderedObject{{Key: "source", Value: "attempt"}, {Key: "reason", Value: text},
 					{Key: "field", Value: field}, {Key: "requestId", Value: nullText(row.Request)}})
+
 			}
 			return reading
 		}
 	}
 	if row.Request != "" {
-		reading = setField(reading, "chosen", "legacy")
+		reading = reading.Set("chosen", "legacy")
 	}
 	cleared := row.SettingsAt != "" && ((row.LifecycleAt != "" && row.LifecycleAt > row.SettingsAt) ||
 		(row.InactiveAt != "" && row.InactiveAt > row.SettingsAt))
 	if kind == "channel_closed" || (row.SettingsAt != "" && !cleared) {
-		reading = setField(reading, "hold", contract.OrderedObject{{Key: "source", Value: "undetermined"}, {Key: "reason", Value: nil},
+		reading = reading.Set("hold", contract.OrderedObject{{Key: "source", Value: "undetermined"}, {Key: "reason", Value: nil},
 			{Key: "field", Value: nil}, {Key: "requestId", Value: nil}})
+
 	}
 	return reading
 }

@@ -127,7 +127,7 @@ func TestF1_FLT_32_ReadingsContinuationWholeCLI(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if len(rows) != 1 || text(rows[0], "signature") != `{"relationship":"rel-2","turn":"turn-1"}` {
+	if len(rows) != 1 || rows[0].Text("signature") != `{"relationship":"rel-2","turn":"turn-1"}` {
 		t.Fatalf("wrong continuation: %v", rows)
 	}
 }

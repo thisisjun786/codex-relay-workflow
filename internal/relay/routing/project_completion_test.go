@@ -17,32 +17,32 @@ import (
 type projectReader struct{ args Object }
 
 func (r projectReader) Attached(context.Context, string, sql.NullString, sql.NullString) ([]string, error) {
-	if e := text(r.args["readError"]); e != "" {
+	if e := pyjson.Text(r.args["readError"]); e != "" {
 		return nil, errors.New(e)
 	}
 	out := []string{}
 	for _, v := range list(r.args["attached"]) {
-		out = append(out, text(v))
+		out = append(out, pyjson.Text(v))
 	}
 	return out, nil
 }
 func (r projectReader) Outstanding(context.Context, string, sql.NullString) ([]string, error) {
-	if e := text(r.args["readError"]); e != "" {
+	if e := pyjson.Text(r.args["readError"]); e != "" {
 		return nil, errors.New(e)
 	}
 	out := []string{}
 	for _, v := range list(r.args["outstanding"]) {
-		out = append(out, text(v))
+		out = append(out, pyjson.Text(v))
 	}
 	return out, nil
 }
 func (r projectReader) Owners(context.Context, string, string) ([]contract.OrderedObject, error) {
-	if e := text(r.args["ownersError"]); e != "" {
+	if e := pyjson.Text(r.args["ownersError"]); e != "" {
 		return nil, errors.New(e)
 	}
 	out := []contract.OrderedObject{}
 	for _, v := range list(r.args["owners"]) {
-		out = append(out, contract.OrderedObject{{Key: "taskId", Value: object(v)["taskId"]}})
+		out = append(out, contract.OrderedObject{{Key: "taskId", Value: pyjson.Map(v)["taskId"]}})
 	}
 	return out, nil
 }
@@ -60,8 +60,8 @@ func projectCompletionReplay(t *testing.T, id string) {
 		if record.Args["reader"] == true {
 			reader = projectReader{record.Args}
 		}
-		answer := registry.ProjectStateReading(context.Background(), text(record.Args["project"]), reader, func(context.Context, string) (contract.OrderedObject, error) {
-			if e := text(record.Args["stateError"]); e != "" {
+		answer := registry.ProjectStateReading(context.Background(), pyjson.Text(record.Args["project"]), reader, func(context.Context, string) (contract.OrderedObject, error) {
+			if e := pyjson.Text(record.Args["stateError"]); e != "" {
 				return nil, errors.New(e)
 			}
 			return contract.OrderedObject{{Key: "state", Value: record.Args["fixed"]}}, nil

@@ -15,24 +15,24 @@ func (l *Ledger) rescope(ctx context.Context, fault row, scope map[string]any, n
 }
 
 func (l *Ledger) rescopeCount(ctx context.Context, fault row, scope map[string]any, now string) (int, error) {
-	key := scopeKeyFor(text(fault, "product"), scope)
-	other, err := l.one(ctx, "SELECT product FROM fault_ledger WHERE scope_key=? AND product!=? LIMIT 1", key, text(fault, "product"))
+	key := scopeKeyFor(fault.Text("product"), scope)
+	other, err := l.one(ctx, "SELECT product FROM fault_ledger WHERE scope_key=? AND product!=? LIMIT 1", key, fault.Text("product"))
 	if err != nil {
 		return 0, err
 	}
 	if other == nil {
-		other, err = l.one(ctx, "SELECT product FROM fault_target_projects WHERE scope_key=? AND product!=?", key, text(fault, "product"))
+		other, err = l.one(ctx, "SELECT product FROM fault_target_projects WHERE scope_key=? AND product!=?", key, fault.Text("product"))
 	}
 	if err != nil {
 		return 0, err
 	}
 	if other != nil {
-		return 0, fmt.Errorf("fault_scope_conflict: scope key %s is already carried by product %s; one product's issues are never filed through another's key", quote.Value(key), quote.Value(text(other, "product")))
+		return 0, fmt.Errorf("fault_scope_conflict: scope key %s is already carried by product %s; one product's issues are never filed through another's key", quote.Value(key), quote.Value(other.Text("product")))
 	}
-	if _, err = l.exec(ctx, "UPDATE fault_ledger SET scope=?,scope_key=?,updated_at=? WHERE fault_id=?", dumps(scope, false), key, now, text(fault, "fault_id")); err != nil {
+	if _, err = l.exec(ctx, "UPDATE fault_ledger SET scope=?,scope_key=?,updated_at=? WHERE fault_id=?", dumps(scope, false), key, now, fault.Text("fault_id")); err != nil {
 		return 0, err
 	}
-	id := text(fault, "fault_id")
+	id := fault.Text("fault_id")
 	query, _, selected, _ := dRepointFaultQuery(id)
 	query += " ORDER BY p.rowid LIMIT ?"
 	selected = append(selected, 100)
@@ -41,7 +41,7 @@ func (l *Ledger) rescopeCount(ctx context.Context, fault row, scope map[string]a
 		return 0, err
 	}
 	for _, r := range rows {
-		publication := text(r, "publication_id")
+		publication := r.Text("publication_id")
 		if _, err = l.exec(ctx, "UPDATE fault_publications SET tracker_ref=?,updated_at=? WHERE publication_id=?", r.Get("team"), now, publication); err != nil {
 			return 0, err
 		}
@@ -49,15 +49,15 @@ func (l *Ledger) rescopeCount(ctx context.Context, fault row, scope map[string]a
 			return 0, err
 		}
 	}
-	if text(fault, "external_ref") != "" {
-		target, e := l.one(ctx, "SELECT project_ref FROM fault_target_projects WHERE scope_key=? AND product=?", key, text(fault, "product"))
+	if fault.Text("external_ref") != "" {
+		target, e := l.one(ctx, "SELECT project_ref FROM fault_target_projects WHERE scope_key=? AND product=?", key, fault.Text("product"))
 		if e != nil {
 			return 0, e
 		}
 		if target == nil || target.Get("project_ref") == nil {
 			return len(rows), dUnlinkOne(ctx, l, id, now)
 		}
-		return len(rows), dRelinkOne(ctx, l, id, text(target, "project_ref"), now)
+		return len(rows), dRelinkOne(ctx, l, id, target.Text("project_ref"), now)
 	}
 	return len(rows), nil
 }

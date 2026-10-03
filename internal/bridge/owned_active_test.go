@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 func Test_test_goal_read_validates_id_and_bounds_text_without_mutation(t *testing.T) {
@@ -15,11 +16,11 @@ func Test_test_goal_read_validates_id_and_bounds_text_without_mutation(t *testin
 	}
 	host.Script("thread/goal/get", fakehost.Reply{Result: map[string]any{"goal": map[string]any{"objective": "exact objective\nwith whitespace  ", "status": "active"}}}, fakehost.Reply{Result: map[string]any{"goal": map[string]any{"objective": strings.Repeat("x", 5000), "status": "active"}}})
 	first, err := b.GetGoal(context.Background(), "thread-1")
-	if err != nil || object(first["goal"])["objective"] != "exact objective\nwith whitespace  " {
+	if err != nil || pyjson.Map(first["goal"])["objective"] != "exact objective\nwith whitespace  " {
 		t.Fatalf("first=%v err=%v", first, err)
 	}
 	second, err := b.GetGoal(context.Background(), "thread-1")
-	if err != nil || object(second["goal"])["objective"] != strings.Repeat("x", 4000)+"\n[truncated; original length 5000 characters]" || object(second["goal"])["status"] != "active" || host.Count("thread/goal/get") != 2 || host.Count("thread/goal/set") != 0 {
+	if err != nil || pyjson.Map(second["goal"])["objective"] != strings.Repeat("x", 4000)+"\n[truncated; original length 5000 characters]" || pyjson.Map(second["goal"])["status"] != "active" || host.Count("thread/goal/get") != 2 || host.Count("thread/goal/set") != 0 {
 		t.Fatalf("second=%v err=%v calls=%v", second, err, host.Requests())
 	}
 }
@@ -50,7 +51,7 @@ func Test_test_active_turn_is_derived_from_the_newest_in_progress_turn(t *testin
 	if err != nil || observed["observation"] != "active" || observed["steerable"] != true || observed["activeTurnId"] != "turn-1" {
 		t.Fatalf("observed=%v err=%v", observed, err)
 	}
-	if _, present := object(observed["status"])["turnId"]; present || host.Count("thread/resume") != 0 {
+	if _, present := pyjson.Map(observed["status"])["turnId"]; present || host.Count("thread/resume") != 0 {
 		t.Fatalf("observed=%v calls=%v", observed, host.Requests())
 	}
 }

@@ -8,6 +8,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -101,7 +102,7 @@ func Refusal(services Services) (contract.OrderedObject, error) {
 func recoveryCommands(services Services, contested bool) []any {
 	socket := ""
 	if services.SocketPath != "" {
-		socket = " --socket=" + shellQuote(services.SocketPath)
+		socket = " --socket=" + quote.Shell(services.SocketPath)
 	}
 	lines := []any{services.Program + socket + " doctor", "  lists the candidates under siblingStores"}
 	candidates := services.Selection.Unidentified
@@ -109,7 +110,7 @@ func recoveryCommands(services Services, contested bool) []any {
 		candidates = services.Selection.Ambiguous
 	}
 	for _, candidate := range candidates {
-		quoted := shellQuote(candidate)
+		quoted := quote.Shell(candidate)
 		lines = append(lines, services.Program+" --state="+quoted+socket+" doctor",
 			services.Program+" --state="+quoted+socket+" service status")
 	}
@@ -120,7 +121,7 @@ func recoveryCommands(services Services, contested bool) []any {
 			" assignment: both stores still record this socket, so default discovery keeps"+
 			" refusing until one of them is retired")
 	}
-	return append(lines, "  then pass --state="+shellQuote(services.Selection.Path)+" once to create the new"+
+	return append(lines, "  then pass --state="+quote.Shell(services.Selection.Path)+" once to create the new"+
 		" store deliberately, or --state=<the existing directory> to keep using it")
 }
 
@@ -131,9 +132,9 @@ func wrongSocketRecovery(services Services, recorded, wanted string) []any {
 		without = "env -u " + store.StateEnv + " "
 	}
 	lines := []any{
-		services.Program + " --state=" + shellQuote(services.Selection.Path) + " --socket=" + shellQuote(recorded) + " doctor",
+		services.Program + " --state=" + quote.Shell(services.Selection.Path) + " --socket=" + quote.Shell(recorded) + " doctor",
 		"  reads this store under the socket it actually records",
-		without + services.Program + " --socket=" + shellQuote(wanted) + " doctor",
+		without + services.Program + " --socket=" + quote.Shell(wanted) + " doctor",
 		"  discovers by socket alone, ignoring any pinned directory",
 	}
 	pinned := os.Getenv(store.StateEnv)
@@ -154,7 +155,7 @@ func wrongSocketRecovery(services Services, recorded, wanted string) []any {
 	selected, err := store.Realpath(services.Selection.Path)
 	if err != nil || resolved != selected {
 		lines = append(lines,
-			services.Program+" --state="+shellQuote(resolved)+" --socket="+shellQuote(wanted)+" doctor",
+			services.Program+" --state="+quote.Shell(resolved)+" --socket="+quote.Shell(wanted)+" doctor",
 			"  reads the directory "+store.StateEnv+" names, which --state overrode on this run")
 	}
 	return lines
@@ -235,30 +236,12 @@ func Program(argv0 string) string {
 		if !strings.Contains(argv0, "/") {
 			argv0 = filepath.Base(argv0)
 		}
-		return shellQuote(argv0) + " relay"
+		return quote.Shell(argv0) + " relay"
 	}
 	if strings.Contains(argv0, "/") {
-		return shellQuote(argv0)
+		return quote.Shell(argv0)
 	}
-	return shellQuote(filepath.Base(argv0))
-}
-
-// shellQuote is shlex.quote.
-func shellQuote(value string) string {
-	if value == "" {
-		return "''"
-	}
-	safe := true
-	for _, r := range value {
-		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("@%+=:,./-_", r)) {
-			safe = false
-			break
-		}
-	}
-	if safe {
-		return value
-	}
-	return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
+	return quote.Shell(filepath.Base(argv0))
 }
 
 func fileExists(path string) bool {
@@ -269,7 +252,7 @@ func fileExists(path string) bool {
 // Refused carries the complete Python selection envelope.
 type Refused struct{ Payload contract.OrderedObject }
 
-func (e *Refused) Error() string { return pyvalue.Str(evidence.Get(e.Payload, "detail")) }
+func (e *Refused) Error() string { return pyvalue.Str(e.Payload.Get("detail")) }
 func nullableText(value string) any {
 	if value == "" {
 		return nil

@@ -61,7 +61,7 @@ func Test33NativeJournalReader(t *testing.T) {
 			}
 			copy = out
 		} else {
-			copy = set(copy, test.key, test.value)
+			copy = copy.Set(test.key, test.value)
 		}
 		if NativePrescanUnreachable(copy) {
 			t.Fatalf("neighbour admitted: %s=%v", test.key, test.value)
@@ -88,10 +88,10 @@ func Test33NativeJournalDetailErrnos(t *testing.T) {
 	_, row := nativeJournalFixture(t)
 	for _, tc := range []struct{ name, prefix string }{{"ENOENT", "[Errno 2] No such file or directory"}, {"EACCES", "[Errno 13] Permission denied"}} {
 		for _, path := range []string{"/tmp/control.sock", "/tmp/quote'and\"/control.sock", "/tmp/new\nline/control.sock", "/tmp/한글/control.sock"} {
-			copy := set(append(Object{}, row...), "errno", tc.name)
-			copy = set(copy, "detail", "the configured runtime could not be run: "+tc.prefix+": "+pyvalue.StrRepr(path))
+			copy := append(Object{}, row...).Set("errno", tc.name)
+			copy = copy.Set("detail", "the configured runtime could not be run: "+tc.prefix+": "+pyvalue.StrRepr(path))
 			if !NativePrescanUnreachable(copy) {
-				t.Fatalf("detail rejected: %v", get(copy, "detail"))
+				t.Fatalf("detail rejected: %v", copy.Get("detail"))
 			}
 		}
 	}
@@ -106,9 +106,9 @@ func Test33NativeJournalPathsWhoseNamesAreNotUTF8(t *testing.T) {
 	_, row := nativeJournalFixture(t)
 	prefix := "the configured runtime could not be run: [Errno 2] No such file or directory: "
 	socket := func(spelled string) Object {
-		return set(set(append(Object{}, row...), "errno", "ENOENT"), "detail", prefix+spelled)
+		return append(Object{}, row...).Set("errno", "ENOENT").Set("detail", prefix+spelled)
 	}
-	configuration := func(path string) Object { return set(append(Object{}, row...), "configuration", path) }
+	configuration := func(path string) Object { return append(Object{}, row...).Set("configuration", path) }
 	cases := []struct {
 		name string
 		row  Object
@@ -124,7 +124,7 @@ func Test33NativeJournalPathsWhoseNamesAreNotUTF8(t *testing.T) {
 	}
 	for _, c := range cases {
 		if got := NativePrescanUnreachable(c.row); got != c.want {
-			t.Errorf("%s: %v, want %v (%v)", c.name, got, c.want, get(c.row, "detail"))
+			t.Errorf("%s: %v, want %v (%v)", c.name, got, c.want, c.row.Get("detail"))
 		}
 	}
 }

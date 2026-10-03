@@ -3,6 +3,7 @@ package delivery
 import (
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 )
 
@@ -53,13 +54,13 @@ func TestORD01_an_on_request_record_is_usable_and_untrusted_granular_or_missing_
 func replaceApproval(settings, raw string) string {
 	o := loadsObj(settings)
 	v, _ := loads(raw)
-	return dumps(set(o, "approvalPolicy", v))
+	return dumps(o.Set("approvalPolicy", v))
 }
 
 func TestORD02_resume_params_never_carry_an_approval_policy(t *testing.T) {
 	for _, policy := range []string{"never", "on-request"} {
 		params := (&TaskSettings{Data: loadsObj(rawSettings("/parent", policy))}).ResumeParams("t-1")
-		if _, present := get(params, "approvalPolicy"); present {
+		if _, present := params.Lookup("approvalPolicy"); present {
 			t.Fatalf("%s: resume carries approvalPolicy", policy)
 		}
 	}
@@ -74,7 +75,7 @@ func TestORD03_an_on_request_parent_is_woken_once(t *testing.T) {
 		out["record"] = record
 		f.clock.Advance(100000)
 		out["eligible"] = []any{}
-		if str(record, "deliveryState") != Dispatched || str(record, "recipientApprovalPolicy") != "on-request" || len(f.host.sends) != 1 || len(f.eligible()) != 0 {
+		if pyjson.Text(record.Get("deliveryState")) != Dispatched || pyjson.Text(record.Get("recipientApprovalPolicy")) != "on-request" || len(f.host.sends) != 1 || len(f.eligible()) != 0 {
 			t.Fatalf("record %v", record)
 		}
 	})

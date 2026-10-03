@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 func Test_test_active_turn_reports_non_runnable_status_without_raising(t *testing.T) {
@@ -41,11 +42,11 @@ func Test_test_steer_reaches_the_guarded_turn_and_claims_only_acceptance(t *test
 	host.Respond("thread/read", fakehost.Reply{Result: map[string]any{"thread": map[string]any{"status": map[string]any{"type": "active"}}}})
 	host.Respond("turn/steer", fakehost.Reply{Result: map[string]any{"turnId": "turn-1"}})
 	receipt, err := b.SteerThread(context.Background(), "steer", "thread-1", "turn-1", "narrow the scope")
-	if err != nil || receipt["status"] != "accepted" || receipt["delivery"] != "accepted_not_applied" || receipt["steeredTurnId"] != "turn-1" || object(receipt["settings"])["verification"] != "not_observable" || !strings.Contains(text(receipt["deliveryMeaning"]), "does not say the peer read it") || !strings.Contains(text(receipt["deliveryMeaning"]), "does not say the peer acted on it") {
+	if err != nil || receipt["status"] != "accepted" || receipt["delivery"] != "accepted_not_applied" || receipt["steeredTurnId"] != "turn-1" || pyjson.Map(receipt["settings"])["verification"] != "not_observable" || !strings.Contains(pyjson.Text(receipt["deliveryMeaning"]), "does not say the peer read it") || !strings.Contains(pyjson.Text(receipt["deliveryMeaning"]), "does not say the peer acted on it") {
 		t.Fatalf("receipt=%v err=%v", receipt, err)
 	}
 	params := hostParams(t, host, "turn/steer")
-	if params["expectedTurnId"] != "turn-1" || object(params["input"].([]any)[0])["type"] != "text" || object(params["input"].([]any)[0])["text"] != "narrow the scope" || params["model"] != nil || params["config"] != nil || host.Count("thread/resume") != 0 || host.Count("turn/start") != 0 || hasMethodPrefix(host, "thread/goal/") || len(params["input"].([]any)) != 1 || len(object(params["input"].([]any)[0])) != 2 {
+	if params["expectedTurnId"] != "turn-1" || pyjson.Map(params["input"].([]any)[0])["type"] != "text" || pyjson.Map(params["input"].([]any)[0])["text"] != "narrow the scope" || params["model"] != nil || params["config"] != nil || host.Count("thread/resume") != 0 || host.Count("turn/start") != 0 || hasMethodPrefix(host, "thread/goal/") || len(params["input"].([]any)) != 1 || len(pyjson.Map(params["input"].([]any)[0])) != 2 {
 		t.Fatalf("params=%v calls=%v", params, host.Requests())
 	}
 }
@@ -56,7 +57,7 @@ func Test_test_steer_refuses_each_non_active_status_by_name(t *testing.T) {
 			b, host := testBridge(t)
 			host.Respond("thread/read", fakehost.Reply{Result: map[string]any{"thread": map[string]any{"status": map[string]any{"type": kind}}}})
 			receipt, err := b.SteerThread(context.Background(), "steer", "thread-1", "turn-1", "stop")
-			if err != nil || receipt["status"] != "failed" || host.Count("turn/steer") != 0 || object(receipt["rpcError"])["code"] != code || (strings.Contains(text(object(receipt["rpcError"])["message"]), "send_message_to_thread") != (kind == "idle")) {
+			if err != nil || receipt["status"] != "failed" || host.Count("turn/steer") != 0 || pyjson.Map(receipt["rpcError"])["code"] != code || (strings.Contains(pyjson.Text(pyjson.Map(receipt["rpcError"])["message"]), "send_message_to_thread") != (kind == "idle")) {
 				t.Fatalf("receipt=%v err=%v calls=%v", receipt, err, host.Requests())
 			}
 		})

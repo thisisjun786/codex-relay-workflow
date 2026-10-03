@@ -63,7 +63,7 @@ func Test28LedgerReplacementAfterGuardMatchesTheGolden(t *testing.T) {
 	rpc.mu.Lock()
 	calls := append([]string{}, rpc.calls...)
 	rpc.mu.Unlock()
-	result := map[string]any{"returned": sendErr == nil, "status": field(receipt, "status"), "turnId": field(receipt, "turnId"), "calls": calls}
+	result := map[string]any{"returned": sendErr == nil, "status": receipt.Get("status"), "turnId": receipt.Get("turnId"), "calls": calls}
 	if err := a.Close(); err != nil {
 		t.Fatal(err)
 	}

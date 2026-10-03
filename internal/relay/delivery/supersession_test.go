@@ -37,15 +37,15 @@ func (f *fixture) queuedOutcome(outcome string) string {
 	}
 	_, err := f.accept(payload, store.AcceptOptions{})
 	mustDo(f.t, err)
-	_, err = f.delivery.Enqueue(f.ctx, str(payload, "eventId"), "", "")
+	_, err = f.delivery.Enqueue(f.ctx, pyjson.Text(payload.Get("eventId")), "", "")
 	mustDo(f.t, err)
-	return str(payload, "eventId")
+	return pyjson.Text(payload.Get("eventId"))
 }
 
 func (f *fixture) declare(successor, older string) {
 	receipt, err := f.delivery.Receipt(f.ctx, older)
 	mustDo(f.t, err)
-	_, err = execSQL(f.ctx, f.store, "UPDATE revision_lineage SET supersedes_hash = ? WHERE event_id = ?", str(receipt, "revisionHash"), successor)
+	_, err = execSQL(f.ctx, f.store, "UPDATE revision_lineage SET supersedes_hash = ? WHERE event_id = ?", pyjson.Text(receipt.Get("revisionHash")), successor)
 	mustDo(f.t, err)
 }
 
@@ -54,7 +54,7 @@ func (f *fixture) item(event string) Obj {
 	mustDo(f.t, err)
 	out := Obj{}
 	for _, k := range []string{"state", "reported", "phase", "supersededNote", "holdReason"} {
-		v, _ := get(it, k)
+		v, _ := it.Lookup(k)
 		out = append(out, F{Key: k, Value: v})
 	}
 	return out
@@ -121,7 +121,7 @@ func TestSUP02_an_annotated_delivery_reports_as_history(t *testing.T) {
 		f.mustAttempt(e, nil)
 		f.advanceTo(2)
 		it := f.item(e)
-		if str(it, "phase") != "superseded:"+StaleGeneration || str(it, "state") != Dispatched {
+		if pyjson.Text(it.Get("phase")) != "superseded:"+StaleGeneration || pyjson.Text(it.Get("state")) != Dispatched {
 			t.Fatalf("item %v", it)
 		}
 		out["item"] = it
@@ -145,17 +145,17 @@ func TestSUP03_a_final_successor_annotates_its_predecessor(t *testing.T) {
 				s := f.readyPayload(f.rid, 1, []string{f.artifact("newer.txt", "the corrected deliverable")}, 2, turn)
 				_, err := f.accept(s, store.AcceptOptions{})
 				mustDo(t, err)
-				f.declare(str(s, "eventId"), older)
+				f.declare(pyjson.Text(s.Get("eventId")), older)
 				if mode == "outstanding_pred" {
 					f.settleStaged(child, dispatchTurn)
-					mustDo(t, f.delivery.AnnotatePredecessors(f.ctx, str(s, "eventId")))
+					mustDo(t, f.delivery.AnnotatePredecessors(f.ctx, pyjson.Text(s.Get("eventId"))))
 				} else {
-					_, err := f.delivery.Enqueue(f.ctx, str(s, "eventId"), "", "")
+					_, err := f.delivery.Enqueue(f.ctx, pyjson.Text(s.Get("eventId")), "", "")
 					mustDo(t, err)
 				}
 				it := f.item(older)
-				note, _ := get(it, "supersededNote")
-				if note == nil || str(note.(Obj), "reason") != SupersededRevision {
+				note, _ := it.Lookup("supersededNote")
+				if note == nil || pyjson.Text(note.(Obj).Get("reason")) != SupersededRevision {
 					t.Fatalf("item %v", it)
 				}
 				out["item"] = it
@@ -207,18 +207,18 @@ func TestSUP05_a_later_execution_only_outcome_survives_a_final_revision_head(t *
 		later := f.executionPayload(f.rid, 1, "failed", 1, assigned("failed"))
 		_, err := f.accept(later, store.AcceptOptions{})
 		mustDo(t, err)
-		_, err = f.delivery.Enqueue(f.ctx, str(later, "eventId"), "", "")
+		_, err = f.delivery.Enqueue(f.ctx, pyjson.Text(later.Get("eventId")), "", "")
 		mustDo(t, err)
 		var reason string
 		mustDo(t, f.store.Transaction(f.ctx, func(ctx context.Context, _ *sql.Conn) error {
-			reason, err = f.delivery.SupersessionReason(ctx, str(later, "eventId"))
+			reason, err = f.delivery.SupersessionReason(ctx, pyjson.Text(later.Get("eventId")))
 			return err
 		}))
 		if reason != "" {
 			t.Fatalf("suppressed: %s", reason)
 		}
 		out["reason"] = nil
-		out["state"] = f.row(str(later, "eventId")).S("state")
+		out["state"] = f.row(pyjson.Text(later.Get("eventId"))).S("state")
 	})
 }
 
@@ -255,7 +255,7 @@ func TestSUP07_an_older_generation_is_never_sent(t *testing.T) {
 				f.clock.Advance(3600)
 				record := f.mustAttempt(e, nil)
 				out["record"] = record
-				if str(record, "supersededReason") != StaleGeneration || f.row(e).S("hold_reason") != StaleGeneration || len(f.host.sends) != 0 || f.count("SELECT COUNT(*) AS c FROM generations") != generations {
+				if pyjson.Text(record.Get("supersededReason")) != StaleGeneration || f.row(e).S("hold_reason") != StaleGeneration || len(f.host.sends) != 0 || f.count("SELECT COUNT(*) AS c FROM generations") != generations {
 					t.Fatalf("record %v", record)
 				}
 			})
@@ -284,13 +284,13 @@ func TestSUP08_a_newer_final_revision_supersedes_and_a_staged_one_does_not(t *te
 			n := f.readyPayload(f.rid, 1, []string{f.artifact("newer.txt", "the corrected deliverable")}, 2, assigned("completed"))
 			_, err := f.accept(n, store.AcceptOptions{})
 			mustDo(t, err)
-			f.declare(str(n, "eventId"), older)
-			_, err = f.delivery.Enqueue(f.ctx, str(n, "eventId"), "", "")
+			f.declare(pyjson.Text(n.Get("eventId")), older)
+			_, err = f.delivery.Enqueue(f.ctx, pyjson.Text(n.Get("eventId")), "", "")
 			mustDo(t, err)
 			f.clock.Advance(3600)
 			out["record"] = f.mustAttempt(older, nil)
 			f.clock.Advance(3600)
-			out["sent"] = f.mustAttempt(str(n, "eventId"), nil)
+			out["sent"] = f.mustAttempt(pyjson.Text(n.Get("eventId")), nil)
 		})
 	})
 	t.Run("staged successor", func(t *testing.T) {
@@ -301,7 +301,7 @@ func TestSUP08_a_newer_final_revision_supersedes_and_a_staged_one_does_not(t *te
 			mustDo(t, err)
 			f.clock.Advance(3600)
 			record := f.mustAttempt(older, nil)
-			if str(record, "deliveryState") != Dispatched {
+			if pyjson.Text(record.Get("deliveryState")) != Dispatched {
 				t.Fatal("a staged claim is not a replacement")
 			}
 			out["record"] = record

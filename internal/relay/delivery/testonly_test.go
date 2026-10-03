@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -142,7 +143,7 @@ func (d *Service) AttemptMessages(ctx context.Context, eventID string) ([]any, e
 			status = Dispatched
 		case state == HostLostTurn:
 			status = HostLostTurn
-		case record != nil && str(record, "sendAttempted") == "no":
+		case record != nil && pyjson.Text(record.Get("sendAttempted")) == "no":
 			status = "confirmed_unsent"
 		}
 		out = append(out, Obj{{Key: "requestId", Value: row.S("request_id")}, {Key: "attemptNo", Value: row.I("attempt_no")}, {Key: "status", Value: status},

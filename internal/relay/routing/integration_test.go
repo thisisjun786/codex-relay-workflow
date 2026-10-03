@@ -104,7 +104,7 @@ func integrationReplay(t *testing.T, property string) {
 			}
 			ctx := faults.WithInputs(context.Background(), clock, bytes.NewReader(entropy))
 			args := list(restoreNumbers(record.Args))
-			kw := object(restoreNumbers(record.Kwargs))
+			kw := pyjson.Map(restoreNumbers(record.Kwargs))
 			var answer any
 			var err error
 			if router != nil {
@@ -121,7 +121,7 @@ func integrationReplay(t *testing.T, property string) {
 					router = New(s, clock)
 				}
 			} else if record.Operation == "sql" {
-				_, err = s.Q(ctx).ExecContext(ctx, text(args[0]), list(args[1])...)
+				_, err = s.Q(ctx).ExecContext(ctx, pyjson.Text(args[0]), list(args[1])...)
 			} else {
 				router.test.digestPageSize = record.PageSize
 				router.test.beforeWrite = nil
@@ -215,7 +215,7 @@ func integrationCall(ctx context.Context, r *Router, name string, a []any, k Obj
 	case "router.show_products":
 		return r.ShowProducts(ctx, arg(0))
 	case "router.registry":
-		return r.Registry(ctx, text(a[0]))
+		return r.Registry(ctx, pyjson.Text(a[0]))
 	case "router.registries":
 		m, err := r.Registries(ctx)
 		out := Object{}
@@ -224,7 +224,7 @@ func integrationCall(ctx context.Context, r *Router, name string, a []any, k Obj
 		}
 		return out, err
 	case "router.bindings":
-		return r.Bindings(ctx, text(a[0]))
+		return r.Bindings(ctx, pyjson.Text(a[0]))
 	case "router.policy":
 		return r.Policy(ctx)
 	case "router.run_issue":
@@ -232,11 +232,11 @@ func integrationCall(ctx context.Context, r *Router, name string, a []any, k Obj
 	case "router.intake":
 		return r.Intake(ctx, a[0])
 	case "router.classify":
-		return r.Classify(ctx, text(a[0]), a[1])
+		return r.Classify(ctx, pyjson.Text(a[0]), a[1])
 	case "router.reconcile":
 		return r.Reconcile(ctx, k["product"], pageLimit(50), k["after"])
 	case "router.evaluate_projects":
-		return r.EvaluateProjects(ctx, text(a[0]))
+		return r.EvaluateProjects(ctx, pyjson.Text(a[0]))
 	case "router.check_completion":
 		return r.CheckCompletion(ctx, a[0])
 	case "router.digest":
@@ -248,63 +248,63 @@ func integrationCall(ctx context.Context, r *Router, name string, a []any, k Obj
 		}
 		return r.Show(ctx, product, k["attention"] == true, pageLimit(20), k["after"])
 	case "ledger.get":
-		return l.Get(ctx, text(a[0]))
+		return l.Get(ctx, pyjson.Text(a[0]))
 	case "ledger.canonical_id":
-		return l.CanonicalID(ctx, text(a[0]), text(a[1]), object(a[2]), text(k["workspace"]))
+		return l.CanonicalID(ctx, pyjson.Text(a[0]), pyjson.Text(a[1]), pyjson.Map(a[2]), pyjson.Text(k["workspace"]))
 	case "ledger.set_target":
-		return l.SetWorkspaceTarget(ctx, text(k["product"]), text(k["workspace"]), text(k["project"]), text(k["team"]), text(k["project_ref"]))
+		return l.SetWorkspaceTarget(ctx, pyjson.Text(k["product"]), pyjson.Text(k["workspace"]), pyjson.Text(k["project"]), pyjson.Text(k["team"]), pyjson.Text(k["project_ref"]))
 	case "ledger.adopt":
-		return l.Adopt(ctx, text(a[0]), text(k["external_ref"]), object(k["scope"]))
+		return l.Adopt(ctx, pyjson.Text(a[0]), pyjson.Text(k["external_ref"]), pyjson.Map(k["scope"]))
 	case "ledger.move":
-		return l.Move(ctx, text(a[0]), object(k["scope"]))
+		return l.Move(ctx, pyjson.Text(a[0]), pyjson.Map(k["scope"]))
 	case "ledger.request_update":
-		return l.RequestUpdate(ctx, text(a[0]), text(k["op"]), k["value"])
+		return l.RequestUpdate(ctx, pyjson.Text(a[0]), pyjson.Text(k["op"]), k["value"])
 	case "ledger.queue":
-		return l.Queue(ctx, text(a[0]), text(k["kind"]), text(k["trigger"]), k["payload"])
+		return l.Queue(ctx, pyjson.Text(a[0]), pyjson.Text(k["kind"]), pyjson.Text(k["trigger"]), k["payload"])
 	case "ledger.publication":
-		return l.Publication(ctx, text(a[0]))
+		return l.Publication(ctx, pyjson.Text(a[0]))
 	case "ledger.publications":
-		return l.Publications(ctx, text(a[0]), k["kind"], k["state"], limit(20), k["after"])
+		return l.Publications(ctx, pyjson.Text(a[0]), k["kind"], k["state"], limit(20), k["after"])
 	case "ledger.cancel":
-		return l.Cancel(ctx, text(a[0]), text(k["reason"]))
+		return l.Cancel(ctx, pyjson.Text(a[0]), pyjson.Text(k["reason"]))
 	case "ledger.claim":
-		return l.Claim(ctx, text(a[0]), text(k["owner"]), k["takeover"] == true)
+		return l.Claim(ctx, pyjson.Text(a[0]), pyjson.Text(k["owner"]), k["takeover"] == true)
 	case "ledger.operation":
-		return l.Operation(ctx, text(a[0]), text(k["claim_token"]))
+		return l.Operation(ctx, pyjson.Text(a[0]), pyjson.Text(k["claim_token"]))
 	case "ledger.complete":
-		return l.Complete(ctx, text(a[0]), text(k["claim_token"]), text(k["readback"]), text(k["external_ref"]), text(k["project_ref"]), k["observed"])
+		return l.Complete(ctx, pyjson.Text(a[0]), pyjson.Text(k["claim_token"]), pyjson.Text(k["readback"]), pyjson.Text(k["external_ref"]), pyjson.Text(k["project_ref"]), k["observed"])
 	case "ledger.fail":
-		return l.Fail(ctx, text(a[0]), text(k["claim_token"]), text(k["error"]), k["ended"] == true)
+		return l.Fail(ctx, pyjson.Text(a[0]), pyjson.Text(k["claim_token"]), pyjson.Text(k["error"]), k["ended"] == true)
 	case "ledger.reconcile":
-		return l.Reconcile(ctx, text(a[0]), text(k["observed_text"]), k["searched"] == true, k["observed"], k["prior_ended"] == true, text(k["reason"]))
+		return l.Reconcile(ctx, pyjson.Text(a[0]), pyjson.Text(k["observed_text"]), k["searched"] == true, k["observed"], k["prior_ended"] == true, pyjson.Text(k["reason"]))
 	case "ledger.record_fix":
-		return l.RecordRemediation(ctx, text(a[0]), "fix", text(k["ref"]), "", "", text(k["detail"]))
+		return l.RecordRemediation(ctx, pyjson.Text(a[0]), "fix", pyjson.Text(k["ref"]), "", "", pyjson.Text(k["detail"]))
 	case "ledger.record_reverification":
-		return l.RecordRemediation(ctx, text(a[0]), "reverification", text(k["ref"]), text(k["method"]), text(k["outcome"]), text(k["detail"]))
+		return l.RecordRemediation(ctx, pyjson.Text(a[0]), "reverification", pyjson.Text(k["ref"]), pyjson.Text(k["method"]), pyjson.Text(k["outcome"]), pyjson.Text(k["detail"]))
 	case "ledger.resolve":
-		return l.ResolveRecord(ctx, text(a[0]))
+		return l.ResolveRecord(ctx, pyjson.Text(a[0]))
 	case "ledger.next":
 		return l.Next(ctx, limit(4))
 	case "ledger.expire_leases":
 		return l.ExpireLeases(ctx)
 	case "ledger.raise_notification":
-		return l.Notify(ctx, text(a[0]), text(k["reason"]), text(k["ref"]))
+		return l.Notify(ctx, pyjson.Text(a[0]), pyjson.Text(k["reason"]), pyjson.Text(k["ref"]))
 	case "ledger.notifications":
-		return l.Notifications(ctx, text(k["state"]), limit(20), k["after"])
+		return l.Notifications(ctx, pyjson.Text(k["state"]), limit(20), k["after"])
 	case "ledger.remediations":
-		return l.Remediations(ctx, text(a[0]), limit(20))
+		return l.Remediations(ctx, pyjson.Text(a[0]), limit(20))
 	case "ledger.snapshot":
-		return l.Snapshot(ctx, text(k["product"]), text(k["fault_class"]), text(k["state"]), limit(20), k["after"])
+		return l.Snapshot(ctx, pyjson.Text(k["product"]), pyjson.Text(k["fault_class"]), pyjson.Text(k["state"]), limit(20), k["after"])
 	case "ledger.set_policy":
-		return l.SetPolicy(ctx, text(a[0]), text(a[1]), text(a[2]), k["threshold"], k["window"], text(k["reason"]))
+		return l.SetPolicy(ctx, pyjson.Text(a[0]), pyjson.Text(a[1]), pyjson.Text(a[2]), k["threshold"], k["window"], pyjson.Text(k["reason"]))
 	case "ledger.set_limit":
-		return l.SetLimit(ctx, text(a[0]), text(a[1]), k["max_count"], k["window"])
+		return l.SetLimit(ctx, pyjson.Text(a[0]), pyjson.Text(a[1]), k["max_count"], k["window"])
 	case "ledger.record":
-		m := object(a[0])
-		o := faults.Observation{Product: text(m["product"]), FaultClass: text(m["faultClass"]), Severity: text(m["severity"]), Signature: object(m["signature"]), OccurrenceKey: text(m["occurrenceKey"]), Scope: object(m["scope"]), Detail: text(m["detail"]), Evidence: list(m["evidence"]), Cleared: m["cleared"] == true, ObservedAt: m["observedAt"]}
+		m := pyjson.Map(a[0])
+		o := faults.Observation{Product: pyjson.Text(m["product"]), FaultClass: pyjson.Text(m["faultClass"]), Severity: pyjson.Text(m["severity"]), Signature: pyjson.Map(m["signature"]), OccurrenceKey: pyjson.Text(m["occurrenceKey"]), Scope: pyjson.Map(m["scope"]), Detail: pyjson.Text(m["detail"]), Evidence: list(m["evidence"]), Cleared: m["cleared"] == true, ObservedAt: m["observedAt"]}
 		var adopt *faults.Adoption
-		if v := object(k["adopt"]); v != nil {
-			adopt = &faults.Adoption{ExternalRef: text(v["externalRef"]), Scope: object(v["scope"])}
+		if v := pyjson.Map(k["adopt"]); v != nil {
+			adopt = &faults.Adoption{ExternalRef: pyjson.Text(v["externalRef"]), Scope: pyjson.Map(v["scope"])}
 		}
 		return l.RecordObservation(ctx, o, adopt)
 	default:

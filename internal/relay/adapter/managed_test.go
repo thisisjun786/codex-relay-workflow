@@ -109,7 +109,7 @@ func Test28_ManagedSixMethodsRealSocket(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if field(result, "state") != "admitted" {
+	if result.Get("state") != "admitted" {
 		t.Fatalf("managed not admitted: %s", dumps(result, false))
 	}
 	if err := a.Close(); err != nil {

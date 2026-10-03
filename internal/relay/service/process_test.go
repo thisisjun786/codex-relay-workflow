@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"golang.org/x/sys/unix"
 )
@@ -121,17 +122,17 @@ func startServing(t *testing.T, home string) (*ProcessHandle, *ProcessHandle) {
 	if start.Code != 0 {
 		t.Fatal(start)
 	}
-	supervisor := process(t, num(get(runtimeObject(t, start), "pid")))
+	supervisor := process(t, num(runtimeObject(t, start).Get("pid")))
 	var r Object
 	w.until(t, func() bool {
 		r = read(filepath.Join(home, "state", "daemon.json"))
 		receipt := read(filepath.Join(home, "state", "worker-policy.json"))
-		worker, _ := get(receipt, "worker").(Object)
-		return truth(get(r, "workerPid")) && equal(get(worker, "pid"), get(r, "workerPid"))
+		worker, _ := receipt.Get("worker").(Object)
+		return truth(r.Get("workerPid")) && equal(worker.Get("pid"), r.Get("workerPid"))
 	})
-	worker := process(t, num(get(r, "workerPid")))
-	s := &Service{Selection: storeSelection(home), Socket: home + "/socket", StoreID: text(get(r, "storeId")), InstallationID: text(get(r, "installationId")), Scope: &ScopeRegistry{Root: home + "/scopes", Authority: "isolated"}}
-	if observed := s.ReadWorkerPolicy(context.Background()); get(observed, "observed") != true {
+	worker := process(t, num(r.Get("workerPid")))
+	s := &Service{Selection: storeSelection(home), Socket: home + "/socket", StoreID: pyjson.Text(r.Get("storeId")), InstallationID: pyjson.Text(r.Get("installationId")), Scope: &ScopeRegistry{Root: home + "/scopes", Authority: "isolated"}}
+	if observed := s.ReadWorkerPolicy(context.Background()); observed.Get("observed") != true {
 		t.Fatalf("live worker receipt not observable: %v", observed)
 	}
 	return supervisor, worker
@@ -162,7 +163,7 @@ func Test29StartStopAndSecondStart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second.Code != 2 || get(runtimeObject(t, second), "reason") != "already_running" || second.Err != "" || !bytes.Equal(before, after) || !bytes.Equal(children, nextChildren) || worker.Wait(0) || supervisor.Wait(0) {
+	if second.Code != 2 || runtimeObject(t, second).Get("reason") != "already_running" || second.Err != "" || !bytes.Equal(before, after) || !bytes.Equal(children, nextChildren) || worker.Wait(0) || supervisor.Wait(0) {
 		t.Fatalf("second start changed live launch: %+v", second)
 	}
 	// Freezing forces worker escalation.
@@ -197,11 +198,11 @@ func Test29OrphanKeepsInheritedLocks(t *testing.T) {
 	}
 	status := invoke(t, home, "--socket", home+"/socket", "service", "status")
 	r := runtimeObject(t, status)
-	if status.Code != 0 || status.Err != "" || get(r, "running") != true || get(r, "lock") != "held" {
+	if status.Code != 0 || status.Err != "" || r.Get("running") != true || r.Get("lock") != "held" {
 		t.Fatal(status)
 	}
 	second := invoke(t, home, "--socket", home+"/socket", "service", "start", "--allow-isolated-scope")
-	if get(runtimeObject(t, second), "reason") != "already_running" {
+	if runtimeObject(t, second).Get("reason") != "already_running" {
 		t.Fatal(second)
 	}
 	worker.Send(unix.SIGKILL)
@@ -222,19 +223,19 @@ func Test29StopEscalatesAndRefusesForeign(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := s.Record()
-	s.InstallationID = text(get(r, "installationId"))
+	s.InstallationID = pyjson.Text(r.Get("installationId"))
 	if err = s.WriteRecord(set(r, "installationId", "foreign-installation")); err != nil {
 		t.Fatal(err)
 	}
 	out, err := s.Stop("test", time.Millisecond)
-	if err != nil || get(out, "reason") != "not_ours" || s.StopRequested() {
+	if err != nil || out.Get("reason") != "not_ours" || s.StopRequested() {
 		t.Fatalf("foreign stop %+v %v", out, err)
 	}
 	if err = s.WriteRecord(r); err != nil {
 		t.Fatal(err)
 	}
 	out, err = s.Stop("test", time.Second)
-	if err != nil || get(out, "ok") != true || !supervisor.Wait(0) || !worker.Wait(0) {
+	if err != nil || out.Get("ok") != true || !supervisor.Wait(0) || !worker.Wait(0) {
 		t.Fatalf("escalation %+v %v", out, err)
 	}
 }
@@ -273,7 +274,7 @@ func Test42InterruptedSupervisorStopsItsWorker(t *testing.T) {
 				}
 			}
 			r := read(filepath.Join(home, "state", "daemon.json"))
-			if get(r, "pid") != nil || get(r, "workerPid") != nil || get(r, "lastExit") == nil || num(get(r, "lastExit")) < 0 || get(r, "nextRestartAt") != nil {
+			if r.Get("pid") != nil || r.Get("workerPid") != nil || r.Get("lastExit") == nil || num(r.Get("lastExit")) < 0 || r.Get("nextRestartAt") != nil {
 				t.Fatalf("the supervisor did not record its worker's own exit: %v", r)
 			}
 			if _, err := os.Lstat(controlPath(filepath.Join(home, "state"))); !errors.Is(err, os.ErrNotExist) {

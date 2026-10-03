@@ -32,15 +32,7 @@ func obj(values ...any) Object {
 	}
 	return out
 }
-func get(o Object, k string) any {
-	for _, f := range o {
-		if f.Key == k {
-			return f.Value
-		}
-	}
-	return nil
-}
-func text(v any) string { s, _ := v.(string); return s }
+
 func num(v any) int {
 	switch n := v.(type) {
 	case int:
@@ -278,7 +270,7 @@ func (s *Service) NewRecord(pid int, token string) Object {
 // again). A record another process wrote is left alone.
 func (s *Service) PublishStoreIdentity() error {
 	r := s.Record()
-	if r == nil || !truth(get(r, "pid")) || num(get(r, "pid")) != os.Getpid() {
+	if r == nil || !truth(r.Get("pid")) || num(r.Get("pid")) != os.Getpid() {
 		return nil
 	}
 	if err := s.WriteRecord(set(r, "storeId", nullable(s.StoreID))); err != nil {
@@ -309,7 +301,7 @@ func (s *Service) JournalNote(detail string) error {
 }
 func (s *Service) Intent() Object {
 	r := read(s.path("service.json"))
-	return obj("enabled", truth(get(r, "enabled")), "configured", r != nil, "changedAt", get(r, "changedAt"), "changedBy", get(r, "changedBy"))
+	return obj("enabled", truth(r.Get("enabled")), "configured", r != nil, "changedAt", r.Get("changedAt"), "changedBy", r.Get("changedBy"))
 }
 func (s *Service) writeIntent(enabled bool, actor string) (Object, error) {
 	r := obj("enabled", enabled, "changedAt", stamp(), "changedBy", actor)

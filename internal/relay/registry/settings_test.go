@@ -28,7 +28,7 @@ func settingsAnswers(t *testing.T) map[string]any {
 	got := map[string]any{}
 	for _, field := range decoded.(contract.OrderedObject) {
 		c := field.Value.(contract.OrderedObject)
-		rowValue, _ := getField(c, "row")
+		rowValue, _ := c.Lookup("row")
 		settings := TaskSettings{rowValue.(contract.OrderedObject)}
 		answer := contract.OrderedObject{{Key: "missing", Value: anyStrings(settings.Missing())}}
 		if err := settings.RequireUsable(); err != nil {
@@ -40,12 +40,12 @@ func settingsAnswers(t *testing.T) map[string]any {
 		} else {
 			answer = append(answer, contract.Field{Key: "usable", Value: nil}, contract.Field{Key: "resumeParams", Value: settings.ResumeParams("t-1")})
 		}
-		if response, ok := getField(c, "response"); ok {
+		if response, ok := c.Lookup("response"); ok {
 			transmitted, loaded := true, false
-			if v, ok := getField(c, "transmitted"); ok {
+			if v, ok := c.Lookup("transmitted"); ok {
 				transmitted = v.(bool)
 			}
-			if v, ok := getField(c, "loadedBefore"); ok {
+			if v, ok := c.Lookup("loadedBefore"); ok {
 				loaded = v.(bool)
 			}
 			found := settings.Mismatches(response, transmitted, false, loaded)
@@ -54,7 +54,7 @@ func settingsAnswers(t *testing.T) map[string]any {
 				list[i] = f
 			}
 			answer = append(answer, contract.Field{Key: "mismatches", Value: list})
-			if v, ok := getField(c, "narrowing"); ok && v == true {
+			if v, ok := c.Lookup("narrowing"); ok && v == true {
 				notes := settings.RootsNarrowing(response, "idle")
 				items := []any{}
 				for _, n := range notes {

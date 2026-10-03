@@ -24,10 +24,10 @@ func (sw *Sweeper) syncFaults(ctx context.Context, product string, cursor any) (
 			return page{}, e
 		}
 		scope["issueKey"] = r.Get("issue_key")
-		target := text(r, "target")
+		target := r.Text("target")
 		count := integer(r, "attempts")
 		subject := map[string]any{"relationship": r.Get("relationship_id")}
-		obs = append(obs, Observation{Product: product, FaultClass: "record_sync_failed", Severity: Broken, Signature: map[string]any{"target": r.Get("target"), "targetRef": r.Get("target_ref")}, OccurrenceKey: fmt.Sprintf("sync:%s:%d", text(r, "sync_id"), count), Scope: scope, Detail: "a " + target + " write exhausted its attempts", Evidence: []any{evidence("row", "sync_outbox:"+text(r, "sync_id"), map[string]any{"attempts": r.Get("attempts"), "lastError": r.Get("last_error"), "relationship": r.Get("relationship_id"), "targetRef": r.Get("target_ref")}), sw.facts("the "+target+" carries this write", fmt.Sprintf("the write gave up after %d attempts: %s", count, pyStr(r.Get("last_error"))), "the "+target+" is behind what the relay recorded", []any{"only the last error of the job is kept"}, subject)}})
+		obs = append(obs, Observation{Product: product, FaultClass: "record_sync_failed", Severity: Broken, Signature: map[string]any{"target": r.Get("target"), "targetRef": r.Get("target_ref")}, OccurrenceKey: fmt.Sprintf("sync:%s:%d", r.Text("sync_id"), count), Scope: scope, Detail: "a " + target + " write exhausted its attempts", Evidence: []any{evidence("row", "sync_outbox:"+r.Text("sync_id"), map[string]any{"attempts": r.Get("attempts"), "lastError": r.Get("last_error"), "relationship": r.Get("relationship_id"), "targetRef": r.Get("target_ref")}), sw.facts("the "+target+" carries this write", fmt.Sprintf("the write gave up after %d attempts: %s", count, pyStr(r.Get("last_error"))), "the "+target+" is behind what the relay recorded", []any{"only the last error of the job is kept"}, subject)}})
 	}
 	return pageOf(obs, rows, "sync_id", after, until), nil
 }
@@ -60,13 +60,13 @@ func (sw *Sweeper) observationFaults(ctx context.Context, product string, cursor
 		if turn == nil {
 			turn = r.Get("dispatch_turn_id")
 		}
-		rel := text(r, "relationship_id")
+		rel := r.Text("relationship_id")
 		gen := integer(r, "execution_generation")
 		obs = append(obs, Observation{Product: product, FaultClass: "observation_stalled", Severity: severity, Signature: map[string]any{"relationship": rel, "generation": gen}, OccurrenceKey: fmt.Sprintf("poll:%s:%d:%s:%s", rel, gen, turn, r.Get("last_attempt_at")), Scope: scope, Detail: detail, Evidence: []any{evidence("row", "poll_observations:"+rel, map[string]any{"turn": turn, "lastPolledAt": r.Get("last_polled_at"), "lastAttemptAt": r.Get("last_attempt_at"), "lastError": r.Get("last_error"), "lastStatus": r.Get("last_status")}), sw.facts("the scheduler reads this anchor successfully", actual, "a turn ending on this anchor is not observed, so its outcome is not delivered", []any{"a poll row keeps only its latest attempt, so earlier failures are not counted"}, map[string]any{"relationship": rel, "generation": gen, "turn": turn})}})
 	}
 	result := pageOf(obs, rows, "relationship_id", after, until)
 	if result.cursor != nil {
-		result.cursor = map[string]any{"at": anchorCursor(text(rows[len(rows)-1], "relationship_id"), integer(rows[len(rows)-1], "execution_generation")), "until": until}
+		result.cursor = map[string]any{"at": anchorCursor(rows[len(rows)-1].Text("relationship_id"), integer(rows[len(rows)-1], "execution_generation")), "until": until}
 	}
 	return result, nil
 }
@@ -93,7 +93,7 @@ func (sw *Sweeper) refusalFaults(ctx context.Context, product string, cursor any
 	scopes := map[string]map[string]any{}
 	current := map[string]bool{}
 	for _, r := range rows {
-		ok, e := sw.current(ctx, text(r, "event_id"), current)
+		ok, e := sw.current(ctx, r.Text("event_id"), current)
 		if e != nil {
 			return page{}, e
 		}
@@ -104,10 +104,10 @@ func (sw *Sweeper) refusalFaults(ctx context.Context, product string, cursor any
 		if e != nil {
 			return page{}, e
 		}
-		refusal := text(r, "reason")
-		rel := text(r, "relationship_id")
-		event := text(r, "event_id")
-		recipient := text(r, "recipient_task_id")
+		refusal := r.Text("reason")
+		rel := r.Text("relationship_id")
+		event := r.Text("event_id")
+		recipient := r.Text("recipient_task_id")
 		seq := integer(r, "seq")
 		obs = append(obs, Observation{Product: product, FaultClass: "delivery_refused", Severity: Degraded, Signature: map[string]any{"relationship": rel, "errorCode": refusal}, OccurrenceKey: fmt.Sprintf("refused:%d", seq), Scope: scope, Detail: fmt.Sprintf("a delivery to %s was refused before sending: %s", recipient, refusal), Evidence: []any{evidence("row", fmt.Sprintf("journal:%d", seq), map[string]any{"event": event, "reason": refusal, "detail": r.Get("refusal_detail"), "deliveryState": r.Get("state"), "at": r.Get("at")}), sw.facts("the recorded settings pass the check made before sending", "refused before any transport call: "+refusal, "the delivery is withheld and the recipient is not given it", []any{"only the delivery's current refusal streak is counted"}, map[string]any{"event": event, "relationship": rel, "generation": r.Get("generation"), "turn": r.Get("turn")})}})
 	}
@@ -149,19 +149,19 @@ func (sw *Sweeper) derivedStillPresent(ctx context.Context, class string, signat
 				if sw.SupersessionReason == nil {
 					return true, sw.noteOvertaken(ctx, memo)
 				}
-				verdict, e := sw.SupersessionReason(ctx, text(r, "event_id"))
+				verdict, e := sw.SupersessionReason(ctx, r.Text("event_id"))
 				if e != nil {
 					return false, e
 				}
 				if verdict == "" {
 					return true, sw.noteOvertaken(ctx, memo)
 				}
-				memo = append(memo, text(r, "event_id")+"\x00"+verdict)
+				memo = append(memo, r.Text("event_id")+"\x00"+verdict)
 			}
 			if len(rows) < sweepLimit {
 				return false, sw.noteOvertaken(ctx, memo)
 			}
-			after = text(rows[len(rows)-1], "event_id")
+			after = rows[len(rows)-1].Text("event_id")
 		}
 	}
 	row, e := sw.Store.One(ctx, query, args...)

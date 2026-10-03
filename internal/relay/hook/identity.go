@@ -35,39 +35,39 @@ type transcriptItem struct {
 
 func classify(row any, turn string) *transcriptItem {
 	o, ok := evidence.Object(row)
-	if !ok || get(o, "type") != "event_msg" {
+	if !ok || o.Get("type") != "event_msg" {
 		return nil
 	}
-	body, ok := evidence.Object(get(o, "payload"))
-	if !ok || get(body, "turn_id") != turn {
+	body, ok := evidence.Object(o.Get("payload"))
+	if !ok || body.Get("turn_id") != turn {
 		return nil
 	}
-	if get(body, "type") == "task_started" {
+	if body.Get("type") == "task_started" {
 		return &transcriptItem{kind: "start"}
 	}
-	item, ok := evidence.Object(get(body, "item"))
-	if !ok || get(body, "type") != "item_completed" {
+	item, ok := evidence.Object(body.Get("item"))
+	if !ok || body.Get("type") != "item_completed" {
 		return nil
 	}
-	switch get(item, "type") {
+	switch item.Get("type") {
 	case "HookPrompt", "UserMessage":
-		return &transcriptItem{kind: "input", id: get(item, "type")}
+		return &transcriptItem{kind: "input", id: item.Get("type")}
 	case "AgentMessage":
 		var said any
-		if parts, ok := evidence.List(get(item, "content")); ok {
+		if parts, ok := evidence.List(item.Get("content")); ok {
 			var b strings.Builder
 			for _, part := range parts {
 				p, ok := evidence.Object(part)
-				if !ok || get(p, "type") != "Text" {
+				if !ok || p.Get("type") != "Text" {
 					continue
 				}
-				if s, ok := get(p, "text").(string); ok {
+				if s, ok := p.Get("text").(string); ok {
 					b.WriteString(s)
 				}
 			}
 			said = b.String()
 		}
-		return &transcriptItem{kind: "answer", id: get(item, "id"), said: said, thread: get(body, "thread_id")}
+		return &transcriptItem{kind: "answer", id: item.Get("id"), said: said, thread: body.Get("thread_id")}
 	}
 	return nil
 }
@@ -77,19 +77,19 @@ func EventIdentity(ctx context.Context, stop Object) (string, Object) {
 	scanCtx, cancel := context.WithDeadline(ctx, time.Now().Add(750*time.Millisecond))
 	defer cancel()
 	identity := Object{{Key: "established", Value: false}, {Key: "reason", Value: nil}, {Key: "answerItem", Value: nil}, {Key: "transcriptPath", Value: nil}, {Key: "scannedBytes", Value: 0}, {Key: "scannedLines", Value: 0}}
-	refuse := func(reason string) (string, Object) { return "", set(identity, "reason", reason) }
-	session, sok := get(stop, "session_id").(string)
-	turn, tok := get(stop, "turn_id").(string)
-	active, aok := get(stop, "stop_hook_active").(bool)
-	said, mok := get(stop, "last_assistant_message").(string)
+	refuse := func(reason string) (string, Object) { return "", identity.Set("reason", reason) }
+	session, sok := stop.Get("session_id").(string)
+	turn, tok := stop.Get("turn_id").(string)
+	active, aok := stop.Get("stop_hook_active").(bool)
+	said, mok := stop.Get("last_assistant_message").(string)
 	if !sok || session == "" || !tok || turn == "" || !aok || !mok {
 		return refuse("identity_fields_incomplete")
 	}
-	path := text(get(stop, "transcript_path"))
+	path := pyjson.Text(stop.Get("transcript_path"))
 	if path == "" {
 		return refuse("transcript_path_missing")
 	}
-	identity = set(identity, "transcriptPath", path)
+	identity = identity.Set("transcriptPath", path)
 	if !filepath.IsAbs(path) {
 		return refuse("transcript_path_relative")
 	}
@@ -163,11 +163,11 @@ func EventIdentity(ctx context.Context, stop Object) (string, Object) {
 	if !ok || id == "" {
 		return refuse("answer_item_unidentified")
 	}
-	identity = set(identity, "answerItem", id)
+	identity = identity.Set("answerItem", id)
 	if item.thread != session {
 		return refuse("session_mismatch")
 	}
-	identity = set(identity, "established", true)
+	identity = identity.Set("established", true)
 	return EventKey(session, turn, active, id), identity
 }
 func turnItems(ctx context.Context, f *os.File, size int64, turn string, identity *Object) ([]transcriptItem, string) {
@@ -185,8 +185,8 @@ func turnItems(ctx context.Context, f *os.File, size int64, turn string, identit
 	newest := true
 	scanned, lines := 0, 0
 	defer func() {
-		*identity = set(*identity, "scannedBytes", scanned)
-		*identity = set(*identity, "scannedLines", lines)
+		*identity = (*identity).Set("scannedBytes", scanned)
+		*identity = (*identity).Set("scannedLines", lines)
 	}()
 	for position > 0 {
 		if scanned >= ScanMaxBytes {

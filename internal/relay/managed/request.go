@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 )
 
@@ -189,12 +190,12 @@ const fieldSeparatorDetail = " must not contain '|', which is the field separato
 // unregistered_scope (the parent's host id equals it). A request with no project is not asked about the
 // host id, as registration does not ask. The child's own task id is the host's to give and cannot be asked.
 func separatorRefusal(req map[string]any) error {
-	for _, field := range []struct{ name, value string }{{"parent_task_id", str(obj(req["parent"])["taskId"])}, {"issue_key", str(req["issueKey"])}} {
+	for _, field := range []struct{ name, value string }{{"parent_task_id", pyjson.Text(pyjson.Map(req["parent"])["taskId"])}, {"issue_key", pyjson.Text(req["issueKey"])}} {
 		if strings.Contains(field.value, "|") {
 			return errors.New(field.name + fieldSeparatorDetail)
 		}
 	}
-	if str(req["projectKey"]) != "" && strings.Contains(str(obj(req["child"])["hostId"]), "|") {
+	if pyjson.Text(req["projectKey"]) != "" && strings.Contains(pyjson.Text(pyjson.Map(req["child"])["hostId"]), "|") {
 		return refusal("unregistered_scope", "the child host id"+fieldSeparatorDetail)
 	}
 	return nil

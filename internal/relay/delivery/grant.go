@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -63,7 +64,7 @@ func requiredForNotice(record Obj, reading evidence.RequiredReading) (string, st
 			[]string{
 				"No required-check reading is recorded for this candidate, so --required is",
 				"yours to fill. Read the branch's required checks first:",
-				"  codex-session-relay merge-evidence --repository " + shellQuote(pyStr(fieldOf(record, "repository"))) + " --pull-request <its number>",
+				"  codex-session-relay merge-evidence --repository " + quote.Shell(pyStr(fieldOf(record, "repository"))) + " --pull-request <its number>",
 				"and pass each name in its requiredDeclared as its own --required=<name>.",
 				"Leaving --required out declares that nothing is required, and a failing",
 				"required check would then not stop the merge.",
@@ -80,7 +81,7 @@ func requiredForNotice(record Obj, reading evidence.RequiredReading) (string, st
 	}
 	var flags strings.Builder
 	for _, name := range reading.Required {
-		flags.WriteString(" --required=" + shellQuote(name))
+		flags.WriteString(" --required=" + quote.Shell(name))
 	}
 	return "requiredDeclared: " + pyjson.Dumps(reading.Required, pyjson.Options{Unicode: true}) + " (" + source + ")", flags.String(),
 		[]string{
@@ -99,5 +100,5 @@ func submission(v any) any {
 
 // grantRequired is DeliveryService._grant_required for a grant row.
 func grantRequired(ctx context.Context, s *store.Store, row Row, record Obj) (evidence.RequiredReading, error) {
-	return evidence.RequiredForCandidate(ctx, s, row.S("relationship_id"), str(record, "repository"), str(record, "baseRef"), str(record, "candidateHead"))
+	return evidence.RequiredForCandidate(ctx, s, row.S("relationship_id"), pyjson.Text(record.Get("repository")), pyjson.Text(record.Get("baseRef")), pyjson.Text(record.Get("candidateHead")))
 }

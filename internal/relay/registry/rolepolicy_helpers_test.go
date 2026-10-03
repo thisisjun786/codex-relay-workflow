@@ -74,7 +74,7 @@ func (x *roleRun) build(raw json.RawMessage) contract.OrderedObject {
 		x.t.Fatal(err)
 	}
 	for _, field := range overrides.(contract.OrderedObject) {
-		settings = setField(settings, field.Key, field.Value)
+		settings = settings.Set(field.Key, field.Value)
 	}
 	return settings
 }

@@ -73,7 +73,7 @@ func NormalisePolicy(policy any) contract.OrderedObject {
 	if !ok {
 		return nil
 	}
-	kindValue, _ := getField(object, "type")
+	kindValue, _ := object.Lookup("type")
 	kind, ok := kindValue.(string)
 	if !ok {
 		return nil
@@ -82,12 +82,12 @@ func NormalisePolicy(policy any) contract.OrderedObject {
 	merged := copyObject(declared)
 	for _, field := range object {
 		if field.Key != "type" {
-			merged = setField(merged, field.Key, field.Value)
+			merged = merged.Set(field.Key, field.Value)
 		}
 	}
-	merged = setField(merged, "type", kind)
+	merged = merged.Set("type", kind)
 	for _, field := range declared {
-		value, _ := getField(merged, field.Key)
+		value, _ := merged.Lookup(field.Key)
 		var readable bool
 		switch field.Value.(type) {
 		case bool:
@@ -101,11 +101,11 @@ func NormalisePolicy(policy any) contract.OrderedObject {
 			return nil
 		}
 	}
-	if roots, ok := getField(merged, "writableRoots"); ok {
+	if roots, ok := merged.Lookup("writableRoots"); ok {
 		if !textList(roots) {
 			return nil
 		}
-		merged = setField(merged, "writableRoots", append([]any{}, roots.([]any)...))
+		merged = merged.Set("writableRoots", append([]any{}, roots.([]any)...))
 	}
 	return merged
 }
@@ -119,12 +119,12 @@ func normaliseEnvironments(environments any) []any {
 	out := make([]any, 0, len(list))
 	for _, entry := range list {
 		one := copyObject(entry.(contract.OrderedObject))
-		roots, present := getField(one, "runtimeWorkspaceRoots")
+		roots, present := one.Lookup("runtimeWorkspaceRoots")
 		if present && roots != nil {
-			one = setField(one, "runtimeWorkspaceRoots", append([]any{}, roots.([]any)...))
+			one = one.Set("runtimeWorkspaceRoots", append([]any{}, roots.([]any)...))
 		} else {
-			cwd, _ := getField(one, "cwd")
-			one = setField(one, "runtimeWorkspaceRoots", []any{cwd})
+			cwd, _ := one.Lookup("cwd")
+			one = one.Set("runtimeWorkspaceRoots", []any{cwd})
 		}
 		out = append(out, one)
 	}
@@ -163,12 +163,12 @@ func environmentsProblem(environments any) (string, string, bool) {
 			return at, "is " + shape(entry) + ", not an object", true
 		}
 		for _, key := range []string{"environmentId", "cwd"} {
-			value, _ := getField(object, key)
+			value, _ := object.Lookup(key)
 			if _, ok := value.(string); !ok {
 				return at + "." + key, "is " + shape(value) + ", not str", true
 			}
 		}
-		if roots, present := getField(object, "runtimeWorkspaceRoots"); present && !textList(roots) {
+		if roots, present := object.Lookup("runtimeWorkspaceRoots"); present && !textList(roots) {
 			return at + ".runtimeWorkspaceRoots", "is " + shape(roots) + ", not a list of str", true
 		}
 	}
@@ -178,7 +178,7 @@ func environmentsProblem(environments any) (string, string, bool) {
 // TaskSettings is settings.TaskSettings: a recorded row, complete or unusable.
 type TaskSettings struct{ Data contract.OrderedObject }
 
-func (s TaskSettings) get(key string) any { v, _ := getField(s.Data, key); return v }
+func (s TaskSettings) get(key string) any { v, _ := s.Data.Lookup(key); return v }
 
 // Missing is TaskSettings.missing.
 func (s TaskSettings) Missing() []string {
@@ -249,7 +249,7 @@ func (s TaskSettings) RequireUsable() error {
 			return settingsRefusal(UnsupportedSandboxType, "the recorded sandbox is "+pyvalue.TypeName(recorded)+
 				", not the policy object a creation result reports, so it does not record the full policy a resume would have to restore")
 		}
-		kind, _ := getField(object, "type")
+		kind, _ := object.Lookup("type")
 		return settingsRefusal(UnsupportedSandboxType, pyvalue.Repr(kind)+" has no ThreadResumeParams.sandbox mode, so it cannot be restored on a resume")
 	}
 	if NormalisePolicy(s.get("sandbox")) == nil {
@@ -264,7 +264,7 @@ func (s TaskSettings) SandboxMode() string {
 	if !ok {
 		return ""
 	}
-	kind, _ := getField(object, "type")
+	kind, _ := object.Lookup("type")
 	text, ok := kind.(string)
 	if !ok {
 		return ""
@@ -289,13 +289,13 @@ func (s TaskSettings) ResumeParams(threadID string) contract.OrderedObject {
 		{Key: "model", Value: s.get("model")},
 	}
 	policy := NormalisePolicy(s.get("sandbox"))
-	kind, _ := getField(policy, "type")
+	kind, _ := policy.Lookup("type")
 	kindText, _ := kind.(string)
 	for _, key := range policyConfigKeys[kindText] {
-		if value, ok := getField(policy, key[0]); ok {
-			section, _ := getField(config, key[1])
+		if value, ok := policy.Lookup(key[0]); ok {
+			section, _ := config.Lookup(key[1])
 			sectionObject, _ := section.(contract.OrderedObject)
-			config = setField(config, key[1], setField(sectionObject, key[2], value))
+			config = config.Set(key[1], sectionObject.Set(key[2], value))
 		}
 	}
 	return append(params, contract.Field{Key: "config", Value: config})
@@ -314,7 +314,7 @@ func (s TaskSettings) Mismatches(response any, transmitted, exactApprovalPolicy,
 		return []contract.OrderedObject{finding(SettingUnobservable, "response", "a resume response object", nil,
 			contract.Field{Key: "returnedShape", Value: pyvalue.TypeName(response)})}
 	}
-	returnedPolicy, _ := getField(object, "approvalPolicy")
+	returnedPolicy, _ := object.Lookup("approvalPolicy")
 	if returnedPolicy == nil {
 		return []contract.OrderedObject{finding(SettingUnobservable, "approvalPolicy", s.get("approvalPolicy"), nil)}
 	}
@@ -333,7 +333,7 @@ func (s TaskSettings) Mismatches(response any, transmitted, exactApprovalPolicy,
 			contract.Field{Key: "returnedShape", Value: pyvalue.TypeName(returnedPolicy)})}
 	}
 	var found []contract.OrderedObject
-	threadValue, _ := getField(object, "thread")
+	threadValue, _ := object.Lookup("thread")
 	if threadValue == nil {
 		threadValue = contract.OrderedObject{}
 	}
@@ -342,7 +342,7 @@ func (s TaskSettings) Mismatches(response any, transmitted, exactApprovalPolicy,
 		return []contract.OrderedObject{finding(SettingUnobservable, "environments", s.get("environments"), nil,
 			contract.Field{Key: "returnedShape", Value: "thread is " + pyvalue.TypeName(threadValue)})}
 	}
-	returnedEnvironments, _ := getField(thread, "environments")
+	returnedEnvironments, _ := thread.Lookup("environments")
 	if returnedEnvironments == nil {
 		return []contract.OrderedObject{finding(EnvironmentsUnknown, "environments", s.get("environments"), nil)}
 	}
@@ -374,7 +374,7 @@ func (s TaskSettings) Mismatches(response any, transmitted, exactApprovalPolicy,
 		"model": s.get("model"), "reasoningEffort": s.get("reasoningEffort")}
 	for _, field := range fieldPrecedence {
 		expected := expectations[field]
-		raw, _ := getField(object, field)
+		raw, _ := object.Lookup(field)
 		if raw == nil {
 			found = append(found, finding(SettingUnobservable, field, expected, nil))
 			continue
@@ -408,7 +408,7 @@ func (s TaskSettings) Mismatches(response any, transmitted, exactApprovalPolicy,
 			found = append(found, finding(SettingsNotPreserved, field, expected, returned))
 		}
 	}
-	profile, _ := getField(object, "activePermissionProfile")
+	profile, _ := object.Lookup("activePermissionProfile")
 	expectedProfile := s.get("expectedPermissionProfile")
 	if profile == nil && expectedProfile != nil {
 		found = append(found, finding(SettingUnobservable, "activePermissionProfile", expectedProfile, nil))
@@ -441,8 +441,8 @@ func (s TaskSettings) isRecordedSandboxProfile(profile any) bool {
 			return false
 		}
 	}
-	id, _ := getField(object, "id")
-	kind, _ := getField(NormalisePolicy(s.get("sandbox")), "type")
+	id, _ := object.Lookup("id")
+	kind, _ := NormalisePolicy(s.get("sandbox")).Lookup("type")
 	kindText, _ := kind.(string)
 	builtin, ok := builtinProfiles[kindText]
 	return ok && id == builtin
@@ -464,16 +464,16 @@ func rootsWithin(returned, recorded []any) bool {
 }
 
 func sandboxWithin(returned, recorded contract.OrderedObject) bool {
-	rt, _ := getField(returned, "type")
-	dt, _ := getField(recorded, "type")
+	rt, _ := returned.Lookup("type")
+	dt, _ := recorded.Lookup("type")
 	if rt != "workspaceWrite" || dt != "workspaceWrite" {
 		return false
 	}
 	if canonical(dropField(returned, "writableRoots")) != canonical(dropField(recorded, "writableRoots")) {
 		return false
 	}
-	got, _ := getField(returned, "writableRoots")
-	allowed, _ := getField(recorded, "writableRoots")
+	got, _ := returned.Lookup("writableRoots")
+	allowed, _ := recorded.Lookup("writableRoots")
 	return textList(got) && textList(allowed) && rootsWithin(got.([]any), allowed.([]any))
 }
 
@@ -486,8 +486,8 @@ func environmentsWithin(returned, recorded []any) bool {
 		if canonical(dropField(got, "runtimeWorkspaceRoots")) != canonical(dropField(allowed, "runtimeWorkspaceRoots")) {
 			return false
 		}
-		gr, _ := getField(got, "runtimeWorkspaceRoots")
-		ar, _ := getField(allowed, "runtimeWorkspaceRoots")
+		gr, _ := got.Lookup("runtimeWorkspaceRoots")
+		ar, _ := allowed.Lookup("runtimeWorkspaceRoots")
 		if !rootsWithin(gr.([]any), ar.([]any)) {
 			return false
 		}
@@ -540,12 +540,12 @@ func (s TaskSettings) RootsNarrowing(response any, statusBefore any) []contract.
 			{Key: "recorded", Value: append([]any{}, rec...)}, {Key: "observed", Value: append([]any{}, obs...)},
 			{Key: "statusBeforeResume", Value: statusBefore}})
 	}
-	observedRoots, _ := getField(object, "runtimeWorkspaceRoots")
+	observedRoots, _ := object.Lookup("runtimeWorkspaceRoots")
 	note("runtimeWorkspaceRoots", s.get("runtimeWorkspaceRoots"), observedRoots)
 	var returned any
-	if thread, ok := getField(object, "thread"); ok {
+	if thread, ok := object.Lookup("thread"); ok {
 		if t, ok := thread.(contract.OrderedObject); ok {
-			returned, _ = getField(t, "environments")
+			returned, _ = t.Lookup("environments")
 		}
 	}
 	recorded := s.get("environments")
@@ -554,19 +554,19 @@ func (s TaskSettings) RootsNarrowing(response any, statusBefore any) []contract.
 	if returned != nil && !badReturned && !badRecorded {
 		got, allowed := normaliseEnvironments(returned), normaliseEnvironments(recorded)
 		for i := 0; i < len(got) && i < len(allowed); i++ {
-			gr, _ := getField(got[i].(contract.OrderedObject), "runtimeWorkspaceRoots")
-			ar, _ := getField(allowed[i].(contract.OrderedObject), "runtimeWorkspaceRoots")
+			gr, _ := got[i].(contract.OrderedObject).Lookup("runtimeWorkspaceRoots")
+			ar, _ := allowed[i].(contract.OrderedObject).Lookup("runtimeWorkspaceRoots")
 			note("environments["+itoa(i)+"].runtimeWorkspaceRoots", ar, gr)
 		}
 	}
-	sandbox, _ := getField(object, "sandbox")
+	sandbox, _ := object.Lookup("sandbox")
 	gotPolicy, recordedPolicy := NormalisePolicy(sandbox), NormalisePolicy(s.get("sandbox"))
 	if gotPolicy != nil && recordedPolicy != nil {
-		gt, _ := getField(gotPolicy, "type")
-		rt, _ := getField(recordedPolicy, "type")
+		gt, _ := gotPolicy.Lookup("type")
+		rt, _ := recordedPolicy.Lookup("type")
 		if gt == "workspaceWrite" && rt == "workspaceWrite" {
-			rw, _ := getField(recordedPolicy, "writableRoots")
-			gw, _ := getField(gotPolicy, "writableRoots")
+			rw, _ := recordedPolicy.Lookup("writableRoots")
+			gw, _ := gotPolicy.Lookup("writableRoots")
 			note("sandbox.writableRoots", rw, gw)
 		}
 	}

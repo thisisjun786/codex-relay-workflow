@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"slices"
 	"strings"
 	"testing"
@@ -74,7 +75,7 @@ func Test_test_reads_and_waits_do_not_resume_or_use_other_completed_turn(t *test
 	host.Respond("thread/turns/list", fakehost.Reply{Result: map[string]any{"data": []any{map[string]any{"id": "turn-1", "status": "completed", "items": []any{map[string]any{"text": strings.Repeat("hello", 100)}}}}}})
 	host.Respond("thread/items/list", fakehost.Reply{Result: map[string]any{"data": []any{}}})
 	read, err := b.ReadThread(context.Background(), "thread-1", 20, nil, 100)
-	if err != nil || !strings.Contains(text(object(firstTurn(t, read)["items"].([]any)[0])["text"]), "truncated") {
+	if err != nil || !strings.Contains(pyjson.Text(pyjson.Map(firstTurn(t, read)["items"].([]any)[0])["text"]), "truncated") {
 		t.Fatalf("read=%v err=%v", read, err)
 	}
 	result, err := b.WaitThread(context.Background(), "thread-1", "not-this-turn", 0)
@@ -100,9 +101,9 @@ func Test_test_history_pagination(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cursor := object(first["turnsPage"])["nextCursor"]
+	cursor := pyjson.Map(first["turnsPage"])["nextCursor"]
 	second, err := b.ReadThread(context.Background(), "thread-1", 1, cursor, 4000)
-	if err != nil || object(object(first["turnsPage"])["data"].([]any)[0])["id"] != "turn-2" || object(object(second["turnsPage"])["data"].([]any)[0])["id"] != "turn-1" || hostParams(t, host, "thread/turns/list")["limit"] != float64(1) {
+	if err != nil || pyjson.Map(pyjson.Map(first["turnsPage"])["data"].([]any)[0])["id"] != "turn-2" || pyjson.Map(pyjson.Map(second["turnsPage"])["data"].([]any)[0])["id"] != "turn-1" || hostParams(t, host, "thread/turns/list")["limit"] != float64(1) {
 		t.Fatalf("first=%v second=%v err=%v", first, second, err)
 	}
 	var pages []map[string]any
@@ -128,8 +129,8 @@ func Test_test_a_read_never_asks_for_the_full_item_view(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	observation := object(r["observation"])
-	if hostParams(t, host, "thread/read")["includeTurns"] != false || hostParams(t, host, "thread/turns/list")["itemsView"] != "summary" || len(observation) != 5 || observation["detailTurnsObserved"] != 1 || observation["detailTurnsRequested"] != 1 || observation["turnsPageStatus"] != "summary" || observation["itemsView"] != "summary" || !strings.Contains(text(observation["note"]), "bounded observation") || !strings.Contains(text(observation["note"]), "requested and read for the newest 1 turn") {
+	observation := pyjson.Map(r["observation"])
+	if hostParams(t, host, "thread/read")["includeTurns"] != false || hostParams(t, host, "thread/turns/list")["itemsView"] != "summary" || len(observation) != 5 || observation["detailTurnsObserved"] != 1 || observation["detailTurnsRequested"] != 1 || observation["turnsPageStatus"] != "summary" || observation["itemsView"] != "summary" || !strings.Contains(pyjson.Text(observation["note"]), "bounded observation") || !strings.Contains(pyjson.Text(observation["note"]), "requested and read for the newest 1 turn") {
 		t.Fatalf("result=%v calls=%v", r, host.Requests())
 	}
 	if methods := hostMethods(host); strings.Join(methods, ",") != "thread/read,thread/turns/list,thread/items/list" {
@@ -145,8 +146,8 @@ func Test_test_only_the_newest_turn_has_its_items_read(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	turns := object(r["turnsPage"])["data"].([]any)
-	if object(turns[0])["itemsDetailStatus"] != "complete" || object(object(turns[0])["itemsDetail"].([]any)[0])["text"] != "second" || object(turns[1])["itemsDetailStatus"] != "not_requested" || object(turns[1])["itemsDetail"] != nil || host.Count("thread/items/list") != 1 || !strings.Contains(text(object(r["observation"])["note"]), "not_requested") {
+	turns := pyjson.Map(r["turnsPage"])["data"].([]any)
+	if pyjson.Map(turns[0])["itemsDetailStatus"] != "complete" || pyjson.Map(pyjson.Map(turns[0])["itemsDetail"].([]any)[0])["text"] != "second" || pyjson.Map(turns[1])["itemsDetailStatus"] != "not_requested" || pyjson.Map(turns[1])["itemsDetail"] != nil || host.Count("thread/items/list") != 1 || !strings.Contains(pyjson.Text(pyjson.Map(r["observation"])["note"]), "not_requested") {
 		t.Fatalf("read=%v calls=%v", r, host.Requests())
 	}
 }

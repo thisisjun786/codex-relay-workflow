@@ -2,6 +2,7 @@ package adapter
 
 import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
@@ -19,12 +20,12 @@ func verifyResume(settings delivery.TaskSettings, response any, status any) (con
 	}
 	if len(findings) > 0 {
 		first := mismatches[0]
-		code := text(field(first, "code"))
-		returned := pyvalue.Repr(field(first, "returned"))
-		message := code + ": " + text(field(first, "field")) + " returned " + returned + "; message withheld"
+		code := pyjson.Text(first.Get("code"))
+		returned := pyvalue.Repr(first.Get("returned"))
+		message := code + ": " + pyjson.Text(first.Get("field")) + " returned " + returned + "; message withheld"
 		if !transmitted {
 			code = registry.SettingsFreeRefusalCode(mismatches)
-			message = code + ": " + text(field(first, "field")) + " is " + returned + " on the loaded thread and " + pyvalue.Repr(field(first, "expected")) + " in the record; nothing was transmitted and no turn was started"
+			message = code + ": " + pyjson.Text(first.Get("field")) + " is " + returned + " on the loaded thread and " + pyvalue.Repr(first.Get("expected")) + " in the record; nothing was transmitted and no turn was started"
 		}
 		return contract.OrderedObject{{Key: "code", Value: code}, {Key: "message", Value: message}}, findings, nil
 	}
