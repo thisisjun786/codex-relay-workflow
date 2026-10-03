@@ -51,4 +51,16 @@ symlinkSync(join(root,'sessions/2026'),join(root,'sessions/link'));
 Date.now=()=>Date.parse('2026-08-22T00:00:00Z');
 for(const days of [0,-1,1,0.5,2,100,1e20]) add('list',[days],()=>r.listRolloutFiles(root,days));
 rmSync(root,{recursive:true,force:true});
+if (process.argv[4] === '--platform-limits') {
+  const first = response({type:'message',content:[{type:'input_text',text:'first'}]});
+  const deep = '{"type":"response_item","timestamp":"t","payload":{"type":"message","content":[{"type":"input_text","text":' + '['.repeat(8000) + '1' + ']'.repeat(8000) + '}]}}';
+  const limits = [false,true].map(prepend => {
+    const c = {depth:8000,prepend,classification:'intentionally-changed',reason:'V8 stack exhaustion is engine-dependent; Go coerces these valid nested arrays and returns preceding entries. No runtime Node or arbitrary emulated stack cap.',goExpectedTexts:prepend?['first','1']:['1']};
+    try { c.oracleEntries = r.parseRollout(prepend?first+'\n'+deep:deep,false); }
+    catch (e) { c.oracleError = e.message; c.oracleErrorType = e.name; }
+    return c;
+  });
+  process.stdout.write(JSON.stringify(limits)+'\n');
+} else {
 process.stdout.write(JSON.stringify(cases)+'\n');
+}

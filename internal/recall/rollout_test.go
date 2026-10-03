@@ -296,3 +296,42 @@ func TestRolloutJSONPlatformBoundaries(t *testing.T) {
 		t.Fatal(got, err)
 	}
 }
+
+func TestRolloutCoercionStackPlatformDifference(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("testdata", "rollout", "platform-limits.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases []struct {
+		Depth                                                int
+		Prepend                                              bool
+		Classification, Reason, OracleError, OracleErrorType string
+		GoExpectedTexts                                      []string
+	}
+	if err := json.Unmarshal(data, &cases); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range cases {
+		if c.Classification != "intentionally-changed" || c.Reason == "" || c.OracleErrorType != "RangeError" || c.OracleError != "Maximum call stack size exceeded" {
+			t.Fatal("unclassified oracle limit", c)
+		}
+		deep := `{"type":"response_item","payload":{"type":"message","content":[{"type":"input_text","text":` + strings.Repeat("[", c.Depth) + "1" + strings.Repeat("]", c.Depth) + `}]}}`
+		if c.Prepend {
+			deep = `{"type":"response_item","payload":{"type":"message","content":[{"type":"input_text","text":"first"}]}}` + "\n" + deep
+		}
+		got, err := ParseRollout(deep, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		texts := []string{}
+		for _, e := range got {
+			texts = append(texts, e.Text)
+		}
+		if !reflect.DeepEqual(texts, c.GoExpectedTexts) {
+			t.Fatal(texts, c.GoExpectedTexts)
+		}
+	}
+	if len(cases) != 2 {
+		t.Fatal("stack-limit case count", len(cases))
+	}
+}
