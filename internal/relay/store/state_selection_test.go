@@ -10,6 +10,7 @@ import (
 )
 
 func TestStateSelection_python_precedence_properties(t *testing.T) {
+	// Serial: sets process environment variables and changes the working directory, which every other running test would see.
 	root := t.TempDir()
 	t.Setenv("HOME", root)
 	t.Setenv("XDG_STATE_HOME", "")
@@ -84,6 +85,7 @@ func TestStateSelection_python_precedence_properties(t *testing.T) {
 }
 
 func TestStateSelection_python_discovery_properties(t *testing.T) {
+	// Serial: sets process environment variables and changes the working directory, which every other running test would see.
 	root := t.TempDir()
 	t.Setenv("HOME", filepath.Join(root, "home"))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))

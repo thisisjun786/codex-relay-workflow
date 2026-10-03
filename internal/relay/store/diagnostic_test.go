@@ -9,8 +9,10 @@ import (
 
 // test_store.py Probe.
 func TestProbe_python_properties(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	t.Run("test_a_missing_state_directory_is_an_answer_and_is_not_created", func(t *testing.T) {
+		t.Parallel()
 		absent := filepath.Join(t.TempDir(), "nothing-here")
 		selection, err := ResolveStateDir(absent, "")
 		if err != nil {
@@ -25,6 +27,7 @@ func TestProbe_python_properties(t *testing.T) {
 		}
 	})
 	t.Run("test_reported_writability_matches_what_this_process_can_really_do", func(t *testing.T) {
+		t.Parallel()
 		locked := filepath.Join(t.TempDir(), "locked")
 		s, err := fixtureOpen(ctx, filepath.Join(locked, "relay.sqlite3"), "")
 		if err != nil {

@@ -13,6 +13,7 @@ import (
 // unverifiable_permission_profile. The built-in profile of the recorded sandbox type, extending
 // nothing, is that sandbox and is verified with it; anything else still is not.
 func TestTheRecordedSandboxsBuiltinProfileIsVerifiedWithTheSandbox(t *testing.T) {
+	t.Parallel()
 	const fullAccess = `{"type": "dangerFullAccess"}`
 	const workspace = `{"type": "workspaceWrite", "writableRoots": [], "networkAccess": false, "excludeTmpdirEnvVar": false, "excludeSlashTmp": false}`
 	const readOnly = `{"type": "readOnly", "networkAccess": false}`

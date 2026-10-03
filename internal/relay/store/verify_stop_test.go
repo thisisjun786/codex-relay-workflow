@@ -14,6 +14,7 @@ import (
 // manifest: the reads it ended come back as problems, and the intake answers the context's error
 // instead of a manifest_unverified refusal about bytes it never judged.
 func TestVerifyBytesTakesAStopForAStop(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	artifact := filepath.Join(root, "deliverable.txt")
 	if err := os.WriteFile(artifact, []byte("the delivered bytes"), 0o600); err != nil {

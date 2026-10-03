@@ -8,6 +8,7 @@ import (
 )
 
 func Test29BridgeUsesPublishedRoleSnapshot(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "policy.json")
 	original := []byte(`{"roles":{"parent":{"model":"first-model","reasoningEffort":"high"}}}`)
 	if err := os.WriteFile(path, original, 0600); err != nil {
