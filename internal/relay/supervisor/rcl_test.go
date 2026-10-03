@@ -117,6 +117,10 @@ func Test24_RCL_4_DoctorWholeStdoutBytes(t *testing.T) {
 			t.Fatalf("Go's doctor names no runtime block (decisions.md 31)\n%s", raw)
 		}
 		delete(value, "runtime")
+		if _, ok := value["writeProbe"]; !ok {
+			t.Fatalf("Go's doctor names no writeProbe block (decisions.md 76)\n%s", raw)
+		}
+		delete(value, "writeProbe")
 		block, _ := value["ownership"].(map[string]any)
 		if block == nil || block["runtime_build"] != goBuild {
 			t.Fatalf("ownership.runtime_build must name the answering runtime's build %q\n%s", goBuild, raw)
