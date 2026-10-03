@@ -113,6 +113,53 @@ func TestReadInterviewEventsReadsACrlfLedgerLikeAnLfOne(t *testing.T) { // crlf-
 	}
 }
 
+func TestAppendersCreateTheStateDirectoryWithItsIgnoreFileAndKeepAnExistingOne(t *testing.T) { // ensureCodexclawDir comes first in both appenders
+	appendOne := map[string]func(cwd string) error{
+		"ledger": func(cwd string) error {
+			return AppendLedger(cwd, LedgerEntry{TS: "t", SessionID: "s", To: PhaseP, Reason: "x"})
+		},
+		"interview": func(cwd string) error {
+			return AppendInterviewEvent(cwd, InterviewEvent{TS: "t", SessionID: "s", Event: ScanStarted, RoundID: 1})
+		},
+	}
+	for name, appendRow := range appendOne {
+		fresh := t.TempDir()
+		if err := appendRow(fresh); err != nil || fileText(t, filepath.Join(fresh, crwdir.DirName, ".gitignore")) != crwdir.GitignoreText {
+			t.Errorf("%s: a fresh state directory must get its ignore file: %v", name, err)
+		}
+		kept := t.TempDir()
+		ignore := filepath.Join(kept, crwdir.DirName, ".gitignore")
+		if err := os.MkdirAll(filepath.Dir(ignore), 0o777); err != nil || os.WriteFile(ignore, []byte("mine\n"), 0o644) != nil {
+			t.Fatal(err)
+		}
+		if err := appendRow(kept); err != nil || fileText(t, ignore) != "mine\n" {
+			t.Errorf("%s: an existing state directory is left alone: %v, %q", name, err, fileText(t, ignore))
+		}
+	}
+}
+
+func TestInterviewEventsOfAliasedSessionIDsShareOneLedgerAndTheReaderSanitisesToo(t *testing.T) { // recorded interview_events aliasFile; the sharing is a known defect
+	cwd := t.TempDir()
+	if err := AppendInterviewEvent(cwd, InterviewEvent{TS: "t", SessionID: "a/b", Event: ScanStarted, RoundID: 1}); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"a/b", "a-b"} {
+		if got := ReadInterviewEvents(cwd, id); len(got) != 1 || got[0].SessionID != "a/b" {
+			t.Errorf("read as %q: %+v", id, got)
+		}
+	}
+}
+
+func TestAppendInterviewEventWritesAKindTheReaderSkips(t *testing.T) { // known defect: the appender does not check the kind
+	cwd := t.TempDir()
+	if err := AppendInterviewEvent(cwd, InterviewEvent{TS: "t", SessionID: "s", Event: "question_asked", RoundID: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if file := fileText(t, interviewLedgerPath(cwd, "s")); !strings.Contains(file, `"event":"question_asked"`) || len(ReadInterviewEvents(cwd, "s")) != 0 {
+		t.Fatalf("file %q, read %+v", file, ReadInterviewEvents(cwd, "s"))
+	}
+}
+
 func TestAppendLedgerReportsAFailedAppend(t *testing.T) { // appendFileSync throws EISDIR when the ledger path is a directory
 	cwd := t.TempDir()
 	ledger := filepath.Join(cwd, crwdir.DirName, LedgerFile)

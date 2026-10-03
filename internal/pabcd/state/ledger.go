@@ -107,7 +107,7 @@ func (k InterviewScanEvent) isScanKind() bool {
 type MapEntry struct{ QuestionID, Dimension string }
 
 // InterviewEvent is a scan row; the counters are JavaScript numbers, written as JSON.stringify writes them (-0 as 0, NaN and the
-// infinities as null, which the reader then skips). Map lists the attributions in the order they were assigned to the JavaScript
+// infinities as null; the reader skips a row whose roundId or contradictionCount is null). Map lists the attributions in the order they were assigned to the JavaScript
 // object (nil leaves the key out, an empty list writes {}). The oracle's reader returns the parsed object; a read event keeps it
 // as Raw, the line as written (trimmed), beside the typed fields, which read as zero when the key is absent or mistyped, and Map
 // is not decoded. Nothing in v0.2.40 consumes the result, and Raw keeps every key the typed fields do not.
@@ -144,7 +144,8 @@ func AppendInterviewEvent(cwd string, e InterviewEvent) error {
 
 // ReadInterviewEvents reads a session's scan rows, best effort: a file that cannot be read is no rows, and the result is never
 // nil. A row counts when its event is a scan kind and roundId and contradictionCount are numbers; blank and damaged lines and the
-// rest are skipped.
+// rest are skipped. Like every reader of this package it parses with encoding/json, which refuses a document nested deeper than
+// 10,000 levels: a row that deep reads as damaged, where JSON.parse's limit is the stack.
 func ReadInterviewEvents(cwd, sessionID string) []InterviewEvent {
 	events := []InterviewEvent{}
 	data, err := os.ReadFile(filepath.Join(cwd, crwdir.DirName, InterviewsSubdir, SanitizeKey(sessionID)+".jsonl"))
