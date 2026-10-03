@@ -432,4 +432,63 @@ BEGIN SELECT RAISE(ABORT, 'dag_edges rows are never deleted'); END`,
     CHECK (action <> 'closed' OR (successor_request_id IS NULL AND request_sha256 IS NULL AND request_json IS NULL))
 )`,
 	`CREATE UNIQUE INDEX IF NOT EXISTS dag_release_recoveries_successor ON dag_release_recoveries (successor_request_id) WHERE successor_request_id IS NOT NULL`,
+
+	// CRW-283, the project summary outbox (docs/relay/dag-outbox.md). The relay holds no Linear credential: a plan's parent writes its summary with its own connector and this table is
+	// the durable, ordered queue it drains. A stream is a plan and a document; seq counts up within it, so the entry with the highest seq is the summary the plan owes the document and
+	// every older one is superseded. subject_digest is the decision the entry states (the digest of the progress reading it was made from) and summary_id is the digest of the key
+	// (plan, document, plan revision, subject, seq). A claim holds a token (and only a claim does), so a claimant that was overtaken cannot confirm or fail an entry it no longer owns.
+	// Only confirmed and superseded are final. The rules below are enforced where the rows live, not only by the writer: an entry is appended pending with the next seq and a plan revision that
+	// does not go back, one open entry per stream, legal moves only, nothing claimed or confirmed once a newer entry exists, nothing deleted.
+	`CREATE TABLE IF NOT EXISTS dag_summary_outbox (
+    summary_id        TEXT PRIMARY KEY CHECK (summary_id <> ''),
+    plan_id           TEXT NOT NULL REFERENCES dag_plans (plan_id),
+    project_key       TEXT NOT NULL CHECK (project_key <> ''),
+    document          TEXT NOT NULL CHECK (document <> ''),
+    plan_revision     INTEGER NOT NULL CHECK (plan_revision >= 1),
+    seq               INTEGER NOT NULL CHECK (seq >= 1),
+    subject_digest    TEXT NOT NULL CHECK (length(subject_digest) = 64),
+    state_digest      TEXT NOT NULL,
+    summary           TEXT NOT NULL CHECK (summary <> ''),
+    summary_sha256    TEXT NOT NULL,
+    state             TEXT NOT NULL CHECK (state IN ('pending', 'claimed', 'confirmed', 'failed', 'superseded')),
+    attempts          INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    last_error        TEXT,
+    claim_token       TEXT,
+    claimed_by        TEXT,
+    claimed_at        TEXT,
+    readback          TEXT,
+    confirmed_at      TEXT,
+    enqueued_by       TEXT NOT NULL,
+    coordinator_epoch INTEGER NOT NULL DEFAULT 0 CHECK (coordinator_epoch >= 0),
+    created_at        TEXT NOT NULL,
+    updated_at        TEXT NOT NULL,
+    UNIQUE (plan_id, document, seq),
+    CHECK ((state = 'claimed') = (claim_token IS NOT NULL)),
+    CHECK ((state = 'confirmed') = (confirmed_at IS NOT NULL))
+)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS dag_summary_outbox_open ON dag_summary_outbox (plan_id, document) WHERE state IN ('pending', 'claimed', 'failed')`,
+	`CREATE TRIGGER IF NOT EXISTS dag_summary_outbox_order BEFORE INSERT ON dag_summary_outbox
+WHEN NEW.state <> 'pending' OR NEW.attempts <> 0
+  OR NEW.seq <> COALESCE((SELECT MAX(seq) FROM dag_summary_outbox WHERE plan_id = NEW.plan_id AND document = NEW.document), 0) + 1
+  OR NEW.plan_revision < COALESCE((SELECT MAX(plan_revision) FROM dag_summary_outbox WHERE plan_id = NEW.plan_id AND document = NEW.document), 0)
+BEGIN SELECT RAISE(ABORT, 'dag_summary_outbox: an entry is appended pending, with the next sequence number of its stream and a plan revision that does not go back'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_summary_outbox_immutable BEFORE UPDATE ON dag_summary_outbox
+WHEN OLD.state IN ('confirmed', 'superseded')
+  OR NEW.summary_id IS NOT OLD.summary_id OR NEW.plan_id IS NOT OLD.plan_id OR NEW.project_key IS NOT OLD.project_key OR NEW.document IS NOT OLD.document
+  OR NEW.plan_revision IS NOT OLD.plan_revision OR NEW.seq IS NOT OLD.seq OR NEW.subject_digest IS NOT OLD.subject_digest OR NEW.state_digest IS NOT OLD.state_digest
+  OR NEW.summary IS NOT OLD.summary OR NEW.summary_sha256 IS NOT OLD.summary_sha256 OR NEW.enqueued_by IS NOT OLD.enqueued_by
+  OR NEW.coordinator_epoch IS NOT OLD.coordinator_epoch OR NEW.created_at IS NOT OLD.created_at
+BEGIN SELECT RAISE(ABORT, 'dag_summary_outbox entries keep their identity, and a confirmed or superseded entry never changes'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_summary_outbox_transition BEFORE UPDATE ON dag_summary_outbox
+WHEN NEW.state <> OLD.state AND NOT (
+     (OLD.state = 'pending' AND NEW.state IN ('claimed', 'superseded'))
+  OR (OLD.state = 'claimed' AND NEW.state IN ('pending', 'failed', 'confirmed', 'superseded'))
+  OR (OLD.state = 'failed' AND NEW.state IN ('pending', 'superseded')))
+BEGIN SELECT RAISE(ABORT, 'dag_summary_outbox: that is not a legal move of an entry'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_summary_outbox_newest BEFORE UPDATE ON dag_summary_outbox
+WHEN NEW.state IN ('claimed', 'confirmed')
+  AND EXISTS (SELECT 1 FROM dag_summary_outbox WHERE plan_id = NEW.plan_id AND document = NEW.document AND seq > NEW.seq)
+BEGIN SELECT RAISE(ABORT, 'dag_summary_outbox: an older summary is never claimed or confirmed over a newer one'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_summary_outbox_no_delete BEFORE DELETE ON dag_summary_outbox
+BEGIN SELECT RAISE(ABORT, 'dag_summary_outbox entries are never deleted'); END`,
 }
