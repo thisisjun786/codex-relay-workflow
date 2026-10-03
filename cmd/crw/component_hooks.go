@@ -5,6 +5,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/provider"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/job"
 )
 
@@ -28,6 +29,11 @@ func componentHooks() []componentHook {
 		}
 	}
 	return []componentHook{
+		// Provider-bridge component ingress; activation is owned by the cutover.
+		{"session-start-ensuring-provider-bridge", "session-start", func(c invocation, in io.Reader) int {
+			return provider.RunHook(c.ctx, in, c.stdout, os.LookupEnv)
+		}},
+
 		{"stop-waking-on-background-completion", "stop", bg("stop")},
 		{"user-prompt-submit-delivering-background-completions", "user-prompt-submit", bg("user-prompt-submit")},
 		{"session-start-adopting-background-completions", "session-start", bg("session-start")},
