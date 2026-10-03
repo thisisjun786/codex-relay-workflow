@@ -180,8 +180,9 @@ func TestCLIProgressReadsOnlyTheStore(t *testing.T) {
 	}
 }
 
-// owingState is a store that still owes the repairs a writer's open makes: a settlement backfilled from an observation, and an index that was dropped. Each call builds its own, so the control and
-// the command under test never share a path (the ownership record names the path a store was created at).
+// owingState is a store that still owes the repairs a writer's open makes: a settlement backfilled from an observation (a store owes it while it lacks the backfill marker, which a store the
+// relay creates carries from the start), and an index that was dropped. Each call builds its own, so the control and the command under test never share a path (the ownership record names the
+// path a store was created at).
 func owingState(t *testing.T) (state, db string) {
 	t.Helper()
 	state, _ = cliState(t)
@@ -192,6 +193,7 @@ func owingState(t *testing.T) (state, db string) {
 	}
 	for _, statement := range []string{
 		"DELETE FROM assignment_settlements",
+		"DELETE FROM schema_meta WHERE key = 'backfill:assignment_settlements'",
 		"INSERT INTO observations (thread_id, turn_id, terminal_status, relationship_id, classification, event_id, observed_at) VALUES ('child-research', 't1', 'completed', 'rel-p1-research', 'x', NULL, '2026-10-02T00:00:00+00:00')",
 		"DROP INDEX IF EXISTS journal_kind",
 	} {
