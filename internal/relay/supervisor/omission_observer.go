@@ -123,7 +123,7 @@ func unclaimedOmission(ctx context.Context, selection store.StateSelection, r fa
 			continue
 		}
 		at, before := delivery.Moment(a.At), delivery.Moment(own.At)
-		if at != nil && (before == nil || at.After(*before) || at.Equal(*before) && a.Row > own.Row) {
+		if before != nil && (at == nil || at.After(*before) || at.Equal(*before) && a.Row > own.Row) {
 			later = true
 		}
 	}
@@ -191,7 +191,8 @@ const unclaimedTurnSQL = `SELECT m.request_id,m.dispatch_request_id,m.issue_key,
   (SELECT terminal_status,settled_at FROM assignment_settlements WHERE relationship_id=r.relationship_id AND thread_id=? AND turn_id=? LIMIT 513) s),
  (SELECT json_group_array(json_object('turn',a.turn_id,'at',a.admitted_at,'row',a.rowid)) FROM
   (SELECT turn_id,admitted_at,rowid FROM generation_turns WHERE relationship_id=r.relationship_id
-   AND execution_generation=g.execution_generation AND evidence=('explicit_admission_bound:' || g.dispatch_turn_id) LIMIT 513) a),
+   AND execution_generation=g.execution_generation AND g.dispatch_turn_id IS NOT NULL AND g.dispatch_turn_id<>''
+   AND evidence=('explicit_admission_bound:' || g.dispatch_turn_id) LIMIT 513) a),
  (SELECT json_group_array(json_object('eventId',e.event_id,'outcome',e.outcome,'stage',e.stage,
   'producer',e.producer,'status',e.turn_status)) FROM (SELECT event_id,outcome,stage,producer,turn_status FROM events
   WHERE relationship_id=r.relationship_id AND execution_generation=g.execution_generation

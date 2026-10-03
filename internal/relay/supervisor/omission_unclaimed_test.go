@@ -134,6 +134,17 @@ func TestCRW398AdmissionAndReportBoundaries(t *testing.T) {
 			c.exec(t, "UPDATE generations SET dispatch_turn_id='business'")
 		}},
 		{"unadmitted", "unmeasured", "dispatch_uncorrelated", false, func(t *testing.T, c *unclaimedChild) { c.exec(t, "DELETE FROM generation_turns") }},
+		{"empty anchor", "unmeasured", "dispatch_uncorrelated", false, func(t *testing.T, c *unclaimedChild) {
+			c.exec(t, "UPDATE generations SET dispatch_turn_id=''")
+			c.exec(t, "UPDATE generation_turns SET evidence='explicit_admission_bound:'")
+		}},
+		{"invalid own admission time", "unreported", delivery.OmittedReason, true, func(t *testing.T, c *unclaimedChild) {
+			c.exec(t, "UPDATE generation_turns SET admitted_at='invalid'")
+			c.exec(t, "INSERT INTO generation_turns SELECT relationship_id,execution_generation,'later',evidence,actor,detail,? FROM generation_turns", nsAt)
+		}},
+		{"invalid competing admission time", "unreported", delivery.OmittedReason, false, func(t *testing.T, c *unclaimedChild) {
+			c.exec(t, "INSERT INTO generation_turns SELECT relationship_id,execution_generation,'later',evidence,actor,detail,'invalid' FROM generation_turns")
+		}},
 		{"standby even if explicitly admitted", "unmeasured", "dispatch_uncorrelated", false, func(t *testing.T, c *unclaimedChild) {
 			c.r.Turn = "standby"
 			c.exec(t, "INSERT INTO generation_turns SELECT relationship_id,execution_generation,'standby',evidence,actor,detail,admitted_at FROM generation_turns")
