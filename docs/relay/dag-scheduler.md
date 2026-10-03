@@ -34,7 +34,7 @@ no second connection, so with unchanged store rows and artifact bytes two readin
 it is not a fingerprint of every source row read. A store with no DAG zone, or a plan it does not hold, answers `unregistered_scope` and is left as it was.
 
 A node is a **candidate** when it is not owned and every incoming edge is satisfied (the predicates are [Edge satisfaction](#edge-satisfaction)).
-Candidates are then checked against what lies outside the plan, ranked, and cut by free slots and by edit-region overlap.
+Candidates are then checked against what lies outside the plan, ranked, and cut by free slots and by exclusive edit-region overlap. Other overlaps are released and settled when the branches meet ([Edit regions](#edit-regions)).
 
 ### Dispositions and reasons
 
@@ -44,7 +44,7 @@ Candidates are then checked against what lies outside the plan, ranked, and cut 
 | wait | `wait:edge:<edge_id>` | the first unsatisfied incoming edge (by edge id) has no recorded result yet |
 | defer | `defer:no_capacity` | a candidate that the free slots do not reach: the binding ceiling is full |
 | defer | `defer:capacity_unmeasured` | an enforced ceiling on a dimension nobody measured leaves no basis to say a slot is free |
-| defer | `defer:edit_overlap` | its edit regions overlap a node that is running or accepted and not yet landed, or a region is undeclared |
+| defer | `defer:edit_overlap` | its edit regions overlap a node that is running or accepted and not yet landed in a way that cannot be settled at merge time (an exclusive overlap), or a region is undeclared |
 | defer | `defer:merge_window` | a merge turn is moving (merging, or unknown) a branch the node's edges name |
 | defer | `defer:ownership_unverified` | the plan's project does not have exactly one registered parent to reserve under |
 | defer | `defer:authority_pending` | a decision edge has no recorded decision, from a required authority, with the digest the plan fixed |
@@ -181,7 +181,7 @@ under two acceptances. The first violated path decides the reason.
 
 Candidates are ordered by the hop count of the longest chain each starts (critical path), then by the nodes below it, then by the stored time it became ready,
 then by node id. There is no wave barrier: a long independent node does not hold back a short dependent chain, because a node waits for its own predecessors. Capacity and edit-region conflicts may still defer a candidate. The first candidates
-that fit the free slots and do not overlap are ready; each candidate cut is deferred with `defer:no_capacity`, `defer:capacity_unmeasured` or `defer:edit_overlap`, and the pass records which limit decided
+that fit the free slots and do not overlap exclusively are ready; each candidate cut is deferred with `defer:no_capacity`, `defer:capacity_unmeasured` or `defer:edit_overlap`, and the pass records which limit decided
 the first cut: `none`, `no_capacity`, `edit_overlap` or `capacity_unmeasured`.
 
 ### Capacity
@@ -194,23 +194,58 @@ observation leaves no slot free.
 ### Edit regions
 
 `crw relay dag-region-declare --plan P --node N --actor A --regions @file` declares the places an implementation node will edit, before it is released: 1 to 64 regions of
-a repository, path, kind (`tree`, `file`, `symbol` with its symbol) and change (`edit`, `rename`, `delete`). A repository is a forge `owner/name` or an existing local
+a repository, path, kind (`tree`, `file`, `symbol` with its symbol), change (`edit`, `rename`, `delete`) and grade (below). A repository is a forge `owner/name` or an existing local
 checkout (the directory its absolute path reaches, links resolved); whitespace inside a path component is kept and the path is cleaned before it is stored, while surrounding whitespace and control characters are refused. A rename, a delete and the
-hotspots (lockfiles, anything under `.github/`, a Makefile or Dockerfile, `.sql` files, a `schema` or `migrations` directory) are exclusive: they conflict with any other
-region of the repository. A node with no declaration counts as overlapping every other node: it waits while any node holds regions, and every declared node waits while one
+hotspots (lockfiles, anything under `.github/`, a Makefile or Dockerfile, `.sql` files, a `schema` or `migrations` directory) hold the whole repository: they conflict with any other
+region of the repository, and are stored as the `exclusive` grade whatever was declared. A node with no declaration counts as overlapping every other node: it waits while any node holds regions, and every declared node waits while one
 undeclared node holds. Regions are held from release until the head lands, so a declaration cannot change while the node holds them. A forge slug and a checkout path of one
 repository are two keys; a plan names one spelling per repository.
+
+A region is a signal for the merge order and for the handling of a conflict, and not a gate on release: the scheduler is there to run nodes in parallel, so only an overlap that cannot be settled when the branches meet holds a release back.
+
+#### Grades
+
+Every region carries a grade, which says how an overlap on its place is settled:
+
+| Grade | The region claims | Against an overlapping region |
+| --- | --- | --- |
+| `independent` (the default) | nobody else edits this place | the claim is contradicted: the overlap is judged `exclusive` |
+| `mechanical` | the result of an overlap is fixed by a rule it names | released, and left out of the overlap count |
+| `local` | the same file, another clause or symbol, a small hunk | released as `local-optimistic`; the later child resolves it at its base refresh |
+| `exclusive` | an overlap cannot be settled at merge time | `defer:edit_overlap` |
+
+A `mechanical` region names its rule, `union` (both sides add rows or lines to one list), `renumber` (a clash of ids or numbers is renumbered) or `regenerate:<command>` (the file is derived and the command rebuilds it; the command is not blank, has no whitespace at its ends or control character, and the rule is at most 200 bytes). A mechanical region without a rule, a rule that is not one, a rule on any other grade and a grade that is not one of the four are refused as `malformed_receipt`: the relay's existing reason for a region that is not valid. A region declared without a grade is `independent`, which is how every declaration made before grades existed reads (it has no row in `dag_node_region_grades`), and so an overlap with one defers exactly as it did.
+
+The grade of an overlap is judged on the place two regions of one repository share (a tree contains what lies under it, a path is itself, two symbols of one file are apart unless they are the same symbol), from both grades: an `exclusive` side makes it `exclusive`, and so does an `independent` side, whose claim the overlap contradicts; two `mechanical` sides are a `mechanical` overlap when they name the same rule, and a `local` one when they name two (neither rule covers the other side's change); every other mix is `local`. The shared contract surfaces are exclusive whatever grade is declared: `contract/schema`, `contract/golden` and `contract/fixtures` and what lies under them, any `testdata/golden` directory, and the CLI spec `internal/relay/argparse/specs.json`. That list holds the place and not the repository: a symbol key means nothing on a listed file, so two commands of the CLI spec are one place, and an overlap whose common place is a tree that holds a listed path (two trees above the CLI spec, or two `testdata` directories, say) is exclusive too, while two trees that hold none, or a tree and a file under it that is not listed, stay graded by their own grades. The judgement reads declarations and not the repository, so a tree further above a golden directory (a package directory) is not looked into: it claims everything under it, and a `testdata/golden` it holds is exclusive only if the tree stops at or below `testdata`. Declare a tree that stops short of those paths where the work does not touch them. A declaration stores the grade a region is judged at (a listed path as `exclusive` with no rule), and the judgement applies the list again when it reads, so a row stored before the list grew cannot sit below it.
+
+#### The release rule
+
+For each implementation candidate the reading judges what it overlaps among the nodes that hold regions (the nodes running or accepted and not yet landed, and the candidates already released in this pass). Per holder the worst grade over every pair of regions counts once. The candidate is released under a rule:
+
+| Rule | When | Released |
+| --- | --- | --- |
+| `independent` | it overlaps nothing that is held | yes |
+| `mechanical` | every overlap is mechanical | yes |
+| `local-optimistic` | the worst overlap is local | yes |
+| `defer` | an overlap is exclusive, or a side is undeclared | no: `defer:edit_overlap`, and the pass's deciding limit is `edit_overlap` as before |
+
+The rule is in the node's `release` object, and in nothing the release path reads as a hold: a released node is a plain ready node with no reason and no detail. A deferred node keeps its reason and its detail names the rule, the row that decided it and the counts. The `release` object has the `rule`, the `overlaps` by grade (`mechanical`, `local`, `exclusive`: the holders it overlaps, each by the worst grade of their overlap) and the `basis`: one row per overlapping pair of regions, worst grade first, at most 16 kept with `basis_omitted` counting the rest. A row names the `holder`, the `repository` and `path` of the place both touch (the deeper of the two paths), the `grade` of the overlap, the grade and rule each side was judged at (`candidate_grade`, `candidate_rule`, `holder_grade`, `holder_rule`), and what the plan's recent conflict observations say of that place: `recent_observations` (the latest twenty by the time they were stored), `recent_conflicts` (those that conflicted in a file of the place, under the repository name the region was declared with) and `unattributed_conflicts` (those that conflicted without naming any file in that repository: observed before files were recorded, in another repository, or under a name that could not be tied to it). An undeclared side has a row of its own with `undeclared` set to `holder` or `candidate` and no place. The decision follows the grades alone; the observations are evidence about the places.
+
+`dag-conflict-observe` records the files git could not merge in `dag_conflict_observation_files`, under each name the observed checkout is known by: its path with links resolved and, when its `origin` remote names `owner/name` on the forge the relay talks to (`GH_HOST`, else `github.com`), that slug. A checkout whose origin is unset, local or on another host is known by its path alone, and a linked worktree's path is not its main checkout's, so the two meet only through the slug. The origin is read at the observation for this evidence only (it is never given to the isolated repository the merge runs in), and a repeat of an observation writes nothing, so changing the origin afterwards changes no row.
+
+A candidate that is not an implementation node edits no repository and is not judged. A candidate that the judgement released can still be cut by capacity, and keeps the rule its overlaps earned.
 
 ### Pass records
 
 `crw relay dag-ready --plan P --record --actor A` keeps the reading as a row of `dag_passes`: the ready node ids in order, the free slots, the ceiling, the held slots, the
-deciding limit and the node dispositions. A pass is a fact and never a decision; a duplicate wake records another pass.
+deciding limit and the node dispositions, each judged node with its `release` object (the rule, the overlaps by grade and the basis). The reading's `pass` object adds `overlaps` (the overlaps the pass judged, by grade, summed over its candidates) and
+`overlap_count` (the local and exclusive ones: mechanical overlaps are released and left out of it). A pass is a fact and never a decision; a duplicate wake records another pass.
 
 ## Releasing a node
 
 `crw relay dag-release --plan P --node N --actor A --request @file --marker-root DIR` (with the explicit `--state` and `--socket` a managed start needs) gives a ready node to a Codex child through the managed-start
 engine. The actor is the project's registered parent: it owns the slot and the child. The request document, `dag-release-request/1`, carries what the plan and the store do not hold: for an
-implementation node the base (repository and ref; the commit is read from the target, never given), the rule version the node is dispatched under (skills digest, model, effort, prompt template, relay build:
+implementation node the base (repository and ref; the commit is read from the target, never given; a correction reads it the same way, see [Corrections](#corrections)), the rule version the node is dispatched under (skills digest, model, effort, prompt template, relay build:
 every field required), volatile snapshots (see below), the instructions, the criteria, the criteria source and scope reference, the artifact roots, the allowed recipients, and the parent's and the child's host and
 settings.
 
@@ -276,6 +311,8 @@ A node that is owned already is `duplicate_assignment`, an unmeasured ceiling `c
 A volatile snapshot is a file the node reads that can change (a Linear document, an issue) captured before dispatch: it must be an absolute path under one of the child's artifact roots (B-05), exist (B-03) and hash to
 the digest the manifest names (B-04). It is part of the manifest digest, so a later edit is a different manifest.
 
+"Under" a root, here and for the artifacts a predecessor handed over, is the store's own rule for authorizing a read (`store.IsWithin`): containment by path component, both sides normalized, a root of `/` holding every absolute path. A path that leaves a root by `..` is out of scope (B-05) at that check, not only when the file is hashed. The scope a manifest records for an artifact is the root as it was given, the longest one that holds the path; a root of `/` is the answer only when no longer root holds the path, and the scope recorded for a normalized path that an earlier build already answered is unchanged.
+
 ## Accepting a result
 
 `crw relay dag-accept --plan P --node N --actor A --rule-version @file [--repository OWNER/NAME --pull-request N] [--event E] [--supersedes ID]` records that the parent accepted a node's result (contract 4.3).
@@ -297,7 +334,7 @@ The rule version (skills digest, model, effort) is recorded with the acceptance 
 ## Integration
 
 `crw relay dag-integration-observe --plan P --node N --actor A [--target REPOSITORY@REF ...]` records whether the accepted head is contained in the branches it has to land on, as a fact the relay reads: `git merge-base --is-ancestor` against a local checkout, the
-compare API (`behind_by` 0) for a forge repository. The parent's order is accept, merge, `assignment-mark merged`, observe. The required targets are those of the node's outgoing `integrated` and code-pinned edges, every target the acceptance already has an
+compare API (`behind_by` 0) for a forge repository; the compare call is bounded by the same 30 seconds as the merge lane's branch-tip read (`mergeturn.ForgeCallTimeout`), plus at most five more seconds for a process that outlived the kill to let go of the output pipe, and a forge that does not answer in that time is a host failure (exit 3) that records nothing. The parent's order is accept, merge, `assignment-mark merged`, observe. The required targets are those of the node's outgoing `integrated` and code-pinned edges, every target the acceptance already has an
 observation for (a negative one included, so observing a subset never completes a node) and the ones observed now; a terminal node names its target with `--target`. A node is **integrated** when every required target contains the head and the `merged` mark exists on
 the same revision of the same generation. The observation alone, or the mark alone, integrates nothing. A squashed or rebased landing leaves a head that is not an ancestor: when a merge turn recorded that it landed this head on the branch, the reading says `blocked:integration_unprovable` rather than guessing; without such a turn the node simply keeps waiting.
 Observations are append-only: an identical reading (same head, same tip, same answer) is a replay, and any change is the next observation. A paused or cancelled relationship records none (contract 3.2); observations already written stay. The targets are read from the plan as it stands when the observation is written, and the node's newest slot tenure is returned, by name, when it integrates.
@@ -311,7 +348,7 @@ supersedes the active one and keeps the history, so a rejection after an approva
 ## Corrections
 
 A correction goes back to the same child (contract 3.2): a `needs_changes` ruling opens the next generation of the same relationship and the existing verdict writer sends the correction message in the same transaction, so a manifest cannot be placed in that
-generation afterwards. The protocol therefore puts the manifest into the one text the relay itself sends. `dag-correct --prepare --manifest-request @file` rebuilds and verifies the node's input manifest as the store holds it now, stores it, and prints an English
+generation afterwards. The protocol therefore puts the manifest into the one text the relay itself sends. `dag-correct --prepare --manifest-request @file` rebuilds and verifies the node's input manifest as the store holds it now (the base it records is read from the named target branch as a release reads it: the request names the repository and the ref, and a `sha` it states is checked against the branch tip and refused as `merge_base_mismatch` when the branch reads another commit, with nothing stored; the recorded commit is always the one the branch reads), stores it, and prints an English
 instruction line that names the manifest, a copy of its canonical bytes kept under the child's first artifact root (the file the child reads, since it cannot read the relay's store; see *The frozen copy*) and the sha256 of that file; the parent submits that line as the **restoration** finding of its `needs_changes` ruling. (When no ruling can open the generation, the coordinator opens it by hand under the dispatch request id the same step prints and carries the line in its own dispatching message: [Two ways to open the generation](#two-ways-to-open-the-generation).) After the ruling, `dag-correct` (without `--prepare`) binds the generation the ruling opened to the manifest that finding names
 (`dag_node_executions`, kind `correction`) once the manifest is stored for this node at its current slice and criteria and the restoration note carries, word for word, the instruction that manifest was prepared with (this generation, the path of the copy and its hash). No file is read when the generation is recorded: the child checks the copy against the hash in the line it was sent. The bound digest is derived from what the child was told: a digest in an ordinary finding does not bind, a restoration block that names two different manifests is refused, a ruling without the block leaves the previous manifest in force (`carried_over`), and a `--manifest-digest` that differs
 is refused, also when the generation is already bound. A node whose accepted head landed in every target is refused in both steps ([Handling a stale node](#handling-a-stale-node)). The previous acceptance stays active and reads `blocked:stale_head` until the parent accepts the corrected result with `--supersedes`; what consumed the old acceptance then reads stale ([Invalidation](#invalidation)).
@@ -465,7 +502,7 @@ An unknown merge turn stays unknown until the head is observed; the merge lane a
 | Command | Reads or writes | Answer |
 | --- | --- | --- |
 | `dag-ready --plan P [--record --actor A]` | reads; writes one `dag_passes` row with `--record` | the reading: `plan_id`, `plan_revision`, `state_digest`, `input_digest`, `pass`, `ready`, `nodes` |
-| `dag-region-declare --plan P --node N --actor A --regions R` | writes `dag_node_regions` | the declaration in force and whether it replayed |
+| `dag-region-declare --plan P --node N --actor A --regions R` | writes `dag_node_regions` and `dag_node_region_grades` | the declaration in force (each region with its `grade` and `rule`) and whether it replayed |
 | `dag-release --plan P --node N --actor A --request R --marker-root D` | writes the intent (`dag_releases` and `dag_release_requests`, or a `rereleased` row of `dag_release_recoveries` after a close of the same manifest; `dag_input_manifests`), reserves a slot, starts a managed task, binds it (`dag_node_executions`) | the release: manifest digest, request id, slot, relationship, generation and child; exit 2 with the managed engine's answer nested under `managed` when the start was refused or incomplete |
 | `dag-release-close --plan P --node N --actor A --manifest D --request-id Q --reason R` | writes the closure (`dag_release_recoveries`) and returns the node's slot, in one transaction; then removes the closed intent's frozen copy and journals it | the closure: `request_id`, `slot_id`, `slot_released`, `replayed`, `successor_request_id`, `frozen_copy` (path and whether the file is gone) |
 | `dag-accept --plan P --node N --actor A --rule-version R [--repository R --pull-request N --event E --supersedes ID]` | writes `dag_acceptances` (and `dag_acceptance_forge`, or a revalidation); returns a non-PR node's slot | the acceptance: `acceptance_id`, `replayed`, `revalidated`, `superseded_acceptance_id`, `head_sha`, `evidence_digest`, `slot_released` |
@@ -474,7 +511,7 @@ An unknown merge turn stays unknown until the head is observed; the merge lane a
 | `dag-correct --plan P --node N --actor A [--prepare --manifest-request R] [--manifest-digest D]` | `--prepare` stores a manifest; otherwise writes `dag_node_executions` (kind `correction`) | the instruction line, the manifest digest and the dispatch request id, or the generation bound, `carried_over`, `opened_by`, `dispatch_request_id` and `dispatch_turn_id` |
 | `dag-merge-judge --plan P --node N --actor A [--repository OWNER/NAME --pull-request N]` | appends `dag_merge_checks` (when the judgement differs from the latest) | the outcome, reason, round, check sequence, heads, base tip and failed required checks |
 | `dag-merge-request --plan P --node N --actor A --host H [--repository OWNER/NAME --pull-request N]` | the judgement as above; asks the merge lane for a turn (`merge_turns`) when eligible | the judgement and the turn |
-| `dag-conflict-observe --plan P --actor A --repository PATH --left-node N --right-node M --left-head SHA --right-head SHA` | writes `dag_conflict_observations` | the number of conflicting files and their names |
+| `dag-conflict-observe --plan P --actor A --repository PATH --left-node N --right-node M --left-head SHA --right-head SHA` | writes `dag_conflict_observations` and `dag_conflict_observation_files` | the number of conflicting files and their names |
 | `dag-cap-basis-record --limit L --revision R --w-minutes W --w-source S --s-minutes S --s-source S --actor A [--plan P]` | writes `dag_cap_basis` | the basis recorded |
 | `dag-coordinator-claim --plan P --actor A --session-nonce N [--project K]` | writes `dag_coordinator_claims` | the claim: epoch, task, binding, nonce, whether it replayed, the epoch and task it replaced |
 | `dag-adopt --plan P --node N --actor A [--expect-epoch E]` | writes `dag_node_executions` (kind `parent_handover`) | the successor relationship bound to the node, the child, the generation, whether it replayed |
@@ -485,12 +522,12 @@ An unknown merge turn stays unknown until the head is observed; the merge lane a
 The commands that decide take `--expect-epoch E`, the epoch the session holds: `dag-region-declare`, `dag-release`, `dag-release-close`, `dag-accept`, `dag-integration-observe`, `dag-decision-record`, `dag-correct` (both forms), `dag-merge-judge`, `dag-merge-request`, `dag-adopt`, `dag-cap-basis-record`, and, in the revision document, `dag-plan-put`. `dag-ready --record` and `dag-conflict-observe` record measurements and decide nothing, and are not fenced; neither are the summary queue's commands, which decide nothing about the plan.
 
 Refusals use the relay's existing reasons: `unregistered_scope` (a plan or node that is not there), `malformed_receipt` (a region or a request that is not valid),
-`disposition_conflict` (a node that edits no repository, or whose regions are held, or that is not ready), and the reasons of the table above. A write of an epoch that is not the plan's is `stale_coordinator_epoch` (new, decision D-02: the second reason this feature adds to the relay's contract, beside `plan_revision_conflict`). `dag-release-close` refuses with `malformed_receipt`, `unregistered_scope`, `scope_role_mismatch` and `disposition_conflict`. Commands can also refuse with `merge_target_unreadable`, `not_acknowledged`, `relationship_conflict`, `relationship_not_active`, `revision_ambiguous`, `scope_role_mismatch`, `slot_unknown` and `unregistered_relationship`. Exit codes are the relay's: 0, 2 refusal, 3 host, 4 usage.
+`disposition_conflict` (a node that edits no repository, or whose regions are held, or that is not ready), and the reasons of the table above. A write of an epoch that is not the plan's is `stale_coordinator_epoch` (new, decision D-02: the second reason this feature adds to the relay's contract, beside `plan_revision_conflict`). `dag-release-close` refuses with `malformed_receipt`, `unregistered_scope`, `scope_role_mismatch` and `disposition_conflict`. `dag-correct` refuses an actor that is not the parent of the node's relationship with `scope_role_mismatch` in both of its steps, and `dag-correct --prepare` refuses a stated base commit that the branch does not read with `merge_base_mismatch`. Commands can also refuse with `merge_base_mismatch`, `merge_target_unreadable`, `not_acknowledged`, `relationship_conflict`, `relationship_not_active`, `revision_ambiguous`, `scope_role_mismatch`, `slot_unknown` and `unregistered_relationship`. Exit codes are the relay's: 0, 2 refusal, 3 host, 4 usage.
 
 ## The store
 
 The scheduler adds tables to the DAG zone ([DAG plans](dag-plans.md#the-store)) as appended statements. `dag_passes` and `dag_node_regions` are described above; `dag_release_requests` freezes the request of a release with its intent; `dag_release_recoveries` holds the closure of an abandoned release and the successor release of a closed one (see Recovering an abandoned release);
-`dag_conflict_observations` holds the merge-tree conflict counts of parallel branches; `dag_merge_checks`, `dag_acceptance_revalidations` and `dag_acceptance_forge` hold what the relay observed of an accepted pull request, re-verification of an accepted
+`dag_conflict_observations` holds the merge-tree conflict counts of parallel branches and `dag_conflict_observation_files` the files they could not merge, by repository name; `dag_node_region_grades` holds the grade and rule of each declared region (a side table of `dag_node_regions`, because a shipped statement is never edited); `dag_merge_checks`, `dag_acceptance_revalidations` and `dag_acceptance_forge` hold what the relay observed of an accepted pull request, re-verification of an accepted
 output under new criteria, and the forge identity of an accepted implementation node. `dag_summary_outbox` is the queue of the project's Linear summaries (see [DAG summary outbox](dag-outbox.md)).
 
 ## How the acceptance path is verified
@@ -510,6 +547,7 @@ seam fired. What is not run is a real child: a paused node's child is a seeded r
 
 Where the code reads the contract differently, or adds to it, and why:
 
+* Contract 7.2 names hotspots, renames and deletes as exclusive and an unknown declaration as overlapping everything; the grades (independent, mechanical, local, exclusive), the release rule and the list of shared contract surfaces are added to it by the active parallel release design, in which a region is a signal for the merge order and not a gate. A pass that records the rule needs no new column: it rides in the node dispositions of `dag_passes`.
 * Contract 7.2 names the `edit_regions` tables for regions; those are two-project agreements keyed by base revision with no unknown or hotspot rule, so per-node declarations have their own table and reuse only the place vocabulary.
 * The managed request id of a release is derived from the plan, the node and the manifest digest (contract 2.6 names the node and the digest): node ids are plan-local and request ids are global to the store. Every predicate carries the plan id, which the contract's SQL predates. The acceptance digest includes the plan id too: acceptance ids are a store-wide key and node ids are plan-local.
 * The reading's vocabulary adds `blocked:release_abandoned`, `blocked:evicted` (D-12) and `blocked:stale_predecessor`; `blocked:stale_epoch` is not emitted (the fence refuses writes, a read is not fenced). A `blocked_needs_input` receipt reads as `blocked:input_unverified_at_consumption` (B-15).
@@ -537,6 +575,8 @@ Where the code reads the contract differently, or adds to it, and why:
 * Contract 3.2 and E-19 send a correction to the same child through the existing path. That path opens a generation with a `needs_changes` ruling, and the relay's verdict writer answers a replay to a second ruling on a head it ruled `verified` unless the criteria registered for the relationship changed since. For a stale node whose criteria did not change the generation is opened by hand with the relay's `generation-open` and `generation-bind` (documented for the coordinator in `crw-run`), and `dag-correct` binds it to the prepared manifest under the conditions of [Two ways to open the generation](#two-ways-to-open-the-generation). The verdict writer is not changed, and no refusal reason, zone statement or table is added: the dispatch request id is kept in the existing nullable `managed_request_id` column of `dag_node_executions`.
 
 ## Where the code reads the contract (D-19)
+
+The region grades (CRW-409) resolved the citations of sections 7.1 and 7.2 (nine: the closed decision set of `reevaluation.md`, `capacity/capacity.go`, the `relay-sqlite.sql` ranges for slots, limits, usage, regions and the merge lane, and `store/mergeturn_capacity.go`) at the contract's commit and at its baseline: eight are identical at the cited lines, one (`reevaluation.md` 55 to 73) gained a table row (`defer:size_check`) inside the range, with the cited `defer:edit_overlap` row at the same line, and none is gone. The claims they carry hold: an unknown region overlaps everything, and a hotspot, a rename and a delete are exclusive.
 
 The contract cites file and line at an older commit. Every citation of the sections this issue consumes (76 of them) was resolved at that commit and at this baseline: 53 are identical at the cited lines, 23 moved with identical content
 (the largest offsets: `registry.go` +30, `delivery/service.go` +84, `relay.md` +27), none changed and none is gone. The claims the design leans on still hold, restated for this baseline: before this change managed-start, registry and delivery did not consult execution slots (the scheduler now couples slot reservation with release intent); there was no
