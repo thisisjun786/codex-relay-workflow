@@ -40,6 +40,7 @@ func runCRR(t *testing.T, mode string, goSide func(f *fixture, c *Criteria, out 
 }
 
 func TestCRR01_an_empty_or_duplicate_set_is_refused_before_any_row(t *testing.T) {
+	t.Parallel()
 	runCRR(t, "refused", func(f *fixture, c *Criteria, out map[string]any) {
 		var results []any
 		for _, entries := range [][]any{{}, {withID("c1", crit("   ", nil))}, {withID("c1", crit("one", nil)), "not-an-object"}, {withID("c1", crit("one", nil)), withID(" c1 ", crit("again", nil))}} {
@@ -53,6 +54,7 @@ func TestCRR01_an_empty_or_duplicate_set_is_refused_before_any_row(t *testing.T)
 }
 
 func TestCRR02_the_first_registration_normalises_and_returns_the_managed_set(t *testing.T) {
+	t.Parallel()
 	runCRR(t, "first", func(f *fixture, c *Criteria, out map[string]any) {
 		set := crrSet()
 		r, err := c.EnsureRegistered(f.ctx, "rel-1", []any{set[1], set[0]}, crrSource)
@@ -62,6 +64,7 @@ func TestCRR02_the_first_registration_normalises_and_returns_the_managed_set(t *
 }
 
 func TestCRR03_an_exact_replay_keeps_the_timestamp_and_writes_no_journal(t *testing.T) {
+	t.Parallel()
 	runCRR(t, "replay", func(f *fixture, c *Criteria, out map[string]any) {
 		_, err := c.EnsureRegistered(f.ctx, "rel-1", crrSet(), crrSource)
 		mustDo(t, err)
@@ -73,6 +76,7 @@ func TestCRR03_an_exact_replay_keeps_the_timestamp_and_writes_no_journal(t *test
 }
 
 func TestCRR04_a_changed_title_source_or_requirement_refuses_without_rewriting(t *testing.T) {
+	t.Parallel()
 	runCRR(t, "changed", func(f *fixture, c *Criteria, out map[string]any) {
 		_, err := c.EnsureRegistered(f.ctx, "rel-1", crrSet(), crrSource)
 		mustDo(t, err)
@@ -95,6 +99,7 @@ func TestCRR04_a_changed_title_source_or_requirement_refuses_without_rewriting(t
 }
 
 func TestCRR05_register_still_replaces_a_set_ensure_would_keep(t *testing.T) {
+	t.Parallel()
 	runCRR(t, "replace", func(f *fixture, c *Criteria, out map[string]any) {
 		_, err := c.EnsureRegistered(f.ctx, "rel-1", crrSet(), crrSource)
 		mustDo(t, err)
@@ -108,6 +113,7 @@ func TestCRR05_register_still_replaces_a_set_ensure_would_keep(t *testing.T) {
 }
 
 func TestCRR06_a_corrupt_or_mistyped_stored_set_is_refused_and_left(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"corrupt", "required2"} {
 		t.Run(mode, func(t *testing.T) {
 			runCRR(t, mode, func(f *fixture, c *Criteria, out map[string]any) {
@@ -137,6 +143,7 @@ func TestCRR06_a_corrupt_or_mistyped_stored_set_is_refused_and_left(t *testing.T
 }
 
 func TestCRR07_two_connections_register_exactly_one_set(t *testing.T) {
+	t.Parallel()
 	for _, same := range []bool{false, true} {
 		name := map[bool]string{false: "different sets", true: "same set"}[same]
 		t.Run(name, func(t *testing.T) {

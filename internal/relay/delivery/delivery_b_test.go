@@ -295,6 +295,7 @@ func TestDEL18_a_deactivated_assignment_is_withheld_with_a_returned_record(t *te
 }
 
 func TestDEL19_a_stopped_assignment_reads_nothing_from_the_host(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "")
 	event := f.queuedEvent(regOpts{})
 	f.setStatus("cancelled")
