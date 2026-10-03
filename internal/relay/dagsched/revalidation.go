@@ -46,6 +46,8 @@ func StaleActions() []string {
 const (
 	OpenedByRuling         = "ruling"
 	OpenedByGenerationOpen = "generation_open"
+	// OpenedByDecisionReply is a generation a decision reply (split_approval or scope_change) advanced: the generation's own reason, as generation-open never writes it.
+	OpenedByDecisionReply = "decision_reply"
 )
 
 // CorrectionRequestID is the dispatch request id a correction generation opened by hand carries (generation-open --dispatch-request-id): derived from the plan, the node, the manifest and the generation, so
@@ -66,11 +68,14 @@ func (s *Scheduler) describeOpening(ctx context.Context, q store.Querier, plan, 
 	if !request.Valid {
 		return nil
 	}
-	var turn sql.NullString
-	if _, err := queryOne(ctx, q, "SELECT dispatch_turn_id FROM generations WHERE relationship_id = ? AND execution_generation = ?", []any{rel.ID, rel.Generation}, &turn); err != nil {
+	var turn, reason sql.NullString
+	if _, err := queryOne(ctx, q, "SELECT dispatch_turn_id, reason FROM generations WHERE relationship_id = ? AND execution_generation = ?", []any{rel.ID, rel.Generation}, &turn, &reason); err != nil {
 		return err
 	}
 	out.OpenedBy, out.DispatchRequestID, out.DispatchTurnID = OpenedByGenerationOpen, request.String, turn.String
+	if reason.String == delivery.DecisionReply {
+		out.OpenedBy = OpenedByDecisionReply
+	}
 	return nil
 }
 

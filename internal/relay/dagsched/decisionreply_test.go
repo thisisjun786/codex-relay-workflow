@@ -11,8 +11,8 @@ import (
 )
 
 // CRW-433: a split approval or scope change returned with decision-reply opens the next generation of the SAME relationship, and dag-correct binds that generation to the node so that its result is
-// accepted. These tests drive the relay's own decision writer (delivery.Ack.RecordDecision) over the real release path and the scheduler's own correction and accept functions; the words dag-correct
-// prints are literals so that a renamed constant cannot silently rename them. Synthetic data only.
+// accepted. These tests drive the relay's own decision writer and anchor binder (delivery.Ack.RecordDecision, BindDispatchedRevision) over the real release path and the scheduler's own correction and
+// accept functions; the words dag-correct prints are literals so that a renamed constant cannot silently rename them. Synthetic data only.
 
 const drReduced = "preserve the contract, first part only"
 
@@ -43,7 +43,7 @@ func newDRWorldOn(t *testing.T, node string) *drWorld {
 		t.Fatal(err)
 	}
 	// the decision is routed to the child, so the child is an allowed recipient
-	k.exec("UPDATE relationships SET allowed_recipients = ? WHERE relationship_id = ?", `["parent","`+w.child+`"]`, w.rid)
+	k.exec("UPDATE relationships SET allowed_recipients = ? WHERE relationship_id = ?", fmt.Sprintf("[\"parent\",\"%s\"]", w.child), w.rid)
 	now := k.clock()
 	w.blocked = "evt-blocked-" + w.rid
 	k.exec("INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at)"+
@@ -63,13 +63,18 @@ func (w *drWorld) register() {
 	}
 }
 
-// revise is the plan revision that narrows the node's criteria to the reduced set.
-func (w *drWorld) revise(request string) {
+// revise is the plan revision that narrows the node's criteria to the reduced set; extra changes the node beyond that.
+func (w *drWorld) revise(request string, extra ...func(n doc)) {
 	w.k.t.Helper()
-	w.k.invRevise(w.plan, w.node, request, func(n doc) { n["criteria_set_digest"] = drDigest() })
+	w.k.invRevise(w.plan, w.node, request, func(n doc) {
+		n["criteria_set_digest"] = drDigest()
+		for _, f := range extra {
+			f(n)
+		}
+	})
 }
 
-// decide is decision-reply with the given kind, and the generation it opened.
+// decide is decision-reply with the given kind, and the id of the decision event it recorded.
 func (w *drWorld) decide(kind, digest string) (string, error) {
 	w.k.t.Helper()
 	record, err := w.ack.RecordDecision(context.Background(), delivery.DecisionRequest{EventID: w.blocked, Decision: kind, Turn: "decision-turn", Note: "split the work: this node keeps the first part", CriteriaDigest: digest})
@@ -93,10 +98,19 @@ func (w *drWorld) mustDecide(kind, digest string) string {
 	return id
 }
 
-// deliver is the delivery engine having dispatched the decision message into a turn of the child: the generation the reply opened is bound to it.
-func (w *drWorld) deliver(generation int64) {
+// dispatched is the delivery engine having sent the decision message into a turn of the child.
+func (w *drWorld) dispatched(decision, turn string) {
 	w.k.t.Helper()
-	w.k.exec("UPDATE generations SET anchor_state = 'bound', dispatch_turn_id = 'turn-decision', bound_at = ? WHERE relationship_id = ? AND execution_generation = ?", w.k.clock(), w.rid, generation)
+	w.k.exec("UPDATE deliveries SET state = 'dispatched', dispatch_turn_id = ? WHERE event_id = ?", turn, decision)
+}
+
+// deliver is the delivery and then the relay's own binder, which binds the generation the decision opened to the turn it was dispatched into.
+func (w *drWorld) deliver(decision string) {
+	w.k.t.Helper()
+	w.dispatched(decision, "turn-decision")
+	if _, err := w.ack.BindDispatchedRevision(context.Background(), decision); err != nil {
+		w.k.t.Fatal(err)
+	}
 }
 
 func (w *drWorld) correct(actor, digest string) (CorrectionResult, error) {
@@ -109,6 +123,21 @@ func (w *drWorld) executions() string {
 	return rvRows(w.k, "SELECT relationship_id, execution_generation, manifest_digest, kind, COALESCE(managed_request_id, '') FROM dag_node_executions WHERE plan_id = ? AND node_id = ? ORDER BY execution_generation", w.plan, w.node)
 }
 
+// count is how many executions the node has recorded.
+func (w *drWorld) count() int {
+	return w.k.count("SELECT COUNT(*) FROM dag_node_executions WHERE plan_id = ? AND node_id = ?", w.plan, w.node)
+}
+
+// previous is the manifest the child was dispatched with.
+func (w *drWorld) previous() string {
+	w.k.t.Helper()
+	var digest string
+	if err := w.k.s.DB.QueryRow("SELECT manifest_digest FROM dag_node_executions WHERE plan_id = ? AND node_id = ? AND execution_generation = 1", w.plan, w.node).Scan(&digest); err != nil {
+		w.k.t.Fatal(err)
+	}
+	return digest
+}
+
 func (w *drWorld) manifest(digest string) map[string]any {
 	w.k.t.Helper()
 	body, found, err := w.k.repo.ReadManifest(context.Background(), digest)
@@ -118,23 +147,37 @@ func (w *drWorld) manifest(digest string) map[string]any {
 	return body
 }
 
+// refused asks dag-correct and expects the refusal reason, naming text, with every row as it was.
+func (w *drWorld) refused(actor, reason, text string) {
+	w.k.t.Helper()
+	before, manifests := w.executions(), w.k.count("SELECT COUNT(*) FROM dag_input_manifests")
+	_, err := w.correct(actor, "")
+	if refusalReason(err) != reason || !strings.Contains(err.Error(), text) {
+		w.k.t.Fatalf("dag-correct = %v, want %s naming %q", err, reason, text)
+	}
+	if after := w.executions(); after != before || w.k.count("SELECT COUNT(*) FROM dag_input_manifests") != manifests {
+		w.k.t.Fatalf("a refusal wrote:\nbefore %s\nafter  %s", before, after)
+	}
+}
+
 // Criterion c1: after a blocked_needs_input receipt the parent's split approval is delivered and recorded through the relay, the child continues on the same node under the reduced criteria, and the DAG
 // accepts the node's result in the generation the decision opened: it is recorded as an execution of the node, never refused as stale, and no new child is made.
 func TestSplitApprovalGenerationIsRecordedAndItsResultAccepted(t *testing.T) {
 	w := newDRWorld(t)
 	k := w.k
-	var previous string
-	if err := k.s.DB.QueryRow("SELECT manifest_digest FROM dag_node_executions WHERE node_id = 'A' AND execution_generation = 1").Scan(&previous); err != nil {
-		t.Fatal(err)
-	}
+	previous := w.previous()
 	w.revise("dp-r2")
 	w.register()
 	decision := w.mustDecide("split_approval", drDigest())
-	w.deliver(2)
-	if n := k.count("SELECT COUNT(*) FROM generations WHERE relationship_id = ? AND reason = 'decision_reply' AND dispatch_request_id = ?", w.rid, "decision-"+decision); n != 1 {
-		t.Fatalf("the split approval did not open generation 2 under its own request id (%d)", n)
+	w.deliver(decision)
+	if n := k.count("SELECT COUNT(*) FROM generations WHERE relationship_id = ? AND reason = 'decision_reply' AND dispatch_request_id = ? AND dispatch_turn_id = 'turn-decision'", w.rid, "decision-"+decision); n != 1 {
+		t.Fatalf("the split approval did not open generation 2 under its own request id, bound to the turn it was dispatched into (%d)", n)
 	}
-	// the child continues in generation 2 and reports; the relay ruled it verified under the reduced set
+	// the child continues in generation 2: the node reads as running until it reports
+	if n := k.read("dp").node("A"); n.State != StateRunning {
+		t.Fatalf("A while its child continues under the decision = %+v", n)
+	}
+	// the child reports in generation 2 and the relay ruled it verified under the reduced set
 	k.rvReportGeneration(w.rid, "A", 2, drDigest())
 
 	t.Run("the generation is not an execution of the node until dag-correct records it", func(t *testing.T) {
@@ -156,7 +199,7 @@ func TestSplitApprovalGenerationIsRecordedAndItsResultAccepted(t *testing.T) {
 
 	// the manifest is the node as the plan holds it now, with what the child was dispatched with
 	before, after := w.manifest(previous), w.manifest(res.ManifestDigest)
-	if after["criteria_set_digest"] != drDigest() || before["criteria_set_digest"] == drDigest() || after["manifest_digest"] == before["manifest_digest"] {
+	if after["criteria_set_digest"] != drDigest() || before["criteria_set_digest"] == drDigest() || res.ManifestDigest == previous {
 		t.Fatalf("criteria of the manifests: before %v, after %v", before["criteria_set_digest"], after["criteria_set_digest"])
 	}
 	snap := k.snapshot("dp")
@@ -167,9 +210,6 @@ func TestSplitApprovalGenerationIsRecordedAndItsResultAccepted(t *testing.T) {
 		if dag.Canonical(before[key]) != dag.Canonical(after[key]) {
 			t.Fatalf("%s changed: %s -> %s", key, dag.Canonical(before[key]), dag.Canonical(after[key]))
 		}
-	}
-	if n := k.read("dp").node("A"); n.State != StateRunning && n.State != StateReported {
-		t.Fatalf("A while its child continues = %+v", n)
 	}
 
 	// the same call again is a replay, and a supplied digest only cross-checks
@@ -203,7 +243,7 @@ func TestDecisionKindsFixWhatTheDAGRecords(t *testing.T) {
 		w.revise("dp-r2")
 		w.register()
 		decision := w.mustDecide("scope_change", drDigest())
-		w.deliver(2)
+		w.deliver(decision)
 		res, err := w.correct("parent", "")
 		if err != nil || res.OpenedBy != "decision_reply" || res.DispatchRequestID != "decision-"+decision {
 			t.Fatalf("dag-correct of a scope change = %v %+v", err, res)
@@ -225,70 +265,91 @@ func TestDecisionKindsFixWhatTheDAGRecords(t *testing.T) {
 	}
 }
 
-// What dag-correct refuses for a generation a decision opened. Each refusal writes nothing; the existing reasons are reused (no reason is added).
+// What dag-correct refuses for a generation a decision opened. Each refusal writes nothing and the existing reasons are reused (no reason is added): the child must have been told, the node must be what
+// the child was dispatched as but for its criteria, those criteria must be the plan's, and what the child consumed must still be there.
 func TestDecisionGenerationIsNotRecordedUnlessTheChildWasToldAndThePlanHoldsWhatItWasToldOn(t *testing.T) {
-	cases := []struct {
-		name   string
-		setup  func(w *drWorld)
-		actor  string
-		reason string
-		said   string
-	}{
-		{name: "the decision has not reached the child", reason: "disposition_conflict", said: "no dispatch turn", actor: "parent",
-			setup: func(w *drWorld) { w.revise("dp-r2"); w.register(); w.mustDecide("split_approval", drDigest()) }},
-		{name: "the plan still holds the criteria before the split", reason: "criteria_set_changed", said: drDigest(), actor: "parent",
-			setup: func(w *drWorld) { w.register(); w.mustDecide("split_approval", drDigest()); w.deliver(2) }},
-		{name: "only the parent of the relationship records it", reason: "scope_role_mismatch", actor: "someone-else",
-			setup: func(w *drWorld) {
-				w.revise("dp-r2")
-				w.register()
-				w.mustDecide("split_approval", drDigest())
-				w.deliver(2)
-			}},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			w := newDRWorld(t)
-			c.setup(w)
-			before := w.executions()
-			_, err := w.correct(c.actor, "")
-			if refusalReason(err) != c.reason || (c.said != "" && !strings.Contains(err.Error(), c.said)) {
-				t.Fatalf("dag-correct = %v, want %s naming %q", err, c.reason, c.said)
-			}
-			if after := w.executions(); after != before {
-				t.Fatalf("a refusal wrote:\nbefore %s\nafter  %s", before, after)
-			}
-		})
-	}
-
-	t.Run("the plan is revised, then the same call goes through", func(t *testing.T) {
+	t.Run("the decision is queued", func(t *testing.T) {
 		w := newDRWorld(t)
+		w.revise("dp-r2")
 		w.register()
 		w.mustDecide("split_approval", drDigest())
-		w.deliver(2)
-		if _, err := w.correct("parent", ""); refusalReason(err) != "criteria_set_changed" {
-			t.Fatalf("before the plan names the reduced criteria = %v", err)
-		}
+		w.refused("parent", "disposition_conflict", "has not been dispatched")
+	})
+	t.Run("the decision is dispatched and the generation is not bound yet", func(t *testing.T) {
+		w := newDRWorld(t)
+		w.revise("dp-r2")
+		w.register()
+		w.dispatched(w.mustDecide("split_approval", drDigest()), "turn-decision")
+		w.refused("parent", "disposition_conflict", "not bound to it yet")
+	})
+	t.Run("the generation was bound by hand to another turn than the one the decision went into", func(t *testing.T) {
+		w := newDRWorld(t)
+		w.revise("dp-r2")
+		w.register()
+		decision := w.mustDecide("split_approval", drDigest())
+		w.k.exec("UPDATE generations SET anchor_state = 'bound', dispatch_turn_id = 'turn-by-hand', bound_at = ? WHERE relationship_id = ? AND execution_generation = 2", w.k.clock(), w.rid)
+		w.dispatched(decision, "turn-decision")
+		w.refused("parent", "disposition_conflict", "turn-decision")
+		w.refused("parent", "disposition_conflict", "turn-by-hand")
+	})
+	t.Run("the plan holds other criteria than the decision named, then goes through once it names them", func(t *testing.T) {
+		w := newDRWorld(t)
+		w.register()
+		w.deliver(w.mustDecide("split_approval", drDigest()))
+		w.refused("parent", "criteria_set_changed", drDigest())
 		w.revise("dp-r2")
 		if res, err := w.correct("parent", ""); err != nil || res.OpenedBy != "decision_reply" {
-			t.Fatalf("after the plan names them = %v %+v", err, res)
+			t.Fatalf("after the plan names the reduced criteria = %v %+v", err, res)
 		}
 	})
-
-	t.Run("what the child consumed moved since it was dispatched", func(t *testing.T) {
+	t.Run("the node changed beyond its criteria after the child was dispatched", func(t *testing.T) {
+		w := newDRWorld(t)
+		w.revise("dp-r2", invTitle("a node with another title"))
+		w.register()
+		w.deliver(w.mustDecide("split_approval", drDigest()))
+		w.refused("parent", "disposition_conflict", "beyond its criteria")
+	})
+	t.Run("only the parent of the relationship records it", func(t *testing.T) {
+		w := newDRWorld(t)
+		w.revise("dp-r2")
+		w.register()
+		w.deliver(w.mustDecide("split_approval", drDigest()))
+		w.refused("someone-else", "scope_role_mismatch", "not the parent")
+	})
+	t.Run("what the child consumed was superseded since it was dispatched", func(t *testing.T) {
 		w := newDRWorldOn(t, "B")
 		w.revise("dp-r2")
 		w.register()
-		w.mustDecide("split_approval", drDigest())
-		w.deliver(2)
-		// the accepted result B consumed is superseded: the manifest the child was dispatched with rests on an input that is not there any more
+		w.deliver(w.mustDecide("split_approval", drDigest()))
+		// the accepted result B consumed is no longer the active one: the manifest the child was dispatched with rests on an input that is not there any more
 		w.k.exec("UPDATE dag_acceptances SET state = 'superseded' WHERE node_id = 'A'")
-		before := w.executions()
-		if _, err := w.correct("parent", ""); refusalReason(err) != "disposition_conflict" || !strings.Contains(err.Error(), "child was not told") {
-			t.Fatalf("dag-correct = %v, want disposition_conflict saying the child was not told what moved", err)
+		w.refused("parent", "disposition_conflict", "child was not told")
+	})
+}
+
+// A decision that leaves the node as the plan held it (the criteria the plan names are the registered ones, which the child continues under) changes no manifest: the one the child was dispatched with is
+// bound as it is and nothing is stored. It is verified all the same: a predecessor superseded since is refused.
+func TestDecisionReplyWithUnchangedCriteriaCarriesTheManifestOver(t *testing.T) {
+	t.Run("the plan is as it was", func(t *testing.T) {
+		w := newDRWorld(t)
+		previous, manifests := w.previous(), w.k.count("SELECT COUNT(*) FROM dag_input_manifests")
+		w.deliver(w.mustDecide("split_approval", releaseCriteriaDigest()))
+		// a digest the caller supplies is only cross-checked against what the decision derives
+		if _, err := w.correct("parent", dig("another manifest")); refusalReason(err) != "disposition_conflict" || w.count() != 1 {
+			t.Fatalf("a supplied digest that is not the derived one = %v (%d executions)", err, w.count())
 		}
-		if after := w.executions(); after != before {
-			t.Fatalf("a refusal wrote:\nbefore %s\nafter  %s", before, after)
+		res, err := w.correct("parent", previous)
+		if err != nil || !res.CarriedOver || res.ManifestDigest != previous || res.OpenedBy != "decision_reply" || res.Generation != 2 {
+			t.Fatalf("dag-correct = %v %+v, want the dispatch manifest %s carried over", err, res, previous)
 		}
+		if w.k.count("SELECT COUNT(*) FROM dag_input_manifests") != manifests {
+			t.Fatal("a carried-over manifest was stored again")
+		}
+	})
+	t.Run("a predecessor was superseded since", func(t *testing.T) {
+		w := newDRWorldOn(t, "B")
+		w.deliver(w.mustDecide("split_approval", releaseCriteriaDigest()))
+		w.k.exec("UPDATE dag_acceptances SET state = 'superseded' WHERE node_id = 'A'")
+		w.refused("parent", "disposition_conflict", "child was not told")
 	})
 }
