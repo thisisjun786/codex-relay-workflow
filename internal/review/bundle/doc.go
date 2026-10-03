@@ -5,7 +5,9 @@
 //
 // The diff is merge-base(base, head)..head, using one unique merge base. Context
 // defaults to 25 lines (zero means default). Head contents use git show head:path;
-// working files and uncommitted attributes are ignored. Git 2.43+ is required for
+// reads run in a temporary bare view borrowing only the source object directory;
+// source-local config, info attributes, templates and working files are ignored.
+// The view is removed on every exit. Git 2.43+ is required for
 // head-sourced attributes. External diff/textconv and replace objects are disabled.
 // Determinism is for the same Git version, objects and options; there are no dates.
 //
@@ -25,7 +27,8 @@
 // greedily. Each chunk repeats identities, statistics, rule excerpts and the data
 // header; its Paths and Text pair each file's diff with that file's head material.
 // Deleted files have no head text, binary/invalid-UTF-8 files are named without
-// inlining head bytes, renames retain both names and full head text, symlinks show
+// inlining diff or head bytes (including forced-text binary patches), renames
+// retain both names and full head text, symlinks show
 // their target blob without following it, and gitlinks are named without file text.
 // Type-change deletion/addition patches stay in one group. All data lines carry a
 // prefix and paths are quoted, separating embedded marker-like text from framing.

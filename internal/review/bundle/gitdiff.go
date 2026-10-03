@@ -17,6 +17,7 @@ import (
 type gitRepo struct {
 	ctx        context.Context
 	path, head string
+	objects    string
 }
 
 func (g gitRepo) run(input []byte, args ...string) ([]byte, error) {
@@ -30,6 +31,9 @@ func (g gitRepo) run(input []byte, args ...string) ([]byte, error) {
 	if g.head != "" {
 		c.Env = append(c.Env, "GIT_ATTR_SOURCE="+g.head)
 	}
+	if g.objects != "" {
+		c.Env = append(c.Env, "GIT_OBJECT_DIRECTORY="+g.objects)
+	}
 	c.Stdin = bytes.NewReader(input)
 	var stderr bytes.Buffer
 	c.Stderr = &stderr
@@ -38,6 +42,30 @@ func (g gitRepo) run(input []byte, args ...string) ([]byte, error) {
 		return nil, fmt.Errorf("git %s: %w: %s", args[0], err, strings.TrimSpace(stderr.String()))
 	}
 	return out, nil
+}
+
+// objectView borrows objects without source config, templates or info attributes.
+func (g gitRepo) objectView() (gitRepo, func(), error) {
+	objects, err := g.run(nil, "rev-parse", "--path-format=absolute", "--git-path", "objects")
+	if err != nil {
+		return g, nil, err
+	}
+	format, err := g.run(nil, "rev-parse", "--show-object-format")
+	if err != nil {
+		return g, nil, err
+	}
+	dir, err := os.MkdirTemp("", "crw-bundle-")
+	if err != nil {
+		return g, nil, err
+	}
+	cleanup := func() { _ = os.RemoveAll(dir) }
+	view := gitRepo{ctx: g.ctx, path: dir, head: g.head}
+	if _, err := view.run(nil, "init", "--bare", "--quiet", "--template=", "--object-format="+strings.TrimSpace(string(format))); err != nil {
+		cleanup()
+		return g, nil, err
+	}
+	view.objects = strings.TrimSpace(string(objects))
+	return view, cleanup, nil
 }
 
 func (g gitRepo) resolve(ref string) (string, error) {

@@ -87,6 +87,11 @@ func Build(ctx context.Context, repo, base, head string, options Options) (*Bund
 	if m.Head, err = g.resolve(head); err != nil {
 		return nil, err
 	}
+	g, cleanup, err := g.objectView()
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
 	g.head = m.Head
 	mb, err := g.run(nil, "merge-base", "--all", m.Base, m.Head)
 	if err != nil {

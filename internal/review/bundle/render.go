@@ -25,8 +25,12 @@ func renderFile(f file) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "FILE path=%q old-path=%q status=%s mode=%s binary=%t head-lines=%d\n", f.Path, f.OldPath, f.Status, f.Mode, f.Binary, f.HeadLines)
 	var diff strings.Builder
-	for _, line := range textLines(f.patch) {
-		diff.WriteString("| " + line + "\n")
+	if f.Binary {
+		diff.WriteString("| Binary diff omitted; payload not inlined\n")
+	} else {
+		for _, line := range textLines(f.patch) {
+			diff.WriteString("| " + line + "\n")
+		}
 	}
 	b.WriteString(part("DIFF", f.Path, diff.String(), false))
 	switch {

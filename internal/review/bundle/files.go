@@ -11,6 +11,7 @@ import (
 var hunk = regexp.MustCompile(`(?m)^@@ -[0-9]+(?:,[0-9]+)? \+([0-9]+)(?:,([0-9]+))? @@`)
 
 func (g gitRepo) headText(f *file, o Options) error {
+	f.Binary = f.Binary || strings.ContainsRune(f.patch, 0) || !utf8.ValidString(f.patch)
 	if f.Status == "D" || f.Mode == "160000" || f.Binary {
 		return nil
 	}

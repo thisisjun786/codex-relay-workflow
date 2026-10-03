@@ -45,8 +45,8 @@ Measured on 2026-10-03: the eight phrases are identical in both files, both file
 
 | Go file | Upstream | Kept | Changed |
 | --- | --- | --- | --- |
-| gitdiff.go | internal/git/diff.go | Reject empty or option-like refs; run Git with a context and remove external-diff environment input. | Resolve both commits and their unique merge base, read the complete range patch/raw/numstat with fixed flags and head attributes, retain rename/type-change groups, use stable patch-id. No fetch, checkout or branch update. |
-| render.go | internal/agent/diff.go | Diff as text material and the no-change sentinel. | Data header, quoted names, prefixed lines and length boundaries replace fenced prompt concatenation. File groups carry head text and fixed rule excerpts; strict output caps and metadata are new. |
+| gitdiff.go | internal/git/diff.go | Reject empty or option-like refs; run Git with a context and remove external-diff environment input. | Resolve both commits, then borrow objects through a temporary bare view excluding source config and info attributes. Read the unique merge base and complete range patch/raw/numstat with fixed flags and head attributes, retain rename/type-change groups, use stable patch-id. No fetch, checkout or branch update. |
+| render.go | internal/agent/diff.go | Diff as text material and the no-change sentinel. | Data header, quoted names, prefixed lines and length boundaries replace fenced prompt concatenation. Binary payloads are excluded from both diff and head text. File groups carry head text and fixed rule excerpts; strict output caps and metadata are new. |
 
 `internal/agent/diff_review.go` and `internal/agent/reffile.go` were compared read-only: their 100 KiB reference-file switch, temporary patch files, author guidance and execution calls are deliberately not adopted. The new package's [doc.go](../../internal/review/bundle/doc.go) specifies cap allocation, chunk grouping, truncation and error behavior.
 

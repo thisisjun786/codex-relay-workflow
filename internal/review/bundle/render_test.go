@@ -121,3 +121,59 @@ func TestEmptyMissingAndErrors(t *testing.T) {
 		t.Fatal("cancelled git succeeded")
 	}
 }
+
+func TestReviewerInfoAttributesIsolation(t *testing.T) {
+	checkIsolation(t, func(r repository) { r.write(".git/info/attributes", "p -diff\n") })
+}
+
+func TestReviewerLocalConfigIsolation(t *testing.T) {
+	checkIsolation(t, func(r repository) { r.git("config", "core.bigFileThreshold", "1") })
+}
+
+func checkIsolation(t *testing.T, mutate func(repository)) {
+	t.Helper()
+	r := newRepository(t)
+	r.write("p", "old\n")
+	base := r.commit()
+	r.write("p", "new\n")
+	head := r.commit()
+	before, err := Build(context.Background(), r.dir, base, head, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutate(r)
+	after, err := Build(context.Background(), r.dir, base, head, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(before, after) {
+		t.Fatalf("unchanged commits/options changed material: before=%+v after=%+v", before.Metadata, after.Metadata)
+	}
+}
+
+func TestReviewerInvalidUTF8NotInlined(t *testing.T) {
+	checkBinaryDiff(t, "new\xff\n", "")
+}
+
+func TestReviewerForcedTextBinaryNotInlined(t *testing.T) {
+	checkBinaryDiff(t, "new\x00\n", "p diff\n")
+}
+
+func checkBinaryDiff(t *testing.T, text, attributes string) {
+	t.Helper()
+	r := newRepository(t)
+	if attributes != "" {
+		r.write(".gitattributes", attributes)
+	}
+	r.write("p", "old\n")
+	base := r.commit()
+	r.write("p", text)
+	head := r.commit()
+	b, err := Build(context.Background(), r.dir, base, head, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !b.Metadata.Files[0].Binary || !utf8.ValidString(b.Chunks[0].Text) || strings.ContainsRune(b.Chunks[0].Text, 0) || strings.Contains(b.Chunks[0].Text, text) {
+		t.Fatal("binary payload entered prompt material")
+	}
+}
