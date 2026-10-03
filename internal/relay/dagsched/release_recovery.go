@@ -427,7 +427,7 @@ func (s *Scheduler) closeIntent(ctx context.Context, tx store.Querier, snap dag.
 		releasedFlag = 1
 	}
 	if _, err := tx.ExecContext(ctx, "INSERT INTO dag_release_recoveries (plan_id, node_id, manifest_digest, abandoned_request_id, action, slot_id, slot_released, copy_path, reason, recorded_by, coordinator_epoch, recorded_at)"+
-		" VALUES (?,?,?,?,'closed',?,?,?,?,?,?,?)", plan, node, open.Digest, open.Request, nilIfEmpty(slotID), releasedFlag, copyPath, strings.TrimSpace(reason), actor, s.ExpectedEpoch, s.now()); err != nil {
+		" VALUES (?,?,?,?,'closed',?,?,?,?,?,?,?)", plan, node, open.Digest, open.Request, optionalText(slotID), releasedFlag, copyPath, strings.TrimSpace(reason), actor, s.ExpectedEpoch, s.now()); err != nil {
 		return err
 	}
 	out.RequestID, out.SlotID, out.SlotReleased, out.Copy = open.Request, slotID, released, copied
@@ -472,13 +472,6 @@ func closureOf(ctx context.Context, q store.Querier, plan, node, digest, request
 		out.SuccessorRequestID = successor
 	}
 	return out, nil
-}
-
-func nilIfEmpty(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
 }
 
 // Object is the result as the relay prints it (dag-release-close).

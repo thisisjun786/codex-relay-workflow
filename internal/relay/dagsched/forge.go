@@ -91,7 +91,7 @@ func projectSnapshot(snapshot map[string]any, repository string, number int64) P
 	}
 	var rows []any
 	for _, c := range pr.Checks {
-		rows = append(rows, map[string]any{"runId": c.RunID, "name": c.Name, "headSha": c.HeadSHA, "conclusion": c.Conclusion, "attempt": c.Attempt, "provider": optionalProvider(c.Provider)})
+		rows = append(rows, map[string]any{"runId": c.RunID, "name": c.Name, "headSha": c.HeadSHA, "conclusion": c.Conclusion, "attempt": c.Attempt, "provider": optionalText(c.Provider)})
 	}
 	for _, p := range evidence.ChecksProblemsWith(pr.HeadSHA, required, rows, true, pr.RequiredProviders) {
 		pr.CheckProblems = append(pr.CheckProblems, p.Code+": "+p.Detail)
@@ -166,12 +166,4 @@ func verdictBesideMerge(problems []Problem, verdict string) string {
 		return verdict
 	}
 	return evidence.VerdictOf(rest)
-}
-
-// optionalProvider is a check's provider as the collector gives it: absent is nil, not an empty text.
-func optionalProvider(p string) any {
-	if p == "" {
-		return nil
-	}
-	return p
 }

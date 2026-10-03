@@ -386,15 +386,8 @@ func (s *Scheduler) releasePolicy(ctx context.Context, q store.Querier, plan str
 	return evaluateOptimism(settings, landings), nil
 }
 
-func optionalSeconds(p *int64) any {
-	if p == nil {
-		return nil
-	}
-	return *p
-}
-
 func (l Landing) object(s ReleaseSettings) contract.OrderedObject {
-	return contract.OrderedObject{{Key: "node_id", Value: l.NodeID}, {Key: "landed_at", Value: l.At}, {Key: "conflict_handling_seconds", Value: optionalSeconds(l.HandlingSeconds)},
+	return contract.OrderedObject{{Key: "node_id", Value: l.NodeID}, {Key: "landed_at", Value: l.At}, {Key: "conflict_handling_seconds", Value: optionalInt(l.HandlingSeconds)},
 		{Key: "slow", Value: l.slow(s)}, {Key: "post_merge_red", Value: l.red()}, {Key: "reverted", Value: l.reverted()}}
 }
 

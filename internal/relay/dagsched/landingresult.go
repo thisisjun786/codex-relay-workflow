@@ -51,7 +51,7 @@ func (in ResultInput) validate() error {
 		return refuse(contract.RefusalMalformedReceipt, "the commit a result is about is 7 to 64 lower-case hex digits, not %q", in.Commit)
 	case strings.TrimSpace(in.Evidence) == "":
 		return refuse(contract.RefusalMalformedReceipt, "a result names its evidence (the run, the pull request or the reason): the relay keeps the statement and reads no forge")
-	case len(in.Evidence) > MaxResultEvidenceBytes || hasControl(in.Evidence):
+	case len(in.Evidence) > MaxResultEvidenceBytes || dag.HasControl(in.Evidence):
 		return refuse(contract.RefusalMalformedReceipt, "the evidence of a result is at most %d bytes and has no control character", MaxResultEvidenceBytes)
 	}
 	return nil

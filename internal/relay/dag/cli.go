@@ -30,7 +30,8 @@ func init() {
 // pageDefault is the page size of dag-plan-log when --limit is not given.
 const pageDefault = 100
 
-func readDocument(input string) ([]byte, error) {
+// ReadDocument is a JSON option's value: the text itself, or @file (at most MaxDocumentBytes of it). Anything it cannot read or that is not UTF-8 is a usage error.
+func ReadDocument(input string) ([]byte, error) {
 	if !strings.HasPrefix(input, "@") {
 		if err := store.EncodeUTF8(input); err != nil {
 			return nil, &dispatch.UsageError{Detail: err.Error(), Code: contract.ExitUsage}
@@ -49,8 +50,8 @@ func readDocument(input string) ([]byte, error) {
 	return raw, nil
 }
 
-// hostFailure answers a plan that does not agree with itself as the host's failure.
-func hostFailure(err error) error {
+// HostFailure answers a plan that does not agree with itself as the host's failure.
+func HostFailure(err error) error {
 	var corrupt *CorruptError
 	if errors.As(err, &corrupt) {
 		return dispatch.Host(corrupt.Error())
@@ -59,7 +60,7 @@ func hostFailure(err error) error {
 }
 
 func runPut(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
-	raw, err := readDocument(args.Text("request"))
+	raw, err := ReadDocument(args.Text("request"))
 	if err != nil {
 		return nil, err
 	}
@@ -72,7 +73,7 @@ func runPut(ctx context.Context, services dispatch.Services, args dispatch.Args)
 		return nil, err
 	}
 	if err := Preflight(ctx, services.Selection.DBPath(), rev); err != nil {
-		return nil, hostFailure(err)
+		return nil, HostFailure(err)
 	}
 	s, err := store.Open(ctx, services.Selection.DBPath(), services.SocketPath)
 	if err != nil {
@@ -81,7 +82,7 @@ func runPut(ctx context.Context, services dispatch.Services, args dispatch.Args)
 	defer s.Close()
 	result, err := (&Repo{Store: s}).Put(ctx, rev)
 	if err != nil {
-		return nil, hostFailure(err)
+		return nil, HostFailure(err)
 	}
 	return putAnswer(result), nil
 }
@@ -131,30 +132,23 @@ func runShow(ctx context.Context, services dispatch.Services, args dispatch.Args
 	}
 	snap, head, err := repo.Snapshot(ctx, planID, rev)
 	if err != nil {
-		return nil, hostFailure(err)
+		return nil, HostFailure(err)
 	}
 	var logVerified any
 	if args.Bool("verify") {
 		if err := repo.VerifyLog(ctx, planID); err != nil {
-			return nil, hostFailure(err)
+			return nil, HostFailure(err)
 		}
 		logVerified = true
 	}
 	return snapshotAnswer(snap, head, logVerified), nil
 }
 
-func optional(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
-}
-
 func nodeAnswer(n SnapNode) contract.OrderedObject {
 	o := contract.OrderedObject{
 		{Key: "node_id", Value: n.NodeID}, {Key: "issue_key", Value: n.IssueKey}, {Key: "kind", Value: n.Kind},
-		{Key: "title", Value: optional(n.Title)}, {Key: "criteria_set_digest", Value: n.CriteriaSetDigest},
-		{Key: "slice_digest", Value: n.SliceDigest}, {Key: "supersedes_node_id", Value: optional(n.SupersedesNodeID)},
+		{Key: "title", Value: nullable(n.Title)}, {Key: "criteria_set_digest", Value: n.CriteriaSetDigest},
+		{Key: "slice_digest", Value: n.SliceDigest}, {Key: "supersedes_node_id", Value: nullable(n.SupersedesNodeID)},
 		{Key: "introduced_rev", Value: n.IntroducedRev},
 	}
 	if n.Lifecycle != "" {
@@ -171,9 +165,9 @@ func edgeAnswer(e SnapEdge) contract.OrderedObject {
 	}
 	return contract.OrderedObject{
 		{Key: "edge_id", Value: e.EdgeID}, {Key: "from_node_id", Value: e.FromNodeID}, {Key: "to_node_id", Value: e.ToNodeID},
-		{Key: "kind", Value: e.Kind}, {Key: "target_repository", Value: optional(e.TargetRepository)},
-		{Key: "target_base_ref", Value: optional(e.TargetBaseRef)}, {Key: "pins_code_head", Value: e.PinsCodeHead},
-		{Key: "decision_subject", Value: optional(e.DecisionSubject)}, {Key: "decision_digest", Value: optional(e.DecisionDigest)},
+		{Key: "kind", Value: e.Kind}, {Key: "target_repository", Value: nullable(e.TargetRepository)},
+		{Key: "target_base_ref", Value: nullable(e.TargetBaseRef)}, {Key: "pins_code_head", Value: e.PinsCodeHead},
+		{Key: "decision_subject", Value: nullable(e.DecisionSubject)}, {Key: "decision_digest", Value: nullable(e.DecisionDigest)},
 		{Key: "required_authority", Value: authority}, {Key: "introduced_rev", Value: e.IntroducedRev},
 	}
 }
@@ -224,7 +218,7 @@ func runLog(ctx context.Context, services dispatch.Services, args dispatch.Args)
 	}
 	page, err := repo.Events(ctx, args.Text("plan"), after, limit)
 	if err != nil {
-		return nil, hostFailure(err)
+		return nil, HostFailure(err)
 	}
 	events := make([]any, len(page.Events))
 	for i, ev := range page.Events {
