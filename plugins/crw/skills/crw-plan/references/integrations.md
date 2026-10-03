@@ -517,26 +517,34 @@ Each level runs on the model and reasoning effort decided for its role, and whic
 which role is a recorded product decision rather than something a task infers. Two roles may be
 decided onto the same pair; each is still read and checked as its own role. The supervisor's
 model is Jun's own selection and is never propagated, changed by automation, or copied to the
-level below it; the parent's and the child's come from the role policy.
+level below it; the parent's and the child's come from the role policy, which may declare more than one
+pair for a role.
 
 | Role | Model and effort | Who decides |
 | --- | --- | --- |
 | Supervisor | its own recorded setting | Jun, directly |
 | Parent | the role policy's parent pair | this policy |
-| Child | the role policy's child pair | this policy |
+| Child | one of the pairs the role policy declares for the child role, chosen per issue | this policy for which pairs exist; [Child pair by issue type](#child-pair-by-issue-type) for which issue gets which |
 
-Read the pair rather than remember it. The host's execution policy declares each role's pair, and
-`get_capabilities` reports what it declares, so a creation states the pair that policy reports for
-the role it is creating and passes the role itself so the host checks the answer. Never carry a
-pair from memory, from another project, or from a document — including this one. That habit is
+Read the pair rather than remember it. The host's execution policy declares the pair of each role, or
+several pairs for a role, and `get_capabilities` reports what it declares, so a creation states a pair
+that policy reports for the role it is creating (for a role that lists several, one entry of its
+`pairs`) and passes the role itself so the host checks the answer. Never carry a pair from memory, from
+another project, or from a document — including this one, whose names for the child's two pairs, Sonnet
+and SOL, say which family a pair belongs to and carry no model or effort. That habit is
 what the failure was made of: a coordinator created a project parent on a model it remembered,
 and another retried a withheld send by changing the model and keeping the previous effort.
 Reasoning-effort names are catalog values belonging to their own model; two that look similar are
 not interchangeable, and nothing maps one onto another.
 
-A role the host's policy does not declare is a blocker to report, and its recovery is declaring it
-in that host's execution policy. There is no fallback pair, because a fallback is a default and a
-default is the second source of truth this arrangement exists to remove.
+A role that lists several pairs ranks none of them. The policy says which pairs a task may run on and
+not which one it does run on; for the child role the issue decides, under
+[Child pair by issue type](#child-pair-by-issue-type).
+
+A role the host's policy does not declare, or a pair it does not list for the role, is a blocker to
+report, and its recovery is declaring it in that host's execution policy. There is no fallback pair,
+because a fallback is a default and a default is the second source of truth this arrangement exists to
+remove.
 
 Changing an existing task's model is a user action plus a re-record, never something a message
 performs. After the user changes it, the authorization recorded for that task is re-recorded from
@@ -544,6 +552,124 @@ a user-attributed source before the next send, because the record is what a send
 and a value observed on the host is evidence of what the task is running rather than a new
 approval. Until then the send is refused naming the record, and a task the host reports as not
 loaded is left alone rather than resumed under a pair that was never checked against its role.
+
+#### Child pair by issue type
+
+Children run on one of two pairs, and the issue decides which. The pairs are named after the family of
+their model: the Sonnet pair is the declared pair whose model is a Claude Sonnet model, and the SOL pair
+is the one whose model is a GPT SOL model. This section carries no model name and no effort, because a
+document that carries one is a second source of truth beside the host's policy (see
+[Execution settings by role](#execution-settings-by-role)); each pair's model and effort are read from
+the declared policy when the child is created.
+
+The axis is where the answer comes from. When a reference implementation, a specification, a golden
+output or an existing pattern decides what the right result is, the child's work is to meet it exactly
+and to keep every outside rule that goes with it: that is the Sonnet pair. When nothing outside the
+issue says what is right, because the answer has to be designed or found, it is the SOL pair.
+
+| Shape of the issue | Pair | Example |
+| --- | --- | --- |
+| A port or a change of language that has an original, where "same as the original" ends the work | Sonnet | moving a module to another language and checking it against the original's recorded outputs |
+| A fix that keeps golden, contract or byte compatibility; names, locations and wording; deletions and moves; wiring or registration in many places | Sonnet | renaming a command across its documentation, specs and tests; registering a subcommand in every list that names it |
+| Writing (documents, skills, prompts, reports); UI or images judged by eye; operations where the order of steps is the point; an investigation that opens no PR | Sonnet | rewriting a skill's procedure; an installation runbook; a read-only audit of a record |
+| A new mechanism, algorithm or state machine | SOL | a rule that decides which work is ready to start; a retry state machine |
+| Performance or parallelism that a measurement ends | SOL | cutting a test suite's wall time by running its parts at once |
+| A bug of unknown cause; a fix that has already failed twice or more; flakes, races, concurrency, cache consistency | SOL | a failure that appears only under load |
+| An implementation that has to decide the structure of a new module | SOL | a new package whose interfaces nobody has drawn |
+
+When choosing, look at four things. Where the answer comes from: something outside the issue that the
+result can be compared with, or the child's own design. How many outside rules the work must keep: the
+more a child has to follow exactly (a golden, a schema, a naming convention, a long procedure), the more
+the issue belongs to the Sonnet pair. The shape of the end: "same as the original" ends a Sonnet issue,
+and "a measurement improved, the cause is gone, a new invariant is proven" ends a SOL issue. And the
+failure history: a fix that failed twice is an answer still to be found, whatever the issue first
+looked like.
+
+Two cases the shape does not settle:
+
+- **A security judgment at the core.** An issue whose core is a security judgment (deletion protection,
+  a permission or sandbox decision, secret detection) goes to the Sonnet pair from the start, whatever
+  its shape. A SOL turn on such work was refused by the provider's cyber policy, and the issue should
+  not meet that refusal in the middle of its delivery.
+- **Half and half.** A clear case follows the table. An ambiguous case goes to the pair with fewer
+  working children in this parent; a plan written before any child runs counts instead the issues of
+  the project that already carry a line, per pair. Once one pair holds more than 60 percent of them,
+  border cases go to the other pair whatever the count of working children says. The line then names
+  the axis half-half.
+
+**Precedence**, highest first: the user's explicit choice of model, effort or pair for this scope; the
+pair the issue body's child pair line records; this table. Host and tool restrictions and the explicit
+limits in force keep the place [Default independent execution](#default-independent-execution) gives
+them above all three. A choice the user makes for an issue is written onto its line with the reason, so
+the record and the creation agree.
+
+**The line.** An implementation issue carries one line, beside its size statement and under none of the
+headings the [size check](issue-boundaries.md#check-the-size-of-an-issue) reads, so the line is
+neither counted as a criterion nor read as a deliverable:
+
+    Child pair: SOL (answer must be found) - a new retry state machine
+
+The form is `Child pair: <Sonnet or SOL> (<axis>) - <the issue's type and the reason, in a few words>`.
+The axis is exactly one of `reference exists`, `answer must be found` and `half-half`. A Korean issue
+body may write the label as `자식 pair`; the pair name and the axis words stay as written here, so a
+reader or a check can match them. The line records a family, never a model or an effort. An issue with
+no line is routed by the table by the parent that dispatches it: the parent writes the answer as the
+line on the issue and reads it back before it prepares the packet or creates the child, so a later
+parent reading the issue finds the selection there. A note in the parent's own coordination record is
+only a pending proposal; where the issue cannot be written, the parent reports that blocker and creates
+nothing. The Launch packet that [crw-run](../../crw-run/SKILL.md#prepare-and-dispatch) keeps for an
+issue with no recorded pair is the form of an issue this rule has not reached yet, and it is no default
+pair for an issue without a line.
+
+**The packet.** The first packet of a SOL issue takes the form of the "SOL packet" section of
+[task-packet.md](../../crw-run/references/task-packet.md); a Sonnet issue's takes the Launch packet.
+The parent takes the form from the recorded pair and does not choose it again from the issue text at
+dispatch.
+
+**Creating the child.** Read `get_capabilities` and state the entry of the child role's `pairs` (or the
+single pair of a role that declares one) that belongs to the line's family, passing `role` so the host
+checks the answer. Where the declared list holds exactly one such entry, create with it. Where it holds
+none, the parent picks no other pair. That is what a SOL line meets while the policy still declares only
+the Sonnet pair, and what any line meets when a model change leaves its family with no declared pair;
+the family is the test and not the number of pairs, so a policy whose only child pair is the SOL pair
+stops a Sonnet line in the same way. Where the list holds two, nothing in the policy ranks them, so the
+parent does not choose between them. Either way the creation is a reported blocker, and the recovery is
+the host declaring the pair or the user choosing a pair for the issue: the parent states exactly the
+entry the user names, which must be one the declared list holds, and writes the choice onto the line
+with its reason; the line still records the family. Under a policy that declares only the Sonnet pair, a
+SOL-line issue therefore waits for that choice, because there is no fallback pair.
+
+The host refuses only a pair outside the role (`execution_role_mismatch`). A refusal before any call
+sends nothing, and the same request id is used again with the corrected pair (see
+[Bridge launch and recovery](../../crw-run/references/bridge.md)). Both pairs are valid for the child
+role, so the host cannot see that a pair differs from the line, and that comparison belongs to the
+parent: it issues no creation whose pair is of another family than the line.
+
+**After creation.** Read the model, reasoning effort and role back from the creation receipt: they are
+the pair that was stated, and they belong to the line's family. The relay records the receipt's pair as
+the child's authorization and accepts any pair of the role
+([codex-session-relay](../../crw-run/references/relay.md)), so this read-back is where a difference is
+caught. A receipt of the other family is a mismatch observed after creation, and the child does not go
+on under a pair its line does not name. It ends in one of three ways: the user changes the pair and the
+authorization is re-recorded from a user-attributed source; or the user accepts the pair the child came
+up on and the parent writes it onto the line with the reason; or, where the recovery rules allow a
+replacement, the child is replaced on the right pair. A resend never changes a running task's model.
+The receipt shows what was requested and applied; the served model stays unproven where no
+served-model evidence exists.
+
+**When SOL fails.** A SOL creation or turn that fails on a provider limit or a policy refusal is not
+repeated. The parent releases the issue on the Sonnet pair and records why: it rewrites the line as
+`Child pair: Sonnet` with the cause and the date, then creates the child on the declared Sonnet pair. A
+refusal before any call leaves no task, so that creation is made under the same request id with the
+corrected pair. A failure after the call may have left a task or a ledger row: the earlier task is first
+proven inactive and its work and receipts kept, and the new child is a replacement with a new id under
+the recovery rules of [Bridge launch and recovery](../../crw-run/references/bridge.md). That
+replacement moves the pair, which is the one change of settings
+[Completion follow-up in an existing execution workflow](#completion-follow-up-in-an-existing-execution-workflow)
+allows.
+
+Choosing by the quota left on each side, instead of by this table, is future work and is not part of
+this rule.
 
 ### The message both relations are read by
 
@@ -892,7 +1018,7 @@ Use the current request together with the established assignment. Checking a man
 
 Explicit read-only, report-only, pause, no-contact, or narrower delivery limits win. An unrelated task link or a standalone audit does not establish execution authority. Existing authorization does not expand to new requirements, changed execution settings, release publication, deployment, issue closure, or messages to unrelated tasks. Reuse authorization that already covers those actions; ask only for the part that needs a new decision.
 
-Recover the existing task first. A replacement is routine only when task creation/recovery is covered by the assignment and the host permits it, the earlier task is proven inactive, its work and receipts are preserved, and the replacement keeps the same scope and settings. Uncertain delivery or a read failure is not proof that no writer remains.
+Recover the existing task first. A replacement is routine only when task creation/recovery is covered by the assignment and the host permits it, the earlier task is proven inactive, its work and receipts are preserved, and the replacement keeps the same scope and settings, the one exception being a child pair moved under [Child pair by issue type](#child-pair-by-issue-type), which is written on the issue's line first with its cause. Uncertain delivery or a read failure is not proof that no writer remains.
 
 ### Default independent execution
 
@@ -916,7 +1042,7 @@ Name the three levels the same way in both registers. A Korean report or record 
 and 자식 after that or in a one-line label, while the English instruction keeps the role words those
 records are keyed on. They are one role in two registers, so neither version needs a gloss.
 
-Unless the request chooses otherwise, an independent child task that `crw-run` creates or resumes runs the pair the role policy declares for the child role, with CXC Loop as its workflow, and owns its own host goal, goalplan, and FSM. That pair is read from the declared policy at the time of the call under [Execution settings by role](#execution-settings-by-role) rather than restated here, so one location cannot fall behind the other. Precedence, highest first: host and tool restrictions; the explicit limits in force for this request, such as plan-only, read-only, status-only, no-goal, no-FSM, no-create, or current-task; the user's explicit model, effort, or workflow choice for this scope; then this default. A later explicit instruction supersedes an earlier one only for the same constraint, so every limit it does not contradict stays in force. The result is the effective setting, and an effective Loop workflow carries the same weight as a separately requested one.
+Unless the request chooses otherwise, an independent child task that `crw-run` creates or resumes runs the child pair recorded for its issue under [Child pair by issue type](#child-pair-by-issue-type), with CXC Loop as its workflow, and owns its own host goal, goalplan, and FSM. That pair is one the declared policy lists for the child role, read from it at the time of the call under [Execution settings by role](#execution-settings-by-role) rather than restated here, so one location cannot fall behind the other. Precedence, highest first: host and tool restrictions; the explicit limits in force for this request, such as plan-only, read-only, status-only, no-goal, no-FSM, no-create, or current-task; the user's explicit model, effort, or workflow choice for this scope; then this default: CXC Loop as the workflow and, for the pair, the one the issue body's child pair line records, or the table's answer where the issue has no line. A later explicit instruction supersedes an earlier one only for the same constraint, so every limit it does not contradict stays in force. The result is the effective setting, and an effective Loop workflow carries the same weight as a separately requested one.
 
 CXC `LOOP-DOCS-FIRST-01` applies to a CRW child as CXC states it, to the child's own issue: a single-cycle issue skips the docs-only first cycle, and a child that plans two or more work-phases opens with one, with CXC's roadmap debt for scope found later. A correction generation, a base-refresh generation and a separated publication step are not the first work-phase of new work, so they do not open `LOOP-DOCS-FIRST-01`'s docs-only cycle.
 

@@ -1,0 +1,94 @@
+{
+  "origin": {
+    "tag": "v0.2.40",
+    "commit": "3c1459acadeb1906d97c00a598e1457327ae372d",
+    "skills_listing_sha256": "79d9580f39ca27221cb9c24337080e3fe4a1e71f76338c7329fca63f76a32e89"
+  },
+  "table_sha256": "25b5d19d9da7e07d474d2b31bc4d4139c68607457f59174a597f17505f7f23eb",
+  "from": "qa",
+  "files": {
+    "SKILL.md": {
+      "original": "c45f452fd44b4b0b0e1aa002036c3c516e1529d5d218f29eafa97cb95f6a5296"
+    },
+    "agents/openai.yaml": {
+      "original": "5eb3061fec4e5308e28793bebe112b58d67f0b762805ee1a058cf662e76e822c"
+    },
+    "references/cli-tui-qa.md": {
+      "original": "af0b7c39f70b3642fc085de6222903fb527202e8b65d6717f0208c9a0e15f7ae"
+    },
+    "references/http-api-qa.md": {
+      "original": "45991b5d0b41441172c443408bafb77c2547617b9d95ba5c04ae9154c22a6c30"
+    },
+    "references/visual-qa.md": {
+      "original": "069e2a4a55ad6f1e1b217e773be16896304bfa7c9ba46c6075c46d5430ee435b"
+    },
+    "scripts/validate-evidence.mjs": {
+      "original": "b06395832abee770c93905a9da1a1fd57b4845c2cbbd6fd094e3359f8e11b4f8"
+    }
+  },
+  "edits": [
+    {
+      "file": "SKILL.md",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Normalize frontmatter to the repository-supported name and description fields; preserve invocation description and record the removed oracle metadata. Keep manual surface QA distinct from the Linear delivery-check verdict. Resolve the QA helper from its owning skill directory, including staging outside the plugin. Explain skill-directory placeholder resolution before invoking the staged QA helper. Quote the resolved helper path so a skill directory containing spaces is usable.",
+      "hunks": [
+        {
+          "line": 4,
+          "old": [
+            "metadata:\n",
+            "  short-description: \"Manual surface-driving QA gate: faithful channels, evidence matrix, adversarial classes, teardown receipts.\"\n"
+          ]
+        },
+        {
+          "line": 27,
+          "old": [
+            "[portable browser routing](../dev/references/browser-routing.md). Suitable available\n"
+          ],
+          "new": [
+            "[portable browser routing](../crw-dev/references/browser-routing.md). Suitable available\n"
+          ]
+        },
+        {
+          "line": 43,
+          "new": [
+            "- crw-check compares delivered work with canonical Linear documents and issue\n",
+            "  criteria. This skill drives a built surface before the task's done claim; its\n",
+            "  PASS is evidence that crw-check may read, not a delivery verdict. A delivery\n",
+            "  check does not replace driven-surface QA.\n",
+            "\n"
+          ]
+        },
+        {
+          "line": 109,
+          "old": [
+            "After every scenario is done, emit the aggregate receipt:\n"
+          ],
+          "new": [
+            "After every scenario is done, resolve `<crw-qa skill directory>` from the loaded\n",
+            "skill path and emit the aggregate receipt:\n"
+          ]
+        },
+        {
+          "line": 112,
+          "old": [
+            "node plugins/crw/skills/qa/scripts/validate-evidence.mjs \\\n"
+          ],
+          "new": [
+            "node \"<crw-qa skill directory>/scripts/validate-evidence.mjs\" \\\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "agents/openai.yaml",
+      "reason": "Provide the default prompt required by CRW skill metadata while preserving the oracle invocation policy.",
+      "hunks": [
+        {
+          "line": 4,
+          "new": [
+            "  default_prompt: \"Use $crw-qa to drive the built surface and capture evidence before claiming the task done.\"\n"
+          ]
+        }
+      ]
+    }
+  ]
+}

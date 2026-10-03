@@ -1,0 +1,19 @@
+{
+  "issue": "CRW-494",
+  "identical": [
+    "hook__permission-request-allowing-agent-thread__baseline_empty_workspace",
+    "hook__permission-request-allowing-agent-thread__codex_config_must_be_full_access",
+    "hook__permission-request-allowing-agent-thread__home_cwd_default_config",
+    "hook__permission-request-allowing-agent-thread__home_cwd_symlinked_default_dir_rejected",
+    "hook__permission-request-allowing-agent-thread__malformed_input_silent",
+    "hook__permission-request-allowing-agent-thread__non_default_mode_and_subagent_silent",
+    "hook__permission-request-allowing-agent-thread__opted_in_agent_thread_allows",
+    "hook__permission-request-allowing-agent-thread__pabcd_off_still_allows_no_state",
+    "hook__permission-request-allowing-agent-thread__project_controlled_config_rejected",
+    "hook__permission-request-allowing-agent-thread__rollout_identity_rejections",
+    "hook__permission-request-allowing-agent-thread__uncovered_tool_or_no_opt_in_silent",
+    "hook__session-start-advising-agent-thread-permissions__advisory_silent_outside_degraded_context",
+    "hook__session-start-advising-agent-thread-permissions__agent_thread_advisory",
+    "hook__session-start-advising-agent-thread-permissions__baseline_empty_workspace"
+  ]
+}

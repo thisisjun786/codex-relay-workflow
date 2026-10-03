@@ -320,11 +320,11 @@ func settledPath(v any, untried bool) bool {
 // rowFieldsWritten is whether a row carries every field the adapter writes on the path its
 // outcome names, and nothing else.
 func rowFieldsWritten(row object) bool {
-	if !allFields(row, hook.RowFields) || row.Get("event") != "Stop" {
+	if !allFields(row, hook.RowFields) || row.Get("event") != "Stop" || !hook.RuntimeRecorded(row) || !hook.StdinReadRecorded(row) {
 		return false
 	}
 	outcome, acceptance, detail := row.Get("adapterOutcome"), row.Get("acceptance"), row.Get("detail")
-	allowed := slices.Concat(hook.RowFields, hook.PayloadFields, hook.GuardCallFields, hook.AnswerFields, hook.SettledFields)
+	allowed := slices.Concat(hook.RowFields, hook.OptionalRowFields, hook.PayloadFields, hook.GuardCallFields, hook.AnswerFields, hook.SettledFields)
 	if outcome == hook.AdapterFaulted {
 		allowed = append(allowed, hook.FaultFields...)
 	}
