@@ -179,7 +179,7 @@ type fact struct {
 func readObservation(o Observation) (fact, error) {
 	policy, ok := classLookup(o.FaultClass)
 	if !ok {
-		return fact{}, fmt.Errorf("fault_class_unregistered: '%s' is not a registered fault class, so nothing declares what would clear it", o.FaultClass)
+		return fact{}, fmt.Errorf("fault_class_unregistered: %q is not a registered fault class, so nothing declares what would clear it", o.FaultClass)
 	}
 	if _, ok := severityRank[o.Severity]; !ok || !productName.MatchString(o.Product) || !named(o.OccurrenceKey) || len(o.Signature) == 0 {
 		return fact{}, fmt.Errorf("fault_observation_malformed: malformed observation")

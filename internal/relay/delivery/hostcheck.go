@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -62,7 +61,7 @@ func (rc *Reconciler) CheckDispatchedTurn(ctx context.Context, requestID string,
 		return nil, err
 	}
 	if attempt == nil {
-		return nil, fmt.Errorf("KeyError: %s", pyvalue.StrRepr(requestID))
+		return nil, fmt.Errorf("no attempt records request %q", requestID)
 	}
 	delivery, err := rc.Delivery.Get(ctx, attempt.S("event_id"))
 	if err != nil {
