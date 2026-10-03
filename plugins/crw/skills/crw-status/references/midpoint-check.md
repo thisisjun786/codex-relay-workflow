@@ -116,8 +116,9 @@ paged to the end, whether the pull request actually merged into its intended tar
 anything was installed or demonstrated afterwards. Use
 [Merge readiness](../../crw-run/references/merge-readiness.md) for what the checks and reviews
 establish and [Implementation Done](../../crw-plan/references/integrations.md#implementation-done)
-for what a landing requires. Codex automatic review is disabled and is recorded as not required,
-never as a review that passed.
+for what a landing requires. The Devin and Codex reviews are references and not gates
+([Devin and Codex reviews are references, not merge gates](../../crw-run/references/merge-readiness.md#devin-and-codex-reviews-are-references-not-merge-gates)): a skipped or
+missing review is recorded as such, never as a review that passed.
 
 ## Surface the disagreements, not the inventory
 
