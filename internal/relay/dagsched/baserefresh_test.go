@@ -414,9 +414,9 @@ func TestBaseRefreshRowsAreTrustedOnlyWhenTheyDigestToTheirId(t *testing.T) {
 	})
 }
 
-// An edge that waits for the node's verified result (artifact_verified) keeps reading the accepted generation: this path moves what integration is judged on and nothing else, so while the relationship is at
-// the later generation the edge reads blocked:stale_head before and after the record, as the release of a successor that pins the accepted head reads merge_candidate_moved.
-func TestBaseRefreshLeavesAnArtifactEdgeReadingTheAcceptedGeneration(t *testing.T) {
+// An edge that waits for the node's verified result (artifact_verified) reads the generation the acceptance stands on (CRW-447): while the relationship is at the later generation and no record says the
+// acceptance stands on it, the edge reads blocked:stale_head, and once the record is made it is satisfied (CRW-430 left it reading the accepted generation).
+func TestBaseRefreshMovesTheGenerationAnArtifactEdgeReads(t *testing.T) {
 	s := newRefreshScenario(t)
 	if st := s.status("g", "ia"); !st.Satisfied {
 		t.Fatalf("the edge before generation 2 = %+v", st)
@@ -429,8 +429,8 @@ func TestBaseRefreshLeavesAnArtifactEdgeReadingTheAcceptedGeneration(t *testing.
 	if _, err := s.record("shared.json"); err != nil {
 		t.Fatal(err)
 	}
-	if st := s.status("g", "ia"); st.Satisfied || st.Reason != BlockedStaleHead {
-		t.Fatalf("the edge after the record = %+v, want it unchanged", st)
+	if st := s.status("g", "ia"); !st.Satisfied {
+		t.Fatalf("the edge after the record = %+v, want it satisfied", st)
 	}
 }
 
