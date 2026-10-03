@@ -544,7 +544,7 @@ parent made: a refusal from `base-refresh check`; a required job that failed on 
 under [impact](#judge-a-finding-by-its-impact). Those corrections name N and not P, and carry the
 restoration block because the child's worktree is now behind its branch. Waiting is not a reason to
 return it. The route is otherwise the
-[needs-changes route](../SKILL.md#return-corrections-to-the-existing-task), unchanged.
+[needs-changes route](../SKILL.md#return-corrections-to-the-existing-task), unchanged. A conflict that shows after the verdict and before the acceptance takes that route on the same receipt: [a base conflict after the ruling and before the acceptance](#a-base-conflict-after-the-ruling-and-before-the-acceptance).
 
 **In a DAG-managed project the update comes before `dag-accept`, and the jobs on N are read after
 it.** `dag-accept` records the head the forge shows as the accepted head and takes none from the
@@ -560,8 +560,7 @@ jobs on N (`checks_pending` is waited on; the first failure is the `retry_same_s
 has to be fetched there, or it fails as a host problem and writes nothing. A base that moves after
 the acceptance, for example while N's jobs run or while the candidate waits for its turn, cannot be
 refreshed by the parent at this baseline: the update would move the head off the accepted one, and
-the judge reads `stale_base`. That candidate goes back to its child for a new generation as it did
-before this rule. The window now includes N's job time, and another project's landing during it
+the judge reads `stale_base`. That candidate does not go back by a second ruling, because the relay takes none on an accepted head; [a base conflict after the ruling and before the acceptance](#a-base-conflict-after-the-ruling-and-before-the-acceptance) says what remains. The window now includes N's job time, and another project's landing during it
 counts; refreshing only the candidate about to merge is what keeps it short. The limit is the
 scheduler's, which has no re-acceptance of a verified refresh.
 
@@ -574,6 +573,10 @@ different one as `merge_candidate_moved`. Nothing in the product records a work 
 (`docs/port/decisions.md`, section 53), so N has no report head to disagree with; a store that holds
 such a row naming P anyway refuses N there, when the turn is already held: return the turn and send
 the candidate back like any other refusal.
+A merge made outside the lane needs no step from the parent that made it: the next
+`merge-turn-check` finds the base the last landing recorded behind the branch and records it again
+itself when it can confirm the move as merge commits no landing recorded
+([the base a landing records](relay.md#checking-landing-and-correcting-a-landings-base)).
 
 **Record the refresh** where the merge is recorded. `assignment-mark merged --evidence` carries the
 check's `evidence:` line exactly as printed (previous head, dev tip, new head, tree OID and the rule
@@ -747,6 +750,24 @@ conflicting files, quotes the refusal, and says which rule the plan declared for
 the rest, and the hunks it settled by a rule are `mechanical` in its handoff ([What a handoff
 discloses](task-packet.md#what-a-handoff-discloses)); the parent may run the same check on the child's merge
 (`--previous` the head it verified, `--head` the child's merge commit) instead of reproducing the hunks by hand.
+
+### A base conflict after the ruling and before the acceptance
+
+The verdict `verified` was given, and before `dag-accept` (or, in a project with no plan, before the merged mark) the base conflicts: the forge refuses the update, the state reads `DIRTY`, or another project's landing changed the head you refreshed. A conflict whose every file lies in a `mechanical` place is the parent's to settle first ([Resolve a mechanical conflict yourself](#resolve-a-mechanical-conflict-yourself)); any other candidate goes back to its child, and the way is the needs-changes ruling on the same receipt: the relay replaces a `verified` ruling by `needs_changes` while nothing rests on it, opens the next generation and queues the correction to the same child. (A criteria re-review that is open is decided first, as it always was.) It needs nothing from a conflict handling of the parent's own.
+
+1. **Check that nothing rests on the ruling.** Read `codex-session-relay --state "$RELAY_STATE" assignment-show --relationship <rel>`: the state is `verified` and the head is the event you ruled. No `dag-accept` was recorded for the node: `dag-ready --plan <plan>` reads it as `verifying`, and a node with an acceptance never does (it reads `done:accepted`, `done:integrated`, `stale` or `blocked:stale_head`, an accepted node whose head moved). No `assignment-mark --mark merged` was either. A merge turn of this candidate that you hold is `holding` (`merge-turn-show` names its state); one that is `merging` or of unknown effect is resolved first (`merge-turn-resolve`), and one that landed means the work is on the target, which new work corrects and a ruling does not.
+2. **Rule `needs_changes` on the same receipt:**
+
+       codex-session-relay --state "$RELAY_STATE" verdict --event <the verified event> --verdict needs_changes \
+         --verdict-turn <own turn> --restoration <criterion id> \
+         --finding '<criterion id>=needs_changes:<the correction and its restoration block>'
+
+   The finding carries the [restoration block](task-packet.md#restoration-block): the head P the verdict named, the head N the branch has now, the conflicting base D and the paths the forge or `git merge-tree` names, the siblings' landings, and that this correction asks only for the base to be brought up to date (the child merges the base, names the kind of each merge and reruns that kind's checks and no more).
+3. **Read the answer, not the exit code.** A ruling that was replaced answers the new record: `verdict` is `needs_changes`, `nextExecutionGeneration` is the generation the child will report in, and `_supersedes` names the verified ruling it replaced; `assignment-show` then reads `needs_changes`.
+4. **Release the turn you hold** once the ruling is given, because the child works on the next generation and the lane must not wait for it: `merge-turn-release --turn <turn> --actor <id> --disposition returned --reason '<what invalidated the readiness>'`.
+5. **An older relay changed nothing.** An answer that is still `verified` and carries `_replay` means the installed relay is older than this rule and answered a different verdict with the recorded one: nothing reached the child and `assignment-show` still reads `verified`. Do not repeat the call, and do not open a parallel path to the child (the rule of [Return corrections to the existing task](../SKILL.md#return-corrections-to-the-existing-task)). Record the correction as undelivered on the assignment and hand the decision to whoever owns it, as for a relay that does not carry the restoration declaration.
+6. **A refusal says what remains**, with its reason, and wrote nothing: the verified ruling stands. `disposition_conflict` names the cause: a plan accepted the event, the work is marked merged, or a merge turn is merging, of unknown effect or landed. `stale_generation`, `superseded_revision`, `revision_ambiguous` and `relationship_not_active` say that the receipt is not the head of an active relationship, and each names its route. After the acceptance the relay takes no second ruling (unless a criteria re-review is open), so a verdict is not the way back for a candidate returned for any reason after it, a second job failure, a failed `Devin Review` status, a thread outside `threadsSeen` or `stale_base` included. The DAG records a correction only for a node whose stale reading says `correct`; for a result that is current (a base that moved after the acceptance is such a case) there is no recorded route in this build, so report it on the coordination record and do not open a generation that `dag-correct` will refuse.
+7. **When the child reports again** in the new generation, the receipt is a new event: acknowledge it and rule it as for any receipt ([the parent verifies](relay.md#the-parent-verifies): `claim`, `ack-proof`, `ack`, `verdict`), and refresh the base yourself if only the base moved again, as above. The child declares the receipt it replaces by its revision hash with `--supersedes-revision` only when it reports again inside the same generation.
 
 ## Hold the turn only while you can use it
 

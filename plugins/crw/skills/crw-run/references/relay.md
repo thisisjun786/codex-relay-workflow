@@ -679,7 +679,9 @@ The base a landing records is the value the next candidate on the same target ha
 `--base-sha`, so the relay does not take it from you: at the check, the landing, a resolution and
 a restatement it reads where the base branch points, from the target the claim named (git for an
 absolute repository path, which must be the repository the merge goes into; a read-only forge
-GET for `owner/name`), and records that reading. What you pass is compared with it.
+GET for `owner/name`), and records that reading. What you pass is compared with it. A check that
+finds the last landing's recorded base older than the branch also reads how the branch moved
+(below).
 
 - `--base-sha` is the branch tip now, in full. Anything else is refused `merge_currency_stale`.
 - `--landed-sha` is the commit your merge put on the base: the merge or squash commit, the last
@@ -697,11 +699,24 @@ target the relay cannot read refuses `merge_target_unreadable` and nothing is re
 merging turn checked before the relay read its base is refused `merge_evidence_required` and
 leaves through `merge-turn-unknown` and `merge-turn-resolve`.
 
-When `merge-turn-check` is refused because the last landing on the target recorded a different
-base, the refusal names that landing and who may correct it: its holder, or the supervisor above
-its project. That task runs `merge-turn-restate-base` on the landing; the relay reads the branch
-again, records it, and keeps the replaced value beside it (`merge-turn-show --turn <landing>`,
-`baseRestatements`). Then the candidate checks again. Nobody edits the store to correct a base.
+When the last landing on the target recorded a different base than the tip the check states, either
+the branch moved after that landing without a landing of the lane, or that landing recorded a
+wrong base. The check reads how the branch moved: the
+first-parent line of the base branch from the tip down to the recorded base. If every commit on
+it is a merge commit that no landing on the target records, which is what a pull request merged
+outside the lane leaves, the check records the base again itself, keeps the replaced value beside
+it (`merge-turn-show --turn <landing>`, `baseRestatements`, evidence beginning `automatic:`),
+reports it as `landingBaseRestated` in its answer and goes on. The parent that merged outside the
+lane has nothing to record afterwards, and no other parent waits for it.
+
+When the check cannot confirm that (the branch was rewritten, a commit on it is not a merge commit,
+more than 32 merges, a turn is in flight, or the branch could not be read) it writes nothing and
+is refused `merge_currency_stale` as before. The refusal names why and the command, with the
+landing and its holder filled in: that holder, or the supervisor above its project, runs
+`merge-turn-restate-base --turn <landing> --actor <task> --evidence <why the base moved>`; the
+relay reads the branch again, records it, and keeps the replaced value beside it. Then the
+candidate checks again. A waiting parent that is neither cannot run it. Nobody edits the store to
+correct a base.
 
 ## Peer region agreements across a moving base
 
@@ -1127,18 +1142,41 @@ criteria digest, so a re-review landing on the SAME disposition enqueues no seco
 document keeps the summary written against the earlier wording. Rewrite it yourself, the same way
 you wrote it the first time.
 
+### Changing a verified ruling before it is accepted
+
+A ruling of `verified` is replaced by `needs_changes` on the same receipt while nothing rests on it:
+no `dag-accept` of the event, no `assignment-mark merged`, and no merge turn of the assignment that
+is `merging`, of unknown effect or landed (a turn that only waits or holds does not count: the
+parent that found a base conflict holds it). An open re-review, which a changed criteria set opens,
+is decided first, as before, whether or not the head was accepted. The relay opens the next generation and queues the
+correction to the same child exactly as for a first `needs_changes` ruling, and answers the new
+record with `_supersedes` naming the ruling it replaced. Give the ruling as the ordinary `verdict`
+line, with the restoration block on the finding that carries the instruction. A different verdict
+is never answered with the recorded one: `unverified` or `aborted` after `verified`, and anything
+different after `needs_changes`, `unverified` or `aborted`, are refused with `disposition_conflict`,
+and a refusal wrote nothing. The same verdict again is still a replay marked `_replay`. A relay older
+than this rule answers a different verdict with the recorded ruling marked `_replay` and exit 0; an
+answer that still says `verified` with `_replay` changed nothing, so read the answer and
+`assignment-show`, never the exit code. The procedure for a base conflict after the ruling is
+[in merge readiness](merge-readiness.md#a-base-conflict-after-the-ruling-and-before-the-acceptance).
+
 ### A fresh execution generation
 
-That route is closed and a new generation is the one to use whenever the same event cannot be the
-answer:
+That route is closed. When the same event cannot be the answer, the cases are told apart here; a new
+generation is the way for the first two:
 
   - the artifact itself has to change, which is what a `needs_changes` verdict is for;
   - the event was already ruled `needs_changes`, `unverified` or `aborted`. Re-claiming it
-    returns `already_claimed` and `verdict` returns the settled record marked as a replay. After
-    `unverified` the state reads `verifying` rather than `re_review_needed`, so the assignment
+    returns `already_claimed`. The same `verdict` again returns the settled record marked as a
+    replay, and a different one is refused with `disposition_conflict`, which names the route (after
+    `needs_changes` the generation it opened is the one to use). After `unverified` the state reads `verifying` rather than `re_review_needed`, so the assignment
     does not announce this one;
-  - the event is no longer the revision this generation stands on, because a newer revision
-    arrived, the head is ambiguous, or the generation advanced.
+  - the generation advanced or a newer revision arrived, so the event is no longer the head: rule
+    the head that `assignment-show` names, which needs no new generation; a needs_changes ruling that
+    tries to replace the verified ruling of the old event is refused with `stale_generation` or
+    `superseded_revision` saying so;
+  - the head is ambiguous: outside a plan, a fresh generation; for a plan node this build records no
+    route, so report it and open none.
 
 A `needs_changes` verdict opens the generation itself. Open one by hand when nothing ruled it:
 
