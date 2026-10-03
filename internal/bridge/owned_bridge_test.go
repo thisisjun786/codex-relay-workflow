@@ -13,6 +13,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 func startReply(cwd string) fakehost.Reply {
@@ -67,27 +68,27 @@ func Test_test_create_and_followup_carry_the_stated_pair_and_exact_messages(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first["status"] != "accepted" || object(first["creation"])["model"] != "explicit-model" {
+	if first["status"] != "accepted" || pyjson.Map(first["creation"])["model"] != "explicit-model" {
 		t.Fatalf("creation=%v calls=%v", first, host.Requests())
 	}
 	sent := hostParams(t, host, "thread/start")
-	if sent["model"] != "explicit-model" || len(object(sent["config"])) != 1 || object(sent["config"])["model_reasoning_effort"] != "high" || sent["projectId"] != nil || hasMethodPrefix(host, "thread/goal/") {
+	if sent["model"] != "explicit-model" || len(pyjson.Map(sent["config"])) != 1 || pyjson.Map(sent["config"])["model_reasoning_effort"] != "high" || sent["projectId"] != nil || hasMethodPrefix(host, "thread/goal/") {
 		t.Fatalf("creation: %v", sent)
 	}
 	turn := hostParams(t, host, "turn/start")
-	if text(object(turn["input"].([]any)[0])["text"]) != in.Prompt {
+	if pyjson.Text(pyjson.Map(turn["input"].([]any)[0])["text"]) != in.Prompt {
 		t.Fatalf("turn: %v", turn)
 	}
-	result, err := b.SendMessageToThread(context.Background(), SendMessage{RequestID: "send", ThreadID: text(first["threadId"]), Message: "followup", Expected: map[string]any{"model": "explicit-model", "reasoning_effort": "high"}})
+	result, err := b.SendMessageToThread(context.Background(), SendMessage{RequestID: "send", ThreadID: pyjson.Text(first["threadId"]), Message: "followup", Expected: map[string]any{"model": "explicit-model", "reasoning_effort": "high"}})
 	if err != nil || result["status"] != "accepted" || result["turnId"] != "turn-2" {
 		t.Fatalf("send: %v %v", result, err)
 	}
 	resume := hostParams(t, host, "thread/resume")
-	if resume["model"] != "explicit-model" || len(object(resume["config"])) != 1 || object(resume["config"])["model_reasoning_effort"] != "high" || resume["excludeTurns"] != true || resume["threadId"] != first["threadId"] || len(resume) != 4 {
+	if resume["model"] != "explicit-model" || len(pyjson.Map(resume["config"])) != 1 || pyjson.Map(resume["config"])["model_reasoning_effort"] != "high" || resume["excludeTurns"] != true || resume["threadId"] != first["threadId"] || len(resume) != 4 {
 		t.Fatalf("resume: %v", resume)
 	}
-	observed, err := b.WaitThread(context.Background(), text(first["threadId"]), text(result["turnId"]), 0)
-	if err != nil || object(object(observed["turn"])["items"].([]any)[0])["text"] != "followup" {
+	observed, err := b.WaitThread(context.Background(), pyjson.Text(first["threadId"]), pyjson.Text(result["turnId"]), 0)
+	if err != nil || pyjson.Map(pyjson.Map(observed["turn"])["items"].([]any)[0])["text"] != "followup" {
 		t.Fatalf("observed=%v err=%v", observed, err)
 	}
 }
@@ -201,7 +202,7 @@ func Test_test_cwd_symlink_retargeting_does_not_change_request_identity(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if object(first["creation"])["cwd"] != original {
+	if pyjson.Map(first["creation"])["cwd"] != original {
 		t.Fatalf("creation=%v", first)
 	}
 	if err := os.Remove(alias); err != nil {

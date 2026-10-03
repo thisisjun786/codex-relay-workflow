@@ -80,13 +80,13 @@ func TestDRelinkOutstandingWriteSelection(t *testing.T) {
 			if e != nil {
 				t.Fatalf("%s link %v %v", dir, r, e)
 			}
-			out.State, out.ProjectRef, out.Revision = text(r, "state"), text(r, "project_ref"), integer(r, "revision")
+			out.State, out.ProjectRef, out.Revision = r.Text("state"), r.Text("project_ref"), integer(r, "revision")
 			p, e := s.One(ctx, "SELECT p.state,p.summary,pp.payload FROM fault_publications p JOIN fault_publication_payloads pp ON pp.publication_id=p.publication_id WHERE p.fault_id=? AND p.trigger_key='update:set_project:P2:r2'", id)
 			if e != nil {
 				t.Fatalf("%s write %v %v", dir, p, e)
 			}
 			out.Found = p != nil
-			out.WriteState, out.Summary, out.Payload = text(p, "state"), text(p, "summary"), text(p, "payload")
+			out.WriteState, out.Summary, out.Payload = p.Text("state"), p.Text("summary"), p.Text("payload")
 			return nil
 		})
 		return out

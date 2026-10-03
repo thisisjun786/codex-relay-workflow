@@ -75,7 +75,7 @@ func RequestGuard(ctx context.Context, conn net.Conn, stop Object, options Guard
 	}
 	// Dispatch rejection is not a domain refusal: the peer understood the frame
 	// but did not run a guard command. EOF alone cannot establish that distinction.
-	if len(response) == 2 && get(response, "protocol") == int64(1) && get(response, "requestRejected") == true {
+	if len(response) == 2 && response.Get("protocol") == int64(1) && response.Get("requestRejected") == true {
 		return nil, &responseError{"guard_rejected_the_call", "said_nothing"}
 	}
 	return response, nil
@@ -168,14 +168,14 @@ func readRequest(r io.Reader) (request Object, refused string, err error) {
 // deadline as an RFC 3339 time still ahead of now (the hook writes it in UTC), and socketPath,
 // program, mode and now strings or null. refused is the host detail for the first that is not.
 func guardParams(request Object, now time.Time) (params, stop Object, deadline time.Time, refused string) {
-	params, ok := evidence.Object(get(request, "params"))
+	params, ok := evidence.Object(request.Get("params"))
 	if !ok {
 		return nil, nil, time.Time{}, "guard params must be an object"
 	}
-	if stop, ok = evidence.Object(get(params, "stopInput")); !ok {
+	if stop, ok = evidence.Object(params.Get("stopInput")); !ok {
 		return nil, nil, time.Time{}, "stop input must be an object"
 	}
-	spelled, ok := get(params, "deadline").(string)
+	spelled, ok := params.Get("deadline").(string)
 	if !ok {
 		return nil, nil, time.Time{}, "guard deadline must be a string"
 	}
@@ -188,7 +188,7 @@ func guardParams(request Object, now time.Time) (params, stop Object, deadline t
 	}
 	// mode and now as well: only a string names either (null or "" asks for the default).
 	for _, key := range []string{"socketPath", "program", "mode", "now"} {
-		if value := get(params, key); value != nil {
+		if value := params.Get(key); value != nil {
 			if _, ok := value.(string); !ok {
 				return nil, nil, time.Time{}, "guard " + key + " must be a string"
 			}

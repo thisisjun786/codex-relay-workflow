@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"golang.org/x/sys/unix"
 )
 
@@ -194,7 +195,7 @@ func reapStop(t *testing.T, home, state string) reapAnswer {
 	}
 	result := invoke(t, home, "--socket", home+"/socket", "service", "stop")
 	answer := runtimeObject(t, result)
-	if result.Code != 0 || get(answer, "worker") != state || !handle.Wait(0) {
+	if result.Code != 0 || answer.Get("worker") != state || !handle.Wait(0) {
 		t.Fatalf("%s: %+v", state, result)
 	}
 	// daemon.json is the record s.NewRecord (Go) wrote above; stop only adds to it, so its
@@ -229,7 +230,7 @@ func Test29D1DeterministicReapStates(t *testing.T) {
 func installationForBinary(t *testing.T, home string) string {
 	t.Helper()
 	result := invoke(t, home, "service", "status")
-	return text(get(runtimeObject(t, result), "installationId"))
+	return pyjson.Text(runtimeObject(t, result).Get("installationId"))
 }
 
 func Test29D1TerminationCadence(t *testing.T) {
@@ -302,7 +303,7 @@ func Test29D1StopWaitsForEveryThreadOfTheWorker(t *testing.T) {
 		t.Fatalf("stop of a worker whose leader has exited: %v", stopped)
 	}
 	held, err := existingLockHeld(lock)
-	if !worker.Wait(0) || get(s.Record(), "workerPid") != nil || err != nil || held {
+	if !worker.Wait(0) || s.Record().Get("workerPid") != nil || err != nil || held {
 		t.Fatalf("stopped worker: exited=%v record=%v lockHeld=%v err=%v", worker.Wait(0), s.Record(), held, err)
 	}
 }

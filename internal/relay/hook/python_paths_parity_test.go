@@ -42,8 +42,8 @@ func TestAPathFromJSONReachesTheSystemAsPythonEncodesIt(t *testing.T) {
 	stop := Object{{Key: "session_id", Value: "s"}, {Key: "turn_id", Value: "t"}, {Key: "stop_hook_active", Value: false}, {Key: "last_assistant_message", Value: "x"}}
 	var reasons []any
 	for _, path := range []string{spelled + "/transcript.jsonl", spelled + "/missing.jsonl", unencodable} {
-		_, identity := EventIdentity(context.Background(), set(append(Object{}, stop...), "transcript_path", path))
-		reasons = append(reasons, get(identity, "reason"))
+		_, identity := EventIdentity(context.Background(), append(Object{}, stop...).Set("transcript_path", path))
+		reasons = append(reasons, identity.Get("reason"))
 	}
 	config := Object{{Key: "journalRoot", Value: unencodable}}
 	slot := Slot{"20260930", strings.Repeat("b", 32)}

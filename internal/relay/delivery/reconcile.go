@@ -9,7 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -43,27 +45,10 @@ var RelayProgram = func() []string {
 	return []string{filepath.Join(filepath.Dir(exe), "codex-session-relay")}
 }
 
-func shellQuote(s string) string {
-	if s == "" {
-		return "''"
-	}
-	safe := true
-	for _, r := range s {
-		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("@%+=:,./-_", r)) {
-			safe = false
-			break
-		}
-	}
-	if safe {
-		return s
-	}
-	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
-}
-
 func recoveryCommand(stateDirectory, eventID string) string {
 	argv := append(RelayProgram(), "--state", stateDirectory, "show", "--event", eventID)
 	for i, a := range argv {
-		argv[i] = shellQuote(a)
+		argv[i] = quote.Shell(a)
 	}
 	return strings.Join(argv, " ")
 }
@@ -147,7 +132,7 @@ func (rc *Reconciler) asItStands(ctx context.Context, requestID string, changed 
 			return nil, err
 		}
 		for _, f := range aw {
-			out = set(out, f.Key, f.Value)
+			out = out.Set(f.Key, f.Value)
 		}
 	}
 	return out, nil
@@ -165,8 +150,8 @@ func (rc *Reconciler) recordedLoss(ctx context.Context, requestID string, readin
 	var redelivery any
 	for _, row := range rows {
 		detail := loadsObj(row.S("detail"))
-		if str(detail, "requestId") == requestID {
-			redelivery, _ = get(detail, "redelivery")
+		if pyjson.Text(detail.Get("requestId")) == requestID {
+			redelivery, _ = detail.Lookup("redelivery")
 			break
 		}
 	}
@@ -211,11 +196,11 @@ func (rc *Reconciler) reconcile(ctx context.Context, requestID string, adapter A
 		facts = &f
 		observation = f.ReceiptStatus + ":" + f.DeliveryState
 		if f.DeliveryState == Dispatched {
-			notes, _ := get(receipt, "settingsNotes")
+			notes, _ := receipt.Lookup("settingsNotes")
 			return rc.settleDispatched(ctx, attempt, delivery, f, observation, adapter, now, notes)
 		}
 		if f.RetrySafe {
-			findings, _ := get(receipt, "settingsFindings")
+			findings, _ := receipt.Lookup("settingsFindings")
 			return rc.settleFromReceipt(ctx, attempt, delivery, f, ConfirmedPreSendRejection, observation, now, false, nil, findings)
 		}
 		if f.ReceiptStatus != Unfinished {
@@ -244,8 +229,8 @@ func (rc *Reconciler) reconcile(ctx context.Context, requestID string, adapter A
 	}
 	if scanned && answer != "" {
 		reading = readUnknownSend(adapter, rc.Clock, attempt, delivery, answer)
-		if str(reading, "finding") == Present {
-			turn, _ := get(reading, "turnId")
+		if pyjson.Text(reading.Get("finding")) == Present {
+			turn, _ := reading.Lookup("turnId")
 			out, err := rc.settleFromScan(ctx, attempt, delivery, TokenScan{Found: true, TurnID: turn}, observation, "found since the send in turn "+pyStr(turn), now)
 			if err != nil {
 				return nil, err
@@ -269,7 +254,7 @@ func (rc *Reconciler) reconcile(ctx context.Context, requestID string, adapter A
 		return nil, err
 	}
 	for _, f := range aw {
-		out = set(out, f.Key, f.Value)
+		out = out.Set(f.Key, f.Value)
 	}
 	return out, nil
 }
@@ -289,7 +274,7 @@ func receiptAnswer(facts *Facts) string {
 
 func (rc *Reconciler) settleDispatched(ctx context.Context, attempt, delivery Row, facts Facts, observation string, adapter Adapter, now float64, notes any) (Obj, error) {
 	reading := ReadRecipientTurn(adapter, rc.Clock, attempt, delivery, facts.TurnID)
-	out, err := rc.settleFromReceipt(ctx, attempt, delivery, facts, ReceiptTurnID, observation, now, str(reading, "finding") != Unknown, notes, nil)
+	out, err := rc.settleFromReceipt(ctx, attempt, delivery, facts, ReceiptTurnID, observation, now, pyjson.Text(reading.Get("finding")) != Unknown, notes, nil)
 	var changed attemptChanged
 	switch {
 	case errors.As(err, &attemptLost{}):
@@ -300,17 +285,17 @@ func (rc *Reconciler) settleDispatched(ctx context.Context, attempt, delivery Ro
 		return nil, err
 	}
 	out = append(out, F{Key: "recipientTurn", Value: reading})
-	if str(reading, "finding") == HostLostTurn {
+	if pyjson.Text(reading.Get("finding")) == HostLostTurn {
 		if delivery.S("kind") == Completion {
 			loss, err := SettleLoss(ctx, rc.Store, rc.Clock, attempt.S("request_id"), reading, observation)
 			if err != nil {
 				return nil, err
 			}
 			for _, f := range loss {
-				out = set(out, f.Key, f.Value)
+				out = out.Set(f.Key, f.Value)
 			}
 		} else {
-			out = set(out, "redelivery", ReportOnly)
+			out = out.Set("redelivery", ReportOnly)
 		}
 	} else if delivery.S("kind") == Completion {
 		if _, err := RecordUndecided(ctx, rc.Store, attempt.S("request_id"), reading); err != nil {
@@ -387,8 +372,8 @@ func (rc *Reconciler) settleFromScan(ctx context.Context, attempt, delivery Row,
 	} else {
 		record = loadsObj(attempt.S("record"))
 	}
-	record = set(record, "reconciliation", Obj{{Key: "operationReceiptChecked", Value: true}, {Key: "recipientTurnsChecked", Value: true}, {Key: "affirmativeEvidence", Value: TurnFound}, {Key: "checkedAt", Value: rc.Clock.ISO()}})
-	anchor, err := rc.write(ctx, attempt, delivery, record, str(record, "deliveryState"), TurnFound, observation, scanDetail, nil, writeOpts{aggregate: Dispatched, dispatchEvidence: "turn_found", dispatchTurn: scan.TurnID})
+	record = record.Set("reconciliation", Obj{{Key: "operationReceiptChecked", Value: true}, {Key: "recipientTurnsChecked", Value: true}, {Key: "affirmativeEvidence", Value: TurnFound}, {Key: "checkedAt", Value: rc.Clock.ISO()}})
+	anchor, err := rc.write(ctx, attempt, delivery, record, pyjson.Text(record.Get("deliveryState")), TurnFound, observation, scanDetail, nil, writeOpts{aggregate: Dispatched, dispatchEvidence: "turn_found", dispatchTurn: scan.TurnID})
 	if err != nil {
 		return nil, err
 	}
@@ -402,13 +387,13 @@ func (rc *Reconciler) stayHeld(ctx context.Context, attempt, delivery Row, obser
 	} else {
 		record = loadsObj(attempt.S("record"))
 	}
-	record = set(record, "reconciliation", Obj{{Key: "operationReceiptChecked", Value: true}, {Key: "recipientTurnsChecked", Value: !strings.Contains(scanDetail, "not scanned")}, {Key: "affirmativeEvidence", Value: NoEvidence}, {Key: "checkedAt", Value: rc.Clock.ISO()}})
+	record = record.Set("reconciliation", Obj{{Key: "operationReceiptChecked", Value: true}, {Key: "recipientTurnsChecked", Value: !strings.Contains(scanDetail, "not scanned")}, {Key: "affirmativeEvidence", Value: NoEvidence}, {Key: "checkedAt", Value: rc.Clock.ISO()}})
 	mark := scanDetail
 	var hold any
 	if reading != nil {
-		if u, _ := get(reading, "undecided"); truthy(u) {
+		if u, _ := reading.Lookup("undecided"); truthy(u) {
 			mark, hold = unknownUndecided+pyStr(u), UnknownSendUndecided
-		} else if str(reading, "finding") == UnknownSendLost {
+		} else if pyjson.Text(reading.Get("finding")) == UnknownSendLost {
 			mark, hold = unknownLostMark, UnknownSendLost
 		}
 	}
@@ -555,7 +540,7 @@ func BindAnchorIn(ctx context.Context, s *store.Store, clock Clock, rid string, 
 
 // awaiting is reconcile._awaiting for the kinds this package delivers.
 func (rc *Reconciler) awaiting(ctx context.Context, kind string, outcome Obj, reading Reading, stored Row, eventID string) (Obj, error) {
-	if str(outcome, "state") != HeldUncertain {
+	if pyjson.Text(outcome.Get("state")) != HeldUncertain {
 		return nil, nil
 	}
 	correction := kind == Revision
@@ -607,9 +592,9 @@ func (rc *Reconciler) awaiting(ctx context.Context, kind string, outcome Obj, re
 		if correction {
 			action = correctionUnconfirmed
 		}
-		reason, _ = get(outcome, "missing")
+		reason, _ = outcome.Lookup("missing")
 		if reading != nil {
-			if d, _ := get(reading, "detail"); truthy(d) {
+			if d, _ := reading.Lookup("detail"); truthy(d) {
 				reason = d
 			}
 		}
@@ -646,7 +631,7 @@ func (rc *Reconciler) RecoverOnStart(ctx context.Context, adapter Adapter, now *
 			}
 		}
 		reconciled = append(reconciled, entry)
-		if str(outcome, "state") == HeldUncertain {
+		if pyjson.Text(outcome.Get("state")) == HeldUncertain {
 			held = append(held, a.S("request_id"))
 		}
 	}

@@ -3,6 +3,7 @@ package delivery
 import (
 	"context"
 	"database/sql"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"slices"
 	"sort"
 	"strconv"
@@ -360,16 +361,16 @@ func (sc *Scheduler) attempt(ctx context.Context, adapter Adapter, row Row, now 
 		}
 		return !moved
 	}
-	if v, _ := get(record, "withheldReason"); truthy(v) {
+	if v, _ := record.Lookup("withheldReason"); truthy(v) {
 		report.Deferred++
 		return false
 	}
-	if str(record, "sendAttempted") == "no" {
+	if pyjson.Text(record.Get("sendAttempted")) == "no" {
 		report.Skipped++
 	} else {
 		report.Delivered++
 	}
-	if row.S("kind") == Revision && str(record, "deliveryState") == Dispatched && sc.Ack != nil {
+	if row.S("kind") == Revision && pyjson.Text(record.Get("deliveryState")) == Dispatched && sc.Ack != nil {
 		if _, err := sc.Ack.BindDispatchedRevision(ctx, event); err != nil {
 			report.Notes = append(report.Notes, "anchor binding failed: "+err.Error())
 		}

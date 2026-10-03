@@ -165,7 +165,7 @@ func Test33PR181AnExplicitStoreIsReadWithoutDiscovery(t *testing.T) {
 			options := GuardOptions{Root: filepath.Join(home, "markers"), DBPath: filepath.Join(home, "explicit.sqlite3"), Now: "2026-01-01T00:00:00Z", NoRecord: true,
 				DefaultDBPath: func() (string, error) { t.Error("discovery was asked for a store"); return "", nil }}
 			answer, err := Evaluate(context.Background(), stop, options)
-			if err != nil || get(answer, "receiptEvidence") != "relationship_absent" {
+			if err != nil || answer.Get("receiptEvidence") != "relationship_absent" {
 				t.Fatalf("%v %s", err, pyjson.Dumps(answer, pyjson.Options{}))
 			}
 		})
@@ -226,7 +226,7 @@ func adapterFiles(t *testing.T, home string) Object {
 			}
 			name, _ := filepath.Rel(home, path)
 			if _, err := strconv.Atoi(filepath.Base(filepath.Dir(path))); err == nil {
-				name = "journal/" + text(get(object(value), "acceptance"))
+				name = "journal/" + pyjson.Text(object(value).Get("acceptance"))
 			}
 			files = append(files, Field{Key: name, Value: Object{{Key: "mode", Value: int64(info.Mode().Perm())}, {Key: "value", Value: normalize(value)}}})
 		}

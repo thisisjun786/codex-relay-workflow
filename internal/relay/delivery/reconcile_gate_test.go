@@ -1,6 +1,7 @@
 package delivery
 
 import (
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"strings"
 	"testing"
 )
@@ -9,7 +10,7 @@ func TestReconcilePass_receipt_gains_turn_id(t *testing.T) {
 	f := newFixture(t, "")
 	event := f.queuedEvent(regOpts{})
 	f.host.script = []string{"in_progress"}
-	request := str(f.mustAttempt(event, nil), "requestId")
+	request := pyjson.Text(f.mustAttempt(event, nil).Get("requestId"))
 	f.host.ledger[request] = Obj{{Key: "status", Value: Accepted}}
 	f.clock.Advance(1000)
 	rc := NewReconciler(f.delivery)

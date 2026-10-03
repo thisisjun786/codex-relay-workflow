@@ -1,6 +1,7 @@
 package delivery
 
 import (
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"math"
 	"strings"
 	"testing"
@@ -19,12 +20,12 @@ func TestDEL11_each_retry_opens_a_new_attempt_and_never_replays_the_first_reques
 	second := f.mustAttempt(event, at(f.clock.Now()))
 	expected.same("first", first)
 	expected.same("second", second)
-	if str(first, "requestId") == str(second, "requestId") || str(second, "deliveryState") != Dispatched {
+	if pyjson.Text(first.Get("requestId")) == pyjson.Text(second.Get("requestId")) || pyjson.Text(second.Get("deliveryState")) != Dispatched {
 		t.Fatalf("records %v %v", first, second)
 	}
 	replayed := 0
 	for _, s := range f.host.sends {
-		if s.requestID == str(first, "requestId") {
+		if s.requestID == pyjson.Text(first.Get("requestId")) {
 			replayed++
 		}
 	}
@@ -106,7 +107,7 @@ func TestDEL13_flood_bounds_cap_attempts_and_pace_sends(t *testing.T) {
 			if record == nil {
 				break
 			}
-			request := str(record, "requestId")
+			request := pyjson.Text(record.Get("requestId"))
 			f.host.ledger[request] = Obj{{Key: "requestId", Value: request}, {Key: "status", Value: "failed"}, {Key: "error", Value: "thread/read: refused"}, {Key: "rpcError", Value: Obj{{Key: "code", Value: "internal"}, {Key: "message", Value: "refused"}}}}
 			outcome, err := rc.ReconcileAttempt(f.ctx, request, f.host, at(f.clock.Now()))
 			mustDo(t, err)
@@ -223,7 +224,7 @@ func TestDEL16_a_later_good_observation_releases_the_withheld_delivery(t *testin
 			expected.same("eligible", f.eligible())
 			record := f.mustAttempt(event, at(f.clock.Now()))
 			expected.same("record", record)
-			if str(record, "deliveryState") != Dispatched {
+			if pyjson.Text(record.Get("deliveryState")) != Dispatched {
 				t.Fatal("released and dispatched")
 			}
 			expected.tables(f)
@@ -277,7 +278,7 @@ func TestDEL18_a_deactivated_assignment_is_withheld_with_a_returned_record(t *te
 			f.setStatus(status)
 			record := f.mustAttempt(event, nil)
 			expected.same("record", record)
-			if str(record, "withheldReason") != RelationshipNotActive || str(record, "relationshipStatus") != status || len(f.host.sends) != 0 {
+			if pyjson.Text(record.Get("withheldReason")) != RelationshipNotActive || pyjson.Text(record.Get("relationshipStatus")) != status || len(f.host.sends) != 0 {
 				t.Fatalf("record %v", record)
 			}
 			row := f.row(event)
@@ -325,7 +326,7 @@ func TestDEL20_resuming_delivers_the_same_event_once_and_an_active_one_is_untouc
 		f.clock.Advance(f.delivery.Policy.LifecycleRecheck + 1)
 		record := f.mustAttempt(event, at(f.clock.Now()))
 		expected.same("record", record)
-		if str(record, "deliveryState") != Dispatched || len(f.host.sends) != 1 {
+		if pyjson.Text(record.Get("deliveryState")) != Dispatched || len(f.host.sends) != 1 {
 			t.Fatal("delivered once")
 		}
 		expected.tables(f)

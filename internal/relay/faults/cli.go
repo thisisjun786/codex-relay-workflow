@@ -286,14 +286,14 @@ func latestPublicationAnswer(ctx context.Context, l *Ledger, id string, before i
 	// record() may queue a secondary update after its primary publication (reopen does);
 	// its reply still describes the first publication created by this observation.
 	row := rows[before]
-	trigger, kind := text(row, "trigger_key"), text(row, "kind")
+	trigger, kind := row.Text("trigger_key"), row.Text("kind")
 	awaitingTarget := kind == openRecord && row.Get("tracker_ref") == nil
 	fault, _ := l.one(ctx, "SELECT product,scope_key,external_ref FROM fault_ledger WHERE fault_id=?", id)
 	reason := "queued"
 	if awaitingTarget {
-		reason = fmt.Sprintf("queued; no target owned by %s for %s (awaiting_target), so it waits rather than being filed somewhere guessed", text(fault, "product"), text(fault, "scope_key"))
+		reason = fmt.Sprintf("queued; no target owned by %s for %s (awaiting_target), so it waits rather than being filed somewhere guessed", fault.Text("product"), fault.Text("scope_key"))
 	}
-	return map[string]any{"publicationId": text(row, "publication_id"), "kind": kind, "trigger": trigger, "queued": true, "awaitingTarget": awaitingTarget, "awaitingRecord": kind != openRecord && text(fault, "external_ref") == "", "reason": reason}
+	return map[string]any{"publicationId": row.Text("publication_id"), "kind": kind, "trigger": trigger, "queued": true, "awaitingTarget": awaitingTarget, "awaitingRecord": kind != openRecord && fault.Text("external_ref") == "", "reason": reason}
 }
 
 func transitionPublicationAnswer(ctx context.Context, l *Ledger, id, trigger string) (any, error) {
@@ -313,7 +313,7 @@ func publicationAnswer(ctx context.Context, l *Ledger, id string, recorded bool,
 	if err != nil || row == nil {
 		return nil
 	}
-	if text(row, "state") != pending {
+	if row.Text("state") != pending {
 		return nil
 	}
 	fault, err := l.one(ctx, "SELECT scope_key,product FROM fault_ledger WHERE fault_id = ?", id)
@@ -330,9 +330,9 @@ func publicationAnswer(ctx context.Context, l *Ledger, id string, recorded bool,
 		reason = "revived"
 	}
 	if awaiting {
-		reason = fmt.Sprintf("%s; no target owned by %s for %s (%s), so it waits rather than being filed somewhere guessed", reason, text(fault, "product"), text(fault, "scope_key"), why)
+		reason = fmt.Sprintf("%s; no target owned by %s for %s (%s), so it waits rather than being filed somewhere guessed", reason, fault.Text("product"), fault.Text("scope_key"), why)
 	}
-	return map[string]any{"publicationId": text(row, "publication_id"), "kind": openRecord, "trigger": triggerOpen, "queued": true, "awaitingTarget": awaiting, "awaitingRecord": false, "reason": reason}
+	return map[string]any{"publicationId": row.Text("publication_id"), "kind": openRecord, "trigger": triggerOpen, "queued": true, "awaitingTarget": awaiting, "awaitingRecord": false, "reason": reason}
 }
 func textRow(row store.Row, key string) string {
 	if row == nil {

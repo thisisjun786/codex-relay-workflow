@@ -8,6 +8,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 func interactiveSend(t *testing.T) (*Bridge, *fakehost.Server, SendMessage) {
@@ -36,7 +37,7 @@ func interactiveSend(t *testing.T) (*Bridge, *fakehost.Server, SendMessage) {
 func Test_test_transmitting_a_policy_would_have_relaxed_an_interactive_thread(t *testing.T) {
 	b, host, input := interactiveSend(t)
 	receipt, err := b.SendMessageToThread(context.Background(), input)
-	if err != nil || receipt["status"] != "failed" || object(receipt["rpcError"])["code"] != "unsupported_approval_policy" || hostParams(t, host, "thread/resume")["approvalPolicy"] != nil || host.Count("turn/start") != 0 || object(object(receipt["settings"])["actual"])["approvalPolicy"] != "on-request" {
+	if err != nil || receipt["status"] != "failed" || pyjson.Map(receipt["rpcError"])["code"] != "unsupported_approval_policy" || hostParams(t, host, "thread/resume")["approvalPolicy"] != nil || host.Count("turn/start") != 0 || pyjson.Map(pyjson.Map(receipt["settings"])["actual"])["approvalPolicy"] != "on-request" {
 		t.Fatalf("receipt=%v err=%v", receipt, err)
 	}
 }
@@ -101,7 +102,7 @@ func Test_test_an_approval_request_during_the_turn_is_left_undecided(t *testing.
 	input.Expected["approval_policy"] = "on-request"
 	host.Respond("turn/start", fakehost.Reply{Result: map[string]any{"turn": map[string]any{"id": "turn-2"}}, ServerRequests: []string{"item/commandExecution/requestApproval"}})
 	receipt, err := b.SendMessageToThread(context.Background(), input)
-	if err != nil || receipt["status"] != "accepted" || len(host.ServerRequests()) == 0 || len(host.Answers()) != 0 || object(receipt["approvals"])["servicedByThisBridge"] != false || object(receipt["approvals"])["onApprovalRequest"] != "left_for_thread_approver" {
+	if err != nil || receipt["status"] != "accepted" || len(host.ServerRequests()) == 0 || len(host.Answers()) != 0 || pyjson.Map(receipt["approvals"])["servicedByThisBridge"] != false || pyjson.Map(receipt["approvals"])["onApprovalRequest"] != "left_for_thread_approver" {
 		t.Fatalf("receipt=%v err=%v raised=%v answers=%v", receipt, err, host.ServerRequests(), host.Answers())
 	}
 }

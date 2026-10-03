@@ -123,7 +123,7 @@ func dRelinkWork(ctx context.Context, l *Ledger, scope string, limit int, stamp 
 		}
 		backfilled = len(rows)
 		for _, r := range rows {
-			id := text(r, "publication_id")
+			id := r.Text("publication_id")
 			if _, e = l.exec(ctx, "UPDATE fault_publications SET tracker_ref=?,updated_at=? WHERE publication_id=?", r.Get("team"), stamp, id); e != nil {
 				return e
 			}
@@ -149,8 +149,8 @@ func dRelinkWork(ctx context.Context, l *Ledger, scope string, limit int, stamp 
 			links = links[:limit]
 		}
 		for _, r := range links {
-			id := text(r, "fault_id")
-			project := text(r, "project_ref")
+			id := r.Text("fault_id")
+			project := r.Text("project_ref")
 			if project != "" {
 				if e = dRelinkOne(ctx, l, id, project, stamp); e != nil {
 					return e
@@ -170,13 +170,13 @@ func dRelinkWork(ctx context.Context, l *Ledger, scope string, limit int, stamp 
 	return map[string]any{"relinked": relinked, "relinkPending": relinkPending, "backfilled": backfilled, "backfillPending": backfillPending}, e
 }
 func dNotice(r row) map[string]any {
-	reason := text(r, "reason")
+	reason := r.Text("reason")
 	reason = strings.TrimPrefix(reason, "raised:")
 	var reasonValue any
 	if reason != "" {
 		reasonValue = reason
 	}
-	return map[string]any{"notificationId": text(r, "notification_id"), "faultId": text(r, "fault_id"), "product": text(r, "product"), "kind": text(r, "kind"), "reason": reasonValue, "cycle": integer(r, "cycle"), "ref": r.Get("ref"), "state": text(r, "state"), "deliveryKey": "relay-notification:" + text(r, "notification_id"), "owner": r.Get("owner"), "attempts": integer(r, "attempts"), "lastError": r.Get("last_error"), "createdAt": text(r, "created_at"), "deliveredAt": r.Get("delivered_at"), "ackRef": r.Get("ack_ref")}
+	return map[string]any{"notificationId": r.Text("notification_id"), "faultId": r.Text("fault_id"), "product": r.Text("product"), "kind": r.Text("kind"), "reason": reasonValue, "cycle": integer(r, "cycle"), "ref": r.Get("ref"), "state": r.Text("state"), "deliveryKey": "relay-notification:" + r.Text("notification_id"), "owner": r.Get("owner"), "attempts": integer(r, "attempts"), "lastError": r.Get("last_error"), "createdAt": r.Text("created_at"), "deliveredAt": r.Get("delivered_at"), "ackRef": r.Get("ack_ref")}
 }
 
 // dLapse is _lapse_notifications: lapsed reservations become uncertain, and a pending
@@ -239,7 +239,7 @@ func dNotifications(ctx context.Context, l *Ledger, a map[string]string) (any, e
 	for _, r := range rows {
 		entry := dNotice(r)
 		if state == "pending" {
-			eligibility, e := dEligibility(ctx, l, text(r, "fault_id"), l.Clock.Now())
+			eligibility, e := dEligibility(ctx, l, r.Text("fault_id"), l.Clock.Now())
 			if e != nil {
 				return nil, e
 			}
@@ -265,7 +265,7 @@ func dRaise(ctx context.Context, l *Ledger, a map[string]string) (any, error) {
 			return fmt.Errorf("fault_unknown: no fault '%s'", id)
 		}
 		notice = pyvalue.SHA256Hex(id + "|decision|raised:" + reason)[:idWidth]
-		_, e = l.exec(ctx, "INSERT INTO fault_notifications(notification_id,fault_id,product,kind,reason,cycle,ref,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(notification_id) DO UPDATE SET state=excluded.state,last_error=NULL,updated_at=excluded.updated_at WHERE fault_notifications.state='withdrawn'", notice, id, text(r, "product"), "decision", "raised:"+reason, integer(r, "cycle"), nilIfEmpty(a["--ref"]), "pending", l.Clock.ISO(), l.Clock.ISO())
+		_, e = l.exec(ctx, "INSERT INTO fault_notifications(notification_id,fault_id,product,kind,reason,cycle,ref,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(notification_id) DO UPDATE SET state=excluded.state,last_error=NULL,updated_at=excluded.updated_at WHERE fault_notifications.state='withdrawn'", notice, id, r.Text("product"), "decision", "raised:"+reason, integer(r, "cycle"), nilIfEmpty(a["--ref"]), "pending", l.Clock.ISO(), l.Clock.ISO())
 		return e
 	})
 	return map[string]any{"notificationId": notice, "faultId": id, "kind": "decision", "reason": reason}, e
@@ -320,7 +320,7 @@ func dReserveRows(ctx context.Context, l *Ledger, a map[string]string, deliverab
 		if len(reserved) >= limit {
 			break
 		}
-		id := text(r, "notification_id")
+		id := r.Text("notification_id")
 		sequence, e := l.one(ctx, "SELECT COALESCE(MAX(examined_seq),0)+1 AS n FROM fault_notifications")
 		if e != nil {
 			return nil, e
@@ -328,7 +328,7 @@ func dReserveRows(ctx context.Context, l *Ledger, a map[string]string, deliverab
 		if _, e = l.exec(ctx, "UPDATE fault_notifications SET examined_seq=? WHERE notification_id=?", integer(sequence, "n"), id); e != nil {
 			return nil, e
 		}
-		eligibility, e := dEligibility(ctx, l, text(r, "fault_id"), l.Clock.Now())
+		eligibility, e := dEligibility(ctx, l, r.Text("fault_id"), l.Clock.Now())
 		if e != nil {
 			return nil, e
 		}
@@ -345,7 +345,7 @@ func dReserveRows(ctx context.Context, l *Ledger, a map[string]string, deliverab
 				continue
 			}
 		}
-		product := text(r, "product")
+		product := r.Text("product")
 		budget, e := l.one(ctx, "SELECT max_count,window_seconds FROM fault_limits WHERE product=? AND kind='notification'", product)
 		if e != nil {
 			return nil, e
@@ -399,10 +399,10 @@ func dSettle(ctx context.Context, l *Ledger, name string, a map[string]string) (
 	}
 	reconcile := name == "fault-notification-reconcile"
 	if reconcile {
-		if text(r, "state") != "uncertain" {
-			return nil, fmt.Errorf("fault_state_conflict: only an uncertain notification is reconciled; this one is %s", text(r, "state"))
+		if r.Text("state") != "uncertain" {
+			return nil, fmt.Errorf("fault_state_conflict: only an uncertain notification is reconciled; this one is %s", r.Text("state"))
 		}
-	} else if text(r, "state") != "reserved" || text(r, "token") != a["--token"] {
+	} else if r.Text("state") != "reserved" || r.Text("token") != a["--token"] {
 		return nil, fmt.Errorf("fault_claim_stale: this reservation token is not the current one")
 	}
 	delivered := name == "fault-notification-ack" || reconcile && a["--delivered"] == "yes"
@@ -411,7 +411,7 @@ func dSettle(ctx context.Context, l *Ledger, name string, a map[string]string) (
 		ref = a["--error"]
 	}
 	state := "pending"
-	if delivered && reconcile && text(r, "owner") == "relay-daemon" {
+	if delivered && reconcile && r.Text("owner") == "relay-daemon" {
 		went, e := l.one(ctx, "SELECT message_id FROM supervisor_messages WHERE obligation_kind='fault_notification' AND obligation_id=? AND state IN ('dispatched','read')", id)
 		if e != nil {
 			return nil, e
@@ -426,21 +426,21 @@ func dSettle(ctx context.Context, l *Ledger, name string, a map[string]string) (
 			return nil, e
 		}
 		if sent != nil {
-			return nil, fmt.Errorf("fault_state_conflict: supervisor channel attempt %s may have sent this notification, so it is not settled as not delivered: that send's answer, or a verified readback, settles it", text(sent, "request_id"))
+			return nil, fmt.Errorf("fault_state_conflict: supervisor channel attempt %s may have sent this notification, so it is not settled as not delivered: that send's answer, or a verified readback, settles it", sent.Text("request_id"))
 		}
 	}
 	if delivered {
 		state = "delivered"
 		_, e = l.exec(ctx, "UPDATE fault_notifications SET state=?,token=NULL,delivered_at=?,ack_ref=?,updated_at=? WHERE notification_id=?", state, l.Clock.ISO(), ref, l.Clock.ISO(), id)
 	} else {
-		_, e = l.exec(ctx, "DELETE FROM fault_budget_uses WHERE product=? AND kind='notification' AND ref=?", text(r, "product"), fmt.Sprintf("%s:%d", id, integer(r, "attempts")))
+		_, e = l.exec(ctx, "DELETE FROM fault_budget_uses WHERE product=? AND kind='notification' AND ref=?", r.Text("product"), fmt.Sprintf("%s:%d", id, integer(r, "attempts")))
 		if e == nil {
-			if text(r, "kind") == "blocking" {
-				fault, readErr := l.one(ctx, "SELECT state FROM fault_ledger WHERE fault_id=?", text(r, "fault_id"))
+			if r.Text("kind") == "blocking" {
+				fault, readErr := l.one(ctx, "SELECT state FROM fault_ledger WHERE fault_id=?", r.Text("fault_id"))
 				if readErr != nil {
 					return nil, readErr
 				}
-				if fault != nil && text(fault, "state") == Withdrawn {
+				if fault != nil && fault.Text("state") == Withdrawn {
 					state = "withdrawn"
 				}
 			}

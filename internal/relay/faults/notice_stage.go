@@ -129,14 +129,14 @@ func (l *Ledger) StageNotice(ctx context.Context, notice map[string]any, resolve
 			}
 			return finish(result == 1, "", false)
 		}
-		id = text(r, "message_id")
+		id = r.Text("message_id")
 		moving := !noticeAddressed(r, live)
-		moved := moving || text(r, "relationship_id") != relation
-		same := dumps(packet, false) == text(r, "packet")
+		moved := moving || r.Text("relationship_id") != relation
+		same := dumps(packet, false) == r.Text("packet")
 		if same && !moved && r.Get("hold_reason") == nil {
 			return finish(false, "this notification is already staged; one notification is one message", false)
 		}
-		released := (text(r, "hold_reason") == NoticeParkedHold || text(r, "hold_reason") == noticeUnaddressedHold) && !moving
+		released := (r.Text("hold_reason") == NoticeParkedHold || r.Text("hold_reason") == noticeUnaddressedHold) && !moving
 		bounds := " hold_reason=CASE WHEN hold_reason IN (?,?) THEN NULL ELSE hold_reason END,"
 		args := []any{dumps(packet, false), relation, live["sender"], live["recipient"], live["projectKey"]}
 		if moving {

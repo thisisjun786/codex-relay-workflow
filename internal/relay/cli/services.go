@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"path/filepath"
-	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
@@ -168,22 +167,4 @@ func contents(ctx context.Context, services dispatch.Services, access store.Prob
 		{Key: "available", Value: true}, {Key: "relationships", Value: relationships},
 		{Key: "openAttempts", Value: open}, {Key: "detail", Value: nil},
 	}
-}
-
-// shellQuote is shlex.quote.
-func shellQuote(value string) string {
-	if value == "" {
-		return "''"
-	}
-	safe := true
-	for _, r := range value {
-		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("@%+=:,./-_", r)) {
-			safe = false
-			break
-		}
-	}
-	if safe {
-		return value
-	}
-	return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
 }

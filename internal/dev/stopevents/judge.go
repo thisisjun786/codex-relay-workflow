@@ -335,7 +335,7 @@ func (r *reading) read(roots, hosts []string) {
 				where := join(root, d, name)
 				body, readable, isExact := readRecord(where)
 				o, isObject := asObject(body)
-				if !readable || !isObject || !(exact(get(o, "recordVersion"), 1) || exact(get(o, "recordVersion"), hook.RecordVersion)) || (exact(get(o, "recordVersion"), hook.RecordVersion) && !(isExact && rowShape(o))) {
+				if !readable || !isObject || !(exact(o.Get("recordVersion"), 1) || exact(o.Get("recordVersion"), hook.RecordVersion)) || (exact(o.Get("recordVersion"), hook.RecordVersion) && !(isExact && rowShape(o))) {
 					r.add("rowsUnreadable", where)
 					continue
 				}
@@ -372,8 +372,8 @@ func (r *reading) read(roots, hosts []string) {
 	}
 	for _, one := range read {
 		for _, key := range one.claimOrder {
-			claimedBy, _ := asObject(get(one.claims[key], "claimedBy"))
-			wanted = append(wanted, wantedLedger{spelled: get(claimedBy, "hostLedger").(string), recorded: true})
+			claimedBy, _ := asObject(one.claims[key].Get("claimedBy"))
+			wanted = append(wanted, wantedLedger{spelled: claimedBy.Get("hostLedger").(string), recorded: true})
 		}
 	}
 	hostFiles := map[string][]hostFile{}
@@ -449,26 +449,26 @@ func (r *reading) read(roots, hosts []string) {
 	selected := map[string]bool{}
 	for _, one := range read {
 		for key, body := range one.claims {
-			if r.inWindow(get(body, "claimedAt"), get(body, "sessionId"), get(body, "turnId")) {
+			if r.inWindow(body.Get("claimedAt"), body.Get("sessionId"), body.Get("turnId")) {
 				selected[key] = true
 			}
 		}
 		for key, body := range one.outcomes {
-			if r.inWindow(get(body, "at"), get(body, "sessionId"), get(body, "turnId")) {
+			if r.inWindow(body.Get("at"), body.Get("sessionId"), body.Get("turnId")) {
 				selected[key] = true
 			}
 		}
 	}
 	for key, files := range hostFiles {
 		for _, file := range files {
-			if r.inWindow(get(file.body, "claimedAt"), get(file.body, "sessionId"), get(file.body, "turnId")) {
+			if r.inWindow(file.body.Get("claimedAt"), file.body.Get("sessionId"), file.body.Get("turnId")) {
 				selected[key] = true
 			}
 		}
 	}
 	for _, one := range rows {
-		if exact(get(one.body, "recordVersion"), hook.RecordVersion) && get(one.body, "eventKey") != nil && r.inWindow(get(one.body, "at"), get(one.body, "sessionId"), get(one.body, "turnId")) {
-			selected[get(one.body, "eventKey").(string)] = true
+		if exact(one.body.Get("recordVersion"), hook.RecordVersion) && one.body.Get("eventKey") != nil && r.inWindow(one.body.Get("at"), one.body.Get("sessionId"), one.body.Get("turnId")) {
+			selected[one.body.Get("eventKey").(string)] = true
 		}
 	}
 
@@ -481,31 +481,31 @@ func (r *reading) read(roots, hosts []string) {
 	var duplicateRows []duplicate
 	for _, one := range rows {
 		body := one.body
-		chosen := r.inWindow(get(body, "at"), get(body, "sessionId"), get(body, "turnId"))
-		if chosen && pyvalue.Truthy(get(body, "sessionId")) && pyvalue.Truthy(get(body, "turnId")) {
-			pair := valueKey(get(body, "sessionId")) + "\x00" + valueKey(get(body, "turnId"))
+		chosen := r.inWindow(body.Get("at"), body.Get("sessionId"), body.Get("turnId"))
+		if chosen && pyvalue.Truthy(body.Get("sessionId")) && pyvalue.Truthy(body.Get("turnId")) {
+			pair := valueKey(body.Get("sessionId")) + "\x00" + valueKey(body.Get("turnId"))
 			if _, seen := pairs[pair]; !seen {
 				pairOrder = append(pairOrder, pair)
 			}
 			pairs[pair]++
 		}
-		if exact(get(body, "recordVersion"), 1) {
+		if exact(body.Get("recordVersion"), 1) {
 			if chosen {
 				r.legacyRows++
 			}
 			continue
 		}
-		acceptance, key := get(body, "acceptance"), get(body, "eventKey")
+		acceptance, key := body.Get("acceptance"), body.Get("eventKey")
 		if key == nil {
 			if !chosen {
 				continue
 			}
 			var label string
 			if acceptance == hook.Unestablished {
-				identity, _ := asObject(get(body, "eventIdentity"))
-				label = hook.Unestablished + ":" + get(identity, "reason").(string)
+				identity, _ := asObject(body.Get("eventIdentity"))
+				label = hook.Unestablished + ":" + identity.Get("reason").(string)
 			} else {
-				label = "no_event:" + pyvalue.Str(get(body, "adapterOutcome"))
+				label = "no_event:" + pyvalue.Str(body.Get("adapterOutcome"))
 			}
 			n, _ := r.unjudged[label].(int)
 			r.unjudged[label] = n + 1
@@ -528,11 +528,11 @@ func (r *reading) read(roots, hosts []string) {
 		case hook.Duplicate:
 			r.duplicateInvocations++
 			duplicateRows = append(duplicateRows, duplicate{k, one.where})
-			if get(body, "acceptedAs") == hook.LedgerDirectory+"/"+k+".json" && !filesOf[one.root][k] {
+			if body.Get("acceptedAs") == hook.LedgerDirectory+"/"+k+".json" && !filesOf[one.root][k] {
 				// It found the accepted record in its own root, which does not hold one.
 				r.add("recordsThatDisagree", one.where)
 			}
-			if get(body, "guardInvoked") != false {
+			if body.Get("guardInvoked") != false {
 				r.add("guardAskedOnDuplicate", one.where)
 			}
 		default:
@@ -571,20 +571,20 @@ func (r *reading) read(roots, hosts []string) {
 			if !hasClaim {
 				continue
 			}
-			turn := [2]string{get(claim, "sessionId").(string), get(claim, "turnId").(string)}
+			turn := [2]string{claim.Get("sessionId").(string), claim.Get("turnId").(string)}
 			if eventsPerTurn[turn] == nil {
 				eventsPerTurn[turn] = map[string]bool{}
 			}
 			eventsPerTurn[turn][key] = true
 			// One owner wrote the host file, this claim, the outcome and the accepted row in one
 			// run: they name one slot and one process, and the accepted row sits in that slot.
-			claimedBy, _ := asObject(get(claim, "claimedBy"))
-			slotName, pid := get(claimedBy, "attemptRow").(string), get(claimedBy, "pid")
+			claimedBy, _ := asObject(claim.Get("claimedBy"))
+			slotName, pid := claimedBy.Get("attemptRow").(string), claimedBy.Get("pid")
 			thisRoot := identityOf(one.root)
 			for _, file := range hostFiles[key] {
-				by, _ := asObject(get(file.body, "claimedBy"))
-				owner, _ := get(by, "journalRoot").(string)
-				if owner != "" && sameIdentity(recordedIdentity(owner), thisRoot) && (get(by, "attemptRow") != slotName || !pyvalue.ItemEqual(get(by, "pid"), pid)) {
+				by, _ := asObject(file.body.Get("claimedBy"))
+				owner, _ := by.Get("journalRoot").(string)
+				if owner != "" && sameIdentity(recordedIdentity(owner), thisRoot) && (by.Get("attemptRow") != slotName || !pyvalue.ItemEqual(by.Get("pid"), pid)) {
 					r.addShown("recordsThatDisagree", file.path)
 				}
 			}
@@ -594,7 +594,7 @@ func (r *reading) read(roots, hosts []string) {
 				}
 			}
 			// The claim's ledger is keyed as it names it, absolute and normalized (hostLedgerNamed).
-			id := ledgerIdentity[get(claimedBy, "hostLedger").(string)]
+			id := ledgerIdentity[claimedBy.Get("hostLedger").(string)]
 			holds := false
 			for _, file := range hostFiles[key] {
 				holds = holds || (id != nil && file.identity == *id)
@@ -607,17 +607,17 @@ func (r *reading) read(roots, hosts []string) {
 				continue
 			}
 			outcomePath := join(one.root, hook.LedgerDirectory, key+hook.OutcomeSuffix)
-			if get(claim, "sessionId") != get(outcome, "sessionId").(string) || get(claim, "turnId") != get(outcome, "turnId").(string) {
+			if claim.Get("sessionId") != outcome.Get("sessionId").(string) || claim.Get("turnId") != outcome.Get("turnId").(string) {
 				r.add("ledgerUnreadable", outcomePath)
 			}
-			policy := get(outcome, "journalPolicy")
+			policy := outcome.Get("journalPolicy")
 			if policy == hook.NoJournal {
 				r.add("invocationsUnrecorded", key)
 			}
 			// Whether the owner's policy wrote its row: every_invocation always, faults_only
 			// for anything but a plain answer, no_journal never.
-			kept := policy == hook.EveryInvocation || (policy == hook.FaultsOnly && !member(get(outcome, "adapterOutcome"), []string{hook.GuardAnswered, hook.DuplicateInvocation}))
-			attemptRow := get(outcome, "attemptRow")
+			kept := policy == hook.EveryInvocation || (policy == hook.FaultsOnly && !member(outcome.Get("adapterOutcome"), []string{hook.GuardAnswered, hook.DuplicateInvocation}))
+			attemptRow := outcome.Get("attemptRow")
 			if attemptRow == nil {
 				if kept {
 					// The row was to be written, so the accepted one's is missing.
@@ -633,11 +633,11 @@ func (r *reading) read(roots, hosts []string) {
 				r.add("recordsThatDisagree", outcomePath)
 			}
 			namedRow := readRow(one.root, attemptRow.(string))
-			if namedRow == nil || !exact(get(namedRow, "recordVersion"), hook.RecordVersion) || get(namedRow, "acceptance") != hook.Accepted || get(namedRow, "eventKey") != key {
+			if namedRow == nil || !exact(namedRow.Get("recordVersion"), hook.RecordVersion) || namedRow.Get("acceptance") != hook.Accepted || namedRow.Get("eventKey") != key {
 				r.add("acceptedRowsMissing", key)
 			} else {
 				for _, field := range []string{"adapterOutcome", "guardDecision", "guardState", "held"} {
-					if !pyvalue.ItemEqual(get(namedRow, field), get(outcome, field)) {
+					if !pyvalue.ItemEqual(namedRow.Get(field), outcome.Get(field)) {
 						r.add("recordsThatDisagree", outcomePath)
 						break
 					}
@@ -645,8 +645,8 @@ func (r *reading) read(roots, hosts []string) {
 			}
 		}
 		for _, file := range hostFiles[key] {
-			by, _ := asObject(get(file.body, "claimedBy"))
-			owner, _ := get(by, "journalRoot").(string)
+			by, _ := asObject(file.body.Get("claimedBy"))
+			owner, _ := by.Get("journalRoot").(string)
 			ownedBy := ""
 			if owner != "" {
 				if id := recordedIdentity(owner); id != nil {

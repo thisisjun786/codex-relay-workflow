@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/worktrees"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 func Test_test_cancellation_after_git_creation_retains_checkout_without_starting_task(t *testing.T) {
@@ -66,7 +67,7 @@ func testCancellationAfterGitCreation(t *testing.T, stage string) {
 		t.Fatalf("checkout not retained: %v", err)
 	}
 	receipt, err := b.GetOperation(context.Background(), input.RequestID)
-	if err != nil || receipt["status"] != "outcome_unknown" || object(receipt["worktree"])["requestedRevision"] != input.Revision || host.Count("thread/start") != 0 {
+	if err != nil || receipt["status"] != "outcome_unknown" || pyjson.Map(receipt["worktree"])["requestedRevision"] != input.Revision || host.Count("thread/start") != 0 {
 		t.Fatalf("receipt=%v err=%v calls=%v", receipt, err, host.Requests())
 	}
 	if stage == "worktree" {

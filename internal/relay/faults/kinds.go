@@ -67,7 +67,7 @@ func queueKind(ctx context.Context, l *Ledger, a map[string]string, spec kindPol
 		if e != nil {
 			return e
 		}
-		id := text(fault, "fault_id")
+		id := fault.Text("fault_id")
 		if spec.Creates {
 			trigger = "create"
 			live, e := l.one(ctx, "SELECT publication_id FROM fault_publications WHERE fault_id=? AND kind=? AND state!='cancelled'", id, kind)
@@ -84,7 +84,7 @@ func queueKind(ctx context.Context, l *Ledger, a map[string]string, spec kindPol
 		if e != nil {
 			return e
 		}
-		queued := prior == nil || text(prior, "state") == cancelled
+		queued := prior == nil || prior.Text("state") == cancelled
 		reason := "this reason was already queued"
 		if queued {
 			reason = "queued"
@@ -110,7 +110,7 @@ func queueKind(ctx context.Context, l *Ledger, a map[string]string, spec kindPol
 		}
 		awaiting := spec.Target != "" && target == nil
 		if awaiting {
-			reason += fmt.Sprintf("; no target owned by %s for %s (%s), so it waits rather than being filed somewhere guessed", text(fault, "product"), text(fault, "scope_key"), why)
+			reason += fmt.Sprintf("; no target owned by %s for %s (%s), so it waits rather than being filed somewhere guessed", fault.Text("product"), fault.Text("scope_key"), why)
 		}
 		answer = map[string]any{"publicationId": pub, "kind": kind, "trigger": trigger, "queued": queued, "awaitingTarget": awaiting, "awaitingRecord": spec.RequiresIssue && !named(fault.Get("external_ref")), "reason": reason}
 		return nil
@@ -124,7 +124,7 @@ func preIssue(ctx context.Context, l *Ledger, spec kindPolicy, r, fault row, mom
 	if spec.PreIssue == nil {
 		return nil, nil
 	}
-	publication, err := cPublication(ctx, l, text(r, "publication_id"))
+	publication, err := cPublication(ctx, l, r.Text("publication_id"))
 	if err != nil {
 		return nil, err
 	}
@@ -132,7 +132,7 @@ func preIssue(ctx context.Context, l *Ledger, spec kindPolicy, r, fault row, mom
 	view["linkState"], view["linkedProject"] = "none", nil
 	if named(fault.Get("external_ref")) {
 		view["linkState"] = "unlinked"
-		link, e := l.one(ctx, "SELECT * FROM fault_links WHERE fault_id=?", text(fault, "fault_id"))
+		link, e := l.one(ctx, "SELECT * FROM fault_links WHERE fault_id=?", fault.Text("fault_id"))
 		if e != nil {
 			return nil, e
 		}
@@ -171,7 +171,7 @@ func preIssue(ctx context.Context, l *Ledger, spec kindPolicy, r, fault row, mom
 	if err != nil {
 		return nil, err
 	}
-	kind := text(r, "kind")
+	kind := r.Text("kind")
 	if before != after {
 		return nil, fmt.Errorf("fault_not_claimable: the %s pre-issue check wrote to the store; its writes were discarded and nothing was issued", kind)
 	}
@@ -189,9 +189,9 @@ func preIssue(ctx context.Context, l *Ledger, spec kindPolicy, r, fault row, mom
 					return nil, e
 				}
 				if target != nil && named(target.Get("project_ref")) {
-					err = dRelinkOne(ctx, l, text(fault, "fault_id"), text(target, "project_ref"), stamp)
+					err = dRelinkOne(ctx, l, fault.Text("fault_id"), target.Text("project_ref"), stamp)
 				} else {
-					err = dUnlinkOne(ctx, l, text(fault, "fault_id"), stamp)
+					err = dUnlinkOne(ctx, l, fault.Text("fault_id"), stamp)
 				}
 				if err != nil {
 					return nil, err

@@ -11,6 +11,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 // smallFrame mirrors the Python small_frame_bridge: a 64 KiB frame limit, so 100 KiB overflows.
@@ -61,7 +62,7 @@ func (v *threadView) answer(method string, raw json.RawMessage) fakehost.Reply {
 				view[key] = value
 			}
 			for _, item := range v.Turns[i]["items"].([]any) {
-				kind := object(item)["type"]
+				kind := pyjson.Map(item)["type"]
 				if params["itemsView"] == "summary" && (kind == "userMessage" || kind == "agentMessage") {
 					items = append(items, item)
 				}
@@ -119,14 +120,14 @@ func smallFrameThread(t *testing.T) (*Bridge, *fakehost.Server, *threadView) {
 func turnIDs(t *testing.T, read map[string]any) string {
 	t.Helper()
 	ids := []string{}
-	for _, turn := range object(read["turnsPage"])["data"].([]any) {
-		ids = append(ids, fmt.Sprint(object(turn)["id"]))
+	for _, turn := range pyjson.Map(read["turnsPage"])["data"].([]any) {
+		ids = append(ids, fmt.Sprint(pyjson.Map(turn)["id"]))
 	}
 	return strings.Join(ids, ",")
 }
 func allItemsEmpty(read map[string]any) bool {
-	for _, turn := range object(read["turnsPage"])["data"].([]any) {
-		if items, _ := object(turn)["items"].([]any); len(items) != 0 {
+	for _, turn := range pyjson.Map(read["turnsPage"])["data"].([]any) {
+		if items, _ := pyjson.Map(turn)["items"].([]any); len(items) != 0 {
 			return false
 		}
 	}

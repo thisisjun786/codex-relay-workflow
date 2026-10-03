@@ -19,7 +19,7 @@ func Test33UnreachableErrnos(t *testing.T) {
 		want string
 	}{{syscall.ENOENT, "ENOENT"}, {syscall.ECONNREFUSED, "ECONNREFUSED"}, {syscall.EACCES, "EACCES"}, {context.DeadlineExceeded, "ETIMEDOUT"}} {
 		record := unreachableRecord(Object{}, &net.OpError{Op: "dial", Net: "unix", Err: test.err}, 0)
-		if get(record, "errno") != test.want || get(record, "processEnding") != "not_started" || get(record, "stdoutReading") != "said_nothing" {
+		if record.Get("errno") != test.want || record.Get("processEnding") != "not_started" || record.Get("stdoutReading") != "said_nothing" {
 			t.Fatal(record)
 		}
 	}
@@ -55,7 +55,7 @@ func Test33UnreachableNoJournalPolicy(t *testing.T) {
 	if failure != "" {
 		t.Fatal(failure)
 	}
-	config = set(config, "journalPolicy", "no_journal")
+	config = config.Set("journalPolicy", "no_journal")
 	writeTest(t, path, []byte(pyjson.Dumps(config, pyjson.Options{})))
 	out, err := hookCommand(t, home, `{}`).CombinedOutput()
 	if err != nil || len(out) != 0 {

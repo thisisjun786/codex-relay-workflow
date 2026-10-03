@@ -303,7 +303,7 @@ func (r *review) pairInput(h reviewHome, payload any, args []string, mask int, d
 	t.Helper()
 	var stdout string
 	if withPeer {
-		stop := r.peer(filepath.Join(filepath.Dir(text(get(h.cfg, "dbPath"))), "control.sock"), reviewRelease)
+		stop := r.peer(filepath.Join(filepath.Dir(pyjson.Text(h.cfg.Get("dbPath"))), "control.sock"), reviewRelease)
 		stdout = r.invoke(h, payload, args, mask)
 		stop()
 	} else {
@@ -391,7 +391,7 @@ func (r *review) constants() {
 		h := r.setup(c.name)
 		h.cfg = append(h.cfg, Field{Key: "extra", Value: []any{c.value, "NaN", Object{{Key: "Infinity", Value: c.value}}}})
 		h.writeSettings(t)
-		transcript := text(get(h.payload, "transcript_path"))
+		transcript := pyjson.Text(h.payload.Get("transcript_path"))
 		raw, err := os.ReadFile(transcript)
 		if err != nil {
 			t.Fatal(err)
@@ -399,14 +399,14 @@ func (r *review) constants() {
 		writeTest(t, transcript, []byte(strings.ReplaceAll(string(raw), `"payload": {`, `"extra": `+pyjson.Dumps(c.value, pyjson.Options{})+`, "payload": {`)))
 		h.payload = append(h.payload, Field{Key: "extra", Value: c.value})
 		result := r.pair(h, h.payload, nil, 0o022, false, true)
-		if get(object(get(object(get(object(get(result, "row")), "value")), "eventIdentity")), "established") != true {
+		if object(object(object(result.Get("row")).Get("value")).Get("eventIdentity")).Get("established") != true {
 			t.Fatalf("%s: %s", c.name, pyjson.Dumps(result, pyjson.Options{SortKeys: true}))
 		}
 		for _, field := range []string{"session_id", "turn_id", "stop_hook_active"} {
 			clearReview(t, h.home)
-			altered := set(append(Object{}, h.payload...), field, c.value)
+			altered := append(Object{}, h.payload...).Set(field, c.value)
 			result = r.pair(h, altered, nil, 0o022, false, true)
-			if get(object(get(object(get(result, "row")), "value")), "adapterOutcome") != "guard_answered" {
+			if object(object(result.Get("row")).Get("value")).Get("adapterOutcome") != "guard_answered" {
 				t.Fatalf("%s %s: %s", c.name, field, pyjson.Dumps(result, pyjson.Options{SortKeys: true}))
 			}
 		}
@@ -421,10 +421,10 @@ func (r *review) budgets() {
 		budget any
 	}{{"7", int64(7)}, {"7.01", 7.01}, {"8", int64(8)}, {"8.99", 8.99}, {"9", int64(9)}} {
 		h := r.setup(c.name)
-		h.cfg = set(h.cfg, "owner", "plugin")
-		h.cfg = set(h.cfg, "adapterEntryPoint", filepath.Join(h.home, "adapter"))
-		h.cfg = set(h.cfg, "adapterInterpreter", filepath.Join(testRoot, ".venv", "bin", "python"))
-		h.cfg = set(h.cfg, "timeoutSeconds", c.budget)
+		h.cfg = h.cfg.Set("owner", "plugin")
+		h.cfg = h.cfg.Set("adapterEntryPoint", filepath.Join(h.home, "adapter"))
+		h.cfg = h.cfg.Set("adapterInterpreter", filepath.Join(testRoot, ".venv", "bin", "python"))
+		h.cfg = h.cfg.Set("timeoutSeconds", c.budget)
 		h.writeSettings(t)
 		result := r.pair(h, h.payload, nil, 0o022, false, true)
 		if (len(result) > 0) != (c.name == "7") {
@@ -450,7 +450,7 @@ func (r *review) dialErrors() {
 				t.Fatal(err)
 			}
 		}
-		h.cfg = set(h.cfg, "dbPath", filepath.Join(state, "relay.sqlite3"))
+		h.cfg = h.cfg.Set("dbPath", filepath.Join(state, "relay.sqlite3"))
 		h.writeSettings(t)
 		r.invoke(h, h.payload, nil, 0o022)
 		r.steps = append(r.steps, Object{{Key: "kind", Value: "snapshot"}, {Key: "snapshot", Value: r.snapshot(h.home, false)}})

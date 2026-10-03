@@ -70,8 +70,8 @@ func (sw *Sweeper) ManagedReadings(ctx context.Context, selection any, observer 
 		now = sw.Now()
 	}
 	for _, r := range rows {
-		sum := sha256.Sum256([]byte(text(r, "dispatch_request_id")))
-		reading, err := observer.Observe(ctx, ManagedReadingRequest{Selection: selection, Root: text(r, "marker_root"), Workspace: text(r, "workspace"), Assignment: fmt.Sprintf("%x", sum), Session: text(r, "thread_id"), Turn: text(r, "turn_id"), Now: now})
+		sum := sha256.Sum256([]byte(r.Text("dispatch_request_id")))
+		reading, err := observer.Observe(ctx, ManagedReadingRequest{Selection: selection, Root: r.Text("marker_root"), Workspace: r.Text("workspace"), Assignment: fmt.Sprintf("%x", sum), Session: r.Text("thread_id"), Turn: r.Text("turn_id"), Now: now})
 		var reason string
 		object, ok := reading.(map[string]any)
 		if err != nil {
