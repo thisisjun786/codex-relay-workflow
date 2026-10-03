@@ -1,7 +1,6 @@
 package state
 
 import (
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -215,52 +214,5 @@ func TestSessionIsolationTwoSessionIDsInOneCwdDoNotClobber(t *testing.T) { // or
 	}
 	if a, b := ReadState(cwd, "alpha"), ReadState(cwd, "beta"); a.Phase != PhaseB || b.Phase != PhaseP {
 		t.Fatalf("alpha %s beta %s", a.Phase, b.Phase)
-	}
-}
-
-func TestAppendLedgerCreatesTaggedNDJSONLines(t *testing.T) { // oracle 359
-	cwd, from := t.TempDir(), PhaseP
-	for _, e := range []LedgerEntry{{TS: "t1", SessionID: "alpha", From: &from, To: PhaseA, Reason: "plan approved"}, {TS: "t2", SessionID: "beta", From: &from, To: PhaseB, Reason: "audit passed"}} {
-		if err := AppendLedger(cwd, e); err != nil {
-			t.Fatal(err)
-		}
-	}
-	lines := strings.Split(strings.TrimSpace(fileText(t, filepath.Join(cwd, crwdir.DirName, LedgerFile))), "\n")
-	var first map[string]any
-	if len(lines) != 2 || json.Unmarshal([]byte(lines[0]), &first) != nil || first["sessionId"] != "alpha" || first["to"] != "A" {
-		t.Fatalf("%q", lines)
-	}
-}
-
-func TestAppendInterviewEventWritesParseableScanEventsAndReadsThemBack(t *testing.T) { // oracle 604, 622
-	cwd := t.TempDir()
-	row := InterviewEvent{TS: "t1", SessionID: "iv", Event: ScanStarted, RoundID: 1, ContradictionCount: 3, HighContradictionCount: 1}
-	done := InterviewEvent{TS: "t2", SessionID: "iv", Event: ScanCompleted, RoundID: 1}
-	for _, e := range []InterviewEvent{row, done} {
-		if err := AppendInterviewEvent(cwd, e); err != nil {
-			t.Fatal(err)
-		}
-	}
-	events, ledger := ReadInterviewEvents(cwd, "iv"), filepath.Join(cwd, crwdir.DirName, InterviewsSubdir, "iv.jsonl")
-	if len(events) != 2 || events[0].Event != ScanStarted || events[1].Event != ScanCompleted || ReadInterviewEvents(cwd, "nope") == nil || len(ReadInterviewEvents(cwd, "nope")) != 0 {
-		t.Fatalf("%+v", events)
-	}
-	// the ledger is shared with the interview ledger's question and answer rows, which are not scan evidence (G3)
-	f, err := os.OpenFile(ledger, os.O_APPEND|os.O_WRONLY, 0o644)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, _ = f.WriteString("{\"ts\":\"t3\",\"sessionId\":\"iv\",\"turnId\":\"t1\",\"event\":\"question_asked\",\"questionId\":\"q1\",\"eventId\":\"t1:q1:question_asked\",\"question\":\"Goal?\"}\n" +
-		"{\"ts\":\"t4\",\"sessionId\":\"iv\",\"turnId\":\"t1\",\"event\":\"answer_recorded\",\"questionId\":\"q1\",\"eventId\":\"t1:q1:answer_recorded\",\"answers\":[\"ship it\"]}\n")
-	_ = f.Close()
-	if err := AppendInterviewEvent(cwd, InterviewEvent{TS: "t5", SessionID: "iv", Event: RescanCompleted, RoundID: 2}); err != nil {
-		t.Fatal(err)
-	}
-	var kinds []InterviewScanEvent
-	for _, e := range ReadInterviewEvents(cwd, "iv") {
-		kinds = append(kinds, e.Event)
-	}
-	if !slices.Equal(kinds, []InterviewScanEvent{ScanStarted, ScanCompleted, RescanCompleted}) {
-		t.Fatalf("%v", kinds)
 	}
 }

@@ -1,7 +1,7 @@
 // Package state is the PABCD session state: the Go form of CXC v0.2.40 pabcd-state/src/state.ts (commit 3c1459ac), with the
 // session file at .crw/sessions/<id>.json (name-substitution R26). state.go and restore.go are the model and the read path (the
-// top of the file to readStateStrict); write.go, lock.go and ledger.go the write path: ensureState, writeState, withSessionLock,
-// appendLedger, appendInterviewEvent and readInterviewEvents.
+// top of the file to readStateStrict); write.go and lock.go the write path: ensureState, writeState and withSessionLock. The
+// ledgers (LedgerEntry, appendLedger, the interview scan events and readInterviewEvents) are the ledger issue's.
 //
 // Behaviour is ported as-is, oracle defects included. A file never becomes a State by decoding it into the struct:
 // ReadStateStrict rebuilds every field from known keys and defaults or drops what is malformed, so a hand-written or
@@ -17,9 +17,8 @@
 // time.Now; WriteState stamps updatedAt from its clock.
 //
 // The write path differs from the oracle in ways no file shows: a temp file is named by the pid and a random UUID, where
-// writeState uses Date.now(), which two goroutines of one process could share; ReadInterviewEvents returns each row's text in
-// Raw beside typed fields (the oracle returns the parsed object), reads a key the row lacks as zero and does not read map; a
-// rename onto a directory fails with EEXIST from os.Rename where rename(2) and Node say EISDIR.
+// writeState uses Date.now(), which two goroutines of one process could share; a rename onto a directory fails with EEXIST
+// from os.Rename where rename(2) and Node say EISDIR.
 package state
 
 import (
