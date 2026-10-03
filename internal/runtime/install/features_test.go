@@ -432,3 +432,16 @@ func TestFeaturesBackupAndEmptySuccess(t *testing.T) {
 		t.Fatal(out)
 	}
 }
+
+func TestFeaturesEmptyHomeStaysAtWorkingDirectory(t *testing.T) {
+	h := newFeatureHome(t, "")
+	root := t.TempDir()
+	t.Chdir(root)
+	h.env = h.env.Without("CODEX_HOME").With("HOME", "")
+	if out := h.success("disable"); out != "crw: no install manifest; nothing to revert\n" {
+		t.Fatal(out)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".codex", configguard.SelfHealMarkerName)); err != nil {
+		t.Fatal(err)
+	}
+}
