@@ -457,3 +457,12 @@ No new oracle defect was identified in the directive text and assembly of `pabcd
 ## Found by the agent-thread permission hook port (CRW-494)
 
 - The config containment check treats project children whose names begin with `..` as outside the project, letting a project-controlled opt-in or full-access config grant permission (source `plugins/codexclaw/components/pabcd-state/src/agent-thread-permissions.ts:98-99`; reproduced for both config readers, regression `TestAgentThreadBoundaries/intentionally-changed_project_child_starting_with_two_dots`); port: fixed (security: compare path components, preserving the literal default-at-home exception; oracle cases intentionally-changed).
+
+## CRW-496 — skill-search CLI
+
+- Unknown options (including `--help`) and dangling flags become query/id text rather than help or a flag error (`skill-search/src/cli.ts:32-43` at v0.2.40); port: kept.
+- Catalog cache keys retain only the first 24 base64url URL characters, discarding the remainder of the URL identity (`skill-search/src/cli.ts:63-67` at v0.2.40); port: kept.
+- Search source, gh launch/auth and malformed-gh-JSON failures can produce empty results with exit 0 (`skill-search/src/cli.ts:101-135,170-194` at v0.2.40); port: kept.
+- `show --source gh` searches jaw, hermes and clawhub instead of GitHub, while unsupported show sources fall through to a no-skill message (`skill-search/src/cli.ts:204-229` at v0.2.40); port: kept.
+- Show suppresses catalog errors, but a matching row's body-fetch failure stops fallback; fetched skill bodies have no size cap (`skill-search/src/cli.ts:209-220` at v0.2.40); port: kept.
+- The default fetch transport reports only `fetch failed` for a network failure, discarding its cause (`skill-search/src/cli.ts:46` at v0.2.40, Node fetch transport); port: kept.
