@@ -1,0 +1,1205 @@
+[
+ {
+  "id": "get_global_defaults",
+  "note": "getSettings of a missing store, scope global",
+  "given": {
+   "store": null
+  },
+  "ops": [
+   {
+    "op": "get",
+    "scope": "\"global\"",
+    "result": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}},\"scope\":\"global\",\"sources\":{\"explorer\":\"session\",\"reviewer\":\"session\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":false,\"reviewer\":false,\"executor\":false,\"architect\":false}}",
+    "file": null
+   }
+  ]
+ },
+ {
+  "id": "get_global_full",
+  "note": "getSettings of a store with all four roles set",
+  "given": {
+   "store": "{\"roles\":{\"explorer\":{\"mode\":\"model\",\"model\":\"gpt-5.5\",\"effort\":\"high\",\"promptOverride\":\"Be brief.\",\"fallback\":{\"model\":\"fb/one\",\"effort\":\"low\"}},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":\"low\",\"promptOverride\":\"\",\"fallback\":null},\"executor\":{\"mode\":\"model\",\"model\":\"  \",\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"model\",\"model\":\"m-arch\",\"effort\":\"xhigh\",\"promptOverride\":null,\"fallback\":{\"model\":\"fb/arch\",\"effort\":null}}}}"
+  },
+  "ops": [
+   {
+    "op": "get",
+    "scope": "\"global\"",
+    "result": "{\"roles\":{\"explorer\":{\"mode\":\"model\",\"model\":\"gpt-5.5\",\"effort\":\"high\",\"promptOverride\":\"Be brief.\",\"fallback\":{\"model\":\"fb/one\",\"effort\":\"low\"}},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":\"low\",\"promptOverride\":\"\",\"fallback\":null},\"executor\":{\"mode\":\"model\",\"model\":\"  \",\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"model\",\"model\":\"m-arch\",\"effort\":\"xhigh\",\"promptOverride\":null,\"fallback\":{\"model\":\"fb/arch\",\"effort\":null}}},\"scope\":\"global\",\"sources\":{\"explorer\":\"global\",\"reviewer\":\"global\",\"executor\":\"global\",\"architect\":\"global\"},\"overrides\":{\"explorer\":true,\"reviewer\":true,\"executor\":true,\"architect\":true}}",
+    "file": "{\"roles\":{\"explorer\":{\"mode\":\"model\",\"model\":\"gpt-5.5\",\"effort\":\"high\",\"promptOverride\":\"Be brief.\",\"fallback\":{\"model\":\"fb/one\",\"effort\":\"low\"}},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":\"low\",\"promptOverride\":\"\",\"fallback\":null},\"executor\":{\"mode\":\"model\",\"model\":\"  \",\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"model\",\"model\":\"m-arch\",\"effort\":\"xhigh\",\"promptOverride\":null,\"fallback\":{\"model\":\"fb/arch\",\"effort\":null}}}}"
+   }
+  ]
+ },
+ {
+  "id": "get_scope_values",
+  "note": "configScope refuses what is not project or global (project itself is valid for the oracle and refused by the port)",
+  "given": {
+   "store": null
+  },
+  "ops": [
+   {
+    "op": "get",
+    "scope": "\"galaxy\"",
+    "error": "invalid scope \"galaxy\"",
+    "file": null
+   },
+   {
+    "op": "get",
+    "scope": "5",
+    "error": "invalid scope \"5\"",
+    "file": null
+   },
+   {
+    "op": "get",
+    "scope": "null",
+    "error": "invalid scope \"null\"",
+    "file": null
+   },
+   {
+    "op": "get",
+    "scope": "true",
+    "error": "invalid scope \"true\"",
+    "file": null
+   },
+   {
+    "op": "get",
+    "scope": "false",
+    "error": "invalid scope \"false\"",
+    "file": null
+   },
+   {
+    "op": "get",
+    "scope": "[\"global\"]",
+    "error": "invalid scope \"global\"",
+    "file": null
+   },
+   {
+    "op": "get",
+    "scope": "{}",
+    "error": "invalid scope \"[object Object]\"",
+    "file": null
+   },
+   {
+    "op": "get",
+    "scope": "\"\"",
+    "error": "invalid scope \"\"",
+    "file": null
+   },
+   {
+    "op": "get",
+    "scope": "1e21",
+    "error": "invalid scope \"1e+21\"",
+    "file": null
+   },
+   {
+    "op": "get",
+    "scope": "0.000001",
+    "error": "invalid scope \"0.000001\"",
+    "file": null
+   },
+   {
+    "op": "get",
+    "scope": "-0",
+    "error": "invalid scope \"0\"",
+    "file": null
+   },
+   {
+    "op": "get",
+    "scope": "[null,[\"a\",2]]",
+    "error": "invalid scope \",a,2\"",
+    "file": null
+   }
+  ]
+ },
+ {
+  "id": "response_get",
+  "note": "settingsResponse over getSettings: ok and error",
+  "given": {
+   "store": "{\"roles\":{\"explorer\":{\"mode\":\"model\",\"model\":\"gpt-5.5\",\"effort\":\"high\",\"promptOverride\":\"Be brief.\",\"fallback\":{\"model\":\"fb/one\",\"effort\":\"low\"}},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":\"low\",\"promptOverride\":\"\",\"fallback\":null},\"executor\":{\"mode\":\"model\",\"model\":\"  \",\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"model\",\"model\":\"m-arch\",\"effort\":\"xhigh\",\"promptOverride\":null,\"fallback\":{\"model\":\"fb/arch\",\"effort\":null}}}}"
+  },
+  "ops": [
+   {
+    "op": "get_response",
+    "scope": "\"global\"",
+    "result": "{\"status\":200,\"body\":{\"roles\":{\"explorer\":{\"mode\":\"model\",\"model\":\"gpt-5.5\",\"effort\":\"high\",\"promptOverride\":\"Be brief.\",\"fallback\":{\"model\":\"fb/one\",\"effort\":\"low\"}},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":\"low\",\"promptOverride\":\"\",\"fallback\":null},\"executor\":{\"mode\":\"model\",\"model\":\"  \",\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"model\",\"model\":\"m-arch\",\"effort\":\"xhigh\",\"promptOverride\":null,\"fallback\":{\"model\":\"fb/arch\",\"effort\":null}}},\"scope\":\"global\",\"sources\":{\"explorer\":\"global\",\"reviewer\":\"global\",\"executor\":\"global\",\"architect\":\"global\"},\"overrides\":{\"explorer\":true,\"reviewer\":true,\"executor\":true,\"architect\":true}}}",
+    "file": "{\"roles\":{\"explorer\":{\"mode\":\"model\",\"model\":\"gpt-5.5\",\"effort\":\"high\",\"promptOverride\":\"Be brief.\",\"fallback\":{\"model\":\"fb/one\",\"effort\":\"low\"}},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":\"low\",\"promptOverride\":\"\",\"fallback\":null},\"executor\":{\"mode\":\"model\",\"model\":\"  \",\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"model\",\"model\":\"m-arch\",\"effort\":\"xhigh\",\"promptOverride\":null,\"fallback\":{\"model\":\"fb/arch\",\"effort\":null}}}}"
+   },
+   {
+    "op": "get_response",
+    "scope": "\"nope\"",
+    "result": "{\"status\":400,\"body\":{\"error\":\"invalid scope \\\"nope\\\"\"}}",
+    "file": "{\"roles\":{\"explorer\":{\"mode\":\"model\",\"model\":\"gpt-5.5\",\"effort\":\"high\",\"promptOverride\":\"Be brief.\",\"fallback\":{\"model\":\"fb/one\",\"effort\":\"low\"}},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":\"low\",\"promptOverride\":\"\",\"fallback\":null},\"executor\":{\"mode\":\"model\",\"model\":\"  \",\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"model\",\"model\":\"m-arch\",\"effort\":\"xhigh\",\"promptOverride\":null,\"fallback\":{\"model\":\"fb/arch\",\"effort\":null}}}}"
+   }
+  ]
+ },
+ {
+  "id": "update_missing_body",
+  "note": "a body that is not an object is missing",
+  "given": {
+   "store": null
+  },
+  "ops": [
+   {
+    "op": "update",
+    "body": "null",
+    "error": "missing body",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "[]",
+    "error": "missing body",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "\"x\"",
+    "error": "missing body",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "5",
+    "error": "missing body",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "0",
+    "error": "missing body",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "\"\"",
+    "error": "missing body",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "true",
+    "error": "missing body",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "false",
+    "error": "missing body",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "[1]",
+    "error": "missing body",
+    "file": null
+   }
+  ]
+ },
+ {
+  "id": "update_role_unknown",
+  "note": "unknown role messages use String(value)",
+  "given": {
+   "store": null
+  },
+  "ops": [
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\"}",
+    "error": "unknown role \"undefined\"",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":null}",
+    "error": "unknown role \"null\"",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":5}",
+    "error": "unknown role \"5\"",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":1.5}",
+    "error": "unknown role \"1.5\"",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":true}",
+    "error": "unknown role \"true\"",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":[\"explorer\"]}",
+    "error": "unknown role \"explorer\"",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":[\"a\",null,2]}",
+    "error": "unknown role \"a,,2\"",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":{}}",
+    "error": "unknown role \"[object Object]\"",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"nobody\"}",
+    "error": "unknown role \"nobody\"",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"Explorer\"}",
+    "error": "unknown role \"Explorer\"",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"\"}",
+    "error": "unknown role \"\"",
+    "file": null
+   }
+  ]
+ },
+ {
+  "id": "update_scope_and_inherit_order",
+  "note": "role is checked before scope, scope before inherit",
+  "given": {
+   "store": null
+  },
+  "ops": [
+   {
+    "op": "update",
+    "body": "{\"role\":\"explorer\",\"scope\":\"galaxy\"}",
+    "error": "invalid scope \"galaxy\"",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "{\"role\":\"nobody\",\"scope\":\"galaxy\"}",
+    "error": "unknown role \"nobody\"",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "{\"role\":\"explorer\",\"scope\":5,\"inherit\":\"yes\"}",
+    "error": "invalid scope \"5\"",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "{\"role\":\"explorer\",\"scope\":\"global\",\"inherit\":\"yes\"}",
+    "error": "inherit must be a boolean",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "{\"role\":\"explorer\",\"scope\":\"global\",\"inherit\":null}",
+    "error": "inherit must be a boolean",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "{\"role\":\"explorer\",\"scope\":\"global\",\"inherit\":1}",
+    "error": "inherit must be a boolean",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "{\"role\":\"explorer\",\"scope\":\"global\",\"inherit\":true,\"mode\":\"default\"}",
+    "error": "inherit cannot be combined with role settings",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "{\"role\":\"explorer\",\"scope\":\"global\",\"inherit\":true,\"model\":null}",
+    "error": "inherit cannot be combined with role settings",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "{\"role\":\"explorer\",\"scope\":\"global\",\"inherit\":true,\"effort\":null,\"promptOverride\":null}",
+    "error": "inherit cannot be combined with role settings",
+    "file": null
+   }
+  ]
+ },
+ {
+  "id": "update_set_roundtrip",
+  "note": "valid sets, then the settings answer",
+  "given": {
+   "store": null
+  },
+  "ops": [
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"reviewer\",\"mode\":\"model\",\"model\":\"gpt-5.5\",\"promptOverride\":\"Be adversarial.\",\"effort\":\"high\"}",
+    "result": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"model\",\"model\":\"gpt-5.5\",\"effort\":\"high\",\"promptOverride\":\"Be adversarial.\",\"fallback\":null},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}},\"scope\":\"global\",\"sources\":{\"explorer\":\"session\",\"reviewer\":\"global\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":false,\"reviewer\":true,\"executor\":false,\"architect\":false}}",
+    "file": "{\n  \"roles\": {\n    \"reviewer\": {\n      \"mode\": \"model\",\n      \"model\": \"gpt-5.5\",\n      \"effort\": \"high\",\n      \"promptOverride\": \"Be adversarial.\",\n      \"fallback\": null\n    }\n  }\n}\n"
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"effort\":\"low\"}",
+    "result": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":\"low\",\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"model\",\"model\":\"gpt-5.5\",\"effort\":\"high\",\"promptOverride\":\"Be adversarial.\",\"fallback\":null},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}},\"scope\":\"global\",\"sources\":{\"explorer\":\"global\",\"reviewer\":\"global\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":true,\"reviewer\":true,\"executor\":false,\"architect\":false}}",
+    "file": "{\n  \"roles\": {\n    \"reviewer\": {\n      \"mode\": \"model\",\n      \"model\": \"gpt-5.5\",\n      \"effort\": \"high\",\n      \"promptOverride\": \"Be adversarial.\",\n      \"fallback\": null\n    },\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": \"low\",\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"reviewer\",\"fallback\":{\"model\":\"fb/two\",\"effort\":\"xhigh\"}}",
+    "result": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":\"low\",\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"model\",\"model\":\"gpt-5.5\",\"effort\":\"high\",\"promptOverride\":\"Be adversarial.\",\"fallback\":{\"model\":\"fb/two\",\"effort\":\"xhigh\"}},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}},\"scope\":\"global\",\"sources\":{\"explorer\":\"global\",\"reviewer\":\"global\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":true,\"reviewer\":true,\"executor\":false,\"architect\":false}}",
+    "file": "{\n  \"roles\": {\n    \"reviewer\": {\n      \"mode\": \"model\",\n      \"model\": \"gpt-5.5\",\n      \"effort\": \"high\",\n      \"promptOverride\": \"Be adversarial.\",\n      \"fallback\": {\n        \"model\": \"fb/two\",\n        \"effort\": \"xhigh\"\n      }\n    },\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": \"low\",\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"reviewer\",\"fallback\":{\"effort\":null}}",
+    "result": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":\"low\",\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"model\",\"model\":\"gpt-5.5\",\"effort\":\"high\",\"promptOverride\":\"Be adversarial.\",\"fallback\":{\"model\":\"fb/two\",\"effort\":null}},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}},\"scope\":\"global\",\"sources\":{\"explorer\":\"global\",\"reviewer\":\"global\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":true,\"reviewer\":true,\"executor\":false,\"architect\":false}}",
+    "file": "{\n  \"roles\": {\n    \"reviewer\": {\n      \"mode\": \"model\",\n      \"model\": \"gpt-5.5\",\n      \"effort\": \"high\",\n      \"promptOverride\": \"Be adversarial.\",\n      \"fallback\": {\n        \"model\": \"fb/two\",\n        \"effort\": null\n      }\n    },\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": \"low\",\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"reviewer\",\"fallback\":null}",
+    "result": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":\"low\",\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"model\",\"model\":\"gpt-5.5\",\"effort\":\"high\",\"promptOverride\":\"Be adversarial.\",\"fallback\":null},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}},\"scope\":\"global\",\"sources\":{\"explorer\":\"global\",\"reviewer\":\"global\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":true,\"reviewer\":true,\"executor\":false,\"architect\":false}}",
+    "file": "{\n  \"roles\": {\n    \"reviewer\": {\n      \"mode\": \"model\",\n      \"model\": \"gpt-5.5\",\n      \"effort\": \"high\",\n      \"promptOverride\": \"Be adversarial.\",\n      \"fallback\": null\n    },\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": \"low\",\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"reviewer\",\"mode\":\"default\"}",
+    "result": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":\"low\",\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":\"high\",\"promptOverride\":\"Be adversarial.\",\"fallback\":null},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}},\"scope\":\"global\",\"sources\":{\"explorer\":\"global\",\"reviewer\":\"global\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":true,\"reviewer\":true,\"executor\":false,\"architect\":false}}",
+    "file": "{\n  \"roles\": {\n    \"reviewer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": \"high\",\n      \"promptOverride\": \"Be adversarial.\",\n      \"fallback\": null\n    },\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": \"low\",\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"executor\"}",
+    "result": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":\"low\",\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":\"high\",\"promptOverride\":\"Be adversarial.\",\"fallback\":null},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}},\"scope\":\"global\",\"sources\":{\"explorer\":\"global\",\"reviewer\":\"global\",\"executor\":\"global\",\"architect\":\"session\"},\"overrides\":{\"explorer\":true,\"reviewer\":true,\"executor\":true,\"architect\":false}}",
+    "file": "{\n  \"roles\": {\n    \"reviewer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": \"high\",\n      \"promptOverride\": \"Be adversarial.\",\n      \"fallback\": null\n    },\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": \"low\",\n      \"promptOverride\": null,\n      \"fallback\": null\n    },\n    \"executor\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"architect\",\"extra\":1,\"unknown\":{\"a\":2},\"effort\":\"medium\"}",
+    "result": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":\"low\",\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":\"high\",\"promptOverride\":\"Be adversarial.\",\"fallback\":null},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":\"medium\",\"promptOverride\":null,\"fallback\":null}},\"scope\":\"global\",\"sources\":{\"explorer\":\"global\",\"reviewer\":\"global\",\"executor\":\"global\",\"architect\":\"global\"},\"overrides\":{\"explorer\":true,\"reviewer\":true,\"executor\":true,\"architect\":true}}",
+    "file": "{\n  \"roles\": {\n    \"reviewer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": \"high\",\n      \"promptOverride\": \"Be adversarial.\",\n      \"fallback\": null\n    },\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": \"low\",\n      \"promptOverride\": null,\n      \"fallback\": null\n    },\n    \"executor\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    },\n    \"architect\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": \"medium\",\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"reviewer\",\"role\":\"explorer\",\"effort\":\"high\"}",
+    "result": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":\"high\",\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":\"high\",\"promptOverride\":\"Be adversarial.\",\"fallback\":null},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":\"medium\",\"promptOverride\":null,\"fallback\":null}},\"scope\":\"global\",\"sources\":{\"explorer\":\"global\",\"reviewer\":\"global\",\"executor\":\"global\",\"architect\":\"global\"},\"overrides\":{\"explorer\":true,\"reviewer\":true,\"executor\":true,\"architect\":true}}",
+    "file": "{\n  \"roles\": {\n    \"reviewer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": \"high\",\n      \"promptOverride\": \"Be adversarial.\",\n      \"fallback\": null\n    },\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": \"high\",\n      \"promptOverride\": null,\n      \"fallback\": null\n    },\n    \"executor\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    },\n    \"architect\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": \"medium\",\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+   }
+  ]
+ },
+ {
+  "id": "update_inherit_resets",
+  "note": "inherit true removes the override; a missing role writes nothing",
+  "given": {
+   "store": "{\"roles\":{\"explorer\":{\"mode\":\"model\",\"model\":\"gpt-5.5\",\"effort\":\"high\",\"promptOverride\":\"Be brief.\",\"fallback\":{\"model\":\"fb/one\",\"effort\":\"low\"}},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":\"low\",\"promptOverride\":\"\",\"fallback\":null},\"executor\":{\"mode\":\"model\",\"model\":\"  \",\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"model\",\"model\":\"m-arch\",\"effort\":\"xhigh\",\"promptOverride\":null,\"fallback\":{\"model\":\"fb/arch\",\"effort\":null}}}}"
+  },
+  "ops": [
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"inherit\":true}",
+    "result": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":\"low\",\"promptOverride\":\"\",\"fallback\":null},\"executor\":{\"mode\":\"model\",\"model\":\"  \",\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"model\",\"model\":\"m-arch\",\"effort\":\"xhigh\",\"promptOverride\":null,\"fallback\":{\"model\":\"fb/arch\",\"effort\":null}}},\"scope\":\"global\",\"sources\":{\"explorer\":\"session\",\"reviewer\":\"global\",\"executor\":\"global\",\"architect\":\"global\"},\"overrides\":{\"explorer\":false,\"reviewer\":true,\"executor\":true,\"architect\":true}}",
+    "file": "{\n  \"roles\": {\n    \"reviewer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": \"low\",\n      \"promptOverride\": \"\",\n      \"fallback\": null\n    },\n    \"executor\": {\n      \"mode\": \"model\",\n      \"model\": \"  \",\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    },\n    \"architect\": {\n      \"mode\": \"model\",\n      \"model\": \"m-arch\",\n      \"effort\": \"xhigh\",\n      \"promptOverride\": null,\n      \"fallback\": {\n        \"model\": \"fb/arch\",\n        \"effort\": null\n      }\n    }\n  }\n}\n"
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"inherit\":true}",
+    "result": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":\"low\",\"promptOverride\":\"\",\"fallback\":null},\"executor\":{\"mode\":\"model\",\"model\":\"  \",\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"model\",\"model\":\"m-arch\",\"effort\":\"xhigh\",\"promptOverride\":null,\"fallback\":{\"model\":\"fb/arch\",\"effort\":null}}},\"scope\":\"global\",\"sources\":{\"explorer\":\"session\",\"reviewer\":\"global\",\"executor\":\"global\",\"architect\":\"global\"},\"overrides\":{\"explorer\":false,\"reviewer\":true,\"executor\":true,\"architect\":true}}",
+    "file": "{\n  \"roles\": {\n    \"reviewer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": \"low\",\n      \"promptOverride\": \"\",\n      \"fallback\": null\n    },\n    \"executor\": {\n      \"mode\": \"model\",\n      \"model\": \"  \",\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    },\n    \"architect\": {\n      \"mode\": \"model\",\n      \"model\": \"m-arch\",\n      \"effort\": \"xhigh\",\n      \"promptOverride\": null,\n      \"fallback\": {\n        \"model\": \"fb/arch\",\n        \"effort\": null\n      }\n    }\n  }\n}\n"
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"reviewer\",\"inherit\":false,\"effort\":\"high\"}",
+    "result": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":\"high\",\"promptOverride\":\"\",\"fallback\":null},\"executor\":{\"mode\":\"model\",\"model\":\"  \",\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"model\",\"model\":\"m-arch\",\"effort\":\"xhigh\",\"promptOverride\":null,\"fallback\":{\"model\":\"fb/arch\",\"effort\":null}}},\"scope\":\"global\",\"sources\":{\"explorer\":\"session\",\"reviewer\":\"global\",\"executor\":\"global\",\"architect\":\"global\"},\"overrides\":{\"explorer\":false,\"reviewer\":true,\"executor\":true,\"architect\":true}}",
+    "file": "{\n  \"roles\": {\n    \"reviewer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": \"high\",\n      \"promptOverride\": \"\",\n      \"fallback\": null\n    },\n    \"executor\": {\n      \"mode\": \"model\",\n      \"model\": \"  \",\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    },\n    \"architect\": {\n      \"mode\": \"model\",\n      \"model\": \"m-arch\",\n      \"effort\": \"xhigh\",\n      \"promptOverride\": null,\n      \"fallback\": {\n        \"model\": \"fb/arch\",\n        \"effort\": null\n      }\n    }\n  }\n}\n"
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"reviewer\",\"inherit\":false}",
+    "result": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":\"high\",\"promptOverride\":\"\",\"fallback\":null},\"executor\":{\"mode\":\"model\",\"model\":\"  \",\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"model\",\"model\":\"m-arch\",\"effort\":\"xhigh\",\"promptOverride\":null,\"fallback\":{\"model\":\"fb/arch\",\"effort\":null}}},\"scope\":\"global\",\"sources\":{\"explorer\":\"session\",\"reviewer\":\"global\",\"executor\":\"global\",\"architect\":\"global\"},\"overrides\":{\"explorer\":false,\"reviewer\":true,\"executor\":true,\"architect\":true}}",
+    "file": "{\n  \"roles\": {\n    \"reviewer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": \"high\",\n      \"promptOverride\": \"\",\n      \"fallback\": null\n    },\n    \"executor\": {\n      \"mode\": \"model\",\n      \"model\": \"  \",\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    },\n    \"architect\": {\n      \"mode\": \"model\",\n      \"model\": \"m-arch\",\n      \"effort\": \"xhigh\",\n      \"promptOverride\": null,\n      \"fallback\": {\n        \"model\": \"fb/arch\",\n        \"effort\": null\n      }\n    }\n  }\n}\n"
+   }
+  ]
+ },
+ {
+  "id": "update_refusals",
+  "note": "validation messages through the settings API",
+  "given": {
+   "store": null
+  },
+  "ops": [
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"mode\":\"turbo\"}",
+    "error": "invalid mode \"turbo\" (must be \"default\" or \"model\")",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"effort\":\"max\"}",
+    "error": "invalid effort \"max\" (must be one of low/medium/high/xhigh or null)",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"executor\",\"fallback\":{\"model\":\"rec/fb\",\"effort\":\"max\"}}",
+    "error": "invalid fallback effort \"max\" (must be one of low/medium/high/xhigh or null)",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"executor\",\"mode\":\"model\"}",
+    "error": "mode \"model\" requires a non-empty model id",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"executor\",\"mode\":\"model\",\"model\":\"m\",\"fallback\":{\"model\":\"m\"}}",
+    "error": "fallback model must differ from the primary model",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"executor\",\"fallback\":{\"model\":\" \"}}",
+    "error": "fallback requires a non-empty model id",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"executor\",\"fallback\":{\"effort\":\"low\"}}",
+    "error": "fallback requires a non-empty model id",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"executor\",\"fallback\":{}}",
+    "error": "fallback requires a non-empty model id",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"executor\",\"mode\":null}",
+    "error": "invalid mode \"null\" (must be \"default\" or \"model\")",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"executor\",\"effort\":\"none\"}",
+    "error": "invalid effort \"none\" (must be one of low/medium/high/xhigh or null)",
+    "file": null
+   }
+  ]
+ },
+ {
+  "id": "update_wrong_types",
+  "note": "members of the wrong JSON type",
+  "given": {
+   "store": null
+  },
+  "ops": [
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"mode\":5}",
+    "error": "invalid mode \"5\" (must be \"default\" or \"model\")",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"mode\":[\"default\"]}",
+    "error": "invalid mode \"default\" (must be \"default\" or \"model\")",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"mode\":{}}",
+    "error": "invalid mode \"[object Object]\" (must be \"default\" or \"model\")",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"mode\":true}",
+    "error": "invalid mode \"true\" (must be \"default\" or \"model\")",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"model\":5}",
+    "result": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}},\"scope\":\"global\",\"sources\":{\"explorer\":\"global\",\"reviewer\":\"session\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":true,\"reviewer\":false,\"executor\":false,\"architect\":false}}",
+    "file": "{\n  \"roles\": {\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"mode\":\"model\",\"model\":5}",
+    "error": "mode \"model\" requires a non-empty model id",
+    "file": "{\n  \"roles\": {\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"mode\":\"model\",\"model\":[\"m\"]}",
+    "error": "mode \"model\" requires a non-empty model id",
+    "file": "{\n  \"roles\": {\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"model\":null}",
+    "result": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}},\"scope\":\"global\",\"sources\":{\"explorer\":\"global\",\"reviewer\":\"session\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":true,\"reviewer\":false,\"executor\":false,\"architect\":false}}",
+    "file": "{\n  \"roles\": {\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"effort\":5}",
+    "error": "invalid effort \"5\" (must be one of low/medium/high/xhigh or null)",
+    "file": "{\n  \"roles\": {\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"effort\":[\"low\"]}",
+    "error": "invalid effort \"low\" (must be one of low/medium/high/xhigh or null)",
+    "file": "{\n  \"roles\": {\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"effort\":false}",
+    "error": "invalid effort \"false\" (must be one of low/medium/high/xhigh or null)",
+    "file": "{\n  \"roles\": {\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"effort\":{\"a\":1}}",
+    "error": "invalid effort \"[object Object]\" (must be one of low/medium/high/xhigh or null)",
+    "file": "{\n  \"roles\": {\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"promptOverride\":5}",
+    "error": "promptOverride must be a string or null",
+    "file": "{\n  \"roles\": {\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"promptOverride\":[]}",
+    "error": "promptOverride must be a string or null",
+    "file": "{\n  \"roles\": {\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"promptOverride\":{}}",
+    "error": "promptOverride must be a string or null",
+    "file": "{\n  \"roles\": {\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"promptOverride\":false}",
+    "error": "promptOverride must be a string or null",
+    "file": "{\n  \"roles\": {\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"fallback\":[]}",
+    "error": "fallback must be an object or null",
+    "file": "{\n  \"roles\": {\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"fallback\":\"x\"}",
+    "error": "fallback must be an object or null",
+    "file": "{\n  \"roles\": {\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"fallback\":5}",
+    "error": "fallback must be an object or null",
+    "file": "{\n  \"roles\": {\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"fallback\":true}",
+    "error": "fallback must be an object or null",
+    "file": "{\n  \"roles\": {\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"fallback\":{\"model\":5}}",
+    "error": "fallback requires a non-empty model id",
+    "file": "{\n  \"roles\": {\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"fallback\":{\"model\":null}}",
+    "error": "fallback requires a non-empty model id",
+    "file": "{\n  \"roles\": {\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"fallback\":{\"effort\":5}}",
+    "error": "invalid fallback effort \"5\" (must be one of low/medium/high/xhigh or null)",
+    "file": "{\n  \"roles\": {\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"fallback\":{\"effort\":[\"xhigh\"]}}",
+    "error": "invalid fallback effort \"xhigh\" (must be one of low/medium/high/xhigh or null)",
+    "file": "{\n  \"roles\": {\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"fallback\":{\"model\":\"a\",\"effort\":1e21}}",
+    "error": "invalid fallback effort \"1e+21\" (must be one of low/medium/high/xhigh or null)",
+    "file": "{\n  \"roles\": {\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"fallback\":{\"model\":\"a\",\"effort\":0.0000001}}",
+    "error": "invalid fallback effort \"1e-7\" (must be one of low/medium/high/xhigh or null)",
+    "file": "{\n  \"roles\": {\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+   }
+  ]
+ },
+ {
+  "id": "update_wrong_type_order",
+  "note": "what comes first when members are wrong together (the port reads a wrong type before the rest)",
+  "given": {
+   "store": null
+  },
+  "ops": [
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"mode\":\"turbo\",\"fallback\":5}",
+    "error": "fallback must be an object or null",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"mode\":5,\"effort\":5}",
+    "error": "invalid mode \"5\" (must be \"default\" or \"model\")",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"effort\":5,\"promptOverride\":5}",
+    "error": "invalid effort \"5\" (must be one of low/medium/high/xhigh or null)",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"effort\":\"max\",\"promptOverride\":5}",
+    "error": "invalid effort \"max\" (must be one of low/medium/high/xhigh or null)",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"fallback\":{\"effort\":5},\"mode\":5}",
+    "error": "invalid fallback effort \"5\" (must be one of low/medium/high/xhigh or null)",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"mode\":\"turbo\",\"effort\":5}",
+    "error": "invalid mode \"turbo\" (must be \"default\" or \"model\")",
+    "file": null
+   }
+  ]
+ },
+ {
+  "id": "update_malformed_store",
+  "note": "a store the write refuses; the refusal comes before any patch complaint",
+  "given": {
+   "store": "{ not json ]"
+  },
+  "ops": [
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"effort\":\"low\"}",
+    "error": "cannot update subagent config: Expected property name or '}' in JSON at position 2 (line 1 column 3)",
+    "file": "{ not json ]"
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"mode\":\"turbo\"}",
+    "error": "cannot update subagent config: Expected property name or '}' in JSON at position 2 (line 1 column 3)",
+    "file": "{ not json ]"
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"mode\":5}",
+    "error": "cannot update subagent config: Expected property name or '}' in JSON at position 2 (line 1 column 3)",
+    "file": "{ not json ]"
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"inherit\":true}",
+    "error": "cannot update subagent config: Expected property name or '}' in JSON at position 2 (line 1 column 3)",
+    "file": "{ not json ]"
+   }
+  ]
+ },
+ {
+  "id": "update_keeps_extras",
+  "note": "unrelated members of the store survive an update",
+  "given": {
+   "store": "{\"keep\":{\"a\":[1,2]},\"roles\":{\"future\":{\"custom\":1},\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":\"low\",\"promptOverride\":null,\"fallback\":null,\"x\":1}}}"
+  },
+  "ops": [
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"effort\":\"high\"}",
+    "result": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":\"high\",\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}},\"scope\":\"global\",\"sources\":{\"explorer\":\"global\",\"reviewer\":\"session\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":true,\"reviewer\":false,\"executor\":false,\"architect\":false}}",
+    "file": "{\n  \"keep\": {\n    \"a\": [\n      1,\n      2\n    ]\n  },\n  \"roles\": {\n    \"future\": {\n      \"custom\": 1\n    },\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": \"high\",\n      \"promptOverride\": null,\n      \"fallback\": null,\n      \"x\": 1\n    }\n  }\n}\n"
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"reviewer\",\"inherit\":true}",
+    "result": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":\"high\",\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}},\"scope\":\"global\",\"sources\":{\"explorer\":\"global\",\"reviewer\":\"session\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":true,\"reviewer\":false,\"executor\":false,\"architect\":false}}",
+    "file": "{\n  \"keep\": {\n    \"a\": [\n      1,\n      2\n    ]\n  },\n  \"roles\": {\n    \"future\": {\n      \"custom\": 1\n    },\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": \"high\",\n      \"promptOverride\": null,\n      \"fallback\": null,\n      \"x\": 1\n    }\n  }\n}\n"
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"inherit\":true}",
+    "result": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}},\"scope\":\"global\",\"sources\":{\"explorer\":\"session\",\"reviewer\":\"session\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":false,\"reviewer\":false,\"executor\":false,\"architect\":false}}",
+    "file": "{\n  \"keep\": {\n    \"a\": [\n      1,\n      2\n    ]\n  },\n  \"roles\": {\n    \"future\": {\n      \"custom\": 1\n    }\n  }\n}\n"
+   }
+  ]
+ },
+ {
+  "id": "response_update",
+  "note": "settingsResponse over updateSettings: ok and the refusals",
+  "given": {
+   "store": null
+  },
+  "ops": [
+   {
+    "op": "update_response",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"effort\":\"low\"}",
+    "result": "{\"status\":200,\"body\":{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":\"low\",\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}},\"scope\":\"global\",\"sources\":{\"explorer\":\"global\",\"reviewer\":\"session\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":true,\"reviewer\":false,\"executor\":false,\"architect\":false}}}",
+    "file": "{\n  \"roles\": {\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": \"low\",\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+   },
+   {
+    "op": "update_response",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"effort\":\"bad\"}",
+    "result": "{\"status\":400,\"body\":{\"error\":\"invalid effort \\\"bad\\\" (must be one of low/medium/high/xhigh or null)\"}}",
+    "file": "{\n  \"roles\": {\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": \"low\",\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+   },
+   {
+    "op": "update_response",
+    "body": "null",
+    "result": "{\"status\":400,\"body\":{\"error\":\"missing body\"}}",
+    "file": "{\n  \"roles\": {\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": \"low\",\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+   }
+  ]
+ },
+ {
+  "id": "resolve_defaults",
+  "note": "resolveSpawnConfig of a missing store",
+  "given": {
+   "store": null
+  },
+  "ops": [
+   {
+    "op": "resolve",
+    "role": "explorer",
+    "result": "{\"role\":\"explorer\",\"model\":null,\"usesMainModel\":true,\"effort\":null,\"promptOverride\":null}",
+    "file": null
+   },
+   {
+    "op": "resolve",
+    "role": "reviewer",
+    "result": "{\"role\":\"reviewer\",\"model\":null,\"usesMainModel\":true,\"effort\":null,\"promptOverride\":null}",
+    "file": null
+   },
+   {
+    "op": "resolve",
+    "role": "executor",
+    "result": "{\"role\":\"executor\",\"model\":null,\"usesMainModel\":true,\"effort\":null,\"promptOverride\":null}",
+    "file": null
+   },
+   {
+    "op": "resolve",
+    "role": "architect",
+    "result": "{\"role\":\"architect\",\"model\":null,\"usesMainModel\":true,\"effort\":null,\"promptOverride\":null}",
+    "file": null
+   }
+  ]
+ },
+ {
+  "id": "resolve_full",
+  "note": "resolveSpawnConfig: model, default, whitespace model, effort, prompt override",
+  "given": {
+   "store": "{\"roles\":{\"explorer\":{\"mode\":\"model\",\"model\":\"gpt-5.5\",\"effort\":\"high\",\"promptOverride\":\"Be brief.\",\"fallback\":{\"model\":\"fb/one\",\"effort\":\"low\"}},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":\"low\",\"promptOverride\":\"\",\"fallback\":null},\"executor\":{\"mode\":\"model\",\"model\":\"  \",\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"model\",\"model\":\"m-arch\",\"effort\":\"xhigh\",\"promptOverride\":null,\"fallback\":{\"model\":\"fb/arch\",\"effort\":null}}}}"
+  },
+  "ops": [
+   {
+    "op": "resolve",
+    "role": "explorer",
+    "result": "{\"role\":\"explorer\",\"model\":\"gpt-5.5\",\"usesMainModel\":false,\"effort\":\"high\",\"promptOverride\":\"Be brief.\"}",
+    "file": "{\"roles\":{\"explorer\":{\"mode\":\"model\",\"model\":\"gpt-5.5\",\"effort\":\"high\",\"promptOverride\":\"Be brief.\",\"fallback\":{\"model\":\"fb/one\",\"effort\":\"low\"}},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":\"low\",\"promptOverride\":\"\",\"fallback\":null},\"executor\":{\"mode\":\"model\",\"model\":\"  \",\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"model\",\"model\":\"m-arch\",\"effort\":\"xhigh\",\"promptOverride\":null,\"fallback\":{\"model\":\"fb/arch\",\"effort\":null}}}}"
+   },
+   {
+    "op": "resolve",
+    "role": "reviewer",
+    "result": "{\"role\":\"reviewer\",\"model\":null,\"usesMainModel\":true,\"effort\":\"low\",\"promptOverride\":\"\"}",
+    "file": "{\"roles\":{\"explorer\":{\"mode\":\"model\",\"model\":\"gpt-5.5\",\"effort\":\"high\",\"promptOverride\":\"Be brief.\",\"fallback\":{\"model\":\"fb/one\",\"effort\":\"low\"}},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":\"low\",\"promptOverride\":\"\",\"fallback\":null},\"executor\":{\"mode\":\"model\",\"model\":\"  \",\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"model\",\"model\":\"m-arch\",\"effort\":\"xhigh\",\"promptOverride\":null,\"fallback\":{\"model\":\"fb/arch\",\"effort\":null}}}}"
+   },
+   {
+    "op": "resolve",
+    "role": "executor",
+    "result": "{\"role\":\"executor\",\"model\":\"  \",\"usesMainModel\":false,\"effort\":null,\"promptOverride\":null}",
+    "file": "{\"roles\":{\"explorer\":{\"mode\":\"model\",\"model\":\"gpt-5.5\",\"effort\":\"high\",\"promptOverride\":\"Be brief.\",\"fallback\":{\"model\":\"fb/one\",\"effort\":\"low\"}},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":\"low\",\"promptOverride\":\"\",\"fallback\":null},\"executor\":{\"mode\":\"model\",\"model\":\"  \",\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"model\",\"model\":\"m-arch\",\"effort\":\"xhigh\",\"promptOverride\":null,\"fallback\":{\"model\":\"fb/arch\",\"effort\":null}}}}"
+   },
+   {
+    "op": "resolve",
+    "role": "architect",
+    "result": "{\"role\":\"architect\",\"model\":\"m-arch\",\"usesMainModel\":false,\"effort\":\"xhigh\",\"promptOverride\":null}",
+    "file": "{\"roles\":{\"explorer\":{\"mode\":\"model\",\"model\":\"gpt-5.5\",\"effort\":\"high\",\"promptOverride\":\"Be brief.\",\"fallback\":{\"model\":\"fb/one\",\"effort\":\"low\"}},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":\"low\",\"promptOverride\":\"\",\"fallback\":null},\"executor\":{\"mode\":\"model\",\"model\":\"  \",\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"model\",\"model\":\"m-arch\",\"effort\":\"xhigh\",\"promptOverride\":null,\"fallback\":{\"model\":\"fb/arch\",\"effort\":null}}}}"
+   }
+  ]
+ },
+ {
+  "id": "resolve_default_mode_keeps_effort_and_prompt",
+  "note": "a default-mode role still carries its effort and prompt; a model it names is ignored",
+  "given": {
+   "store": "{\"roles\":{\"reviewer\":{\"mode\":\"default\",\"model\":\"ignored\",\"effort\":\"low\",\"promptOverride\":\"keep\"}}}"
+  },
+  "ops": [
+   {
+    "op": "resolve",
+    "role": "reviewer",
+    "result": "{\"role\":\"reviewer\",\"model\":null,\"usesMainModel\":true,\"effort\":\"low\",\"promptOverride\":\"keep\"}",
+    "file": "{\"roles\":{\"reviewer\":{\"mode\":\"default\",\"model\":\"ignored\",\"effort\":\"low\",\"promptOverride\":\"keep\"}}}"
+   }
+  ]
+ },
+ {
+  "id": "resolve_malformed",
+  "note": "a malformed store resolves to defaults",
+  "given": {
+   "store": "{ not json ]"
+  },
+  "ops": [
+   {
+    "op": "resolve",
+    "role": "explorer",
+    "result": "{\"role\":\"explorer\",\"model\":null,\"usesMainModel\":true,\"effort\":null,\"promptOverride\":null}",
+    "file": "{ not json ]"
+   }
+  ]
+ },
+ {
+  "id": "resolve_unknown_role",
+  "note": "the oracle throws a TypeError for a role it does not know",
+  "given": {
+   "store": null
+  },
+  "ops": [
+   {
+    "op": "resolve",
+    "role": "nobody",
+    "error": "Cannot read properties of undefined (reading 'mode')",
+    "file": null
+   }
+  ]
+ },
+ {
+  "id": "resolve_after_update",
+  "note": "a spawn resolution sees what the settings API wrote (store.test AC3, phase2 S8 and S10)",
+  "given": {
+   "store": null
+  },
+  "ops": [
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"executor\",\"mode\":\"model\",\"model\":\"claude-opus\"}",
+    "result": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"executor\":{\"mode\":\"model\",\"model\":\"claude-opus\",\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}},\"scope\":\"global\",\"sources\":{\"explorer\":\"session\",\"reviewer\":\"session\",\"executor\":\"global\",\"architect\":\"session\"},\"overrides\":{\"explorer\":false,\"reviewer\":false,\"executor\":true,\"architect\":false}}",
+    "file": "{\n  \"roles\": {\n    \"executor\": {\n      \"mode\": \"model\",\n      \"model\": \"claude-opus\",\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+   },
+   {
+    "op": "resolve",
+    "role": "executor",
+    "result": "{\"role\":\"executor\",\"model\":\"claude-opus\",\"usesMainModel\":false,\"effort\":null,\"promptOverride\":null}",
+    "file": "{\n  \"roles\": {\n    \"executor\": {\n      \"mode\": \"model\",\n      \"model\": \"claude-opus\",\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+   },
+   {
+    "op": "resolve",
+    "role": "explorer",
+    "result": "{\"role\":\"explorer\",\"model\":null,\"usesMainModel\":true,\"effort\":null,\"promptOverride\":null}",
+    "file": "{\n  \"roles\": {\n    \"executor\": {\n      \"mode\": \"model\",\n      \"model\": \"claude-opus\",\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"reviewer\",\"promptOverride\":\"Adversarial only.\"}",
+    "result": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":\"Adversarial only.\",\"fallback\":null},\"executor\":{\"mode\":\"model\",\"model\":\"claude-opus\",\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}},\"scope\":\"global\",\"sources\":{\"explorer\":\"session\",\"reviewer\":\"global\",\"executor\":\"global\",\"architect\":\"session\"},\"overrides\":{\"explorer\":false,\"reviewer\":true,\"executor\":true,\"architect\":false}}",
+    "file": "{\n  \"roles\": {\n    \"executor\": {\n      \"mode\": \"model\",\n      \"model\": \"claude-opus\",\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    },\n    \"reviewer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": \"Adversarial only.\",\n      \"fallback\": null\n    }\n  }\n}\n"
+   },
+   {
+    "op": "resolve",
+    "role": "reviewer",
+    "result": "{\"role\":\"reviewer\",\"model\":null,\"usesMainModel\":true,\"effort\":null,\"promptOverride\":\"Adversarial only.\"}",
+    "file": "{\n  \"roles\": {\n    \"executor\": {\n      \"mode\": \"model\",\n      \"model\": \"claude-opus\",\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    },\n    \"reviewer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": \"Adversarial only.\",\n      \"fallback\": null\n    }\n  }\n}\n"
+   },
+   {
+    "op": "get",
+    "scope": "\"global\"",
+    "result": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":\"Adversarial only.\",\"fallback\":null},\"executor\":{\"mode\":\"model\",\"model\":\"claude-opus\",\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}},\"scope\":\"global\",\"sources\":{\"explorer\":\"session\",\"reviewer\":\"global\",\"executor\":\"global\",\"architect\":\"session\"},\"overrides\":{\"explorer\":false,\"reviewer\":true,\"executor\":true,\"architect\":false}}",
+    "file": "{\n  \"roles\": {\n    \"executor\": {\n      \"mode\": \"model\",\n      \"model\": \"claude-opus\",\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    },\n    \"reviewer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": \"Adversarial only.\",\n      \"fallback\": null\n    }\n  }\n}\n"
+   }
+  ]
+ },
+ {
+  "id": "get_scope_to_primitive",
+  "note": "String() of an object with an own toString member throws in JavaScript (ToPrimitive finds no callable toString and valueOf returns the object); one without it prints [object Object]",
+  "given": {
+   "store": null
+  },
+  "ops": [
+   {
+    "op": "get",
+    "scope": "{\"toString\":null}",
+    "error": "Cannot convert object to primitive value",
+    "file": null
+   },
+   {
+    "op": "get",
+    "scope": "{\"toString\":\"x\",\"valueOf\":1}",
+    "error": "Cannot convert object to primitive value",
+    "file": null
+   },
+   {
+    "op": "get",
+    "scope": "{\"valueOf\":null}",
+    "error": "invalid scope \"[object Object]\"",
+    "file": null
+   },
+   {
+    "op": "get",
+    "scope": "[{\"toString\":null}]",
+    "error": "Cannot convert object to primitive value",
+    "file": null
+   },
+   {
+    "op": "get",
+    "scope": "[[1,[2]],[]]",
+    "error": "invalid scope \"1,2,\"",
+    "file": null
+   },
+   {
+    "op": "get",
+    "scope": "[{},[null]]",
+    "error": "invalid scope \"[object Object],\"",
+    "file": null
+   },
+   {
+    "op": "get",
+    "scope": "{\"a\":{\"toString\":1}}",
+    "error": "invalid scope \"[object Object]\"",
+    "file": null
+   }
+  ]
+ },
+ {
+  "id": "update_to_primitive",
+  "note": "the same conversion in the messages of update: role, scope, mode, effort, fallback.effort; the promptOverride and fallback type messages convert nothing",
+  "given": {
+   "store": null
+  },
+  "ops": [
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":{\"toString\":null}}",
+    "error": "Cannot convert object to primitive value",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":[{\"toString\":null}]}",
+    "error": "Cannot convert object to primitive value",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":{\"valueOf\":null}}",
+    "error": "unknown role \"[object Object]\"",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "{\"role\":\"explorer\",\"scope\":{\"toString\":1}}",
+    "error": "Cannot convert object to primitive value",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"mode\":{\"toString\":null}}",
+    "error": "Cannot convert object to primitive value",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"mode\":[[1,[2]],[]]}",
+    "error": "invalid mode \"1,2,\" (must be \"default\" or \"model\")",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"effort\":[{\"toString\":null}]}",
+    "error": "Cannot convert object to primitive value",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"fallback\":{\"model\":\"a\",\"effort\":{\"toString\":\"x\"}}}",
+    "error": "Cannot convert object to primitive value",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"promptOverride\":{\"toString\":null}}",
+    "error": "promptOverride must be a string or null",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"fallback\":{\"toString\":null}}",
+    "error": "fallback requires a non-empty model id",
+    "file": null
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"fallback\":[{\"toString\":null}]}",
+    "error": "fallback must be an object or null",
+    "file": null
+   }
+  ]
+ },
+ {
+  "id": "update_key_case_and_duplicates",
+  "note": "JavaScript reads members by exact key and the last of a repeated key wins, so a wrong value overwritten by a good one (or the reverse) is judged as the last",
+  "given": {
+   "store": null
+  },
+  "ops": [
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"Mode\":\"turbo\",\"EFFORT\":\"max\",\"Fallback\":5,\"PROMPTOVERRIDE\":5}",
+    "result": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}},\"scope\":\"global\",\"sources\":{\"explorer\":\"global\",\"reviewer\":\"session\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":true,\"reviewer\":false,\"executor\":false,\"architect\":false}}",
+    "file": "{\n  \"roles\": {\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"fallback\":{\"Model\":\"x\",\"EFFORT\":\"max\"}}",
+    "error": "fallback requires a non-empty model id",
+    "file": "{\n  \"roles\": {\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"Role\":\"explorer\"}",
+    "error": "unknown role \"undefined\"",
+    "file": "{\n  \"roles\": {\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"effort\":5,\"effort\":\"low\"}",
+    "result": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":\"low\",\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}},\"scope\":\"global\",\"sources\":{\"explorer\":\"global\",\"reviewer\":\"session\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":true,\"reviewer\":false,\"executor\":false,\"architect\":false}}",
+    "file": "{\n  \"roles\": {\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": \"low\",\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"effort\":\"low\",\"effort\":5}",
+    "error": "invalid effort \"5\" (must be one of low/medium/high/xhigh or null)",
+    "file": "{\n  \"roles\": {\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": \"low\",\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"fallback\":{\"model\":\"a\",\"model\":5}}",
+    "error": "fallback requires a non-empty model id",
+    "file": "{\n  \"roles\": {\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": \"low\",\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"fallback\":{\"model\":5,\"model\":\"a\"}}",
+    "result": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":\"low\",\"promptOverride\":null,\"fallback\":{\"model\":\"a\",\"effort\":null}},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}},\"scope\":\"global\",\"sources\":{\"explorer\":\"global\",\"reviewer\":\"session\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":true,\"reviewer\":false,\"executor\":false,\"architect\":false}}",
+    "file": "{\n  \"roles\": {\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": \"low\",\n      \"promptOverride\": null,\n      \"fallback\": {\n        \"model\": \"a\",\n        \"effort\": null\n      }\n    }\n  }\n}\n"
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"mode\":\"turbo\",\"mode\":\"default\"}",
+    "result": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":\"low\",\"promptOverride\":null,\"fallback\":{\"model\":\"a\",\"effort\":null}},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}},\"scope\":\"global\",\"sources\":{\"explorer\":\"global\",\"reviewer\":\"session\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":true,\"reviewer\":false,\"executor\":false,\"architect\":false}}",
+    "file": "{\n  \"roles\": {\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": \"low\",\n      \"promptOverride\": null,\n      \"fallback\": {\n        \"model\": \"a\",\n        \"effort\": null\n      }\n    }\n  }\n}\n"
+   },
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"inherit\":true,\"inherit\":false}",
+    "result": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":\"low\",\"promptOverride\":null,\"fallback\":{\"model\":\"a\",\"effort\":null}},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}},\"scope\":\"global\",\"sources\":{\"explorer\":\"global\",\"reviewer\":\"session\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":true,\"reviewer\":false,\"executor\":false,\"architect\":false}}",
+    "file": "{\n  \"roles\": {\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": \"low\",\n      \"promptOverride\": null,\n      \"fallback\": {\n        \"model\": \"a\",\n        \"effort\": null\n      }\n    }\n  }\n}\n"
+   }
+  ]
+ },
+ {
+  "id": "update_missing_store_reset",
+  "note": "a reset in a store that is not there writes nothing",
+  "given": {
+   "store": null
+  },
+  "ops": [
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"inherit\":true}",
+    "result": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}},\"scope\":\"global\",\"sources\":{\"explorer\":\"session\",\"reviewer\":\"session\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":false,\"reviewer\":false,\"executor\":false,\"architect\":false}}",
+    "file": null
+   }
+  ]
+ },
+ {
+  "id": "update_malformed_store_to_primitive",
+  "note": "a store the write refuses comes before the conversion that would throw",
+  "given": {
+   "store": "{ not json ]"
+  },
+  "ops": [
+   {
+    "op": "update",
+    "body": "{\"scope\":\"global\",\"role\":\"explorer\",\"mode\":{\"toString\":null}}",
+    "error": "cannot update subagent config: Expected property name or '}' in JSON at position 2 (line 1 column 3)",
+    "file": "{ not json ]"
+   }
+  ]
+ },
+ {
+  "id": "get_scope_whitespace",
+  "note": "JSON.parse reads a scope with white space around it as the value",
+  "given": {
+   "store": null
+  },
+  "ops": [
+   {
+    "op": "get",
+    "scope": "  \"global\" ",
+    "result": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}},\"scope\":\"global\",\"sources\":{\"explorer\":\"session\",\"reviewer\":\"session\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":false,\"reviewer\":false,\"executor\":false,\"architect\":false}}",
+    "file": null
+   },
+   {
+    "op": "get",
+    "scope": "\n\"global\"\t",
+    "result": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}},\"scope\":\"global\",\"sources\":{\"explorer\":\"session\",\"reviewer\":\"session\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":false,\"reviewer\":false,\"executor\":false,\"architect\":false}}",
+    "file": null
+   },
+   {
+    "op": "get",
+    "scope": "\t\"galaxy\" ",
+    "error": "invalid scope \"galaxy\"",
+    "file": null
+   },
+   {
+    "op": "get",
+    "scope": " null ",
+    "error": "invalid scope \"null\"",
+    "file": null
+   }
+  ]
+ }
+]

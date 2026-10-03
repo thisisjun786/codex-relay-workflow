@@ -114,9 +114,9 @@ release instead of `--from`. Either way the archive has to be named for this hos
 and architecture, be listed exactly once in `SHA256SUMS` and hash to the listed digest, and nothing
 under the destination or in the host record is created before all three hold.
 
-`--backup-state-to <dir>` (on `install`, `update` and `rollback`) is the acknowledgement that the swap brings the additive DAG zone to a store
-that predates it: the command copies the whole relay state directory to `<dir>` before promoting, and without it that swap refuses and names the
-flag ([the route](#why-the-schema-reading-compares-statements-and-not-versions)).
+`--backup-state-to <dir>` (on `install`, `update` and `rollback`) is the acknowledgement that the swap brings the additive DAG zone, or ordinary
+indexes on tables the store already holds, to a store that lacks them: the command copies the whole relay state directory to `<dir>` before
+promoting, and without it that swap refuses and names the flag ([the route](#why-the-schema-reading-compares-statements-and-not-versions)).
 
 What follows is one run, in this order, and the result lists the steps it took:
 
@@ -338,6 +338,8 @@ outside quoted text are normalised away and nothing else is.
 | `NARROWS` | the store holds objects the candidate does not declare | refused |
 | `EXTENDS_ZONE` | the only difference is the additive DAG zone arriving: every added object is the zone's | refused, unless the command takes the OPS-4.5 backup (below) |
 | `NARROWS_ZONE` | the only difference is the additive DAG zone leaving: every object the candidate does not declare is the zone's | allowed |
+| `EXTENDS_INDEX` | the only difference is ordinary indexes arriving on tables both sides declare (a few may leave beside them) | refused, unless the command takes the OPS-4.5 backup (below) |
+| `NARROWS_INDEX` | the only difference is ordinary indexes leaving: every object the candidate does not declare is one, on a table both sides declare | allowed |
 
 The relay applies its whole schema on every write-open, so a candidate whose schema is not the
 store's applies the difference the moment its daemon first starts. OPS-4.5 reserves that for its own
@@ -348,7 +350,7 @@ through. The Go and Python runtimes execute the same schema statements
 
 The one release that changes the schema is the one that adds the DAG zone ([DAG plans](relay/dag-plans.md#the-store), decision 74): its
 `dag_*` tables are created by the first write-open and are declared by that build. That decision is made (D-01), so the gate has an answer of
-its own for the zone and for nothing else, and the supported install command has a route through it.
+its own for the zone and, below, for ordinary indexes, and for nothing else, and the supported install command has a route through both.
 
 **The history indexes (CRW-301).** A second change reaches the frozen v1 schema script itself: six `CREATE INDEX IF NOT EXISTS` statements
 for the tables that only grow (`attempts`, `supervisor_attempts`, `acks`, `sync_outbox`, `supervisor_messages`,
@@ -391,6 +393,46 @@ The acknowledgement where nothing arrives is not a refusal and takes no backup. 
 **The zone leaves (`NARROWS_ZONE`).** Returning to a runtime that does not declare the zone, on an update, on a promotion an interrupted run left to
 finish, or on a rollback that moves the pointer, is not refused for that reason: the zone is additive, so an older runtime opens a store that has
 it (it validates only the frozen tables) and never reads or writes the zone, which stays in the store for a newer runtime to read again.
+
+**Ordinary indexes arrive (`EXTENDS_INDEX`) or leave (`NARROWS_INDEX`).** A release may add an index to a table the schema already declares, and then
+the store lacks an object the candidate declares, which is a plain `EXTENDS`. The gate gives a difference made only of ordinary indexes on tables
+both sides declare an answer of its own. An index is ordinary when it is not unique and calls no SQL function, in its key or in the `WHERE` of a
+partial index. SQLite decides that and the gate does not match text: it builds every table both readings declare in memory from the store's own
+statement for it, executes the one `CREATE INDEX` statement (a statement with a semicolon, even inside a literal, is not classified), and asks
+SQLite for the table the index is on, whether it is unique and, from SQLite's own compiled program for the statement, whether it calls a function.
+A unique index can fail to build over existing rows and then fails the writes of a runtime that never heard of it, and so can a function:
+`json_extract` over text that is not JSON raises, which an older runtime's ordinary write would meet. Neither is ordinary, however few rows are
+involved. An index on a table that is new, that differs between the two readings, or that the statement does not name correctly is not ordinary
+either, and neither is a trigger, a view, a new table or a column change: each keeps the answer it had (`EXTENDS`, `DIFFERS` or `NARROWS`),
+alone or beside an ordinary index, and the backup route does not carry it. The zone beside an index is neither class (a store without the zone
+meeting a build that brings the zone and an index together is a plain `EXTENDS`, as is the zone and an index leaving together a plain
+`NARROWS`), so the route is taken for the zone first, with a build that carries it alone ([refactor backlog](port/refactor-backlog.md)).
+
+An arrival refuses without `--backup-state-to` and passes with it, by the same route as the zone: the backup is taken after the daemon-stopped and
+no-open-attempt cells have answered and before anything is promoted, and the candidate builds each index on its first write-open. The schema
+script runs as separate statements, each in its own transaction, so the write lock is held for the build of one index at a time, never for the
+script. Measured on a synthetic store built by this build (the zone present, the six history indexes of pull request #384 absent, filled with the
+generator of that change's benchmark; page cache warm, on a host that was running other jobs; WAL mode, so readers were never held), with a second
+connection updating one row every 2 ms to see the lock:
+
+| Store | Events / attempts | The first write-open (six indexes) | The largest index (`attempts_sent_at`) | Each of the other five | Longest write stall | Growth of the file |
+| --- | --- | --- | --- | --- | --- | --- |
+| 89.8 MB (larger than the operating store's about 65 MB) | 80,000 / 160,000 | 0.12 to 0.13 s | 0.10 s | 3 to 22 ms | 0.08 to 0.105 s | 8 MB |
+| 447.8 MB | 400,000 / 800,000 | 0.50 to 0.56 s | 0.48 to 0.54 s | 2 to 45 ms | 0.33 to 0.43 s | 40 MB |
+
+The build is a small fraction of a second at the operating store's size and scales about linearly with the attempts table, which holds the one large
+index. A writer that meets the lock waits for it: the probe's longest wait can exceed the build by up to one busy-handler retry step, and no probe
+write failed. Three runs of each size are in the figures, and the readers' longest wait was 3 ms.
+
+An index the candidate does not declare leaves with no acknowledgement and no backup, on an update, on a promotion an interrupted run left to finish,
+and on a rollback. An ordinary index is derived from its table's rows and is never needed for correctness, and SQLite maintains every index of a
+table on every write whichever runtime made it, with no function that could fail, so an older runtime opens such a store and keeps it up to date
+without reading it; the index stays for a newer runtime to find. The one effect is on speed and on the order of a query that has no `ORDER BY`,
+which may now follow a leftover index. A unique index, or one that calls a function, that the candidate does not declare is not that: an older
+runtime's write can fail on it, and the store reads a plain `NARROWS`. A new index meant for this route is therefore non-unique and function-free;
+the ratchet test names the one index of the shipped schema that is not (`journal_managed_creation`, whose `WHERE` guards `json_extract` with
+`json_valid`), and a new exception fails it. The test of what calls a function reads SQLite's compiled program, whose opcodes SQLite does not promise
+to keep, so the tests keep `json_extract` as a control that fails when a driver upgrade changes them.
 
 The warning against write commands stays: opening a store for writing with this build creates the zone, and that happens outside this route (a
 relay command run by hand against a live state directory takes no backup), so the route makes the warning unnecessary only inside the install

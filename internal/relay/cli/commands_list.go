@@ -3,7 +3,7 @@ package cli
 // Reported by doctor, copied from cli.py OFFLINE_COMMANDS and HOST_REQUIRED_COMMANDS.
 var offlineCommands = []string{
 	"ack", "ack-proof", "admit-turn", "assignment-show", "claim", "criteria-register",
-	"criteria-show", "decision-reply", "decision-show", "doctor", "emit", "generation-bind", "generation-open", "register",
+	"criteria-show", "decision-reply", "decision-show", "doctor", "emit", "generation-bind", "generation-open", "intervention-show", "register",
 	"relationship-resume", "relationship-status", "revision-head", "settings-record", "settings-show",
 	"show", "status", "store-challenge", "store-identity", "verdict", "linkage-attach",
 	"linkage-bind", "linkage-counterpart", "linkage-directive", "linkage-completion", "linkage-down",

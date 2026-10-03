@@ -39,7 +39,9 @@ type StoredReceipt struct {
 }
 
 // AcceptOptions carries what accept_child_receipt takes beside the payload: a continuation
-// admission (JSON, nil for none) and the revision a re-emission declares it supersedes.
+// admission (JSON, nil for none) and the revision a re-emission declares it supersedes. The
+// revision named is recorded as stated; whether it is one the head can find (a suppressed
+// receipt is not a revision) is for the head to read, not for intake to refuse.
 type AcceptOptions struct {
 	Continuation       []byte
 	SupersedesRevision *string
