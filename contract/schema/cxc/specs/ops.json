@@ -4064,7 +4064,7 @@
         "K12/ps",
         "A/bg-wake/cli.test.ts"
       ],
-      "note": "bg run spawns a detached sh that outlives the step: the step's own PATH adds the system directories, because the oracle's case PATH (stubs and bin) has neither the sh nor the mv that the spawn wrapper needs to write <id>.exit; a wait step stands for the recorder waiting until that file is there (the id is random, aliased <BG_1>). The ps stub answers the start fingerprint, so startToken is recorded and the ps call is logged with its pid aliased. Then bg list --json shows the reconciled failed record (exit 3) and the Stop wakes on it.",
+      "note": "bg run spawns a detached sh that outlives the step: the step's own PATH adds the system directories, because the oracle's case PATH (stubs and bin) has neither the sh nor the mv that the spawn wrapper needs to write <id>.exit; a wait step stands for the recorder waiting until that file is there (the id is random, aliased <BG_1>). The ps stub answers the start fingerprint, so startToken is recorded and the ps call is logged with its pid aliased. Then bg list --json shows the reconciled failed record (exit 3) and the Stop wakes on it. It observes only ws/.codexclaw/bg: an existing test pins the number of fixture trees that hold a first .codexclaw/.gitignore at 50, and the 50 fixtures that already record it hold that behaviour.",
       "given": {
         "env": {
           "CODEX_THREAD_ID": "rec-s1"
@@ -4115,6 +4115,9 @@
             "transcript_path": null
           }
         }
+      ],
+      "observe": [
+        "ws/.codexclaw/bg"
       ]
     },
     {
