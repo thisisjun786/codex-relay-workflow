@@ -2,7 +2,6 @@ package delivery
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"sort"
 	"time"
@@ -18,7 +17,7 @@ func wallClockISO() string { return time.Now().UTC().Format("2006-01-02T15:04:05
 
 func (h *hl) sweeper() *faults.Sweeper {
 	return &faults.Sweeper{Store: h.store, MaxAttempts: h.delivery.Policy.MaxAttempts, Now: wallClockISO,
-		HostRecordPath: filepath.Join(os.Getenv("XDG_STATE_HOME"), "codex-relay-workflow", "host-record.json"),
+		HostRecordPath: filepath.Join(h.tree, "xdg-state", "codex-relay-workflow", "host-record.json"),
 		Installation: faults.Installation{Package: "codex-session-relay", Version: faults.RelayPackageVersion,
 			Location: installationDir()},
 		SupersessionReason: h.delivery.SupersessionReason,

@@ -83,6 +83,7 @@ func (p *ctxProbe) RecipientFingerprint(ctx context.Context, thread string) (str
 // attempt (lifecycle read, turn listing, send), a reconcile of an uncertain send, an
 // acknowledgement and a daemon-shaped pass over them.
 func TestDeliveryPassesItsContextToEveryHostCall(t *testing.T) {
+	t.Parallel()
 	probe := &ctxProbe{}
 	scenario := func(name string, run func(h *hl)) {
 		t.Run(name, func(t *testing.T) {

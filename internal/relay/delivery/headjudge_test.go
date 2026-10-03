@@ -361,6 +361,7 @@ func seedCases(g *graphStore) []seededCase {
 }
 
 func TestHeadRevisionFromMatchesTheOldJudgmentOnNamedCases(t *testing.T) {
+	t.Parallel()
 	g := newGraphStore(t)
 	for _, c := range seedCases(g) {
 		t.Run(c.name, func(t *testing.T) {
@@ -387,6 +388,7 @@ func TestHeadRevisionFromMatchesTheOldJudgmentOnNamedCases(t *testing.T) {
 }
 
 func TestSupersessionReasonMatchesTheOldJudgmentOnNamedCases(t *testing.T) {
+	t.Parallel()
 	g := newGraphStore(t)
 	for _, c := range seedCases(g) {
 		t.Run(c.name, func(t *testing.T) {
@@ -418,6 +420,7 @@ func TestSupersessionReasonMatchesTheOldJudgmentOnNamedCases(t *testing.T) {
 // A grant notice is judged by the merge-turn port, not by the head; the claim path still asks
 // SupersessionReason, so its answer is held to the old one before and after the grant is answered.
 func TestSupersessionReasonOfAMergeTurnGrantMatchesTheOldJudgment(t *testing.T) {
+	t.Parallel()
 	f, m, turn, event := promotedGrant(t)
 	for _, when := range []string{"promoted", "acknowledged"} {
 		got, err := f.delivery.SupersessionReason(f.ctx, event)
@@ -525,6 +528,7 @@ func TestJudgeHeadMatchesTheOldJudgmentOnRandomGraphs(t *testing.T) {
 // event id was read before (and listed the event twice, in no defined order); it is ignored now, so
 // the event reads as it was stored, undeclared. The product never writes such a row.
 func TestALineageRowOfAnotherGenerationIsNotTheEventsDeclaration(t *testing.T) {
+	t.Parallel()
 	g := newGraphStore(t)
 	c := g.seed(0, graphCase{events: []graphEvent{rv("e1", "h1", ""), rv("e2", "h2", "")}})
 	g.exec("INSERT INTO revision_lineage (relationship_id, execution_generation, event_id, revision_hash, supersedes_hash, declared_by, recorded_at) VALUES ('rel-elsewhere', 1, ?, 'h2', 'h1', 'child_declared', 'x')", c.prefix+"e2")
@@ -564,6 +568,7 @@ func (w *headWorld) plan(query string, args ...any) []planStep {
 // revision_lineage once per event, and the index on (relationship, generation) alone would still
 // walk the generation's lineage rows once per event.
 func TestHeadRevisionStatementFindsLineageByItsKey(t *testing.T) {
+	t.Parallel()
 	w := newHeadWorld(t, shapeChain, 200)
 	args := []any{headRelationship, 1, "ready_for_review"}
 	now := planText(w.plan(headRevisionSQL, args...))
