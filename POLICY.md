@@ -78,7 +78,7 @@ The release workflow is manual and owner-controlled.
 
 | Evidence | What it establishes |
 | --- | --- |
-| Skill metadata, local links and the absence of Python files | Repository structure, and that no Python enters the repository |
+| Skill metadata, local links and no Python outside skill assets | Repository structure, and that Python sits only in skill assets, so the runtime, installer and CI do not depend on it |
 | Installer and skill-linker tests in temporary destinations (Go) | Idempotence and preservation of conflicting files, directories and links |
 | CI-control negative tests | Missing, malformed, failed, cancelled or skipped prerequisites cannot pass the gate; main-target PRs and invalid release sources are rejected |
 | Go lint, the Go test suite with the contract corpus, static release binaries and the isolated-home install | The Go runtime builds, passes its tests and installs and wires from this checkout |
@@ -94,7 +94,9 @@ applicable. A structural test does not prove the workflow's meaning, and a fixtu
 replay does not prove an actual Codex hook, relay delivery or Desktop behavior.
 
 The Go checks need only the Go toolchain `go.mod` names and temporary synthetic
-data; CI installs no Python. Pin any
+data. The runtime, installer and CI do not depend on Python: CI installs none and runs
+no skill script, and a helper script in a skill's `scripts/` or `examples/` is an original
+asset an agent runs when it needs it. Pin any
 downloaded tooling by version, commit and checksum, and keep fixtures synthetic
 and local. Ordinary CI does not need a
 contributor's Codex, CXC, Linear account, App Server socket or user
