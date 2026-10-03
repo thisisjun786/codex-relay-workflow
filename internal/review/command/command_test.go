@@ -357,18 +357,18 @@ func TestTerminationSignalsCancelAReview(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer unlock()
-	sink := make(chan os.Signal, 64)
-	signal.Notify(sink, syscall.SIGTERM, syscall.SIGHUP) // whatever happens below, these signals must not end the test process itself
-	t.Cleanup(func() { signal.Stop(sink) })
+	// The signals go to this process: a Notify that is never stopped keeps any of them, however late, from ending the test binary, and reports delivery, so at most one is in flight.
+	sink := make(chan os.Signal, 16)
+	signal.Notify(sink, syscall.SIGTERM, syscall.SIGHUP)
 	for _, sig := range []syscall.Signal{syscall.SIGTERM, syscall.SIGHUP} {
 		done, code := make(chan int, 1), -1
 		go func() { done <- Run(context.Background(), f.args(h, "--lock-wait", "1m"), io.Discard, io.Discard) }()
 		for deadline := time.Now().Add(10 * time.Second); code < 0 && time.Now().Before(deadline); {
-			time.Sleep(200 * time.Millisecond) // a signal sent before Run has installed its handler changes nothing, so it is repeated
-			_ = syscall.Kill(os.Getpid(), sig)
 			select {
 			case code = <-done:
-			default:
+			case <-time.After(200 * time.Millisecond): // a signal sent before Run has installed its handler changes nothing, so it is repeated
+				_ = syscall.Kill(os.Getpid(), sig)
+				<-sink
 			}
 		}
 		if code != 130 {
