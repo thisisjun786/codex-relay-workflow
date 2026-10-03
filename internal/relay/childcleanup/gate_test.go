@@ -158,12 +158,12 @@ func TestExecuteCleansAMergedChildAndLeavesTheOthersAlone(t *testing.T) {
 	if result, err := Execute(ctx, w.st, s.client(t), merged, parent, false); err != nil || !result.Complete() || fmt.Sprint(s.archived()) != "[grand sub-2 sub-1 child]" {
 		t.Fatalf("err=%v result=%+v archived=%v", err, result, s.archived())
 	}
-	// cancelled after the threads were read and before the first archive: the second reading refuses and nothing is archived
+	// cancelled after the threads were read the second time, right before the first archive: the second reading of the relationship refuses and nothing is archived
 	w.exec("UPDATE relationships SET status = 'archived' WHERE relationship_id = ?", merged)
 	s = newScripted(t, family()...)
 	again := w.assign("ISSUE-3", "child")
 	w.merge(again)
-	hook := &afterCall{Host: s.client(t), method: "thread/loaded/list", then: func() { w.exec("UPDATE relationships SET status = 'cancelled' WHERE relationship_id = ?", again) }}
+	hook := &afterCall{Host: s.client(t), method: "thread/loaded/list", n: 2, then: func() { w.exec("UPDATE relationships SET status = 'cancelled' WHERE relationship_id = ?", again) }}
 	if _, err := Execute(ctx, w.st, hook, again, parent, false); err == nil || s.srv.Count("thread/loaded/list") == 0 || len(s.archived()) != 0 {
 		t.Fatalf("err=%v listings=%d archived=%v, want a refusal after the listing and no archive", err, s.srv.Count("thread/loaded/list"), s.archived())
 	}

@@ -142,18 +142,21 @@ func (s *scripted) archived() []string {
 	return append([]string(nil), s.archives...)
 }
 
-// afterCall runs then once, right after the first answer to method.
+// afterCall runs then once, right after the n-th answer to method (the first when n is 0).
 type afterCall struct {
 	Host
-	method string
-	then   func()
+	method  string
+	n, seen int
+	then    func()
 }
 
 func (h *afterCall) Call(ctx context.Context, method string, params map[string]any) (json.RawMessage, error) {
 	raw, err := h.Host.Call(ctx, method, params)
 	if then := h.then; method == h.method && then != nil {
-		h.then = nil
-		then()
+		if h.seen++; h.seen >= max(h.n, 1) {
+			h.then = nil
+			then()
+		}
 	}
 	return raw, err
 }

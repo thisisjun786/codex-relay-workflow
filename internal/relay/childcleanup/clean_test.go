@@ -3,9 +3,13 @@ package childcleanup
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 )
 
 // the threads of one finished child: the child, a sub-thread with a sub-thread of its own, a sub-thread below an intermediate that is not loaded, and a second tree that is not the child's.
@@ -135,9 +139,9 @@ func TestCleanDryRunAndRecheckMutateNothing(t *testing.T) {
 
 func TestCleanJudgesTheSubtreeAgainRightBeforeTheFirstArchive(t *testing.T) {
 	s := newScripted(t, family()...)
-	// a thread of the subtree starts running after the first reading, as Recheck passes
-	started := func(context.Context) error { s.mu.Lock(); s.byID["sub-2"].status = "active"; s.mu.Unlock(); return nil }
-	report, err := run(t, s, Options{Recheck: started})
+	// a thread of the subtree starts running right after the second listing
+	started := func() { s.mu.Lock(); s.byID["sub-2"].status = "active"; s.mu.Unlock() }
+	report, err := Clean(context.Background(), &afterCall{Host: s.client(t), method: "thread/loaded/list", n: 2, then: started}, "child", Options{})
 	if got := outcomes(report); err != nil || report.Complete() || len(s.archived()) != 0 || strings.Count(got, OutcomeHeldActive) != 4 {
 		t.Fatalf("err=%v outcomes=%q archived=%v", err, got, s.archived())
 	}
@@ -148,7 +152,12 @@ func TestCleanKeepsWhatItDidWhenTheContextEnds(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	report, err := Clean(ctx, &afterCall{Host: s.client(t), method: "thread/archive", then: cancel}, "child", Options{})
-	if !errors.Is(err, context.Canceled) || outcomes(report) != "grand:archived" {
-		t.Fatalf("err=%v outcomes=%q: the first archive is reported with the error", err, outcomes(report))
+	if !errors.Is(err, context.Canceled) || outcomes(report) != "grand:archived" || report.Complete() || report.Stopped == "" {
+		t.Fatalf("err=%v report=%+v: the first archive is reported with the error, and the cleanup is not complete", err, report)
+	}
+	_, err = answerOf("rel", report, err, false)
+	var exit *dispatch.PayloadExit
+	if !errors.As(err, &exit) || exit.Code != contract.ExitHost || !strings.Contains(fmt.Sprint(exit.Payload), "{ok false}") || !strings.Contains(fmt.Sprint(exit.Payload), "{complete false}") {
+		t.Fatalf("the answer is exit %d with ok and complete false and the report: %v", contract.ExitHost, err)
 	}
 }

@@ -55,13 +55,15 @@ type Report struct {
 	Child  string
 	DryRun bool
 	Items  []Item
+	// Stopped is the error that ended the cleanup before every thread was handled; Items is what was done until then.
+	Stopped string
 	// Unresolved are loaded threads whose ancestry could not be read, or that sit on a parent cycle: any of them may belong to the subtree, so nothing is archived.
 	Unresolved []string
 }
 
 // Complete is whether the subtree is released (for a dry run: would be): nothing held, left loaded or failed, and nothing unresolved.
 func (r Report) Complete() bool {
-	return len(r.Unresolved) == 0 && !slices.ContainsFunc(r.Items, func(i Item) bool {
+	return r.Stopped == "" && len(r.Unresolved) == 0 && !slices.ContainsFunc(r.Items, func(i Item) bool {
 		return slices.Contains([]string{OutcomeHeldActive, OutcomeHeldIncomplete, OutcomeNoRolloutLeftLoaded, OutcomeFailed}, i.Outcome)
 	})
 }
@@ -79,7 +81,14 @@ func (r Report) Object() contract.OrderedObject {
 	for _, id := range r.Unresolved {
 		unresolved = append(unresolved, id)
 	}
-	return contract.OrderedObject{{Key: "child_thread_id", Value: r.Child}, {Key: "dry_run", Value: r.DryRun}, {Key: "complete", Value: r.Complete()}, {Key: "items", Value: items}, {Key: "unresolved", Value: unresolved}}
+	return contract.OrderedObject{{Key: "child_thread_id", Value: r.Child}, {Key: "dry_run", Value: r.DryRun}, {Key: "complete", Value: r.Complete()}, {Key: "items", Value: items}, {Key: "unresolved", Value: unresolved}, {Key: "stopped", Value: optional(r.Stopped)}}
+}
+
+func optional(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 // member is a loaded thread of the child's subtree.
@@ -100,22 +109,23 @@ type discovery struct {
 
 // Clean releases the loaded threads of child's subtree, the child included when it is loaded: it reads thread/loaded/list, walks every loaded thread's parentThreadId up to the child and archives the
 // members deepest first with the child last. Threads that are not loaded hold no helpers and are never touched. Any member that is running, and any loaded thread whose ancestry cannot be established,
-// holds the whole subtree: nothing is archived. The subtree is read a second time right after Recheck and before the first archive, and that reading decides; the App Server has no fence against a thread
-// starting to run after it, so the archive is undone with codex unarchive. A repeat finds nothing loaded and changes nothing. The caller decides whether the child may be cleaned up (Judge).
+// holds the whole subtree: nothing is archived. The subtree is read a second time and Recheck judges the relationship right after it, immediately before the first archive; the App Server has no fence
+// against a thread starting to run after that, so the archive is undone with codex unarchive. A repeat finds nothing loaded and changes nothing. The caller decides whether the child may be cleaned up (Judge).
 func Clean(ctx context.Context, host Host, child string, opts Options) (Report, error) {
 	report := Report{Child: child, DryRun: opts.DryRun}
 	d := &discovery{host: host}
+	stop := func(err error) (Report, error) {
+		report.Stopped = err.Error()
+		return report, err
+	}
 	members, hold, detail, err := d.scan(ctx, child, &report)
 	if err == nil && hold == "" && !opts.DryRun && len(members) > 0 {
-		if opts.Recheck != nil {
+		if members, hold, detail, err = d.scan(ctx, child, &report); err == nil && hold == "" && opts.Recheck != nil {
 			err = opts.Recheck(ctx)
-		}
-		if err == nil {
-			members, hold, detail, err = d.scan(ctx, child, &report)
 		}
 	}
 	if err != nil {
-		return report, err
+		return stop(err)
 	}
 	for _, m := range members {
 		switch {
@@ -126,7 +136,7 @@ func Clean(ctx context.Context, host Host, child string, opts Options) (Report, 
 		default:
 			outcome, detail, err := d.archive(ctx, m.id)
 			if err != nil {
-				return report, err
+				return stop(err)
 			}
 			report.Items = append(report.Items, Item{ThreadID: m.id, ParentID: m.parent, Outcome: outcome, Detail: detail})
 		}
