@@ -54,10 +54,10 @@ type ServiceOptions struct {
 }
 
 var (
-	unitNamePattern = regexp.MustCompile("^[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}\\.service$")
+	unitNamePattern = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}\.service$`)
 	// unsafeInUnit is what systemd would split, expand or unescape in an Exec line or Environment value.
 	unsafeInUnit = regexp.MustCompile("[\\s\"'\\\\%$;\\x00-\\x1f\\x7f]")
-	relayStarts  = regexp.MustCompile("(?m)^\\s*ExecStart=.*(codex-session-relay|crw relay)\\b.*\\bservice (start|run)\\b")
+	relayStarts  = regexp.MustCompile(`(?m)^\s*ExecStart=.*(codex-session-relay|crw relay)\b.*\bservice (start|run)\b`)
 	busyStates   = map[string]bool{"active": true, "activating": true, "deactivating": true, "reloading": true}
 )
 

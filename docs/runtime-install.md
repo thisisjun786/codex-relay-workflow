@@ -22,6 +22,7 @@ follows is about what is read before anything moves and what is put back when it
 | `crw install remove <dir>` | Delete one runtime directory nothing selects, points at or runs out of | OPS-2.4 |
 | `crw install register-mcp [--owner plugin]` | Write the bridge record the plugin's declared server reads | OPS-2.2 |
 | `crw install hook [--owner plugin]` | Write the Stop settings the plugin's declared hook reads | OPS-6.3 |
+| `crw install register-service [--remove]` | Write and enable the one systemd user unit that starts the relay service when the user manager starts; with `--remove`, disable and delete it | OPS-4.1, OPS-6.1 |
 | `crw install status`, `crw doctor` | Read the installation, classify it and report the six check results; write nothing | OPS-2.1, OPS-2.2, OPS-6.1 |
 | `crw-dev skills link --check` or `--apply` | Skill links into Codex, from a checkout | OPS-2.3 |
 
@@ -860,7 +861,7 @@ behind it reports `unknown`; no time is ever invented or copied from another fie
 | `connected` | The relay's `doctor` reporting `actorReachability.socketConnect` as `ok` | A socket file on disk |
 | `deliveryAccepted` | An attempt that recorded a returned turn id | A dispatch or an absent error |
 | `verificationComplete` | Every OPS-6.4 condition at once | A completed turn or a green check |
-| `alwaysActive` | A supervised runtime surviving a host restart | Any of the five above |
+| `alwaysActive` | A supervised runtime surviving a host restart, observed after one | Any of the five above, or a registered unit no restart has tested |
 
 A live session is the only thing that can list the tools a Codex session exposes, and the
 diagnosis's own session with the bridge is not Codex's, so `mcpExposed` stays `not_verified` from
@@ -878,6 +879,56 @@ the service by calling the relay's own `doctor` rather than by rediscovering any
 other stores beside the resolved one without adopting any of them. Equality of path strings is not
 proof under OPS-3.4; proof is `doctor` from each participating process reporting the same state
 directory together with `assignment-find --issue` returning the expected relationship.
+
+## The relay service unit
+
+A relay service started by hand does not come back after a host restart: `service start` leaves a record that reads
+"recorded before a different boot", and nothing starts it again. `crw install register-service --socket <app-server-socket>
+[--state <dir>]` registers the one systemd user unit that does. It is a command of its own, like `hook` and `register-mcp`,
+because an install or an update never starts a daemon and gains no side effect here.
+
+The unit is written to `${XDG_CONFIG_HOME:-~/.config}/systemd/user/crw-relay.service` (`--unit-dir` and `--unit-name` change
+either) and enabled with `systemctl --user enable`. It is `Type=oneshot` with `RemainAfterExit=yes`, wanted by
+`default.target`; its `ExecStart` is the relay's own `service start` and its `ExecStop` is `service stop`. Both name
+`<destination>/current/bin/codex-session-relay` with the state directory and socket resolved at registration, so a pointer
+move never rewrites the unit, and the relay's own checks (intent, launch policy, scope) apply to the start unchanged. The unit
+has no restart policy: after the one start it acts only when an operator acts on it, and a refused start (`service_disabled`,
+`already_running`) is a failed unit with the relay's answer in the journal, never a retry that could start the relay in the
+middle of an update. It unsets `CODEX_THREAD_BRIDGE_EXECUTION_POLICY` and `CODEX_SESSION_RELAY_SCOPE_DIR`, which the user manager
+would otherwise pass in. `--scope-dir <dir>` registers an isolated target instead (a temporary state directory and socket):
+the unit sets that scope variable and the start carries `--allow-isolated-scope`.
+
+One owner registers this surface, and the command asks the manager as well as the file. It refuses, writing nothing:
+
+| Outcome | When |
+| --- | --- |
+| `unit_foreign` | something at the path is not the installer's unit (it lacks `X-CRW-Owner=crw-install`), or is not a regular file |
+| `unit_differs` | the installer's unit says something else; run `--remove`, then register again |
+| `unit_name_taken` | the manager loads the name from another file, or it is masked |
+| `unit_modified` | a `<name>.d` directory, drop-ins, or a manager definition older than the disk (`NeedDaemonReload`), which `disable` would re-read |
+| `unit_second_owner` | another unit in the directory runs the relay's `service start` or `run` |
+| `unit_dir_in_runtime` | the unit directory lies inside the installer's destination, where removing a runtime would delete it |
+| `unit_unreadable` | no runtime is installed, systemd could not be asked, or the relay cannot read its launch declaration |
+
+It also reads what the boot start will find, through the pointer's relay in the unit's environment (`service status`), and
+reports `serviceEnabled`, `launchPolicySource` and `scopeAuthority`. A disabled service intent, an undeclared execution policy
+and an `XDG_STATE_HOME` the unit does not carry are `warnings`: the boot start would refuse `service_disabled`, withhold
+role-bound deliveries, or write its host record elsewhere. It never changes the intent. Exit status 3 means the unit file
+landed and a later step did not (written and not enabled: run it again; deleted and `daemon-reload` failed: run that); 1 is a
+refusal with nothing changed, 2 a usage error. `--remove` disables and deletes only a unit it wrote, only when its `[Install]`
+holds just `WantedBy=default.target`, the manager resolves the name to that file and it is not running; it never stops the relay.
+
+The maintenance order is the relay's own: `service stop` (`systemctl --user stop crw-relay.service` runs the same stop while the
+unit is active, but a unit that never started has none to run), `crw install update`, which refuses while a daemon runs, then
+`systemctl --user restart crw-relay.service` or `service start`. After a hand `service stop` the unit still reads
+`active (exited)`, so `systemctl --user start` does nothing and `restart` is the command. Measured with the unit's own commands: a
+start with no App Server socket present succeeds and its worker stays up, so a start before the App Server is listening is not
+refused; a start not ready within the relay's 20 seconds on a heavily loaded host is ended by the relay and leaves a partial store
+(`write-gate.lock` without a database) that the next start refuses as `store_owned_by_other`, which is the relay's behaviour
+and is in the [refactor backlog](port/refactor-backlog.md).
+
+`crw doctor` keeps `alwaysActive` at `not_verified` and names the default unit file it found or did not (a unit under another
+name or directory is not read). A unit file is a registration; surviving a host restart is a measurement of one.
 
 ## The completion hook
 
