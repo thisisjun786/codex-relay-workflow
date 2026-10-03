@@ -14,6 +14,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/job"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
+	_ "github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 func TestJobCLIContract(t *testing.T) {
