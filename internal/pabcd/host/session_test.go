@@ -204,6 +204,35 @@ func TestResolveNativeSessionReadsColumnsByTheNamesTheTableDeclares(t *testing.T
 		f.dbWith("5", schema, nil)
 		f.refuses(schema, f.cwd, want)
 	}
+	f := newFixture(t) // the integer rule is checked when the row is read, before any column name
+	f.dbWith("5", "id TEXT COLLATE NOCASE PRIMARY KEY, cwd, ARCHIVED, source, title TEXT", map[string]any{"archived": int64(1) << 53})
+	f.refuses("big integer", f.cwd, msgReadDB)
+}
+
+// node:sqlite's connection has foreign keys on; a view can report that.
+func TestResolveNativeSessionOpensWithForeignKeysOn(t *testing.T) {
+	f := newFixture(t)
+	path := filepath.Join(f.home, "state_5.sqlite")
+	seed(t, path, "CREATE TABLE base (id, cwd, source)")
+	seed(t, path, "INSERT INTO base VALUES (?, ?, 'cli')", child, f.cwd)
+	seed(t, path, "CREATE VIEW threads AS SELECT id, cwd, (SELECT foreign_keys FROM pragma_foreign_keys) - 1 AS archived, source FROM base")
+	f.accepts("foreign keys", f.cwd)
+}
+
+// The path reaches SQLite as a file: URI, so a home whose name is special in one must still open.
+func TestResolveNativeSessionOpensAHomeWhoseNameIsSpecialInURIs(t *testing.T) {
+	for _, name := range []string{"h?x", "h#x", "h%41"} {
+		f := newFixture(t)
+		special := filepath.Join(f.root, name)
+		want := filepath.Join(special, "state_5.sqlite")
+		if err := os.Mkdir(special, 0o755); err != nil || os.Rename(f.db("5", nil), want) != nil { // seed would read the name as a DSN
+			t.Fatal(name, err)
+		}
+		f.vars["CODEX_HOME"] = special
+		if got := f.accepts(name, f.cwd); got.DBPath != want {
+			t.Errorf("%s: %+v", name, got)
+		}
+	}
 }
 
 // node:sqlite's SQLite takes a double-quoted string for an identifier only, so a view that uses one
