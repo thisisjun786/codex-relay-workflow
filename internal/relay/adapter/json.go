@@ -122,6 +122,14 @@ func errorText(err error) string {
 // bridgeValue supplies insertion order to map-shaped values the in-process bridge
 // returns. This is a boundary conversion, not a second settings implementation.
 func bridgeValue(key string, value any) any {
+	if pairs, ok := value.([]any); ok && key == "pairs" {
+		// The pairs of a role that may run on several: each is ordered like the pair it describes.
+		out := make([]any, len(pairs))
+		for i, pair := range pairs {
+			out[i] = bridgeValue("pair", pair)
+		}
+		return out
+	}
 	if findings, ok := value.([]settings.Finding); ok {
 		out := make([]any, 0, len(findings))
 		for _, f := range findings {
@@ -138,7 +146,9 @@ func bridgeValue(key string, value any) any {
 	case "executionPolicy":
 		keys = []string{"mode", "digest", "exception", "role", "roleExpectation", "model", "reasoningEffort", "limits"}
 	case "roleExpectation":
-		keys = []string{"role", "expectation", "model", "reasoningEffort", "overriddenBy"}
+		keys = []string{"role", "expectation", "model", "reasoningEffort", "pairs", "overriddenBy"}
+	case "pair":
+		keys = []string{"model", "reasoningEffort"}
 	case "settings":
 		keys = []string{"requested", "actual", "verified", "unobservable", "findings", "verification", "observationLimits"}
 	case "requested":

@@ -80,8 +80,8 @@ func (r *Registry) RecordSettings(ctx context.Context, task string, settings con
 			unchanged := model == prevModel && effort == prevEffort
 			stillNeeded := true
 			if contested == nil {
-				if m, e, ok := declaredPairFor(bound, r.Policy); ok {
-					stillNeeded = !(model == any(m) && effort == any(e))
+				if declared, ok := declaredRoleFor(bound, r.Policy); ok {
+					stillNeeded = !allows(declared, model, effort)
 				}
 			}
 			if carried != nil && stillNeeded && (unchanged || source != UserTransition) {
@@ -276,13 +276,16 @@ func CheckBoundRole(ctx context.Context, s *store.Store, task string, settings c
 // derivedFromRolePair is whether the pair a record carries was derived from its role's declared
 // pair: the role's expectation is a pair, the record's equals it, and the record cites no
 // exception (provenance, not resemblance: an exception that authorizes the role's own pair is
-// still an exception). A pair that was not derived is never transmitted: the send resumes the
-// recipient settings-free and compares what the host reports with the record
+// still an exception). A role that lists several pairs derives none of them: the policy says which
+// pairs the task may run on and not which of them it does, so a record on one of them may have been
+// moved to another by the user since, and transmitting it would undo that. Only a role pinned to
+// one pair has a pair the policy derived. A pair that was not derived is never transmitted: the
+// send resumes the recipient settings-free and compares what the host reports with the record
 // (TaskSettings.SettingsFreeResume). It is the predicate Python's delivery gate asked
 // rolepolicy.check_unloaded_transmission with "notLoaded" (decision R3F-7).
 func derivedFromRolePair(settings contract.OrderedObject, role string, policy RolePolicy) bool {
 	expectation, ok := policy.expectation(role)
 	model, effort := pairOf(settings)
 	return citedException(settings) == nil && ok && expectation.Expectation == "pair" &&
-		model == any(expectation.Model) && effort == any(expectation.Effort)
+		len(expectation.Pairs) == 1 && allows(expectation, model, effort)
 }
