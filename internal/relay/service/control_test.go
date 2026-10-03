@@ -183,15 +183,10 @@ func Test30ControlDisconnectBeforeARequestIsNoFailure(t *testing.T) {
 			t.Fatal(err)
 		}
 		path := controlPath(home + "/state")
-		for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
-			if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSocket != 0 {
-				break
-			}
-			if time.Now().After(deadline) {
-				_ = daemon.Process.Kill()
-				_ = daemon.Wait()
-				t.Fatalf("the daemon never bound control.sock: %s %s", stdout.String(), stderr.String())
-			}
+		if err := awaitControlAccepting(path, 10*time.Second); err != nil {
+			_ = daemon.Process.Kill()
+			_ = daemon.Wait()
+			t.Fatalf("the daemon never accepted on control.sock: %v: %s %s", err, stdout.String(), stderr.String())
 		}
 		probe(t, path, nil)
 		err := daemon.Wait()
@@ -416,15 +411,10 @@ func Test30ControlPeerFailuresAreAnsweredWithTheHostRecord(t *testing.T) {
 			t.Fatal(err)
 		}
 		path := controlPath(home + "/state")
-		for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
-			if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSocket != 0 {
-				break
-			}
-			if time.Now().After(deadline) {
-				_ = daemon.Process.Kill()
-				_ = daemon.Wait()
-				t.Fatalf("the daemon never bound control.sock: %s %s", stdout.String(), stderr.String())
-			}
+		if err := awaitControlAccepting(path, 10*time.Second); err != nil {
+			_ = daemon.Process.Kill()
+			_ = daemon.Wait()
+			t.Fatalf("the daemon never accepted on control.sock: %v: %s %s", err, stdout.String(), stderr.String())
 		}
 		hostRecord(t, "params not an object", ask(t, path, frames["params not an object"]))
 		hangUp(t, path, frame(params(later, "")))

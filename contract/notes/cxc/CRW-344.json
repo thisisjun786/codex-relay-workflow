@@ -1,0 +1,41 @@
+{
+  "issue": "CRW-344",
+  "identical": [
+    "cli-help__map__dash_h",
+    "cli-help__map__dashdash_help",
+    "cli-help__map__word_help",
+    "cli-help__provider__dash_h",
+    "cli-help__provider__dashdash_help",
+    "cli-help__provider__word_help",
+    "cli__provider__detect_line_and_ignored_args",
+    "cli__provider__ocx_absent_is_native",
+    "hook__session-start-ensuring-provider-bridge__baseline_empty_workspace",
+    "hook__session-start-ensuring-provider-bridge__ocx_absent_is_native",
+    "hook__session-start-ensuring-provider-bridge__ocx_non_json_is_error",
+    "hook__session-start-ensuring-provider-bridge__ocx_nonzero_exit_is_error",
+    "hook__session-start-ensuring-provider-bridge__ocx_status_json_is_provider"
+  ],
+  "intentionally-changed": [
+    {
+      "id": "cli__map__codexclaw_python_runs_repomap_with_it",
+      "reason": "The Go runtime addresses the skill-owned script under CRW_SKILLS_DIR or CODEX_HOME/skills; the staged skill is outside the runtime/plugin package until cutover.",
+      "set": {
+        "calls/1": "{\"cmd\":\"py-pinned\",\"argv\":[\"-B\",\"${CODEX_HOME}/skills/crw-repo-map/scripts/repomap.py\",\".\"],\"cwd\":\"${WS}\"}",
+        "calls/4": "{\"cmd\":\"python3\",\"argv\":[\"-B\",\"${CODEX_HOME}/skills/crw-repo-map/scripts/repomap.py\",\".\"],\"cwd\":\"${WS}\"}"
+      }
+    },
+    {
+      "id": "cli-help__payload-dispatcher__map_pointer",
+      "reason": "Parent-approved claim handover: the Go runtime has one dispatcher for root and payload forms, and crw map now runs the map ladder instead of the temporary unknown-command answer.",
+      "set": {
+        "exit": "1",
+        "steps/0/exit": "1",
+        "steps/0/form": "empty",
+        "steps/0/stdout": "",
+        "steps/0/stderr": "crw map: python3 could not be run (exit spawn error). Install Python 3.9+ or set CRW_PYTHON.\n",
+        "calls/0": "{\"cmd\":\"uv\",\"argv\":[\"--version\"],\"cwd\":\"${WS}\"}"
+      }
+    }
+  ],
+  "pending": []
+}
