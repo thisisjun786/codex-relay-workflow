@@ -1217,8 +1217,9 @@ independent review obtained instead under the repository's policy, and the work 
 indefinitely for an optional reviewer is not diligence; the one run each of Devin and Codex makes on a
 pull request is the exception, awaited to its end before the receipt
 ([Devin and Codex reviews are references, not merge gates](merge-readiness.md#devin-and-codex-reviews-are-references-not-merge-gates)). Apart from that run, a reviewer
-the [reviewer policy](merge-readiness.md#disabled-reviewer-policy) rules out is not requested or awaited;
-its existing findings still require evidence-backed disposition.
+is not requested again or awaited under the [reviewer policy](merge-readiness.md#reviewer-policy);
+its existing findings, and any thread that arrives after the receipt, still require evidence-backed disposition
+([Late review threads](merge-readiness.md#late-review-threads)).
 
 A missing mandatory review or a required check that has not passed is BLOCKED, and blocked is
 reported as blocked. It is never reported as completion with a note, because the note is what gets
@@ -1260,7 +1261,10 @@ round the child already owns. What the parent adds is currency, which only it ca
 the head and the base immediately before merging and compares the counts it sees against the record.
 That comparison is mechanical validity, not a review round. Where the re-read disagrees with the
 record, the candidate returns to the same child fail-closed; neither the parent nor the supervisor
-reviews on the child's behalf.
+reviews on the child's behalf. The one thing the coordinator judges itself first is a minor review thread the
+record never saw, because it is outside `threadsSeen`: the child never judged it, so grading it is not a second
+review of the child's work, and the record still returns to the child to be rebuilt
+([Late review threads](merge-readiness.md#late-review-threads)).
 
 One disagreement is the parent's own to remove: a base that moved under an otherwise verified head.
 The parent refreshes that itself under
@@ -1300,7 +1304,10 @@ carry a green result forward across a head it never saw.
 A handoff record is invalidated the same way, and a review thread that appears on the SAME head
 counts: if it is not in the record's `threadsSeen`, the record did not see it and no longer
 describes the candidate. An invalidated record is not a verdict and is not a merge candidate. It
-returns to the child that produced it, through the correction path the assignment already uses.
+returns to the child that produced it, through the correction path the assignment already uses, for as long as
+that path is open: once the node is accepted no correction can reach the child, and
+[Late review threads](merge-readiness.md#late-review-threads) says what holds then and which grades the
+coordinator triages first.
 
 The one head the parent makes itself, a base refresh under that rule, is a head the child's evidence
 never saw either, and it is handled the same way: the jobs and the review are read again on it, the
