@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -138,7 +137,7 @@ func NormaliseFindings(sources ...[]any) ([]any, error) {
 			if flag, present := o.Lookup("restoration"); present && flag != nil {
 				b, isBool := flag.(bool)
 				if !isBool {
-					return nil, refuse(DispositionConflict, "a finding declares its restoration block with true or false, not %s", pyvalue.TypeName(flag))
+					return nil, refuse(DispositionConflict, "a finding declares its restoration block with true or false, not %s", quote.Kind(flag))
 				}
 				if declaredSet[id] && declared[id] != b {
 					return nil, refuse(DispositionConflict, "%s both declares and disclaims the restoration block; one correction carries one block and says so once", strconv.Quote(id))
