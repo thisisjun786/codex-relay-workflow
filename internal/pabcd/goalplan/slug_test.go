@@ -48,7 +48,7 @@ func TestGoalplanPaths(t *testing.T) {
 	}
 }
 
-// A slug that climbs out is refused before anything is resolved, so nothing is created next to the project.
+// A slug that climbs out is refused before anything is resolved, so nothing is created in the project.
 func TestGoalplanDirTraversalCreatesNothing(t *testing.T) {
 	cwd := t.TempDir()
 	if _, err := GoalplanDir(cwd, "../../escaped"); err == nil || !strings.HasPrefix(err.Error(), "invalid goalplan slug") {
