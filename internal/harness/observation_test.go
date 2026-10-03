@@ -153,3 +153,33 @@ func TestRecordInvocationRefusesAnOversizedInputBeforeParsingIt(t *testing.T) {
 		t.Errorf("recorded %v, allocated %d bytes", recorded, after.TotalAlloc-before.TotalAlloc)
 	}
 }
+
+// The oracle counts the bytes it reads, not the text they decode to, so 1.5 MiB of invalid bytes is
+// not an overflow although its text is past the limit; the record then refuses that text, as the
+// oracle's own byte-length check does (hook-observation.mjs:27).
+func TestAnInputThatDecodesPastTheLimitIsReadButNotRecorded(t *testing.T) {
+	env, home, _ := hookEnv(t)
+	in := `{"session_id":"s1","pad":"` + strings.Repeat("\xff", 3*MaxStdinBytes/8) + `"}`
+	raw, overflow := ReadStdin(strings.NewReader(in))
+	if overflow || len(raw) <= MaxStdinBytes {
+		t.Fatalf("overflow %v, %d bytes read as %d bytes of text", overflow, len(in), len(raw))
+	}
+	if RecordInvocation(raw, "pabcd-state", "stop", lookup(env)) || len(records(t, home)) != 0 {
+		t.Error("a record was made for text past the limit")
+	}
+}
+
+// A session is keyed by the digest of its decoded id, which the oracle hashes as UTF-8: each lone
+// surrogate is written as U+FFFD, so ids that differ only in them share a directory there too. Only
+// the actor is told apart, by the escape in JSON.stringify.
+func TestSessionIdsThatDifferOnlyInLoneSurrogatesShareADirectoryAsInTheOracle(t *testing.T) {
+	env, home, _ := hookEnv(t)
+	for _, id := range []string{`s\ud800`, `s\ud801`, `s\ufffd`} {
+		if !RecordInvocation(`{"session_id":"`+id+`"}`, "pabcd-state", "stop", lookup(env)) {
+			t.Fatalf("%s: not recorded", id)
+		}
+	}
+	if n := len(records(t, home)); n != 1 {
+		t.Errorf("%d records, want the one the oracle's digest gives all three", n)
+	}
+}
