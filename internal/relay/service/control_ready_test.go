@@ -47,10 +47,19 @@ func TestAwaitControlAcceptingWaitsOutTheGapBetweenBindAndListen(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(home) })
 	path := filepath.Join(home, "control.sock")
-	// Not bound yet: the daemon has started and has not reached its bind, so the path is absent.
+	// Any other error is the answer at once: a path under a regular file is ENOTDIR, which no amount of waiting changes.
+	plain := filepath.Join(home, "plain")
+	if err = os.WriteFile(plain, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	started := time.Now()
+	if err = awaitControlAccepting(filepath.Join(plain, "control.sock"), 10*time.Second); !errors.Is(err, unix.ENOTDIR) || time.Since(started) > 5*time.Second {
+		t.Fatalf("a path under a regular file ended after %v with %v, want ENOTDIR at once", time.Since(started), err)
+	}
+	// Not bound yet: the daemon has started and has not reached its bind, so the path is absent.
+	started = time.Now()
 	if err = awaitControlAccepting(path, 100*time.Millisecond); err == nil || time.Since(started) < 100*time.Millisecond {
-		t.Fatalf("a path nothing has bound was taken for ready after %v: %v", time.Since(started), err)
+		t.Fatalf("a path nothing has bound ended after %v with %v, want ENOENT at its deadline", time.Since(started), err)
 	}
 	fd, err := unix.Socket(unix.AF_UNIX, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
 	if err != nil {
