@@ -59,6 +59,7 @@ func addForeignRelationship(t *testing.T, f *stageFixture) {
 }
 
 func Test24DevinSelectorConflictMatchesTheGolden(t *testing.T) {
+	t.Parallel()
 	f := devinFixture(t)
 	first := omissionReading24(f)
 	second := copyReading(t, first)
@@ -71,6 +72,7 @@ func Test24DevinSelectorConflictMatchesTheGolden(t *testing.T) {
 }
 
 func Test24DevinForeignRelationshipMatchesTheGolden(t *testing.T) {
+	t.Parallel()
 	f := devinFixture(t)
 	addForeignRelationship(t, f)
 	foreign := omissionReading24(f)
@@ -139,6 +141,7 @@ func checkDevinReadback(t *testing.T, tc devinReadbackCase) map[string]any {
 }
 
 func Test24DevinReadbackChronologyMatchesTheGolden(t *testing.T) {
+	t.Parallel()
 	cases := []devinReadbackCase{
 		{name: "F1 unrelated holder predates transport", named: "turn-read", holder: "turn-old", turns: map[string]float64{"turn-read": 1_700_000_010, "turn-old": 1_699_999_990}},
 		{name: "neighbor token in named turn", named: "turn-read", holder: "turn-read", turns: map[string]float64{"turn-read": 1_700_000_010}},
@@ -155,6 +158,7 @@ func Test24DevinReadbackChronologyMatchesTheGolden(t *testing.T) {
 }
 
 func Test24DevinStageStandingOrderMatchesTheGolden(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	first := omissionReading24(f)
 	first["executionGeneration"] = 1
@@ -254,6 +258,7 @@ func checkDevinRestage(t *testing.T, moved, changed bool) map[string]any {
 }
 
 func Test24DevinRepeatedReadingObservedAtMatchesTheGolden(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	original := omissionReading24(f)
 	original["executionGeneration"] = 1
@@ -272,6 +277,7 @@ func Test24DevinRepeatedReadingObservedAtMatchesTheGolden(t *testing.T) {
 }
 
 func Test24DevinFrozenReadingCheckedBeforeReaddressMatchesTheGolden(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name           string
 		moved, changed bool
@@ -281,6 +287,7 @@ func Test24DevinFrozenReadingCheckedBeforeReaddressMatchesTheGolden(t *testing.T
 }
 
 func Test24DevinStageUnsentFiltersEveryStandingObligationLikeTheGolden(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, state, hold string
 		confirmed         bool
@@ -326,6 +333,7 @@ func Test24DevinStageUnsentFiltersEveryStandingObligationLikeTheGolden(t *testin
 }
 
 func Test24DevinObservationNeighboursMatchTheGolden(t *testing.T) {
+	t.Parallel()
 	t.Run("same selectors and irrelevant metadata", func(t *testing.T) {
 		f := devinFixture(t)
 		first := omissionReading24(f)

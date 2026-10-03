@@ -189,6 +189,7 @@ func normalizedJSON(t *testing.T, raw []byte) any {
 // A tick over relationships whose turn already reported has nothing to judge about a receipt: the
 // state (a final child receipt of the turn) says nothing is owed, so no artifact is read.
 func TestCRW300ReceiptedTickReadsNoArtifact(t *testing.T) {
+	t.Parallel()
 	const relationships = 6
 	w := newOmissionWorld(t, relationships, 0)
 	ctx, reads := store.WithArtifactReads(w.ctx)
@@ -201,6 +202,7 @@ func TestCRW300ReceiptedTickReadsNoArtifact(t *testing.T) {
 // The watch the tick test leans on sees a second open of the database file through the read-only path,
 // through the driver registered as "sqlite", and through a reconnect of the store's own pool.
 func TestCRW300DatabaseOpensAreSeen(t *testing.T) {
+	t.Parallel()
 	w := newOmissionWorld(t, 1, 0)
 	opens, watching := watchDatabaseOpens(t, filepath.Dir(w.s.Path))
 	if !watching {
@@ -243,6 +245,7 @@ func TestCRW300DatabaseOpensAreSeen(t *testing.T) {
 
 // The artifact read counter counts one read for one artifact, wherever the test runs.
 func TestCRW300ArtifactReadsAreCounted(t *testing.T) {
+	t.Parallel()
 	w := newOmissionWorld(t, 1, 0)
 	ctx, reads := store.WithArtifactReads(w.ctx)
 	if _, _, _, err := store.HashArtifact(ctx, w.artifacts[0], []string{filepath.Dir(w.artifacts[0])}, false); err != nil {
@@ -255,6 +258,7 @@ func TestCRW300ArtifactReadsAreCounted(t *testing.T) {
 
 // The tick reads on the store's own connection, and a tick over a settled project writes nothing.
 func TestCRW300TickOpensNoConnectionAndChangesNoRow(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name  string
 		owed  int
@@ -285,6 +289,7 @@ func TestCRW300TickOpensNoConnectionAndChangesNoRow(t *testing.T) {
 // staged is an omission whose frozen reading carries the receipt's answer, and each tick reads the
 // artifact of each owed relationship once.
 func TestCRW300OwedOmissionStillReadsItsReceipt(t *testing.T) {
+	t.Parallel()
 	const relationships = 3
 	w := newOmissionWorld(t, relationships, relationships)
 	rows, err := w.s.DB.QueryContext(w.ctx, "SELECT obligation_kind, reading FROM supervisor_messages ORDER BY message_id")

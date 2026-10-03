@@ -130,6 +130,7 @@ func Test24_DIR_1_WholeOutput(t *testing.T) {
 	partDCheck(t, root, s, []any{0, 0, 0, len(partDIDs(t, r)), []any{got.SupervisorStaged, got.SupervisorSent}, partDContest(t, r)})
 }
 func Test24_DIR_2_WholeOutput(t *testing.T) {
+	t.Parallel()
 	root := partDFixture(t, "test_directive_places", "ARealConflictIsRefusedWhereItIsRecorded.test_a_second_assignment_is_refused_and_names_the_one_in_force")
 	s, _, r := partDOpen(t, root, "setup")
 	l := partDLink(t, s)
@@ -163,6 +164,7 @@ func stringContains(x, s string) bool {
 }
 
 func Test24_DIR_3_WholeOutput(t *testing.T) {
+	t.Parallel()
 	root := partDFixture(t, "test_directive_places", "ARealConflictIsRefusedWhereItIsRecorded.test_two_different_answers_to_one_message_are_refused")
 	s, _, r := partDOpen(t, root, "setup")
 	l := partDLink(t, s)
@@ -172,6 +174,7 @@ func Test24_DIR_3_WholeOutput(t *testing.T) {
 	partDCheck(t, root, s, []any{0, 2, contains(x["detail"], did(a)), partDIDs(t, r)})
 }
 func Test24_DIR_4_WholeOutput(t *testing.T) {
+	t.Parallel()
 	root := partDFixture(t, "test_directive_places", "ARealConflictIsRefusedWhereItIsRecorded.test_a_refusal_names_the_message_the_live_correction_answers")
 	s, _, r := partDOpen(t, root, "setup")
 	l := partDLink(t, s)
@@ -181,6 +184,7 @@ func Test24_DIR_4_WholeOutput(t *testing.T) {
 	partDCheck(t, root, s, []any{0, 2, contains(x["detail"], did(a)), contains(x["detail"], "msg-blocked-7")})
 }
 func Test24_DIR_5_WholeOutput(t *testing.T) {
+	t.Parallel()
 	root := partDFixture(t, "test_directive_places", "ARealConflictIsRefusedWhereItIsRecorded.test_two_instructions_of_unknown_purpose_are_still_recorded_and_contested")
 	s, _, r := partDOpen(t, root, "setup")
 	l := partDLink(t, s)
@@ -189,6 +193,7 @@ func Test24_DIR_5_WholeOutput(t *testing.T) {
 	partDCheck(t, root, s, []any{0, 0, len(partDIDs(t, r)), len(partDContest(t, r))})
 }
 func Test24_DIR_6_WholeOutput(t *testing.T) {
+	t.Parallel()
 	root := partDFixture(t, "test_directive_places", "ARealConflictIsRefusedWhereItIsRecorded.test_a_place_keeps_one_live_row_across_a_handover")
 	s, _, r := partDOpen(t, root, "setup")
 	l := partDLink(t, s)
@@ -626,6 +631,7 @@ func partDInterleaveStore(t *testing.T, s *store.Store, kind int, message string
 }
 
 func Test24_DIR_3_DifferentCorrelationsWholeOutput(t *testing.T) {
+	t.Parallel()
 	root := partDFixture(t, "test_directive_places", "ARealConflictIsRefusedWhereItIsRecorded.test_answers_to_two_messages_stand_together")
 	s, _, r := partDOpen(t, root, "setup")
 	l := partDLink(t, s)
@@ -640,6 +646,7 @@ func partDCode(err error) int {
 	return 0
 }
 func Test24_DIR_5_PurposedBesideUnknownWholeOutput(t *testing.T) {
+	t.Parallel()
 	root := partDFixture(t, "test_directive_places", "ARealConflictIsRefusedWhereItIsRecorded.test_a_purposed_instruction_beside_one_of_unknown_purpose_is_refused")
 	s, _, r := partDOpen(t, root, "setup")
 	l := partDLink(t, s)
@@ -652,6 +659,7 @@ func Test24_DIR_5_PurposedBesideUnknownWholeOutput(t *testing.T) {
 	partDCheck(t, root, s, []any{partDCode(err), contains(refusal["detail"], did(older)), contains(refusal["detail"], "purpose"), partDIDs(t, r)})
 }
 func Test24_DIR_9_CappedWholeOutput(t *testing.T) {
+	t.Parallel()
 	root := partDFixture(t, "test_directive_places", "AHeldReportIsNamedWhereTheOperatorLooks.test_a_capped_report_is_still_called_held")
 	s, c, r := partDOpen(t, root, "event")
 	o := captureObligation4(t, c, s)
