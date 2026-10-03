@@ -12,35 +12,23 @@ import (
 )
 
 // stagedRepo is validateRepo plus one skill, whose original text is skill, staged by the staging
-// tool from a synthetic CXC tree.
+// tool from a synthetic CXC tree (a scratch repository stands in for the extracted tree).
 func stagedRepo(t *testing.T, skill string) *fixtureRepo {
 	t.Helper()
-	r := validateRepo(t)
+	r, tree := validateRepo(t), newRepo(t)
 	table, err := os.ReadFile(filepath.Join(repoRoot(), "contract/schema/cxc/name-substitution.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	r.write("contract/schema/cxc/name-substitution.json", string(table))
-	tree := t.TempDir()
-	skills := filepath.Join(tree, "plugins/codexclaw/skills")
-	for name, text := range map[string]string{
-		"kwrite/SKILL.md":           skill,
-		"kwrite/agents/openai.yaml": "interface:\n  display_name: \"cxc-kwrite\"\n  short_description: \"Demo\"\n  default_prompt: \"$cxc-kwrite demo\"\n",
-		"kwrite/references/a.md":    "# A\n",
-	} {
-		path := filepath.Join(skills, name)
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	listing, err := skillport.Listing(skills)
+	tree.write("plugins/codexclaw/skills/kwrite/SKILL.md", skill)
+	tree.write("plugins/codexclaw/skills/kwrite/agents/openai.yaml", "interface:\n  display_name: \"cxc-kwrite\"\n  short_description: \"Demo\"\n  default_prompt: \"$cxc-kwrite demo\"\n")
+	tree.write("plugins/codexclaw/skills/kwrite/references/a.md", "# A\n")
+	listing, err := skillport.Listing(filepath.Join(tree.root, "plugins/codexclaw/skills"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	src := skillport.Source{Dir: tree, Origin: skillport.Origin{Tag: "test", Commit: "c0ffee", SkillsListing: listing}}
+	src := skillport.Source{Dir: tree.root, Origin: skillport.Origin{Tag: "test", Commit: "c0ffee", SkillsListing: listing}}
 	if _, err := skillport.Stage(r.root, src, []string{"kwrite"}); err != nil {
 		t.Fatal(err)
 	}

@@ -3,16 +3,13 @@
 // Package skillport stages CXC v0.2.40 skills outside the plugin root and checks the staged copies.
 //
 // "skillport stage" copies a skill folder of the extracted CXC tree into port/cxc/skills/crw-<folder>
-// with the checked-in name table applied (contract/schema/cxc/name-substitution.json, as the corpus
-// replay applies it) and writes port/cxc/records/crw-<folder>.json: the digest of every substituted
-// original file. "skillport check" verifies the staged tree against the records, and crw-dev ci
-// validate runs the same check (Check) and validates the staged skills like the plugin's own.
-//
-// Offline, Check proves that every staged file is byte for byte what the record holds, under the
-// pinned name table; any difference is refused, because recording hand edits is a later change. It
-// holds no original: that the recorded digests are the substituted originals is proved by check
-// --source, which renders them again from an extracted tree and compares. Stage never overwrites. To
-// refresh a skill (the table changed), remove its directory and record with git and stage it again.
+// with the checked-in name table applied, as the corpus replay applies it, and records the digest of
+// every substituted original file in port/cxc/records/crw-<folder>.json. "skillport check" verifies the
+// staged tree against the records; crw-dev ci validate runs the same Check and validates the staged
+// skills like the plugin's own. Offline, Check proves each staged file is what its record holds under
+// the pinned name table; any difference is refused (recording hand edits is a later change). It holds
+// no original: that the digests are the substituted originals is proved by check --source against an
+// extracted tree. Stage never overwrites; to refresh a skill, remove its directory and record with git.
 package skillport
 
 import (

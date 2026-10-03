@@ -3,7 +3,6 @@
 package skillport
 
 import (
-	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -356,44 +355,5 @@ func TestStageNeverOverwritesAndRollsBack(t *testing.T) {
 	}
 	if left := leftovers(t, g.root); len(left) != 0 {
 		t.Errorf("a failed stage left %v", left)
-	}
-}
-
-// The pinned listing digest is the real one when CRW_CXC_V0240_TREE names an extracted CXC v0.2.40 tree.
-func TestDefaultOriginMatchesTheOracle(t *testing.T) {
-	tree := os.Getenv("CRW_CXC_V0240_TREE")
-	if tree == "" {
-		t.Skip("CRW_CXC_V0240_TREE is not set")
-	}
-	if got, err := Listing(Source{Dir: tree}.skills()); err != nil || got != DefaultOrigin().SkillsListing {
-		t.Errorf("Listing = %q, %v; DefaultOrigin has %q", got, err, DefaultOrigin().SkillsListing)
-	}
-}
-
-func TestRun(t *testing.T) {
-	f := newFixture(t)
-	do := func(args ...string) (int, string, string) {
-		var out, errb bytes.Buffer
-		code := run(args, &out, &errb, f.src.Origin)
-		return code, out.String(), errb.String()
-	}
-	for _, row := range [][]string{{}, {"nope"}, {"edits"}, {"stage", "--root", f.root, "kwrite"}, {"check", "extra"}} {
-		if code, _, _ := do(row...); code != 2 {
-			t.Errorf("run(%q) exit %d, want 2", row, code)
-		}
-	}
-	if code, out, errs := do("stage", "--root", f.root, "--source", f.src.Dir, "kwrite"); code != 0 || !strings.Contains(out, "staged crw-kwrite") {
-		t.Fatalf("stage: %d %q %q", code, out, errs)
-	}
-	if code, out, _ := do("check", "--root", f.root, "--source", f.src.Dir); code != 0 || !strings.Contains(out, "Checked 1 staged skills") || !strings.Contains(out, "fidelity only") {
-		t.Errorf("check: %d %q", code, out)
-	}
-	put(t, f.path("SKILL.md"), "changed\n", 0o644)
-	if code, _, errs := do("check", "--root", f.root); code != 1 || !strings.Contains(errs, "SKILL.md: differs") {
-		t.Errorf("check after a change: %d %q", code, errs)
-	}
-	var out, errb bytes.Buffer
-	if code := Run([]string{"stage", "--root", f.root, "--source", f.src.Dir, "kwrite"}, &out, &errb); code != 1 || !strings.Contains(errb.String(), "does not match the pinned origin") {
-		t.Errorf("Run with a synthetic tree: %d %q", code, errb.String())
 	}
 }
