@@ -244,8 +244,13 @@ func TestAnUnstatedStructuralRegionIsNotAHold(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, r := range declared.Regions {
-		if r.Exclusive || r.Grade != GradeExclusive && r.Path != "internal/x/a.go" {
-			t.Errorf("declared %+v, want no whole-repository hold and the exclusive grade at its place", r)
+		// a delete, a rename and a hotspot are the exclusive grade at their place; an ordinary edit stays independent; none holds the repository
+		wantGrade := GradeExclusive
+		if r.Path == "internal/x/a.go" {
+			wantGrade = GradeIndependent
+		}
+		if r.Exclusive || r.Grade != wantGrade {
+			t.Errorf("declared %+v, want no whole-repository hold and the %s grade", r, wantGrade)
 		}
 	}
 	if n := f.count("SELECT COUNT(*) FROM dag_node_regions WHERE exclusive = 1"); n != 3 {
