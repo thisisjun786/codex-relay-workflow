@@ -108,4 +108,3 @@ for (const [name, c] of Object.entries(plans)) {
 }
 const lines = (o) => "{\n" + Object.keys(o).map((n, i, a) => "  " + JSON.stringify(n) + ": " + JSON.stringify(o[n]) + (i < a.length - 1 ? "," : "")).join("\n") + "\n}";
 process.stdout.write('{\n"plans": ' + lines(out.plans) + ',\n"slugs": ' + lines(slugs) + ',\n"dirs": ' + lines(dirs) + "\n}\n"); // one case per line
-
