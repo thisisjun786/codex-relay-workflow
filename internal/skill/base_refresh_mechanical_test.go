@@ -2,6 +2,8 @@ package skill
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -103,6 +105,17 @@ func TestMechanicalUnionRefusals(t *testing.T) {
 		f.regen()
 		head := f.finish()
 		wantMechRefused(t, f.run(head), "union_line_added", "<<<<<<<")
+	})
+	t.Run("it changes the mode of the file", func(t *testing.T) {
+		f := newMechFixture(t)
+		f.standard()
+		f.startMerge()
+		f.put("backlog.md", backlogBase+"- p1\n- p2\n- d1\n")
+		f.regen()
+		if err := os.Chmod(filepath.Join(f.r.path, "backlog.md"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		wantMechRefused(t, f.run(f.finish()), "union_result_not_a_file", "backlog.md")
 	})
 	t.Run("it keeps one copy of a line both sides added", func(t *testing.T) {
 		f := newMechFixture(t)
@@ -305,6 +318,10 @@ func TestMechanicalRegionCoverage(t *testing.T) {
 		f, head := listFixture(t, "contract/golden/list.txt")
 		wantMechRefused(t, f.run(head, f.regionsFile(mechanical("contract/golden/list.txt", "union"))), "conflict_outside_mechanical", "contract/golden/list.txt")
 	})
+	t.Run("a tree region above a shared contract surface", func(t *testing.T) {
+		f, head := listFixture(t, "contract/golden/list.txt")
+		wantMechRefused(t, f.run(head, f.regionsFile(tree("contract", "union"))), "conflict_outside_mechanical", "contract/golden/list.txt")
+	})
 	t.Run("two trees that hold a shared contract surface", func(t *testing.T) {
 		f, head := listFixture(t, "internal/relay/list.md")
 		one := f.regionsFile(tree("internal/relay", "union"))
@@ -373,6 +390,17 @@ func TestMechanicalConflictsThatAreNotPlainText(t *testing.T) {
 		f.put("gone.md", "# Gone\n- a\n- d\n")
 		wantMechRefused(t, f.run(f.finish(), union(f, "gone.md")), "conflict_not_content", "gone.md")
 	})
+	t.Run("a regenerated file one side deleted and the other changed", func(t *testing.T) {
+		f := newMechFixture(t)
+		f.r.git("checkout", "-q", "feature")
+		f.r.git("rm", "-q", "plugin.json")
+		f.r.git("commit", "-q", "-m", "previous deletes the manifest")
+		f.previous = f.r.git("rev-parse", "HEAD")
+		f.devTip = f.commitOn("dev", "dev changes the payload", map[string]string{"payload/two.txt": "two D\n"}, true)
+		f.startMerge()
+		f.regen()
+		wantMechRefused(t, f.run(f.finish(), f.regionsFile(mechanical("plugin.json", "regenerate:sh regen.sh"))), "conflict_not_content", "plugin.json")
+	})
 	t.Run("a binary file both sides added", func(t *testing.T) {
 		f := newMechFixture(t)
 		f.previous = f.commitOn("feature", "previous binary", map[string]string{"data.bin": "a\x00b\n"}, false)
@@ -409,6 +437,23 @@ func TestMechanicalConflictsThatAreNotPlainText(t *testing.T) {
 	t.Run("the same where rename detection of a plain diff is skipped", func(t *testing.T) {
 		f, head := renamed(t, 1001)
 		wantMechRefused(t, f.run(head, union(f, "new.md")), "conflict_not_content", "new.md")
+	})
+	t.Run("one side renamed a directory and the other added a file to it", func(t *testing.T) {
+		f := newMechFixture(t)
+		f.r.git("checkout", "-q", "dev")
+		for i := 1; i <= 3; i++ {
+			f.put(fmt.Sprintf("old/f%d.txt", i), fmt.Sprintf("file %d\nline\nline\nline\n", i))
+		}
+		f.r.git("add", "-A")
+		f.r.git("commit", "-q", "-m", "a directory")
+		f.r.git("checkout", "-q", "-B", "feature", "dev")
+		f.r.git("mv", "old", "new")
+		f.r.git("commit", "-q", "-m", "previous renames the directory")
+		f.previous = f.commitOn("feature", "previous adds a file", map[string]string{"new/added.md": "p\n"}, false)
+		f.devTip = f.commitOn("dev", "dev adds a file to the old name", map[string]string{"old/added.md": "d\n"}, false)
+		f.startMerge()
+		f.put("new/added.md", "p\nd\n")
+		wantMechRefused(t, f.run(f.finish(), union(f, "new/added.md")), "conflict_not_content", "new/added.md")
 	})
 	t.Run("a criss-cross has more than one merge base", func(t *testing.T) {
 		f := newMechFixture(t)
