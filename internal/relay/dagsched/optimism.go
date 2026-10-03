@@ -108,8 +108,8 @@ func (s *Scheduler) RecordReleasePolicy(ctx context.Context, plan, actor string,
 			return nil
 		}
 		out.Settings = ReleaseSettings{Seq: latest.Seq + 1, Window: int(in.Window), HandlingSeconds: in.HandlingSeconds, RedMerges: int(in.RedMerges), CleanRun: int(in.CleanRun), RecordedBy: actor, RecordedAt: s.now()}
-		_, err = q.ExecContext(txCtx, "INSERT INTO dag_release_policy (plan_id, policy_seq, window_size, handling_seconds, red_merges, clean_run, recorded_by, recorded_at) VALUES (?,?,?,?,?,?,?,?)",
-			plan, out.Settings.Seq, out.Settings.Window, out.Settings.HandlingSeconds, out.Settings.RedMerges, out.Settings.CleanRun, actor, out.Settings.RecordedAt)
+		_, err = q.ExecContext(txCtx, "INSERT INTO dag_release_policy (plan_id, policy_seq, window_size, handling_seconds, red_merges, clean_run, recorded_by, coordinator_epoch, recorded_at) VALUES (?,?,?,?,?,?,?,?,?)",
+			plan, out.Settings.Seq, out.Settings.Window, out.Settings.HandlingSeconds, out.Settings.RedMerges, out.Settings.CleanRun, actor, s.ExpectedEpoch, out.Settings.RecordedAt)
 		return err
 	})
 	return out, err

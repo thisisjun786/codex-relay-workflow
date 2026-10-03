@@ -77,12 +77,23 @@ func (s *Scheduler) RecordLandingResult(ctx context.Context, plan, node, actor s
 		if err := s.requireParent(txCtx, q, snap, actor); err != nil {
 			return err
 		}
-		n, ok := nodeOf(snap, node)
-		switch {
-		case !ok:
-			return refuse(contract.RefusalUnregisteredScope, "plan %s has no live node %s", plan, node)
-		case n.Kind != dag.NodeImplementation:
-			return refuse(contract.RefusalDispositionConflict, "node %s is a %s node: it has no pull request to state a result about", node, n.Kind)
+		n, live := nodeOf(snap, node)
+		if !live || n.Kind != dag.NodeImplementation {
+			// a plan revision that retired the node or changed its kind after its pull request existed leaves the work as it was (the scheduler reads landed work from the stored acceptance), so a node
+			// the store holds an acceptance or an execution of can still be stated about
+			var one int
+			had, err := queryOne(txCtx, q, "SELECT 1 FROM dag_acceptances WHERE plan_id = ? AND node_id = ? AND head_sha IS NOT NULL AND head_sha <> '' UNION ALL SELECT 1 FROM dag_node_executions WHERE plan_id = ? AND node_id = ? LIMIT 1",
+				[]any{plan, node, plan, node}, &one)
+			if err != nil {
+				return err
+			}
+			switch {
+			case had:
+			case !live:
+				return refuse(contract.RefusalUnregisteredScope, "plan %s has no node %s that is live or that ever had a pull request", plan, node)
+			default:
+				return refuse(contract.RefusalDispositionConflict, "node %s is a %s node: it has no pull request to state a result about", node, n.Kind)
+			}
 		}
 		var one int
 		found, err := queryOne(txCtx, q, "SELECT 1 FROM dag_landing_results WHERE result_id = ?", []any{out.ResultID}, &one)
@@ -93,8 +104,8 @@ func (s *Scheduler) RecordLandingResult(ctx context.Context, plan, node, actor s
 			out.Replayed = true
 			return nil
 		}
-		_, err = q.ExecContext(txCtx, "INSERT INTO dag_landing_results (result_id, plan_id, node_id, kind, commit_sha, evidence, recorded_by, recorded_at) VALUES (?,?,?,?,?,?,?,?)",
-			out.ResultID, plan, node, in.Kind, in.Commit, in.Evidence, actor, s.now())
+		_, err = q.ExecContext(txCtx, "INSERT INTO dag_landing_results (result_id, plan_id, node_id, kind, commit_sha, evidence, recorded_by, coordinator_epoch, recorded_at) VALUES (?,?,?,?,?,?,?,?,?)",
+			out.ResultID, plan, node, in.Kind, in.Commit, in.Evidence, actor, s.ExpectedEpoch, s.now())
 		return err
 	})
 	return out, err

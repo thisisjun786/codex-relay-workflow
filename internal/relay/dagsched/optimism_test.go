@@ -401,3 +401,51 @@ func TestLandingResultsAreStatementsOfTheParent(t *testing.T) {
 		t.Errorf("a node the plan does not have: %v, want unregistered_scope", err)
 	}
 }
+
+// A fenced decision keeps the epoch of the session that made it, as the other decision rows do: a parent that restarts under a later epoch leaves rows that say which session decided.
+func TestPolicyAndResultRowsKeepTheCoordinatorEpoch(t *testing.T) {
+	w := newPolicyWorld(t, "l1")
+	ctx := context.Background()
+	claim, err := w.f.sched.ClaimEpoch(ctx, "p", ClaimInput{Actor: "parent", SessionNonce: "session-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.f.sched.ExpectedEpoch = claim.Epoch
+	w.policy(3, 600, 1, 2)
+	w.result("l1", ResultDevGreen)
+	for _, table := range []string{"dag_release_policy", "dag_landing_results"} {
+		if got := w.f.count("SELECT coordinator_epoch FROM " + table + " WHERE plan_id = 'p'"); int64(got) != claim.Epoch || claim.Epoch < 1 {
+			t.Fatalf("%s kept epoch %d, want the claimed epoch %d", table, got, claim.Epoch)
+		}
+	}
+	// a session of another epoch is stopped where it writes, and leaves no row
+	w.f.sched.ExpectedEpoch = claim.Epoch + 1
+	if _, err := w.f.sched.RecordReleasePolicy(ctx, "p", "parent", PolicyInput{Window: 4, HandlingSeconds: 600, RedMerges: 1, CleanRun: 1}); refusalReason(err) != "stale_coordinator_epoch" {
+		t.Fatalf("a policy of another epoch: %v, want stale_coordinator_epoch", err)
+	}
+	if _, err := w.f.sched.RecordLandingResult(ctx, "p", "l1", "parent", ResultInput{Kind: ResultDevRed, Evidence: "x"}); refusalReason(err) != "stale_coordinator_epoch" {
+		t.Fatalf("a result of another epoch: %v, want stale_coordinator_epoch", err)
+	}
+	if w.f.count("SELECT COUNT(*) FROM dag_release_policy") != 1 || w.f.count("SELECT COUNT(*) FROM dag_landing_results") != 1 {
+		t.Fatal("a refused write left a row")
+	}
+}
+
+// A plan revision that retires a node or changes its kind after its pull request landed leaves the landed work as it was: the parent can still state what dev did, and the release policy reads it.
+func TestAResultCanBeStatedForWorkThatAPlanRevisionRetired(t *testing.T) {
+	w := newPolicyWorld(t, "l1", "l2")
+	w.policy(3, 600, 1, 1)
+	w.land("l1", 1, 0)
+	w.land("l2", 2, 0)
+	w.f.putPlan("p", 1, "p-r2", lifeOp("retire_node", "l1"))
+	if _, live := nodeOf(w.f.snapshot("p"), "l1"); live {
+		t.Fatal("the node was not retired")
+	}
+	if _, err := w.f.sched.RecordLandingResult(context.Background(), "p", "l1", "parent", ResultInput{Kind: ResultDevRed, Evidence: "dev-gate run of the merge commit failed"}); err != nil {
+		t.Fatalf("a result for a retired node that had landed: %v", err)
+	}
+	// a node the plan never had is still refused
+	if _, err := w.f.sched.RecordLandingResult(context.Background(), "p", "ghost", "parent", ResultInput{Kind: ResultDevRed, Evidence: "x"}); refusalReason(err) != "unregistered_scope" {
+		t.Fatalf("a node the plan never had: %v, want unregistered_scope", err)
+	}
+}

@@ -190,8 +190,8 @@ func (g *gradeTally) object() contract.OrderedObject {
 	return contract.OrderedObject{{Key: "prs", Value: len(g.nodes)}, {Key: "files", Value: len(g.files)}, {Key: "files_per_pr", Value: perPR}}
 }
 
-// measureConflicts counts, per pull request, the files that conflicted, by the grade of the conflict. The measured pull requests are the nodes a conflict sweep (or dag-conflict-observe) measured at
-// all; one that no observation found a conflict for has its zero. An observation of two heads is graded as a whole by the declarations as they are now (classify: the worst grade over its files, a
+// measureConflicts counts, per pull request, the files that conflicted, by the grade of the conflict. The measured pull requests are the nodes any observation measured: a sweep member, or an observation row
+// recorded before sweeps kept a ledger; one that no observation found a conflict for has its zero. An observation of two heads is graded as a whole by the declarations as they are now (classify: the worst grade over its files, a
 // conflict every file of which a rule settles is mechanical) and each of its files counts at that grade for both nodes; an observation of a head against a tip has no declaration on the other side and
 // is counted apart. Hunks are not recorded: an observation keeps the names and the number of the files git could not merge.
 func measureConflicts(ctx context.Context, q store.Querier, plan string) (contract.OrderedObject, error) {
@@ -224,6 +224,27 @@ func measureConflicts(ctx context.Context, q store.Querier, plan string) (contra
 		return nil, err
 	}
 	rows.Close()
+	// an observation row is a measurement whether or not a sweep ledgered it: the observations of a plan upgraded from a build before the ledger have no sweep member
+	legacy, err := q.QueryContext(ctx, "SELECT left_node_id, right_node_id FROM dag_conflict_observations WHERE plan_id = ? UNION ALL SELECT node_id, '' FROM dag_tip_conflict_observations WHERE plan_id = ?", plan, plan)
+	if err != nil {
+		return nil, err
+	}
+	for legacy.Next() {
+		var left, right string
+		if err := legacy.Scan(&left, &right); err != nil {
+			legacy.Close()
+			return nil, err
+		}
+		measured[left] = true
+		if right != "" {
+			measured[right] = true
+		}
+	}
+	if err := legacy.Err(); err != nil {
+		legacy.Close()
+		return nil, err
+	}
+	legacy.Close()
 	if len(measured) == 0 {
 		return absentMetric(0, AbsentNoObservations), nil
 	}

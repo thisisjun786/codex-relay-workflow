@@ -255,3 +255,19 @@ func TestCancelledAfterReleaseCountsNodesThatHadAChild(t *testing.T) {
 	}
 	wantAbsent(t, got, AbsentNoneRecorded, "duplicated_or_discarded")
 }
+
+// The observations of a plan upgraded from a build before the sweep ledger have no sweep member: they are measurements all the same, so the pull requests they name are measured and their conflicts are tallied.
+func TestObservationsRecordedBeforeTheSweepLedgerAreMeasured(t *testing.T) {
+	w := newPolicyWorld(t)
+	f := w.f
+	f.exec("INSERT INTO dag_conflict_observations (observation_id, plan_id, left_node_id, right_node_id, repository, left_head, right_head, base_sha, conflict_count, method, observed_by, observed_at) VALUES ('dco-old', 'p', 'cand', 'hold', 'owner/repo', 'x', 'y', 'z', 1, 'git', 'parent', ?)", stamp(policyAt(0)))
+	f.exec("INSERT INTO dag_conflict_observation_files (observation_id, repository, path) VALUES ('dco-old', 'owner/repo', 'a.go')")
+	got := measured(t, f, "p")
+	conflicts := wantPresent(t, got, 2, "conflicts_by_grade")
+	if local := metric(t, conflicts, "by_grade", "local"); local["prs"] != float64(2) || local["files"] != float64(2) {
+		t.Fatalf("local conflicts = %v, want both pull requests of the observation", local)
+	}
+	// a later, unrelated sweep adds its own nodes to the measured set and keeps the legacy ones
+	w.sweep("hold", policyAt(1), "observed", 0)
+	wantPresent(t, measured(t, f, "p"), 2, "conflicts_by_grade")
+}
