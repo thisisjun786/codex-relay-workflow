@@ -1,0 +1,23 @@
+{
+  "origin": {
+    "tag": "v0.2.40",
+    "commit": "3c1459acadeb1906d97c00a598e1457327ae372d",
+    "skills_listing_sha256": "79d9580f39ca27221cb9c24337080e3fe4a1e71f76338c7329fca63f76a32e89"
+  },
+  "table_sha256": "25b5d19d9da7e07d474d2b31bc4d4139c68607457f59174a597f17505f7f23eb",
+  "from": "dev-code-reviewer",
+  "files": {
+    "SKILL.md": {
+      "original": "782ff460c2cf8a713ebfa6b1e682e8487b19eca23e12a59f4d3656822817dfa6"
+    },
+    "agents/openai.yaml": {
+      "original": "4ba6754ad21b4858c602d4486a6d8a6b3dfa1f711351b4f42ea1719eb2dd2216"
+    },
+    "references/ai-assisted-review.md": {
+      "original": "620473b4462d2fe632119090d05232042b16f1e2d8a9d1e3d5a8747365b0dc77"
+    },
+    "references/tech-debt.md": {
+      "original": "78b27a0323d43d8f4cc5e5bd73104a234e933a58c646fa09fb18e28fd1723443"
+    }
+  }
+}

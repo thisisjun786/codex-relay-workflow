@@ -1,0 +1,50 @@
+{
+  "origin": {
+    "tag": "v0.2.40",
+    "commit": "3c1459acadeb1906d97c00a598e1457327ae372d",
+    "skills_listing_sha256": "79d9580f39ca27221cb9c24337080e3fe4a1e71f76338c7329fca63f76a32e89"
+  },
+  "table_sha256": "25b5d19d9da7e07d474d2b31bc4d4139c68607457f59174a597f17505f7f23eb",
+  "from": "dev-testing",
+  "files": {
+    "SKILL.md": {
+      "original": "174afc94ed0cb7b1d3cfb780a87fe5306ff161d381425a1fcc995682221f3993"
+    },
+    "agents/openai.yaml": {
+      "original": "067f2a9486f39b8184506251f0f00079120db3db46bdcfe4d33c02466e1a5ba1"
+    },
+    "examples/console_logging.py": {
+      "original": "2d3e1d5387c543d7edfcbe3e7964cc8f4dd49209734da5b09de0999701efc30a"
+    },
+    "examples/element_discovery.py": {
+      "original": "db777d0f499be8e27c0bdb0984ed599093d9d1f92bca49d21cc527e3cc6aff69"
+    },
+    "examples/static_html_automation.py": {
+      "original": "dbb4da0d20fd7a96c22eee87655e2463c97ae53081a1ccc2e5c6dfd769f99b68"
+    },
+    "references/backend-testing.md": {
+      "original": "2afae51a769baaeab24328666f452694808e19f96855d3b37c1efde093e90f0c"
+    },
+    "references/ci-pipeline.md": {
+      "original": "277ce323ee91d66186afe3aacb5745368ad715fb1211fd4e1c6717e3494bbed1"
+    },
+    "references/core/crud-test-matrix.md": {
+      "original": "6c6490af84ceed03a8c7862166a5b880c0cf12e43bc2cd52271ac3eec683e842"
+    },
+    "references/edge-first-testing.md": {
+      "original": "53affdad3bf32334ac1922fdd6026f18b7379080ae5c8c8ae3266ba487805533"
+    },
+    "references/limited-oracle-evaluation.md": {
+      "original": "334e1fde9a4dc837ae2352ead85b90656cd8df81433997c9b0bfe34bb988b657"
+    },
+    "references/load-testing.md": {
+      "original": "884ad5d296ae513cef8296e0d17380475a1c5fe241d5975557827cb3dd5a2a3c"
+    },
+    "references/ml-evaluation.md": {
+      "original": "fa6cba677dc963c074dac093fae3c5cc457062f253ca4ceaeea602ad9200ead4"
+    },
+    "scripts/with_server.py": {
+      "original": "b0dcf4918935b795f4eda9821579b9902119235ff4447f687a30286e7d0925fd"
+    }
+  }
+}

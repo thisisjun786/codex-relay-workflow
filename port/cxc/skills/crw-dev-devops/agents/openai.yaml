@@ -1,0 +1,5 @@
+interface:
+  display_name: "crw-dev-devops"
+  short_description: "Container, deploy, Kubernetes, IaC, SRE and native desktop acceptance guidance for production delivery."
+policy:
+  allow_implicit_invocation: false

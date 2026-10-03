@@ -1,0 +1,75 @@
+{
+  "origin": {
+    "tag": "v0.2.40",
+    "commit": "3c1459acadeb1906d97c00a598e1457327ae372d",
+    "skills_listing_sha256": "79d9580f39ca27221cb9c24337080e3fe4a1e71f76338c7329fca63f76a32e89"
+  },
+  "table_sha256": "25b5d19d9da7e07d474d2b31bc4d4139c68607457f59174a597f17505f7f23eb",
+  "from": "dev-backend",
+  "files": {
+    "SKILL.md": {
+      "original": "0943253d2eaea414f184e5004718933b607b343027e3eaa4632b43bebe77f10a"
+    },
+    "agents/openai.yaml": {
+      "original": "e9398d12026128a0c0f566f27c3b6c003f50fd0dd2491d50d151cec63672e668"
+    },
+    "references/core/anti-slop-backend.md": {
+      "original": "348f5dbc5ae642aef066a7aa4a83a4d13243c616a6390b78451fd40321865940"
+    },
+    "references/core/api-design.md": {
+      "original": "9f04a9748353521e7531aed676f3474aa7b34457583c75a58fdb34ca5fc9a7df"
+    },
+    "references/core/api-lifecycle.md": {
+      "original": "f927f321de07e61eadde453616320da89d3e469610d31c0aedf9f974011e006a"
+    },
+    "references/core/architecture.md": {
+      "original": "84d14a0320d2d7c43a7153acd18abe4edfd33f856457c835a02f781bdbcc6f1f"
+    },
+    "references/core/caching.md": {
+      "original": "952559503b9710053ceccb8f568be69c55cca01af19bd41e0f83605d75f3ce2e"
+    },
+    "references/core/crud-api.md": {
+      "original": "4e8565b8ce0a063e6fd38015be7498ded876539cdff3d14184de8867f6f56343"
+    },
+    "references/core/health-checks.md": {
+      "original": "259cb11cf6598482a3453bc9ef889fbfa4f06c2df5665a61b2889be5cc7851e9"
+    },
+    "references/core/llm-integration.md": {
+      "original": "4ff346471a2888cf947231ba64b4f34c6859d95c52da3f5b980f6c73e9c1b942"
+    },
+    "references/core/ml-serving.md": {
+      "original": "095dd5c09d1fa35a64312022a94a852dbb720b0d45ad969522441314f1a741f9"
+    },
+    "references/core/mobile-api.md": {
+      "original": "dd2d734d738d6540eb77b479d59124f77549496ce914e3f0135bda42e900093f"
+    },
+    "references/core/observability.md": {
+      "original": "67af85d9fc6b4e85d7b445d036455bdd2ae6e615799302d1c79ab93ffee42d0a"
+    },
+    "references/core/process-isolation.md": {
+      "original": "04c71ebf75510742d07123cbe8fab54a0fc0716d7e71106a054f91bdad7e9c63"
+    },
+    "references/core/resilience.md": {
+      "original": "76ddf605bdfd6763f1bfd02fdcef423a2c2b1594b02d86a7733e978fc9c45e5d"
+    },
+    "references/core/security.md": {
+      "original": "b734cd07e551eed7b6417a8b882d6d35a275ccf9afe5c4dc1bff1627e847049a"
+    },
+    "references/stacks/database.md": {
+      "original": "dd0ec2eb160d1fbba1e8bdd374028ac2c57da4ad49edc5b57388ab90820ffc58"
+    },
+    "references/stacks/node.md": {
+      "original": "7618363438c194209c1230b36c4285409cad92bcdbd57180bc8caa0acaf34c60"
+    },
+    "references/stacks/python.md": {
+      "original": "66101b9b709e27aa25eb6d6ce7af2273a7ea56546989ab56ff50c52536508971"
+    },
+    "scripts/README.md": {
+      "original": "945fcac278c98c35fb39283aec98536e07ed564734ba443ac35fe8b410973046"
+    },
+    "scripts/scaffold-audit.sh": {
+      "original": "89429bc487bebf09ede348ad4796a27c821178b6ba46e8907288c21604c6e78f",
+      "exec": true
+    }
+  }
+}

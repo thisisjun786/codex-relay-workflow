@@ -1,0 +1,151 @@
+{
+  "origin": {
+    "tag": "v0.2.40",
+    "commit": "3c1459acadeb1906d97c00a598e1457327ae372d",
+    "skills_listing_sha256": "79d9580f39ca27221cb9c24337080e3fe4a1e71f76338c7329fca63f76a32e89"
+  },
+  "table_sha256": "25b5d19d9da7e07d474d2b31bc4d4139c68607457f59174a597f17505f7f23eb",
+  "from": "dev-frontend",
+  "files": {
+    "SKILL.md": {
+      "original": "0bef424ea31d6c1aabfbe241a8741b8123155a7687dd64d5e87392c88d16b7fd"
+    },
+    "agents/openai.yaml": {
+      "original": "34a608e6c7242efc51d4512de7eea9e9f5ea59046816bf9d9a5322ae366fad16"
+    },
+    "examples/README.md": {
+      "original": "36ab35c1091c877373fb539038455547e27ff1cc7ba6417e2970b0fc0679cec1"
+    },
+    "references/core/a11y-patterns.md": {
+      "original": "2a86facf86c52bfabc572e4d5bdcc162e75df6d6dc22b070a2f559dcdabaaec4"
+    },
+    "references/core/aesthetics.md": {
+      "original": "ce821196635f957b53ded1461c9c1dfa6d3480d9ea40147d354841af87a7d0e1"
+    },
+    "references/core/anti-slop.md": {
+      "original": "eef70d2b3cb4fedc069013f374ac15467f986c9eee9b52e588f4c3791425b0e2"
+    },
+    "references/core/asset-requirements.md": {
+      "original": "0c7596dff51b2e6e7362a373f0f2428a6025ebbb444c4175da66f5f88725b7a6"
+    },
+    "references/core/brand-asset-sourcing.md": {
+      "original": "25d6b827376ab386ddcda9893ac688153af10d016e746237c63ffe5c45b5c46a"
+    },
+    "references/core/color-system.md": {
+      "original": "535d9ad6e4d6fa514c04e267d1943ffe70e716ba2ce7152f5259a18d7ecad3ee"
+    },
+    "references/core/consistency-locks.md": {
+      "original": "dd0a304cce1bc2e594d08b5ca8ac64c0cbcfb30459fdafce4b7e146206192025"
+    },
+    "references/core/content-surface-pipeline.md": {
+      "original": "f4ccef367423f5ac04c405484045592d05a68447a3a1a023772957c4c8006ff0"
+    },
+    "references/core/crud-ui.md": {
+      "original": "c9c27c54db9873105c08cb42b1b04d650c457ac4ea571b4fd51cf3ece3c08650"
+    },
+    "references/core/dropdown-layer.md": {
+      "original": "197441ee5752f9a19c5e06a99b5a4d46d3254c788ee69d1d0167edf48b90e8bd"
+    },
+    "references/core/i18n-global.md": {
+      "original": "06dd9a93785cddd55ac2fa525d4a667bc7e2d3aad3affaa8c4d16732ec855890"
+    },
+    "references/core/iterative-design.md": {
+      "original": "72fa97c98192d8e8af4f1928c12fbaf55132fd891819fc117cf8b86265231b74"
+    },
+    "references/core/korea-2026.md": {
+      "original": "03a2e00b4e2a26ff1912907c51063d64738c11f08223bd49e7d38a54e772283e"
+    },
+    "references/core/layout-discipline.md": {
+      "original": "e426152a320387985b6f3f981d4c5f56ac876dbc48ab1b701c48e8c4739b0602"
+    },
+    "references/core/liquid-glass.md": {
+      "original": "6072ad2c188d4e92c8e71d637f9769c8fca66c54b8378e56e1fc996a96bb213c"
+    },
+    "references/core/logo-sections.md": {
+      "original": "1c3faa76599e0a3bc543fae731ee27a586457ed8ed2a7cd379a8e4be40e4cd17"
+    },
+    "references/core/mobile-ux.md": {
+      "original": "2b87a88898b49cb3cbfad1d774553ed5d1ef3edc7fb8a8119ef34252ede14250"
+    },
+    "references/core/motion.md": {
+      "original": "34d1bf5284a128426284e2c5d8851d721d7c8079a3d3d64d4d43bc9bf77e0fc8"
+    },
+    "references/core/performance-budget.md": {
+      "original": "ebbc3b13d514df54abda89a3596b57ad0389602e48d88ab2fce26fdfe2ffcda6"
+    },
+    "references/core/preflight-full.md": {
+      "original": "57e6cd97db762caadd481e2a53ff9f85f32b8082ab25faaf99c30d49b7f79d86"
+    },
+    "references/core/product-density.md": {
+      "original": "834536e08ffc6248edfa3a1c3f16cf091c3846463ec1501df5ce2ae2143543fa"
+    },
+    "references/core/prototype-variants.md": {
+      "original": "3768cdc50a29882011ddf924d41b6842a678aa1026fae19c39c9f027862f3696"
+    },
+    "references/core/reference-capture.md": {
+      "original": "aa3b271f4db08df343294d987ff9b9352c357325030a5f19e6d60bc16135cb9e"
+    },
+    "references/core/responsive-viewport.md": {
+      "original": "64db22569d337dd01ef8cf752f651f9b77ee86e63d9775ff261d8dfd202e9d57"
+    },
+    "references/core/section-level-sourcing.md": {
+      "original": "9daae11665e54c0d162e140972960470f8ebeb0ef2c7ebdc206fee397142bf95"
+    },
+    "references/core/seo-baseline.md": {
+      "original": "9c8c3d24dd92fa8d308a300b09be59061917fb4a484fd492bc8f3ee4a8842f2a"
+    },
+    "references/core/soft-3d-asset-gates.md": {
+      "original": "9767f0ea5307fe1f61064562b2dc50b970da590114d376b1103f3dce9f29f113"
+    },
+    "references/core/theme-switching.md": {
+      "original": "f4f3fa82245dd922a4b6251c4c64e6fef756acaf4803b3feaa132deecec629a0"
+    },
+    "references/core/token-source-divergence.md": {
+      "original": "1878d89606ee9e1f04e5f4a4b1ed0322505063c9190f2db07ec992de5ad1ca98"
+    },
+    "references/core/top-bar.md": {
+      "original": "8409a9b00343bb6640bf1e95216013240350c86b7c919d0a891463de3f5c49ee"
+    },
+    "references/core/typography-wrapping.md": {
+      "original": "144486283331fe58ba67878235ea811b66adde77fd184c9266c135c10d919a61"
+    },
+    "references/core/ux-writing-ko.md": {
+      "original": "c1b00e353e34aa516909a8eed680a57372f085fa8c3e08e4f9ea563bad7be2f7"
+    },
+    "references/core/visual-verification.md": {
+      "original": "4c1bec3f284c0beb78cdec588f0e9e897f2e27c38a6830053eb6d711f732380c"
+    },
+    "references/stacks/astro.md": {
+      "original": "b48419aa011855803068601e926a0f647b047a9d3604a0202bf42db211138557"
+    },
+    "references/stacks/mobile-native.md": {
+      "original": "f25cfd6da46ae7126979acbd1c1860077ba84d7f198d1a1d416e083ab22c0687"
+    },
+    "references/stacks/nextjs.md": {
+      "original": "8d0cd7b38841d3ed7182b68604d6092f343050dd75edfb29ea048fe49c568a7e"
+    },
+    "references/stacks/react.md": {
+      "original": "1f126bf707064f6635a1d26ba53f367b97bb97604fd2739f37ef0ee4664fc699"
+    },
+    "references/stacks/svelte.md": {
+      "original": "c60f7d19b040065268ce0efa04bd01c90288408ae94d7fc3bd39614ae4aadf71"
+    },
+    "references/stacks/vanilla.md": {
+      "original": "05e04e186e875f1cadc7bb06c767d6cd9926078c08fbc58d8f3065014a828a56"
+    },
+    "scripts/README.md": {
+      "original": "96d0f0e5a27235fd27a2f10e74f7de47e17012aa7692e6180ed74d0f1e73996e"
+    },
+    "scripts/bundle-artifact.sh": {
+      "original": "abf0e480bf6585b56fab8526a407dfb7dc740812bddd70c636e1e8f3df5f9618",
+      "exec": true
+    },
+    "scripts/init-artifact.sh": {
+      "original": "0e36f68f5124e65da9a555a2dbc6763100777acef2c00187ba33dfed8714a419",
+      "exec": true
+    },
+    "scripts/shadcn-components.tar.gz": {
+      "original": "1296f069e825de7933de7e8ac63672495cacce3f88f2dc45554dbcddbcbca60f"
+    }
+  }
+}

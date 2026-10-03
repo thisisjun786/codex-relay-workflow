@@ -1,0 +1,83 @@
+{
+  "origin": {
+    "tag": "v0.2.40",
+    "commit": "3c1459acadeb1906d97c00a598e1457327ae372d",
+    "skills_listing_sha256": "79d9580f39ca27221cb9c24337080e3fe4a1e71f76338c7329fca63f76a32e89"
+  },
+  "table_sha256": "25b5d19d9da7e07d474d2b31bc4d4139c68607457f59174a597f17505f7f23eb",
+  "from": "dev-uiux-design",
+  "files": {
+    "SKILL.md": {
+      "original": "416cf48ff7b9fb0c3c9d61acefc0ea7e7b4f7d6779139cbc9cfb49a257714bf0"
+    },
+    "agents/openai.yaml": {
+      "original": "46cc6b62b9e8a54a25859b07d25ed715dca5e7c579cbd7d0c46516e64550020a"
+    },
+    "references/anti-rationalization.md": {
+      "original": "8bd146bc936741c31da66bd91c3a4308b2ee63ff2b493a52b882b113b609104e"
+    },
+    "references/color-system.md": {
+      "original": "0c409e37d0e1c35f2e61e8280a1b7fd46d4e358d7dc4aa5c6d5bafaa7fbe9920"
+    },
+    "references/compositional-patterns.md": {
+      "original": "a60efd4399bc47ff0a828a91fff87b037bf38a43556b0383af2fe7dacd0bc6d8"
+    },
+    "references/conversational-ai.md": {
+      "original": "5949fc67c4c78adb72c6e39982ce0424a2204170799c7ee25e68f530b8ec0e59"
+    },
+    "references/design-award-sources.md": {
+      "original": "69db27ab015afef82f90e92b77af6c84d23c9d798f77e399ce8364c01d570bce"
+    },
+    "references/design-isms.md": {
+      "original": "5b1d80f4d996f641d9daeaa80f1452902f48a77a7944f8abd4c6d81fb00088d9"
+    },
+    "references/design-read-example.md": {
+      "original": "b2f31beb91ce9c60482b38deee6c10f2a9a56f8280d3a707defd38d51f9f37fb"
+    },
+    "references/design-system-bootstrap.md": {
+      "original": "b01b6402025dfa6ee4250c3538ef9d4ee47a612b7c00c99586120002f7192602"
+    },
+    "references/design-trends.md": {
+      "original": "c43241257a4d03bdbf95f752e7c7a57fb937d1902f33dae7a471e6b31eafc75a"
+    },
+    "references/favicon-logo.md": {
+      "original": "64a01f21604930678225e2ad7b7e4b0eab49e2b29ada22203fcd7c22e236d1dd"
+    },
+    "references/form-patterns.md": {
+      "original": "f77466e78c9a833b1f7fde944a91cf9d9454fd56050e6c67093b87776b53ba9b"
+    },
+    "references/intent-discovery-ladder.md": {
+      "original": "2c05d9530be61c2c75ad09706bce1cefed90589aa7266c32ca08f890f919935b"
+    },
+    "references/korean-design-vocabulary.md": {
+      "original": "7ff0337e11f9c16ba1b5f52da9a09085430196ce663fc90364a4cbcff872ae3f"
+    },
+    "references/layout-macrostructures.md": {
+      "original": "6046ccc0a9b64ec4a7b86fd42315b55725be2dbfe5daebcfc3bd53b555c2c58c"
+    },
+    "references/logo-trust-sections.md": {
+      "original": "17c37d5baeb9f7f3edc751dacaa5fa2cda0268d4b6347fb5c975df058b852484"
+    },
+    "references/mobile-native-ux.md": {
+      "original": "9e4f24b59ac12dd292345e42d65b8afa2c6729983804c5cc76705040b3df0bea"
+    },
+    "references/product-personalities.md": {
+      "original": "c30592fbcca3b4522289c62be767ac439614bedca23550225cede609230d354a"
+    },
+    "references/responsive-nav.md": {
+      "original": "72b0b3bc7a6d75ac57c085188f5c3d12fd8e7848d98328b9b00706a33df7f545"
+    },
+    "references/typography-line-breaks.md": {
+      "original": "fd1857e275cae205e5f5362c827b118e7c0c89ffa1316c6ab73f6c0305973908"
+    },
+    "references/ux-preflight.md": {
+      "original": "8381d929cbb7fdfcf25a206ab2a54ad09985761b410024ec294806c0e67ff8a5"
+    },
+    "references/ux-states.md": {
+      "original": "893d839c5f7c237fab31574f19c106bd8e004002e9a7c561a80c8024ac362b74"
+    },
+    "references/visual-hierarchy.md": {
+      "original": "f607fc349b19144e09b380da4cd2ef20db485a7741124489e88f3884a25b1fdd"
+    }
+  }
+}
