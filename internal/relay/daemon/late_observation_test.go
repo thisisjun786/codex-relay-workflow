@@ -86,6 +86,7 @@ func (c lateClaim) insert(t *testing.T, s *store.Store) {
 // turns reported nothing, or nothing the parent is owed, is still observed and delivered as it
 // always was.
 func TestLateEndOfAnEarlierTurnIsNotReportedOnceALaterTurnReported(t *testing.T) {
+	t.Parallel()
 	final := &lateClaim{"continuation", "child", "final", owedQueued}
 	for _, c := range []struct {
 		name     string
@@ -109,6 +110,7 @@ func TestLateEndOfAnEarlierTurnIsNotReportedOnceALaterTurnReported(t *testing.T)
 		{"the receipt sits on an earlier admission, not a later one", "continuation", "interrupted", "completed", &lateClaim{"business", "child", "final", owedQueued}, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			ctx, s := lateStore(t)
 			if c.claim != nil {
 				c.claim.insert(t, s)
@@ -182,6 +184,7 @@ const owedQueued = "queued"
 // The relationship the pass loaded may move while the pass reads the host: the observation is then
 // decided on the state the store has now, exactly as it was before a later receipt could suppress one.
 func TestAnEarlierTurnIsDecidedOnTheCurrentRelationshipWhenItMovesDuringThePass(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name    string
 		change  []string
@@ -196,6 +199,7 @@ func TestAnEarlierTurnIsDecidedOnTheCurrentRelationshipWhenItMovesDuringThePass(
 		}, 1, 1, ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			ctx, s := lateStore(t)
 			lateClaim{"continuation", "child", "final", owedQueued}.insert(t, s)
 			moved := false

@@ -161,6 +161,7 @@ func longestWaitingFirst(t *testing.T, reads [][]int, members []int) {
 // c1: of 50 active relationships 45 have nothing to do and 5 have staged receipts whose turns the host
 // reports completed. One tick finalizes all five and reads nothing else.
 func TestStagedReceiptsAmongManyRelationshipsAreFinalizedInOneTick(t *testing.T) {
+	t.Parallel()
 	ctx, s := throughputStore(t)
 	staged := []int{3, 14, 26, 38, 47}
 	for i := range 50 {
@@ -208,6 +209,7 @@ func TestStagedReceiptsAmongManyRelationshipsAreFinalizedInOneTick(t *testing.T)
 // c2: when more relationships have work than the budget allows, the longest-waiting are served first and none
 // starves.
 func TestWorkBeyondTheBudgetIsServedLongestWaitingFirstAndNoneStarves(t *testing.T) {
+	t.Parallel()
 	ctx, s := throughputStore(t)
 	members := []int{}
 	for i := range 12 {
@@ -230,6 +232,7 @@ func TestWorkBeyondTheBudgetIsServedLongestWaitingFirstAndNoneStarves(t *testing
 // Staged claims are served first, but a standing set of them cannot starve the other work: the longest-waiting
 // of the rest is visited first, once, before the staged claims take the remaining budget.
 func TestStagedClaimsAreServedFirstWithoutStarvingOtherWork(t *testing.T) {
+	t.Parallel()
 	ctx, s := throughputStore(t)
 	staged, plain := []int{}, []int{}
 	for i := range 12 {
@@ -264,6 +267,7 @@ func TestStagedClaimsAreServedFirstWithoutStarvingOtherWork(t *testing.T) {
 
 // With nothing but staged claims, every read of the budget goes to them.
 func TestStagedClaimsTakeTheWholeBudgetWhenNothingElseWaits(t *testing.T) {
+	t.Parallel()
 	ctx, s := throughputStore(t)
 	for i := range 6 {
 		seedIndexed(t, s, i)
@@ -279,6 +283,7 @@ func TestStagedClaimsTakeTheWholeBudgetWhenNothingElseWaits(t *testing.T) {
 
 // The order is derived from the store, so a restarted daemon carries on where the last one stopped.
 func TestObservationOrderSurvivesARestart(t *testing.T) {
+	t.Parallel()
 	ctx, s := throughputStore(t)
 	for i := range 6 {
 		seedIndexed(t, s, i)
@@ -310,6 +315,7 @@ func (h *failingHost) ReadTurn(_ context.Context, thread, turn string) (*deliver
 }
 
 func TestTurnsTheHostCannotAnswerDoNotHoldTheFrontOfTheLine(t *testing.T) {
+	t.Parallel()
 	ctx, s := throughputStore(t)
 	members := []int{}
 	for i := range 6 {
@@ -327,8 +333,10 @@ func TestTurnsTheHostCannotAnswerDoNotHoldTheFrontOfTheLine(t *testing.T) {
 // The budget follows the work: five relationships with something to read cost five reads, and thirty-two is
 // the most any tick spends however many wait.
 func TestTheBudgetFollowsTheWorkAndIsBounded(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct{ relationships, reads int }{{5, 5}, {50, 32}} {
 		t.Run(fmt.Sprint(c.relationships, " relationships"), func(t *testing.T) {
+			t.Parallel()
 			ctx, s := throughputStore(t)
 			for i := range c.relationships {
 				seedIndexed(t, s, i)
@@ -347,12 +355,14 @@ func TestTheBudgetFollowsTheWorkAndIsBounded(t *testing.T) {
 // first, so every one of its turns comes round, the current anchor with the others; the budget it leaves is the
 // others'. The budget is shared by the relationships that need it, so with two of them each may take half of it.
 func TestARelationshipWithManyPendingTurnsReadsItsShareAndRotatesThem(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name   string
 		share  int
 		within int // every one of its four turns is read in every window of this many ticks
 	}{{"share of two", 2, 2}, {"share of one", 1, 4}} {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			ctx, s := throughputStore(t)
 			seedIndexed(t, s, 0)
 			seedIndexed(t, s, 1)
@@ -400,6 +410,7 @@ func TestARelationshipWithManyPendingTurnsReadsItsShareAndRotatesThem(t *testing
 // A relationship with nothing to observe is not visited, writes nothing, and is visited again the moment
 // the store shows work: the decision is made from store rows on every tick.
 func TestAnIdleRelationshipIsLeftAloneAndPickedUpWhenWorkAppears(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name string
 		work func(t *testing.T, s *store.Store)
@@ -427,6 +438,7 @@ func TestAnIdleRelationshipIsLeftAloneAndPickedUpWhenWorkAppears(t *testing.T) {
 		}, nil},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			ctx, s := throughputStore(t)
 			for i := range 2 {
 				seedIndexed(t, s, i)
@@ -451,6 +463,7 @@ func TestAnIdleRelationshipIsLeftAloneAndPickedUpWhenWorkAppears(t *testing.T) {
 
 // Two relationships can watch one child turn; a claim staged for one leaves the other with nothing to observe.
 func TestAClaimForOneRelationshipDoesNotKeepAnotherOnTheSameTurnInTheRotation(t *testing.T) {
+	t.Parallel()
 	ctx, s := throughputStore(t)
 	seed(t, s, "r1", "parent-one", "shared-child", "anchor")
 	seed(t, s, "r2", "parent-two", "shared-child", "anchor")
@@ -477,6 +490,7 @@ func TestAClaimForOneRelationshipDoesNotKeepAnotherOnTheSameTurnInTheRotation(t 
 // admission rows of other relationships come before it. The old pass paged the whole table in rowid order,
 // a few rows per visit.
 func TestAnAdmittedTurnIsFoundHoweverManyOtherAdmissionsPrecedeIt(t *testing.T) {
+	t.Parallel()
 	ctx, s := throughputStore(t)
 	for i := range 30 {
 		seedIndexed(t, s, i)
@@ -505,6 +519,7 @@ func TestAnAdmittedTurnIsFoundHoweverManyOtherAdmissionsPrecedeIt(t *testing.T) 
 }
 
 func TestStagedClaimsOfAnInactiveRelationshipAreLeftUntouched(t *testing.T) {
+	t.Parallel()
 	ctx, s := throughputStore(t)
 	seedIndexed(t, s, 0)
 	stageClaim(t, s, 0, "anchor-00")
@@ -522,6 +537,7 @@ func TestStagedClaimsOfAnInactiveRelationshipAreLeftUntouched(t *testing.T) {
 
 // A tick with nothing to observe is quiet in the store too: it writes no cursor, poll or journal row.
 func TestATickWithNothingToObserveWritesNothing(t *testing.T) {
+	t.Parallel()
 	ctx, s := throughputStore(t)
 	for i := range 3 {
 		seedIndexed(t, s, i)
@@ -543,6 +559,7 @@ func TestATickWithNothingToObserveWritesNothing(t *testing.T) {
 // With a budget of one read there is nothing to hold back for the other group, so the two are served in turn,
 // longest-waiting first, and a staged claim that never ends cannot keep other work out for good.
 func TestASingleReadBudgetServesBothGroupsInTurn(t *testing.T) {
+	t.Parallel()
 	ctx, s := throughputStore(t)
 	seedIndexed(t, s, 0) // plain work
 	seedIndexed(t, s, 1)
@@ -557,6 +574,7 @@ func TestASingleReadBudgetServesBothGroupsInTurn(t *testing.T) {
 
 // Staged claims are read ahead of other work, apart from the one held-back visit.
 func TestStagedRelationshipsAreReadBeforeOthers(t *testing.T) {
+	t.Parallel()
 	ctx, s := throughputStore(t)
 	for i := range 6 {
 		seedIndexed(t, s, i)
@@ -577,6 +595,7 @@ func TestStagedRelationshipsAreReadBeforeOthers(t *testing.T) {
 // A relationship that gets a new admitted turn before every tick does not keep another relationship waiting,
 // and its own current anchor is still read among the newcomers.
 func TestARelationshipThatKeepsReceivingTurnsDoesNotKeepOthersWaiting(t *testing.T) {
+	t.Parallel()
 	ctx, s := throughputStore(t)
 	seedIndexed(t, s, 0)
 	seedIndexed(t, s, 1)
@@ -604,6 +623,7 @@ func TestARelationshipThatKeepsReceivingTurnsDoesNotKeepOthersWaiting(t *testing
 // running anchor and a staged claim on a turn that ended get all three claims finalized in the first tick of a
 // budget of four, the fourth read going to the anchor held back for the other class.
 func TestAStagedClaimIsReadForItselfNotAsOneOfItsRelationshipsTurns(t *testing.T) {
+	t.Parallel()
 	ctx, s := throughputStore(t)
 	statuses := map[string]string{}
 	for i := range 3 {
@@ -628,8 +648,10 @@ func TestAStagedClaimIsReadForItselfNotAsOneOfItsRelationshipsTurns(t *testing.T
 // staged turn does not stand in for reading its other one, and with a share of one the read held back for the
 // other class does not cost it its staged read.
 func TestARelationshipWithATurnOfEachClassHasBothReadInTurn(t *testing.T) {
+	t.Parallel()
 	for _, share := range []int{1, 2} {
 		t.Run(fmt.Sprint("share of ", share), func(t *testing.T) {
+			t.Parallel()
 			ctx, s := throughputStore(t)
 			seedIndexed(t, s, 0)
 			seedIndexed(t, s, 1)
@@ -668,6 +690,7 @@ func TestARelationshipWithATurnOfEachClassHasBothReadInTurn(t *testing.T) {
 // another that needs it: with the default policy a relationship with four pending turns beside one with a single
 // turn has all five read in the first tick.
 func TestSpareBudgetGoesToTheRelationshipThatNeedsIt(t *testing.T) {
+	t.Parallel()
 	ctx, s := throughputStore(t)
 	seedIndexed(t, s, 0)
 	seedIndexed(t, s, 1)
@@ -689,6 +712,7 @@ func TestSpareBudgetGoesToTheRelationshipThatNeedsIt(t *testing.T) {
 // stamps now: it must not hold the same turns at the front of the line. Without that, turns stamped in the future keep
 // ranking behind the ones just read for as long as the clock stays behind them.
 func TestAClockSetBackDoesNotPinTheSameTurnsAtTheFront(t *testing.T) {
+	t.Parallel()
 	const future = "2100-01-01T00:00:00.000000+00:00"
 	for _, c := range []struct {
 		name          string
@@ -715,6 +739,7 @@ func TestAClockSetBackDoesNotPinTheSameTurnsAtTheFront(t *testing.T) {
 		}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			ctx, s := throughputStore(t)
 			members := []int{}
 			for i := range c.relationships {

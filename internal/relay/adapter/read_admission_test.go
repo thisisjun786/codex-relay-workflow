@@ -14,7 +14,6 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/managed"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // These tests pin the lifetime rule the transport gives reads: a read that arrives after Close
@@ -214,6 +213,7 @@ func sendSettings() *delivery.TaskSettings {
 }
 
 func TestReadAdmission_CloseWaitsForAnInFlightRead(t *testing.T) {
+	t.Parallel()
 	host := newGatedHost()
 	a := admissionAdapter(t, host, time.Hour)
 	release := host.hold(t, "thread/read")
@@ -248,6 +248,7 @@ func TestReadAdmission_CloseWaitsForAnInFlightRead(t *testing.T) {
 }
 
 func TestReadAdmission_CloseCancelsAReadThatOutlivesTheDrainBudget(t *testing.T) {
+	t.Parallel()
 	host := newGatedHost()
 	a := admissionAdapter(t, host, -1)
 	host.hold(t, "thread/read")
@@ -267,8 +268,9 @@ func TestReadAdmission_CloseCancelsAReadThatOutlivesTheDrainBudget(t *testing.T)
 }
 
 func TestReadAdmission_ACancelledScanEndsBeforeTheClientCloses(t *testing.T) {
+	t.Parallel()
 	host := newGatedHost()
-	db, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "go", "go-store.sqlite3"), "")
+	db, err := openStore(context.Background(), filepath.Join(t.TempDir(), "go", "go-store.sqlite3"), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -302,6 +304,7 @@ func TestReadAdmission_ACancelledScanEndsBeforeTheClientCloses(t *testing.T) {
 }
 
 func TestReadAdmission_ReadsAfterCloseAreRefused(t *testing.T) {
+	t.Parallel()
 	host := newGatedHost()
 	a := admissionAdapter(t, host, time.Second)
 	if err := a.Close(); err != nil {
@@ -340,6 +343,7 @@ func TestReadAdmission_ReadsAfterCloseAreRefused(t *testing.T) {
 }
 
 func TestReadAdmission_CreatesKeepTheirOwnRefusal(t *testing.T) {
+	t.Parallel()
 	host := newGatedHost()
 	a := admissionAdapter(t, host, time.Second)
 	if err := a.Close(); err != nil {
@@ -355,6 +359,7 @@ func TestReadAdmission_CreatesKeepTheirOwnRefusal(t *testing.T) {
 }
 
 func TestReadAdmission_AnAdmittedSendKeepsItsGuardReadsWhileCloseDrains(t *testing.T) {
+	t.Parallel()
 	host := newGatedHost()
 	a := admissionAdapter(t, host, time.Hour)
 	inGuard := make(chan struct{})
@@ -400,6 +405,7 @@ func TestReadAdmission_AnAdmittedSendKeepsItsGuardReadsWhileCloseDrains(t *testi
 }
 
 func TestReadAdmission_ANestedReadIsCollectedAfterItsSendEnded(t *testing.T) {
+	t.Parallel()
 	host := newGatedHost()
 	a := admissionAdapter(t, host, -1)
 	host.hold(t, "thread/list")
@@ -432,6 +438,7 @@ func TestReadAdmission_ANestedReadIsCollectedAfterItsSendEnded(t *testing.T) {
 }
 
 func TestReadAdmission_ARetainedContextIsNoAdmission(t *testing.T) {
+	t.Parallel()
 	host := newGatedHost()
 	a := admissionAdapter(t, host, time.Second)
 	stored := make(chan context.Context, 1)
@@ -477,6 +484,7 @@ func TestReadAdmission_ARetainedContextIsNoAdmission(t *testing.T) {
 }
 
 func TestReadAdmission_AnotherTransportsLeaseIsNoLease(t *testing.T) {
+	t.Parallel()
 	closedHost := newGatedHost()
 	closed := admissionAdapter(t, closedHost, time.Second)
 	if err := closed.Close(); err != nil {
@@ -504,6 +512,7 @@ func TestReadAdmission_AnotherTransportsLeaseIsNoLease(t *testing.T) {
 }
 
 func TestReadAdmission_OneAdmissionCoversAMultiPageRead(t *testing.T) {
+	t.Parallel()
 	host := newGatedHost()
 	a := admissionAdapter(t, host, time.Hour)
 	release := host.hold(t, "thread/turns/list")
@@ -531,6 +540,7 @@ func TestReadAdmission_OneAdmissionCoversAMultiPageRead(t *testing.T) {
 }
 
 func TestReadAdmission_ACreateReadsItsReceiptBeforeCloseCanEndTheLedger(t *testing.T) {
+	t.Parallel()
 	host := newGatedHost()
 	a := admissionAdapter(t, host, time.Hour)
 	release := host.hold(t, "turn/start")
@@ -558,6 +568,7 @@ func TestReadAdmission_ACreateReadsItsReceiptBeforeCloseCanEndTheLedger(t *testi
 }
 
 func TestReadAdmission_ACreateNeverJoinsALiveLease(t *testing.T) {
+	t.Parallel()
 	host := newGatedHost()
 	a := admissionAdapter(t, host, time.Hour)
 	cwd := t.TempDir()
@@ -609,6 +620,7 @@ func TestReadAdmission_ACreateNeverJoinsALiveLease(t *testing.T) {
 }
 
 func TestReadAdmission_ACompletedCreateStillReadsItsReceiptWhenTheDrainBudgetEndsFirst(t *testing.T) {
+	t.Parallel()
 	host := newGatedHost()
 	a := admissionAdapter(t, host, -1)
 	release, noticed := host.holdStubborn(t, "turn/start")
@@ -637,6 +649,7 @@ func TestReadAdmission_ACompletedCreateStillReadsItsReceiptWhenTheDrainBudgetEnd
 }
 
 func TestReadAdmission_ACancelledCallerReleasesItsAdmission(t *testing.T) {
+	t.Parallel()
 	host := newGatedHost()
 	a := admissionAdapter(t, host, time.Hour)
 	host.hold(t, "thread/read")
@@ -660,6 +673,7 @@ func TestReadAdmission_ACancelledCallerReleasesItsAdmission(t *testing.T) {
 }
 
 func TestReadAdmission_AnAdapterWithoutATransportStillReads(t *testing.T) {
+	t.Parallel()
 	host := newGatedHost()
 	a := New(Options{RPC: host})
 	if status, err := a.ReadGoalStatus(context.Background(), "thread-1"); err != nil || status != "active" {

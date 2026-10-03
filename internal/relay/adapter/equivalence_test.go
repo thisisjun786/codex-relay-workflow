@@ -8,9 +8,11 @@ import (
 )
 
 func Test28_MSC_10_TwoValueAndDetailedVerifiers(t *testing.T) {
+	t.Parallel()
 	shareGoldens(t)
 	for _, kind := range []string{"good", "deleted", "tampered", "absent", "different"} {
 		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
 			file, reference, entries := frozenFixture(t)
 			switch kind {
 			case "deleted":
@@ -42,6 +44,7 @@ func Test28_MSC_10_TwoValueAndDetailedVerifiers(t *testing.T) {
 	}
 	for _, kind := range []string{"good", "gone", "changed", "outside", "empty"} {
 		t.Run("live-"+kind, func(t *testing.T) {
+			t.Parallel()
 			file, _, entries := frozenFixture(t)
 			roots := []string{filepath.Dir(file)}
 			switch kind {
