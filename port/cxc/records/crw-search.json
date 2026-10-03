@@ -1,0 +1,111 @@
+{
+  "origin": {
+    "tag": "v0.2.40",
+    "commit": "3c1459acadeb1906d97c00a598e1457327ae372d",
+    "skills_listing_sha256": "79d9580f39ca27221cb9c24337080e3fe4a1e71f76338c7329fca63f76a32e89"
+  },
+  "table_sha256": "25b5d19d9da7e07d474d2b31bc4d4139c68607457f59174a597f17505f7f23eb",
+  "from": "search",
+  "files": {
+    "SKILL.md": {
+      "original": "12b300def5d9d4a39642d41c5db7a04b3227b8932bcafa01dbc1d772c0623335"
+    },
+    "agents/openai.yaml": {
+      "original": "c9e239a4879dde68b56ec5007d45418d4499dfcfdac66a7c78864d7a8cf1082b"
+    },
+    "references/blocked-url-reader.md": {
+      "original": "3eee8d932960a5daa6fc6fbc1095d9cdead54f6d0f73f721a237accbe420f793"
+    },
+    "references/deep-research.md": {
+      "original": "ea1dfe6a02495ef661bb7da7ff59dc5518a720ed6d17180026bd1b73feae505a"
+    },
+    "references/query-rewrite.md": {
+      "original": "6fc769fbb01473a791192d9a3420df3280dde991b5b8dfecfcdebb2a3afd3974"
+    },
+    "scripts/agbrowse_helper.py": {
+      "original": "b6022c0d0e207d8ebd86eac67a8d4df202720e0c12d4a2027627532c625e7d73"
+    }
+  },
+  "edits": [
+    {
+      "file": "SKILL.md",
+      "reason": "Remove unsupported frontmatter metadata and resolve peer/browser policy links through the renamed CRW dev folder.",
+      "hunks": [
+        {
+          "line": 4,
+          "old": [
+            "metadata:\n",
+            "  last-verified: \"2026-09-08\"\n",
+            "  short-description: \"Codex-native unified search: discover -> prove -> deep-research ladder with Aside lane and Korean intent guard.\"\n"
+          ]
+        },
+        {
+          "line": 29,
+          "old": [
+            "[Peer collaboration](../dev/references/peer-collaboration.md) limits contact to\n"
+          ],
+          "new": [
+            "[Peer collaboration](../crw-dev/references/peer-collaboration.md) limits contact to\n"
+          ]
+        },
+        {
+          "line": 76,
+          "old": [
+            "Use the shared [portable browser routing](../dev/references/browser-routing.md).\n"
+          ],
+          "new": [
+            "Use the shared [portable browser routing](../crw-dev/references/browser-routing.md).\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "agents/openai.yaml",
+      "reason": "Add the required interface default_prompt naming this CRW skill while preserving the original implicit-invocation policy.",
+      "hunks": [
+        {
+          "line": 4,
+          "new": [
+            "  default_prompt: \"Use $crw-search to discover candidate sources and verify the requested claim in the original source.\"\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/blocked-url-reader.md",
+      "reason": "Resolve the cross-skill Markdown reference through the renamed CRW dev folder; retain the policy text.",
+      "hunks": [
+        {
+          "line": 16,
+          "old": [
+            "Select the usable tool through [portable browser routing](../../dev/references/browser-routing.md),\n"
+          ],
+          "new": [
+            "Select the usable tool through [portable browser routing](../../crw-dev/references/browser-routing.md),\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/deep-research.md",
+      "reason": "Resolve the cross-skill Markdown reference through the renamed CRW dev folder; retain the policy text.",
+      "hunks": [
+        {
+          "line": 21,
+          "old": [
+            "[Reader documents](../../dev/references/reader-documents.md). If the scope, purpose\n"
+          ],
+          "new": [
+            "[Reader documents](../../crw-dev/references/reader-documents.md). If the scope, purpose\n"
+          ]
+        },
+        {
+          "line": 158,
+          "old": [
+            "\n"
+          ]
+        }
+      ]
+    }
+  ]
+}

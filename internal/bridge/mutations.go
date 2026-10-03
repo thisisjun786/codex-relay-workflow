@@ -29,6 +29,9 @@ type SendMessage struct {
 }
 
 func (b *Bridge) SendMessageToThread(ctx context.Context, in SendMessage) (ledger.Receipt, error) {
+	var watch *appserver.TurnWatch
+	var result ledger.Receipt
+	defer func() { finishSubscription(watch, result, false) }()
 	if err := nonempty(in.ThreadID, "thread_id", 128); err != nil {
 		return nil, err
 	}
@@ -102,7 +105,7 @@ func (b *Bridge) SendMessageToThread(ctx context.Context, in SendMessage) (ledge
 		}
 		return err
 	}
-	return b.mutate(ctx, mutation{in.RequestID, "send_message_to_thread", params, validate, func(ctx context.Context, receipt ledger.Receipt, effects *[]string) error {
+	result, err := b.mutate(ctx, mutation{in.RequestID, "send_message_to_thread", params, validate, func(ctx context.Context, receipt ledger.Receipt, effects *[]string) error {
 		receipt["threadId"] = in.ThreadID
 		receipt["executionPolicy"] = auth.Receipt
 		// Where this connection's server-request stream stood before anything was sent, so the
@@ -142,6 +145,9 @@ func (b *Bridge) SendMessageToThread(ctx context.Context, in SendMessage) (ledge
 			}
 			receipt["mcpProfile"] = info
 		}
+		if watch, err = b.watchSubscription(ctx, in.ThreadID); err != nil {
+			return err
+		}
 		resumed, err := b.dispatch(ctx, "thread/resume", contract.ResumeParams(in.ThreadID), effects)
 		if err != nil {
 			return err
@@ -177,6 +183,7 @@ func (b *Bridge) SendMessageToThread(ctx context.Context, in SendMessage) (ledge
 		}
 		return nil
 	}, nil, nil})
+	return result, err
 }
 
 // serverRequests is the part of appserver.Client that records server-to-client requests.

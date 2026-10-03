@@ -1,0 +1,319 @@
+{
+  "origin": {
+    "tag": "v0.2.40",
+    "commit": "3c1459acadeb1906d97c00a598e1457327ae372d",
+    "skills_listing_sha256": "79d9580f39ca27221cb9c24337080e3fe4a1e71f76338c7329fca63f76a32e89"
+  },
+  "table_sha256": "25b5d19d9da7e07d474d2b31bc4d4139c68607457f59174a597f17505f7f23eb",
+  "from": "dev-visualizer",
+  "files": {
+    "SKILL.md": {
+      "original": "c5ad6432167b166a83b2cbc1b658536c2ba102d5c6d3b627ada57b6d18c41f60"
+    },
+    "agents/openai.yaml": {
+      "original": "dbb5104efe502defa4732c82c53c9336bf73bb1de7a3b2e8b2090fde681238c4"
+    },
+    "assets/editorial-report.html": {
+      "original": "2c31f323ca5dae6f0dc98d9af8bb7dd813745b40c632da24f9c5e2eca48cbe50"
+    },
+    "assets/exhibit-recipes.json": {
+      "original": "d7361778fcd28f052788e586ec29a1562f2c8323c555ca6077f7069a14206a9c"
+    },
+    "assets/paged-report.html": {
+      "original": "3e6423fa88c5ae7a118239c1e6e82597aaff9f2053b006f003ce5de1e14df0ad"
+    },
+    "assets/report-examples/decision-en.json": {
+      "original": "98c2e1c54a9d3dabee92a9456e68aa7b3f41268f6b96fa9e32e41c6ad029d199"
+    },
+    "assets/report-examples/decision-ko.json": {
+      "original": "d009f8c139cc4c5653c57a140cc213dfd79a2461ac5ee2ec4248d98edbd87088"
+    },
+    "assets/report-examples/reference-en.json": {
+      "original": "b010d8d81a67d369891a3645dc9d75d9cb09f5ff095979cf66dc5f1cd73e5464"
+    },
+    "assets/report-examples/reference-ko.json": {
+      "original": "258862a87ab8765f5ff909ae8b11c87f5ea66d6033c458eca9ec37972e3d4723"
+    },
+    "assets/report-examples/research-en.json": {
+      "original": "454d1b2b98e55fdcef006dc9c0ea96a5627b4597afb554a819dba725218477bc"
+    },
+    "assets/report-examples/research-ko.json": {
+      "original": "b575f2942d832b2e40b2ce9cee942a5099a1042fc09c112f201c30c791186331"
+    },
+    "assets/report-model.example.json": {
+      "original": "d3a22eb264a1abe419b2951e58eaa4e9f73104a8a2791a6062b87c0a8bd6439b"
+    },
+    "assets/research-handoff.example.json": {
+      "original": "25e4b4f4574f95f02ebf8b9e3611d3282eda81cc3612816415fd53ff2fbdc075"
+    },
+    "reference/document-pdf.md": {
+      "original": "00fdad3de5234142eb850f68d42871743d3e5201481cf350f5907104cc5665d2"
+    },
+    "reference/english-authoring.md": {
+      "original": "e35e30be73a965256f494e49ea5527ab99a4d1b84c4e859d92820ce38d5a792c"
+    },
+    "reference/environment-detection.md": {
+      "original": "200bf23cb66aadbb0c9fb9215026bc0d1e3a7be8604488aeb9deb544e841d663"
+    },
+    "reference/exhibit-recipes.md": {
+      "original": "306d85be79b061ea23a83449e6bd160df6841c9ad4c84d4dc21944d371772985"
+    },
+    "reference/html-templates.md": {
+      "original": "51f25a49404de4b366c49516193d1bd7983c270ad5c67e223ca7f30cb61c3498"
+    },
+    "reference/page-role-catalog.md": {
+      "original": "78edfdebb4793d544f416b83658a36a2b309c5274d9f3ce66e0a01318c55d1f4"
+    },
+    "reference/port-maintenance.md": {
+      "original": "3bd2e43c6c9b109e638dc83c2bdcafd24cecc3980593f695afc96f713e87d12d"
+    },
+    "reference/print-provenance.md": {
+      "original": "47e17dbe93e3627e15e64974ddc7c4b06d45aefccef7e9cb9c5bbd9bd436fcdd"
+    },
+    "reference/reader-documents.md": {
+      "original": "b2ca73afa6aecf3be62aee8e01d2508445e4848a457b69e8b2fcfacddce4512a"
+    },
+    "reference/report-pipeline.md": {
+      "original": "e4376d80a090b1ae32e39d08e18427909c5ef813b85141d99b2ba1fbcdccd825"
+    },
+    "reference/report-writing.md": {
+      "original": "a83d0d646b5603832f101f3fc1921267663a93001551bf5dca57f2bedc892d73"
+    },
+    "reference/source-patterns.md": {
+      "original": "1018ee25acee622dd6b21eaf908e682c3d5a23dc5e76eb1ec0e152c3be1ae50d"
+    },
+    "reference/svg-and-interaction.md": {
+      "original": "e16944dfbd580c2727a347c2ecd62efa475907ebe93b117a36d7c89c540f0705"
+    },
+    "reference/visual-design.md": {
+      "original": "06b28950ec0fc8af717904601c4229b185c1e763079c4743c1ced307bdd0ee6a"
+    },
+    "reference/visualize-contract.md": {
+      "original": "e0942ac7d42cd3270ab49b2c314ea5fd2f404c543f036e0ac0e6587a70a10afe"
+    },
+    "scripts/diagram-to-html.sh": {
+      "original": "84b0e78eca390307aa1cfa0b284c414861c84442f5ce97224cabad7158d45865",
+      "exec": true
+    },
+    "scripts/exhibit-contract.mjs": {
+      "original": "aae1945f2926255f7d78bd5f97326ac6162ad8a18dd9b33db952a78e5ab5b147"
+    },
+    "scripts/export-paged-report.mjs": {
+      "original": "a8df53007a6bf4d2d1b2514c6a3d6e520d89c73774542191ff75f67596060d1b",
+      "exec": true
+    },
+    "scripts/quality-gate.mjs": {
+      "original": "96aeb54050a66031702747f46a78697b7c75649b04b5fa55649784bfd412550b"
+    },
+    "scripts/report-contract.mjs": {
+      "original": "ba095e52e0a608cf055879586547d2b884162476e6d5d37e130c826049c624a7"
+    },
+    "scripts/report-intake.mjs": {
+      "original": "caf486a6cfebfcdbf8305b4ff609163d1f9450de10af5806d7f5f756b061801e"
+    },
+    "scripts/report-locale.mjs": {
+      "original": "92e2184968b7da493db597ed1c2131cf14bd35bdf85fadb6fdad280340fc65a1"
+    },
+    "scripts/research-adapter.mjs": {
+      "original": "b8fb2e8244720c5be4c2eb672e8e8851571c430a139d876351af59f60943bb16"
+    },
+    "upstream/sync-check.sh": {
+      "original": "91be3d7d40cce87ebb56590c8b80448d5755e8bac2a229502949788996451d91",
+      "exec": true
+    },
+    "upstream/visualize-upstream.md": {
+      "original": "20f22309ce93ee66c2e348eb75fbb69ea5d38a1f9f301522a7b28a734ede5de8"
+    }
+  },
+  "edits": [
+    {
+      "file": "SKILL.md",
+      "reason": "Remove unsupported frontmatter metadata; remove the omitted diagram-viewer redirect and name the CRW dev owner; preserve CodexClaw upstream maintenance attribution.",
+      "hunks": [
+        {
+          "line": 4,
+          "old": [
+            "metadata:\n",
+            "  last-verified: \"2026-09-20\"\n",
+            "  short-description: \"Visual documents, SVG/HTML explainers and PDF delivery, verified in proportion.\"\n",
+            "  keywords: [diagram, visualization, visualize, document, report, SVG, HTML, PDF, interactive, cover, contents, storyline]\n"
+          ]
+        },
+        {
+          "line": 13,
+          "old": [
+            "`crw-dev-visualizer` is the entrypoint; the former `crw-dev-diagram-viewer`\n",
+            "name redirects here. Use `dev`\n"
+          ],
+          "new": [
+            "`crw-dev-visualizer` is the entrypoint. Use `crw-dev`\n"
+          ]
+        },
+        {
+          "line": 21,
+          "old": [
+            "visualizer fixes are implemented and verified in crw first, then adapted to\n"
+          ],
+          "new": [
+            "visualizer fixes are implemented and verified in codexclaw first, then adapted to\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "agents/openai.yaml",
+      "reason": "Add the required interface default_prompt naming this CRW skill while preserving the original implicit-invocation policy.",
+      "hunks": [
+        {
+          "line": 4,
+          "new": [
+            "  default_prompt: \"Create the requested visual document with $crw-dev-visualizer, using the caller scope and the appropriate verification depth.\"\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "assets/editorial-report.html",
+      "reason": "Restore CodexClaw upstream project attribution, historical snapshots and the complete upstream URL; identify CRW as a downstream port without changing visual output.",
+      "hunks": [
+        {
+          "line": 2,
+          "old": [
+            "<!-- Original crw example; provenance: ../reference/source-patterns.md -->\n"
+          ],
+          "new": [
+            "<!-- Original codexclaw example; provenance: ../reference/source-patterns.md -->\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "reference/english-authoring.md",
+      "reason": "Point locale examples at the renamed skill directory so they work independently of repository or installed plugin layout.",
+      "hunks": [
+        {
+          "line": 38,
+          "old": [
+            "From the repository root, produce an A4 Korean fixture and a Letter English fixture with no network access:\n"
+          ],
+          "new": [
+            "Using this skill's installed directory, produce an A4 Korean fixture and a Letter English fixture with no network access:\n"
+          ]
+        },
+        {
+          "line": 41,
+          "old": [
+            "node plugins/crw/skills/dev-visualizer/scripts/report-locale.mjs plugins/crw/skills/dev-visualizer/assets/report-examples/decision-ko.json > /tmp/report-locale-decision-ko-a4.html\n",
+            "node plugins/crw/skills/dev-visualizer/scripts/report-locale.mjs plugins/crw/skills/dev-visualizer/assets/report-examples/reference-en.json > /tmp/report-locale-reference-en-letter.html\n"
+          ],
+          "new": [
+            "node \"<crw-dev-visualizer skill directory>/scripts/report-locale.mjs\" \"<crw-dev-visualizer skill directory>/assets/report-examples/decision-ko.json\" > /tmp/report-locale-decision-ko-a4.html\n",
+            "node \"<crw-dev-visualizer skill directory>/scripts/report-locale.mjs\" \"<crw-dev-visualizer skill directory>/assets/report-examples/reference-en.json\" > /tmp/report-locale-reference-en-letter.html\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "reference/port-maintenance.md",
+      "reason": "Restore CodexClaw upstream project attribution, historical snapshots and the complete upstream URL; identify CRW as a downstream port without changing visual output.",
+      "hunks": [
+        {
+          "line": 1,
+          "old": [
+            "# Visualizer maintenance: crw first, Aside follows\n"
+          ],
+          "new": [
+            "# Visualizer maintenance: codexclaw first, Aside follows\n",
+            "\n",
+            "CRW carries a downstream port of this CodexClaw skill.\n"
+          ]
+        },
+        {
+          "line": 4,
+          "old": [
+            "[crw's dev-visualizer](https://github.com/lidge-jun/codexclaw/tree/dev/plugins/crw/skills/dev-visualizer).\n"
+          ],
+          "new": [
+            "[codexclaw's dev-visualizer](https://github.com/lidge-jun/codexclaw/tree/dev/plugins/codexclaw/skills/dev-visualizer).\n"
+          ]
+        },
+        {
+          "line": 14,
+          "old": [
+            "2. Fix shared behavior in crw and verify the exact changed revision. Record\n"
+          ],
+          "new": [
+            "2. Fix shared behavior in codexclaw and verify the exact changed revision. Record\n"
+          ]
+        },
+        {
+          "line": 19,
+          "old": [
+            "   there instead of adding an Aside runtime dependency to crw.\n"
+          ],
+          "new": [
+            "   there instead of adding an Aside runtime dependency to codexclaw.\n"
+          ]
+        },
+        {
+          "line": 32,
+          "old": [
+            "crw records shared changes and their proof rather than maintaining a second\n"
+          ],
+          "new": [
+            "codexclaw records shared changes and their proof rather than maintaining a second\n"
+          ]
+        },
+        {
+          "line": 42,
+          "old": [
+            "At crw `main` 1914fb679b2f625989be5af2322eec8a749663d4 and `dev`\n"
+          ],
+          "new": [
+            "At codexclaw `main` 1914fb679b2f625989be5af2322eec8a749663d4 and `dev`\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "reference/report-pipeline.md",
+      "reason": "Label repository-only maintenance tests as upstream checks outside this skill and restore their accurate upstream paths.",
+      "hunks": [
+        {
+          "line": 205,
+          "new": [
+            "These checks belong to the upstream CXC v0.2.40 repository; their test files\n",
+            "are not bundled with this staged skill.\n",
+            "\n"
+          ]
+        },
+        {
+          "line": 206,
+          "old": [
+            "node --test plugins/crw/test/report-*.test.mjs\n",
+            "node --test plugins/crw/test/exhibit-contract.test.mjs plugins/crw/test/visualizer-packaging.test.mjs\n"
+          ],
+          "new": [
+            "node --test plugins/codexclaw/test/report-*.test.mjs\n",
+            "node --test plugins/codexclaw/test/exhibit-contract.test.mjs plugins/codexclaw/test/visualizer-packaging.test.mjs\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "upstream/visualize-upstream.md",
+      "reason": "Restore CodexClaw upstream project attribution, historical snapshots and the complete upstream URL; identify CRW as a downstream port without changing visual output.",
+      "hunks": [
+        {
+          "line": 11,
+          "old": [
+            "The repository formerly embedded 1.0.11. The installed crw snapshot inspected\n"
+          ],
+          "new": [
+            "The repository formerly embedded 1.0.11. The installed codexclaw snapshot inspected\n"
+          ]
+        }
+      ]
+    }
+  ]
+}
