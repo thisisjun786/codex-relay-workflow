@@ -96,7 +96,7 @@ func Test22_FLF_6_CreationAnswerIndexWholeOutput(t *testing.T) {
 	}
 	got := []string{}
 	for _, row := range rows {
-		got = append(got, text(row, "detail"))
+		got = append(got, row.Text("detail"))
 	}
 	checkGolden(t, "query plan", nil, runPathsOf(t, filepath.Dir(gd)), got)
 }

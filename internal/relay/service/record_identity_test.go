@@ -55,7 +55,7 @@ func Test29GoRecordsCarryANullFenceBuildThePythonFenceReads(t *testing.T) {
 	record := read(filepath.Join(home, "state", "daemon.json"))
 	scope := (&ScopeRegistry{Root: home + "/scopes", Authority: "isolated"}).Read(socket)
 	receipt := read(filepath.Join(home, "state", "worker-policy.json"))
-	workerIdentity, _ := get(receipt, "worker").(Object)
+	workerIdentity, _ := receipt.Get("worker").(Object)
 	for what, o := range map[string]Object{"daemon.json": record, "scope registration": scope} {
 		if key, value := firstField(t, o, what); key != "python_compatibility_build" || value != nil {
 			t.Fatalf("%s starts with %s=%v, want python_compatibility_build=null: %v", what, key, value, o)
@@ -64,14 +64,14 @@ func Test29GoRecordsCarryANullFenceBuildThePythonFenceReads(t *testing.T) {
 	if n := len(workerIdentity); n == 0 || workerIdentity[n-1].Key != "python_compatibility_build" || workerIdentity[n-1].Value != nil {
 		t.Fatalf("worker-policy.json worker %v: want python_compatibility_build=null last", workerIdentity)
 	}
-	if stop := runProgram(t, home, "--socket", socket, "service", "stop"); stop.Code != 0 || get(runtimeObject(t, stop), "ok") != true {
+	if stop := runProgram(t, home, "--socket", socket, "service", "stop"); stop.Code != 0 || runtimeObject(t, stop).Get("ok") != true {
 		t.Fatalf("Go stop: %+v", stop)
 	}
 	if !supervisor.Wait(10*time.Second) || !worker.Wait(10*time.Second) {
 		t.Fatal("the Go service outlived its stop")
 	}
 	stopped := read(filepath.Join(home, "state", "daemon.json"))
-	if key, value := firstField(t, stopped, "stopped daemon.json"); key != "python_compatibility_build" || value != nil || get(stopped, "pid") != nil || get(stopped, "storeId") != get(record, "storeId") {
+	if key, value := firstField(t, stopped, "stopped daemon.json"); key != "python_compatibility_build" || value != nil || stopped.Get("pid") != nil || stopped.Get("storeId") != record.Get("storeId") {
 		t.Fatalf("stopped Go record: %v", stopped)
 	}
 }
@@ -91,7 +91,7 @@ func Test29SpentServiceRunCreatesNoStore(t *testing.T) {
 				t.Fatal(r)
 			}
 			run := runProgram(t, home, append([]string{"--socket", socket, "service", "run", "--allow-isolated-scope"}, bound...)...)
-			if run.Code != 0 || get(runtimeObject(t, run), "ok") != true {
+			if run.Code != 0 || runtimeObject(t, run).Get("ok") != true {
 				t.Fatalf("service run: %+v", run)
 			}
 			record := read(filepath.Join(home, "state", "daemon.json"))
@@ -106,8 +106,8 @@ func Test29SpentServiceRunCreatesNoStore(t *testing.T) {
 						t.Fatalf("a spent run left %s: %v", name, err)
 					}
 				}
-				if get(record, "storeId") != nil || get(scope, "storeId") != nil {
-					t.Fatalf("a spent run recorded a store: %v %v", get(record, "storeId"), get(scope, "storeId"))
+				if record.Get("storeId") != nil || scope.Get("storeId") != nil {
+					t.Fatalf("a spent run recorded a store: %v %v", record.Get("storeId"), scope.Get("storeId"))
 				}
 				return
 			}
@@ -115,8 +115,8 @@ func Test29SpentServiceRunCreatesNoStore(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if stamp.StoreID == "" || get(record, "storeId") != stamp.StoreID || get(scope, "storeId") != stamp.StoreID {
-				t.Fatalf("published identity %v %v, store %s", get(record, "storeId"), get(scope, "storeId"), stamp.StoreID)
+			if stamp.StoreID == "" || record.Get("storeId") != stamp.StoreID || scope.Get("storeId") != stamp.StoreID {
+				t.Fatalf("published identity %v %v, store %s", record.Get("storeId"), scope.Get("storeId"), stamp.StoreID)
 			}
 		})
 	}

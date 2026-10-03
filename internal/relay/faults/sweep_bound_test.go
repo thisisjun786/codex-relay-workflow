@@ -244,7 +244,7 @@ func cursorRows(t *testing.T, l *Ledger, c context.Context) map[string]string {
 	}
 	out := map[string]string{}
 	for _, r := range rows {
-		out[text(r, "source")] = fmt.Sprintf("%v @ %s", r.Get("position"), text(r, "updated_at"))
+		out[r.Text("source")] = fmt.Sprintf("%v @ %s", r.Get("position"), r.Text("updated_at"))
 	}
 	return out
 }
@@ -300,7 +300,7 @@ func Test_CRW293_StillPresentDoesNotScanSettledAttemptsPerDelivery(t *testing.T)
 	}
 	var plan []string
 	for _, r := range rows {
-		plan = append(plan, text(r, "detail"))
+		plan = append(plan, r.Text("detail"))
 	}
 	if len(plan) == 0 {
 		t.Fatal("no query plan")

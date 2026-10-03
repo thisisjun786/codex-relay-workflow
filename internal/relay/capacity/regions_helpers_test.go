@@ -225,7 +225,7 @@ func id(v any) string {
 		return x
 	case contract.OrderedObject:
 		for _, key := range []string{"agreementId", "followupId"} {
-			if s, ok := get(x, key).(string); ok && x[0].Key == key {
+			if s, ok := x.Get(key).(string); ok && x[0].Key == key {
 				return s
 			}
 		}

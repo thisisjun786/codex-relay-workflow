@@ -61,11 +61,11 @@ func launchRecord(path string) Object {
 	}
 	// Valid JSON that is not an object declares no file; it is not corrupt JSON.
 	record, _ := data.(Object)
-	declared, ok := get(record, "path").(string)
+	declared, ok := record.Get("path").(string)
 	if !ok || pyvalue.Strip(declared) == "" {
 		return absent("the launch declaration names no execution policy file")
 	}
-	return obj("path", declared, "declaredAt", get(record, "declaredAt"), "declaredBy", get(record, "declaredBy"), "unreadable", nil)
+	return obj("path", declared, "declaredAt", record.Get("declaredAt"), "declaredBy", record.Get("declaredBy"), "unreadable", nil)
 }
 
 // ResolveLaunchPolicy is RelayService.resolve_launch_policy over this process's environment.
@@ -81,10 +81,10 @@ func (s *Service) ResolveLaunchPolicy() Object {
 func ResolveLaunchPolicyAt(state, environment string) Object {
 	stated := pyvalue.Strip(environment)
 	record := launchRecord(stateFile(state, "launch-policy.json"))
-	declared := text(get(record, "path"))
-	answer := obj("variable", execution.EnvPolicy, "path", nil, "source", nil, "record", nullable(declared), "environment", nullable(stated), "declaredAt", get(record, "declaredAt"), "declaredBy", get(record, "declaredBy"), "state", nil, "digest", nil, "persisted", nil, "detail", nil, "hint", nil)
-	if truth(get(record, "unreadable")) {
-		return set(answer, "source", "unreadable_record", "detail", get(record, "unreadable"), "hint", "declare the file again with service declare --execution-policy, or drop the record with service declare --forget-execution-policy. A launch does not fall back to this process's environment to cover an unreadable record")
+	declared := pyjson.Text(record.Get("path"))
+	answer := obj("variable", execution.EnvPolicy, "path", nil, "source", nil, "record", nullable(declared), "environment", nullable(stated), "declaredAt", record.Get("declaredAt"), "declaredBy", record.Get("declaredBy"), "state", nil, "digest", nil, "persisted", nil, "detail", nil, "hint", nil)
+	if truth(record.Get("unreadable")) {
+		return set(answer, "source", "unreadable_record", "detail", record.Get("unreadable"), "hint", "declare the file again with service declare --execution-policy, or drop the record with service declare --forget-execution-policy. A launch does not fall back to this process's environment to cover an unreadable record")
 	}
 	if declared != "" && stated != "" && canonicalPolicyPath(declared) != canonicalPolicyPath(stated) {
 		return set(answer, "source", "conflict", "detail", fmt.Sprintf("this service declares %q and %s in this process names %q", declared, execution.EnvPolicy, stated), "hint", "two files are not a preference: unset the variable to launch on the declaration, or declare that other file")
@@ -124,10 +124,10 @@ var ErrEmbeddedNUL = errors.New("embedded null byte")
 // the record is its source (set true); otherwise the environment stands and set is false. A
 // recorded path holding NUL is ErrEmbeddedNUL, the host failure the assignment raises.
 func LaunchVariable(resolution Object) (value string, set bool, err error) {
-	if get(resolution, "source") != "record" {
+	if resolution.Get("source") != "record" {
 		return "", false, nil
 	}
-	value = text(get(resolution, "path"))
+	value = pyjson.Text(resolution.Get("path"))
 	if strings.IndexByte(value, 0) >= 0 {
 		return "", false, ErrEmbeddedNUL
 	}
@@ -135,7 +135,7 @@ func LaunchVariable(resolution Object) (value string, set bool, err error) {
 }
 
 func LaunchRefusal(r Object) Object {
-	source := text(get(r, "source"))
+	source := pyjson.Text(r.Get("source"))
 	if source != "conflict" && source != "unreadable_record" {
 		return nil
 	}
@@ -143,7 +143,7 @@ func LaunchRefusal(r Object) Object {
 	if source == "unreadable_record" {
 		reason = "launch_policy_unreadable"
 	}
-	return obj("ok", false, "reason", reason, "detail", get(r, "detail"), "launchPolicy", r)
+	return obj("ok", false, "reason", reason, "detail", r.Get("detail"), "launchPolicy", r)
 }
 
 // errNoHome is pathlib's RuntimeError for an unknown ~user, worded as Python words it.
@@ -184,7 +184,7 @@ func (s *Service) Declare(path, actor string, forget bool) (out Object, err erro
 		if e := syscall.Unlink(s.path("launch-policy.json")); e != nil && !errors.Is(e, os.ErrNotExist) {
 			return nil, &os.PathError{Op: "unlink", Path: s.path("launch-policy.json"), Err: e}
 		}
-		return obj("ok", true, "reason", nil, "forgot", get(before, "path"), "actor", actor, "launchPolicy", s.ResolveLaunchPolicy(), "note", note), nil
+		return obj("ok", true, "reason", nil, "forgot", before.Get("path"), "actor", actor, "launchPolicy", s.ResolveLaunchPolicy(), "note", note), nil
 	}
 	written := obj("schemaVersion", 1, "path", path, "declaredAt", stamp(), "declaredBy", actor)
 	if err = atomicWrite(s.path("launch-policy.json"), written); err != nil {

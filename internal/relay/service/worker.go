@@ -29,10 +29,10 @@ type Owned struct {
 
 func (s *Service) Own(allow, requireIntent bool, lockFD, scopeFD *int) (*Owned, error) {
 	gate := s.AuthorityCheck(allow)
-	if !truth(get(gate, "ok")) {
-		return nil, &Refused{text(get(gate, "reason")), text(get(gate, "detail"))}
+	if !truth(gate.Get("ok")) {
+		return nil, &Refused{pyjson.Text(gate.Get("reason")), pyjson.Text(gate.Get("detail"))}
 	}
-	if requireIntent && !truth(get(s.Intent(), "enabled")) {
+	if requireIntent && !truth(s.Intent().Get("enabled")) {
 		return nil, &Refused{"service_disabled", "this service is not enabled; running it would ignore the owner's intent"}
 	}
 	token, err := randomID()
@@ -63,9 +63,9 @@ func (s *Service) Own(allow, requireIntent bool, lockFD, scopeFD *int) (*Owned, 
 			_ = l.Close()
 			return nil, e
 		}
-		if !truth(get(claim, "ok")) {
+		if !truth(claim.Get("ok")) {
 			_ = l.Close()
-			return nil, &Refused{text(get(claim, "reason")), pyjson.Dumps(get(claim, "held_by"), pyjson.Options{})}
+			return nil, &Refused{pyjson.Text(claim.Get("reason")), pyjson.Dumps(claim.Get("held_by"), pyjson.Options{})}
 		}
 	} else if s.Prepare != nil {
 		if err = s.Prepare(); err != nil {
@@ -108,16 +108,16 @@ func (s *Service) Adopt(token *string, lockFD, scopeFD *int) error {
 		return fail("supervised_invocation_incomplete", "a supervised worker needs the token and both descriptors together")
 	}
 	r := s.Record()
-	if !truth(get(r, "token")) || text(get(r, "token")) != *token {
+	if !truth(r.Get("token")) || pyjson.Text(r.Get("token")) != *token {
 		return fail("supervised_token_mismatch", "the token does not match this state directory")
 	}
-	if v := get(r, "stateDir"); v != nil && v != s.Selection.Path {
+	if v := r.Get("stateDir"); v != nil && v != s.Selection.Path {
 		return fail("supervised_state_mismatch", "the record names a different state directory")
 	}
-	if v := get(r, "socketPath"); v != nil && v != s.Socket {
+	if v := r.Get("socketPath"); v != nil && v != s.Socket {
 		return fail("supervised_socket_mismatch", "the record names a different operating scope")
 	}
-	if v := get(r, "storeId"); v != nil && v != s.StoreID {
+	if v := r.Get("storeId"); v != nil && v != s.StoreID {
 		return fail("supervised_store_mismatch", "the record names a different store than this worker opened")
 	}
 	var want, got unix.Stat_t
@@ -132,8 +132,8 @@ func (s *Service) Adopt(token *string, lockFD, scopeFD *int) error {
 	}
 	// Go's prctl is thread-scoped. SysProcAttr.Pdeathsig arms the worker on the
 	// exec thread; this check closes the parent-death-before-bootstrap race.
-	if os.Getppid() != num(get(r, "pid")) {
-		return fail("supervisor_already_gone", fmt.Sprintf("parent is %d, not the recorded supervisor %v", os.Getppid(), get(r, "pid")))
+	if os.Getppid() != num(r.Get("pid")) {
+		return fail("supervisor_already_gone", fmt.Sprintf("parent is %d, not the recorded supervisor %v", os.Getppid(), r.Get("pid")))
 	}
 	return nil
 }
@@ -143,7 +143,7 @@ func (s *Service) PublishWorkerPolicy(policy Object) error {
 	}
 	r := s.Record()
 	pid := os.Getpid()
-	if (num(get(r, "pid")) != pid && num(get(r, "pid")) != os.Getppid()) || !truth(get(r, "token")) {
+	if (num(r.Get("pid")) != pid && num(r.Get("pid")) != os.Getppid()) || !truth(r.Get("token")) {
 		return fmt.Errorf("worker policy publication needs this process's service run")
 	}
 	info, err := os.Stat(s.Selection.DBPath())
@@ -153,7 +153,7 @@ func (s *Service) PublishWorkerPolicy(policy Object) error {
 	stat := info.Sys().(*syscall.Stat_t)
 	run := Object{}
 	for _, key := range strings.Fields("token pid startTicks installationId stateDir socketPath storeId scopeRoot scopeAuthority") {
-		run = set(run, key, get(r, key))
+		run = set(run, key, r.Get(key))
 	}
 	run = set(run, "dbDevice", int64(stat.Dev), "dbInode", int64(stat.Ino))
 	// The worker's python_compatibility_build is null for the reason NewRecord gives.
@@ -262,12 +262,12 @@ func (s *Service) readWorkerPolicy(ctx context.Context, storeID func() string, h
 	if err != nil || r == nil {
 		return absent("worker_policy_unreadable")
 	}
-	if n, ok := get(receipt, "schemaVersion").(json.Number); !ok || n != "1" {
+	if n, ok := receipt.Get("schemaVersion").(json.Number); !ok || n != "1" {
 		return absent("worker_policy_version_unknown")
 	}
-	worker, wok := get(receipt, "worker").(Object)
-	run, rok := get(receipt, "service").(Object)
-	policy, pok := get(receipt, "policy").(Object)
+	worker, wok := receipt.Get("worker").(Object)
+	run, rok := receipt.Get("service").(Object)
+	policy, pok := receipt.Get("policy").(Object)
 	if !wok || !rok || !pok {
 		return absent("worker_policy_unreadable")
 	}
@@ -279,17 +279,17 @@ func (s *Service) readWorkerPolicy(ctx context.Context, storeID func() string, h
 		i, e := n.Int64()
 		return e == nil && i >= int64(minimum)
 	}
-	if !validInt(get(r, "pid"), 1) || !validInt(get(r, "startTicks"), 0) || (get(r, "workerPid") != nil && !validInt(get(r, "workerPid"), 1)) {
+	if !validInt(r.Get("pid"), 1) || !validInt(r.Get("startTicks"), 0) || (r.Get("workerPid") != nil && !validInt(r.Get("workerPid"), 1)) {
 		return absent("worker_policy_process_mismatch")
 	}
-	pid, ticks := get(r, "pid"), get(r, "startTicks")
-	if truth(get(r, "workerPid")) {
-		pid, ticks = get(r, "workerPid"), get(r, "workerStartTicks")
+	pid, ticks := r.Get("pid"), r.Get("startTicks")
+	if truth(r.Get("workerPid")) {
+		pid, ticks = r.Get("workerPid"), r.Get("workerStartTicks")
 	}
-	if !validInt(pid, 1) || !validInt(ticks, 0) || !validInt(get(worker, "pid"), 1) || !validInt(get(worker, "startTicks"), 0) || !equal(get(worker, "pid"), pid) || !equal(get(worker, "startTicks"), ticks) {
+	if !validInt(pid, 1) || !validInt(ticks, 0) || !validInt(worker.Get("pid"), 1) || !validInt(worker.Get("startTicks"), 0) || !equal(worker.Get("pid"), pid) || !equal(worker.Get("startTicks"), ticks) {
 		return absent("worker_policy_process_mismatch")
 	}
-	if !truth(get(r, "bootId")) || !equal(get(worker, "bootId"), get(r, "bootId")) || !equal(get(r, "bootId"), BootID()) {
+	if !truth(r.Get("bootId")) || !equal(worker.Get("bootId"), r.Get("bootId")) || !equal(r.Get("bootId"), BootID()) {
 		return absent("worker_policy_boot_mismatch")
 	}
 	info, err := os.Stat(s.Selection.DBPath())
@@ -299,11 +299,11 @@ func (s *Service) readWorkerPolicy(ctx context.Context, storeID func() string, h
 	stat := info.Sys().(*syscall.Stat_t)
 	identity := Object{}
 	for _, k := range strings.Fields("token pid startTicks installationId stateDir socketPath storeId scopeRoot scopeAuthority") {
-		identity = set(identity, k, get(r, k))
+		identity = set(identity, k, r.Get(k))
 	}
 	identity = set(identity, "dbDevice", int64(stat.Dev), "dbInode", int64(stat.Ino))
 	currentStoreID := storeID()
-	if !sameObject(run, identity) || !truth(get(r, "token")) || currentStoreID == "" || get(r, "storeId") != currentStoreID || get(r, "installationId") != s.InstallationID || get(r, "stateDir") != s.Selection.Path || !equal(get(r, "socketPath"), nullable(s.Socket)) || get(r, "scopeRoot") != s.Scope.Root || get(r, "scopeAuthority") != s.Scope.Authority {
+	if !sameObject(run, identity) || !truth(r.Get("token")) || currentStoreID == "" || r.Get("storeId") != currentStoreID || r.Get("installationId") != s.InstallationID || r.Get("stateDir") != s.Selection.Path || !equal(r.Get("socketPath"), nullable(s.Socket)) || r.Get("scopeRoot") != s.Scope.Root || r.Get("scopeAuthority") != s.Scope.Authority {
 		return absent("worker_policy_service_mismatch")
 	}
 	held := !holdPidfd
@@ -327,7 +327,7 @@ func (s *Service) readWorkerPolicy(ctx context.Context, storeID func() string, h
 			return absent("worker_policy_scope_mismatch")
 		}
 		for _, k := range strings.Fields("token pid startTicks bootId storeId installationId stateDir socketPath") {
-			if !equal(get(scope, k), get(r, k)) {
+			if !equal(scope.Get(k), r.Get(k)) {
 				return absent("worker_policy_scope_mismatch")
 			}
 		}
@@ -352,5 +352,5 @@ func (s *Service) readWorkerPolicy(ctx context.Context, storeID func() string, h
 	if !bytes.Equal(r1, r2) || !os.SameFile(info, after) || (s.Socket != "" && !sameObject(scope, s.Scope.Read(s.Socket))) || unavailable() {
 		return absent("worker_policy_observation_changed")
 	}
-	return obj("observed", true, "reason", nil, "policy", policy, "worker", worker, "service", run, "observedAt", get(receipt, "observedAt"))
+	return obj("observed", true, "reason", nil, "policy", policy, "worker", worker, "service", run, "observedAt", receipt.Get("observedAt"))
 }

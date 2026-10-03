@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -149,7 +150,7 @@ func Test27_MST_7_WorkerPolicyDisappearsAfterCreation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	host := &managedFake{operations: map[string]map[string]any{}, settings: obj(obj(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, standby: "completed"}
+	host := &managedFake{operations: map[string]map[string]any{}, settings: pyjson.Map(pyjson.Map(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, standby: "completed"}
 	ready := true
 	host.onCreate = func() { ready = false }
 	start := &Start{Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) {
@@ -196,7 +197,7 @@ func Test27_MST_7_CreationEnvironmentDriftRefusesRegistration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	host := &managedFake{operations: map[string]map[string]any{}, settings: obj(obj(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, creationEnvironmentChanged: true}
+	host := &managedFake{operations: map[string]map[string]any{}, settings: pyjson.Map(pyjson.Map(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, creationEnvironmentChanged: true}
 	start := &Start{Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
 	result, err := start.Run(ctx, raw)
 	if err != nil {
@@ -228,7 +229,7 @@ func Test27_MST_3_PausedPartialShellNoRecoverySend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	host := &managedFake{operations: map[string]map[string]any{}, settings: obj(obj(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, partial: true, paused: true}
+	host := &managedFake{operations: map[string]map[string]any{}, settings: pyjson.Map(pyjson.Map(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, partial: true, paused: true}
 	start := &Start{Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
 	result, err := start.Run(ctx, raw)
 	if err != nil {
@@ -256,7 +257,7 @@ func Test27_MST_7_PausedChildPreservesShell(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	host := &managedFake{operations: map[string]map[string]any{}, settings: obj(obj(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, standby: "completed", paused: true}
+	host := &managedFake{operations: map[string]map[string]any{}, settings: pyjson.Map(pyjson.Map(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, standby: "completed", paused: true}
 	start := &Start{Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
 	result, err := start.Run(ctx, raw)
 	if err != nil {
@@ -284,7 +285,7 @@ func Test27_MST_6_CreatedChildIsAuthorizedOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	host := &managedFake{operations: map[string]map[string]any{}, settings: obj(obj(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, standby: "completed"}
+	host := &managedFake{operations: map[string]map[string]any{}, settings: pyjson.Map(pyjson.Map(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, standby: "completed"}
 	start := &Start{Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
 	result, err := start.Run(ctx, raw)
 	if err != nil {
@@ -323,7 +324,7 @@ func Test27_MST_3_UnknownRecoverySendIsNotRetried(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	host := &managedFake{operations: map[string]map[string]any{}, settings: obj(obj(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, partial: true, sendStatus: "outcome_unknown"}
+	host := &managedFake{operations: map[string]map[string]any{}, settings: pyjson.Map(pyjson.Map(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, partial: true, sendStatus: "outcome_unknown"}
 	start := &Start{Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
 	for range 2 {
 		result, e := start.Run(ctx, raw)
@@ -367,7 +368,7 @@ func checkManagedScopeDrift(t *testing.T, column, value string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	host := &managedFake{operations: map[string]map[string]any{}, settings: obj(obj(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, standby: "completed"}
+	host := &managedFake{operations: map[string]map[string]any{}, settings: pyjson.Map(pyjson.Map(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, standby: "completed"}
 	var observed string
 	host.beforeSend = func(in SendRequest) {
 		if in.GuardRPCRequests != 10 {
@@ -384,7 +385,7 @@ func checkManagedScopeDrift(t *testing.T, column, value string) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		observed = str(verdict["code"])
+		observed = pyjson.Text(verdict["code"])
 	}
 	start := &Start{Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
 	result, err := start.Run(ctx, raw)
@@ -413,7 +414,7 @@ func Test27_MST_3_UncertainFirstTurnNeverRecovers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	host := &managedFake{operations: map[string]map[string]any{}, settings: obj(obj(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, partial: true, attemptedTurn: true}
+	host := &managedFake{operations: map[string]map[string]any{}, settings: pyjson.Map(pyjson.Map(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, partial: true, attemptedTurn: true}
 	start := &Start{Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
 	for range 2 {
 		receipt, e := start.Run(ctx, raw)
@@ -446,7 +447,7 @@ func Test27_MST_4_LedgerReplacementBeforeCreationWithholdsEffect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	host := &managedFake{operations: map[string]map[string]any{}, settings: obj(obj(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}}
+	host := &managedFake{operations: map[string]map[string]any{}, settings: pyjson.Map(pyjson.Map(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}}
 	host.onGetOperation = func(id string) {
 		if strings.HasPrefix(id, "managed-create-") {
 			host.ledger = map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 3}
@@ -497,7 +498,7 @@ func Test27_MST_4_PreflightRefusesBeforeHostEffects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	host := &managedFake{operations: map[string]map[string]any{}, settings: obj(obj(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}}
+	host := &managedFake{operations: map[string]map[string]any{}, settings: pyjson.Map(pyjson.Map(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}}
 	start := &Start{Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "worker_policy_unconfigured", nil }}
 	result, err := start.Run(ctx, raw)
 	if err != nil {
@@ -529,7 +530,7 @@ func Test27_MST_2_RegisteredShellCompletesCriteriaAfterCrash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	host := &managedFake{operations: map[string]map[string]any{}, settings: obj(obj(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, standby: "completed"}
+	host := &managedFake{operations: map[string]map[string]any{}, settings: pyjson.Map(pyjson.Map(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, standby: "completed"}
 	host.onCreate = func() {
 		_, e := s.DB.ExecContext(ctx, "CREATE TRIGGER fail_criteria BEFORE INSERT ON canonical_criteria BEGIN SELECT RAISE(ABORT,'caller died'); END")
 		if e != nil {
@@ -573,7 +574,7 @@ func Test27_MST_2_BusinessReceiptReplayedAfterAdmissionCrash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	host := &managedFake{operations: map[string]map[string]any{}, settings: obj(obj(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, standby: "completed"}
+	host := &managedFake{operations: map[string]map[string]any{}, settings: pyjson.Map(pyjson.Map(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, standby: "completed"}
 	host.onSend = func(in SendRequest) {
 		if strings.HasPrefix(in.RequestID, "managed-business-") {
 			_, e := s.DB.ExecContext(ctx, "CREATE TRIGGER fail_admission BEFORE INSERT ON generation_turns BEGIN SELECT RAISE(ABORT,'caller died'); END")
@@ -615,7 +616,7 @@ func Test27_MST_2_StandbyRecoveryUsesRetainedShell(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	host := &managedFake{operations: map[string]map[string]any{}, settings: obj(obj(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, standby: "completed", partial: true}
+	host := &managedFake{operations: map[string]map[string]any{}, settings: pyjson.Map(pyjson.Map(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, standby: "completed", partial: true}
 	start := &Start{Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
 	for range 2 {
 		result, e := start.Run(ctx, raw)
@@ -652,7 +653,7 @@ func Test27_MST_3_StandbyIncompleteRetainsChildUntilRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	host := &managedFake{operations: map[string]map[string]any{}, settings: obj(obj(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, standby: "inProgress"}
+	host := &managedFake{operations: map[string]map[string]any{}, settings: pyjson.Map(pyjson.Map(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, standby: "inProgress"}
 	start := &Start{Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
 	result, err := start.Run(ctx, raw)
 	if err != nil {
@@ -692,7 +693,7 @@ func Test27_MST_3_UnknownCreationNeverCreatesReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	host := &managedFake{operations: map[string]map[string]any{}, settings: obj(obj(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, creationStatus: "outcome_unknown"}
+	host := &managedFake{operations: map[string]map[string]any{}, settings: pyjson.Map(pyjson.Map(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, creationStatus: "outcome_unknown"}
 	start := &Start{Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
 	for range 2 {
 		receipt, e := start.Run(ctx, raw)
@@ -725,7 +726,7 @@ func Test27_MST_1_FakeHostStartReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	child := obj(obj(req["child"])["settings"])
+	child := pyjson.Map(pyjson.Map(req["child"])["settings"])
 	host := &managedFake{operations: map[string]map[string]any{}, settings: child, ledger: map[string]any{"realPath": filepath.Join(dir, "operations"), "device": 1, "inode": 2}, standby: "completed"}
 	start := &Start{Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
 	result, err := start.Run(ctx, raw)

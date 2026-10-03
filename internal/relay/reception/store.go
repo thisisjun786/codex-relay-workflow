@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
@@ -18,13 +19,13 @@ type Reader struct{ Policy registry.RolePolicy }
 
 func (r Reader) Read(ctx context.Context, s *store.Store, receiver string, packet, observation, ledger any) (Obj, error) {
 	region := Get(packet, "envelope")
-	role := roles[str(Get(region, "direction"))][1]
+	role := roles[pyjson.Text(Get(region, "direction"))][1]
 	own := role + "TaskId"
 	record, provenance, notes := O(own, receiver), O(own, "receiver"), []string{}
 	for _, k := range []string{"repository", "prNumber", "headSha", "artifactPath", "artifactDigest"} {
 		if v := Get(observation, k); v != nil {
 			Set(&record, k, v)
-			Set(&provenance, k, "observation: "+str(Get(observation, "source")))
+			Set(&provenance, k, "observation: "+pyjson.Text(Get(observation, "source")))
 		}
 	}
 	answer := func() Obj { return O("record", record, "provenance", provenance, "notes", notes) }
@@ -94,7 +95,7 @@ func (r Reader) readStore(ctx context.Context, s *store.Store, receiver, role st
 		*notes = append(*notes, fmt.Sprintf("the receiver holds %d relationship(s), %d live, and the packet names none of them, so no relationship was read", len(held), len(live)))
 		return nil
 	}
-	rid := str(row.Get("relationship_id"))
+	rid := pyjson.Text(row.Get("relationship_id"))
 	answer("relationId", rid, "relationships ("+how+")")
 	for _, k := range []string{"parent", "child"} {
 		if k != role {
@@ -126,17 +127,17 @@ func (r Reader) readStore(ctx context.Context, s *store.Store, receiver, role st
 		if Get(link, "revision") == nil {
 			return fmt.Errorf("IndexError: No item with that key")
 		}
-		status := str(Get(link, "status"))
+		status := pyjson.Text(Get(link, "status"))
 		if status != "active" && status != "paused" || truth(Get(link, "supersededBy")) {
 			detail := ""
 			if truth(Get(link, "supersededBy")) {
 				detail = ", superseded by " + pyvalue.Str(Get(link, "supersededBy"))
 			}
-			*notes = append(*notes, "the execution link "+str(Get(link, "linkId"))+" is "+status+detail+", so it no longer answers for this relationship and its revision is unread")
+			*notes = append(*notes, "the execution link "+pyjson.Text(Get(link, "linkId"))+" is "+status+detail+", so it no longer answers for this relationship and its revision is unread")
 		} else if Get(Get(link, "lower"), "taskId") != row.Get("child_task_id") || Get(Get(link, "upper"), "taskId") != row.Get("parent_task_id") {
-			*notes = append(*notes, "the execution link "+str(Get(link, "linkId"))+" now joins "+pyvalue.Str(Get(Get(link, "upper"), "taskId"))+" and "+pyvalue.Str(Get(Get(link, "lower"), "taskId"))+", not this relationship's tasks, so it has been handed over and its revision is unread")
+			*notes = append(*notes, "the execution link "+pyjson.Text(Get(link, "linkId"))+" now joins "+pyvalue.Str(Get(Get(link, "upper"), "taskId"))+" and "+pyvalue.Str(Get(Get(link, "lower"), "taskId"))+", not this relationship's tasks, so it has been handed over and its revision is unread")
 		} else {
-			answer("relationRevision", Get(link, "revision"), "scope_links "+str(Get(link, "linkId")))
+			answer("relationRevision", Get(link, "revision"), "scope_links "+pyjson.Text(Get(link, "linkId")))
 		}
 	}
 	if e = readCriteria(ctx, s, rid, answer, notes); e != nil {
@@ -188,7 +189,7 @@ func tenureStart(ctx context.Context, s *store.Store, rid string, current any, n
 	}
 	var start int64
 	for _, row := range rows {
-		v, e := registry.DecodeJSON(str(row.Get("detail")))
+		v, e := registry.DecodeJSON(pyjson.Text(row.Get("detail")))
 		generation, ok := evidence.PyInt(Get(v, "executionGeneration"))
 		if e != nil || !ok {
 			*notes = append(*notes, "a returning registration of "+rid+" is journalled without a readable generation, so the current tenure is unread")
@@ -247,7 +248,7 @@ func readCriteria(ctx context.Context, s *store.Store, rid string, answer func(s
 			*notes = append(*notes, "the registered criteria are not one valid set: stored required flag for "+quote.Value(row.Get("criterion_id"))+" is not 0 or 1")
 			return nil
 		}
-		criteria = append(criteria, delivery.Criterion{ID: str(row.Get("criterion_id")), Title: str(row.Get("title")), Required: required == 1})
+		criteria = append(criteria, delivery.Criterion{ID: pyjson.Text(row.Get("criterion_id")), Title: pyjson.Text(row.Get("title")), Required: required == 1})
 		sources[row.Get("source_ref")] = true
 		digests[row.Get("set_digest")] = true
 	}
@@ -259,7 +260,7 @@ func readCriteria(ctx context.Context, s *store.Store, rid string, answer func(s
 	return nil
 }
 func (r Reader) readSettings(ctx context.Context, reg *registry.Registry, row store.Row, answer func(string, any, string), notes *[]string) error {
-	child, parent := str(row.Get("child_task_id")), str(row.Get("parent_task_id"))
+	child, parent := pyjson.Text(row.Get("child_task_id")), pyjson.Text(row.Get("parent_task_id"))
 	settings := map[string]Obj{}
 	for _, task := range []string{child, parent} {
 		raw, e := reg.Store.One(ctx, "SELECT settings FROM authorized_settings WHERE task_id = ?", task)
@@ -274,7 +275,7 @@ func (r Reader) readSettings(ctx context.Context, reg *registry.Registry, row st
 			*notes = append(*notes, "no settings are recorded for "+task+about)
 			continue
 		}
-		rawSettings := str(raw.Get("settings"))
+		rawSettings := pyjson.Text(raw.Get("settings"))
 		if problem := JSONSettingsDepthProblem([]byte(rawSettings)); problem != "" {
 			*notes = append(*notes, "the recorded settings of "+task+" are unreadable: "+problem)
 			continue
@@ -295,7 +296,7 @@ func (r Reader) readSettings(ctx context.Context, reg *registry.Registry, row st
 			if v == nil || pyvalue.TypeName(v) == "str" {
 				return v
 			}
-			*notes = append(*notes, "the recorded "+name+" of "+task+" is a "+pyvalue.TypeName(v)+", not the text a writer records, so it is unread")
+			*notes = append(*notes, "the recorded "+name+" of "+task+" is "+quote.Kind(v)+", not the text a writer records, so it is unread")
 			return nil
 		}
 		if task == child {
@@ -332,7 +333,7 @@ func (r Reader) readSettings(ctx context.Context, reg *registry.Registry, row st
 		if !ok {
 			continue
 		}
-		role := str(roles[0].Get("role"))
+		role := pyjson.Text(roles[0].Get("role"))
 		if !r.Policy.Declared {
 			*notes = append(*notes, "no role policy resolved for this check ("+r.Policy.Detail+"; it reads the one this store's service declares with service declare --execution-policy, else the variable), so whether the recorded pair of "+task+" is authorised for "+role+" is unchecked")
 			continue
@@ -379,7 +380,7 @@ func describeRole(finding Obj) string {
 		return "its recorded authorization is " + quote.Value(Get(finding, "recorded")) + " while the policy for that role is " + quote.Value(Get(finding, "expected"))
 	}
 	if d := Get(finding, "detail"); d != nil {
-		return str(d)
+		return pyjson.Text(d)
 	}
 	return "its recorded authorization does not match this policy"
 }
@@ -401,7 +402,7 @@ func (r Reader) Check(ctx context.Context, s *store.Store, packet any, receiver 
 	}{{"recordSource", "store"}, {"receiver", receiver}, {"record", Get(reading, "record")}, {"provenance", Get(reading, "provenance")}, {"notes", Get(reading, "notes")}} {
 		Set(&answer, p.k, p.v)
 	}
-	held, e := Ladder(ctx, s, str(Get(Get(reading, "record"), "relationId")), str(Get(Get(packet, "envelope"), "subject")), observation)
+	held, e := Ladder(ctx, s, pyjson.Text(Get(Get(reading, "record"), "relationId")), pyjson.Text(Get(Get(packet, "envelope"), "subject")), observation)
 	if e != nil {
 		return nil, e
 	}

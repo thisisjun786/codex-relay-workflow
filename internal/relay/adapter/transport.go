@@ -10,18 +10,12 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 )
 
 func slicesSort(values []string) { sort.Strings(values) }
-func field(o contract.OrderedObject, key string) any {
-	for _, f := range o {
-		if f.Key == key {
-			return f.Value
-		}
-	}
-	return nil
-}
+
 func plain(value any) any {
 	switch x := value.(type) {
 	case contract.OrderedObject:
@@ -201,7 +195,7 @@ func (a *Adapter) Send(ctx context.Context, requestID, thread, message string, s
 		t.mu.Unlock()
 		return nil, err
 	}
-	if retained != nil && text(retained["status"]) != "not_attempted" {
+	if retained != nil && pyjson.Text(retained["status"]) != "not_attempted" {
 		r, err := a.receipt(ctx, requestID, true)
 		t.mu.Unlock()
 		return r, err
@@ -284,7 +278,7 @@ func (a *Adapter) guardedSend(ctx context.Context, requestID, thread, message st
 			receipt["retrySafe"] = true
 			receipt["attemptedEffects"] = []string{}
 		}
-		receipt["error"] = method + ": " + text(field(rpc, "message"))
+		receipt["error"] = method + ": " + pyjson.Text(rpc.Get("message"))
 		receipt["rpcError"] = rpc
 	}
 	action := func() error {
@@ -306,7 +300,7 @@ func (a *Adapter) guardedSend(ctx context.Context, requestID, thread, message st
 		}
 		status := statusObject["type"]
 		receipt["statusBeforeResume"] = status
-		if text(status) == "active" {
+		if pyjson.Text(status) == "active" {
 			refuse("thread/read", contract.OrderedObject{{Key: "code", Value: "thread_busy"}, {Key: "message", Value: "Thread is active; message withheld. Wait for completion."}}, false)
 			return nil
 		}

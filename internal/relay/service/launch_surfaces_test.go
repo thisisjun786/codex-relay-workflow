@@ -138,7 +138,7 @@ func TestLaunchPolicy_the_receive_check_settles_the_declaration_first(t *testing
 		t.Fatal(err)
 	}
 	got = relay(t, "--state", state, "packet-check", "--packet", packet, "--receiver", "")
-	want := "{\n  \"error\": \"refused\",\n  \"reason\": \"malformed_receipt\",\n  \"detail\": \"a packet carries a relay-envelope/1 region under envelope, not a NoneType\"\n}\n"
+	want := "{\n  \"error\": \"refused\",\n  \"reason\": \"malformed_receipt\",\n  \"detail\": \"a packet carries a relay-envelope/1 region under envelope, not null\"\n}\n"
 	if got.code != 2 || got.stdout != want {
 		t.Fatalf("empty receiver: exit %d\n%s", got.code, got.stdout)
 	}

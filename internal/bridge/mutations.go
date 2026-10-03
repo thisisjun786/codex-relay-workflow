@@ -9,6 +9,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 // expectedSettingsKeys is bridge.py EXPECTED_SETTINGS_KEYS, sorted as its refusal lists them.
@@ -45,7 +46,7 @@ func (b *Bridge) SendMessageToThread(ctx context.Context, in SendMessage) (ledge
 		slices.Sort(unknown)
 		return nil, &Invalid{fmt.Sprintf("expected_settings has unknown keys %s; supported keys are %s", show(anyStrings(unknown)), show(anyStrings(expectedSettingsKeys)))}
 	}
-	if policy := object(expected["expected_sandbox_policy"]); policy != nil || expected["expected_sandbox_policy"] != nil {
+	if policy := pyjson.Map(expected["expected_sandbox_policy"]); policy != nil || expected["expected_sandbox_policy"] != nil {
 		if err := validateSandboxPolicy(policy); err != nil {
 			return nil, err
 		}
@@ -67,21 +68,21 @@ func (b *Bridge) SendMessageToThread(ctx context.Context, in SendMessage) (ledge
 	var contract settings.Contract
 	validate := func() error {
 		var err error
-		auth, err = b.Policy.Authorize(execution.Input{Model: expected["model"], Effort: expected["reasoning_effort"], CWD: text(expected["cwd"]), Exception: in.Exception, Role: in.Role})
+		auth, err = b.Policy.Authorize(execution.Input{Model: expected["model"], Effort: expected["reasoning_effort"], CWD: pyjson.Text(expected["cwd"]), Exception: in.Exception, Role: in.Role})
 		if err != nil {
 			return err
 		}
-		contract = settings.Contract{CWD: text(expected["cwd"]), Sandbox: text(expected["sandbox"]), ExpectedPolicy: object(expected["expected_sandbox_policy"]), Model: auth.Model, ReasoningEffort: auth.Effort}
+		contract = settings.Contract{CWD: pyjson.Text(expected["cwd"]), Sandbox: pyjson.Text(expected["sandbox"]), ExpectedPolicy: pyjson.Map(expected["expected_sandbox_policy"]), Model: auth.Model, ReasoningEffort: auth.Effort}
 		if roots, ok := expected["runtime_workspace_roots"].([]any); ok {
 			for _, root := range roots {
-				contract.Roots = append(contract.Roots, text(root))
+				contract.Roots = append(contract.Roots, pyjson.Text(root))
 			}
 			if contract.Roots == nil {
 				contract.Roots = []string{}
 			}
 		}
 		if approval, ok := expected["approval_policy"]; ok {
-			contract.ApprovalPolicy = text(approval)
+			contract.ApprovalPolicy = pyjson.Text(approval)
 			if approval == nil {
 				// Python checks None against the same list as any other undeclarable value.
 				return &Invalid{`approval_policy must be one of "never", "on-request", "untrusted"; a granular policy has no name a caller can declare`}
@@ -106,7 +107,7 @@ func (b *Bridge) SendMessageToThread(ctx context.Context, in SendMessage) (ledge
 		if err != nil {
 			return err
 		}
-		status := text(object(object(state["thread"])["status"])["type"])
+		status := pyjson.Text(pyjson.Map(pyjson.Map(state["thread"])["status"])["type"])
 		if status == "active" {
 			message := "Thread is active; message withheld. This path starts a new turn and an active thread already has one. To instruct the turn that is running, read get_active_turn and call steer_thread with that turn id. Waiting is for when there is nothing to say yet."
 			return &appserver.RPCError{Method: "thread/read", Message: message, Object: map[string]any{"code": "thread_busy", "message": message}}
@@ -179,7 +180,7 @@ func (b *Bridge) SteerThread(ctx context.Context, requestID, threadID, turnID, m
 		if err != nil {
 			return err
 		}
-		status := text(object(object(state["thread"])["status"])["type"])
+		status := pyjson.Text(pyjson.Map(pyjson.Map(state["thread"])["status"])["type"])
 		if status != "active" {
 			code, message := "thread_not_steerable", "Thread status "+status+"; steer withheld."
 			switch status {
@@ -219,7 +220,7 @@ func (b *Bridge) PauseGoal(ctx context.Context, requestID, threadID string) (led
 		if err != nil {
 			return err
 		}
-		before := object(response["goal"])
+		before := pyjson.Map(response["goal"])
 		if before == nil {
 			message := "Thread has no goal to pause."
 			return &appserver.RPCError{Method: "thread/goal/get", Message: message, Object: map[string]any{"code": "no_goal", "message": message}}
@@ -239,7 +240,7 @@ func (b *Bridge) PauseGoal(ctx context.Context, requestID, threadID string) (led
 		if err != nil {
 			return err
 		}
-		after := object(afterResponse["goal"])
+		after := pyjson.Map(afterResponse["goal"])
 		receipt["goalAfter"] = clipped(after, 4000, false)
 		receipt["concurrency"] = "no_host_precondition_for_goal_status"
 		receipt["concurrencyMeaning"] = "thread/goal/set takes no expected status, so this pause is not atomic. Read the goal again afterwards rather than trusting this receipt as exclusive."

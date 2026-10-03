@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"strings"
 	"testing"
 )
@@ -18,7 +19,7 @@ func readSetup(t *testing.T) (*Bridge, *fakehost.Server) {
 }
 func firstTurn(t *testing.T, r map[string]any) map[string]any {
 	t.Helper()
-	page := object(r["turnsPage"])
+	page := pyjson.Map(r["turnsPage"])
 	if page == nil {
 		t.Fatalf("missing page: %v", r)
 	}
@@ -26,7 +27,7 @@ func firstTurn(t *testing.T, r map[string]any) map[string]any {
 	if !ok || len(turns) == 0 {
 		t.Fatalf("missing turns: %v", r)
 	}
-	return object(turns[0])
+	return pyjson.Map(turns[0])
 }
 func Test_test_items_that_will_not_arrive_at_all_are_reported_not_claimed(t *testing.T) {
 	b, _, view := smallFrameThread(t)
@@ -41,9 +42,9 @@ func Test_test_items_that_will_not_arrive_at_all_are_reported_not_claimed(t *tes
 		t.Fatal(err)
 	}
 	turn := firstTurn(t, r)
-	observation := object(r["observation"])
-	note := text(object(turn["itemsDetailNote"])["note"])
-	if turn["itemsDetailStatus"] != "not_observed" || turn["itemsDetail"] != nil || len(object(turn["itemsDetailNote"])["attempts"].([]any)) != 2 || !strings.Contains(note, "no query narrower than one item") || !strings.Contains(note, "limit on observation, not a fact about the thread") || object(turn["items"].([]any)[0])["text"] != "second" || observation["turnsPageStatus"] != "summary" || observation["detailTurnsRequested"] != 1 || observation["detailTurnsObserved"] != 0 || !strings.Contains(text(observation["note"]), "arrived for 0 of them") || strings.Contains(text(observation["note"]), "requested and read") {
+	observation := pyjson.Map(r["observation"])
+	note := pyjson.Text(pyjson.Map(turn["itemsDetailNote"])["note"])
+	if turn["itemsDetailStatus"] != "not_observed" || turn["itemsDetail"] != nil || len(pyjson.Map(turn["itemsDetailNote"])["attempts"].([]any)) != 2 || !strings.Contains(note, "no query narrower than one item") || !strings.Contains(note, "limit on observation, not a fact about the thread") || pyjson.Map(turn["items"].([]any)[0])["text"] != "second" || observation["turnsPageStatus"] != "summary" || observation["detailTurnsRequested"] != 1 || observation["detailTurnsObserved"] != 0 || !strings.Contains(pyjson.Text(observation["note"]), "arrived for 0 of them") || strings.Contains(pyjson.Text(observation["note"]), "requested and read") {
 		t.Fatalf("read=%v", r)
 	}
 }
@@ -62,12 +63,12 @@ func Test_test_a_turn_with_more_items_than_one_page_says_so(t *testing.T) {
 	}
 	turn := firstTurn(t, r)
 	detail := turn["itemsDetail"].([]any)
-	note := object(turn["itemsDetailNote"])
-	if turn["itemsDetailStatus"] != "partial" || len(detail) != ItemPage || note["more"] != true || note["observed"] != ItemPage || !strings.Contains(text(note["note"]), "most recent items of the turn") || len(turn["items"].([]any)) != 0 || hostParams(t, host, "thread/items/list")["sortDirection"] != "desc" {
+	note := pyjson.Map(turn["itemsDetailNote"])
+	if turn["itemsDetailStatus"] != "partial" || len(detail) != ItemPage || note["more"] != true || note["observed"] != ItemPage || !strings.Contains(pyjson.Text(note["note"]), "most recent items of the turn") || len(turn["items"].([]any)) != 0 || hostParams(t, host, "thread/items/list")["sortDirection"] != "desc" {
 		t.Fatalf("turn=%v", turn)
 	}
 	for i, item := range detail {
-		if want := fmt.Sprintf("line %d", i+4); object(item)["aggregatedOutput"] != want {
+		if want := fmt.Sprintf("line %d", i+4); pyjson.Map(item)["aggregatedOutput"] != want {
 			t.Fatalf("detail[%d]=%v, want %s", i, item, want)
 		}
 	}
@@ -79,7 +80,7 @@ func Test_test_tool_output_inside_item_detail_is_truncated_and_marked(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	out := text(object(firstTurn(t, r)["itemsDetail"].([]any)[0])["aggregatedOutput"])
+	out := pyjson.Text(pyjson.Map(firstTurn(t, r)["itemsDetail"].([]any)[0])["aggregatedOutput"])
 	if !strings.HasPrefix(out, strings.Repeat("y", 100)) || !strings.Contains(out, "truncated; original length 5000") {
 		t.Fatalf("output length=%d suffix=%q", len(out), out)
 	}
@@ -92,7 +93,7 @@ func Test_test_a_host_that_cannot_read_items_still_answers_the_read(t *testing.T
 		t.Fatal(err)
 	}
 	turn := firstTurn(t, r)
-	if turn["itemsDetailStatus"] != "method_unavailable" || object(turn["itemsDetailNote"])["code"] != -32601 || object(r["observation"])["detailTurnsObserved"] != 0 || object(r["observation"])["detailTurnsRequested"] != 1 || object(turn["items"].([]any)[0])["text"] != "first" || strings.Contains(text(object(r["observation"])["note"]), "requested and read") {
+	if turn["itemsDetailStatus"] != "method_unavailable" || pyjson.Map(turn["itemsDetailNote"])["code"] != -32601 || pyjson.Map(r["observation"])["detailTurnsObserved"] != 0 || pyjson.Map(r["observation"])["detailTurnsRequested"] != 1 || pyjson.Map(turn["items"].([]any)[0])["text"] != "first" || strings.Contains(pyjson.Text(pyjson.Map(r["observation"])["note"]), "requested and read") {
 		t.Fatalf("read=%v", r)
 	}
 	h.Respond("thread/items/list", fakehost.Reply{Error: &fakehost.RPCError{Code: -32000, Message: "nope"}})
@@ -101,7 +102,7 @@ func Test_test_a_host_that_cannot_read_items_still_answers_the_read(t *testing.T
 		t.Fatal(err)
 	}
 	turn = firstTurn(t, r)
-	if turn["itemsDetailStatus"] != "refused" || object(turn["itemsDetailNote"])["message"] != "nope" || object(turn["itemsDetailNote"])["code"] != -32000 {
+	if turn["itemsDetailStatus"] != "refused" || pyjson.Map(turn["itemsDetailNote"])["message"] != "nope" || pyjson.Map(turn["itemsDetailNote"])["code"] != -32000 {
 		t.Fatalf("read=%v", r)
 	}
 }
@@ -109,11 +110,11 @@ func Test_test_a_page_that_never_arrives_is_a_gap_in_the_answer_not_a_failed_rea
 	b, h := readSetup(t)
 	h.Respond("thread/turns/list", fakehost.Reply{Close: &fakehost.CloseFrame{Code: 1001, Reason: "lost"}})
 	r, err := b.ReadThread(context.Background(), "thread-1", 2, nil, 4000)
-	if err != nil || r["turnsPage"] != nil || object(r["observation"])["turnsPageStatus"] != "not_observed" || object(r["thread"])["id"] != "thread-1" || h.Count("thread/turns/list") != 1 {
+	if err != nil || r["turnsPage"] != nil || pyjson.Map(r["observation"])["turnsPageStatus"] != "not_observed" || pyjson.Map(r["thread"])["id"] != "thread-1" || h.Count("thread/turns/list") != 1 {
 		t.Fatalf("read=%v err=%v calls=%v", r, err, h.Requests())
 	}
-	attempts := object(r["observation"])["pageAttempts"].([]any)
-	if len(attempts) != 1 || !strings.HasPrefix(text(object(attempts[0])["error"]), "TransportError:") || object(attempts[0])["attribution"] != "unestablished" || object(attempts[0])["frameBytes"] != nil {
+	attempts := pyjson.Map(r["observation"])["pageAttempts"].([]any)
+	if len(attempts) != 1 || !strings.HasPrefix(pyjson.Text(pyjson.Map(attempts[0])["error"]), "TransportError:") || pyjson.Map(attempts[0])["attribution"] != "unestablished" || pyjson.Map(attempts[0])["frameBytes"] != nil {
 		t.Fatalf("attempts=%v", attempts)
 	}
 }
@@ -125,7 +126,7 @@ func Test_test_item_detail_that_never_arrives_does_not_fail_a_read_that_did(t *t
 		t.Fatal(err)
 	}
 	turn := firstTurn(t, r)
-	if turn["itemsDetailStatus"] != "not_observed" || turn["itemsDetail"] != nil || object(turn["items"].([]any)[0])["text"] != "first" || object(r["observation"])["detailTurnsObserved"] != 0 || object(r["observation"])["detailTurnsRequested"] != 1 || object(r["observation"])["turnsPageStatus"] != "summary" || !strings.Contains(text(object(turn["itemsDetailNote"])["note"]), "none of this is a fact about the thread") || !strings.HasPrefix(text(object(object(turn["itemsDetailNote"])["attempts"].([]any)[0])["error"]), "TransportError:") {
+	if turn["itemsDetailStatus"] != "not_observed" || turn["itemsDetail"] != nil || pyjson.Map(turn["items"].([]any)[0])["text"] != "first" || pyjson.Map(r["observation"])["detailTurnsObserved"] != 0 || pyjson.Map(r["observation"])["detailTurnsRequested"] != 1 || pyjson.Map(r["observation"])["turnsPageStatus"] != "summary" || !strings.Contains(pyjson.Text(pyjson.Map(turn["itemsDetailNote"])["note"]), "none of this is a fact about the thread") || !strings.HasPrefix(pyjson.Text(pyjson.Map(pyjson.Map(turn["itemsDetailNote"])["attempts"].([]any)[0])["error"]), "TransportError:") {
 		t.Fatalf("read=%v calls=%v", r, h.Requests())
 	}
 }
@@ -140,9 +141,9 @@ func Test_test_low_text_limit_preserves_page_cursors_and_protocol_fields(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	page := object(r["turnsPage"])
-	item := object(firstTurn(t, r)["items"].([]any)[0])
-	if object(r["thread"])["cwd"] != path || page["nextCursor"] != cursorAt(1) || page["backwardsCursor"] != cursorAt(0) || item["id"] != itemID || !strings.HasPrefix(text(item["text"]), strings.Repeat("second", 16)) || !strings.Contains(text(item["text"]), "truncated") {
+	page := pyjson.Map(r["turnsPage"])
+	item := pyjson.Map(firstTurn(t, r)["items"].([]any)[0])
+	if pyjson.Map(r["thread"])["cwd"] != path || page["nextCursor"] != cursorAt(1) || page["backwardsCursor"] != cursorAt(0) || item["id"] != itemID || !strings.HasPrefix(pyjson.Text(item["text"]), strings.Repeat("second", 16)) || !strings.Contains(pyjson.Text(item["text"]), "truncated") {
 		t.Fatalf("read=%v", r)
 	}
 	second, err := b.ReadThread(context.Background(), "thread-1", 1, page["nextCursor"], 100)

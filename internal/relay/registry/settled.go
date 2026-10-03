@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 // CRW-288: a relationship whose work is merged is settled once nothing of it is still owed, and a settled one is
@@ -55,9 +56,9 @@ func (r *Registry) readSettled(ctx context.Context, view *AssignmentView, rid st
 	if err != nil {
 		return settledReading{}, err
 	}
-	reading := settledReading{id: rid, issue: field(state, "issueKey"), parent: field(state, "parentTaskId"),
-		child: field(state, "childTaskId"), state: field(state, "state")}
-	if status := field(state, "relationshipStatus"); status != Active {
+	reading := settledReading{id: rid, issue: pyjson.Text(state.Get("issueKey")), parent: pyjson.Text(state.Get("parentTaskId")),
+		child: pyjson.Text(state.Get("childTaskId")), state: pyjson.Text(state.Get("state"))}
+	if status := pyjson.Text(state.Get("relationshipStatus")); status != Active {
 		reading.why = "the relationship is " + status
 		return reading, nil
 	}
@@ -65,11 +66,11 @@ func (r *Registry) readSettled(ctx context.Context, view *AssignmentView, rid st
 		reading.why = "the assignment is " + reading.state + ", not merged"
 		return reading, nil
 	}
-	mark, _ := getField(state, "mark")
+	mark, _ := state.Lookup("mark")
 	reading.mark, _ = mark.(contract.OrderedObject)
-	criteria, _ := getField(state, "criteria")
+	criteria, _ := state.Lookup("criteria")
 	registered, _ := criteria.(contract.OrderedObject)
-	digest, _ := getField(registered, "setDigest")
+	digest, _ := registered.Lookup("setDigest")
 	if why, err := r.owedOf(ctx, rid, reading.mark, digest); err != nil || why != "" {
 		reading.why = why
 		return reading, err
@@ -106,7 +107,7 @@ func (r *Registry) owedOf(ctx context.Context, rid string, mark contract.Ordered
 	// The acceptance is looked up by the merge mark's own relationship, generation, event and revision, not by the
 	// generation of the execution row, so a node's older executions (a correction leaves one row per generation) do not
 	// hold it open once the current head is accepted: every row of the node asks the same question.
-	event, generation, revision := field(mark, "eventId"), markNumber(mark, "executionGeneration"), field(mark, "revisionHash")
+	event, generation, revision := pyjson.Text(mark.Get("eventId")), markNumber(mark, "executionGeneration"), pyjson.Text(mark.Get("revisionHash"))
 	query, args := "SELECT e.node_id AS node FROM dag_node_executions e WHERE e.relationship_id = ?"+
 		" AND NOT EXISTS (SELECT 1 FROM dag_acceptances a WHERE a.plan_id = e.plan_id AND a.node_id = e.node_id AND a.state = 'active'"+
 		"   AND a.relationship_id = ? AND a.execution_generation = ? AND a.event_id = ? AND a.revision_hash = ?%s) LIMIT 1",
@@ -130,7 +131,7 @@ func (r *Registry) owedOf(ctx context.Context, rid string, mark contract.Ordered
 }
 
 func markNumber(mark contract.OrderedObject, key string) any {
-	v, _ := getField(mark, key)
+	v, _ := mark.Lookup(key)
 	return v
 }
 

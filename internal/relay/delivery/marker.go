@@ -387,7 +387,7 @@ func identified(value any, factID string) any {
 		return value
 	}
 	out := append(Obj(nil), record...)
-	return set(out, "factId", factID)
+	return out.Set("factId", factID)
 }
 
 func stem(name string) string { return strings.TrimSuffix(name, filepath.Ext(name)) }
@@ -504,18 +504,18 @@ func ListAssignments(root, workspace string) ([]string, bool, error) {
 
 // markerFactList is a numbered or claims fact list as the reader returned it.
 func markerFactList(marker Obj, key string) []any {
-	v, _ := get(marker, key)
+	v, _ := marker.Lookup(key)
 	list, _ := v.([]any)
 	return list
 }
 
 func markerFact(marker Obj, key string) Obj {
-	v, _ := get(marker, key)
+	v, _ := marker.Lookup(key)
 	record, _ := v.(Obj)
 	return record
 }
 
 func fieldOf(record Obj, key string) any {
-	v, _ := get(record, key)
+	v, _ := record.Lookup(key)
 	return v
 }

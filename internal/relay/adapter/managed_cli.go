@@ -60,7 +60,7 @@ func managedStart(ctx context.Context, services dispatch.Services, args dispatch
 	if err != nil {
 		return nil, err
 	}
-	if field(answer, "state") != "admitted" {
+	if answer.Get("state") != "admitted" {
 		return nil, &dispatch.PayloadExit{Payload: answer, Code: contract.ExitRefused}
 	}
 	return answer, nil

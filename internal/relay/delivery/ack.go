@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -151,7 +152,7 @@ func (a *Ack) currentDigest(ctx context.Context, rid string) (any, error) {
 	if err != nil || registered == nil {
 		return nil, err
 	}
-	return str(registered, "setDigest"), nil
+	return pyjson.Text(registered.Get("setDigest")), nil
 }
 
 func (a *Ack) rulingIsCurrent(ctx context.Context, eventID string) (bool, error) {
@@ -191,7 +192,7 @@ func (a *Ack) reReviewOpen(ctx context.Context, eventID string, decided any) (bo
 	if err != nil {
 		return false, err
 	}
-	current, _ := get(state, "current")
+	current, _ := state.Lookup("current")
 	return current == true, nil
 }
 
@@ -359,7 +360,7 @@ func (a *Ack) verifyAckTurn(ctx context.Context, row Row, ackTurn string, adapte
 		}
 		var dispatched any
 		if !attempt.N("record") {
-			dispatched, _ = get(loadsObj(attempt.S("record")), "turnId")
+			dispatched, _ = loadsObj(attempt.S("record")).Lookup("turnId")
 		}
 		if !truthy(dispatched) && attempt.S("affirmative_evidence") == TurnFound {
 			dispatched = row.Opt("dispatch_turn_id")
@@ -396,9 +397,9 @@ func restorationResult(outcome, basis string, criterion any, detail string) Obj 
 func projectCap(findings []any) Obj {
 	for i, f := range findings {
 		o := f.(Obj)
-		if v, _ := get(o, "restoration"); truthy(v) {
+		if v, _ := o.Lookup("restoration"); truthy(v) {
 			where := fmt.Sprintf("finding %d of %d", i+1, len(findings))
-			id, _ := get(o, "id")
+			id, _ := o.Lookup("id")
 			if i < manifestLines {
 				return restorationResult("carried", "relay-message/legacy", id, fmt.Sprintf("%s, within the %d this renderer shows", where, manifestLines))
 			}
@@ -464,9 +465,9 @@ func (a *Ack) RecordVerdict(ctx context.Context, eventID, verdict, verdictTurn s
 		if err != nil {
 			return err
 		}
-		current, _ := get(state, "current")
+		current, _ := state.Lookup("current")
 		if (verdict == "verified" || verdict == "needs_changes") && current != true {
-			return refuse(currencyReasons[str(state, "reason")], "%s cannot be ruled %s: %s", strconv.Quote(eventID), strconv.Quote(verdict), str(state, "detail"))
+			return refuse(currencyReasons[pyjson.Text(state.Get("reason"))], "%s cannot be ruled %s: %s", strconv.Quote(eventID), strconv.Quote(verdict), pyjson.Text(state.Get("detail")))
 		}
 		cover, err := a.Criteria.Coverage(ctx, event.S("relationship_id"), eventID, verdict, normalised, reason, expected)
 		if err != nil {
@@ -478,8 +479,8 @@ func (a *Ack) RecordVerdict(ctx context.Context, eventID, verdict, verdictTurn s
 				return refuse(RecipientNotAuthorized, "child %s is not an allowed recipient, so a revision cannot be routed to it", strconv.Quote(relationship.Child.TaskID))
 			}
 			projected = projectCap(normalised)
-			if o := str(projected, "outcome"); o == "truncated" || o == "budget_dropped" {
-				return refuse(RestorationUndeliverable, "this correction declares a restoration block on %s that the revision message would not carry: %s. Move it within the first %d findings and rule again. No execution generation has been opened", quote.Value(func() any { v, _ := get(projected, "criterion"); return v }()), str(projected, "detail"), manifestLines)
+			if o := pyjson.Text(projected.Get("outcome")); o == "truncated" || o == "budget_dropped" {
+				return refuse(RestorationUndeliverable, "this correction declares a restoration block on %s that the revision message would not carry: %s. Move it within the first %d findings and rule again. No execution generation has been opened", quote.Value(func() any { v, _ := projected.Lookup("criterion"); return v }()), pyjson.Text(projected.Get("detail")), manifestLines)
 			}
 		} else {
 			projected = restorationResult("not_carried", "relay-message/legacy", nil, fmt.Sprintf("a %s verdict opens no correction, so no message carries a restoration block", verdict))
@@ -532,7 +533,7 @@ func (a *Ack) RecordVerdict(ctx context.Context, eventID, verdict, verdictTurn s
 				return err
 			}
 		}
-		setDigest, _ := get(cover, "setDigest")
+		setDigest, _ := cover.Lookup("setDigest")
 		if reReview {
 			if err := journal(ctx, a.Store, "verdict_superseded", eventID, Obj{{Key: "supersededVerdict", Value: loadsObj(settled.S("record"))}, {Key: "reviewedSetDigest", Value: settled.Opt("set_digest")}, {Key: "currentSetDigest", Value: setDigest}}, now); err != nil {
 				return err
@@ -544,7 +545,7 @@ func (a *Ack) RecordVerdict(ctx context.Context, eventID, verdict, verdictTurn s
 		}
 		currency := "current"
 		if current != true {
-			currency = str(state, "reason")
+			currency = pyjson.Text(state.Get("reason"))
 			if currency == "" {
 				currency = "unknown"
 			}
@@ -553,10 +554,10 @@ func (a *Ack) RecordVerdict(ctx context.Context, eventID, verdict, verdictTurn s
 		if err != nil {
 			return err
 		}
-		headID, _ := get(state, "headEventId")
-		headRev, _ := get(state, "headRevisionHash")
+		headID, _ := state.Lookup("headEventId")
+		headRev, _ := state.Lookup("headRevisionHash")
 		if _, err := execSQL(ctx, a.Store, "INSERT INTO verdict_context (event_id, set_digest, coverage, findings, reason, currency, head_event_id, head_revision, ack_evidence, recorded_at) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(event_id) DO UPDATE SET set_digest = excluded.set_digest, coverage = excluded.coverage, findings = excluded.findings, reason = excluded.reason, currency = excluded.currency, head_event_id = excluded.head_event_id, head_revision = excluded.head_revision, ack_evidence = excluded.ack_evidence, recorded_at = excluded.recorded_at",
-			eventID, setDigest, str(cover, "coverage"), findingsText, reason, currency, headID, headRev, tier, now); err != nil {
+			eventID, setDigest, pyjson.Text(cover.Get("coverage")), findingsText, reason, currency, headID, headRev, tier, now); err != nil {
 			return err
 		}
 		if a.Sync != nil {

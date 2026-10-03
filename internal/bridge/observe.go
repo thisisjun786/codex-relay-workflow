@@ -3,6 +3,7 @@ package bridge
 import (
 	"context"
 	"fmt"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"time"
 )
 
@@ -74,14 +75,14 @@ func (b *Bridge) ActiveTurn(ctx context.Context, threadID string) (map[string]an
 	if err != nil {
 		return nil, err
 	}
-	status := object(object(metadata["thread"])["status"])
+	status := pyjson.Map(pyjson.Map(metadata["thread"])["status"])
 	turns, _ := page["data"].([]any)
 	newest := map[string]any{}
 	if len(turns) > 0 {
-		newest = object(turns[0])
+		newest = pyjson.Map(turns[0])
 	}
 	running := newest["status"] == "inProgress"
-	kind := text(status["type"])
+	kind := pyjson.Text(status["type"])
 	observation := kind
 	if kind == "active" && running {
 		observation = "active"
@@ -125,7 +126,7 @@ func (b *Bridge) WaitThread(ctx context.Context, threadID, turnID string, timeou
 		}
 		data, _ := page["data"].([]any)
 		for _, item := range data {
-			turn := object(item)
+			turn := pyjson.Map(item)
 			if turn["id"] == turnID {
 				latest = turn
 				break

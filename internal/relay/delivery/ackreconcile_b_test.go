@@ -2,6 +2,7 @@ package delivery
 
 import (
 	"fmt"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"slices"
 	"strings"
 	"testing"
@@ -45,8 +46,8 @@ func (h *hl) uncertain(outcome string) (string, string) {
 	event := h.queuedEvent(regOpts{})
 	h.host.script = []string{outcome}
 	record := h.attemptOn(event, h.host, nil)
-	h.eq(str(record, "deliveryState"))
-	return event, str(record, "requestId")
+	h.eq(pyjson.Text(record.Get("deliveryState")))
+	return event, pyjson.Text(record.Get("requestId"))
 }
 
 func Test21_ACR14_the_operation_receipt_is_read_before_the_recipient_turns(t *testing.T) {
@@ -68,8 +69,8 @@ func Test21_ACR15_no_affirmative_evidence_keeps_the_attempt_held(t *testing.T) {
 	mirror(t, acr, "Reconciliation.test_no_affirmative_evidence_keeps_the_attempt_held_and_says_what_is_missing", func(h *hl) {
 		_, request := h.uncertain("turn_start_fail")
 		outcome := h.reconcile(request, h.host)
-		h.eq(str(outcome, "evidence"))
-		h.eq(str(outcome, "state"))
+		h.eq(pyjson.Text(outcome.Get("evidence")))
+		h.eq(pyjson.Text(outcome.Get("state")))
 		h.eq(pyIn("no confirmed pre-send rejection", field(outcome, "missing")))
 		h.eq(pyIn("exhausted", field(outcome, "recipientScan")))
 	})
@@ -78,8 +79,8 @@ func Test21_ACR15_no_affirmative_evidence_keeps_the_attempt_held(t *testing.T) {
 		first := h.reconcile(request, h.host)
 		h.clock.Advance(86400 * 30)
 		second := h.reconcile(request, h.host)
-		h.eq(str(first, "evidence"))
-		h.eq(str(second, "state"))
+		h.eq(pyjson.Text(first.Get("evidence")))
+		h.eq(pyjson.Text(second.Get("state")))
 		h.eq(len(h.attemptsFor(event)))
 	})
 }
@@ -88,10 +89,10 @@ func Test21_ACR16_a_token_in_the_recipient_items_advances_the_delivery_honestly(
 	mirror(t, acr, "Reconciliation.test_a_token_found_in_the_recipient_items_advances_the_delivery_honestly", func(h *hl) {
 		event := h.queuedEvent(regOpts{})
 		h.host.script = []string{"in_progress"}
-		request := str(h.attemptOn(event, h.host, nil), "requestId")
+		request := pyjson.Text(h.attemptOn(event, h.host, nil).Get("requestId"))
 		h.host.startTurn(parent, "", "completed", "..."+request+"...")
 		outcome := h.reconcile(request, h.host)
-		h.eq(str(outcome, "evidence"))
+		h.eq(pyjson.Text(outcome.Get("evidence")))
 		h.eq(h.row(event).S("state"))
 		h.eq(h.row(event).S("dispatch_evidence"))
 		stored := loadsObj(h.attemptsFor(event)[0].S("record"))
@@ -110,8 +111,8 @@ func Test21_ACR17_a_truncated_scan_is_inconclusive(t *testing.T) {
 		}
 		h.host.scanLimit = 5
 		outcome := h.reconcile(request, h.host)
-		h.eq(str(outcome, "evidence"))
-		h.eq(strings.Contains(str(outcome, "recipientScan"), "exhausted=False"))
+		h.eq(pyjson.Text(outcome.Get("evidence")))
+		h.eq(strings.Contains(pyjson.Text(outcome.Get("recipientScan")), "exhausted=False"))
 	})
 }
 
@@ -120,8 +121,8 @@ func Test21_ACR18_a_missing_ledger_row_is_an_observation_not_a_licence_to_resend
 		_, request := h.uncertain("turn_start_fail")
 		delete(h.host.ledger, request)
 		outcome := h.reconcile(request, h.host)
-		h.eq(str(outcome, "operationObservation"))
-		h.eq(str(outcome, "evidence"))
+		h.eq(pyjson.Text(outcome.Get("operationObservation")))
+		h.eq(pyjson.Text(outcome.Get("evidence")))
 		h.clock.Advance(86400)
 		eligible := []any{}
 		for _, e := range h.eligible() {
@@ -135,10 +136,10 @@ func Test21_ACR19_a_confirmed_pre_send_rejection_permits_a_new_attempt(t *testin
 	mirror(t, acr, "Reconciliation.test_a_confirmed_pre_send_rejection_permits_a_new_attempt", func(h *hl) {
 		event := h.queuedEvent(regOpts{})
 		h.host.script = []string{"in_progress"}
-		request := str(h.attemptOn(event, h.host, nil), "requestId")
+		request := pyjson.Text(h.attemptOn(event, h.host, nil).Get("requestId"))
 		h.host.ledger[request] = preSendRejection(request)
 		outcome := h.reconcile(request, h.host)
-		h.eq(str(outcome, "evidence"))
+		h.eq(pyjson.Text(outcome.Get("evidence")))
 		h.clock.Advance(100000)
 		second := h.attemptOn(event, h.host, at(h.clock.Now()))
 		h.eq(field(second, "attemptNo"))
@@ -163,10 +164,10 @@ func Test21_ACR20_restart_recovery_never_sends(t *testing.T) {
 			event := h.queuedEvent(regOpts{})
 			h.host.script = []string{"process_death"}
 			record := h.attemptOn(event, h.host, nil)
-			h.eq(str(record, "deliveryState"))
-			delete(h.host.ledger, str(record, "requestId"))
+			h.eq(pyjson.Text(record.Get("deliveryState")))
+			delete(h.host.ledger, pyjson.Text(record.Get("requestId")))
 			report := h.recoverOnStart()
-			h.eq(listed(report, "heldUncertain", str(record, "requestId")))
+			h.eq(listed(report, "heldUncertain", pyjson.Text(record.Get("requestId"))))
 			h.eq(field(report, "resent"))
 		})
 	})
@@ -176,14 +177,14 @@ func Test21_ACR20_restart_recovery_never_sends(t *testing.T) {
 			h.host.script = []string{"in_progress"}
 			record := h.attemptOn(event, h.host, nil)
 			report := h.recoverOnStart()
-			h.eq(listed(report, "heldUncertain", str(record, "requestId")))
+			h.eq(listed(report, "heldUncertain", pyjson.Text(record.Get("requestId"))))
 		})
 	})
 	t.Run("crash after acceptance", func(t *testing.T) {
 		mirror(t, acr, "RestartRecovery.test_a_crash_after_acceptance_recovers_from_the_ledger", func(h *hl) {
 			event := h.queuedEvent(regOpts{})
 			h.host.script = []string{"in_progress"}
-			request := str(h.attemptOn(event, h.host, nil), "requestId")
+			request := pyjson.Text(h.attemptOn(event, h.host, nil).Get("requestId"))
 			turn := h.host.startTurn(parent, "", "inProgress", "")
 			h.host.ledger[request] = Obj{{Key: "requestId", Value: request}, {Key: "status", Value: "accepted"}, {Key: "resumed", Value: Obj{{Key: "approvalPolicy", Value: "never"}}}, {Key: "turnId", Value: turn.TurnID}}
 			report := h.recoverOnStart()

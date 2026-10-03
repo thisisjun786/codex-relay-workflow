@@ -15,12 +15,12 @@ func (l *Ledger) Resolve(ctx context.Context, identifier string) (bool, error) {
 		if err != nil {
 			return err
 		}
-		identifier = text(fault, "fault_id")
-		if text(fault, "state") == Resolved {
+		identifier = fault.Text("fault_id")
+		if fault.Text("state") == Resolved {
 			return nil
 		}
-		if text(fault, "state") != FixPending {
-			return fmt.Errorf("fault_state_conflict: a fault is resolved from fix_pending and this one is %s", text(fault, "state"))
+		if fault.Text("state") != FixPending {
+			return fmt.Errorf("fault_state_conflict: a fault is resolved from fix_pending and this one is %s", fault.Text("state"))
 		}
 		cycle := integer(fault, "cycle")
 		fix, err := l.one(ctx, "SELECT MAX(seq) AS seq FROM fault_timeline WHERE fault_id = ? AND cycle = ? AND kind = 'fix'", identifier, cycle)
@@ -47,7 +47,7 @@ func (l *Ledger) Resolve(ctx context.Context, identifier string) (bool, error) {
 		if installed.Get("seq") != nil && integer(installed, "seq") > integer(latest, "seq") {
 			return fmt.Errorf("fault_verification_stale: the fix was installed after the newest reverification")
 		}
-		if outcome := text(latest, "outcome"); outcome != "passed" && outcome != "absent" {
+		if outcome := latest.Text("outcome"); outcome != "passed" && outcome != "absent" {
 			return fmt.Errorf("fault_unverified: the newest reverification reported %q", outcome)
 		}
 		recurrence, err := l.one(ctx, "SELECT MIN(seq) AS seq FROM fault_timeline WHERE fault_id = ? AND kind = 'occurrence' AND seq > ?", identifier, integer(latest, "seq"))

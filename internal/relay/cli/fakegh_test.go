@@ -15,7 +15,6 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -135,7 +134,7 @@ func fakeGH(args []string, stdout, stderr io.Writer) (code int) {
 						endpoint = "other"
 					}
 				}
-				if evidence.Get(object, "endpoint") == endpoint {
+				if object.Get("endpoint") == endpoint {
 					v = applyForgePatch(v, object)
 				}
 			}
@@ -308,10 +307,10 @@ func pySlice(list []any, start, stop int) []any {
 
 // applyForgePatch was testdata/gh's CRW_FORGE_PATCH: set or delete the value at path.
 func applyForgePatch(v any, patch contract.OrderedObject) any {
-	path, _ := evidence.Get(patch, "path").([]any)
-	remove := pyvalue.Truthy(evidence.Get(patch, "delete"))
+	path, _ := patch.Get("path").([]any)
+	remove := pyvalue.Truthy(patch.Get("delete"))
 	value := func() any {
-		value, ok := evidence.Lookup(patch, "value")
+		value, ok := patch.Lookup("value")
 		if !ok {
 			panic("KeyError: 'value'")
 		}
@@ -384,7 +383,7 @@ func forgeIndex(node, key any) any {
 		if !ok {
 			panic("KeyError")
 		}
-		value, found := evidence.Lookup(n, name)
+		value, found := n.Lookup(name)
 		if !found {
 			panic("KeyError: " + name)
 		}
