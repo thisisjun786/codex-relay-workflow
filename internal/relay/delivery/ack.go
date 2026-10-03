@@ -480,6 +480,14 @@ func (a *Ack) RecordVerdict(ctx context.Context, eventID, verdict, verdictTurn s
 		if err != nil {
 			return err
 		}
+		if settled == nil {
+			// a decision and a verdict never both answer one receipt (decision.go): a receipt that carries a decision is not ruled
+			if answered, err := one(ctx, a.Store, "SELECT 1 FROM events WHERE event_id = ?", DecisionEventID(event.S("relationship_id"), eventID)); err != nil {
+				return err
+			} else if answered != nil {
+				return refuse(DispositionConflict, "%s already carries a decision reply, and a decision and a verdict never both answer one receipt: the child's next receipt is the one to rule", strconv.Quote(eventID))
+			}
+		}
 		relationship, err := RequireActive(ctx, a.Store, event.S("relationship_id"))
 		if err != nil {
 			if changed && Reason(err) == RelationshipNotActive {
@@ -541,11 +549,7 @@ func (a *Ack) RecordVerdict(ctx context.Context, eventID, verdict, verdictTurn s
 			payload := Obj{{Key: "eventId", Value: revisionEvent}, {Key: "relationshipId", Value: rid}, {Key: "executionGeneration", Value: number}, {Key: "kind", Value: Revision}, {Key: "supersedesEvent", Value: eventID}, {Key: "supersedesRevisionHash", Value: event.S("revision_hash")},
 				{Key: "verdict", Value: verdict}, {Key: "verdictTurnId", Value: verdictTurn}, {Key: "criteria", Value: criteriaList}, {Key: "childTaskId", Value: child}, {Key: "emittedAt", Value: now},
 				{Key: "note", Value: "relay-owned revision request; contract v1 defines no record for this direction"}}
-			if _, err := execSQL(ctx, a.Store, "INSERT OR IGNORE INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, attempt, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at, observation_count) VALUES (?,?,?,?,?,?,NULL,?,?,?,?, 'final', ?,?,1)",
-				revisionEvent, rid, number, store.NoDeliverable, "revision_request", "relay", relationship.Parent.TaskID, verdictTurn, "completed", dumps(payload), now, now); err != nil {
-				return err
-			}
-			if err := a.Delivery.EnqueueIn(ctx, revisionEvent, rid, Revision, child); err != nil {
+			if err := a.queueToChild(ctx, revisionEvent, rid, number, Revision, relationship.Parent.TaskID, verdictTurn, child, payload, now); err != nil {
 				return err
 			}
 			record = append(record, F{Key: "nextExecutionGeneration", Value: number})
@@ -612,6 +616,17 @@ func (a *Ack) RecordVerdict(ctx context.Context, eventID, verdict, verdictTurn s
 		record = append(record, F{Key: "_supersedes", Value: replaced})
 	}
 	return record, err
+}
+
+// queueToChild stores a relay-owned request to the child as a final event of the generation and queues its delivery, inside the
+// caller's transaction. The correction a needs_changes ruling opens (outcome revision_request) and a decision reply (outcome
+// decision_reply) are both written here, so the two cannot differ in how they reach the delivery engine.
+func (a *Ack) queueToChild(ctx context.Context, eventID, rid string, generation int64, outcome, parentTask, turn, child string, payload Obj, now string) error {
+	if _, err := execSQL(ctx, a.Store, "INSERT OR IGNORE INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, attempt, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at, observation_count) VALUES (?,?,?,?,?,?,NULL,?,?,?,?, 'final', ?,?,1)",
+		eventID, rid, generation, store.NoDeliverable, outcome, "relay", parentTask, turn, "completed", dumps(payload), now, now); err != nil {
+		return err
+	}
+	return a.Delivery.EnqueueIn(ctx, eventID, rid, Revision, child)
 }
 
 // OpenGenerationIn is registry.open_generation_in inside the caller's transaction.
@@ -827,6 +842,9 @@ func (a *Ack) BindDispatchedRevision(ctx context.Context, revisionEvent string) 
 	event, err := a.Delivery.eventRow(ctx, revisionEvent)
 	if err != nil {
 		return nil, err
+	}
+	if keepsAnchor(event) {
+		return nil, nil
 	}
 	return BindAnchor(ctx, a.Store, a.Clock, event.S("relationship_id"), event.I("execution_generation"), row.S("dispatch_turn_id"))
 }

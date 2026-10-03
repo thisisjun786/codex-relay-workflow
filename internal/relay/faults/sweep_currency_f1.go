@@ -29,6 +29,14 @@ func f1SupersessionReason(ctx context.Context, l *Ledger, eventID string) (strin
 		}
 		return "superseded_revision", nil
 	}
+	if event.Text("outcome") == "decision_reply" {
+		answered, _ := loadsMap(event.Text("receipt"))["answersEvent"].(string)
+		later, e := l.one(ctx, "SELECT 1 FROM events c JOIN events b ON b.event_id=? WHERE c.relationship_id=? AND c.execution_generation=? AND c.stage='final' AND c.suppressed_reason IS NULL AND c.producer='child' AND c.event_id != b.event_id AND (c.first_seen_at > b.first_seen_at OR (c.first_seen_at = b.first_seen_at AND c.rowid > b.rowid))", answered, event.Text("relationship_id"), integer(event, "execution_generation"))
+		if e != nil || later == nil {
+			return "", e
+		}
+		return "superseded_revision", nil
+	}
 	switch event.Text("outcome") {
 	case "failed", "interrupted", "blocked_needs_input":
 		return "", nil
