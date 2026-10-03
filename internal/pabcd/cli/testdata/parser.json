@@ -175,5 +175,19 @@
     "result": {
       "error": "unexpected argument '--help' before --"
     }
+  },
+  {
+    "argv": [
+      "test",
+      "--cwd",
+      "other",
+      "--cwd"
+    ],
+    "cwd": "/original",
+    "result": {
+      "verb": "test",
+      "cwd": "/original",
+      "command": []
+    }
   }
 ]

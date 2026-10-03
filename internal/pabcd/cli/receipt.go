@@ -85,6 +85,7 @@ func ParseReceiptCLIArgs(argv []string, cwd string) (ReceiptCLIArgs, error) {
 		case "--session":
 			out.Session = value()
 		case "--cwd":
+			out.Cwd = cwd
 			if v := value(); i < len(argv) {
 				out.Cwd = v
 			}
@@ -152,8 +153,9 @@ func RunReceiptCLI(args ReceiptCLIArgs, options ReceiptRunOptions) (ReceiptCLIRe
 		return refuse("receipt test: no check binding on this session. Step back with `crw pabcd orchestrate B` and re-enter `crw pabcd orchestrate C` to mint one (this cycle predates CHECK-BINDING-01).")
 	}
 	path := ReceiptPathFor(args.Cwd, sid)
-	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return ReceiptCLIResult{}, err
+	// unlink never falls back to rmdir: rmSync without recursive refuses an empty directory too.
+	if err := syscall.Unlink(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return ReceiptCLIResult{}, &os.PathError{Op: "unlink", Path: path, Err: err}
 	}
 	root, err := session.Resolve(args.Cwd, sid)
 	if err != nil {
@@ -228,8 +230,15 @@ func runReceiptCommand(argv []string, cwd string, o ReceiptRunOptions) error {
 	cmd.Args[0] = argv[0]
 	cmd.Dir, cmd.Env = cwd, source.GitEnv(nil)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = o.Stdin, o.Stdout, o.Stderr
+	if o.Context != nil {
+		// Buffer/writer adapters use pipes: a descendant can hold them after the owned child is killed. Bound the drain,
+		// closing only Cmd's own descriptors, while leaving that descendant's process untouched.
+		cmd.WaitDelay = receiptPipeDrainWait
+	}
 	return cmd.Run()
 }
+
+const receiptPipeDrainWait = 100 * time.Millisecond
 
 // Node's POSIX PATH search resolves relative entries in the command cwd, whereas exec.LookPath uses the caller cwd and
 // rejects relative results with ErrDot. Resolve before constructing Cmd so its own lookup cannot silently change that.
@@ -237,10 +246,14 @@ func receiptExecutable(name, cwd string) (string, error) {
 	if strings.Contains(name, "/") {
 		return name, nil
 	}
+	absolute, err := filepath.Abs(cwd)
+	if err != nil {
+		return "", err
+	}
 	permission := false
 	for _, dir := range strings.Split(os.Getenv("PATH"), string(os.PathListSeparator)) {
 		if !filepath.IsAbs(dir) {
-			dir = filepath.Join(cwd, dir)
+			dir = filepath.Join(absolute, dir)
 		}
 		candidate := filepath.Join(dir, name)
 		info, err := os.Stat(candidate)

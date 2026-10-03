@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -56,6 +57,16 @@ func receiptHelper(a []string) {
 		}
 	case "block":
 		fmt.Fprintln(os.Stdout, "ready")
+		_, _ = io.Copy(io.Discard, os.Stdin)
+	case "hold":
+		_, _ = io.Copy(io.Discard, os.Stdin)
+	case "descendant":
+		child := exec.Command(os.Args[0], "--receipt-helper", "hold")
+		child.Stdin, child.Stdout, child.Stderr = os.Stdin, os.Stdout, os.Stderr
+		if err := child.Start(); err != nil {
+			panic(err)
+		}
+		fmt.Fprintln(os.Stdout, child.Process.Pid)
 		_, _ = io.Copy(io.Discard, os.Stdin)
 	case "atomic-failure":
 		// git status must not refresh its index under the helper's file-size limit: the failure belongs to receipt publication.
@@ -485,5 +496,89 @@ func TestReceiptHelpAndPath(t *testing.T) {
 	}
 	if got := ReceiptPathFor(root, ".."); got != filepath.Join(root, ".crw/test-receipt.json") {
 		t.Fatal("oracle dotdot key changed")
+	}
+}
+
+func TestReceiptRelativeCwdAndPath(t *testing.T) {
+	root := receiptRepo(t)
+	bin, err := os.Executable()
+	receiptMust(t, err)
+	receiptMust(t, os.Mkdir(filepath.Join(root, "tool-bin"), 0o755))
+	receiptMust(t, os.Symlink(bin, filepath.Join(root, "tool-bin/probe")))
+	t.Chdir(filepath.Dir(root))
+	t.Setenv("PATH", "tool-bin:"+os.Getenv("PATH"))
+	a := ReceiptCLIArgs{Verb: "test", Cwd: filepath.Base(root), Session: "s1", Command: []string{"probe", "--receipt-helper", "exit", "0"}}
+	got := receiptRun(t, a, ReceiptRunOptions{})
+	if got.Code != 0 || got.Output != expectedReceiptPath(a.Cwd) {
+		t.Fatal(got)
+	}
+}
+
+func TestReceiptRefusesDirectoryBeforeSpawn(t *testing.T) {
+	root := receiptRepo(t)
+	path := expectedReceiptPath(root)
+	receiptMust(t, os.MkdirAll(path, 0o755))
+	a := ReceiptCLIArgs{Verb: "test", Cwd: root, Session: "s1", Command: receiptCommand(t, "write", "sentinel", "ran")}
+	_, err := RunReceiptCLI(a, ReceiptRunOptions{Stdout: io.Discard, Stderr: io.Discard})
+	if err == nil {
+		t.Fatal("directory was removed instead of refused")
+	}
+	info, err := os.Stat(path)
+	receiptMust(t, err)
+	if !info.IsDir() {
+		t.Fatal("directory changed")
+	}
+	if _, err := os.Stat(filepath.Join(root, "sentinel")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("command ran after directory refusal")
+	}
+}
+
+type receiptPIDWriter struct {
+	ids    chan int
+	cancel context.CancelFunc
+}
+
+func (w receiptPIDWriter) Write(b []byte) (int, error) {
+	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err == nil {
+		w.ids <- pid
+		w.cancel()
+	}
+	return len(b), nil
+}
+
+func TestReceiptCancellationWithInheritedStream(t *testing.T) {
+	root := receiptRepo(t)
+	inR, inW, err := os.Pipe()
+	receiptMust(t, err)
+	defer inR.Close()
+	defer inW.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ids := make(chan int, 1)
+	result := make(chan ReceiptCLIResult, 1)
+	a := ReceiptCLIArgs{Verb: "test", Cwd: root, Session: "s1", Command: receiptCommand(t, "descendant")}
+	go func() {
+		got, err := RunReceiptCLI(a, ReceiptRunOptions{Context: ctx, Stdin: inR, Stdout: receiptPIDWriter{ids, cancel}, Stderr: io.Discard})
+		if err != nil {
+			got.Output = err.Error()
+		}
+		result <- got
+	}()
+	pid := <-ids
+	holder, err := os.FindProcess(pid)
+	receiptMust(t, err)
+	defer holder.Kill() // the PID came from the helper this test started; never a process-name sweep
+	select {
+	case got := <-result:
+		if got.Code != 1 || !strings.Contains(got.Output, "terminated by signal") {
+			t.Fatal(got)
+		}
+		receiptMust(t, holder.Signal(syscall.Signal(0)))
+		receiptAbsent(t, root)
+	case <-time.After(2 * time.Second):
+		_ = holder.Kill()
+		<-result // release inherited descriptors before failing; leave no overlapping process
+		t.Fatal("cancelled runner waited for grandchild pipe EOF")
 	}
 }
