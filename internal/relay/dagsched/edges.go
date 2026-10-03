@@ -367,19 +367,24 @@ type IntegratedAt struct {
 // that consumers recorded must not follow every later observation of a moved tip (contract E-27).
 func (s *Scheduler) integratedAt(ctx context.Context, q store.Querier, plan string, a Acceptance, repository, baseRef string) (IntegratedAt, error) {
 	var out IntegratedAt
+	// the head and the merged mark are those of what the acceptance stands on: itself, or after a recorded base refresh the later generation (baserefresh.go)
+	stand, err := s.standOf(ctx, q, a)
+	if err != nil {
+		return IntegratedAt{}, err
+	}
 	found, err := queryOne(ctx, q, "SELECT o.observation_id, o.observed_at"+
 		" FROM dag_acceptances a"+
 		" JOIN dag_integration_observations o ON o.acceptance_id = a.acceptance_id AND o.repository = ? AND o.base_ref = ?"+
-		"  AND o.subject_sha = a.head_sha AND o.is_ancestor = 1 AND o.reverted_by IS NULL"+
-		" JOIN assignment_marks k ON k.relationship_id = a.relationship_id AND k.mark = 'merged' AND k.event_id = a.event_id"+
-		"  AND k.execution_generation = a.execution_generation AND k.revision_hash = a.revision_hash"+
+		"  AND o.subject_sha = ? AND o.is_ancestor = 1 AND o.reverted_by IS NULL"+
+		" JOIN assignment_marks k ON k.relationship_id = ? AND k.mark = 'merged' AND k.event_id = ?"+
+		"  AND k.execution_generation = ? AND k.revision_hash = ?"+
 		" WHERE a.acceptance_id = ? AND a.plan_id = ? AND a.head_sha IS NOT NULL AND a.head_sha <> ''"+
 		"  AND NOT EXISTS (SELECT 1 FROM dag_integration_observations o2 WHERE o2.acceptance_id = a.acceptance_id AND o2.repository = o.repository"+
 		"   AND o2.base_ref = o.base_ref AND o2.observed_seq > o.observed_seq AND o2.is_ancestor = 0)"+
 		"  AND (o.merge_turn_id IS NULL OR EXISTS (SELECT 1 FROM merge_turns m WHERE m.turn_id = o.merge_turn_id AND m.state = 'landed'"+
-		"   AND m.candidate_head = a.head_sha AND m.repository = o.repository AND m.base_ref = o.base_ref))"+
+		"   AND m.candidate_head = ? AND m.repository = o.repository AND m.base_ref = o.base_ref))"+
 		" ORDER BY o.observed_seq ASC LIMIT 1",
-		[]any{repository, baseRef, a.AcceptanceID, plan}, &out.Observation, &out.Since)
+		[]any{repository, baseRef, stand.Head, stand.RelationshipID, stand.EventID, stand.Generation, stand.RevisionHash, a.AcceptanceID, plan, stand.Head}, &out.Observation, &out.Since)
 	if err != nil {
 		return IntegratedAt{}, err
 	}
@@ -393,7 +398,7 @@ func (s *Scheduler) integratedAt(ctx context.Context, q store.Querier, plan stri
 	if err != nil || !seen || latest != 0 || a.HeadSHA == "" {
 		return out, err
 	}
-	landed, err := queryOne(ctx, q, "SELECT 1 FROM merge_turns WHERE repository = ? AND base_ref = ? AND candidate_head = ? AND state = 'landed' LIMIT 1", []any{repository, baseRef, a.HeadSHA}, &one)
+	landed, err := queryOne(ctx, q, "SELECT 1 FROM merge_turns WHERE repository = ? AND base_ref = ? AND candidate_head = ? AND state = 'landed' LIMIT 1", []any{repository, baseRef, stand.Head}, &one)
 	out.Unprovable = landed
 	return out, err
 }
