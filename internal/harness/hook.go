@@ -73,7 +73,9 @@ const Interrupted = 130
 //
 // The first interrupt of a crw process only cancels its run (cmd/crw serve), where Node's default
 // action ends the oracle at once, even while it waits for its input: so Hook answers Interrupted as
-// soon as ctx is done, whatever the run is waiting for, and anything it would have written is lost.
+// soon as ctx is done, whatever the run is waiting for. The run itself is not stopped: crw exits with
+// the status Hook returns, which ends what is left of it, and a caller that outlives Hook must not
+// rely on that.
 //
 // Intentional change: arguments that name no leg of the table (an unknown leg, an event that is not the
 // leg's, no --leg) release the hook in silence, without reading its input and without a record. The
