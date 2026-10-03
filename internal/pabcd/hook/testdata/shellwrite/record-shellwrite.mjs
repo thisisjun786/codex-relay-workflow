@@ -30,6 +30,7 @@ const commands = [
 'echo x > a\necho y > b', 'cat <<<word > out', 'cat <<<<word > out',
 'cat <<\'A B\' > out\nbody\nA B\necho x > next',
 ];
+commands.push(...["printf x \\ #word 2>target",": 2> \\\n target",": >\\\n| target","cat <<EOF$X\n'\nEOF$X\n: 2>target","cat <<''\n'\n\n: 2>target","cat <\\\n<EOF\n'\nEOF\n: 2>target","cat <<EOF\n'\nEO\\\nF\n: 2>target",": >a\rb"]);
 const additions = new Map([
  ['x -> y', ['y']], ['x <> y', ['y']], ['echo x > a>b', ['a', 'b']],
  ['echo x >"a"x', ['ax']], ['echo x > a\\ b', ['a b']],
@@ -37,6 +38,15 @@ const additions = new Map([
  ['cat <<-EOF > out\n\tbody\n\tEOF\necho x > next', ['next']],
  ['cat <<EOF-X > out\nbody\nEOF-X\necho x > next', ['next']],
 ]);
+additions.set("cat <<'EOF' > out\r\nbody\r\nEOF\r\necho x > next", ["out\r"]);
+additions.set("printf x \\ #word 2>target", ["target"]);
+additions.set(": 2> \\\n target", ["target"]);
+additions.set(": >\\\n| target", ["target"]);
+additions.set("cat <<EOF$X\n'\nEOF$X\n: 2>target", ["target"]);
+additions.set("cat <<''\n'\n\n: 2>target", ["target"]);
+additions.set("cat <\\\n<EOF\n'\nEOF\n: 2>target", ["target"]);
+additions.set("cat <<EOF\n'\nEO\\\nF\n: 2>target", ["target"]);
+additions.set(": >a\rb", ["a\rb"]);
 const data = { oracle: 'CXC v0.2.40 commit 3c1459ac', source: path, entry: [], units: [] };
 for (const command of commands) {
  const output = api.shellWriteDestinations(command).map(utf8);

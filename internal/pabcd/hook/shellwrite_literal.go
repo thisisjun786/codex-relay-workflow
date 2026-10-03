@@ -7,19 +7,23 @@ import "strings"
 func literalRedirectDestinations(command string) []string {
 	s := stripLiteralHeredocs(command)
 	dests := []string{}
+	wordStart := true
 	for i := 0; i < len(s); {
 		switch s[i] {
 		case '\'', '"':
 			_, i, _ = literalShellWord(s, i)
+			wordStart = false
 			continue
 		case '\\':
 			i = min(i+2, len(s))
+			wordStart = false
 			continue
 		case '#':
 			// Only a word-boundary # begins a shell comment.
-			if i == 0 || strings.ContainsRune(" \t\r\n;|&()", rune(s[i-1])) {
+			if wordStart {
 				if end := strings.IndexByte(s[i:], '\n'); end >= 0 {
 					i += end + 1
+					wordStart = true
 				} else {
 					i = len(s)
 				}
@@ -41,6 +45,7 @@ func literalRedirectDestinations(command string) []string {
 		}
 		readwrite := strings.HasPrefix(s[i:], "<>")
 		if s[i] != '>' && !readwrite {
+			wordStart = strings.ContainsRune(" \t\n;|&()<>", rune(s[i]))
 			i++
 			continue
 		}
@@ -54,6 +59,7 @@ func literalRedirectDestinations(command string) []string {
 		}
 		word, next, literal := literalShellWord(s, at)
 		i = max(i+1, next)
+		wordStart = false
 		if !literal || word == "" || word == "/dev/null" || dup && shellDescriptor(word) {
 			continue
 		}
@@ -78,15 +84,21 @@ func shellDescriptor(word string) bool {
 // Quote fragments concatenate; unquoted escapes remove their backslash and
 // double-quoted escapes remove it only for $, backtick, quote, backslash and LF.
 func literalShellWord(s string, i int) (string, int, bool) {
-	for i < len(s) && strings.ContainsRune(" \t\r\n", rune(s[i])) {
+	return literalWord(s, i, false)
+}
+
+// Delimiters remove quotes but perform no expansion, including dollar words.
+func literalWord(s string, i int, delimiter bool) (string, int, bool) {
+	for i < len(s) && strings.ContainsRune(" \t\n", rune(s[i])) {
 		i++
 	}
+	start := i
 	var out strings.Builder
 	literal := true
 	var quote byte
 	for i < len(s) {
 		ch := s[i]
-		if quote == 0 && strings.ContainsRune(" \t\r\n;|&<>()", rune(ch)) {
+		if quote == 0 && strings.ContainsRune(" \t\n;|&<>()", rune(ch)) {
 			break
 		}
 		if ch == '\'' || ch == '"' {
@@ -114,50 +126,97 @@ func literalShellWord(s string, i int) (string, int, bool) {
 				continue
 			}
 		}
-		if quote != '\'' && (ch == '$' || ch == '`') {
+		if !delimiter && quote != '\'' && (ch == '$' || ch == '`') {
 			literal = false
 		}
 		out.WriteByte(ch)
 		i++
 	}
-	return out.String(), i, literal && quote == 0
+	return out.String(), i, literal && quote == 0 && i > start
 }
 
 type literalHeredoc struct {
-	delimiter string
-	tabs      bool
+	delimiter    string
+	tabs, quoted bool
 }
 
-// Unlike the parity helper, this recognizes the complete quoted/escaped word,
-// <<- tab stripping and multiple queued bodies. It always reads the raw command.
+// Read one complete shell header, joining continuations before lexing operators.
+// Heredoc bodies are consumed separately, so their quotes cannot change header
+// parsing. Escaped separators remain part of the word before a following #.
+func literalHeader(s string, i int) (string, int) {
+	var out strings.Builder
+	var quote byte
+	wordStart := true
+	comment := false
+	for i < len(s) {
+		ch := s[i]
+		if !comment && ch == '\\' && quote != '\'' && i+1 < len(s) {
+			if s[i+1] != '\n' {
+				out.WriteString(s[i : i+2])
+				wordStart = false
+			}
+			i += 2
+			continue
+		}
+		if !comment {
+			if quote == 0 && ch == '#' && wordStart {
+				comment = true
+			}
+			if quote == 0 && (ch == '\'' || ch == '"') {
+				quote = ch
+			} else if quote == ch {
+				quote = 0
+			}
+		}
+		out.WriteByte(ch)
+		i++
+		if ch == '\n' && (comment || quote == 0) {
+			break
+		}
+		if quote == 0 {
+			wordStart = strings.ContainsRune(" \t\n;|&()<>", rune(ch))
+		} else {
+			wordStart = false
+		}
+	}
+	return out.String(), i
+}
+
 func stripLiteralHeredocs(s string) string {
 	var out strings.Builder
-	var pending []literalHeredoc
 	for i := 0; i < len(s); {
-		start := i
+		header, next := literalHeader(s, i)
+		out.WriteString(header)
+		i = next
+		for _, h := range literalHeredocs(header) {
+			i = literalHeredocEnd(s, i, h)
+		}
+	}
+	return out.String()
+}
+
+// Only headers are scanned for delimiter words; valid empty quoted words count.
+func literalHeredocs(s string) []literalHeredoc {
+	pending := []literalHeredoc{}
+	wordStart := true
+	for i := 0; i < len(s); {
 		switch s[i] {
 		case '\'', '"':
 			_, i, _ = literalShellWord(s, i)
-			out.WriteString(s[start:i])
+			wordStart = false
 			continue
 		case '\\':
 			i = min(i+2, len(s))
-			out.WriteString(s[start:i])
+			wordStart = false
 			continue
 		case '#':
-			if i == 0 || strings.ContainsRune(" \t\r\n;|&()", rune(s[i-1])) {
-				if end := strings.IndexByte(s[i:], '\n'); end >= 0 {
-					i += end
-				} else {
-					i = len(s)
-				}
-				out.WriteString(s[start:i])
-				continue
+			if wordStart {
+				return pending
 			}
 		case '<':
 			if strings.HasPrefix(s[i:], "<<<") {
 				_, i, _ = literalShellWord(s, i+3)
-				out.WriteString(s[start:i])
+				wordStart = false
 				continue
 			}
 			if strings.HasPrefix(s[i:], "<<") {
@@ -166,47 +225,51 @@ func stripLiteralHeredocs(s string) string {
 				if tabs {
 					at++
 				}
-				word, next, ok := literalShellWord(s, at)
-				if ok && word != "" {
-					pending = append(pending, literalHeredoc{word, tabs})
+				word, next, ok := literalWord(s, at, true)
+				if ok {
+					quoted := strings.ContainsAny(s[at:next], "'\"\\")
+					pending = append(pending, literalHeredoc{word, tabs, quoted})
 				}
 				i = max(i+2, next)
-				out.WriteString(s[start:i])
+				wordStart = false
 				continue
 			}
-		case '\n':
-			out.WriteByte('\n')
-			i++
-			for _, h := range pending {
-				i = literalHeredocEnd(s, i, h)
-			}
-			pending = nil
-			continue
 		}
-		out.WriteByte(s[i])
+		wordStart = strings.ContainsRune(" \t\n;|&()<>", rune(s[i]))
 		i++
 	}
-	return out.String()
+	return pending
 }
 
 func literalHeredocEnd(s string, i int, h literalHeredoc) int {
 	for i < len(s) {
-		end := strings.IndexByte(s[i:], '\n')
-		nl := end >= 0
-		if nl {
-			end += i
-		} else {
-			end = len(s)
+		var line strings.Builder
+		for {
+			end := strings.IndexByte(s[i:], '\n')
+			nl := end >= 0
+			if nl {
+				end += i
+			} else {
+				end = len(s)
+			}
+			part := s[i:end]
+			if h.tabs {
+				part = strings.TrimLeft(part, "\t")
+			}
+			continued := nl && !h.quoted && strings.HasSuffix(part, "\\")
+			if continued {
+				part = strings.TrimSuffix(part, "\\")
+			}
+			line.WriteString(part)
+			i = end
+			if nl {
+				i++
+			}
+			if !continued || i >= len(s) {
+				break
+			}
 		}
-		line := s[i:end]
-		if h.tabs {
-			line = strings.TrimLeft(line, "\t")
-		}
-		i = end
-		if nl {
-			i++
-		}
-		if line == h.delimiter {
+		if line.String() == h.delimiter {
 			return i
 		}
 	}
