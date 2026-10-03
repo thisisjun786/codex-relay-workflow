@@ -114,4 +114,3 @@ for (const [name, raw] of Object.entries(cases)) {
   rmSync(cwd, { recursive: true, force: true });
 }
 process.stdout.write("[\n" + out.map((o) => JSON.stringify(o)).join(",\n") + "\n]\n");
-
