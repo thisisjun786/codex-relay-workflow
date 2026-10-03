@@ -14,6 +14,7 @@ import (
 // the parker it tests; its cases and assertions are as they were. A ledger over a fresh store stands in
 // for faults' testLedger, and the two accessors read a column as faults' text and integer do.
 func TestParkNotice_parks_only_a_notice_nothing_of_which_has_gone(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name, state string
 		assignments []string

@@ -151,8 +151,9 @@ func TestCXCReplay_against_a_fake_crw(t *testing.T) {
 	}
 }
 
-// Pending is not run, an unregistered fixture fails, and a claim that needs what the replayer does
-// not have yet is refused before anything runs, naming the work.
+// Pending is not run, an unregistered fixture fails, and a claim that needs what no replay provides
+// (a scripted fetch reply, a connect or dns call in the expectation, rewrite-rule text in the given) is refused before
+// anything runs, naming what is missing.
 func TestCXCReplay_states_and_refusals(t *testing.T) {
 	r := cxcTestReplayer(t)
 	bare := func(given, expect string) cxccorpus.Fixture {
@@ -179,24 +180,23 @@ func TestCXCReplay_states_and_refusals(t *testing.T) {
 		state string
 		want  string
 	}{
-		{"sqlite given", bare(`{"sqlite":{"codex/x.sqlite":["CREATE TABLE t(a)"]}}`, ""), cxcChanged, "SQLite"},
-		{"sqlite tree", bare("{}", `{"exit":0,"steps":[],"tree":{"codex/y.sqlite":{"type":"file","mode":"0644","form":"sqlite","json":{"tables":[]}}},"calls":[]}`), cxcIdentical, "SQLite"},
-		{"fetch given", bare(`{"fetch":{"https://example.invalid/":{"status":200,"body":"{}"}}}`, ""), cxcIdentical, "network"},
-		{"fetch call", bare("{}", calls("fetch")), cxcIdentical, "network"},
-		{"connect call", bare("{}", calls("connect")), cxcChanged, "network"},
-		{"dns call", bare("{}", calls("dns")), cxcIdentical, "network"},
+		{"fetch given", bare(`{"fetch":{"https://example.invalid/":{"status":200,"body":"{}"}}}`, ""), cxcIdentical, "scripted fetch reply"},
+		{"connect call", bare("{}", calls("connect")), cxcChanged, "connect or dns"},
+		{"dns call", bare("{}", calls("dns")), cxcIdentical, "connect or dns"},
 		{"R19 given", bare(`{"files":{"ws/.codexclaw-install.json":"{}"}}`, ""), cxcChanged, "rewrite rule"},
 		{"R29 expected", bare("{}", out("cxc-ops error")), cxcIdentical, "rewrite rule"},
 		{"R30 expected", bare("{}", out("codexclaw-subagent-config")), cxcIdentical, "rewrite rule"},
 	} {
 		err := r.check("a__b__c", tc.fix, cxcClaim{State: tc.state}, t.TempDir)
-		if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "later issue") {
-			t.Errorf("%s: error = %v, want a refusal naming %q and the later issue", tc.name, err, tc.want)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: error = %v, want a refusal naming %q", tc.name, err, tc.want)
 		}
 	}
 }
 
-// The classes the follow-up owns, counted over the real corpus.
+// The classes no replay provides, counted over the real corpus: four fixtures script a fetch reply,
+// none expects a connect or dns call, four give rewrite-rule text (a claim overrides the given) and
+// the expectation of 33 holds it (a claim sets or removes the key).
 func TestCXCCorpus_refused_classes(t *testing.T) {
 	root, _ := Root()
 	_, fixtures, err := loadCXCFixtures(root)
@@ -205,11 +205,11 @@ func TestCXCCorpus_refused_classes(t *testing.T) {
 	}
 	r, got := cxcTestReplayer(t), map[string]int{}
 	for _, f := range fixtures {
-		for _, need := range r.needs(f, true) {
+		for _, need := range r.needs(f, f.Given, true) {
 			got[need]++
 		}
 	}
-	want := map[string]int{cxcNeedSQLite: 39, cxcNeedNetwork: 10, cxcNeedRewriteGiven: 4, cxcNeedRewriteExpected: 33}
+	want := map[string]int{cxcNeedFetchReply: 4, cxcNeedRewriteGiven: 4, cxcNeedRewriteExpected: 33}
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Errorf("refused classes over %d fixtures = %v, want %v", len(fixtures), got, want)
 	}

@@ -13,6 +13,12 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// Most tests here call t.Parallel: each builds its own store and temporary tree, and the
+// process-wide environment (HOME, the XDG directories, the relay roots) is isolated once, by
+// TestMain, so no test sets it. A test that replaces a package-level seam (TokenSource, or the
+// CLI and delivery clocks sosClockNow and sosDeliveryClock) stays serial and restores the seam
+// when it ends; testing runs every serial test before any parallel one, so the two never overlap.
+// Do not add t.Parallel to such a test, and do not call t.Setenv in a parallel one.
 func TestMain(m *testing.M) {
 	testsupport.Main(m)
 }

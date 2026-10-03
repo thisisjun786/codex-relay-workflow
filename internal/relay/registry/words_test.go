@@ -10,6 +10,7 @@ import (
 // and prose string assignment/dispositions/rolepolicy emit outside errors.RefusalReason equals
 // its golden, which began as the Python module's own value.
 func Test25_words_outside_RefusalReason_are_pythons(t *testing.T) {
+	t.Parallel()
 	next := map[string]any{}
 	for k, v := range nextAction {
 		next[k] = v

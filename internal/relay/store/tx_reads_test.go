@@ -25,6 +25,7 @@ func boundedCtx(t *testing.T) context.Context {
 }
 
 func TestCompose_read_sees_a_relationship_written_earlier_in_the_same_transaction(t *testing.T) {
+	t.Parallel()
 	// Given: a composed transaction that registers a relationship and has not committed.
 	s := recordStore(t)
 	ctx := boundedCtx(t)
@@ -58,6 +59,7 @@ func TestCompose_read_sees_a_relationship_written_earlier_in_the_same_transactio
 }
 
 func TestTransaction_read_with_the_body_ctx_sees_the_uncommitted_write(t *testing.T) {
+	t.Parallel()
 	// Given: a plain transaction that has written a journal entry and not committed.
 	s := recordStore(t)
 	ctx := boundedCtx(t)
@@ -82,6 +84,7 @@ func TestTransaction_read_with_the_body_ctx_sees_the_uncommitted_write(t *testin
 // inside a transaction uses the transaction's connection. Only the pool plumbing itself
 // (opening, Transaction and Projection acquiring the connection, q, Close) may touch s.DB.
 func TestStoreReaders_query_through_the_transaction_aware_querier(t *testing.T) {
+	t.Parallel()
 	// Projection is pool plumbing too: the SQLite backup API needs a raw connection of its own.
 	allowed := map[string]bool{"Transaction": true, "q": true, "Close": true, "Projection": true}
 	files, err := filepath.Glob("*.go")

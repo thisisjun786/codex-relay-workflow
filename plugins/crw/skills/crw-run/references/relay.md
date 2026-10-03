@@ -679,7 +679,9 @@ The base a landing records is the value the next candidate on the same target ha
 `--base-sha`, so the relay does not take it from you: at the check, the landing, a resolution and
 a restatement it reads where the base branch points, from the target the claim named (git for an
 absolute repository path, which must be the repository the merge goes into; a read-only forge
-GET for `owner/name`), and records that reading. What you pass is compared with it.
+GET for `owner/name`), and records that reading. What you pass is compared with it. A check that
+finds the last landing's recorded base older than the branch also reads how the branch moved
+(below).
 
 - `--base-sha` is the branch tip now, in full. Anything else is refused `merge_currency_stale`.
 - `--landed-sha` is the commit your merge put on the base: the merge or squash commit, the last
@@ -697,11 +699,85 @@ target the relay cannot read refuses `merge_target_unreadable` and nothing is re
 merging turn checked before the relay read its base is refused `merge_evidence_required` and
 leaves through `merge-turn-unknown` and `merge-turn-resolve`.
 
-When `merge-turn-check` is refused because the last landing on the target recorded a different
-base, the refusal names that landing and who may correct it: its holder, or the supervisor above
-its project. That task runs `merge-turn-restate-base` on the landing; the relay reads the branch
-again, records it, and keeps the replaced value beside it (`merge-turn-show --turn <landing>`,
-`baseRestatements`). Then the candidate checks again. Nobody edits the store to correct a base.
+When the last landing on the target recorded a different base than the tip the check states, either
+the branch moved after that landing without a landing of the lane, or that landing recorded a
+wrong base. The check reads how the branch moved: the
+first-parent line of the base branch from the tip down to the recorded base. If every commit on
+it is a merge commit that no landing on the target records, which is what a pull request merged
+outside the lane leaves, the check records the base again itself, keeps the replaced value beside
+it (`merge-turn-show --turn <landing>`, `baseRestatements`, evidence beginning `automatic:`),
+reports it as `landingBaseRestated` in its answer and goes on. The parent that merged outside the
+lane has nothing to record afterwards, and no other parent waits for it.
+
+When the check cannot confirm that (the branch was rewritten, a commit on it is not a merge commit,
+more than 32 merges, a turn is in flight, or the branch could not be read) it writes nothing and
+is refused `merge_currency_stale` as before. The refusal names why and the command, with the
+landing and its holder filled in: that holder, or the supervisor above its project, runs
+`merge-turn-restate-base --turn <landing> --actor <task> --evidence <why the base moved>`; the
+relay reads the branch again, records it, and keeps the replaced value beside it. Then the
+candidate checks again. A waiting parent that is neither cannot run it. Nobody edits the store to
+correct a base.
+
+## Working inside a merge turn
+
+Everything between the grant and the landing runs in the foreground of the turn you hold: refresh
+the head, wait for the jobs, `merge-turn-check`, merge, `merge-turn-land`. Work inside a merge turn
+never runs in the background. A `nohup` script, a detached job or a polling loop is not tied to your
+turn: it can stop with the session that started it (a merge script started that way died with its
+shell on 2026-10-03 and left the turn held for 23 minutes while two pull requests waited), or keep
+running with nobody reading its result. Without progress records the relay cannot tell stopped work
+from unattended work.
+Wait for CI in your own turn, and say that you are alive while you wait.
+
+Record each step as you take it:
+
+    codex-session-relay --state "$RELAY_STATE" merge-turn-progress --turn <id> --actor <task> --step base_refresh|ci_started|ci_polled|ci_result|merge_attempt [--evidence <what>]
+
+- `base_refresh` right after you refresh the candidate (the new head in `--evidence`);
+  `ci_started` when its jobs start (the run ids); `ci_polled` each time you look at them while
+  they run, every few minutes, which is what tells another parent you are still there;
+  `ci_result` when they finish; `merge_attempt` when you request the merge. Only the holder
+  records, while the turn is holding or merging.
+- The grant acknowledgement, a restated head or readiness and a successful `merge-turn-check` also
+  count as signs of life; the newest sign decides.
+- `merge-turn-show --repository <repo> --base-ref <ref>` shows every other parent `lastProgressAt`,
+  `lastProgress`, `stallsAt` and `stalled` while a turn occupies the target. A holding turn silent
+  for the holding limit, 1200 seconds (the longest hosted job, 15 minutes, plus a margin), reads
+  `stalled` true and `blocked.cause` `holder_stalled` (unless the holder no longer owns its project or
+  is paused, which are read first).
+
+**Passing a stalled turn on.** Silence does not prove the holder is gone. A parent that waits
+behind a stalled holding turn, or the supervisor, reads `merge-turn-show` and the holder's pull
+request first and then passes the turn:
+
+    codex-session-relay --state "$RELAY_STATE" merge-turn-pass --turn <the stalled turn> --actor <task> --evidence <what you read: the last progress, how long, why the holder is gone>
+
+The relay checks the silence again inside the call and refuses a turn that is not stalled
+(`merge_turn_not_held`, naming when it would stall). A pass closes the turn as `passed`, keeps the
+holder, head and last progress in the ledger beside who passed it and why, and grants the target to
+the next ready waiter in the usual order with its wake. It frees the target; it does not decide a
+merge: a holder that merged without running `merge-turn-check`, against the protocol, never recorded
+it, so read the pull request before you treat the passed candidate as unmerged. A holder that ran
+the check and died stays merging, and a merging or unknown turn is never passed
+(`merge_turn_unresolved`): the holder or the supervisor reports a merging turn with
+`merge-turn-unknown` and then resolves it with `merge-turn-resolve`; an unknown turn goes straight to
+`merge-turn-resolve`.
+
+**If you are the holder that was passed**, the calls that act on the turn (land, release,
+readiness, check, acknowledge, progress, withdraw) are refused `merge_turn_not_held` and say the turn
+was passed; `merge-turn-show` still reads it. Stop working it. Read the turn, your pull request and
+any job you left running, and claim the target again with `merge-turn-request` only if the candidate
+is still wanted.
+
+**Asking a holder for the target.** `merge-turn-request-return --turn <id> --actor <task> --evidence
+<why>` queues a notice to the holder through the delivery engine, which wakes it when it is idle;
+the answer's `returnNotice` says whether it was queued (queued is not delivered). A holder that gets
+one acts according to the turn's state: while holding, it continues and records progress, or
+releases the turn with `merge-turn-release --disposition returned`; while merging (it has run
+`merge-turn-check`), it records progress and lands the verified result with `merge-turn-land`, or
+reports `merge-turn-unknown`, because a merging turn cannot be released; an unknown outcome is
+resolved by the supervisor or the holder with `merge-turn-resolve` from an observation of the pull
+request and the base. Asking moves nothing by itself.
 
 ## Peer region agreements across a moving base
 
@@ -1029,7 +1105,9 @@ head that landed is not the head the receipt names: `--expected-event` still pin
 report, and the mark records a revision, not a commit. So the `--evidence` text names the head
 that landed, the head the report named, and the check between them: the `evidence:` line of the
 `base-refresh check` as it printed it (previous head, dev tip, new head, tree OID and the rule
-applied, one line for each step of a chain) and the `merge-evidence` verdict on the landed head.
+applied, one line for each step of a chain; after a conflict settled by a mechanical rule the `base-refresh mechanical`
+output instead, with its `applied:` lines and the wording of [Resolve a mechanical conflict
+yourself](merge-readiness.md#resolve-a-mechanical-conflict-yourself)) and the `merge-evidence` verdict on the landed head.
 Nothing else in the record says why the two heads differ, and `merge-evidence` on the landed head
 is the reading to quote, not the child's record.
 
@@ -1125,18 +1203,41 @@ criteria digest, so a re-review landing on the SAME disposition enqueues no seco
 document keeps the summary written against the earlier wording. Rewrite it yourself, the same way
 you wrote it the first time.
 
+### Changing a verified ruling before it is accepted
+
+A ruling of `verified` is replaced by `needs_changes` on the same receipt while nothing rests on it:
+no `dag-accept` of the event, no `assignment-mark merged`, and no merge turn of the assignment that
+is `merging`, of unknown effect or landed (a turn that only waits or holds does not count: the
+parent that found a base conflict holds it). An open re-review, which a changed criteria set opens,
+is decided first, as before, whether or not the head was accepted. The relay opens the next generation and queues the
+correction to the same child exactly as for a first `needs_changes` ruling, and answers the new
+record with `_supersedes` naming the ruling it replaced. Give the ruling as the ordinary `verdict`
+line, with the restoration block on the finding that carries the instruction. A different verdict
+is never answered with the recorded one: `unverified` or `aborted` after `verified`, and anything
+different after `needs_changes`, `unverified` or `aborted`, are refused with `disposition_conflict`,
+and a refusal wrote nothing. The same verdict again is still a replay marked `_replay`. A relay older
+than this rule answers a different verdict with the recorded ruling marked `_replay` and exit 0; an
+answer that still says `verified` with `_replay` changed nothing, so read the answer and
+`assignment-show`, never the exit code. The procedure for a base conflict after the ruling is
+[in merge readiness](merge-readiness.md#a-base-conflict-after-the-ruling-and-before-the-acceptance).
+
 ### A fresh execution generation
 
-That route is closed and a new generation is the one to use whenever the same event cannot be the
-answer:
+That route is closed. When the same event cannot be the answer, the cases are told apart here; a new
+generation is the way for the first two:
 
   - the artifact itself has to change, which is what a `needs_changes` verdict is for;
   - the event was already ruled `needs_changes`, `unverified` or `aborted`. Re-claiming it
-    returns `already_claimed` and `verdict` returns the settled record marked as a replay. After
-    `unverified` the state reads `verifying` rather than `re_review_needed`, so the assignment
+    returns `already_claimed`. The same `verdict` again returns the settled record marked as a
+    replay, and a different one is refused with `disposition_conflict`, which names the route (after
+    `needs_changes` the generation it opened is the one to use). After `unverified` the state reads `verifying` rather than `re_review_needed`, so the assignment
     does not announce this one;
-  - the event is no longer the revision this generation stands on, because a newer revision
-    arrived, the head is ambiguous, or the generation advanced.
+  - the generation advanced or a newer revision arrived, so the event is no longer the head: rule
+    the head that `assignment-show` names, which needs no new generation; a needs_changes ruling that
+    tries to replace the verified ruling of the old event is refused with `stale_generation` or
+    `superseded_revision` saying so;
+  - the head is ambiguous: outside a plan, a fresh generation; for a plan node this build records no
+    route, so report it and open none.
 
 A `needs_changes` verdict opens the generation itself. Open one by hand when nothing ruled it:
 
