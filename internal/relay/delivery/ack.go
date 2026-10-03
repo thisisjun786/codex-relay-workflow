@@ -14,6 +14,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -411,6 +412,12 @@ func projectCap(findings []any) Obj {
 
 // RecordVerdict is record_verdict: the verdict, the generation it opens and the correction, in
 // one transaction, with currency decided inside it. No parameter bypasses the check.
+//
+// An event has one standing ruling (rulingchange.go). The same verdict again is a replay. A different
+// one is never answered with the recorded ruling: a verified ruling that nothing rests on is
+// replaced by needs_changes (the correction opens as for a first needs_changes ruling) and every
+// other different verdict is refused with disposition_conflict. An open re-review is decided first,
+// as before: it is the route for a criteria set that moved, accepted head or not.
 func (a *Ack) RecordVerdict(ctx context.Context, eventID, verdict, verdictTurn string, criteria, findings []any, reason, expected any) (Obj, error) {
 	if !slices.Contains(verdicts, verdict) {
 		return nil, refuse(DispositionConflict, "unknown verdict %s", strconv.Quote(verdict))
@@ -420,21 +427,41 @@ func (a *Ack) RecordVerdict(ctx context.Context, eventID, verdict, verdictTurn s
 		return nil, err
 	}
 	now := a.Clock.ISO()
-	var record Obj
+	var record, replaced Obj
 	err = a.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
-		settled, err := one(ctx, a.Store, "SELECT v.record AS record, c.set_digest AS set_digest FROM verdicts v LEFT JOIN verdict_context c ON c.event_id = v.event_id WHERE v.event_id = ?", eventID)
+		replaced = nil
+		settled, err := one(ctx, a.Store, "SELECT v.record AS record, v.verdict AS verdict, v.verdict_turn_id AS verdict_turn, v.next_generation AS next_generation, c.set_digest AS set_digest FROM verdicts v LEFT JOIN verdict_context c ON c.event_id = v.event_id WHERE v.event_id = ?", eventID)
 		if err != nil {
 			return err
 		}
-		reReview := false
+		reReview, changed := false, false
 		if settled != nil {
 			if reReview, err = a.reReviewOpen(ctx, eventID, settled.Opt("set_digest")); err != nil {
 				return err
 			}
 		}
 		if settled != nil && !reReview {
-			record = append(loadsObj(settled.S("record")), F{Key: "_replay", Value: true})
-			return nil
+			recorded := settled.S("verdict")
+			move, route := rulingTransition(recorded, verdict, settled.I("next_generation"))
+			switch move {
+			case moveReplay:
+				record = append(loadsObj(settled.S("record")), F{Key: "_replay", Value: true})
+				return nil
+			case moveRefuse:
+				return differentRuling(eventID, recorded, settled.S("verdict_turn"), verdict, route)
+			}
+			// a verified ruling is replaced only while nothing rests on it, read before anything else of
+			// the existing path so that an event the plan accepted always names its acceptance
+			rest, err := registry.RestsOn(ctx, a.Store, eventID)
+			if err != nil {
+				return err
+			}
+			if rest.Kind != "" {
+				return builtOn(eventID, settled.S("verdict_turn"), rest)
+			}
+			changed = true
+			prior := loadsObj(settled.S("record"))
+			replaced = Obj{{Key: "verdict", Value: prior.Get("verdict")}, {Key: "verdictTurnId", Value: prior.Get("verdictTurnId")}, {Key: "decidedAt", Value: prior.Get("decidedAt")}}
 		}
 		if reReview && verdict != "verified" && verdict != "needs_changes" {
 			return refuse(DispositionConflict, "%s cannot replace the verified ruling this re-review is reopening: it would leave the assignment with no state to act on. Rule verified or needs_changes, or change the relationship's status", strconv.Quote(verdict))
@@ -455,6 +482,9 @@ func (a *Ack) RecordVerdict(ctx context.Context, eventID, verdict, verdictTurn s
 		}
 		relationship, err := RequireActive(ctx, a.Store, event.S("relationship_id"))
 		if err != nil {
+			if changed && Reason(err) == RelationshipNotActive {
+				return changeRefusal(RelationshipNotActive, eventID, Detail(err))
+			}
 			return err
 		}
 		relRow, err := one(ctx, a.Store, "SELECT * FROM relationships WHERE relationship_id = ?", event.S("relationship_id"))
@@ -467,6 +497,9 @@ func (a *Ack) RecordVerdict(ctx context.Context, eventID, verdict, verdictTurn s
 		}
 		current, _ := state.Lookup("current")
 		if (verdict == "verified" || verdict == "needs_changes") && current != true {
+			if changed {
+				return changeRefusal(currencyReasons[pyjson.Text(state.Get("reason"))], eventID, pyjson.Text(state.Get("detail")))
+			}
 			return refuse(currencyReasons[pyjson.Text(state.Get("reason"))], "%s cannot be ruled %s: %s", strconv.Quote(eventID), strconv.Quote(verdict), pyjson.Text(state.Get("detail")))
 		}
 		cover, err := a.Criteria.Coverage(ctx, event.S("relationship_id"), eventID, verdict, normalised, reason, expected)
@@ -534,8 +567,12 @@ func (a *Ack) RecordVerdict(ctx context.Context, eventID, verdict, verdictTurn s
 			}
 		}
 		setDigest, _ := cover.Lookup("setDigest")
-		if reReview {
-			if err := journal(ctx, a.Store, "verdict_superseded", eventID, Obj{{Key: "supersededVerdict", Value: loadsObj(settled.S("record"))}, {Key: "reviewedSetDigest", Value: settled.Opt("set_digest")}, {Key: "currentSetDigest", Value: setDigest}}, now); err != nil {
+		if reReview || changed {
+			superseded := Obj{{Key: "supersededVerdict", Value: loadsObj(settled.S("record"))}, {Key: "reviewedSetDigest", Value: settled.Opt("set_digest")}, {Key: "currentSetDigest", Value: setDigest}}
+			if changed {
+				superseded = append(superseded, F{Key: "reason", Value: rulingChanged})
+			}
+			if err := journal(ctx, a.Store, "verdict_superseded", eventID, superseded, now); err != nil {
 				return err
 			}
 		}
@@ -569,6 +606,11 @@ func (a *Ack) RecordVerdict(ctx context.Context, eventID, verdict, verdictTurn s
 		}
 		return nil
 	})
+	if err == nil && replaced != nil {
+		// an answer annotation, as _replay is: the stored record and the summary owed to the
+		// coordination document stay the record's own fields
+		record = append(record, F{Key: "_supersedes", Value: replaced})
+	}
 	return record, err
 }
 
