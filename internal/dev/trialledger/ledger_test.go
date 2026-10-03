@@ -13,7 +13,6 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/pyload"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
@@ -50,7 +49,7 @@ func loadCases(t *testing.T) []ledgerCase {
 	for i, item := range decoded.([]any) {
 		c := item.(hook.Object)
 		for key, into := range map[string]**string{"start": &cases[i].Start, "ledger": &cases[i].Ledger, "arg": &cases[i].Arg} {
-			if s, ok := evidence.Get(c, key).(string); ok {
+			if s, ok := c.Get(key).(string); ok {
 				*into = &s
 			}
 		}

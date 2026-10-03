@@ -6,6 +6,7 @@ import (
 	"slices"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -35,8 +36,8 @@ func (r *Registry) contestedRows(ctx context.Context, kind, key string, contenti
 	}
 	for _, d := range directives {
 		*contention = append(*contention, contract.OrderedObject{{Key: "contention", Value: "instruction_conflict"},
-			{Key: "scopeKind", Value: kind}, {Key: "scopeKey", Value: key}, {Key: "directiveId", Value: field(d, "directiveId")},
-			{Key: "fromScopeKey", Value: field(d, "fromScopeKey")}, {Key: "digest", Value: field(d, "digest")}})
+			{Key: "scopeKind", Value: kind}, {Key: "scopeKey", Value: key}, {Key: "directiveId", Value: pyjson.Text(d.Get("directiveId"))},
+			{Key: "fromScopeKey", Value: pyjson.Text(d.Get("fromScopeKey"))}, {Key: "digest", Value: pyjson.Text(d.Get("digest"))}})
 	}
 	return nil
 }
@@ -47,7 +48,7 @@ func gap(kind, key string) contract.OrderedObject {
 
 func contentionIs(rows []any, words ...string) bool {
 	for _, row := range rows {
-		if o, ok := row.(contract.OrderedObject); ok && slices.Contains(words, field(o, "contention")) {
+		if o, ok := row.(contract.OrderedObject); ok && slices.Contains(words, pyjson.Text(o.Get("contention"))) {
 			return true
 		}
 	}
@@ -165,19 +166,19 @@ func (r *Registry) descend(ctx context.Context, kind, key string, levels, gaps, 
 	}
 	for _, row := range rows {
 		edge := linkRecord(row)
-		lid := field(edge, "linkId")
+		lid := pyjson.Text(edge.Get("linkId"))
 		upper, lower := sub(edge, "upper"), sub(edge, "lower")
-		if o, ok := owner.(contract.OrderedObject); ok && field(o, "taskId") != field(upper, "taskId") {
-			*contention = append(*contention, drift(lid, field(upper, "taskId"), field(o, "taskId")))
+		if o, ok := owner.(contract.OrderedObject); ok && pyjson.Text(o.Get("taskId")) != pyjson.Text(upper.Get("taskId")) {
+			*contention = append(*contention, drift(lid, pyjson.Text(upper.Get("taskId")), pyjson.Text(o.Get("taskId"))))
 		}
-		live, err := r.Owner(ctx, field(lower, "scopeKind"), field(lower, "scopeKey"))
+		live, err := r.Owner(ctx, pyjson.Text(lower.Get("scopeKind")), pyjson.Text(lower.Get("scopeKey")))
 		if err != nil {
 			return err
 		}
-		if live != nil && field(live, "taskId") != field(lower, "taskId") {
-			*contention = append(*contention, drift(lid, field(lower, "taskId"), field(live, "taskId")))
+		if live != nil && pyjson.Text(live.Get("taskId")) != pyjson.Text(lower.Get("taskId")) {
+			*contention = append(*contention, drift(lid, pyjson.Text(lower.Get("taskId")), pyjson.Text(live.Get("taskId"))))
 		}
-		if err := r.descend(ctx, field(lower, "scopeKind"), field(lower, "scopeKey"), levels, gaps, contention, depth+1, seen,
+		if err := r.descend(ctx, pyjson.Text(lower.Get("scopeKind")), pyjson.Text(lower.Get("scopeKey")), levels, gaps, contention, depth+1, seen,
 			append(slices.Clone(path), here)); err != nil {
 			return err
 		}
@@ -214,8 +215,8 @@ func (r *Registry) up(ctx context.Context, sel UpSelector) (contract.OrderedObje
 		}
 		var keys []string
 		for _, b := range bindings {
-			if isLive(field(b, "status")) {
-				keys = append(keys, field(b, "scopeKey"))
+			if isLive(pyjson.Text(b.Get("status"))) {
+				keys = append(keys, pyjson.Text(b.Get("scopeKey")))
 			}
 		}
 		keys = sortedSet(keys)
@@ -277,23 +278,23 @@ func (r *Registry) up(ctx context.Context, sel UpSelector) (contract.OrderedObje
 			break
 		}
 		edge := linkRecord(incoming[0])
-		lid := field(edge, "linkId")
+		lid := pyjson.Text(edge.Get("linkId"))
 		upper, lower := sub(edge, "upper"), sub(edge, "lower")
-		live, err := r.Owner(ctx, field(lower, "scopeKind"), field(lower, "scopeKey"))
+		live, err := r.Owner(ctx, pyjson.Text(lower.Get("scopeKind")), pyjson.Text(lower.Get("scopeKey")))
 		if err != nil {
 			return nil, err
 		}
-		if live != nil && field(live, "taskId") != field(lower, "taskId") {
-			contention = append(contention, drift(lid, field(lower, "taskId"), field(live, "taskId")))
+		if live != nil && pyjson.Text(live.Get("taskId")) != pyjson.Text(lower.Get("taskId")) {
+			contention = append(contention, drift(lid, pyjson.Text(lower.Get("taskId")), pyjson.Text(live.Get("taskId"))))
 		}
-		above, err := r.Owners(ctx, field(upper, "scopeKind"), field(upper, "scopeKey"))
+		above, err := r.Owners(ctx, pyjson.Text(upper.Get("scopeKind")), pyjson.Text(upper.Get("scopeKey")))
 		if err != nil {
 			return nil, err
 		}
-		if len(above) == 1 && field(above[0], "taskId") != field(upper, "taskId") {
-			contention = append(contention, drift(lid, field(upper, "taskId"), field(above[0], "taskId")))
+		if len(above) == 1 && pyjson.Text(above[0].Get("taskId")) != pyjson.Text(upper.Get("taskId")) {
+			contention = append(contention, drift(lid, pyjson.Text(upper.Get("taskId")), pyjson.Text(above[0].Get("taskId"))))
 		}
-		kind, key = field(upper, "scopeKind"), field(upper, "scopeKey")
+		kind, key = pyjson.Text(upper.Get("scopeKind")), pyjson.Text(upper.Get("scopeKey"))
 	}
 	state := "resolved"
 	if contentionIs(contention, "competing_owners") {
@@ -329,8 +330,8 @@ func (r *Registry) startingScope(ctx context.Context, sel UpSelector) (string, s
 				return "", "", false, err
 			}
 			for _, b := range bindings {
-				if isLive(field(b, "status")) && field(b, "scopeKey") == sel.Scope.String {
-					return field(b, "scopeKind"), field(b, "scopeKey"), true, nil
+				if isLive(pyjson.Text(b.Get("status"))) && pyjson.Text(b.Get("scopeKey")) == sel.Scope.String {
+					return pyjson.Text(b.Get("scopeKind")), pyjson.Text(b.Get("scopeKey")), true, nil
 				}
 			}
 			return "", "", false, nil
@@ -361,7 +362,7 @@ func (r *Registry) bindingsFor(ctx context.Context, task string) ([]contract.Ord
 }
 
 func (r *Registry) joiningLinks(ctx context.Context, sender, recipient contract.OrderedObject) ([]contract.OrderedObject, error) {
-	sk, sv, rk, rv := field(sender, "scopeKind"), field(sender, "scopeKey"), field(recipient, "scopeKind"), field(recipient, "scopeKey")
+	sk, sv, rk, rv := pyjson.Text(sender.Get("scopeKind")), pyjson.Text(sender.Get("scopeKey")), pyjson.Text(recipient.Get("scopeKind")), pyjson.Text(recipient.Get("scopeKey"))
 	rows, err := r.Store.All(ctx, "SELECT * FROM scope_links"+
 		"  WHERE status IN ('active','paused') AND superseded_by IS NULL"+
 		"    AND ((upper_kind = ? AND upper_key = ? AND lower_kind = ? AND lower_key = ?)"+
@@ -378,7 +379,7 @@ func (r *Registry) joiningLinks(ctx context.Context, sender, recipient contract.
 }
 
 func rolePairIsWrong(sender, recipient contract.OrderedObject) bool {
-	pair := [2]string{field(sender, "role"), field(recipient, "role")}
+	pair := [2]string{pyjson.Text(sender.Get("role")), pyjson.Text(recipient.Get("role"))}
 	return !slices.Contains([][2]string{{roleSupervisor, roleParent}, {roleParent, roleSupervisor}, {roleParent, roleChild},
 		{roleChild, roleParent}, {roleParent, roleParent}}, pair)
 }
@@ -427,7 +428,7 @@ func (r *Registry) counterpart(ctx context.Context, from, to string, q Counterpa
 	narrow := func(list []contract.OrderedObject, scope string) []contract.OrderedObject {
 		var out []contract.OrderedObject
 		for _, b := range list {
-			if field(b, "scopeKey") == scope {
+			if pyjson.Text(b.Get("scopeKey")) == scope {
 				out = append(out, b)
 			}
 		}
@@ -480,19 +481,19 @@ func (r *Registry) counterpart(ctx context.Context, from, to string, q Counterpa
 		contention = []any{}
 		for _, m := range matches {
 			for _, record := range m.joined {
-				contention = append(contention, contract.OrderedObject{{Key: "linkId", Value: field(record, "linkId")},
-					{Key: "kind", Value: field(record, "kind")}, {Key: "scopeKey", Value: field(m.recipient, "scopeKey")}})
+				contention = append(contention, contract.OrderedObject{{Key: "linkId", Value: pyjson.Text(record.Get("linkId"))},
+					{Key: "kind", Value: pyjson.Text(record.Get("kind"))}, {Key: "scopeKey", Value: pyjson.Text(m.recipient.Get("scopeKey"))}})
 			}
 		}
 	}
 	var current any
 	stale := func(b contract.OrderedObject) bool {
-		v, _ := getField(b, "supersededBy")
-		return !isLive(field(b, "status")) || (v != nil && v != "")
+		v, _ := b.Lookup("supersededBy")
+		return !isLive(pyjson.Text(b.Get("status"))) || (v != nil && v != "")
 	}
 	if recipient != nil && stale(recipient) {
 		findings = append(findings, "stale_owner")
-		held, err := r.Owners(ctx, field(recipient, "scopeKind"), field(recipient, "scopeKey"))
+		held, err := r.Owners(ctx, pyjson.Text(recipient.Get("scopeKind")), pyjson.Text(recipient.Get("scopeKey")))
 		if err != nil {
 			return nil, err
 		}
@@ -542,7 +543,7 @@ func (r *Registry) counterpart(ctx context.Context, from, to string, q Counterpa
 	}
 	for _, side := range []string{"upper", "lower"} {
 		end := sub(edge, side)
-		held, err := r.Owners(ctx, field(end, "scopeKind"), field(end, "scopeKey"))
+		held, err := r.Owners(ctx, pyjson.Text(end.Get("scopeKind")), pyjson.Text(end.Get("scopeKey")))
 		if err != nil {
 			return nil, err
 		}
@@ -550,18 +551,18 @@ func (r *Registry) counterpart(ctx context.Context, from, to string, q Counterpa
 			findings = append(findings, "competing_owners")
 			continue
 		}
-		if len(held) == 1 && field(held[0], "taskId") != field(end, "taskId") {
+		if len(held) == 1 && pyjson.Text(held[0].Get("taskId")) != pyjson.Text(end.Get("taskId")) {
 			findings = append(findings, "owner_drift")
 		}
 	}
-	contested, err := r.ContestedDirectives(ctx, field(recipient, "scopeKind"), field(recipient, "scopeKey"))
+	contested, err := r.ContestedDirectives(ctx, pyjson.Text(recipient.Get("scopeKind")), pyjson.Text(recipient.Get("scopeKey")))
 	if err != nil {
 		return nil, err
 	}
 	if len(contested) > 0 {
 		findings = append(findings, "instruction_conflict")
 	}
-	status, _ := getField(edge, "status")
-	return answer("linked", contract.OrderedObject{{Key: "linkId", Value: field(edge, "linkId")}, {Key: "kind", Value: field(edge, "kind")},
+	status, _ := edge.Lookup("status")
+	return answer("linked", contract.OrderedObject{{Key: "linkId", Value: pyjson.Text(edge.Get("linkId"))}, {Key: "kind", Value: pyjson.Text(edge.Get("kind"))},
 		{Key: "revision", Value: revisionOf(edge)}, {Key: "status", Value: status}}), nil
 }

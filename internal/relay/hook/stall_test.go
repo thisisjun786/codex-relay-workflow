@@ -65,7 +65,7 @@ func prescanRow(t *testing.T, home string) Object {
 	if !ok {
 		t.Fatalf("not the decision-22 pre-scan row: %v", rowsAt(t, home))
 	}
-	if get(row, "errno") != "ENOENT" {
+	if row.Get("errno") != "ENOENT" {
 		t.Fatal(row)
 	}
 	for _, p := range []string{"journal/accepted", "crw-completion-hook"} {
@@ -99,7 +99,7 @@ func Test33StalledEntryKeepsThePrescanRow(t *testing.T) {
 				t.Fatalf("code=%d stdout=%s", code, &out)
 			}
 			row := prescanRow(t, home)
-			if get(row, "sessionId") != "s" || get(row, "turnId") != "t" {
+			if row.Get("sessionId") != "s" || row.Get("turnId") != "t" {
 				t.Fatal(row)
 			}
 		})

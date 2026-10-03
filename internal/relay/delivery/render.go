@@ -140,10 +140,10 @@ func series(words []string) string {
 
 func correctionFindings(receipt Obj) []Obj {
 	var out []Obj
-	list, _ := get(receipt, "criteria")
+	list, _ := receipt.Lookup("criteria")
 	items, _ := list.([]any)
 	for _, item := range items {
-		if o, ok := item.(Obj); ok && truthy(func() any { v, _ := get(o, "id"); return v }()) {
+		if o, ok := item.(Obj); ok && truthy(func() any { v, _ := o.Lookup("id"); return v }()) {
 			out = append(out, o)
 		}
 	}
@@ -155,7 +155,7 @@ type verdictCounts struct{ fix, owed, met, undecided int }
 func countFindings(findings []Obj) verdictCounts {
 	var c verdictCounts
 	for _, f := range findings {
-		switch v, _ := get(f, "verdict"); v {
+		switch v, _ := f.Lookup("verdict"); v {
 		case "needs_changes":
 			c.fix++
 		case "unverified":
@@ -188,7 +188,7 @@ func violatedHeading(receipt Obj) string {
 }
 
 func whatChangedLines(receipt Obj) []string {
-	g := func(k string) any { v, _ := get(receipt, k); return v }
+	g := func(k string) any { v, _ := receipt.Lookup(k); return v }
 	return []string{"",
 		fmt.Sprintf("WHAT CHANGED: submission %s ruled %s and superseded, generation %s opened", known(g("supersedesEvent")), known(g("verdict")), known(g("executionGeneration"))),
 		fmt.Sprintf("  superseded revision %s, ruled in turn %s", known(g("supersedesRevisionHash")), known(g("verdictTurnId")))}
@@ -262,7 +262,7 @@ func returnLines(rid string, generation any) []string {
 }
 
 func restorationLabel(f Obj) string {
-	if v, _ := get(f, "restoration"); truthy(v) {
+	if v, _ := f.Lookup("restoration"); truthy(v) {
 		return " [restoration block]"
 	}
 	return ""
@@ -277,8 +277,8 @@ func overflowLine(items []any, eventID string, nameBlock bool) string {
 	if nameBlock {
 		for _, h := range hidden {
 			if o, ok := h.(Obj); ok {
-				if v, _ := get(o, "restoration"); truthy(v) {
-					id, _ := get(o, "id")
+				if v, _ := o.Lookup("restoration"); truthy(v) {
+					id, _ := o.Lookup("id")
 					detail = ", including the restoration block on " + pyStr(id)
 					break
 				}
@@ -289,7 +289,7 @@ func overflowLine(items []any, eventID string, nameBlock bool) string {
 }
 
 func renderCompletion(row Row, record Obj, request string) string {
-	g := func(k string) any { v, _ := get(record, k); return v }
+	g := func(k string) any { v, _ := record.Lookup(k); return v }
 	event := row.S("event_id")
 	lines := []string{
 		"[codex-session-relay] verification request",
@@ -305,8 +305,8 @@ func renderCompletion(row Row, record Obj, request string) string {
 		lines = append(lines, fmt.Sprintf("deliverables: %d", len(manifest)))
 		for _, entry := range manifest[:min(len(manifest), manifestLines)] {
 			o, _ := entry.(Obj)
-			line := "  " + pyStr(func() any { v, _ := get(o, "path"); return v }()) + "  sha256=" + pyStr(func() any { v, _ := get(o, "sha256"); return v }())
-			if size, ok := get(o, "bytes"); ok && size != nil {
+			line := "  " + pyStr(func() any { v, _ := o.Lookup("path"); return v }()) + "  sha256=" + pyStr(func() any { v, _ := o.Lookup("sha256"); return v }())
+			if size, ok := o.Lookup("bytes"); ok && size != nil {
 				line += "  bytes=" + pyStr(size)
 			}
 			lines = append(lines, line)
@@ -324,8 +324,8 @@ func renderCompletion(row Row, record Obj, request string) string {
 		lines = append(lines, "criteria claimed by the child:")
 		for _, item := range criteria[:min(len(criteria), manifestLines)] {
 			o, _ := item.(Obj)
-			id, _ := get(o, "id")
-			verdict, _ := get(o, "verdict")
+			id, _ := o.Lookup("id")
+			verdict, _ := o.Lookup("verdict")
 			lines = append(lines, "  "+pyStr(id)+": "+pyStr(verdict))
 		}
 		if overflow := overflowLine(criteria, event, false); overflow != "" {
@@ -348,7 +348,7 @@ func renderCompletion(row Row, record Obj, request string) string {
 }
 
 func renderRevision(row Row, record Obj, request string) string {
-	g := func(k string) any { v, _ := get(record, k); return v }
+	g := func(k string) any { v, _ := record.Lookup(k); return v }
 	event := row.S("event_id")
 	lines := []string{
 		"[codex-session-relay] revision request",
@@ -364,15 +364,15 @@ func renderRevision(row Row, record Obj, request string) string {
 	lines = append(lines, "", violatedHeading(record))
 	for _, item := range findings[:min(len(findings), manifestLines)] {
 		o, _ := item.(Obj)
-		id, _ := get(o, "id")
+		id, _ := o.Lookup("id")
 		if !truthy(id) {
 			id = "(no id recorded)"
 		}
-		verdict, _ := get(o, "verdict")
+		verdict, _ := o.Lookup("verdict")
 		if !truthy(verdict) {
 			verdict = "no disposition recorded"
 		}
-		note, _ := get(o, "note")
+		note, _ := o.Lookup("note")
 		tail := " — " + noNote
 		if truthy(note) {
 			tail = " — " + inline(note)

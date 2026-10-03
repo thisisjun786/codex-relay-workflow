@@ -13,6 +13,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/service"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -163,7 +164,7 @@ func serviceStore(services dispatch.Services) (contract.OrderedObject, error) {
 	return append(served,
 		contract.Field{Key: "detail", Value: "the relay service registered for this App Server socket serves another directory than the one discovery selected here; that store, not this one, is the one it reads and writes"},
 		contract.Field{Key: "recover", Value: []any{
-			services.Program + " --state=" + shellQuote(directory) + " --socket=" + shellQuote(claimed) + " doctor",
+			services.Program + " --state=" + quote.Shell(directory) + " --socket=" + quote.Shell(claimed) + " doctor",
 			"  reads the store that service serves",
 		}},
 	), nil

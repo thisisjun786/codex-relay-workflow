@@ -53,7 +53,7 @@ func TestCRW263ManagedObserverAnswersReportedForADaemonObservation(t *testing.T)
 				if err != nil {
 					t.Fatal(err)
 				}
-				if len(rows) != 1 || text(rows[0], "producer") != store.ProducerDaemon || text(rows[0], "stage") != "final" || text(rows[0], "outcome") != c.status || text(rows[0], "turn_status") != c.status {
+				if len(rows) != 1 || rows[0].Text("producer") != store.ProducerDaemon || rows[0].Text("stage") != "final" || rows[0].Text("outcome") != c.status || rows[0].Text("turn_status") != c.status {
 					t.Fatalf("the stored event is not the daemon's final observation of the turn: %v", rows)
 				}
 			}

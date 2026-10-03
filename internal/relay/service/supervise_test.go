@@ -36,7 +36,7 @@ func Test29StoreOpensOnlyUnderBothLocks(t *testing.T) {
 		if !lockHeld(s.path("daemon.lock")) || !lockHeld(s.Scope.path(s.Socket, ".lock")) {
 			t.Fatal("writable store opened without both ownership locks")
 		}
-		if get(s.Record(), "storeId") != nil && get(s.Record(), "storeId") != s.StoreID {
+		if s.Record().Get("storeId") != nil && s.Record().Get("storeId") != s.StoreID {
 			t.Fatalf("record names another store before recovery: %v", s.Record())
 		}
 		s.StoreID = "new-store"
@@ -50,7 +50,7 @@ func Test29StoreOpensOnlyUnderBothLocks(t *testing.T) {
 	if _, err := s.Supervise(context.Background(), Options{AllowIsolated: true, MaxSegments: &zero}, recovery, nil); err != nil {
 		t.Fatal(err)
 	}
-	if !opened || get(s.Record(), "storeId") != "new-store" || get(scopeWhileRunning, "storeId") != "new-store" || get(s.Scope.Read(s.Socket), "storeId") != "new-store" {
+	if !opened || s.Record().Get("storeId") != "new-store" || scopeWhileRunning.Get("storeId") != "new-store" || s.Scope.Read(s.Socket).Get("storeId") != "new-store" {
 		t.Fatalf("new identity not published: record %v, scope %v", s.Record(), s.Scope.Read(s.Socket))
 	}
 }
@@ -65,7 +65,7 @@ func Test29SupervisionBoundsAndRecoveryReadiness(t *testing.T) {
 			recoveries := 0
 			granted := []float64{}
 			inputs := &SupervisionInputs{Now: func() float64 { return now }, Sleep: func(_ context.Context, n float64) error { now += n; return nil }, Spawn: func(lock, scope *os.File, token string, length float64, end *float64, allow bool) (*exec.Cmd, error) {
-				if !truth(get(s.Record(), "readyAt")) {
+				if !truth(s.Record().Get("readyAt")) {
 					t.Fatal("worker before recovery readiness")
 				}
 				if end == nil || *end > deadline {
@@ -82,7 +82,7 @@ func Test29SupervisionBoundsAndRecoveryReadiness(t *testing.T) {
 			}
 			out, err := s.Supervise(context.Background(), Options{AllowIsolated: true, DeadlineMonotonic: &deadline, SegmentSeconds: &segment}, func() error {
 				recoveries++
-				if truth(get(s.Record(), "readyAt")) {
+				if truth(s.Record().Get("readyAt")) {
 					t.Fatal("ready before recovery")
 				}
 				return nil
@@ -90,11 +90,11 @@ func Test29SupervisionBoundsAndRecoveryReadiness(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if get(out, "ok") != true {
+			if out.Get("ok") != true {
 				t.Fatal(out)
 			}
 			if spent {
-				if recoveries != 0 || len(granted) != 0 || get(s.Record(), "readyAt") != nil {
+				if recoveries != 0 || len(granted) != 0 || s.Record().Get("readyAt") != nil {
 					t.Fatal(recoveries, granted, s.Record())
 				}
 			} else {
@@ -118,7 +118,7 @@ func Test29SupervisionFailureBackoffAndIntent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(waits) != 3 || waits[0] != 2 || waits[1] != 4 || waits[2] != 8 || get(out, "consecutiveFailures") != 0 || get(out, "degraded") != "3 consecutive worker failures, last exit 3" {
+	if len(waits) != 3 || waits[0] != 2 || waits[1] != 4 || waits[2] != 8 || out.Get("consecutiveFailures") != 0 || out.Get("degraded") != "3 consecutive worker failures, last exit 3" {
 		t.Fatal(out, waits)
 	}
 	if RestartDelay(1000000) != 300 {
@@ -130,7 +130,7 @@ func Test29ScopePersistentConflictAndConcurrentReaders(t *testing.T) {
 	s.Socket = filepath.Join(t.TempDir(), "socket")
 	s.StoreID = "first-store"
 	claim, err := s.Scope.Claim(s.Socket, s.NewRecord(os.Getpid(), "test-run"))
-	if err != nil || get(claim, "ok") != true {
+	if err != nil || claim.Get("ok") != true {
 		t.Fatal(claim, err)
 	}
 	if err = s.Scope.Release(s.Socket); err != nil {
@@ -139,11 +139,11 @@ func Test29ScopePersistentConflictAndConcurrentReaders(t *testing.T) {
 	other := &ScopeRegistry{Root: s.Scope.Root, Authority: s.Scope.Authority}
 	r := set(s.NewRecord(os.Getpid(), "next-run"), "storeId", "second-store")
 	claim, err = other.Claim(s.Socket, r)
-	if err != nil || get(claim, "reason") != "scope_registered_to_other_store" {
+	if err != nil || claim.Get("reason") != "scope_registered_to_other_store" {
 		t.Fatal(claim, err)
 	}
 	claim, err = other.Claim(s.Socket, set(r, "takeover", true))
-	if err != nil || get(claim, "ok") != true {
+	if err != nil || claim.Get("ok") != true {
 		t.Fatal(claim, err)
 	}
 	defer other.Release(s.Socket)

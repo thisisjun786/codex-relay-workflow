@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"io"
 	"os"
-	"path"
 	"regexp"
 	"slices"
 	"strings"
@@ -18,6 +17,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // Whether a record is one the adapter's writers produce: the shape of each record kind, checked
@@ -36,10 +36,8 @@ var (
 	stampShape  = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$`)
 )
 
-func get(o object, key string) any { return evidence.Get(o, key) }
-
 func has(o object, key string) bool {
-	_, ok := evidence.Lookup(o, key)
+	_, ok := o.Lookup(key)
 	return ok
 }
 
@@ -103,17 +101,6 @@ func fieldsExactly(v any, fields []string) bool {
 }
 
 func isAbs(p string) bool { return strings.HasPrefix(p, "/") }
-
-// normpath is the normal form the adapter's writers give a path: path.Clean, except that a
-// leading "//" stays (POSIX leaves its meaning to the system), as every writer, Python's
-// os.path.abspath first, has kept it. A recorded path is checked against that form.
-func normpath(p string) string {
-	cleaned := path.Clean(p)
-	if strings.HasPrefix(p, "//") && !strings.HasPrefix(p, "///") {
-		return "/" + cleaned
-	}
-	return cleaned
-}
 
 // stamp is a real UTC second in the adapter's own format.
 func stamp(v any) bool {
@@ -179,11 +166,11 @@ func stderrKept(v any) bool {
 // stdout reading, an exit code only from a process that exited, a signal only from one that was
 // signalled, an errno only from one that never started.
 func callRecorded(row object) bool {
-	said, how := get(row, "stdoutReading"), get(row, "processEnding")
+	said, how := row.Get("stdoutReading"), row.Get("processEnding")
 	if !member(said, hook.StdoutReadings) || !member(how, hook.ProcessEndings) {
 		return false
 	}
-	code, signal, errno := get(row, "exitCode"), get(row, "signal"), get(row, "errno")
+	code, signal, errno := row.Get("exitCode"), row.Get("signal"), row.Get("errno")
 	switch how {
 	case hook.Exited:
 		if !count(code, true) || signal != nil || errno != nil {
@@ -202,12 +189,12 @@ func callRecorded(row object) bool {
 			return false
 		}
 	}
-	return count(get(row, "guardElapsedMs"), true) && stderrKept(get(row, "guardStderr"))
+	return count(row.Get("guardElapsedMs"), true) && stderrKept(row.Get("guardStderr"))
 }
 
 // couldAnswer is a call that could have produced an answer: a verdict from a clean exit.
 func couldAnswer(row object) bool {
-	return get(row, "processEnding") == hook.Exited && get(row, "stdoutReading") == hook.SaidAVerdict && exact(get(row, "exitCode"), 0)
+	return row.Get("processEnding") == hook.Exited && row.Get("stdoutReading") == hook.SaidAVerdict && exact(row.Get("exitCode"), 0)
 }
 
 // outcomeOf is the one outcome a recorded call reaches, when the verdict itself is not needed.
@@ -252,11 +239,11 @@ func outcomeFollows(row object) bool {
 	if !callRecorded(row) {
 		return false
 	}
-	outcome := get(row, "adapterOutcome")
+	outcome := row.Get("adapterOutcome")
 	if couldAnswer(row) {
 		return outcome == "guard_verdict_incomplete" || outcome == hook.GuardAnswered
 	}
-	return outcome == outcomeOf(get(row, "processEnding"), get(row, "stdoutReading"), get(row, "exitCode"))
+	return outcome == outcomeOf(row.Get("processEnding"), row.Get("stdoutReading"), row.Get("exitCode"))
 }
 
 func anyAnswerField(row object) bool {
@@ -289,17 +276,17 @@ func anyField(row object, fields []string) bool {
 // faultPrefixWritten is whether a faulted row holds a prefix of what the adapter records, in its
 // order: the guard marked as asked, then the call, then an answer.
 func faultPrefixWritten(row object) bool {
-	called := get(row, "processEnding") != nil
-	answered := get(row, "guardDecision") != nil || get(row, "guardState") != nil || get(row, "assignmentId") != nil || get(row, "guardRecordedAs") != nil || anyAnswerField(row)
+	called := row.Get("processEnding") != nil
+	answered := row.Get("guardDecision") != nil || row.Get("guardState") != nil || row.Get("assignmentId") != nil || row.Get("guardRecordedAs") != nil || anyAnswerField(row)
 	if called {
-		if get(row, "guardInvoked") != true || !allFields(row, hook.GuardCallFields) || !callRecorded(row) {
+		if row.Get("guardInvoked") != true || !allFields(row, hook.GuardCallFields) || !callRecorded(row) {
 			return false
 		}
-	} else if get(row, "stdoutReading") != nil || anyField(row, hook.GuardCallFields) {
+	} else if row.Get("stdoutReading") != nil || anyField(row, hook.GuardCallFields) {
 		return false
 	}
 	if answered {
-		return called && allFields(row, hook.AnswerFields) && member(get(row, "guardDecision"), hook.Decisions) && couldAnswer(row)
+		return called && allFields(row, hook.AnswerFields) && member(row.Get("guardDecision"), hook.Decisions) && couldAnswer(row)
 	}
 	return true
 }
@@ -307,8 +294,8 @@ func faultPrefixWritten(row object) bool {
 // guardResultWritten is whether a record's guard result is one the adapter writes: only an
 // answer carries a decision, and it holds exactly when it blocks.
 func guardResultWritten(record object) bool {
-	outcome, decision := get(record, "adapterOutcome"), get(record, "guardDecision")
-	state, held := get(record, "guardState"), get(record, "held")
+	outcome, decision := record.Get("adapterOutcome"), record.Get("guardDecision")
+	state, held := record.Get("guardState"), record.Get("held")
 	h, ok := held.(bool)
 	if !ok || !(state == nil || isString(state)) {
 		return false
@@ -322,21 +309,21 @@ func guardResultWritten(record object) bool {
 	if outcome == hook.AdapterFaulted {
 		return decision == nil || member(decision, hook.Decisions)
 	}
-	return decision == nil && state == nil && get(record, "assignmentId") == nil && get(record, "guardRecordedAs") == nil
+	return decision == nil && state == nil && record.Get("assignmentId") == nil && record.Get("guardRecordedAs") == nil
 }
 
 func settledPath(v any, untried bool) bool {
 	s, ok := v.(string)
-	return ok && isAbs(s) && s == normpath(s) && (untried || hook.PathTheSystemTakes(s))
+	return ok && isAbs(s) && s == store.Normpath(s) && (untried || hook.PathTheSystemTakes(s))
 }
 
 // rowFieldsWritten is whether a row carries every field the adapter writes on the path its
 // outcome names, and nothing else.
 func rowFieldsWritten(row object) bool {
-	if !allFields(row, hook.RowFields) || get(row, "event") != "Stop" {
+	if !allFields(row, hook.RowFields) || row.Get("event") != "Stop" {
 		return false
 	}
-	outcome, acceptance, detail := get(row, "adapterOutcome"), get(row, "acceptance"), get(row, "detail")
+	outcome, acceptance, detail := row.Get("adapterOutcome"), row.Get("acceptance"), row.Get("detail")
 	allowed := slices.Concat(hook.RowFields, hook.PayloadFields, hook.GuardCallFields, hook.AnswerFields, hook.SettledFields)
 	if outcome == hook.AdapterFaulted {
 		allowed = append(allowed, hook.FaultFields...)
@@ -346,28 +333,28 @@ func rowFieldsWritten(row object) bool {
 			return false
 		}
 	}
-	if get(row, "journalledAs") != nil {
+	if row.Get("journalledAs") != nil {
 		return false
 	}
-	if identity, ok := asObject(get(row, "eventIdentity")); ok {
+	if identity, ok := asObject(row.Get("eventIdentity")); ok {
 		for _, f := range identity {
 			if !slices.Contains(hook.IdentityFields, f.Key) {
 				return false
 			}
 		}
 	}
-	if !settledPath(get(row, "configuration"), member(outcome, hook.SettingsUntried)) || !count(get(row, "elapsedMs"), true) || !(detail == nil || isString(detail)) {
+	if !settledPath(row.Get("configuration"), member(outcome, hook.SettingsUntried)) || !count(row.Get("elapsedMs"), true) || !(detail == nil || isString(detail)) {
 		return false
 	}
 	read := allFields(row, hook.PayloadFields)
 	if anyField(row, hook.PayloadFields) && !read {
 		return false
 	}
-	mode := get(row, "guardMode")
+	mode := row.Get("guardMode")
 	if read != member(mode, []string{hook.Observe, hook.Hold}) || (mode != nil && !read) {
 		return false
 	}
-	if acceptance == nil && !hook.NativePrescanUnreachable(row) && ((read && outcome != hook.AdapterFaulted) || get(row, "identityScanMs") != nil) {
+	if acceptance == nil && !hook.NativePrescanUnreachable(row) && ((read && outcome != hook.AdapterFaulted) || row.Get("identityScanMs") != nil) {
 		return false
 	}
 	if member(outcome, slices.Concat(hook.BeforeTheGuard, []string{hook.DuplicateInvocation, hook.ArbitrationFailed})) && !isString(detail) {
@@ -379,11 +366,11 @@ func rowFieldsWritten(row object) bool {
 			return false
 		}
 	}
-	if member(outcome, hook.FromTheGuard) && (detail == nil) != member(get(row, "processEnding"), []string{hook.Exited, hook.Signalled}) {
+	if member(outcome, hook.FromTheGuard) && (detail == nil) != member(row.Get("processEnding"), []string{hook.Exited, hook.Signalled}) {
 		return false
 	}
 	if outcome == hook.AdapterFaulted {
-		if !isString(get(row, "fault")) {
+		if !isString(row.Get("fault")) {
 			return false
 		}
 	} else if !allFields(row, hook.SettledFields) {
@@ -412,11 +399,11 @@ func rowFieldsWritten(row object) bool {
 		return false
 	}
 	if acceptance != nil {
-		identity, ok := asObject(get(row, "eventIdentity"))
-		if !read || !ok || !allFields(identity, hook.IdentityFields) || !count(get(row, "identityScanMs"), true) || !count(get(identity, "scannedBytes"), true) || !count(get(identity, "scannedLines"), true) {
+		identity, ok := asObject(row.Get("eventIdentity"))
+		if !read || !ok || !allFields(identity, hook.IdentityFields) || !count(row.Get("identityScanMs"), true) || !count(identity.Get("scannedBytes"), true) || !count(identity.Get("scannedLines"), true) {
 			return false
 		}
-		if p := get(identity, "transcriptPath"); !(p == nil || isString(p)) {
+		if p := identity.Get("transcriptPath"); !(p == nil || isString(p)) {
 			return false
 		}
 	}
@@ -443,14 +430,14 @@ func outcomesOf(acceptance any) []string {
 // its session, turn and key, and they hash to the key; one that could not be identified carries
 // only what its reason had recorded; one that reached no event carries none of them.
 func rowShape(row object) bool {
-	if !stamp(get(row, "at")) || !rowFieldsWritten(row) {
+	if !stamp(row.Get("at")) || !rowFieldsWritten(row) {
 		return false
 	}
 	if hook.NativePrescanUnreachable(row) {
 		return true
 	}
-	acceptance, key := get(row, "acceptance"), get(row, "eventKey")
-	outcome, asked := get(row, "adapterOutcome"), get(row, "guardInvoked")
+	acceptance, key := row.Get("acceptance"), row.Get("eventKey")
+	outcome, asked := row.Get("adapterOutcome"), row.Get("guardInvoked")
 	if !(acceptance == nil || member(acceptance, acceptances)) || !isBool(asked) || !guardResultWritten(row) {
 		return false
 	}
@@ -462,30 +449,30 @@ func rowShape(row object) bool {
 	case !member(outcome, outcomesOf(acceptance)):
 		return false
 	case member(outcome, hook.FromTheGuard):
-		if asked != true || !isString(get(row, "processEnding")) {
+		if asked != true || !isString(row.Get("processEnding")) {
 			return false
 		}
-	case (asked == true && acceptance != hook.Duplicate) || get(row, "processEnding") != nil || get(row, "stdoutReading") != nil:
+	case (asked == true && acceptance != hook.Duplicate) || row.Get("processEnding") != nil || row.Get("stdoutReading") != nil:
 		// A duplicate that says it asked is left to the verdict, which reads it FALSE.
 		return false
 	}
 	k, keyed := key.(string)
 	keyed = keyed && ledgerName.MatchString(k+".json")
-	named := nonEmptyString(get(row, "sessionId")) && nonEmptyString(get(row, "turnId"))
-	identity, isIdentity := asObject(get(row, "eventIdentity"))
+	named := nonEmptyString(row.Get("sessionId")) && nonEmptyString(row.Get("turnId"))
+	identity, isIdentity := asObject(row.Get("eventIdentity"))
 	switch acceptance {
 	case hook.Accepted, hook.Duplicate, hook.Unclaimable, hook.ClaimFailed, hook.Unarbitrated:
-		if !keyed || !named || !isIdentity || get(identity, "established") != true || get(identity, "reason") != nil {
+		if !keyed || !named || !isIdentity || identity.Get("established") != true || identity.Get("reason") != nil {
 			return false
 		}
-		transcript, ok := get(identity, "transcriptPath").(string)
-		if !ok || !isAbs(transcript) || !hook.PathTheSystemTakes(transcript) || !isBool(get(row, "stopHookActive")) || !nonEmptyString(get(identity, "answerItem")) {
+		transcript, ok := identity.Get("transcriptPath").(string)
+		if !ok || !isAbs(transcript) || !hook.PathTheSystemTakes(transcript) || !isBool(row.Get("stopHookActive")) || !nonEmptyString(identity.Get("answerItem")) {
 			return false
 		}
-		if k != hook.EventKey(get(row, "sessionId"), get(row, "turnId"), get(row, "stopHookActive"), get(identity, "answerItem")) {
+		if k != hook.EventKey(row.Get("sessionId"), row.Get("turnId"), row.Get("stopHookActive"), identity.Get("answerItem")) {
 			return false
 		}
-		where := get(row, "acceptedAs")
+		where := row.Get("acceptedAs")
 		switch acceptance {
 		case hook.Accepted:
 			return where == hook.LedgerDirectory+"/"+k+".json"
@@ -494,11 +481,11 @@ func rowShape(row object) bool {
 		}
 		return where == nil
 	case hook.Unestablished:
-		if key != nil || !isIdentity || get(identity, "established") != false || !member(get(identity, "reason"), hook.UnestablishedReasons) {
+		if key != nil || !isIdentity || identity.Get("established") != false || !member(identity.Get("reason"), hook.UnestablishedReasons) {
 			return false
 		}
-		reason := get(identity, "reason").(string)
-		transcript := get(identity, "transcriptPath")
+		reason := identity.Get("reason").(string)
+		transcript := identity.Get("transcriptPath")
 		if slices.Contains(hook.PathlessReasons, reason) {
 			if transcript != nil {
 				return false
@@ -509,18 +496,18 @@ func rowShape(row object) bool {
 			return false
 		}
 		if reason == hook.SessionMismatch {
-			return nonEmptyString(get(identity, "answerItem"))
+			return nonEmptyString(identity.Get("answerItem"))
 		}
-		return get(identity, "answerItem") == nil
+		return identity.Get("answerItem") == nil
 	}
-	return key == nil && get(row, "eventIdentity") == nil
+	return key == nil && row.Get("eventIdentity") == nil
 }
 
 // hostLedgerNamed is a host ledger as the adapter names one: absolute, normalized, ending in the
 // ledger's own two parts, and one the system took.
 func hostLedgerNamed(v any) bool {
 	s, ok := v.(string)
-	if !ok || !isAbs(s) || s != normpath(s) || !hook.PathTheSystemTakes(s) {
+	if !ok || !isAbs(s) || s != store.Normpath(s) || !hook.PathTheSystemTakes(s) {
 		return false
 	}
 	parts := strings.Split(s, "/")
@@ -532,40 +519,40 @@ func hostLedgerNamed(v any) bool {
 // written with and names its key.
 func ledgerShape(v any, key string, outcome bool) bool {
 	body, ok := asObject(v)
-	if !ok || get(body, "eventKey") != key || !exact(get(body, "ledgerVersion"), hook.LedgerVersion) {
+	if !ok || body.Get("eventKey") != key || !exact(body.Get("ledgerVersion"), hook.LedgerVersion) {
 		return false
 	}
-	if !nonEmptyString(get(body, "sessionId")) || !nonEmptyString(get(body, "turnId")) {
+	if !nonEmptyString(body.Get("sessionId")) || !nonEmptyString(body.Get("turnId")) {
 		return false
 	}
 	if outcome {
-		ended := get(body, "adapterOutcome")
-		row := get(body, "attemptRow")
-		return fieldsExactly(body, hook.OutcomeFields) && stamp(get(body, "at")) && (member(ended, hook.FromTheGuard) || ended == hook.AdapterFaulted) && member(get(body, "journalPolicy"), hook.JournalPolicies) && guardResultWritten(body) && (row == nil || slot(row))
+		ended := body.Get("adapterOutcome")
+		row := body.Get("attemptRow")
+		return fieldsExactly(body, hook.OutcomeFields) && stamp(body.Get("at")) && (member(ended, hook.FromTheGuard) || ended == hook.AdapterFaulted) && member(body.Get("journalPolicy"), hook.JournalPolicies) && guardResultWritten(body) && (row == nil || slot(row))
 	}
-	claimedBy, _ := asObject(get(body, "claimedBy"))
-	return fieldsExactly(body, hook.ClaimFields) && fieldsExactly(get(body, "claimedBy"), hook.ClaimedByFields) && stamp(get(body, "claimedAt")) && isBool(get(body, "stopHookActive")) && nonEmptyString(get(body, "answerItem")) && slot(get(claimedBy, "attemptRow")) && count(get(claimedBy, "pid"), false) && hostLedgerNamed(get(claimedBy, "hostLedger")) && key == hook.EventKey(get(body, "sessionId"), get(body, "turnId"), get(body, "stopHookActive"), get(body, "answerItem"))
+	claimedBy, _ := asObject(body.Get("claimedBy"))
+	return fieldsExactly(body, hook.ClaimFields) && fieldsExactly(body.Get("claimedBy"), hook.ClaimedByFields) && stamp(body.Get("claimedAt")) && isBool(body.Get("stopHookActive")) && nonEmptyString(body.Get("answerItem")) && slot(claimedBy.Get("attemptRow")) && count(claimedBy.Get("pid"), false) && hostLedgerNamed(claimedBy.Get("hostLedger")) && key == hook.EventKey(body.Get("sessionId"), body.Get("turnId"), body.Get("stopHookActive"), body.Get("answerItem"))
 }
 
 // hostShape is whether a host file carries every field it is written with, under its own key.
 func hostShape(v any, key string) bool {
 	body, ok := asObject(v)
-	if !ok || get(body, "eventKey") != key || !exact(get(body, "ledgerVersion"), hook.LedgerVersion) {
+	if !ok || body.Get("eventKey") != key || !exact(body.Get("ledgerVersion"), hook.LedgerVersion) {
 		return false
 	}
 	for _, f := range []string{"sessionId", "turnId", "answerItem"} {
-		if !nonEmptyString(get(body, f)) {
+		if !nonEmptyString(body.Get(f)) {
 			return false
 		}
 	}
-	if !stamp(get(body, "claimedAt")) {
+	if !stamp(body.Get("claimedAt")) {
 		return false
 	}
-	claimedBy, _ := asObject(get(body, "claimedBy"))
-	root := get(claimedBy, "journalRoot")
+	claimedBy, _ := asObject(body.Get("claimedBy"))
+	root := claimedBy.Get("journalRoot")
 	rootOK := root == nil
 	if s, ok := root.(string); ok {
 		rootOK = isAbs(s)
 	}
-	return fieldsExactly(body, hook.ClaimFields) && fieldsExactly(get(body, "claimedBy"), hook.HostClaimedByFields) && isBool(get(body, "stopHookActive")) && slot(get(claimedBy, "attemptRow")) && count(get(claimedBy, "pid"), false) && rootOK && key == hook.EventKey(get(body, "sessionId"), get(body, "turnId"), get(body, "stopHookActive"), get(body, "answerItem"))
+	return fieldsExactly(body, hook.ClaimFields) && fieldsExactly(body.Get("claimedBy"), hook.HostClaimedByFields) && isBool(body.Get("stopHookActive")) && slot(claimedBy.Get("attemptRow")) && count(claimedBy.Get("pid"), false) && rootOK && key == hook.EventKey(body.Get("sessionId"), body.Get("turnId"), body.Get("stopHookActive"), body.Get("answerItem"))
 }

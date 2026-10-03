@@ -31,16 +31,6 @@ const (
 
 var occupying = []string{"holding", "merging", "unknown"}
 
-func text(r store.Row, name string) string {
-	switch v := r.Get(name).(type) {
-	case string:
-		return v
-	case []byte:
-		return string(v)
-	}
-	return ""
-}
-
 // decode is the object a ledger entry's text holds, read as json.Decoder.Decode reads it (every
 // number a json.Number, what follows the value unread), or nil.
 func decode(raw string) map[string]any {
@@ -91,7 +81,7 @@ func GrantSupersessionIn(ctx context.Context, s *store.Store, turn, grant string
 	if answered != nil {
 		return GrantAnswered, nil
 	}
-	state := text(row, "state")
+	state := row.Text("state")
 	isOccupying := false
 	for _, o := range occupying {
 		isOccupying = isOccupying || o == state
@@ -118,7 +108,7 @@ func currentGrantIn(ctx context.Context, s *store.Store, turn string, tenure any
 	}
 	best, bestSequence := "", int64(math.MinInt64)
 	for _, row := range rows {
-		envelope := decode(text(row, "evidence"))
+		envelope := decode(row.Text("evidence"))
 		if envelope == nil {
 			continue
 		}
@@ -128,7 +118,7 @@ func currentGrantIn(ctx context.Context, s *store.Store, turn string, tenure any
 		}
 		sum := sha256.Sum256([]byte(turn + "|" + fmt.Sprint(tenure) + "|" + strconv.FormatInt(sequence, 10)))
 		derived := "mtg-" + hex.EncodeToString(sum[:])[:32]
-		if envelope["grantId"] != derived || text(row, "idempotency_key") != "grant:"+derived {
+		if envelope["grantId"] != derived || row.Text("idempotency_key") != "grant:"+derived {
 			continue
 		}
 		if r, ok := envelope["recipientTaskId"].(string); !ok || r == "" {

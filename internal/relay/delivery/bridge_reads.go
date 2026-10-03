@@ -27,13 +27,13 @@ func (b BridgeReads) page() int {
 }
 
 func list(result Obj) []any {
-	data, _ := get(result, "data")
+	data, _ := result.Lookup("data")
 	items, _ := data.([]any)
 	return items
 }
 
 func cursorOf(result Obj) any {
-	next, _ := get(result, "nextCursor")
+	next, _ := result.Lookup("nextCursor")
 	if !truthy(next) {
 		return nil
 	}
@@ -60,12 +60,12 @@ func (b BridgeReads) FindDispatchedTurn(thread, turnID string, sentAt float64) (
 		var turns []TurnInfo
 		for _, raw := range list(result) {
 			turn, _ := raw.(Obj)
-			id, _ := get(turn, "id")
-			status, ok := get(turn, "status")
+			id, _ := turn.Lookup("id")
+			status, ok := turn.Lookup("status")
 			if !ok {
 				status = "unknown"
 			}
-			started, _ := get(turn, "startedAt")
+			started, _ := turn.Lookup("startedAt")
 			turns = append(turns, TurnInfo{TurnID: pyStrOrEmpty(id), Status: pyStr(status), StartedAt: number(started)})
 		}
 		return ListingPage{Turns: turns, Follows: cursor != nil}, nil
@@ -75,13 +75,13 @@ func (b BridgeReads) FindDispatchedTurn(thread, turnID string, sentAt float64) (
 
 // itemText is bridge_adapter._item_text.
 func itemText(entry Obj) string {
-	raw, _ := get(entry, "item")
+	raw, _ := entry.Lookup("item")
 	item, ok := raw.(Obj)
 	if !ok {
 		return dumpsSorted(entry)
 	}
 	for _, key := range []string{"text", "preview", "summary", "aggregatedOutput"} {
-		if v, ok := get(item, key); ok {
+		if v, ok := item.Lookup(key); ok {
 			if s, isText := v.(string); isText {
 				return s
 			}
@@ -92,9 +92,9 @@ func itemText(entry Obj) string {
 
 // itemKind is bridge_adapter._item_kind: the host's type, "" when it gives none.
 func itemKind(entry Obj) string {
-	raw, _ := get(entry, "item")
+	raw, _ := entry.Lookup("item")
 	item, _ := raw.(Obj)
-	kind, _ := get(item, "type")
+	kind, _ := item.Lookup("type")
 	s, _ := kind.(string)
 	return s
 }
@@ -103,7 +103,7 @@ func triples(entries []any) []Item {
 	out := make([]Item, 0, len(entries))
 	for _, raw := range entries {
 		entry, _ := raw.(Obj)
-		turn, _ := get(entry, "turnId")
+		turn, _ := entry.Lookup("turnId")
 		out = append(out, Item{Turn: pyStrOrEmpty(turn), Text: itemText(entry), Type: itemKind(entry)})
 	}
 	return out

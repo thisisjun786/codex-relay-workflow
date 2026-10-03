@@ -164,9 +164,10 @@ Two dependencies a replay has to reproduce or exclude:
 
 ## Replaying against the Go build
 
-The Go contract runner does not replay this domain yet: `internal/contracttest` lists `cxc` as a
-pending domain and skips it by name, with the reason, until a Go implementation exists. A replay
-issue then:
+The Go contract runner replays this domain (`internal/contracttest`, `cxc_replay.go`) and runs what a
+status file claims, in these steps; the format and the exceptions are in
+[`contract/notes/cxc/README.md`](../../notes/cxc/README.md), and every fixture is pending until a port
+issue claims it:
 
 1. Maps each step to its CRW entry: `hook` legs through the CRW hook registration that
    replaces them (`crw hook <event>`), `cli` argv through `cli-names.md` (Wave 0) to `crw ...`,

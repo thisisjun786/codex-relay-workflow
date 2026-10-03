@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 func Test_test_pause_sets_status_only_and_never_claims_the_turn_stopped(t *testing.T) {
@@ -14,7 +15,7 @@ func Test_test_pause_sets_status_only_and_never_claims_the_turn_stopped(t *testi
 	host.Respond("thread/goal/get", fakehost.Reply{Result: map[string]any{"goal": goal}})
 	host.Respond("thread/goal/set", fakehost.Reply{Result: map[string]any{"goal": map[string]any{"objective": "original objective", "status": "paused", "tokenBudget": 100}}})
 	receipt, err := b.PauseGoal(context.Background(), "pause", "thread-1")
-	if err != nil || receipt["status"] != "accepted" || receipt["delivery"] != "applied_by_host" || receipt["pause"] != "goal_paused_turn_may_still_be_running" || receipt["concurrency"] != "no_host_precondition_for_goal_status" || object(receipt["goalAfter"])["objective"] != "original objective" || object(receipt["goalAfter"])["status"] != "paused" {
+	if err != nil || receipt["status"] != "accepted" || receipt["delivery"] != "applied_by_host" || receipt["pause"] != "goal_paused_turn_may_still_be_running" || receipt["concurrency"] != "no_host_precondition_for_goal_status" || pyjson.Map(receipt["goalAfter"])["objective"] != "original objective" || pyjson.Map(receipt["goalAfter"])["status"] != "paused" {
 		t.Fatalf("receipt=%v err=%v", receipt, err)
 	}
 	params := hostParams(t, host, "thread/goal/set")
@@ -38,7 +39,7 @@ func Test_test_pause_then_steer_the_observed_turn_to_finish_safely(t *testing.T)
 	if err != nil || observed["observation"] != "active" || observed["activeTurnId"] != "turn-1" {
 		t.Fatalf("observed=%v err=%v", observed, err)
 	}
-	finished, err := b.SteerThread(context.Background(), "finish", "thread-1", text(observed["activeTurnId"]), "Finish the current step safely and stop.")
+	finished, err := b.SteerThread(context.Background(), "finish", "thread-1", pyjson.Text(observed["activeTurnId"]), "Finish the current step safely and stop.")
 	if err != nil || finished["status"] != "accepted" {
 		t.Fatalf("finished=%v err=%v", finished, err)
 	}
@@ -68,7 +69,7 @@ func Test_test_a_goal_that_moved_under_the_pause_is_a_known_failure(t *testing.T
 			host.Respond("thread/goal/get", fakehost.Reply{Result: map[string]any{"goal": map[string]any{"objective": "original", "status": "active", "tokenBudget": 10}}})
 			host.Respond("thread/goal/set", fakehost.Reply{Result: map[string]any{"goal": scenario.change}})
 			receipt, err := b.PauseGoal(context.Background(), "pause", "thread-1")
-			if err != nil || receipt["status"] != "failed" || object(receipt["rpcError"])["code"] != scenario.code || object(receipt["goalBefore"])["objective"] != "original" || receipt["goalAfter"] == nil || receipt["delivery"] == "applied_by_host" || host.Count("thread/goal/set") != 1 {
+			if err != nil || receipt["status"] != "failed" || pyjson.Map(receipt["rpcError"])["code"] != scenario.code || pyjson.Map(receipt["goalBefore"])["objective"] != "original" || receipt["goalAfter"] == nil || receipt["delivery"] == "applied_by_host" || host.Count("thread/goal/set") != 1 {
 				t.Fatalf("receipt=%v err=%v", receipt, err)
 			}
 		})
@@ -79,7 +80,7 @@ func Test_test_pause_refuses_a_thread_with_no_goal(t *testing.T) {
 	b, host := testBridge(t)
 	host.Respond("thread/goal/get", fakehost.Reply{Result: map[string]any{}})
 	receipt, err := b.PauseGoal(context.Background(), "pause", "thread-1")
-	if err != nil || receipt["status"] != "failed" || object(receipt["rpcError"])["code"] != "no_goal" || host.Count("thread/goal/set") != 0 {
+	if err != nil || receipt["status"] != "failed" || pyjson.Map(receipt["rpcError"])["code"] != "no_goal" || host.Count("thread/goal/set") != 0 {
 		t.Fatalf("receipt=%v err=%v calls=%v", receipt, err, host.Requests())
 	}
 }
@@ -99,7 +100,7 @@ func Test_test_pause_refuses_a_goal_that_is_not_active(t *testing.T) {
 			b, host := testBridge(t)
 			host.Respond("thread/goal/get", fakehost.Reply{Result: map[string]any{"goal": map[string]any{"objective": "o", "status": status}}})
 			receipt, err := b.PauseGoal(context.Background(), "pause", "thread-1")
-			if err != nil || receipt["status"] != "failed" || object(receipt["rpcError"])["code"] != "goal_not_active" || !strings.Contains(text(object(receipt["rpcError"])["message"]), status) || host.Count("thread/goal/set") != 0 {
+			if err != nil || receipt["status"] != "failed" || pyjson.Map(receipt["rpcError"])["code"] != "goal_not_active" || !strings.Contains(pyjson.Text(pyjson.Map(receipt["rpcError"])["message"]), status) || host.Count("thread/goal/set") != 0 {
 				t.Fatalf("receipt=%v err=%v calls=%v", receipt, err, host.Requests())
 			}
 		})

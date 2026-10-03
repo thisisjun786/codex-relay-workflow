@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 // oversizedFrame is past the real 16 MiB client limit, for bridges built at the default size.
@@ -23,10 +24,10 @@ func Test_test_a_page_too_large_is_narrowed_and_then_dropped_to_ids(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	observation := object(narrowed["observation"])
-	attempt := object(observation["pageAttempts"].([]any)[0])
-	requested := object(attempt["requested"])
-	if observation["turnsPageStatus"] != "summary_narrowed" || observation["itemsView"] != "summary" || len(object(narrowed["turnsPage"])["data"].([]any)) != 1 || len(requested) != 2 || requested["itemsView"] != "summary" || requested["limit"] != 2 || attempt["attribution"] != "unestablished" || !strings.Contains(text(attempt["note"]), "not established") || attempt["frameBytes"].(int) <= attempt["limit"].(int) {
+	observation := pyjson.Map(narrowed["observation"])
+	attempt := pyjson.Map(observation["pageAttempts"].([]any)[0])
+	requested := pyjson.Map(attempt["requested"])
+	if observation["turnsPageStatus"] != "summary_narrowed" || observation["itemsView"] != "summary" || len(pyjson.Map(narrowed["turnsPage"])["data"].([]any)) != 1 || len(requested) != 2 || requested["itemsView"] != "summary" || requested["limit"] != 2 || attempt["attribution"] != "unestablished" || !strings.Contains(pyjson.Text(attempt["note"]), "not established") || attempt["frameBytes"].(int) <= attempt["limit"].(int) {
 		t.Fatalf("narrowed=%v", narrowed)
 	}
 
@@ -40,9 +41,9 @@ func Test_test_a_page_too_large_is_narrowed_and_then_dropped_to_ids(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	observation = object(ids["observation"])
+	observation = pyjson.Map(ids["observation"])
 	newest := firstTurn(t, ids)
-	if observation["turnsPageStatus"] != "not_loaded" || observation["itemsView"] != "notLoaded" || turnIDs(t, ids) != "turn-2,turn-1" || !allItemsEmpty(ids) || !strings.Contains(text(observation["note"]), "every turn's items field is empty") || observation["detailTurnsObserved"] != 1 || newest["itemsDetailStatus"] != "complete" || object(newest["itemsDetail"].([]any)[0])["text"] != "second" {
+	if observation["turnsPageStatus"] != "not_loaded" || observation["itemsView"] != "notLoaded" || turnIDs(t, ids) != "turn-2,turn-1" || !allItemsEmpty(ids) || !strings.Contains(pyjson.Text(observation["note"]), "every turn's items field is empty") || observation["detailTurnsObserved"] != 1 || newest["itemsDetailStatus"] != "complete" || pyjson.Map(newest["itemsDetail"].([]any)[0])["text"] != "second" {
 		t.Fatalf("ids=%v", ids)
 	}
 
@@ -56,8 +57,8 @@ func Test_test_a_page_too_large_is_narrowed_and_then_dropped_to_ids(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	observation = object(nothing["observation"])
-	if nothing["turnsPage"] != nil || object(nothing["thread"])["id"] != "thread-1" || observation["turnsPageStatus"] != "not_observed" || len(observation["pageAttempts"].([]any)) != 3 || observation["itemsView"] != nil || observation["detailTurnsRequested"] != 0 || observation["detailTurnsObserved"] != 0 {
+	observation = pyjson.Map(nothing["observation"])
+	if nothing["turnsPage"] != nil || pyjson.Map(nothing["thread"])["id"] != "thread-1" || observation["turnsPageStatus"] != "not_observed" || len(observation["pageAttempts"].([]any)) != 3 || observation["itemsView"] != nil || observation["detailTurnsRequested"] != 0 || observation["detailTurnsObserved"] != 0 {
 		t.Fatalf("nothing=%v", nothing)
 	}
 }
@@ -75,8 +76,8 @@ func Test_test_an_item_page_that_will_not_arrive_is_asked_again_smaller(t *testi
 		t.Fatal(err)
 	}
 	turn := firstTurn(t, read)
-	note := object(turn["itemsDetailNote"])
-	if turn["itemsDetailStatus"] != "narrowed" || note["requestedLimit"] != 10 || note["observedLimit"] != 1 || object(note["attempts"].([]any)[0])["attribution"] != "unestablished" || len(turn["itemsDetail"].([]any)) != 1 {
+	note := pyjson.Map(turn["itemsDetailNote"])
+	if turn["itemsDetailStatus"] != "narrowed" || note["requestedLimit"] != 10 || note["observedLimit"] != 1 || pyjson.Map(note["attempts"].([]any)[0])["attribution"] != "unestablished" || len(turn["itemsDetail"].([]any)) != 1 {
 		t.Fatalf("read=%v", read)
 	}
 }
@@ -97,7 +98,7 @@ func Test_test_a_mutation_caught_in_someone_elses_oversized_frame_is_unknown(t *
 	host.Script("turn/start", fakehost.Reply{Before: []fakehost.Notification{{Method: "thread/status/changed", Params: map[string]any{"padding": strings.Repeat("x", oversizedFrame)}}}})
 	message := SendMessage{RequestID: "send", ThreadID: "thread-1", Message: "second", Expected: map[string]any{"model": "explicit-model", "reasoning_effort": "high"}}
 	receipt, err := b.SendMessageToThread(context.Background(), message)
-	if err != nil || receipt["status"] != "outcome_unknown" || receipt["retrySafe"] != false || len(receipt["attemptedEffects"].([]string)) == 0 || !strings.HasPrefix(text(receipt["error"]), "ResponseTooLarge:") || !strings.Contains(text(receipt["error"]), "cannot be attributed to a request") || host.Count("turn/start") != started+1 {
+	if err != nil || receipt["status"] != "outcome_unknown" || receipt["retrySafe"] != false || len(receipt["attemptedEffects"].([]string)) == 0 || !strings.HasPrefix(pyjson.Text(receipt["error"]), "ResponseTooLarge:") || !strings.Contains(pyjson.Text(receipt["error"]), "cannot be attributed to a request") || host.Count("turn/start") != started+1 {
 		t.Fatalf("receipt=%v err=%v calls=%v", receipt, err, host.Requests())
 	}
 }
@@ -110,13 +111,13 @@ func Test_test_a_frame_belonging_to_nobody_can_drive_the_ladder_down(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	observation := object(read["observation"])
-	note := text(observation["note"])
+	observation := pyjson.Map(read["observation"])
+	note := pyjson.Text(observation["note"])
 	if observation["turnsPageStatus"] != "not_loaded" || observation["itemsView"] != "notLoaded" || turnIDs(t, read) != "turn-2,turn-1" || !allItemsEmpty(read) || firstTurn(t, read)["itemsDetailStatus"] != "complete" || observation["detailTurnsObserved"] != 1 {
 		t.Fatalf("read=%v", read)
 	}
 	for _, value := range observation["pageAttempts"].([]any) {
-		if object(value)["attribution"] != "unestablished" {
+		if pyjson.Map(value)["attribution"] != "unestablished" {
 			t.Fatalf("attempt=%v", value)
 		}
 	}

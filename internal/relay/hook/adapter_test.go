@@ -142,7 +142,7 @@ func Test33HookHappyAndInvalid(t *testing.T) {
 				if err != nil {
 					return err
 				}
-				if get(request, "method") != "guard-evaluate" {
+				if request.Get("method") != "guard-evaluate" {
 					return fmt.Errorf("wrong request %v", request)
 				}
 				_, err = io.WriteString(conn, c.response+"\n")

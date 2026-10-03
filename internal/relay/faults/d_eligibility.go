@@ -26,8 +26,8 @@ func dEligibility(ctx context.Context, l *Ledger, id string, moment float64) (ma
 // dAnchor is faults.anchor_relationship, shared by addressing and eligibility.
 func dAnchor(ctx context.Context, l *Ledger, fault row) (row, error) {
 	var e error
-	signature := loadsMap(text(fault, "signature"))
-	scope := loadsMap(text(fault, "scope"))
+	signature := loadsMap(fault.Text("signature"))
+	scope := loadsMap(fault.Text("scope"))
 	var anchor row
 	if relationship, ok := signature["relationship"].(string); ok && named(relationship) {
 		anchor, e = l.one(ctx, "SELECT relationship_id,issue_key,status,parent_task_id FROM relationships WHERE relationship_id=?", relationship)
@@ -55,11 +55,11 @@ func dAnchor(ctx context.Context, l *Ledger, fault row) (row, error) {
 		return nil, nil
 	}
 	if project, ok := scope["projectKey"].(string); ok && project != "" {
-		placed, e := l.one(ctx, "SELECT project_key FROM relationship_scope WHERE relationship_id=?", text(anchor, "relationship_id"))
+		placed, e := l.one(ctx, "SELECT project_key FROM relationship_scope WHERE relationship_id=?", anchor.Text("relationship_id"))
 		if e != nil {
 			return nil, e
 		}
-		if placed != nil && text(placed, "project_key") != project {
+		if placed != nil && placed.Text("project_key") != project {
 			return nil, nil
 		}
 	}
@@ -70,15 +70,15 @@ func dAnchorEligibility(ctx context.Context, l *Ledger, anchor row, moment float
 	if anchor == nil {
 		return map[string]any{"eligible": true, "reason": "no relationship whose wishes apply"}, nil
 	}
-	about := map[string]any{"relationshipId": text(anchor, "relationship_id"), "parentTaskId": text(anchor, "parent_task_id")}
-	status := text(anchor, "status")
+	about := map[string]any{"relationshipId": anchor.Text("relationship_id"), "parentTaskId": anchor.Text("parent_task_id")}
+	status := anchor.Text("status")
 	if status == "paused" || status == "cancelled" || status == "archived" {
 		about["eligible"] = false
 		about["reason"] = "the relationship is " + status
 		return about, nil
 	}
 	// subset ported for todo 22; todo 24 owns supervision.contactable
-	parent := text(anchor, "parent_task_id")
+	parent := anchor.Text("parent_task_id")
 	var contact map[string]any
 	if parent == "" {
 		contact = map[string]any{"contactable": nil, "asked": false, "reason": "no recipient was named, so deliverability was not part of this question"}
@@ -90,10 +90,10 @@ func dAnchorEligibility(ctx context.Context, l *Ledger, anchor row, moment float
 		if lifecycle == nil {
 			contact = map[string]any{"contactable": nil, "reason": "the host has not been observed for this task, so deliverability is unmeasured rather than allowed"}
 		} else {
-			deliverable, observed := text(lifecycle, "deliverable"), text(lifecycle, "observed_at")
+			deliverable, observed := lifecycle.Text("deliverable"), lifecycle.Text("observed_at")
 			contact = map[string]any{"deliverable": deliverable, "observedAt": observed}
 			if deliverable != "yes" {
-				reason := text(lifecycle, "withhold_reason")
+				reason := lifecycle.Text("withhold_reason")
 				if reason == "" {
 					reason = deliverable
 				}

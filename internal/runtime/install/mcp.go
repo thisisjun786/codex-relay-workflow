@@ -523,10 +523,13 @@ func executionPolicyReading(value string) (Object, string) {
 }
 
 // pathlibAbsolute is str(pathlib.Path(value).absolute()) on POSIX: the working directory
-// prefixed when value is relative, "." components and repeated or trailing slashes dropped, and
-// ".." KEPT. Folding ".." by text (filepath.Abs) names another file than the kernel opens when a
-// component before it is a symbolic link, and the record, the digest and the bridge have to name
-// the one file the operator named.
+// prefixed when value is relative, then the pathlib spelling (store.PathlibSpelling): "."
+// components and repeated or trailing slashes dropped, and ".." KEPT. Folding ".." by text
+// (filepath.Abs) names another file than the kernel opens when a component before it is a
+// symbolic link, and the record, the digest and the bridge have to name the one file the operator
+// named. The working directory is os.Getwd's and the join is cwd + "/" + value, as this
+// registration has always recorded them: the result is the stored executionPolicy text a
+// re-registration compares, so it is not store.Absolute (the kernel's directory, JoinCwd).
 func pathlibAbsolute(value string) (string, error) {
 	if !strings.HasPrefix(value, "/") {
 		cwd, err := os.Getwd()
@@ -535,17 +538,7 @@ func pathlibAbsolute(value string) (string, error) {
 		}
 		value = cwd + "/" + value
 	}
-	root := "/"
-	if strings.HasPrefix(value, "//") && !strings.HasPrefix(value, "///") {
-		root = "//"
-	}
-	var parts []string
-	for _, part := range strings.Split(value, "/") {
-		if part != "" && part != "." {
-			parts = append(parts, part)
-		}
-	}
-	return root + strings.Join(parts, "/"), nil
+	return store.PathlibSpelling(value), nil
 }
 
 // RegisterMCP is `crw install register-mcp --owner plugin`: the record the packaged launcher

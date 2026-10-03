@@ -44,6 +44,19 @@ func (o Object) Set(key string, value any) Object {
 	return append(o, Field{Key: key, Value: value})
 }
 
+// Text is the string v holds, and "" when v is any other value (nil included): the assertion
+// s, _ := v.(string) that reads a decoded JSON value as text.
+func Text(v any) string {
+	s, _ := v.(string)
+	return s
+}
+
+// Map is the map[string]any v holds, and nil when v is any other value (an Object included).
+func Map(v any) map[string]any {
+	m, _ := v.(map[string]any)
+	return m
+}
+
 // Float is float.__repr__ (and str() of a float): the shortest spelling that reads back as f,
 // fixed notation for decimal exponents from -4 up to but not including 16 (with ".0" when it
 // has no fraction), scientific notation with at least two exponent digits outside them, and
