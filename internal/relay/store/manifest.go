@@ -43,10 +43,10 @@ func CanonicalPayload(entries []ManifestEntry) (string, error) {
 }
 
 // BuildManifest reads each authorized artifact into a manifest entry (manifest.build).
-func BuildManifest(paths, roots []string) ([]ManifestEntry, error) {
+func BuildManifest(ctx context.Context, paths, roots []string) ([]ManifestEntry, error) {
 	entries := make([]ManifestEntry, 0, len(paths))
 	for _, declared := range paths {
-		digest, size, _, err := HashArtifact(declared, roots, false)
+		digest, size, _, err := HashArtifact(ctx, declared, roots, false)
 		if err != nil {
 			return nil, err
 		}
@@ -57,11 +57,11 @@ func BuildManifest(paths, roots []string) ([]ManifestEntry, error) {
 
 // verifyAgainstDisk re-hashes every declared path and reports what disagrees, with the
 // weakest binding achieved over the whole manifest.
-func verifyAgainstDisk(entries []ManifestEntry, roots []string, allowLease bool) ([]string, PathBinding) {
+func verifyAgainstDisk(ctx context.Context, entries []ManifestEntry, roots []string, allowLease bool) ([]string, PathBinding) {
 	var problems []string
 	weakest := LeaseEnforced
 	for _, entry := range entries {
-		digest, size, binding, err := HashArtifact(entry.Path, roots, allowLease)
+		digest, size, binding, err := HashArtifact(ctx, entry.Path, roots, allowLease)
 		if err != nil {
 			problems = append(problems, entry.Path+": "+err.Error())
 			continue
@@ -163,7 +163,7 @@ func ReadFrozenBlob(ctx context.Context, reference, digest string) (string, int6
 	if err != nil {
 		return "", 0, err
 	}
-	hashed, size, _, err := HashArtifactContext(ctx, blob, []string{root}, false)
+	hashed, size, _, err := HashArtifact(ctx, blob, []string{root}, false)
 	return hashed, size, err
 }
 
@@ -171,7 +171,7 @@ func ReadFrozenBlob(ctx context.Context, reference, digest string) (string, int6
 // so every branch answers as the fence's two-value form does, including the exception it raises
 // for a frozen copy that was reached and is not a manifest (ManifestException, or a RefusedError
 // for the ScopeError of a frozen record revision_hash will not hash).
-func VerifyFrozen(reference string, entries []ManifestEntry) ([]string, error) {
-	_, problems, _, err := VerifyFrozenDetailed(reference, entries)
+func VerifyFrozen(ctx context.Context, reference string, entries []ManifestEntry) ([]string, error) {
+	_, problems, _, err := VerifyFrozenDetailed(ctx, reference, entries)
 	return problems, err
 }

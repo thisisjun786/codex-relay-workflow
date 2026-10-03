@@ -150,8 +150,8 @@ func (a *Adapter) admitRead(ctx context.Context) (context.Context, func(), error
 	return run, release, nil
 }
 
-func (a *Adapter) SendMessage(requestID, thread, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
-	return a.Send(context.Background(), requestID, thread, message, settings, nil, 0)
+func (a *Adapter) SendMessage(ctx context.Context, requestID, thread, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
+	return a.Send(ctx, requestID, thread, message, settings, nil, 0)
 }
 
 type Guard func(context.Context) (map[string]any, error)

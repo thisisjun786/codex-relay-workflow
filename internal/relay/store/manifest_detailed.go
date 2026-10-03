@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -22,11 +23,11 @@ func accessFailure(err error) bool {
 	}
 	return errno != unix.ELOOP && errno != unix.ENOTDIR && errno != unix.ENOENT && errno != unix.ESTALE
 }
-func VerifyAgainstDiskDetailed(entries []ManifestEntry, roots []string, allowLease bool) ([]string, map[string]ArtifactBinding, []string) {
+func VerifyAgainstDiskDetailed(ctx context.Context, entries []ManifestEntry, roots []string, allowLease bool) ([]string, map[string]ArtifactBinding, []string) {
 	problems, unreadable := []string{}, []string{}
 	bindings := map[string]ArtifactBinding{}
 	for _, entry := range entries {
-		digest, size, binding, err := HashArtifact(entry.Path, roots, allowLease)
+		digest, size, binding, err := HashArtifact(ctx, entry.Path, roots, allowLease)
 		if err != nil {
 			message := entry.Path + ": " + err.Error()
 			problems = append(problems, message)

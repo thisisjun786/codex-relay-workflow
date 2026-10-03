@@ -23,7 +23,7 @@ func cooperatingWriter(t *testing.T, path, text string) (func(string), *bool) {
 			return
 		}
 		wrote = true
-		lock, err := record.Lock(path, 0)
+		lock, err := record.Lock(context.Background(), path, 0)
 		if err != nil {
 			t.Fatal(err)
 		}

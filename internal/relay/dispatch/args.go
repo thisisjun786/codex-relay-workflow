@@ -1,7 +1,6 @@
 package dispatch
 
 import (
-	"math/big"
 	"strconv"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
@@ -76,12 +75,12 @@ func (a Args) Bool(name string) bool {
 func (a Args) Strings(name string) []string { return a.Parsed.Values[name] }
 
 // Integer is an int option's value: the integer the line gave, else its default.
-func (a Args) Integer(name string) *big.Int {
+func (a Args) Integer(name string) int64 {
 	if a.Given(name) {
-		return a.Parsed.Numbers[name].(*big.Int)
+		return a.Parsed.Numbers[name].(int64)
 	}
 	value, _ := a.Defaults[name].(int64)
-	return big.NewInt(value)
+	return value
 }
 
 // Float is a float option's value: the float the line gave, else its default.
@@ -93,13 +92,9 @@ func (a Args) Float(name string) float64 {
 	return value
 }
 
-// Number is an int (int64) or float (float64) option's value, else its default, else nil. An int
-// the line gave is an int64 as a default is: the parser accepts only integers within int64.
+// Number is an int (int64) or float (float64) option's value, else its default, else nil.
 func (a Args) Number(name string) any {
 	if a.Given(name) {
-		if n, ok := a.Parsed.Numbers[name].(*big.Int); ok {
-			return n.Int64()
-		}
 		return a.Parsed.Numbers[name]
 	}
 	return a.Defaults[name]

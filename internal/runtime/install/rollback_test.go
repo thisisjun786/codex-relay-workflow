@@ -72,7 +72,7 @@ func TestARollbackNeverRewritesTheSettings(t *testing.T) {
 		if h.pointerTarget(t) != current || readFile(t, path) != settings {
 			t.Errorf("at the commit the pointer names %s and the settings read\n%s", h.pointerTarget(t), readFile(t, path))
 		}
-		return record.Update(recordPath, version, delta)
+		return record.Update(context.Background(), recordPath, version, delta)
 	})
 	restorePlace := install.ReplacePointerPlacement(func(pointerPath, target string) error {
 		windows["native placement"] = h.nativeStopRecorded(t)
@@ -320,7 +320,7 @@ func TestARollbackRefusesARuntimeThatCannotBeLaunched(t *testing.T) {
 			for _, component := range []string{"codex-session-relay", "codex-thread-bridge"} {
 				delta.Installs = append(delta.Installs, record.Named{Component: component, Entry: record.GoInstall(other, component, strings.Repeat("0", 64), "by hand", false)})
 			}
-			if _, err := record.Update(h.record, 1, delta); err != nil {
+			if _, err := record.Update(context.Background(), h.record, 1, delta); err != nil {
 				t.Fatal(err)
 			}
 			return other, "is not a Go runtime"

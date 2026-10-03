@@ -65,8 +65,8 @@ func handoverSet3(t *testing.T, s *store.Store) {
 
 type killedHostSet3 struct{ *captureHost4 }
 
-func (h *killedHostSet3) SendMessage(id, thread, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
-	_, err := h.captureHost4.SendMessage(id, thread, message, settings)
+func (h *killedHostSet3) SendMessage(_ context.Context, id, thread, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
+	_, err := h.captureHost4.SendMessage(context.Background(), id, thread, message, settings)
 	if err != nil {
 		return nil, err
 	}
@@ -306,12 +306,12 @@ type invalidLandingSet3 struct {
 	landing string
 }
 
-func (h *invalidLandingSet3) ReadTurn(thread, id string) (*delivery.TurnInfo, error) {
+func (h *invalidLandingSet3) ReadTurn(_ context.Context, thread, id string) (*delivery.TurnInfo, error) {
 	if id == h.landing {
 		v := math.NaN()
 		return &delivery.TurnInfo{TurnID: id, StartedAt: &v}, nil
 	}
-	return h.captureHost4.ReadTurn(thread, id)
+	return h.captureHost4.ReadTurn(context.Background(), thread, id)
 }
 func Test24_SCH_52_LandingCapture(t *testing.T) {
 	supervisorMirror(t, "WhatTheThirdIndependentReviewFound.test_a_landing_turn_whose_start_is_not_a_time_does_not_verify", "event", func(c *Channel, s *store.Store) []any {
@@ -347,7 +347,7 @@ func Test24_SCH_52_Capture(t *testing.T) {
 
 type captureSuccessorSet3 struct{ *captureHost4 }
 
-func (h *captureSuccessorSet3) SendMessage(id, thread, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
+func (h *captureSuccessorSet3) SendMessage(_ context.Context, id, thread, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
 	return h.accept(id, "turn-"+thread+"-1", message, settings), nil
 }
 func Test24_SCH_51_Capture(t *testing.T) {
@@ -384,7 +384,7 @@ func Test24_SCH_51_Capture(t *testing.T) {
 
 type unknownHostSet3 struct{ *captureHost4 }
 
-func (h *unknownHostSet3) SendMessage(id, thread, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
+func (h *unknownHostSet3) SendMessage(_ context.Context, id, thread, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
 	h.accept(id, "turn-01supervisor-task-1", message, settings)
 	return delivery.Obj{{Key: "status", Value: delivery.OutcomeUnknown}, {Key: "requestId", Value: id}}, nil
 }
