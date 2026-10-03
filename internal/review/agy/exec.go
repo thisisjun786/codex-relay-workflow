@@ -63,9 +63,11 @@ func execute(ctx context.Context, limit time.Duration, bin string, args []string
 	cmd.WaitDelay = killGrace
 	start := time.Now()
 	err := cmd.Run()
-	// The leader has been reaped, so the group id is still held by any descendant it left and by nothing else (the kernel does not reuse it while a member lives):
-	// ending the group now means a call never outlives its lock, and a descendant that kept stdout open does not survive the call.
+	// The leader has been reaped, so the group id is still held by any descendant it left (the kernel does not reuse it while a member lives) and is free
+	// otherwise, which takes a wrap of the whole pid range to reuse within the microseconds between the reap and this signal: ending the group now means a
+	// descendant does not outlive the call, and waiting until it is gone means not the lock either.
 	_ = terminateProcessGroup(cmd)
+	waitProcessGroupGone(cmd, groupGrace)
 	ex := execution{stdout: stdout.buf.Bytes(), stderr: stderr.buf.Bytes(), truncated: stdout.over || stderr.over, exitCode: -1, limit: limit, elapsed: time.Since(start)}
 	if cmd.ProcessState == nil {
 		ex.startErr = err
@@ -74,7 +76,7 @@ func execute(ctx context.Context, limit time.Duration, bin string, args []string
 	ex.exitCode = cmd.ProcessState.ExitCode()
 	ex.timedOut = killed.Load() && ctx.Err() == nil
 	var exitErr *exec.ExitError
-	if err != nil && !errors.As(err, &exitErr) && !errors.Is(err, exec.ErrWaitDelay) {
+	if err != nil && !errors.As(err, &exitErr) {
 		ex.readErr = err
 	}
 	return ex

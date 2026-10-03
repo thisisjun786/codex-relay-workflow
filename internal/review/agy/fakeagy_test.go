@@ -219,6 +219,12 @@ func testdata(t *testing.T, name string) string {
 	return string(b)
 }
 
+// zombie is true for a process that has died and that nobody has reaped yet (Linux only).
+func zombie(pid int) bool {
+	stat, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	return err == nil && bytes.Contains(stat, []byte(") Z "))
+}
+
 // gone waits for a process to be gone; a zombie that nobody has reaped yet counts as gone.
 func gone(t *testing.T, pid int) {
 	t.Helper()
@@ -226,7 +232,7 @@ func gone(t *testing.T, pid int) {
 		if err := syscall.Kill(pid, 0); err != nil {
 			return
 		}
-		if stat, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid)); err == nil && bytes.Contains(stat, []byte(") Z ")) {
+		if zombie(pid) {
 			return
 		}
 	}

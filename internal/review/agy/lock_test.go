@@ -57,6 +57,12 @@ func TestHeldLock(t *testing.T) {
 	if _, err := os.Stat(recordPath(cfg)); err == nil {
 		t.Error("agy ran although the lock was held")
 	}
+	cancelled, cancelNow := context.WithCancel(t.Context())
+	cancelNow()
+	cfg.LockWait = -1
+	if _, err := Run(cancelled, cfg, Request{Prompt: []byte("hi")}); !errors.Is(err, context.Canceled) {
+		t.Errorf("a cancelled caller must get its context's error, not the lock outcome: %v", err)
+	}
 	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
 	defer cancel()
 	cfg.LockWait = time.Minute

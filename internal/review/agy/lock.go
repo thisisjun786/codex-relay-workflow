@@ -41,6 +41,10 @@ func acquire(ctx context.Context, path string, wait time.Duration) (release func
 	}
 	deadline := time.Now().Add(wait)
 	for {
+		if err = ctx.Err(); err != nil {
+			_ = unix.Close(fd)
+			return nil, err
+		}
 		err = unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB)
 		if err == nil {
 			return func() { _ = unix.Flock(fd, unix.LOCK_UN); _ = unix.Close(fd) }, nil

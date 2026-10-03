@@ -9,7 +9,11 @@ import (
 	"os"
 	"os/exec"
 	"syscall"
+	"time"
 )
+
+// groupGrace is the longest a call waits, after killing the process group, for its members to be gone.
+const groupGrace = 2 * time.Second
 
 // configureProcessGroup starts the process as the leader of a new process group, so everything it starts can be ended through that group.
 func configureProcessGroup(cmd *exec.Cmd) {
@@ -26,4 +30,16 @@ func terminateProcessGroup(cmd *exec.Cmd) error {
 		return os.ErrProcessDone
 	}
 	return err
+}
+
+// waitProcessGroupGone polls until the process group has no member left (a killed member nobody has reaped yet still counts) or until grace has passed.
+func waitProcessGroupGone(cmd *exec.Cmd, grace time.Duration) {
+	if cmd == nil || cmd.Process == nil {
+		return
+	}
+	for deadline := time.Now().Add(grace); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		if errors.Is(syscall.Kill(-cmd.Process.Pid, 0), syscall.ESRCH) {
+			return
+		}
+	}
 }

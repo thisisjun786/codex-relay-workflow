@@ -19,7 +19,7 @@ func TestWorkDirIsEmptyAndRemoved(t *testing.T) {
 		{"normal", fakeSpec{Stdout: testdata(t, "success_schema.json")}, 0, ClassNormal},
 		{"invalid", fakeSpec{Stdout: testdata(t, "denied_actions.json")}, 0, ClassInvalid},
 		{"unavailable", fakeSpec{Exit: 2, Stderr: "panic: boom"}, 0, ClassUnavailable},
-		{"time limit kill", fakeSpec{Sleep: time.Minute}, 1500 * time.Millisecond, ClassInvalid},
+		{"time limit kill", fakeSpec{Sleep: time.Minute}, 2 * time.Second, ClassInvalid},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			cfg, rec := fakeCfg(t, c.spec)

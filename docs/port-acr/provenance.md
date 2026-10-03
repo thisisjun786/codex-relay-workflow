@@ -38,30 +38,29 @@ git -C <ACR> show a3e438e2bd1f0824c1eab88db738aa3c82c69e99:LICENSE | cmp - <repo
 ```
 
 Measured on 2026-10-03: the eight phrases are identical in both files, both files test with `strings.Contains(lower, phrase)` and compile their patterns with `regexp.Compile`, the identifiers named above exist at those lines, and `docs/port-acr/LICENSE` is byte-identical to the upstream `LICENSE`. The rest was compared by reading: the comparison shows which names and values were taken, not that behavior is equal, because the Go code around them is new.
+
 ### internal/review/agy
 
-Five files carry the header; the others (doc.go, classify.go, agylog.go, env.go, workdir.go, lock.go and the tests) were written for CRW and take nothing from ACR. ACR has no agy envelope or classification: its agy adapter sends `--print=-` and treats output as review text.
+Four files carry the header; the others (doc.go, envelope.go, classify.go, agylog.go, env.go, workdir.go, lock.go and the tests) were written for CRW and take nothing from ACR. ACR has no agy envelope or classification: its agy adapter sends `--print=-` and treats output as review text, and its parser extracts JSON out of prose, which is not what a call whose whole output must be one envelope needs.
 
 | Go file | Upstream | Kept | Changed |
 | --- | --- | --- | --- |
-| agy.go | internal/agent/antigravity.go | The availability check (`exec.LookPath` of the agy binary, ACR's `IsAvailable`) and one place that builds the agy command. | ACR passes `--print=- --print-timeout <d>` and no model. Here the call is `--model <config> --output-format json [--json-schema <file>] --disable-slash-commands --log-file <file>` with the prompt on stdin and no print flags (agy 1.2.16 reads `-` as the whole prompt). `Run`, `Config`, `Result` and the classes are new; ACR's print-timeout formatting and grace are not taken. |
-| envelope.go | internal/agent/parser.go | `extractBalanced`: counting braces outside strings, with escapes, to find a balanced JSON object in text, here as `balancedEnd`. | ACR takes an object or an array out of reviewer prose and strips a Markdown fence (`ExtractJSON`, `StripMarkdownCodeFence`); here only the first object is read and nothing is stripped. The envelope fields (status, response, error, usage, denied_actions, structured_output) come from R0's measurements. |
-| exec.go | internal/agent/executor.go, internal/agent/cmd_reader.go, internal/agent/result.go | `cappedBuffer` (a capped writer that never stops the writer), the start in its own process group with `cmd.Cancel` ending that group, `-1` as the exit code of a process that did not exit by itself, and the exit code and stderr kept beside the output (`ExecutionResult`). | ACR streams stdout through a reader the caller closes and caps only stderr; here stdout and stderr are each read to the end under a cap and returned as one value, the prompt comes from bytes, the time limit is a context deadline that sets a flag, and `WaitDelay` bounds Wait. ACR's temp-file cleanup and `executeOptions` are not taken. |
-| process_unix.go | internal/agent/process_unix.go | `configureProcessGroup` and `terminateProcessGroup`: `Setpgid`, SIGKILL to the negative pid, ESRCH read as done. | Comments only. ACR's `!windows` build tag and process_windows.go are not taken: the package uses flock and is Unix only, like the runtime. |
+| agy.go | internal/agent/antigravity.go | The availability check only: `exec.LookPath` of the agy binary (ACR's `IsAvailable`). | ACR passes `--print=- --print-timeout <d>` and no model. Here the call is `--model <config> --output-format json [--json-schema <file>] --disable-slash-commands --log-file <file>` with the prompt on stdin and no print flags (agy 1.2.16 reads `-` as the whole prompt). `Run`, `Config`, `Result` and the classes are new; ACR's print-timeout formatting and grace are not taken. |
+| exec.go | internal/agent/executor.go, internal/agent/cmd_reader.go, internal/agent/result.go | `cappedBuffer` (a capped writer that never stops the writer), the start in its own process group with `cmd.Cancel` ending that group, `-1` as the exit code of a process that did not exit by itself, and the exit code and stderr kept beside the output (`ExecutionResult`). | ACR streams stdout through a reader the caller closes and caps only stderr; here stdout and stderr are each read to the end under a cap and returned as one value, the prompt comes from bytes, the time limit is a context deadline that sets a flag, `WaitDelay` bounds Wait, and the group is signalled again once the leader has been reaped. ACR's temp-file cleanup and `executeOptions` are not taken. |
+| process_unix.go | internal/agent/process_unix.go | `configureProcessGroup` and `terminateProcessGroup`: `Setpgid`, SIGKILL to the negative pid, ESRCH read as done. | The two functions differ in comments only. `waitProcessGroupGone` and `groupGrace` are new. ACR's `!windows` build tag and process_windows.go are not taken: the package uses flock and is Unix only, like the runtime. |
 | timeout.go | internal/review/timeout.go | The 100 KiB threshold and a limit that grows in proportion to the size beyond it. | ACR multiplies a configured reviewer timeout, up to ten times, in integer arithmetic and prints a message; here the limit has a floor and a configurable ceiling, grows in float arithmetic and prints nothing. |
 
 How the files were compared. `<ACR>` is a checkout of the upstream repository at the commit above and `<repo>` this checkout; both commands read only.
 
 ```sh
 git -C <ACR> rev-parse HEAD                      # a3e438e2bd1f0824c1eab88db738aa3c82c69e99
-diff <(sed -n '/^func configureProcessGroup/,$p' <ACR>/internal/agent/process_unix.go) \
-     <(sed -n '/^func configureProcessGroup/,$p' <repo>/internal/review/agy/process_unix.go)   # blank lines and comments only
-grep -n 'Setpgid\|syscall.Kill(-cmd.Process.Pid\|ESRCH' <ACR>/internal/agent/process_unix.go <repo>/internal/review/agy/process_unix.go
+fn() { awk -v n="$2" '$0 ~ "^func "n"\\(" {p=1} p {print} p && /^}$/ {exit}' "$1"; }
+diff -B <(fn <ACR>/internal/agent/process_unix.go configureProcessGroup; fn <ACR>/internal/agent/process_unix.go terminateProcessGroup) \
+        <(fn <repo>/internal/review/agy/process_unix.go configureProcessGroup; fn <repo>/internal/review/agy/process_unix.go terminateProcessGroup)
 grep -n 'func (c \*cappedBuffer) Write\|cmd.Cancel = ' <ACR>/internal/agent/executor.go <repo>/internal/review/agy/exec.go
 grep -n 'r.exitCode = -1' <ACR>/internal/agent/cmd_reader.go; grep -n 'ExitCode()' <repo>/internal/review/agy/exec.go
-grep -n 'func extractBalanced\|escape = true\|depth--' <ACR>/internal/agent/parser.go <repo>/internal/review/agy/envelope.go
 grep -n 'reviewerTimeoutScaleThreshold = ' <ACR>/internal/review/timeout.go; grep -n 'sizeScaleThreshold = ' <repo>/internal/review/agy/timeout.go
 grep -n 'LookPath' <ACR>/internal/agent/antigravity.go <repo>/internal/review/agy/agy.go
 ```
 
-Measured on 2026-10-04: the process-group file differs from ACR's only in blank lines and comments, both thresholds are `100 * 1024`, both executors cap with a `cappedBuffer` and end the group from `cmd.Cancel`, both brace counters use `escape` and `depth`, and both adapters call `exec.LookPath`. The rest was compared by reading: the comparison shows which names and values were taken, not that behavior is equal, because the Go code around them is new.
+Measured on 2026-10-04: the two process-group functions are identical in ACR and here apart from blank lines and comments, both thresholds are `100 * 1024`, both executors cap with a `cappedBuffer` and end the group from `cmd.Cancel`, and both adapters call `exec.LookPath`. The rest was compared by reading: the comparison shows which names and values were taken, not that behavior is equal, because the Go code around them is new.

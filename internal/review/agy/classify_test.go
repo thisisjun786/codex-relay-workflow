@@ -27,6 +27,7 @@ func TestClassify(t *testing.T) {
 		{"normal with a schema", fakeSpec{Stdout: testdata(t, "success_schema.json")}, prompt, true, 0, ClassNormal, "", ""},
 		{"normal without a schema", fakeSpec{Stdout: ok}, prompt, false, 0, ClassNormal, "", ""},
 		{"normal, non-ASCII prompt counted in bytes", fakeSpec{Stdout: ok}, nonASCII, false, 0, ClassNormal, "", ""},
+		{"normal, a newline after the envelope", fakeSpec{Stdout: ok + "\n"}, prompt, false, 0, ClassNormal, "", ""},
 		{"normal, the response only talks about quota and login", fakeSpec{Stdout: `{"status":"SUCCESS","response":"authentication required? RESOURCE_EXHAUSTED?"}`}, prompt, false, 0, ClassNormal, "", ""},
 
 		{"invalid: denied actions (R0)", fakeSpec{Stdout: testdata(t, "denied_actions.json")}, prompt, true, 0, ClassInvalid, ReasonDeniedActions, "RunCommand"},
@@ -34,7 +35,7 @@ func TestClassify(t *testing.T) {
 		{"invalid: schema but no structured output", fakeSpec{Stdout: ok}, prompt, true, 0, ClassInvalid, ReasonNoStructured, ""},
 		{"invalid: structured output null", fakeSpec{Stdout: `{"status":"SUCCESS","response":"x","structured_output":null}`}, prompt, true, 0, ClassInvalid, ReasonNoStructured, ""},
 		{"invalid: print timeout partial (R0)", fakeSpec{Stdout: testdata(t, "print_timeout.json"), Stderr: testdata(t, "print_timeout.stderr")}, prompt, false, 0, ClassInvalid, ReasonPartialResponse, ""},
-		{"invalid: time limit", fakeSpec{Sleep: time.Minute}, prompt, false, 1500 * time.Millisecond, ClassInvalid, ReasonTimeLimit, "1.5s"},
+		{"invalid: time limit", fakeSpec{Sleep: time.Minute}, prompt, false, 2 * time.Second, ClassInvalid, ReasonTimeLimit, "2s"},
 		{"invalid: prompt taken as one character (the --print=- shape, R0)", fakeSpec{Stdout: `{"status":"SUCCESS","response":""}`, LogLength: 1}, prompt, false, 0, ClassInvalid, ReasonPromptLength, "promptLength=1"},
 		{"invalid: prompt length one too long", fakeSpec{Stdout: ok, LogLength: len(prompt) + 1}, prompt, false, 0, ClassInvalid, ReasonPromptLength, ""},
 		{"invalid: prompt length counted in runes", fakeSpec{Stdout: ok, LogLength: utf8.RuneCountInString(nonASCII)}, nonASCII, false, 0, ClassInvalid, ReasonPromptLength, ""},
@@ -51,6 +52,9 @@ func TestClassify(t *testing.T) {
 		{"unavailable: crash, killed by a signal", fakeSpec{Kill: true}, prompt, true, 0, ClassUnavailable, ReasonCrash, "signal"},
 		{"unavailable: crash, a signal after a quota text stays a crash", fakeSpec{Kill: true, Stderr: testdata(t, "quota.stderr")}, prompt, true, 0, ClassUnavailable, ReasonCrash, "signal"},
 		{"unavailable: crash, unparseable output", fakeSpec{Stdout: "not json at all"}, prompt, true, 0, ClassUnavailable, ReasonCrash, "envelope"},
+		{"unavailable: crash, two envelopes", fakeSpec{Stdout: ok + ok}, prompt, false, 0, ClassUnavailable, ReasonCrash, "more than one"},
+		{"unavailable: crash, text after the envelope", fakeSpec{Stdout: ok + "\nwarning: something"}, prompt, false, 0, ClassUnavailable, ReasonCrash, "more than one"},
+		{"unavailable: crash, a cut-off envelope", fakeSpec{Stdout: ok[:len(ok)-8]}, prompt, false, 0, ClassUnavailable, ReasonCrash, "envelope"},
 		{"unavailable: crash, status ERROR with exit 0", fakeSpec{Stdout: `{"status":"ERROR","error":"boom"}`}, prompt, true, 0, ClassUnavailable, ReasonCrash, "boom"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
