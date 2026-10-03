@@ -344,17 +344,26 @@ func catalogDate(s string) (int64, bool) {
 	}
 	location := time.Local
 	fields := strings.Fields(s)
-	if len(fields) > 0 {
-		name := strings.ToUpper(fields[len(fields)-1])
+	normalizedZone := false
+	for i, field := range fields {
+		name := strings.ToUpper(field)
 		for _, zone := range []struct {
 			name  string
 			hours int
 		}{{"UT", 0}, {"UTC", 0}, {"GMT", 0}, {"EST", -5}, {"EDT", -4}, {"CST", -6}, {"CDT", -5}, {"MST", -7}, {"MDT", -6}, {"PST", -8}, {"PDT", -7}} {
 			if name == zone.name {
-				location = time.FixedZone(zone.name, zone.hours*60*60)
+				if name == "UT" {
+					name = "GMT"
+				} // Go's zone token needs three letters.
+				fields[i] = name
+				normalizedZone = true
+				location = time.FixedZone(name, zone.hours*60*60)
 				break
 			}
 		}
+	}
+	if normalizedZone {
+		s = strings.Join(fields, " ")
 	}
 	for _, layout := range []string{time.RFC1123, time.RFC1123Z, time.RFC822, time.RFC822Z, time.ANSIC, time.UnixDate, time.RFC850, "Mon Jan 02 2006 15:04:05 GMT-0700", "Jan 2 2006", "January 2, 2006", "2006/1/2", "2006,1,2", "1/2/2006", "1-2-2006", "1.2.2006", "2006-01-02T15:04:05", "2006-01-02T15:04", "2006-01-02 15:04:05"} {
 		if at, err := time.ParseInLocation(layout, s, location); err == nil {

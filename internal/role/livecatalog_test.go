@@ -409,6 +409,29 @@ func TestLiveCatalogReviewLocalCacheDate(t *testing.T) {
 	}
 }
 
+func TestLiveCatalogReviewTimezoneSpellings(t *testing.T) {
+	for _, c := range []struct {
+		at string
+		ms int64
+	}{{"Thu Jan  1 00:00:00 PST 2026", 1767254400000}, {"Thu, 01 Jan 2026 00:00:00 UT", 1767225600000}} {
+		t.Run(c.at, func(t *testing.T) {
+			o := liveOptions(t)
+			o.Now = func() time.Time { return time.UnixMilli(c.ms) }
+			path := livePath(o)
+			check(t, os.MkdirAll(filepath.Dir(path), 0700))
+			cache := map[string]any{"key": sourceKey(catalogEnv(o.Environ)), "catalog": map[string]any{"state": "ocx-active", "entries": []any{}, "status": "fresh", "source": "ocx", "fetchedAt": c.at}}
+			check(t, os.WriteFile(path, must(json.Marshal(cache)), 0600))
+			calls := 0
+			o.RunOcx = func([]string) (string, error) { calls++; return "", errors.New("discovery fails") }
+			var r CatalogReader
+			got := liveRead(t, &r, o)
+			if got.Status != "fresh" || calls != 0 || got.FetchedAt == nil || *got.FetchedAt != c.at {
+				t.Fatal("explicit cache timezone changed", got, calls)
+			}
+		})
+	}
+}
+
 func TestLiveCatalogSubprocess(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX fake executable")
