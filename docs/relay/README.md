@@ -608,6 +608,19 @@ never from arrival order: knowing a digest shows acquaintance with a revision, n
 where the declared graph has a fork, a cycle, an unknown predecessor or a gap, the answer is
 ambiguous and completion is withheld.
 
+A receipt the relay suppressed (the turn that staged it ended failed or interrupted) is not a
+revision, and the child that emitted it cannot tell after a restart. A revision that names one
+is read as naming what that suppressed receipt itself replaced: nothing, so it has no predecessor,
+or a revision that still counts, so it replaces that one, through any number of suppressed
+receipts in a row. Emit accepts the naming and records it as stated; the head does the reading
+(`registry.ReadThrough`, used by both head readers over the one statement that reads the
+generation's reviewable receipts, suppressed ones included). The rest of the judgment is
+unchanged: a revision of another generation, a revision nobody emitted, and a suppressed receipt
+whose own predecessor nobody holds still read `unknown_predecessor`, and revisions left
+unconnected read `fork`. One revision is one event (the event id is the generation and the
+revision hash), so the same bytes emitted again are a duplicate of the suppressed receipt and
+leave nothing that counts.
+
 A `needs_changes` ruling opens a new generation and names the exact result to correct.
 That result is the new generation's only permitted predecessor outside its own revisions:
 the relay-owned request, ruling and generation must agree on the same relationship and
@@ -655,7 +668,7 @@ When a step refuses, the refusal names what to do:
 | the work is marked merged, or a turn landed it | `disposition_conflict` | a merged result is corrected by new work, not by a second ruling |
 | a merge turn is merging or of unknown effect | `disposition_conflict` | resolve the turn (`merge-turn-resolve` reads the branch), then rule again |
 | the event is not the head | `stale_generation` or `superseded_revision` | rule the head the assignment shows |
-| the head is ambiguous | `revision_ambiguous` | outside a plan, a fresh execution generation; for a plan node this build records no route, so report it |
+| the head is ambiguous | `revision_ambiguous` | outside a plan, a fresh execution generation; for a plan node this build records no route, so report it (read `revision-head` first: a re-emit that named a suppressed receipt of its own generation may read a head) |
 | the relationship is not active | `relationship_not_active` | `relationship-resume`, then rule again |
 
 Two limits are part of the contract. The same verdict again is a replay even when its findings differ, so a `needs_changes` ruling that was already given cannot be given again with other words: the verdict does not resend (see [Return corrections to the existing task](../../plugins/crw/skills/crw-run/SKILL.md#return-corrections-to-the-existing-task)). And an installed relay older than this change answers a different verdict with the recorded ruling marked `_replay` and exit 0; read the answer (a ruling that is still `verified` and marked `_replay` changed nothing) and `assignment-show`, never the exit code.
