@@ -209,3 +209,18 @@ func TestMemoryStatusDefaultsAndThresholds(t *testing.T) {
 		t.Fatal("missing home must stay unavailable and silent")
 	}
 }
+
+func TestMemoryStatusNegativeZeroJSON(t *testing.T) {
+	home := memoryStatusHome(t, memoryStatusOracle{SQL: []string{"CREATE TABLE jobs (kind, status, retry_remaining, last_error, finished_at)", "INSERT INTO jobs VALUES ('stage','done',3,NULL,'-0')"}})
+	s := CollectMemoryStatus(home)
+	if s.LastSuccessAt == nil || !math.Signbit(*s.LastSuccessAt) {
+		t.Fatal("collector must preserve Number('-0')")
+	}
+	data, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), `"lastSuccessAt":-0`) || !strings.Contains(string(data), `"lastSuccessAt":0`) {
+		t.Fatalf("JSON.stringify(-0) is 0: %s", data)
+	}
+}

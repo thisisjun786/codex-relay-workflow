@@ -120,6 +120,9 @@ func (s MemoryStatus) MarshalJSON() ([]byte, error) {
 	for _, at := range []**float64{&w.LastSuccessAt, &w.LastFinishedAt} {
 		if *at != nil && (math.IsNaN(**at) || math.IsInf(**at, 0)) {
 			*at = nil
+		} else if *at != nil && **at == 0 {
+			zero := float64(0) // JSON.stringify also normalizes negative zero.
+			*at = &zero
 		}
 	}
 	return json.Marshal(w)
