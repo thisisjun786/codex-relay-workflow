@@ -9,7 +9,10 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
+	"sync"
+	"syscall"
 	"testing"
+	"time"
 )
 
 func must(t *testing.T, err error) {
@@ -309,24 +312,36 @@ func TestUnreadableRootsAreNotEmpty(t *testing.T) {
 	expectProblem(t, "unreadable staging root", f.problems(nil), "permission denied")
 }
 
-// Two runs that race for one skill: exactly one gets it (an empty skill would let both rename).
+// Two runs that race for one skill: exactly one gets it. The injected rename holds each run until
+// both are there, the interleaving in which an empty skill let both publish.
 func TestConcurrentStagesPublishOnce(t *testing.T) {
-	for i := 0; i < 20; i++ {
-		f := newFixture(t)
-		must(t, os.MkdirAll(filepath.Join(f.src.Dir, "plugins/codexclaw/skills/empty"), 0o755))
-		errs := make(chan error, 2)
-		for range 2 {
-			go func() {
-				_, err := Stage(f.root, f.src, []string{"empty"})
-				errs <- err
-			}()
+	f := newFixture(t)
+	must(t, os.MkdirAll(filepath.Join(f.src.Dir, "plugins/codexclaw/skills/empty"), 0o755))
+	var mu sync.Mutex
+	waiting, together := 0, make(chan struct{})
+	rename := func(from, to string) error {
+		mu.Lock()
+		if waiting++; waiting == 2 {
+			close(together)
 		}
-		if a, b := <-errs, <-errs; (a == nil) == (b == nil) {
-			t.Fatalf("run %d: both or neither staged: %v, %v", i, a, b)
+		mu.Unlock()
+		select {
+		case <-together:
+		case <-time.After(300 * time.Millisecond):
 		}
+		return syscall.Rename(from, to) // the kernel's rename, which replaces an empty directory (os.Rename refuses)
+	}
+	errs := make(chan error, 2)
+	for range 2 {
+		go func() {
+			_, err := stage(f.root, f.src, []string{"empty"}, rename)
+			errs <- err
+		}()
+	}
+	if a, b := <-errs, <-errs; (a == nil) == (b == nil) {
+		t.Fatalf("both or neither staged: %v, %v", a, b)
 	}
 }
-
 func leftovers(t *testing.T, root string) []string {
 	t.Helper()
 	var left []string
