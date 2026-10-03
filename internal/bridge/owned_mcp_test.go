@@ -170,6 +170,20 @@ func TestAKeptServerConfigTomlDoesNotDefineStopsTheCreationWithItsReason(t *test
 	}
 }
 
+// No override can turn on a server config.toml disables, so a profile that keeps one is refused with that
+// reason before the thread starts, instead of the status check withholding the prompt afterwards.
+func TestAKeptServerConfigTomlDisablesStopsTheCreationWithItsReason(t *testing.T) {
+	b, host := policyBridge(t, mcpChildPolicy)
+	cwd := t.TempDir()
+	mcpHost(host, cwd, mcpConfigured, true)
+	host.Respond("config/read", fakehost.Reply{Result: map[string]any{"config": map[string]any{"mcp_servers": map[string]any{"gemini_notebook": map[string]any{"enabled": true}, "node_repl": map[string]any{"enabled": false}, "oracle": map[string]any{}}}}})
+	receipt, err := b.CreateThread(context.Background(), mcpCreate(cwd, "create-disabled", "ui-qa"))
+	rpc := pyjson.Map(receipt["rpcError"])
+	if message, _ := rpc["message"].(string); err != nil || receipt["status"] != "failed" || rpc["code"] != execution.MCPServerDisabled || host.Count("thread/start") != 0 || !contains(message, "node_repl") || !contains(message, "disables") {
+		t.Fatalf("receipt=%v err=%v", receipt, err)
+	}
+}
+
 func TestACreationWithoutProfilesAsksTheHostNothingExtra(t *testing.T) {
 	for name, build := range map[string]func(t *testing.T) (*Bridge, *fakehost.Server){
 		"a role that declares none": rolesBridge,
@@ -264,5 +278,46 @@ func TestTwoConcurrentCreationsOfOneRequestStartOneThread(t *testing.T) {
 	wg.Wait()
 	if host.Count("thread/start") != 1 || host.Count("config/read") != 1 {
 		t.Fatalf("thread/start x%d, config/read x%d", host.Count("thread/start"), host.Count("config/read"))
+	}
+}
+
+func mcpSend(id, profile string) SendMessage {
+	expected := map[string]any{"model": pyModel, "reasoning_effort": pyEffort}
+	if profile != "" {
+		expected["mcp_profile"] = profile
+	}
+	return SendMessage{RequestID: id, ThreadID: "thread-1", Message: "work", Role: "child", Expected: expected}
+}
+
+func TestASendNamingAProfileResumesUnderItsOverrides(t *testing.T) {
+	b, host, _ := mcpBridge(t, true)
+	receipt, err := b.SendMessageToThread(context.Background(), mcpSend("send-ui-qa", "ui-qa"))
+	if err != nil || receipt["status"] != "accepted" || !equalNames(switchedOff(t, host), []string{"gemini_notebook", "oracle"}) || host.Count("turn/start") != 1 {
+		t.Fatalf("receipt=%v err=%v off=%v", receipt, err, switchedOff(t, host))
+	}
+	if methods := hostMethods(host); indexOf(methods, "config/read") > indexOf(methods, "thread/resume") || host.Count("mcpServerStatus/list") != 1 {
+		t.Fatalf("host calls %v", methods)
+	}
+	if _, err := b.SendMessageToThread(context.Background(), mcpSend("send-nope", "nope")); err == nil {
+		t.Fatal("a send naming an unknown profile was accepted")
+	}
+}
+
+func TestASendResumedOntoAThreadThatIgnoredTheOverridesIsWithheld(t *testing.T) {
+	b, host, _ := mcpBridge(t, false)
+	receipt, err := b.SendMessageToThread(context.Background(), mcpSend("send-ignored", "ui-qa"))
+	if err != nil || receipt["status"] != "failed" || pyjson.Map(receipt["rpcError"])["code"] != settings.NotPreserved || host.Count("turn/start") != 0 {
+		t.Fatalf("receipt=%v err=%v", receipt, err)
+	}
+}
+
+// Overrides are not kept with a thread, and no default is applied on a send: a send that names no
+// profile resumes as it always did.
+func TestASendNamingNoProfileAsksTheHostNothingExtra(t *testing.T) {
+	b, host, _ := mcpBridge(t, true)
+	receipt, err := b.SendMessageToThread(context.Background(), mcpSend("send-plain", ""))
+	config := pyjson.Map(hostParams(t, host, "thread/resume")["config"])
+	if err != nil || receipt["status"] != "accepted" || config["mcp_servers"] != nil || host.Count("config/read") != 0 || host.Count("mcpServerStatus/list") != 0 {
+		t.Fatalf("receipt=%v err=%v config=%v", receipt, err, config)
 	}
 }

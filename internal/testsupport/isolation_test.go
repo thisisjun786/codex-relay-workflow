@@ -98,6 +98,23 @@ func TestIsolate_ignores_an_exported_value_that_is_not_a_root(t *testing.T) {
 	}
 }
 
+// A shell that holds an operating execution policy must not reach the tests: doctor reports the
+// policy of the process that answers, and a supervisor send is held for want of a readable policy
+// only when none is set, so a test whose expected bytes were recorded without a policy fails in
+// such a shell. The isolation drops both variables from the test process, and with them from the
+// processes that inherit its environment.
+func TestIsolate_drops_the_execution_policy_the_host_shell_holds(t *testing.T) {
+	privateTMPDIR(t)
+	t.Setenv("CODEX_THREAD_BRIDGE_EXECUTION_POLICY", "/operating/execution-policy.json")
+	t.Setenv("CODEX_THREAD_BRIDGE_EXECUTION_POLICY_DIGEST", strings.Repeat("a", 64))
+	isolateForTest(t)
+	for _, key := range []string{"CODEX_THREAD_BRIDGE_EXECUTION_POLICY", "CODEX_THREAD_BRIDGE_EXECUTION_POLICY_DIGEST"} {
+		if value, set := os.LookupEnv(key); set {
+			t.Errorf("%s=%q after isolation: the test process and the processes that inherit its environment would read the host's execution policy", key, value)
+		}
+	}
+}
+
 // The cleanup IsolateRelayState returns removes the root, unless KeepRootEnv asks to keep it.
 func TestKeepRootEnv_keeps_the_root_only_when_asked(t *testing.T) {
 	for _, tc := range []struct {

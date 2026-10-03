@@ -153,7 +153,7 @@ func (m *Start) create(ctx context.Context, id Identity, req, ledger map[string]
 	settings := pyjson.Map(child["settings"])
 	sandbox := pyjson.Map(settings["sandbox"])
 	kind := map[string]string{"workspaceWrite": "workspace-write", "readOnly": "read-only", "dangerFullAccess": "danger-full-access"}[pyjson.Text(sandbox["type"])]
-	receipt, err := m.Adapter.CreateThread(ctx, CreateThreadRequest{RequestID: id.CreateRequestID, CWD: pyjson.Text(settings["cwd"]), Prompt: bootstrap, Title: pyjson.Text(child["title"]), Sandbox: kind, Model: pyjson.Text(settings["model"]), ReasoningEffort: pyjson.Text(settings["reasoningEffort"]), RuntimeWorkspaceRoots: stringsOf(settings["runtimeWorkspaceRoots"]), ExpectedSandboxPolicy: sandbox, Role: "child"})
+	receipt, err := m.Adapter.CreateThread(ctx, CreateThreadRequest{RequestID: id.CreateRequestID, CWD: pyjson.Text(settings["cwd"]), Prompt: bootstrap, Title: pyjson.Text(child["title"]), Sandbox: kind, Model: pyjson.Text(settings["model"]), ReasoningEffort: pyjson.Text(settings["reasoningEffort"]), RuntimeWorkspaceRoots: stringsOf(settings["runtimeWorkspaceRoots"]), ExpectedSandboxPolicy: sandbox, Role: "child", MCPProfile: pyjson.Text(settings["mcpProfile"])})
 	return receipt, "", release, err
 }
 
@@ -267,7 +267,7 @@ func (m *Start) recoverStandby(ctx context.Context, id Identity, req map[string]
 		if err := m.Adapter.RequireLedger(ctx, ledger); err != nil {
 			return nil, err
 		}
-		recovered, err = m.Adapter.SendMessage(ctx, SendRequest{RequestID: recoveryOp, ThreadID: task, Message: bootstrap, Settings: settings, GuardRPCRequests: 10, BeforeStart: func(guardCtx context.Context) (map[string]any, error) {
+		recovered, err = m.Adapter.SendMessage(ctx, SendRequest{RequestID: recoveryOp, ThreadID: task, Message: bootstrap, Settings: settingsWithRole(settings, "child"), GuardRPCRequests: 10, BeforeStart: func(guardCtx context.Context) (map[string]any, error) {
 			if err := m.Adapter.RequireLedger(guardCtx, ledger); err != nil {
 				return map[string]any{"code": "managed_store_changed", "message": "Standby recovery store changed"}, nil
 			}

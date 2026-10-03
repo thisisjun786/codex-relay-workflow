@@ -721,6 +721,312 @@ the loop field by design, and neither is a finding. The reading carries the mode
 under, and that mode has to agree with the policy and with the mode the receiver already
 holds.
 
+## SOL packet
+
+A child whose recorded pair is a GPT-family model (SOL) gets this short form of the [Launch packet](#launch-packet) for its
+first assignment. The parent picks the form from that pair ([Prepare and dispatch](../SKILL.md#prepare-and-dispatch));
+the Launch packet stays the form for a Sonnet child, and neither form changes what a task owes. The premise is that a
+long checklist suits a Claude child while a GPT child follows short principle-style instructions better and drifts when
+many rules collide. So the SOL packet says the task in five short parts and moves CRW's mandatory procedure into a few hard
+invariants. Each invariant names the Launch packet rule it comes from, so shortening drops no obligation. A task whose scope excludes
+publication keeps the same parts, and its TASK, DELIVERABLE and STOP WHEN name the frozen diff in place of the pull request.
+
+### Body
+
+```text
+TASK
+<ISSUE-ID>: <the bounded result>. Deliver exactly one pull request into <integration branch> of <owner/name> from <branch>, ready
+for the coordinator to merge.
+Context: <project and coordinator task; the execution mode: relay-managed with its state directory and exact issue identity, or
+  explicitly direct with the reason>.
+Codex task title (not the pull request's title): <ISSUE-ID · short Korean title>
+Workflow: <the effective workflow, restated; for CXC Loop the literal $codexclaw:cxc-loop with $codexclaw:cxc-pabcd and
+  $codexclaw:cxc-dev, how LOOP-DOCS-FIRST-01 applies to this issue, and that the first turn writes the activation evidence>
+Model/effort: <the pair requested through the creation call; the coordinator reads the receipt back>
+Language: English for everything you write (messages, commits, pull request title, body and replies, handoff and receipt text).
+
+DELIVERABLE
+- <the pull request: non-draft, English title ISSUE-ID: <short English summary>, a non-empty body>
+- <the handoff record and the completion receipt over it, and a final return that states what `Return:` lists: task id, baseline and
+  final head, model and effort as observed, goal ids, per-criterion evidence, remaining defects, and the resource delta: what you
+  created, changed, retained or started, each with its owner, release condition and next action, and any process with its working
+  directory and whether it still runs>
+- <the criteria, numbered, each the thing the pull request must show>
+
+SCOPE
+- <the edit surfaces, what is out of scope, shared contracts>
+- <the verified repository and the remote name and URL to push to, baseline commit, worktree, branch, evidence root, prerequisites; the
+  project instructions and source to read first>
+- <the permission profile the child was created with, the measured write capability of the checkout and its git metadata, and the
+  fallback where a write is refused>
+- <host values: a short TMPDIR with the socket limit stated, the Go build resources, relay ids, where a finding you leave unfixed is recorded>
+- <the publication scope (push the task branch and open the pull request, or none) and the delivery contract by id: OPS-5.5 and OPS-9 in operations.md>
+
+VERIFY
+- <commands confirmed to exist at the baseline, the acceptance example, the data boundary>
+- <local runs on the packages the change touches; what hosted CI on the same head stands in for, and what this child does not verify>
+
+STOP WHEN
+- Done: <the pull request is open with its body, every required check is green on its head, the one-time reviews are finished or
+  skipped, every thread is answered, the receipt is emitted>. Then publish the ready_for_review disposition and end the turn.
+- Blocked: <the size passes the cap, an input mismatch, a question only a person can answer, anything you cannot clear under
+  the assignment>. Write the blocked file, emit blocked_needs_input over it and end the turn.
+- <the behavior principles below>
+
+HARD INVARIANTS
+1. ... 7. (the list below, with the host values filled in)
+```
+
+Each field of [First full assignment required fields](#first-full-assignment-required-fields) keeps a home:
+
+| Launch packet field | Where it goes in the SOL packet |
+| --- | --- |
+| Workflow, the Loop and non-Loop branches of `Execution:` | TASK `Workflow:` |
+| Issue scope: `Task:`, `Issue/PR mapping:`, `Outcome and scope:` | TASK, and SCOPE for the surfaces and exclusions |
+| Verification boundary: `Verification:` | VERIFY, including the rule that every named command was confirmed at the baseline |
+| Handoff and completion boundary: `Return:` with its resource delta, the delivery contract | DELIVERABLE and STOP WHEN Done |
+| `Determined execution mode`, `Code target`, the remote and the permission profile of `Authorized execution:` | TASK Context and SCOPE |
+| Publication scope: `Delivery:` and the publication bullet | SCOPE and invariant 4 |
+| Escalation route: the `blocked_needs_input` bullet | STOP WHEN Blocked |
+| Model and effort: `Effective model/effort:` | TASK `Model/effort:` |
+| Language: `Language:` | TASK `Language:` |
+| Title: `Title:` with its "not the pull request's title" sentence | TASK, and invariant 3 |
+| Temporary path: `Capacity and large artifacts:` | SCOPE host values, held by invariant 7 |
+| Go build resources: `Go build resources:` (build cache, `GOFLAGS=-p=4`, memory limit) | SCOPE host values and VERIFY, held by invariant 7 |
+| Process rule: `Processes you start:` | Invariant 7 |
+| Verification targets | VERIFY |
+| `Existing resources at dispatch`, `Your resources`, `Write capability`, `Runtime/test data access` | SCOPE, held by invariant 1 |
+| The relay bullets of `Execution:` | Invariant 6 |
+
+### Hard invariants
+
+Seven rules, each followed by the rule of the Launch packet it comes from, and by what is new in it where the Launch packet
+is silent. They are CRW's mandatory procedure for the child in short form; the parent writes them into every SOL packet with the
+host values filled in.
+
+1. **Boundaries.** Edit only what SCOPE names, inside the worktree it gives. The checkouts, worktrees, branches, pull requests,
+   relay store and processes SCOPE labels as owned elsewhere are not yours. Tests use temporary synthetic data and scripted
+   hosts and never read or write the real homes, the relay's real state or the real policy file. If a git write is refused,
+   report which refusal it is; never use `GIT_DIR` tricks, a throwaway clone, reset, stash or rebase to get around it.
+
+   Source: `Workspace ownership:` (`Existing resources at dispatch`, `Your resources`, `Write capability`), the `Execution:` bullet
+   "Work in the assigned existing worktree; preserve unrelated changes", and `Runtime/test data access:`.
+2. **Size.** Keep the change to about 1,035 lines or fewer, counting implementation, tests and docs and not testdata or
+   generated files, measured against the baseline commit with uncommitted work and new files included (`git add -N` them, then `git diff --numstat <baseline>`). If it
+   will pass that, stop before going further and propose a split in a blocked handoff (what would land first, what would follow,
+   and why); do not open a larger pull request.
+
+   Source: new here, because no Launch packet rule gives a child a line count. The nearest are the parent's pre-dispatch check
+   ([Check the size before dispatch](../SKILL.md#check-the-size-before-dispatch)), "Do not absorb another issue into this task or
+   PR" and the `blocked_needs_input` route of `Execution:`. The figure is this project's; a packet may carry another.
+3. **Text on GitHub.** The title, body, commit messages and replies are English. The pull request title is
+   `<ISSUE-ID>: <short English summary>`, never the Codex task title, and the pull request targets the integration branch SCOPE
+   names (`dev` in this repository). The only Linear issue id you write in any of them is the one you deliver: name another issue
+   by its pull request number or its title, and never write a project id, a plan or node id or a relay id. The body states the
+   expected behavior and acceptance criteria, the commands run with their results and what is out of scope, carries no private
+   path, and is read back after the pull request is opened.
+
+   Source: `Language:`, `Title:` and `Issue/PR mapping:` (one issue, one pull request), [Child task titles](#child-task-titles), and the
+   pull request lines of `Return:`. The ban on other ids is new here: Linear's GitHub integration acts on any issue id it reads in
+   this text, and a project id of the form P-<TEAM>-<number> contains one.
+4. **Delivery and base.** Where SCOPE grants publication, you own the commits, the push, the pull request (opened ready for review,
+   not as a draft) and its review cycle, and the coordinator merges; where it does not, commit locally or return the frozen diff and say
+   which publication you did not perform. Push your task branch only: no merge, force-push, rebase or tag, no push to the integration
+   branch, and no release, installation, service restart, Linear write or change to global settings. Do not chase the integration
+   branch: merge it into your branch with a merge commit only when GitHub reports a conflict (record what you resolved), or when
+   the coordinator's correction asks for a base refresh, which arrives as a new generation and is not new scope: name the kind of each
+   merge (`clean`, `mechanical` or `manual`) and rerun only what that kind needs ([what a handoff discloses](#what-a-handoff-discloses)).
+
+   Source: the `Delivery:` line and the publication bullet of `Execution:` ("push your task branch and open the pull request ... never merge; no force-push,
+   no tag, no push to `dev` or `main`"), OPS-9.1 and OPS-9.3 in [Operations contract](operations.md), and the `Execution:` bullet
+   on a correction that asks only for the base ([Refresh the base yourself when only the base moved](merge-readiness.md#refresh-the-base-yourself-when-only-the-base-moved)
+   says why the coordinator refreshes only the candidate about to merge). The exception for a reported conflict is new here.
+5. **Reviews.** Where you open a pull request (with no pull request there is no review to wait for), Devin and GitHub Codex each review it once (Codex when it is opened, Devin when it becomes ready for
+   review) and neither is a merge gate; you never request or re-request one. Wait for that one run of each to end before you emit: a
+   notice that a review was skipped (no credits, a usage limit) means skipped, and with no signal of any kind 30 minutes after the pull
+   request is open and ready you record "review unavailable (no signal)" and go on. A Devin red, a Codex P0 or P1 and any security
+   finding is fixed, or refuted from the code in a reply, and checked again on the new head. Devin yellow and Codex P2 and P3 get your
+   reply with your judgment and are resolved or listed for the backlog where SCOPE says; a finding you would leave unfixed is proposed
+   to the parent, not accepted by you, unless SCOPE grants that standing decision. Your own independent review, where your workflow runs
+   one, ends on the head you open the pull request from, and a High finding of it that you would not apply is not yours to close: list it
+   in the handoff as a decision request, or ask first and end the turn blocked. A required check that is not green, a mandatory review
+   that has not finished or a blocking finding left open is BLOCKED: report it as blocked, never as complete with a note.
+
+   Source: the `Execution:` bullets "Finish your own independent review ...", "A finding of your own review that you reject is not
+   yours to close", "Open that pull request non-draft ..." (which waits for the one run each of Devin and Codex makes) and "Finishing the
+   review is part of finishing the work", OPS-9.2, and in [Merge readiness](merge-readiness.md) the
+   [reviewer policy](merge-readiness.md#reviewer-policy),
+   [the one run of each reviewer, awaited before the receipt](merge-readiness.md#the-one-run-of-each-reviewer-awaited-before-the-receipt)
+   (skip notices, no signal after 30 minutes),
+   [what each finding needs before the receipt](merge-readiness.md#what-each-finding-needs-before-the-receipt) (the grades) and
+   [Judge a finding by its impact](merge-readiness.md#judge-a-finding-by-its-impact) (what blocks, and who accepts a residue).
+
+6. **Relay.** Where a relay holds the assignment (SCOPE carries the state directory, marker root, exact issue identity and routing
+   ids): in your first turn publish your `intent-claim` with your current turn id, and at the end of every turn publish one
+   `intent-disposition` for that turn (`in_progress`, `blocked_needs_input`, `failed` or `ready_for_review`). When the pull request is
+   ready, write the handoff record, which states every field of the merge-readiness handoff and of the disclosures `Return:` lists
+   (`none` where there is none), and from inside your own turn emit the completion receipt over it without `--socket`, publish
+   `ready_for_review` and end the turn. If you cannot proceed, write a blocked file and emit `blocked_needs_input` (or `failed`) over it
+   the same way; never end a turn waiting on the parent without emitting. Emitting from a turn that is not the generation's anchor (a
+   goal continuation, a turn after a restart) takes `--continues-anchor`, `--continuation-actor` and `--continuation-reason` on the first
+   emit, with the anchor read from the relay's `status` for the relationship; if the emit is refused `unassigned_turn`, re-emit once with
+   the anchor its detail names. Before re-emitting inside the same generation read the current revision (`revision-head` or
+   `assignment-show`) and name it with `--supersedes-revision`; the first receipt of a new generation names none; every head gets a
+   new handoff file. Any other refusal: stop and report the receipt UNEMITTED with the exact refusal. If the issue
+   lookup finds no assignment, or is refused `store_absent`, preserve the artifact and report the receipt UNEMITTED with that exact result, your
+   task id, the issue identity and the state directory, and do not guess a relationship id; if it names a different owner, report that
+   conflict and write nothing into that relationship. Before acting on an assignment,
+   a correction or a resume that comes as a typed relay packet (SCOPE says when the assignment is a plain prompt that carries none), check it
+   with `packet-check`, with your own `--observation` when the packet names an artifact, and act only on an accepted answer whose `act` is
+   true; once you have acted, record it with `--applied`. Never message or steer the parent: the relay is the only route.
+
+   Source: the relay bullets of `Execution:` (`packet-check`, "emit your completion receipt", "know which turn your receipt is emitted
+   from", the UNEMITTED and other-owner bullets, the `blocked_needs_input` bullet), [Completing on a later turn of the same
+   child](relay.md#completing-on-a-later-turn-of-the-same-child) and the handoff and disclosure lines of `Return:`. The Launch packet
+   does not spell out `intent-claim` and `intent-disposition`: the managed-start routing record instructs them and
+   [codex-session-relay](relay.md) says what they record.
+7. **Processes and host load.** Stop only a process you started: by the pid you recorded, by a process group you created or through
+   the handle the execution tool returned; never pick a target by pattern or name (no `pkill`, `killall` or `fuser -k`, no pid taken from
+   a `pgrep`, `ps` or `lsof` lookup). Record the pid of every long command or run it under `timeout`, and confirm a recorded pid is still
+   your process before you signal it, because a pid is reused after its process exits. A process you did not start is reported with its
+   pid and working directory and left running. Run Go under the build resources SCOPE gives: the shared build cache (never `go clean
+   -cache`), `GOFLAGS=-p=4`, `-count=1` for a result you cite, and the changed packages locally, with the hosted CI of the same head standing in for the whole
+   suite where SCOPE states that override. A heavy command (the race detector, a large `-count`, a load reproduction) runs alone, one at
+   a time, inside the memory scope and above the free-memory floor SCOPE states; a command the limit ends is reported, and you do not raise
+   the limit to get past it.
+
+   Source: `Processes you start:` (carried in the packet's own words, because the child works from the packet), `Go build resources:`
+   for the cache, parallelism, local runs and memory limit, `Capacity and large artifacts:` for the temporary directory and the volumes,
+   and S26 in [Dispatch verification](dispatch-verification.md). The values (cache directory, memory limit, floor) are the parent's to
+   read from the host and write in.
+
+### Behavior
+
+STOP WHEN carries five principles in place of the Launch packet's longer rules about escalation and scope:
+
+- Do not stop to ask for permission for what the packet already grants. A decision, a credential or an approval it does not carry
+  is the one route for a question: write the question out, emit `blocked_needs_input` (where no relay holds the assignment, return the CXC
+  status the case takes, BLOCKED, UNSAFE or NEEDS_HUMAN, with the question) and end the turn. Never call `request_user_input`, which CXC
+  denies while a goal is active.
+- Do not stop at a partial fix or a proof of concept: deliver the whole DELIVERABLE, or report blocked.
+- Make no refactor and add no feature the TASK did not ask for. An edit outside SCOPE is a defect even when it improves something.
+- After three failed attempts at the same thing, revert your own changes for it to the last good state and report it as blocked.
+- A stop condition you declared yourself, in your plan or your goal, binds you: acting beyond it is a defect.
+
+The first three restate Launch packet rules in fewer words: the escalation route and the publication sentence of `Execution:`, its
+"own the delivery end to end" bullet (report once the head's checks and reviews have finished, not when the code is written), and "Do not
+absorb another issue into this task or PR" with "preserve unrelated changes". The last two, the revert after three failed attempts and the
+binding self-declared stop condition, have no counterpart in the Launch packet. All five are principles GPT-family agent prompts state
+plainly (the oh-my-openagent project's prompts for these models carry them), and they are why this form is short.
+
+### Shared by both formats
+
+The [Restoration block](#restoration-block) and the rule that every send restates the workflow apply to both formats alike. A message
+that asks a task to pick work back up (a needs-changes correction, a review fix, a resume, a restart after compaction) carries the
+block whichever form the first packet used, and every send restates the effective workflow, the language and the publication scope,
+because no transport field carries them. The short form is for the first assignment: a SOL child's correction is not cut down to a
+list of findings, because the block is what lets a restarted child find its own record. Where the child cannot read this
+repository, the packet carries the text of OPS-5.5 and OPS-9 as the Launch packet does; where it can, SCOPE cites them by id.
+
+### One issue in both formats
+
+The issue is the one delivered as pull request #255, titled "the seed refuses a bound generation without a dispatch turn again":
+the test seed `storeseed.RecordRelationship` had lost a refusal the store method it replaced made, so a test could start from a
+bound generation with no dispatch turn id, a state the product never writes. It is one Go module change with one goal. The example
+does not say which pair such an issue gets; the pair rule does. The facts come from the issue and the pull request; values the
+parent reads from the host are written <like this>.
+
+As a SOL packet:
+
+```text
+TASK
+CRW-243: make the test seed's RecordRelationship refuse a bound generation that has no dispatch turn id, as the store method it
+replaced did. Deliver exactly one pull request into dev of thisisjun786/codex-relay-workflow from codex/crw-243-storeseed-dispatch-turn, ready for the
+coordinator to merge.
+Context: the project that tracks the deferred test and documentation defects of the Go port; coordinator task <task id>; relay-managed,
+state <state directory>, issue identity CRW-243.
+Codex task title (not the pull request's title): CRW-243 · 시드의 결속 세대 거부 복원
+Workflow: $codexclaw:cxc-loop with $codexclaw:cxc-pabcd and $codexclaw:cxc-dev, your own session binding, goal and goalplan. This is a
+single-cycle issue, so it skips the docs-only first cycle. Your first turn writes the activation evidence.
+Model/effort: <the pair requested through the creation call>.
+Language: English for everything you write.
+
+DELIVERABLE
+- One non-draft pull request into dev titled "CRW-243: <short English summary>", with a non-empty body: the behavior, evidence per
+  criterion, the commands run with results, the size, what is out of scope.
+- The handoff record and the completion receipt over it (invariant 6), and a final return with the resource delta.
+- Criteria: (1) new tests show the seed refuses and accepts; the body says they fail when the refusal is removed. (2) `make test` passes
+  in CI and no golden changes (`CRW_GOLDEN=update`, then `git status` is clean). (3) `gofmt`, `go vet` (default and `GOOS=darwin`), `make lint`
+  and `git diff --check` pass. (4) Every CI job is green on the head and Devin has no red or security finding.
+
+SCOPE
+- Edit `internal/testsupport/storeseed` (the refusal and its tests) and any existing test the refusal now stops: change that test to
+  start from a state the product writes, never loosen the seed to fit it. Check the original method with `git show 95019bd0^:internal/relay/store/`
+  and whether it guarded anything else. Out of scope: product code and `docs/port/refactor-backlog.md`.
+- Remote <name and URL>; baseline <commit>; worktree <path> (already created); evidence root <path>; prerequisites none.
+- Permission profile <values>; write capability of the checkout and its git metadata <measured>; fallback <where a write is refused>.
+- Host values: `TMPDIR=<short path>` (a Unix socket path stays under 108 bytes on Linux and 104 on macOS, and a test adds its own
+  names); Go build resources <shared cache, `GOFLAGS=-p=4`, memory scope and floor>; a finding you leave unfixed is listed in the handoff for the backlog.
+- Publication: push the task branch and open the pull request; the coordinator merges. Delivery contract: OPS-5.5 and OPS-9 in crw-run's
+  `operations.md`; invariants 3 to 6 are their short form.
+
+VERIFY
+- `go test -count=1 -v ./internal/testsupport/storeseed/ ./internal/relay/adapter/` (the seed's only caller), `make lint`, `go vet ./...`,
+  `GOOS=darwin go vet ./...`, `git diff --check`. Each was confirmed to exist at the baseline. Tests use temporary synthetic data only.
+- Hosted CI on the same head stands in for `make test`; you run the packages you changed, with `-count=1`, not the whole suite.
+
+STOP WHEN
+- Done: the pull request is open with its body, every required check is green on its head (`dev-gate`, which needs every job), the
+  one-time reviews are finished or skipped, every thread is answered and the receipt is emitted. Then publish ready_for_review and end the turn.
+- Blocked: the size passes about 1,035 lines, an input mismatch, or anything you cannot clear under this assignment. Write the
+  blocked file, emit blocked_needs_input and end the turn.
+- Do not stop to ask for permission or at a partial fix. No refactor or feature the TASK did not ask for. After three failed attempts at
+  the same thing, revert your own changes for it to the last good state and report. A stop condition you declared yourself is binding.
+
+HARD INVARIANTS
+1 to 7, as listed above, with the host values of SCOPE filled in.
+```
+
+As a Launch packet. The fields that carry this issue are filled in; the template's standing text, about 300 lines in a real packet,
+is marked in brackets:
+
+```text
+Task: CRW-243, the seed's RecordRelationship refuses a bound generation without a dispatch turn id again.
+Parent: the project that tracks the deferred test and documentation defects of the Go port; coordinator task <task id>.
+Supervisor: none.
+Issue/PR mapping: CRW-243; thisisjun786/codex-relay-workflow; one pull request into dev from codex/crw-243-storeseed-dispatch-turn.
+Title: CRW-243 · 시드의 결속 세대 거부 복원
+  This names the Codex task only. Your pull request's title is yours, in English: "CRW-243: <short English summary>".
+Workflow: CXC Loop, [the Loop branch of the template]
+Language: [the template's text]
+
+Context:
+- Code target: thisisjun786/codex-relay-workflow; integration branch dev; baseline <commit>; prerequisites none.
+- Effective model/effort: <the pair>. Coordinator: <task id>.
+- Determined execution mode: relay-managed; <state directory, socket, marker root, issue identity CRW-243>; delivery owner <service>.
+- Canonical criteria: c1 new tests show the seed refuses and accepts; c2 `make test` passes in CI and no golden changes; c3 `gofmt`,
+  `go vet`, `make lint` and `git diff --check` pass; c4 every CI job is green and Devin has no red or security finding.
+
+Authorized execution:
+- Sandbox/approval: <values>. Delivery: publication in scope, so you push the task branch, open the pull request ready for review and
+  own its review cycle; the coordinator merges. Operations clauses: OPS-5.5 and OPS-9 by id.
+- Runtime/test data access: temporary synthetic data only; never the real homes or the relay's real state.
+
+Workspace ownership:
+- Existing resources at dispatch, Your resources, Write capability, Capacity and large artifacts (the short `TMPDIR` and its socket
+  limit), Processes you start: [the template's text, each field filled with this host's values]
+
+Outcome and scope: [the issue's scope and exclusions, as in SCOPE above]
+Execution: [the template's nineteen bullets: own review, publication, review cycle, base refresh, CXC, the six relay bullets,
+  escalation, Loop, permissions]
+Verification: [the commands of VERIFY above, each confirmed at the baseline]
+Return: [the template's list: task id, relay receipt, title as published, changed files, per-criterion evidence, model and effort,
+  goal ids, pull request, merge-readiness handoff, disclosures, remaining defects, proposed Linear changes]
+```
+
+What moved is the standing text: `Workspace ownership:`, `Execution:` and `Return:` are the Launch packet's, and the SOL packet
+carries their obligations as invariants 1 and 3 to 7 and as DELIVERABLE and STOP WHEN, each traced to its source rule above.
+
 ## Non-PR packet
 
 Use this reduced shape for research, design or verification without repository changes.
