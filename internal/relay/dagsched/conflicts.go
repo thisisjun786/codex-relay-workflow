@@ -140,7 +140,7 @@ func (s *Scheduler) ObserveConflicts(ctx context.Context, plan, actor string, in
 }
 
 // repositoryNames are the names an observed checkout is known by: its absolute path with links resolved and, when its origin remote names owner/name on the forge the relay talks to, that slug. A
-// region is declared with one of them, and a conflict is attributed to a region only under the name the region was declared with. The origin is read once, here, for the evidence; it is never given to
+// region is declared with one of them, and a conflict is attributed to a region only under the name the region was declared with. The origin is read here, at the observation, for the evidence; it is never given to
 // the isolated repository the merge runs in, and an origin that is unset or names another host or no owner/name leaves the path alone.
 func repositoryNames(ctx context.Context, checkout string) []string {
 	names := []string{filepath.Clean(checkout)}

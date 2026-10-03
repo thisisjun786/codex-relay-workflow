@@ -135,7 +135,7 @@ func decodeRegions(raw []byte) ([]Region, error) {
 	}
 	out := make([]Region, len(wire))
 	for i, w := range wire {
-		out[i] = Region{Repository: w.Repository, Path: w.Path, Kind: w.Kind, Key: w.Key, Change: w.Change, Exclusive: w.Exclusive, Grade: w.Grade, Rule: w.Rule}
+		out[i] = Region(w)
 	}
 	return out, nil
 }
