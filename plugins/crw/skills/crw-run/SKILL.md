@@ -30,9 +30,9 @@ Resolve current installed paths; never copy plugin versions from old records.
 CXC owns those phases and subagent routing; the parent does not adopt a child's FSM.
 
 Read [Integrations](../crw-plan/references/integrations.md) for Linear document
-authority, tools, and Paperthin invocation rules. Use the available Linear tools
+authority and tools. Use the available Linear tools
 and relevant workspace Agent Skills for full documents, criteria, and work records.
-Use `readchk` for bundled scope or model corrections, and `catchup` when the user
+Restate a bundled scope or model correction to resolve it, and refresh the state from the records when the user
 needs a refreshed briefing. Route roadmap authoring to
 [crw-plan](../crw-plan/SKILL.md) within the user's requested scope.
 
@@ -762,10 +762,9 @@ does not fulfill independent verification.
 For substantial intent or acceptance uncertainty, use
 [crw-check](../crw-check/SKILL.md) as a bounded audit and retain coordination
 here. Use [crw-logic](../crw-logic/SKILL.md) for a specific suspected logical
-violation and `mandela` for self-confirming evaluation evidence. Use `shower` when
-a nontrivial task packet needs a fresh-reader check, and `re0` to refresh that
-packet after changes. Do not run every helper on every delivery or auto-invoke
-Paperthin's user-only skills.
+violation, and check that evaluation evidence does not merely confirm its own assumption. When
+a nontrivial task packet needs a fresh-reader check, give it to a context-free reviewer through CXC delegation and rewrite that
+packet after changes so it reads as current. Do not run every check on every delivery.
 
 After verification, the coordinator applies [Default dev integration](../crw-plan/references/integrations.md#default-dev-integration),
 unless the assignment limits delivery. Read [Merge readiness](references/merge-readiness.md)

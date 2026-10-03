@@ -1403,8 +1403,8 @@ code rather than with the repository it lands in.
 
 The skills and the runtime own different things. The skills hold workflow instructions that an agent
 reads; `cmd/` and `internal/` hold runtime code that a host executes. A rule that belongs to one does not move
-into the other just because they now share a commit. CXC and Paperthin stay outside this repository
-entirely and are not vendored by this decision.
+into the other just because they now share a commit. CXC stays outside this repository
+entirely and is not vendored by this decision.
 
 ### OPS-11.3 Four stages that are not one event
 
