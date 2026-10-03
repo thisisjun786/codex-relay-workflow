@@ -393,13 +393,26 @@ rechecked before host mutations. Replacing that file refuses recovery rather tha
 another child from an empty ledger.
 
 Retry the **same request with the same paths and contents**. A fingerprint mismatch refuses
-rather than rewriting the assignment; uncertain creation or delivery is reconciled against the
-bridge's retained operation, never retried under a new identity. A still-running standby returns
+rather than rewriting the assignment; an uncertain delivery is reconciled against the
+bridge's retained operation, never retried under a new identity, and an uncertain creation is
+reconciled by observing the App Server under the same request (below). A still-running standby returns
 `incomplete`; the caller may retry when it ends. This command does not install a retry scheduler.
 `admitted` means the business turn was dispatched, not that the child claimed it, that its hook
 fired, or that its issue passed review. Those remain separately observed facts.
 If naming failed after a verified task was created and the bridge recorded that no first turn
 was attempted, retry resumes that same task with a separately retained standby operation.
+A creation whose outcome is unknown (the bridge receipt is `outcome_unknown`, or
+`in_progress_or_unknown` when the process stopped inside it) is reconciled by the next retry of the same
+request, which observes the App Server before it answers. A thread that exists with no turn is continued
+under the same request (the standby turn under a standby operation of its own, then the title), after taking the project's lock and
+asking the scope decision again, as a creation does. When no thread
+is shown, the retry waits 2 minutes from the receipt's last update (`pending`, with `repeatAfter`) and then
+creates again under the same request with a derived bridge operation id, at most three creations in all. A thread that has a turn,
+a creation whose `turn/start` may have been sent, several threads that fit, a thread or a listing the host cannot read, a standby
+recovery the host refused, or a creation with no recorded time stop with `creation_unknown` and a `creationReconciliation` object that says why (`state`,
+`detail`, `attempt`, `attemptRequestId`, `thread`, `repeatAfter`); no replacement request is ever the answer.
+dag-scheduler.md ([A creation whose outcome is unknown](dag-scheduler.md#a-creation-whose-outcome-is-unknown))
+gives the table and what it does not establish.
 The original failed creation receipt is preserved. An unknown or attempted first turn does not
 qualify for this recovery; its effects still need reconciliation.
 
@@ -428,7 +441,8 @@ Running it does not wake a parent, write a queue, or publish a new report.
 | `incomplete` / `standby_incomplete` | Wait for that standby to complete, then retry the same request. |
 | worker policy absent or mismatched | Restore the declared serving policy, verify its reading, retry the same request. |
 | paused/archived recipient, changed settings/scope/criteria | Preserve the hold; obtain the owning user's supported transition before retrying. |
-| creation or business outcome unknown | Inspect the retained bridge operation; keep the reservation and do not create a replacement. |
+| creation outcome unknown | Retry the same request: it observes the App Server and continues, creates again after the grace period, or stops with `creationReconciliation` saying why. Do not start a replacement request. |
+| business outcome unknown | Inspect the retained bridge operation; keep the reservation and do not create a replacement. |
 | request fingerprint conflict | Recover the original input and selectors; never overwrite them to force a replay. |
 
 Before the business turn, authorization is checked again after resume. A known paused, archived,
@@ -528,6 +542,7 @@ Global options come BEFORE the subcommand:
 | `intervention-show` | the direct parent interventions recorded for a relationship, oldest first; a read |
 | `relationship-status` / `relationship-resume` | pause, cancel, archive; resume only by restating generation and scope |
 | `relationship-close-merged` | archive the live assignments that are merged with nothing owed; a dry run without `--apply` |
+| `child-cleanup` | after the merge and the integration observation, archive the finished child and its loaded sub-threads on the App Server so their MCP helpers stop; refuses unless a merged mark counts and nothing can still be sent to the child; needs `--socket`, `--dry-run` plans |
 | `linkage-supervise` | an initiative supervisor over a project parent, by execution or by reference |
 | `linkage-bind` | claim one scope for one task at one level |
 | `linkage-attach` | bind an existing assignment's issue to its project |
@@ -607,6 +622,19 @@ never from arrival order: knowing a digest shows acquaintance with a revision, n
 where the declared graph has a fork, a cycle, an unknown predecessor or a gap, the answer is
 ambiguous and completion is withheld.
 
+A receipt the relay suppressed (the turn that staged it ended failed or interrupted) is not a
+revision, and the child that emitted it cannot tell after a restart. A revision that names one
+is read as naming what that suppressed receipt itself replaced: nothing, so it has no predecessor,
+or a revision that still counts, so it replaces that one, through any number of suppressed
+receipts in a row. Emit accepts the naming and records it as stated; the head does the reading
+(`registry.ReadThrough`, used by both head readers over the one statement that reads the
+generation's reviewable receipts, suppressed ones included). The rest of the judgment is
+unchanged: a revision of another generation, a revision nobody emitted, and a suppressed receipt
+whose own predecessor nobody holds still read `unknown_predecessor`, and revisions left
+unconnected read `fork`. One revision is one event (the event id is the generation and the
+revision hash), so the same bytes emitted again are a duplicate of the suppressed receipt and
+leave nothing that counts.
+
 A `needs_changes` ruling opens a new generation and names the exact result to correct.
 That result is the new generation's only permitted predecessor outside its own revisions:
 the relay-owned request, ruling and generation must agree on the same relationship and
@@ -654,7 +682,7 @@ When a step refuses, the refusal names what to do:
 | the work is marked merged, or a turn landed it | `disposition_conflict` | a merged result is corrected by new work, not by a second ruling |
 | a merge turn is merging or of unknown effect | `disposition_conflict` | resolve the turn (`merge-turn-resolve` reads the branch), then rule again |
 | the event is not the head | `stale_generation` or `superseded_revision` | rule the head the assignment shows |
-| the head is ambiguous | `revision_ambiguous` | outside a plan, a fresh execution generation; for a plan node this build records no route, so report it |
+| the head is ambiguous | `revision_ambiguous` | outside a plan, a fresh execution generation; for a plan node this build records no route, so report it (read `revision-head` first: a re-emit that named a suppressed receipt of its own generation may read a head) |
 | the relationship is not active | `relationship_not_active` | `relationship-resume`, then rule again |
 
 Two limits are part of the contract. The same verdict again is a replay even when its findings differ, so a `needs_changes` ruling that was already given cannot be given again with other words: the verdict does not resend (see [Return corrections to the existing task](../../plugins/crw/skills/crw-run/SKILL.md#return-corrections-to-the-existing-task)). And an installed relay older than this change answers a different verdict with the recorded ruling marked `_replay` and exit 0; read the answer (a ruling that is still `verified` and marked `_replay` changed nothing) and `assignment-show`, never the exit code.

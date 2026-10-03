@@ -100,28 +100,56 @@ func Check(root string, src *Source) (int, []string) {
 	return len(names), problems
 }
 
-// compare is the differences between a staged tree and the substituted originals the record holds.
+// compare is the differences between a staged tree and what its record accounts for.
 func compare(dir string, skill *Skill, tree map[string]file) []string {
+	edits := map[string]Edit{}
 	names := map[string]bool{}
+	for p := range skill.Files {
+		names[p] = true
+	}
 	for p := range tree {
 		names[p] = true
 	}
-	for p := range skill.Files {
-		names[p] = true
+	for _, e := range skill.Edits {
+		edits[e.File], names[e.File] = e, true
 	}
 	var out []string
 	for _, p := range slices.Sorted(maps.Keys(names)) {
 		got, have := tree[p]
 		want, inOriginal := skill.Files[p]
-		switch at := dir + "/" + p; {
+		e, edited := edits[p]
+		at := dir + "/" + p
+		switch {
+		case e.Add && !have:
+			out = append(out, at+": recorded as added but missing")
+		case e.Add:
+			if sum(got.data) != e.SHA256 || got.exec != e.Exec {
+				out = append(out, at+": differs from the recorded added file")
+			}
 		case !inOriginal:
-			out = append(out, at+": is not in the substituted original")
+			out = append(out, at+": is not in the substituted original and not recorded as an added file")
+		case e.Remove:
+			if have {
+				out = append(out, at+": present although recorded as removed")
+			}
 		case !have:
-			out = append(out, at+": missing from the staged copy")
-		case sum(got.data) != want.Original:
-			out = append(out, at+": differs from the substituted original")
-		case got.exec != want.Exec:
-			out = append(out, at+": executable bit differs from the substituted original")
+			out = append(out, at+": missing from the staged copy and not recorded as removed")
+		default:
+			data := got.data
+			if edited {
+				lines, err := revert(splitLines(string(data)), e.Hunks)
+				if err != nil {
+					out = append(out, at+": "+err.Error())
+					continue
+				}
+				data = []byte(strings.Join(lines, ""))
+			}
+			if sum(data) != want.Original {
+				out = append(out, at+": differs from the substituted original and no recorded edit accounts for it")
+			}
+			if got.exec != want.Exec {
+				out = append(out, at+": executable bit differs from the substituted original")
+			}
 		}
 	}
 	return out
