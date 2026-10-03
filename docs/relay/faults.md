@@ -477,6 +477,12 @@ times, outcome and error; `attempts(publication, *, limit)` returns them.
   request, a newer final revision, a regranted merge turn) says is overtaken. `delivery_stalled`
   and `delivery_refused` neither collect such a delivery nor let it keep a fault present, so a fault
   it raised clears.
+- A delivery that reached its recipient is settled: one in the `dispatched`, `inbox_only` or
+  `acknowledged` state (a verified acknowledgement moves a dispatched delivery to `acknowledged`),
+  besides a `superseded` one. `delivery_stalled` and `delivery_refused` neither collect it nor let it
+  keep a fault present, so the failed attempts and refusals it carries from before no longer count and
+  a fault they raised clears. The daemon's sweep and `fault-sweep` read the same state list and the
+  same currency verdict, so on one ledger they answer alike.
 - `observation_stalled` reads only the anchors the scheduler reads - the current generation of an
   active relationship nobody replaced, the predicate `observation_health` uses - so a paused
   assignment or a generation it moved past is never a stalled one.

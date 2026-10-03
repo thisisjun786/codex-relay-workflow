@@ -14,7 +14,9 @@ func canonical(v any) string {
 	return pyjson.Dumps(v, pyjson.Options{Compact: true, SortKeys: true, Unicode: true})
 }
 
-func sum(v any) string {
+// Digest is the sha256 of the canonical JSON of v in lower-case hex: the digest of every record of this package, and the one the scheduler builds its acceptance, evidence, result and request
+// digests with (contract 4.1), so that the serialization is the one of this package.
+func Digest(v any) string {
 	h := sha256.Sum256([]byte(canonical(v)))
 	return hex.EncodeToString(h[:])
 }
@@ -103,7 +105,7 @@ func SliceDigest(n Node, incoming []Edge) string {
 	for i, e := range sorted {
 		edges[i] = edgeObject(e)
 	}
-	return sum(map[string]any{"schema": SchemaSlice, "node": nodeObject(n), "incoming": edges})
+	return Digest(map[string]any{"schema": SchemaSlice, "node": nodeObject(n), "incoming": edges})
 }
 
 // stateDigest is the digest of a plan's live content: what two equal plans share whatever revisions
@@ -130,7 +132,7 @@ func stateDigest(planID, project, planState string, nodes []SnapNode, edges []Sn
 	if planState != "" {
 		content["plan_state"] = planState
 	}
-	return sum(content)
+	return Digest(content)
 }
 
 // RequestDigest identifies a request by what it asks, whatever its key order or whitespace: the
@@ -140,6 +142,6 @@ func RequestDigest(r Revision) string {
 	for i, c := range r.Changes {
 		changes[i] = changeObject(c)
 	}
-	return sum(map[string]any{"schema": SchemaRevision, "plan_id": r.PlanID, "project_key": r.ProjectKey, "request_id": r.RequestID,
+	return Digest(map[string]any{"schema": SchemaRevision, "plan_id": r.PlanID, "project_key": r.ProjectKey, "request_id": r.RequestID,
 		"expected_parent_revision": r.ExpectedParent, "coordinator_epoch": r.CoordinatorEpoch, "author_task_id": r.AuthorTaskID, "changes": changes})
 }

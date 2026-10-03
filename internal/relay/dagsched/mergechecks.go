@@ -272,19 +272,15 @@ func loadMergeHistory(ctx context.Context, q store.Querier, plan, node, forge, h
 		if r.failed, err = parseFailures(failed); err != nil {
 			return h, fmt.Errorf("a merge check of %s holds a failed list that is not JSON: %w", r.acceptance, err)
 		}
-		listing, err := parseEvidenceChecks(evidence)
+		body, err := parseEvidence(evidence)
 		if err != nil {
 			return h, err
-		}
-		checks := make([]Check, len(listing))
-		for i, c := range listing {
-			checks[i] = Check{Name: c.Name, RunID: c.RunID, HeadSHA: c.HeadSHA, Conclusion: c.Conclusion, Provider: c.Provider, Stamp: c.Stamp, Attempt: c.Attempt}
 		}
 		recorded := map[runKey]failure{}
 		for _, f := range r.failed {
 			recorded[f.key()] = f
 		}
-		for k, c := range reduceRuns(head, checks) {
+		for k, c := range reduceRuns(head, body.Checks) {
 			if prev, ok := h.seen[k]; !ok || newerReading(c, prev) {
 				h.seen[k] = c
 			}
