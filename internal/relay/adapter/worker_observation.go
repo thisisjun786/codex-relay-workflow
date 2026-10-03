@@ -50,7 +50,7 @@ func (o WorkerObservation) Ready(ctx context.Context, request map[string]any, po
 		if expected["expectation"] != "pair" {
 			return "worker_policy_role_unsupported", nil
 		}
-		if settings["model"] != expected["model"] || settings["reasoningEffort"] != expected["reasoningEffort"] {
+		if !registry.SummaryAllowsPair(expected, settings["model"], settings["reasoningEffort"]) {
 			return "worker_policy_pair_mismatch", nil
 		}
 		finding := registry.CheckRecord(ordered(settings).(contract.OrderedObject), role, policy)
