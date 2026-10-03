@@ -184,7 +184,7 @@ func TestDetectorsOracle(t *testing.T) {
 		{"orchestrate B", "B", false, false, false},
 		{"Use crw-pabcd to plan\rUse crw-pabcd check", "P", false, false, false},
 		{"\ufeffRun crw-loop", "", true, false, false},
-		{"Runcrw-loop", "", true, false, false},
+		{"Run\u0085crw-loop", "", true, false, false},
 		{"Run crw-loop", "", true, false, false},
 		{"Uſe crw-loop", "", false, false, false},
 		{"1) Run crw-loop", "", false, false, false},
@@ -222,7 +222,7 @@ func TestDetectorsOracle(t *testing.T) {
 		{"save 😀😀😀😀😀😀😀😀😀xx to memory", "", false, false, true},
 		{"save 😀😀😀😀😀😀😀😀😀😀xx to memory", "", false, false, true},
 		{"save to memory", "", false, false, true},
-		{"saveto memory", "", false, false, true},
+		{"save\u0085to memory", "", false, false, true},
 		{"Make a note", "", false, false, true},
 		{"dont forget", "", false, false, true},
 		{"기억 해 둬", "", false, false, true},
@@ -297,7 +297,7 @@ func TestRequestLines(t *testing.T) {
 		{"Run crw-loop, but Use crw-pabcd to Check", []string{"Run crw-loop,", "Use crw-pabcd to Check"}},
 		{"Run crw-loop, summarize plans", []string{"Run crw-loop, summarize plans"}},
 		{"Run crw-loop but use crw-pabcd to check", []string{"Run crw-loop", "use crw-pabcd to check"}},
-		{"Run crw-loopbut use crw-pabcd to check", []string{"Run crw-loopbut use crw-pabcd to check"}},
+		{"Run crw-loop\u0085but use crw-pabcd to check", []string{"Run crw-loop\u0085but use crw-pabcd to check"}},
 		{"Run crw-loop. Do not push! Use crw-pabcd to check?", []string{"Run crw-loop", "Use crw-pabcd to check"}},
 		{"Run `crw-loop` then use `crw-pabcd` to plan", []string{"Run crw-loop then use   to plan"}},
 		{"Use \"x\\\rcrw-loop\" crw-loop으로 진행", []string{"Use \"x\\\rcrw-loop\" crw-loop으로 진행"}},
