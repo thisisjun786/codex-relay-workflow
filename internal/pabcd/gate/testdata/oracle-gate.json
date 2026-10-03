@@ -1,0 +1,1267 @@
+{
+ "receipt": [
+  {
+   "receipt": {
+    "kind": "test",
+    "sourceIdentity": {
+     "kind": "resolved",
+     "commitSha": "abc1234",
+     "dirty": false,
+     "capturedAt": "2026-01-01T00:00:00.000Z"
+    },
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "createdAtProvided": true,
+    "command": "go test",
+    "exitCode": 0
+   }
+  },
+  {
+   "receipt": {
+    "kind": "qa",
+    "sourceIdentity": {
+     "kind": "resolved",
+     "commitSha": "abc1234",
+     "dirty": false,
+     "capturedAt": "2026-01-01T00:00:00.000Z"
+    },
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "createdAtProvided": true
+   }
+  },
+  {
+   "receipt": {
+    "kind": "test",
+    "sourceIdentity": {
+     "kind": "resolved",
+     "commitSha": "abc1234",
+     "dirty": false,
+     "capturedAt": "2026-01-01T00:00:00.000Z"
+    },
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "createdAtProvided": true,
+    "command": "go test",
+    "exitCode": 0,
+    "ownerSessionId": "s1",
+    "checkEpoch": "c-1",
+    "generatedPaths": [
+     "build",
+     "dist/x"
+    ]
+   }
+  },
+  {
+   "error": "receipt path is empty"
+  },
+  {
+   "error": "receipt failed the evidence-root guard (outside {S}/evidence, symlink, not a regular file, or empty): outside.json"
+  },
+  {
+   "receipt": {
+    "kind": "test",
+    "sourceIdentity": {
+     "kind": "resolved",
+     "commitSha": "abc1234",
+     "dirty": false,
+     "capturedAt": "2026-01-01T00:00:00.000Z"
+    },
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "createdAtProvided": true,
+    "command": "go test",
+    "exitCode": 0
+   }
+  },
+  {
+   "receipt": {
+    "kind": "test",
+    "sourceIdentity": {
+     "kind": "resolved",
+     "commitSha": "abc1234",
+     "dirty": false,
+     "capturedAt": "2026-01-01T00:00:00.000Z"
+    },
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "createdAtProvided": true,
+    "command": "go test",
+    "exitCode": 0
+   }
+  },
+  {
+   "error": "receipt failed the evidence-root guard (outside {S}/evidence, symlink, not a regular file, or empty): {S}/evidence/zero_byte.json"
+  },
+  {
+   "error": "receipt failed the evidence-root guard (outside {S}/evidence, symlink, not a regular file, or empty): {S}/evidence/d.json"
+  },
+  {
+   "error": "receipt failed the evidence-root guard (outside {S}/evidence, symlink, not a regular file, or empty): {S}/evidence/l.json"
+  },
+  {
+   "error": "receipt failed the evidence-root guard (outside {S}/evidence, symlink, not a regular file, or empty): {S}/evidence/linked/r.json"
+  },
+  {
+   "error": "receipt is not valid JSON: {S}/evidence/bad_json.json (<JSON>)"
+  },
+  {
+   "error": "receipt must be a JSON object: {S}/evidence/json_array.json"
+  },
+  {
+   "error": "receipt must be a JSON object: {S}/evidence/json_null.json"
+  },
+  {
+   "error": "receipt must be a JSON object: {S}/evidence/json_string.json"
+  },
+  {
+   "error": "receipt is not valid JSON: {S}/evidence/json_trailing_data.json (<JSON>)"
+  },
+  {
+   "error": "receipt is not valid JSON: {S}/evidence/json_bom.json (<JSON>)"
+  },
+  {
+   "error": "receipt kind must be \"test\" or \"qa\": {S}/evidence/kind_unknown.json"
+  },
+  {
+   "error": "receipt kind must be \"test\" or \"qa\": {S}/evidence/kind_missing.json"
+  },
+  {
+   "error": "receipt kind mismatch: expected \"qa\", found \"test\" at {S}/evidence/kind_mismatch_test_as_qa.json"
+  },
+  {
+   "error": "receipt kind mismatch: expected \"test\", found \"qa\" at {S}/evidence/kind_mismatch_qa_as_test.json"
+  },
+  {
+   "error": "receipt is missing a well-formed sourceIdentity: {S}/evidence/id_missing.json"
+  },
+  {
+   "error": "receipt is missing a well-formed sourceIdentity: {S}/evidence/id_null.json"
+  },
+  {
+   "error": "receipt is missing a well-formed sourceIdentity: {S}/evidence/id_array.json"
+  },
+  {
+   "error": "receipt is missing a well-formed sourceIdentity: {S}/evidence/id_kind_bad.json"
+  },
+  {
+   "receipt": {
+    "kind": "test",
+    "sourceIdentity": {
+     "kind": "unavailable",
+     "commitSha": "abc1234",
+     "dirty": false,
+     "capturedAt": "2026-01-01T00:00:00.000Z"
+    },
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "createdAtProvided": true,
+    "command": "go test",
+    "exitCode": 0
+   }
+  },
+  {
+   "error": "receipt is missing a well-formed sourceIdentity: {S}/evidence/id_commit_non_string.json"
+  },
+  {
+   "receipt": {
+    "kind": "test",
+    "sourceIdentity": {
+     "kind": "resolved",
+     "commitSha": "",
+     "dirty": false,
+     "capturedAt": "2026-01-01T00:00:00.000Z"
+    },
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "createdAtProvided": true,
+    "command": "go test",
+    "exitCode": 0
+   }
+  },
+  {
+   "error": "receipt is missing a well-formed sourceIdentity: {S}/evidence/id_dirty_non_boolean.json"
+  },
+  {
+   "receipt": {
+    "kind": "test",
+    "sourceIdentity": {
+     "kind": "resolved",
+     "commitSha": "a",
+     "dirty": false,
+     "capturedAt": "1970-01-01T00:00:00.000Z"
+    },
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "createdAtProvided": true,
+    "command": "go test",
+    "exitCode": 0
+   }
+  },
+  {
+   "receipt": {
+    "kind": "test",
+    "sourceIdentity": {
+     "kind": "resolved",
+     "commitSha": "abc1234",
+     "dirty": false,
+     "capturedAt": "1970-01-01T00:00:00.000Z"
+    },
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "createdAtProvided": true,
+    "command": "go test",
+    "exitCode": 0
+   }
+  },
+  {
+   "receipt": {
+    "kind": "test",
+    "sourceIdentity": {
+     "kind": "resolved",
+     "commitSha": "abc1234",
+     "dirty": true,
+     "capturedAt": "2026-01-01T00:00:00.000Z",
+     "treeHash": "deadbeef"
+    },
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "createdAtProvided": true,
+    "command": "go test",
+    "exitCode": 0
+   }
+  },
+  {
+   "receipt": {
+    "kind": "test",
+    "sourceIdentity": {
+     "kind": "resolved",
+     "commitSha": "abc1234",
+     "dirty": false,
+     "capturedAt": "2026-01-01T00:00:00.000Z"
+    },
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "createdAtProvided": true,
+    "command": "go test",
+    "exitCode": 0
+   }
+  },
+  {
+   "receipt": {
+    "kind": "test",
+    "sourceIdentity": {
+     "kind": "resolved",
+     "commitSha": "abc1234",
+     "dirty": false,
+     "capturedAt": "2026-01-01T00:00:00.000Z",
+     "sourceRoot": "<CWD>/src"
+    },
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "createdAtProvided": true,
+    "command": "go test",
+    "exitCode": 0
+   }
+  },
+  {
+   "error": "receipt is missing a well-formed sourceIdentity: {S}/evidence/id_sourceroot_relative.json"
+  },
+  {
+   "error": "receipt is missing a well-formed sourceIdentity: {S}/evidence/id_sourceroot_null.json"
+  },
+  {
+   "error": "receipt is missing a well-formed sourceIdentity: {S}/evidence/id_sourceroot_number.json"
+  },
+  {
+   "receipt": {
+    "kind": "test",
+    "sourceIdentity": {
+     "kind": "resolved",
+     "commitSha": "abc1234",
+     "dirty": false,
+     "capturedAt": "2026-01-01T00:00:00.000Z"
+    },
+    "createdAt": "1970-01-01T00:00:00.000Z",
+    "createdAtProvided": false
+   }
+  },
+  {
+   "receipt": {
+    "kind": "test",
+    "sourceIdentity": {
+     "kind": "resolved",
+     "commitSha": "abc1234",
+     "dirty": false,
+     "capturedAt": "2026-01-01T00:00:00.000Z"
+    },
+    "createdAt": "1970-01-01T00:00:00.000Z",
+    "createdAtProvided": false,
+    "command": "go test",
+    "exitCode": 0
+   }
+  },
+  {
+   "receipt": {
+    "kind": "test",
+    "sourceIdentity": {
+     "kind": "resolved",
+     "commitSha": "abc1234",
+     "dirty": false,
+     "capturedAt": "2026-01-01T00:00:00.000Z"
+    },
+    "createdAt": "1970-01-01T00:00:00.000Z",
+    "createdAtProvided": false,
+    "command": "go test",
+    "exitCode": 0
+   }
+  },
+  {
+   "receipt": {
+    "kind": "test",
+    "sourceIdentity": {
+     "kind": "resolved",
+     "commitSha": "abc1234",
+     "dirty": false,
+     "capturedAt": "2026-01-01T00:00:00.000Z"
+    },
+    "createdAt": "2026-01-01",
+    "createdAtProvided": true,
+    "command": "go test",
+    "exitCode": 0
+   }
+  },
+  {
+   "receipt": {
+    "kind": "test",
+    "sourceIdentity": {
+     "kind": "resolved",
+     "commitSha": "abc1234",
+     "dirty": false,
+     "capturedAt": "2026-01-01T00:00:00.000Z"
+    },
+    "createdAt": "2026-01-01T09:00:00+09:00",
+    "createdAtProvided": true,
+    "command": "go test",
+    "exitCode": 0
+   }
+  },
+  {
+   "receipt": {
+    "kind": "test",
+    "sourceIdentity": {
+     "kind": "resolved",
+     "commitSha": "abc1234",
+     "dirty": false,
+     "capturedAt": "2026-01-01T00:00:00.000Z"
+    },
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "createdAtProvided": true,
+    "exitCode": 0
+   }
+  },
+  {
+   "receipt": {
+    "kind": "test",
+    "sourceIdentity": {
+     "kind": "resolved",
+     "commitSha": "abc1234",
+     "dirty": false,
+     "capturedAt": "2026-01-01T00:00:00.000Z"
+    },
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "createdAtProvided": true,
+    "command": "",
+    "exitCode": 0
+   }
+  },
+  {
+   "receipt": {
+    "kind": "test",
+    "sourceIdentity": {
+     "kind": "resolved",
+     "commitSha": "abc1234",
+     "dirty": false,
+     "capturedAt": "2026-01-01T00:00:00.000Z"
+    },
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "createdAtProvided": true,
+    "command": "go test"
+   }
+  },
+  {
+   "receipt": {
+    "kind": "test",
+    "sourceIdentity": {
+     "kind": "resolved",
+     "commitSha": "abc1234",
+     "dirty": false,
+     "capturedAt": "2026-01-01T00:00:00.000Z"
+    },
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "createdAtProvided": true,
+    "command": "go test",
+    "exitCode": 1.5
+   }
+  },
+  {
+   "receipt": {
+    "kind": "test",
+    "sourceIdentity": {
+     "kind": "resolved",
+     "commitSha": "abc1234",
+     "dirty": false,
+     "capturedAt": "2026-01-01T00:00:00.000Z"
+    },
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "createdAtProvided": true,
+    "command": "go test",
+    "exitCode": -3
+   }
+  },
+  {
+   "receipt": {
+    "kind": "test",
+    "sourceIdentity": {
+     "kind": "resolved",
+     "commitSha": "abc1234",
+     "dirty": false,
+     "capturedAt": "2026-01-01T00:00:00.000Z"
+    },
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "createdAtProvided": true,
+    "command": "go test",
+    "exitCode": 0
+   }
+  },
+  {
+   "receipt": {
+    "kind": "test",
+    "sourceIdentity": {
+     "kind": "resolved",
+     "commitSha": "abc1234",
+     "dirty": false,
+     "capturedAt": "2026-01-01T00:00:00.000Z"
+    },
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "createdAtProvided": true,
+    "command": "go test",
+    "exitCode": 0,
+    "generatedPaths": [
+     "a",
+     "b"
+    ]
+   }
+  },
+  {
+   "receipt": {
+    "kind": "test",
+    "sourceIdentity": {
+     "kind": "resolved",
+     "commitSha": "abc1234",
+     "dirty": false,
+     "capturedAt": "2026-01-01T00:00:00.000Z"
+    },
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "createdAtProvided": true,
+    "command": "go test",
+    "exitCode": 0
+   }
+  },
+  {
+   "receipt": {
+    "kind": "test",
+    "sourceIdentity": {
+     "kind": "resolved",
+     "commitSha": "abc1234",
+     "dirty": false,
+     "capturedAt": "2026-01-01T00:00:00.000Z"
+    },
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "createdAtProvided": true,
+    "command": "go test",
+    "exitCode": 0
+   }
+  },
+  {
+   "receipt": {
+    "kind": "test",
+    "sourceIdentity": {
+     "kind": "resolved",
+     "commitSha": "abc1234",
+     "dirty": false,
+     "capturedAt": "2026-01-01T00:00:00.000Z"
+    },
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "createdAtProvided": true,
+    "command": "go test",
+    "exitCode": 0
+   }
+  },
+  {
+   "receipt": {
+    "kind": "qa",
+    "sourceIdentity": {
+     "kind": "resolved",
+     "commitSha": "abc1234",
+     "dirty": false,
+     "capturedAt": "2026-01-01T00:00:00.000Z"
+    },
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "createdAtProvided": true,
+    "artifactManifest": [
+     {
+      "path": "qa/D-PACKAGE/verdict.json",
+      "sha256": "5f8c7f5898d582e7f17d1fc2d6137d25629e6694f93ab19031579f90de820ea5",
+      "kind": "verdict",
+      "criterionIds": [
+       "c-3"
+      ]
+     },
+     {
+      "path": "qa/D-PACKAGE/artifact-identity.json",
+      "sha256": "2430f1a2ad2982d0067885488a4c89e21ad1d7c83b115ba8f1b20acc88dfaea8",
+      "kind": "artifact-identity",
+      "criterionIds": [
+       "c-3"
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "receipt": {
+    "kind": "qa",
+    "sourceIdentity": {
+     "kind": "resolved",
+     "commitSha": "abc1234",
+     "dirty": false,
+     "capturedAt": "2026-01-01T00:00:00.000Z"
+    },
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "createdAtProvided": true,
+    "artifactManifest": [
+     {
+      "path": "qa/V/verdict.json",
+      "sha256": "f145c34e0fcd9c8a0e5c26fb45feec11e798a1ec946641f92c0feb8f1c86062a",
+      "kind": "verdict"
+     }
+    ]
+   }
+  },
+  {
+   "receipt": {
+    "kind": "qa",
+    "sourceIdentity": {
+     "kind": "resolved",
+     "commitSha": "abc1234",
+     "dirty": false,
+     "capturedAt": "2026-01-01T00:00:00.000Z"
+    },
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "createdAtProvided": true,
+    "artifactManifest": [
+     {
+      "path": "qa/D-PACKAGE/verdict.json",
+      "sha256": "5f8c7f5898d582e7f17d1fc2d6137d25629e6694f93ab19031579f90de820ea5",
+      "kind": "verdict",
+      "criterionIds": [
+       "c-3"
+      ]
+     },
+     {
+      "path": "qa/D-PACKAGE/artifact-identity.json",
+      "sha256": "2430f1a2ad2982d0067885488a4c89e21ad1d7c83b115ba8f1b20acc88dfaea8",
+      "kind": "artifact-identity",
+      "criterionIds": [
+       "c-3"
+      ]
+     },
+     {
+      "path": "qa/E/verdict.json",
+      "sha256": "8e47b67eb5b88f6653d9a0f4aeb8a23bfd29072ab9b87f2d268b08a551f44318",
+      "kind": "verdict",
+      "criterionIds": [
+       "c-4"
+      ]
+     },
+     {
+      "path": "qa/E/artifact-identity.json",
+      "sha256": "2430f1a2ad2982d0067885488a4c89e21ad1d7c83b115ba8f1b20acc88dfaea8",
+      "kind": "artifact-identity",
+      "criterionIds": [
+       "c-4"
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "receipt": {
+    "kind": "qa",
+    "sourceIdentity": {
+     "kind": "resolved",
+     "commitSha": "abc1234",
+     "dirty": false,
+     "capturedAt": "2026-01-01T00:00:00.000Z"
+    },
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "createdAtProvided": true,
+    "artifactManifest": [
+     {
+      "path": "qa/D-PACKAGE/verdict.json",
+      "sha256": "5f8c7f5898d582e7f17d1fc2d6137d25629e6694f93ab19031579f90de820ea5",
+      "kind": "verdict",
+      "criterionIds": [
+       "c-3"
+      ]
+     },
+     {
+      "path": "qa/D-PACKAGE/artifact-identity.json",
+      "sha256": "2430f1a2ad2982d0067885488a4c89e21ad1d7c83b115ba8f1b20acc88dfaea8",
+      "kind": "artifact-identity",
+      "criterionIds": [
+       "c-3"
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "error": "artifactManifest is only valid on a QA receipt"
+  },
+  {
+   "error": "artifactManifest must be a non-empty array"
+  },
+  {
+   "error": "artifactManifest must be a non-empty array"
+  },
+  {
+   "error": "artifactManifest must be a non-empty array"
+  },
+  {
+   "error": "artifactManifest[0] must be an object"
+  },
+  {
+   "error": "artifactManifest[0] must be an object"
+  },
+  {
+   "error": "artifactManifest[0] must be an object"
+  },
+  {
+   "error": "artifactManifest[0].path must be a relative path without .."
+  },
+  {
+   "error": "artifactManifest[0].path must be a relative path without .."
+  },
+  {
+   "error": "artifactManifest[0].path must be a relative path without .."
+  },
+  {
+   "error": "artifactManifest[0].path must be a relative path without .."
+  },
+  {
+   "error": "artifactManifest[0].path must be a relative path without .."
+  },
+  {
+   "error": "artifactManifest[0].path must be a relative path without .."
+  },
+  {
+   "error": "artifactManifest[0].path must be a relative path without .."
+  },
+  {
+   "error": "artifactManifest desktop verdict qa/./D-PACKAGE/verdict.json has no identity"
+  },
+  {
+   "receipt": {
+    "kind": "qa",
+    "sourceIdentity": {
+     "kind": "resolved",
+     "commitSha": "abc1234",
+     "dirty": false,
+     "capturedAt": "2026-01-01T00:00:00.000Z"
+    },
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "createdAtProvided": true,
+    "artifactManifest": [
+     {
+      "path": "qa/D-PACKAGE/verdict.json/",
+      "sha256": "5f8c7f5898d582e7f17d1fc2d6137d25629e6694f93ab19031579f90de820ea5",
+      "kind": "verdict",
+      "criterionIds": [
+       "c-3"
+      ]
+     },
+     {
+      "path": "qa/D-PACKAGE/artifact-identity.json",
+      "sha256": "2430f1a2ad2982d0067885488a4c89e21ad1d7c83b115ba8f1b20acc88dfaea8",
+      "kind": "artifact-identity",
+      "criterionIds": [
+       "c-3"
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "error": "artifactManifest[0].kind is invalid"
+  },
+  {
+   "error": "artifactManifest[0].kind is invalid"
+  },
+  {
+   "error": "artifactManifest[0].kind does not match path basename"
+  },
+  {
+   "error": "artifactManifest[0].sha256 must be a lowercase SHA-256 digest"
+  },
+  {
+   "error": "artifactManifest[0].sha256 must be a lowercase SHA-256 digest"
+  },
+  {
+   "error": "artifactManifest[0].sha256 must be a lowercase SHA-256 digest"
+  },
+  {
+   "error": "artifactManifest[0].sha256 must be a lowercase SHA-256 digest"
+  },
+  {
+   "error": "artifactManifest[0].sha256 must be a lowercase SHA-256 digest"
+  },
+  {
+   "error": "artifactManifest[1].criterionIds must be unique c-N IDs"
+  },
+  {
+   "error": "artifactManifest[1].criterionIds must be unique c-N IDs"
+  },
+  {
+   "error": "artifactManifest[1].criterionIds must be unique c-N IDs"
+  },
+  {
+   "error": "artifactManifest[1].criterionIds must be unique c-N IDs"
+  },
+  {
+   "error": "artifactManifest[1].criterionIds must be unique c-N IDs"
+  },
+  {
+   "error": "artifactManifest[1].criterionIds must be unique c-N IDs"
+  },
+  {
+   "error": "artifactManifest[1].criterionIds must be unique c-N IDs"
+  },
+  {
+   "error": "artifactManifest criterionIds do not match verdict qa/D-PACKAGE/verdict.json"
+  },
+  {
+   "error": "artifactManifest[1].criterionIds must be unique c-N IDs"
+  },
+  {
+   "error": "artifactManifest[1].criterionIds must be unique c-N IDs"
+  },
+  {
+   "error": "artifactManifest[1] duplicates a manifest path"
+  },
+  {
+   "error": "artifactManifest[2] duplicates a manifest path"
+  },
+  {
+   "error": "artifactManifest[1] cannot be read: <ERR>"
+  },
+  {
+   "error": "artifactManifest[1] is a symlink"
+  },
+  {
+   "error": "artifactManifest[1] resolves outside the evidence root"
+  },
+  {
+   "receipt": {
+    "kind": "qa",
+    "sourceIdentity": {
+     "kind": "resolved",
+     "commitSha": "abc1234",
+     "dirty": false,
+     "capturedAt": "2026-01-01T00:00:00.000Z"
+    },
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "createdAtProvided": true,
+    "artifactManifest": [
+     {
+      "path": "qa/L/verdict.json",
+      "sha256": "5f8c7f5898d582e7f17d1fc2d6137d25629e6694f93ab19031579f90de820ea5",
+      "kind": "verdict",
+      "criterionIds": [
+       "c-3"
+      ]
+     },
+     {
+      "path": "qa/L/artifact-identity.json",
+      "sha256": "2430f1a2ad2982d0067885488a4c89e21ad1d7c83b115ba8f1b20acc88dfaea8",
+      "kind": "artifact-identity",
+      "criterionIds": [
+       "c-3"
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "error": "artifactManifest[1] is a symlink"
+  },
+  {
+   "error": "artifactManifest[1] is empty or not a regular file"
+  },
+  {
+   "error": "artifactManifest[1] is empty or not a regular file"
+  },
+  {
+   "error": "artifactManifest[1] digest does not match"
+  },
+  {
+   "error": "artifactManifest identity qa/D-PACKAGE/artifact-identity.json needs one same-directory verdict"
+  },
+  {
+   "error": "artifactManifest identity qa/E/artifact-identity.json needs one same-directory verdict"
+  },
+  {
+   "error": "artifactManifest verdict cannot be parsed: <JSON>"
+  },
+  {
+   "error": "artifactManifest verdict cannot be parsed: <JSON>"
+  },
+  {
+   "error": "artifactManifest verdict must be an object"
+  },
+  {
+   "error": "artifactManifest verdict qa/D-PACKAGE/verdict.json must be an object"
+  },
+  {
+   "error": "artifactManifest verdict must be an object"
+  },
+  {
+   "error": "artifactManifest verdict qa/D-PACKAGE/verdict.json must be an object"
+  },
+  {
+   "error": "artifactManifest verdict must be an object"
+  },
+  {
+   "error": "artifactManifest verdict qa/D-PACKAGE/verdict.json must be an object"
+  },
+  {
+   "error": "artifactManifest verdict does not reference qa/D-PACKAGE/artifact-identity.json"
+  },
+  {
+   "error": "artifactManifest verdict does not reference qa/D-PACKAGE/artifact-identity.json"
+  },
+  {
+   "error": "artifactManifest verdict does not reference qa/D-PACKAGE/artifact-identity.json"
+  },
+  {
+   "error": "artifactManifest verdict does not reference qa/D-PACKAGE/artifact-identity.json"
+  },
+  {
+   "receipt": {
+    "kind": "qa",
+    "sourceIdentity": {
+     "kind": "resolved",
+     "commitSha": "abc1234",
+     "dirty": false,
+     "capturedAt": "2026-01-01T00:00:00.000Z"
+    },
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "createdAtProvided": true,
+    "artifactManifest": [
+     {
+      "path": "qa/D-PACKAGE/verdict.json",
+      "sha256": "e95034418b61449dbdcf0acc916620bfd0d081c66bb60fd70c345f859349bc1f",
+      "kind": "verdict",
+      "criterionIds": [
+       "c-3"
+      ]
+     },
+     {
+      "path": "qa/D-PACKAGE/artifact-identity.json",
+      "sha256": "2430f1a2ad2982d0067885488a4c89e21ad1d7c83b115ba8f1b20acc88dfaea8",
+      "kind": "artifact-identity",
+      "criterionIds": [
+       "c-3"
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "receipt": {
+    "kind": "qa",
+    "sourceIdentity": {
+     "kind": "resolved",
+     "commitSha": "abc1234",
+     "dirty": false,
+     "capturedAt": "2026-01-01T00:00:00.000Z"
+    },
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "createdAtProvided": true,
+    "artifactManifest": [
+     {
+      "path": "qa/D-PACKAGE/verdict.json",
+      "sha256": "a28778b942d773a012e33e116d4cc30c79e14cc25ba9cd6fb86781efc598d95d",
+      "kind": "verdict",
+      "criterionIds": [
+       "c-3"
+      ]
+     },
+     {
+      "path": "qa/D-PACKAGE/artifact-identity.json",
+      "sha256": "2430f1a2ad2982d0067885488a4c89e21ad1d7c83b115ba8f1b20acc88dfaea8",
+      "kind": "artifact-identity",
+      "criterionIds": [
+       "c-3"
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "receipt": {
+    "kind": "qa",
+    "sourceIdentity": {
+     "kind": "resolved",
+     "commitSha": "abc1234",
+     "dirty": false,
+     "capturedAt": "2026-01-01T00:00:00.000Z"
+    },
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "createdAtProvided": true,
+    "artifactManifest": [
+     {
+      "path": "qa/D-PACKAGE/verdict.json",
+      "sha256": "f45a580998d18f1cc7c75884ca6ba5c00bb5b5a2cf3dbf07778399981e7a968f",
+      "kind": "verdict",
+      "criterionIds": [
+       "c-3"
+      ]
+     },
+     {
+      "path": "qa/D-PACKAGE/artifact-identity.json",
+      "sha256": "2430f1a2ad2982d0067885488a4c89e21ad1d7c83b115ba8f1b20acc88dfaea8",
+      "kind": "artifact-identity",
+      "criterionIds": [
+       "c-3"
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "error": "artifactManifest desktop verdict has invalid criterionIds"
+  },
+  {
+   "error": "artifactManifest verdict qa/D-PACKAGE/verdict.json has invalid criterionIds"
+  },
+  {
+   "error": "artifactManifest desktop verdict has invalid criterionIds"
+  },
+  {
+   "error": "artifactManifest verdict qa/D-PACKAGE/verdict.json has invalid criterionIds"
+  },
+  {
+   "error": "artifactManifest criterionIds do not match verdict qa/D-PACKAGE/verdict.json"
+  },
+  {
+   "error": "artifactManifest verdict qa/D-PACKAGE/verdict.json criterionIds do not match"
+  },
+  {
+   "error": "artifactManifest criterionIds do not match verdict qa/D-PACKAGE/verdict.json"
+  },
+  {
+   "error": "artifactManifest verdict qa/D-PACKAGE/verdict.json criterionIds do not match"
+  },
+  {
+   "error": "artifactManifest criterionIds do not match verdict qa/D-PACKAGE/verdict.json"
+  },
+  {
+   "error": "artifactManifest criterionIds do not match verdict qa/D-PACKAGE/verdict.json"
+  },
+  {
+   "error": "artifactManifest criterionIds do not match verdict qa/D-PACKAGE/verdict.json"
+  },
+  {
+   "error": "artifactManifest criterionIds do not match verdict qa/D-PACKAGE/verdict.json"
+  },
+  {
+   "error": "artifactManifest verdict qa/D-PACKAGE/verdict.json criterionIds do not match"
+  },
+  {
+   "error": "artifactManifest desktop verdict qa/D-PACKAGE/verdict.json has no identity"
+  },
+  {
+   "error": "artifactManifest desktop verdict qa/D-PACKAGE/verdict.json has no identity"
+  },
+  {
+   "error": "artifactManifest desktop verdict qa/D-PACKAGE/verdict.json has no identity"
+  },
+  {
+   "error": "artifactManifest desktop verdict ./qa/D-PACKAGE/verdict.json has no identity"
+  },
+  {
+   "receipt": {
+    "kind": "qa",
+    "sourceIdentity": {
+     "kind": "resolved",
+     "commitSha": "abc1234",
+     "dirty": false,
+     "capturedAt": "2026-01-01T00:00:00.000Z"
+    },
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "createdAtProvided": true,
+    "artifactManifest": [
+     {
+      "path": "./qa/D-PACKAGE/verdict.json",
+      "sha256": "5f8c7f5898d582e7f17d1fc2d6137d25629e6694f93ab19031579f90de820ea5",
+      "kind": "verdict",
+      "criterionIds": [
+       "c-3"
+      ]
+     },
+     {
+      "path": "./qa/D-PACKAGE/artifact-identity.json",
+      "sha256": "2430f1a2ad2982d0067885488a4c89e21ad1d7c83b115ba8f1b20acc88dfaea8",
+      "kind": "artifact-identity",
+      "criterionIds": [
+       "c-3"
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "receipt": {
+    "kind": "qa",
+    "sourceIdentity": {
+     "kind": "resolved",
+     "commitSha": "abc1234",
+     "dirty": false,
+     "capturedAt": "2026-01-01T00:00:00.000Z"
+    },
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "createdAtProvided": true,
+    "artifactManifest": [
+     {
+      "path": "qa//D-PACKAGE/verdict.json",
+      "sha256": "5f8c7f5898d582e7f17d1fc2d6137d25629e6694f93ab19031579f90de820ea5",
+      "kind": "verdict",
+      "criterionIds": [
+       "c-3"
+      ]
+     },
+     {
+      "path": "qa//D-PACKAGE/artifact-identity.json",
+      "sha256": "2430f1a2ad2982d0067885488a4c89e21ad1d7c83b115ba8f1b20acc88dfaea8",
+      "kind": "artifact-identity",
+      "criterionIds": [
+       "c-3"
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "receipt": {
+    "kind": "test",
+    "sourceIdentity": {
+     "kind": "resolved",
+     "commitSha": "abc1234",
+     "dirty": false,
+     "capturedAt": "2026-01-01T00:00:00.000Z",
+     "treeHash": ""
+    },
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "createdAtProvided": true,
+    "command": "go test",
+    "exitCode": 0
+   }
+  },
+  {
+   "receipt": {
+    "kind": "qa",
+    "sourceIdentity": {
+     "kind": "resolved",
+     "commitSha": "abc1234",
+     "dirty": false,
+     "capturedAt": "2026-01-01T00:00:00.000Z"
+    },
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "createdAtProvided": true,
+    "artifactManifest": [
+     {
+      "path": "..legit/verdict.json",
+      "sha256": "5f8c7f5898d582e7f17d1fc2d6137d25629e6694f93ab19031579f90de820ea5",
+      "kind": "verdict",
+      "criterionIds": [
+       "c-3"
+      ]
+     },
+     {
+      "path": "..legit/artifact-identity.json",
+      "sha256": "2430f1a2ad2982d0067885488a4c89e21ad1d7c83b115ba8f1b20acc88dfaea8",
+      "kind": "artifact-identity",
+      "criterionIds": [
+       "c-3"
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "receipt": {
+    "kind": "qa",
+    "sourceIdentity": {
+     "kind": "resolved",
+     "commitSha": "abc1234",
+     "dirty": false,
+     "capturedAt": "2026-01-01T00:00:00.000Z"
+    },
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "createdAtProvided": true,
+    "artifactManifest": [
+     {
+      "path": "a\\b/verdict.json",
+      "sha256": "5f8c7f5898d582e7f17d1fc2d6137d25629e6694f93ab19031579f90de820ea5",
+      "kind": "verdict",
+      "criterionIds": [
+       "c-3"
+      ]
+     },
+     {
+      "path": "a\\b/artifact-identity.json",
+      "sha256": "2430f1a2ad2982d0067885488a4c89e21ad1d7c83b115ba8f1b20acc88dfaea8",
+      "kind": "artifact-identity",
+      "criterionIds": [
+       "c-3"
+      ]
+     }
+    ]
+   }
+  }
+ ],
+ "gate": [
+  {
+   "ok": false,
+   "reason": "C -> D on a goalplan-bound session requires \"testReceiptPath\" (CHECK-BINDING-01). Produce one with: cxc receipt test --session <id> -- <command>, then pass its path as testReceiptPath."
+  },
+  {
+   "ok": false,
+   "reason": "this check cycle predates CHECK-BINDING-01, so no receipt can bind to it. Step back with `cxc orchestrate B` and re-enter `cxc orchestrate C` to mint a binding."
+  },
+  {
+   "ok": false,
+   "reason": "this check cycle predates CHECK-BINDING-01, so no receipt can bind to it. Step back with `cxc orchestrate B` and re-enter `cxc orchestrate C` to mint a binding."
+  },
+  {
+   "ok": false,
+   "reason": "receipt failed the evidence-root guard (outside {S}/evidence, symlink, not a regular file, or empty): outside.json (CHECK-BINDING-01). Produce one with: cxc receipt test --session <id> -- <command>, then pass its path as testReceiptPath."
+  },
+  {
+   "ok": false,
+   "reason": "receipt kind mismatch: expected \"test\", found \"qa\" at {S}/evidence/kind_mismatch.json (CHECK-BINDING-01). Produce one with: cxc receipt test --session <id> -- <command>, then pass its path as testReceiptPath."
+  },
+  {
+   "ok": false,
+   "reason": "the receipt names no command, so it records nothing about what ran (CHECK-BINDING-01). Produce one with: cxc receipt test --session <id> -- <command>, then pass its path as testReceiptPath."
+  },
+  {
+   "ok": false,
+   "reason": "the receipt names no command, so it records nothing about what ran (CHECK-BINDING-01). Produce one with: cxc receipt test --session <id> -- <command>, then pass its path as testReceiptPath."
+  },
+  {
+   "ok": false,
+   "reason": "the receipt names no command, so it records nothing about what ran (CHECK-BINDING-01). Produce one with: cxc receipt test --session <id> -- <command>, then pass its path as testReceiptPath."
+  },
+  {
+   "ok": false,
+   "reason": "the receipt names no command, so it records nothing about what ran (CHECK-BINDING-01). Produce one with: cxc receipt test --session <id> -- <command>, then pass its path as testReceiptPath."
+  },
+  {
+   "ok": false,
+   "reason": "git could not resolve the source identity (git could not resolve the source identity on at least one side) (CHECK-BINDING-01). Produce one with: cxc receipt test --session <id> -- <command>, then pass its path as testReceiptPath."
+  },
+  {
+   "ok": false,
+   "reason": "the receipt names no command, so it records nothing about what ran (CHECK-BINDING-01). Produce one with: cxc receipt test --session <id> -- <command>, then pass its path as testReceiptPath."
+  },
+  {
+   "ok": false,
+   "reason": "git could not resolve the source identity (git could not resolve the source identity on at least one side) (CHECK-BINDING-01). Produce one with: cxc receipt test --session <id> -- <command>, then pass its path as testReceiptPath."
+  },
+  {
+   "ok": false,
+   "reason": "the receipt reports exitCode none; only a passing run closes a check (CHECK-BINDING-01). Produce one with: cxc receipt test --session <id> -- <command>, then pass its path as testReceiptPath."
+  },
+  {
+   "ok": false,
+   "reason": "the receipt reports exitCode 1; only a passing run closes a check (CHECK-BINDING-01). Produce one with: cxc receipt test --session <id> -- <command>, then pass its path as testReceiptPath."
+  },
+  {
+   "ok": false,
+   "reason": "the receipt reports exitCode 1.5; only a passing run closes a check (CHECK-BINDING-01). Produce one with: cxc receipt test --session <id> -- <command>, then pass its path as testReceiptPath."
+  },
+  {
+   "ok": false,
+   "reason": "the receipt reports exitCode none; only a passing run closes a check (CHECK-BINDING-01). Produce one with: cxc receipt test --session <id> -- <command>, then pass its path as testReceiptPath."
+  },
+  {
+   "ok": false,
+   "reason": "the receipt reports exitCode Infinity; only a passing run closes a check (CHECK-BINDING-01). Produce one with: cxc receipt test --session <id> -- <command>, then pass its path as testReceiptPath."
+  },
+  {
+   "ok": false,
+   "reason": "the receipt reports exitCode -Infinity; only a passing run closes a check (CHECK-BINDING-01). Produce one with: cxc receipt test --session <id> -- <command>, then pass its path as testReceiptPath."
+  },
+  {
+   "ok": false,
+   "reason": "the receipt reports exitCode 1e+21; only a passing run closes a check (CHECK-BINDING-01). Produce one with: cxc receipt test --session <id> -- <command>, then pass its path as testReceiptPath."
+  },
+  {
+   "ok": false,
+   "reason": "the receipt reports exitCode 1e-7; only a passing run closes a check (CHECK-BINDING-01). Produce one with: cxc receipt test --session <id> -- <command>, then pass its path as testReceiptPath."
+  },
+  {
+   "ok": false,
+   "reason": "the receipt was produced by a different session (CHECK-BINDING-01). Produce one with: cxc receipt test --session <id> -- <command>, then pass its path as testReceiptPath."
+  },
+  {
+   "ok": false,
+   "reason": "the receipt carries no usable createdAt (CHECK-BINDING-01). Produce one with: cxc receipt test --session <id> -- <command>, then pass its path as testReceiptPath."
+  },
+  {
+   "ok": false,
+   "reason": "the receipt carries no usable createdAt (CHECK-BINDING-01). Produce one with: cxc receipt test --session <id> -- <command>, then pass its path as testReceiptPath."
+  },
+  {
+   "ok": false,
+   "reason": "the receipt was produced by a different session (CHECK-BINDING-01). Produce one with: cxc receipt test --session <id> -- <command>, then pass its path as testReceiptPath."
+  },
+  {
+   "ok": false,
+   "reason": "the receipt was produced by a different session (CHECK-BINDING-01). Produce one with: cxc receipt test --session <id> -- <command>, then pass its path as testReceiptPath."
+  },
+  {
+   "ok": false,
+   "reason": "the receipt belongs to an earlier check cycle — re-run the command for this one (CHECK-BINDING-01). Produce one with: cxc receipt test --session <id> -- <command>, then pass its path as testReceiptPath."
+  },
+  {
+   "ok": false,
+   "reason": "the receipt belongs to an earlier check cycle — re-run the command for this one (CHECK-BINDING-01). Produce one with: cxc receipt test --session <id> -- <command>, then pass its path as testReceiptPath."
+  },
+  {
+   "ok": false,
+   "reason": "git could not resolve the source identity (git could not resolve the source identity on at least one side) (CHECK-BINDING-01). Produce one with: cxc receipt test --session <id> -- <command>, then pass its path as testReceiptPath."
+  },
+  {
+   "ok": false,
+   "reason": "SOURCE-ROOT: Invalid source-binding session ID. (CHECK-BINDING-01). Produce one with: cxc receipt test --session <id> -- <command>, then pass its path as testReceiptPath."
+  },
+  {
+   "ok": false,
+   "reason": "the receipt names no command, so it records nothing about what ran (CHECK-BINDING-01). Produce one with: cxc receipt test --session <id> -- <command>, then pass its path as testReceiptPath."
+  },
+  {
+   "ok": false,
+   "reason": "the receipt reports exitCode 1; only a passing run closes a check (CHECK-BINDING-01). Produce one with: cxc receipt test --session <id> -- <command>, then pass its path as testReceiptPath."
+  },
+  {
+   "ok": false,
+   "reason": "the receipt carries no usable createdAt (CHECK-BINDING-01). Produce one with: cxc receipt test --session <id> -- <command>, then pass its path as testReceiptPath."
+  },
+  {
+   "ok": false,
+   "reason": "the receipt was produced by a different session (CHECK-BINDING-01). Produce one with: cxc receipt test --session <id> -- <command>, then pass its path as testReceiptPath."
+  }
+ ]
+}
