@@ -121,17 +121,6 @@
         "steps/0/stdout": "",
         "steps/0/stderr": "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,review,help,version} ...\ncrw: error: argument command: invalid choice: \"gui\" (choose from 'relay', 'bridge', 'hook', 'skill', 'doctor', 'install', 'review', 'help', 'version')\n"
       }
-    },
-    {
-      "id": "cli-help__payload-dispatcher__map_pointer",
-      "reason": "crw map is a later port issue; until it lands the word is not a mode; crw answers an unlisted word with its usage and exit status 2 (decision 8: no aliases)",
-      "set": {
-        "exit": "2",
-        "steps/0/exit": "2",
-        "steps/0/form": "empty",
-        "steps/0/stdout": "",
-        "steps/0/stderr": "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,review,help,version} ...\ncrw: error: argument command: invalid choice: \"map\" (choose from 'relay', 'bridge', 'hook', 'skill', 'doctor', 'install', 'review', 'help', 'version')\n"
-      }
     }
   ]
 }
