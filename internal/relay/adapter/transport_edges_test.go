@@ -107,8 +107,12 @@ func transportEdge(t *testing.T, kind string) {
 	expectJSON(t, "transport", result)
 }
 func Test28_BAD_13_TransportEdgesMatchTheGolden(t *testing.T) {
+	t.Parallel()
 	shareGoldens(t)
 	for _, kind := range []string{"abandoned", "racing-close", "stopping"} {
-		t.Run(kind, func(t *testing.T) { transportEdge(t, kind) })
+		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
+			transportEdge(t, kind)
+		})
 	}
 }

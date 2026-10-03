@@ -23,6 +23,7 @@ import (
 // receipt the parent is owed. When that receipt is the staged claim of a later turn that this very pass confirms,
 // the earlier turn must be settled after it, whichever of the two the pass read first.
 func TestAnEarlierTurnEndedBadlyIsNotReportedWhenALaterStagedClaimIsConfirmedInTheSamePass(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name     string
 		settled  string // a turn settled before the tick, so the next one in line is read first
@@ -35,6 +36,7 @@ func TestAnEarlierTurnEndedBadlyIsNotReportedWhenALaterStagedClaimIsConfirmedInT
 		{"the anchor is settled, the admitted turn was interrupted", "anchor", "business", "interrupted", 2},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			ctx, s := lateStore(t)
 			lateClaim{"continuation", "child", "staged", ""}.insert(t, s)
 			if c.settled != "" {
@@ -92,6 +94,7 @@ func TestAnEarlierTurnEndedBadlyIsNotReportedWhenALaterStagedClaimIsConfirmedInT
 // What the order must not change: with no later claim confirmed in the pass, the earlier end is reported as it
 // always was.
 func TestAnEarlierTurnEndedBadlyIsStillReportedWhenNoLaterClaimIsConfirmed(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name         string
 		continuation string // what the host reports for the turn that holds the staged claim
@@ -102,6 +105,7 @@ func TestAnEarlierTurnEndedBadlyIsStillReportedWhenNoLaterClaimIsConfirmed(t *te
 		{"the later turn failed, so its claim is suppressed", "failed", "suppressed", 1},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			ctx, s := lateStore(t)
 			lateClaim{"continuation", "child", "staged", ""}.insert(t, s)
 			host := &observationHost{status: "completed", statuses: map[string]string{"anchor": "interrupted", "continuation": c.continuation}}
@@ -142,9 +146,11 @@ func notesSaying(notes []string, text string) (n int) {
 // A pass that ends early still settles the ends it has read, in the same order. Three exits: the read budget, the
 // time bound and a failure. A cancelled context is the fourth, and leaves those turns to the next tick.
 func TestTheEndsAPassHasReadAreSettledWhenItStopsEarly(t *testing.T) {
+	t.Parallel()
 	// One read, the anchor's: nothing later is confirmed in this pass, so the end is reported, and it is settled
 	// in the tick that read it (the budget ended the loop with the settlement still waiting).
 	t.Run("the read budget is spent", func(t *testing.T) {
+		t.Parallel()
 		ctx, s := lateStore(t)
 		lateClaim{"continuation", "child", "staged", ""}.insert(t, s)
 		host := &observationHost{status: "completed", statuses: map[string]string{"anchor": "interrupted"}}
@@ -166,6 +172,7 @@ func TestTheEndsAPassHasReadAreSettledWhenItStopsEarly(t *testing.T) {
 	// time bound then ends the loop with "business" unread and the anchor's settlement still waiting. The anchor
 	// is settled in this tick, and not reported, because the claim was confirmed in the pass.
 	t.Run("the time bound is spent", func(t *testing.T) {
+		t.Parallel()
 		ctx, s := lateStore(t)
 		lateClaim{"continuation", "child", "staged", ""}.insert(t, s)
 		watch := &stopwatch{}
@@ -196,6 +203,7 @@ func TestTheEndsAPassHasReadAreSettledWhenItStopsEarly(t *testing.T) {
 	// A failure writing the poll row of a later read ends the pass with an error, as it did when each end was
 	// settled as it was read: the anchor, read before it, is settled all the same, and the next tick finds the rest.
 	t.Run("a later read fails to be recorded", func(t *testing.T) {
+		t.Parallel()
 		ctx, s := lateStore(t)
 		lateClaim{"continuation", "child", "staged", ""}.insert(t, s)
 		exec(t, s, "CREATE TRIGGER refuse_poll BEFORE INSERT ON poll_observations WHEN NEW.turn_id='continuation' BEGIN SELECT RAISE(ABORT, 'poll row refused'); END")
@@ -226,6 +234,7 @@ func TestTheEndsAPassHasReadAreSettledWhenItStopsEarly(t *testing.T) {
 	// is not attempted. Nothing is half done, and a tick on a fresh context reads and settles every turn once, the
 	// anchor's end not reported because the claim is confirmed in that pass.
 	t.Run("the context is cancelled during a later read", func(t *testing.T) {
+		t.Parallel()
 		ctx, s := lateStore(t)
 		lateClaim{"continuation", "child", "staged", ""}.insert(t, s)
 		cancelled, cancel := context.WithCancel(ctx)
@@ -271,6 +280,7 @@ func TestTheEndsAPassHasReadAreSettledWhenItStopsEarly(t *testing.T) {
 
 // The ends a pass kept waiting are settled in the order the pass read them, however many there are.
 func TestTheDeferredEndsAreSettledInTheOrderTheyWereRead(t *testing.T) {
+	t.Parallel()
 	ctx, s := lateStore(t)
 	host := &observationHost{statuses: map[string]string{"anchor": "interrupted", "business": "failed", "continuation": "interrupted"}}
 	d := New(s, host, &delivery.FakeClock{T: 1700000000}, nil)
@@ -298,6 +308,7 @@ func TestTheDeferredEndsAreSettledInTheOrderTheyWereRead(t *testing.T) {
 // settles it. If the store has moved since the first check, so that the receipt no longer silences the turn, the
 // turn is not settled: it is judged again on the next pass, on the state the store has then.
 func TestASilencedEndIsJudgedAgainWhenTheStoreMovesBeforeItsSettlementCommits(t *testing.T) {
+	t.Parallel()
 	const gap = "a generation is opened on the observed turn"
 	for _, c := range []struct {
 		name   string
@@ -315,6 +326,7 @@ func TestASilencedEndIsJudgedAgainWhenTheStoreMovesBeforeItsSettlementCommits(t 
 		}, true, nil, 1},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			ctx, s := lateStore(t)
 			lateClaim{"continuation", "child", "final", owedQueued}.insert(t, s)
 			// The other turns are settled, so the turn under test is the only one the passes read.

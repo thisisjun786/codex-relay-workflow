@@ -14,6 +14,7 @@ import (
 // deliverable) exactly once; a
 // failed or interrupted ending suppresses it, saying why; a turn still running leaves it staged.
 func Test29ASettledTurnResolvesItsStagedClaims(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct{ status, stage, journal string }{
 		{"completed", "final", `{"finalized": ["staged-1"], "suppressed": [], "status": "completed"}`},
 		{"failed", "suppressed", `{"finalized": [], "suppressed": ["staged-1"], "status": "failed"}`},
@@ -21,6 +22,7 @@ func Test29ASettledTurnResolvesItsStagedClaims(t *testing.T) {
 		{"inProgress", "staged", ""},
 	} {
 		t.Run(c.status, func(t *testing.T) {
+			t.Parallel()
 			ctx := context.Background()
 			s, err := fixtureStore(ctx, filepath.Join(t.TempDir(), "relay.sqlite3"), "")
 			if err != nil {

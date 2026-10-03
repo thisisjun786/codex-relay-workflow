@@ -12,6 +12,7 @@ import (
 )
 
 func Test27_MST_7_RefusalExcludesBusinessTurnAndReportingArgv(t *testing.T) {
+	t.Parallel()
 	r := startResult{RequestID: "request", AssignmentID: "assignment", ChildTaskID: "child", StatePath: "/state", MarkerRoot: "/marker", Workspace: "/workspace"}
 	var output bytes.Buffer
 	if err := contract.Emit(&output, r.result("refused", "business", "recipient_paused")); err != nil {
@@ -33,6 +34,7 @@ func Test27_MST_7_RefusalExcludesBusinessTurnAndReportingArgv(t *testing.T) {
 }
 
 func Test27_MST_10_ObservationReadback(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s, err := store.Open(ctx, filepath.Join(t.TempDir(), "relay.sqlite3"), "")
 	if err != nil {
@@ -63,6 +65,7 @@ func Test27_MST_10_ObservationReadback(t *testing.T) {
 
 // Test27_MST_1_AdmittedResultAndReplay checks the Python result field contract.
 func Test27_MST_1_AdmittedResultAndReplay(t *testing.T) {
+	t.Parallel()
 	row := startResult{RequestID: "req", AssignmentID: "assignment", ChildTaskID: "child", BusinessTurnID: "business", StatePath: "/state", MarkerRoot: "/marker", Workspace: "/workspace"}
 	got := row.admitted()
 	want := `{"schema":"managed-start/1","requestId":"req","state":"admitted","stage":"business_accepted","reason":null,"assignmentId":"assignment","relationshipId":null,"executionGeneration":null,"childTaskId":"child","standbyTurnId":null,"creationRequestId":"","businessRequestId":"","requestFingerprint":"","ledger":null,"reservationState":null,"reservationRevision":null,"recovery":"Retry only this same complete request; do not create a replacement.","selectors":{"state":"/state","markerRoot":"/marker","workspace":"/workspace"},"businessTurnId":"business","childClaim":"not_observed","hookFiring":"not_observed","reportingArgv":["--state","/state","reporting-show","--marker-root","/marker","--workspace","/workspace","--assignment","assignment","--session","child","--turn","business"]}`
