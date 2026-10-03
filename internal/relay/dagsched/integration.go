@@ -5,7 +5,9 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
@@ -26,6 +28,8 @@ type IntegrationResult struct {
 	Observations                 []Observation
 	Integrated, MarkPresent      bool
 	SlotReleased                 bool
+	// Sweep is the conflict sweep a landing owes (conflicts, CRW-410): nil when no head landed in this call.
+	Sweep *SweepResult
 }
 
 // ObserveIntegration records, for each target, whether the head the parent accepted is contained in the branch now, as a fact the relay read itself (git merge-base --is-ancestor for a local
@@ -188,7 +192,26 @@ func (s *Scheduler) ObserveIntegration(ctx context.Context, plan, node, actor st
 		}
 		return err
 	})
-	return out, err
+	if err != nil {
+		return out, err
+	}
+	// a head that landed owes a conflict sweep: the other live heads against each other and against the tip it landed on. It rests on the landing's observation, so a repeat of this command (a replay of the
+	// observation) runs the sweep that a failure left undone and finds one that is done.
+	var tips []SweepTip
+	var landed []string
+	for i, r := range readings {
+		if !r.anc {
+			continue
+		}
+		tips = append(tips, SweepTip{Repository: r.target.Repository, Ref: r.target.BaseRef, SHA: r.tip})
+		if i < len(out.Observations) {
+			landed = append(landed, out.Observations[i].ObservationID)
+		}
+	}
+	if ref := landingRef(landed); ref != "" {
+		out.Sweep = s.sweepAfter(ctx, plan, node, actor, TriggerLanding, ref, tips, nil)
+	}
+	return out, nil
 }
 
 // observableRelationship refuses an observation for a relationship that is not the parent's to advance: paused or cancelled (contract 3.2), or another parent's. An archived
@@ -211,4 +234,18 @@ func (s *Scheduler) observableRelationship(ctx context.Context, q store.Querier,
 		return refuse(contract.RefusalScopeRoleMismatch, "task %s is not the parent of relationship %s, which is held by %s", actor, rel.ID, rel.ParentTaskID)
 	}
 	return nil
+}
+
+// landingRef is what a landing's sweep rests on: the observation of the one target the head is contained in, or, when several contain it, a digest of all of their observations, so that a later landing on
+// another target (a new observation) is a new trigger and is swept, and a repeat of the same call (the same observations, replayed) finds the sweep it owes.
+func landingRef(observations []string) string {
+	switch len(observations) {
+	case 0:
+		return ""
+	case 1:
+		return observations[0]
+	}
+	sorted := append([]string(nil), observations...)
+	sort.Strings(sorted)
+	return "dio-set-" + shaOf([]byte(strings.Join(sorted, "|")))[:32]
 }

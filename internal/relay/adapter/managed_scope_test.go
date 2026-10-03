@@ -16,7 +16,6 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/managed"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // The built CLI refuses a project with no bound parent exactly as before, in the same words and
@@ -85,7 +84,7 @@ func Test28_ManagedStartRefusesAnUnboundProjectBeforeCreation(t *testing.T) {
 		}
 		return fakehost.Reply{Result: map[string]any{"data": data, "nextCursor": nil}}
 	})
-	s, err := store.Open(context.Background(), filepath.Join(state, "relay.sqlite3"), host.SocketPath)
+	s, err := openStore(context.Background(), filepath.Join(state, "relay.sqlite3"), host.SocketPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +118,7 @@ func Test28_ManagedStartRefusesAnUnboundProjectBeforeCreation(t *testing.T) {
 		t.Fatalf("the refused request asked the app-server to start %d threads", n)
 	}
 
-	s, err = store.Open(context.Background(), filepath.Join(state, "relay.sqlite3"), host.SocketPath)
+	s, err = openStore(context.Background(), filepath.Join(state, "relay.sqlite3"), host.SocketPath)
 	if err != nil {
 		t.Fatal(err)
 	}

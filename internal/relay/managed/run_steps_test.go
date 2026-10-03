@@ -8,6 +8,7 @@ import (
 )
 
 func TestRecipientsWithAddsTheChildOnlyWhenAbsent(t *testing.T) {
+	t.Parallel()
 	req := map[string]any{"allowedRecipients": []any{"parent", "other"}}
 	if got, want := recipientsWith(req, "child"), []string{"parent", "other", "child"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("recipients %q, want %q", got, want)
@@ -21,6 +22,7 @@ func TestRecipientsWithAddsTheChildOnlyWhenAbsent(t *testing.T) {
 }
 
 func TestSettingsWithRoleCopiesAndNamesTheRole(t *testing.T) {
+	t.Parallel()
 	settings := map[string]any{"model": "gpt-5", "citedRole": "stale"}
 	got := settingsWithRole(settings, "child")
 	if want := map[string]any{"model": "gpt-5", "citedRole": "child"}; !reflect.DeepEqual(got, want) {
@@ -35,6 +37,7 @@ func TestSettingsWithRoleCopiesAndNamesTheRole(t *testing.T) {
 }
 
 func TestCriteriaEntriesKeepTheRequestsOrderAndFields(t *testing.T) {
+	t.Parallel()
 	req := map[string]any{"criteria": []any{
 		map[string]any{"id": "c2", "title": "second", "required": false},
 		map[string]any{"id": "c1", "title": "first", "required": true},

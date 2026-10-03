@@ -58,6 +58,7 @@ func Test27_MST_LockHelper(t *testing.T) {
 	_, _ = os.Stdin.Read(signal[:])
 }
 func Test27_MST_LockSidecarAndOwnedFile(t *testing.T) {
+	t.Parallel()
 	state := t.TempDir()
 	path := filepath.Join(state, "relay.sqlite3")
 	release, err := Lock(path, "req-1")
@@ -185,6 +186,7 @@ func TestLockProject_WaitsForAWriterAndEndsWithItsContext(t *testing.T) {
 // The sidecar is an owned regular file beside the store, a different file from every request lock, and
 // the lock for one project key does not touch a request lock of the same text.
 func TestLockProject_SidecarIsOwnedAndApartFromRequestLocks(t *testing.T) {
+	t.Parallel()
 	state := t.TempDir()
 	path := filepath.Join(state, "relay.sqlite3")
 	unlock, err := LockProject(context.Background(), path, "P1")

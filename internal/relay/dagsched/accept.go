@@ -40,6 +40,10 @@ type AcceptResult struct {
 	PlanID, NodeID, AcceptanceID, RelationshipID, SupersededID, HeadSHA, EvidenceDigest string
 	Generation                                                                          int64
 	Replayed, Revalidated, SlotReleased                                                 bool
+	// Sweep is the conflict sweep an accepted receipt owes (CRW-410): nil for a node with no head and for a re-ruling of an output accepted before.
+	Sweep *SweepResult
+	// the pull request's repository and base branch, for the tip the sweep measures against
+	prRepository, baseRef string
 }
 
 // slotState is the state and tenure of the newest tenure of a node's slot ("" when it never had one). A slot returned and reserved again (a replay of a release whose slot was returned
@@ -177,6 +181,27 @@ func (s *Scheduler) verifiedHead(ctx context.Context, q store.Querier, rel relRo
 // only on the head the relay itself read from the forge. An acceptance is idempotent per output: the same output accepted again is a replay, and the same output re-ruled under re-registered
 // criteria is a revalidation of the same acceptance (contract E-11), never a second acceptance, a new generation or a new child.
 func (s *Scheduler) Accept(ctx context.Context, plan, node, actor string, in AcceptInput) (AcceptResult, error) {
+	out, err := s.accept(ctx, plan, node, actor, in)
+	if err != nil || out.AcceptanceID == "" || out.HeadSHA == "" || out.Revalidated {
+		return out, err
+	}
+	// the receipt taken in owes a conflict sweep (conflicts, CRW-410): its head against the other live heads and against the tip of its pull request's base branch. It rests on the acceptance, so a repeat of the
+	// acceptance runs the sweep that a failure left undone and finds one that is done.
+	tipSource := func(ctx context.Context) []SweepTip {
+		if s.Tips == nil || out.baseRef == "" {
+			return nil
+		}
+		tip := SweepTip{Repository: out.prRepository, Ref: out.baseRef}
+		if read, err := s.Tips.Tip(ctx, out.prRepository, out.baseRef); err == nil {
+			tip.SHA = read.SHA
+		}
+		return []SweepTip{tip}
+	}
+	out.Sweep = s.sweepAfter(ctx, plan, node, actor, TriggerReceipt, out.AcceptanceID, nil, tipSource)
+	return out, nil
+}
+
+func (s *Scheduler) accept(ctx context.Context, plan, node, actor string, in AcceptInput) (AcceptResult, error) {
 	out := AcceptResult{PlanID: plan, NodeID: node}
 	rule := in.RuleVersion
 	if rule.SkillsDigest == "" || rule.Model == "" || rule.Effort == "" {
@@ -211,6 +236,7 @@ func (s *Scheduler) Accept(ctx context.Context, plan, node, actor string, in Acc
 		if err := ClassifyPullRequest(pr); err != nil {
 			return out, err
 		}
+		out.prRepository, out.baseRef = in.PullRequest.Repository, pr.BaseRef
 	} else if in.PullRequest != nil {
 		return out, refuse(contract.RefusalMalformedReceipt, "node %s is a %s node: it has no pull request to name", node, n.Kind)
 	}
