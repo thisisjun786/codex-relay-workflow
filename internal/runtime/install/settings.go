@@ -158,7 +158,7 @@ func settingsWrite(ctx context.Context, path string, wanted Object, apply bool) 
 		return append(record.Set(answer, "outcome", ConfigWouldCreate), field("detail", detail))
 	}
 	beforeWriteLock(path)
-	lock, err := record.LockContext(ctx, path, 0)
+	lock, err := record.Lock(ctx, path, 0)
 	if err != nil {
 		if ctx.Err() != nil {
 			return append(record.Set(answer, "outcome", Interrupted), field("detail", interrupted(err)))

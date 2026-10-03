@@ -1,6 +1,7 @@
 package delivery
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -91,7 +92,7 @@ func (h *fakeHost) guard(name string) error {
 	return nil
 }
 
-func (h *fakeHost) ReadThread(thread string) (ThreadFacts, error) {
+func (h *fakeHost) ReadThread(_ context.Context, thread string) (ThreadFacts, error) {
 	if err := h.guard("read_thread"); err != nil {
 		return ThreadFacts{}, err
 	}
@@ -100,7 +101,7 @@ func (h *fakeHost) ReadThread(thread string) (ThreadFacts, error) {
 	return ThreadFacts{RuntimeStatus: t.status, CanAcceptInput: &accepts}, nil
 }
 
-func (h *fakeHost) IsArchived(thread string, _ any) (*bool, error) {
+func (h *fakeHost) IsArchived(_ context.Context, thread string, _ any) (*bool, error) {
 	if err := h.guard("is_archived"); err != nil {
 		return nil, err
 	}
@@ -110,7 +111,7 @@ func (h *fakeHost) IsArchived(thread string, _ any) (*bool, error) {
 	return h.threads[thread].archived, nil
 }
 
-func (h *fakeHost) ReadGoalStatus(thread string) (any, error) {
+func (h *fakeHost) ReadGoalStatus(_ context.Context, thread string) (any, error) {
 	if h.onGoalRead != nil {
 		h.onGoalRead(thread)
 	}
@@ -120,7 +121,7 @@ func (h *fakeHost) ReadGoalStatus(thread string) (any, error) {
 	return h.threads[thread].goalStatus, nil
 }
 
-func (h *fakeHost) ListTurnIDs(thread string, limit int) ([]any, error) {
+func (h *fakeHost) ListTurnIDs(_ context.Context, thread string, limit int) ([]any, error) {
 	if err := h.guard("list_turn_ids"); err != nil {
 		return nil, err
 	}
@@ -135,7 +136,7 @@ func (h *fakeHost) ListTurnIDs(thread string, limit int) ([]any, error) {
 	return ids, nil
 }
 
-func (h *fakeHost) ReadTurn(thread, turn string) (*TurnInfo, error) {
+func (h *fakeHost) ReadTurn(_ context.Context, thread, turn string) (*TurnInfo, error) {
 	if err := h.guard("read_turn"); err != nil {
 		return nil, err
 	}
@@ -148,14 +149,14 @@ func (h *fakeHost) ReadTurn(thread, turn string) (*TurnInfo, error) {
 	return nil, nil
 }
 
-func (h *fakeHost) GetOperation(requestID string) (Obj, error) {
+func (h *fakeHost) GetOperation(_ context.Context, requestID string) (Obj, error) {
 	if err := h.guard("get_operation"); err != nil {
 		return nil, err
 	}
 	return h.ledger[requestID], nil
 }
 
-func (h *fakeHost) FindToken(thread, token string, limit int, messageOnly bool) (TokenScan, error) {
+func (h *fakeHost) FindToken(_ context.Context, thread, token string, limit int, messageOnly bool) (TokenScan, error) {
 	if err := h.guard("find_token"); err != nil {
 		return TokenScan{}, err
 	}
@@ -183,7 +184,7 @@ func (h *fakeHost) bound(limit int) int {
 }
 
 // RecipientFingerprint is FakeHostAdapter.recipient_fingerprint (window 8).
-func (h *fakeHost) RecipientFingerprint(thread string) (string, error) {
+func (h *fakeHost) RecipientFingerprint(_ context.Context, thread string) (string, error) {
 	if err := h.guard("recipient_fingerprint"); err != nil {
 		return "", err
 	}
@@ -198,7 +199,7 @@ func (h *fakeHost) RecipientFingerprint(thread string) (string, error) {
 	return hex.EncodeToString(digest.Sum(nil)), nil
 }
 
-func (h *fakeHost) SendMessage(requestID, thread, message string, settings *TaskSettings) (Obj, error) {
+func (h *fakeHost) SendMessage(_ context.Context, requestID, thread, message string, settings *TaskSettings) (Obj, error) {
 	if cached, ok := h.ledger[requestID]; ok && pyjson.Text(cached.Get("status")) != Unfinished {
 		return append(append(Obj(nil), cached...), F{Key: "replayed", Value: true}), nil
 	}
@@ -266,7 +267,7 @@ func (h *fakeHost) newestItems(thread string) []Item {
 	return out
 }
 
-func (h *fakeHost) FindDispatchedTurn(thread, turnID string, sentAt float64) (TurnPresence, error) {
+func (h *fakeHost) FindDispatchedTurn(_ context.Context, thread, turnID string, sentAt float64) (TurnPresence, error) {
 	if err := h.guard("find_dispatched_turn"); err != nil {
 		return TurnPresence{}, err
 	}
@@ -278,7 +279,7 @@ func (h *fakeHost) FindDispatchedTurn(thread, turnID string, sentAt float64) (Tu
 	return FindInListing([]ListingPage{{newest, false}}, turnID, sentAt)
 }
 
-func (h *fakeHost) FindTokenSince(thread, token string, older []string, limit int) (TokenScan, error) {
+func (h *fakeHost) FindTokenSince(_ context.Context, thread, token string, older []string, limit int) (TokenScan, error) {
 	if err := h.guard("find_token_since"); err != nil {
 		return TokenScan{}, err
 	}
@@ -287,7 +288,7 @@ func (h *fakeHost) FindTokenSince(thread, token string, older []string, limit in
 	return FindTokenIn([]ItemPage{{items[:min(bound, len(items))], bound < len(items)}}, token, older), nil
 }
 
-func (h *fakeHost) FindTokenInTurn(thread, token, turnID string, limit int) (TokenScan, error) {
+func (h *fakeHost) FindTokenInTurn(_ context.Context, thread, token, turnID string, limit int) (TokenScan, error) {
 	if err := h.guard("find_token_in_turn"); err != nil {
 		return TokenScan{}, err
 	}

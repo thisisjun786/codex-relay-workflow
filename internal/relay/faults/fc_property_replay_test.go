@@ -170,7 +170,7 @@ func Test22_FC_9_ManagedReadingsWholeOutput(t *testing.T) {
 					if variant == "real_ready" {
 						fcMarker(t, dir, "dispositions/child/turn-9.json", map[string]any{"sessionId": "child", "turnId": "turn-9", "outcome": "ready_for_review", "at": "1970-01-02T03:46:40+00:00"})
 						fcMarker(t, work, "artifact.json", map[string]any{"ready": true})
-						entries, e := store.BuildManifest([]string{work + "/artifact.json"}, []string{work})
+						entries, e := store.BuildManifest(context.Background(), []string{work + "/artifact.json"}, []string{work})
 						if e != nil {
 							t.Fatal(e)
 						}

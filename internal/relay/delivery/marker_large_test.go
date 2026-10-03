@@ -19,11 +19,11 @@ func Test33LargeMarkerFactPython(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	value, state := readFactContext(ctx, path)
+	value, state := readFact(ctx, path)
 	if state != factPresent {
 		t.Fatal("valid 5 MiB fact unreadable", state)
 	}
-	unbounded, unboundedState := readFact(path)
+	unbounded, unboundedState := readFact(context.Background(), path)
 	if unboundedState != state || !reflect.DeepEqual(value, unbounded) {
 		t.Fatal("deadline changed fact semantics")
 	}
@@ -31,7 +31,7 @@ func Test33LargeMarkerFactPython(t *testing.T) {
 	// the fence's _read_fact decoded).
 	golden.CheckJSON(t, "read_fact", normalizeJSON(t, jsonable(value)))
 	cancel()
-	if _, state := readFactContext(ctx, path); state != factUnreadable {
+	if _, state := readFact(ctx, path); state != factUnreadable {
 		t.Fatal("cancelled read proceeded")
 	}
 }

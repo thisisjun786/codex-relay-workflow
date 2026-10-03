@@ -335,23 +335,23 @@ func partDAutoBasic(t *testing.T, id string, kind int) {
 
 type partDMissingHost struct{ partDHost }
 
-func (*partDMissingHost) ReadThread(task string) (delivery.ThreadFacts, error) {
+func (*partDMissingHost) ReadThread(_ context.Context, task string) (delivery.ThreadFacts, error) {
 	return delivery.ThreadFacts{}, &delivery.HostError{Kind: "KeyError", Message: "'" + task + "'"}
 }
-func (*partDMissingHost) IsArchived(task string, _ any) (*bool, error) {
+func (*partDMissingHost) IsArchived(_ context.Context, task string, _ any) (*bool, error) {
 	return nil, &delivery.HostError{Kind: "KeyError", Message: "'" + task + "'"}
 }
-func (*partDMissingHost) ReadGoalStatus(task string) (any, error) {
+func (*partDMissingHost) ReadGoalStatus(_ context.Context, task string) (any, error) {
 	return nil, &delivery.HostError{Kind: "KeyError", Message: "'" + task + "'"}
 }
 
 type partDHost struct{ sendHost }
 
-func (h *partDHost) ReadGoalStatus(string) (any, error) { return nil, nil }
-func (h *partDHost) SendMessage(id, thread, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
+func (h *partDHost) ReadGoalStatus(context.Context, string) (any, error) { return nil, nil }
+func (h *partDHost) SendMessage(_ context.Context, id, thread, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
 	return h.accept(id, "turn-"+thread+"-1", message, settings), nil
 }
-func (h *partDHost) ReadTurn(thread, id string) (*delivery.TurnInfo, error) {
+func (h *partDHost) ReadTurn(_ context.Context, thread, id string) (*delivery.TurnInfo, error) {
 	at := float64(1700000001)
 	if id == "turn-"+thread+"-1" {
 		return &delivery.TurnInfo{TurnID: id, StartedAt: &at}, nil
@@ -366,13 +366,13 @@ type partDRecipientHost struct {
 	recipients    []string
 }
 
-func (h *partDRecipientHost) IsArchived(task string, _ any) (*bool, error) {
+func (h *partDRecipientHost) IsArchived(_ context.Context, task string, _ any) (*bool, error) {
 	v := task == h.archivedTask || h.archivedTasks[task]
 	return &v, nil
 }
-func (h *partDRecipientHost) SendMessage(id, thread, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
+func (h *partDRecipientHost) SendMessage(_ context.Context, id, thread, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
 	h.recipients = append(h.recipients, thread)
-	return h.partDHost.SendMessage(id, thread, message, settings)
+	return h.partDHost.SendMessage(context.Background(), id, thread, message, settings)
 }
 func (h *partDRecipientHost) count(task string) int {
 	n := 0

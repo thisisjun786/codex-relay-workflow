@@ -24,7 +24,7 @@ func Test28RecipientFingerprintTurnIDParity(t *testing.T) {
 	fingerprints := []string{}
 	for _, page := range pages {
 		a := New(Options{RPC: fingerprintRPC{page}})
-		got, err := a.RecipientFingerprint("thread")
+		got, err := a.RecipientFingerprint(context.Background(), "thread")
 		if err != nil {
 			t.Fatal(err)
 		}

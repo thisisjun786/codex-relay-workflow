@@ -18,6 +18,7 @@
 package staging
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -131,7 +132,8 @@ func WriteClaim(directory string, payload record.Object) error {
 		return &os.PathError{Op: "claim", Path: directory, Err: unix.ENOTDIR}
 	}
 	target := ClaimPath(directory)
-	lock, err := record.Lock(target, 0)
+	// A claim is written whatever the context of its caller says: the claim is what the next run reads.
+	lock, err := record.Lock(context.Background(), target, 0)
 	if err != nil {
 		return err
 	}

@@ -2,6 +2,7 @@ package record_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -143,7 +144,7 @@ func TestUpdateWritesWhatPythonWrites(t *testing.T) {
 	for _, f := range fixtureObject(t, "update-deltas.json") {
 		t.Run(f.Key, func(t *testing.T) {
 			path := fixtureCopy(t)
-			read, err := record.Update(path, 1, deltaOf(t, golden.Obj(f.Value)))
+			read, err := record.Update(context.Background(), path, 1, deltaOf(t, golden.Obj(f.Value)))
 			if err != nil {
 				t.Fatalf("state %s err %v", read.State, err)
 			}
@@ -159,7 +160,7 @@ func TestUpdateWritesWhatPythonWrites(t *testing.T) {
 
 func TestUpdateOnAnAbsentRecordStartsFromEmpty(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state", record.Name)
-	if _, err := record.Update(path, 1, record.Delta{Select: []contract.Field{{Key: "codex-session-relay", Value: "/x"}}}); err != nil {
+	if _, err := record.Update(context.Background(), path, 1, record.Delta{Select: []contract.Field{{Key: "codex-session-relay", Value: "/x"}}}); err != nil {
 		t.Fatal(err)
 	}
 	read := record.Load(path, 1)
@@ -182,7 +183,7 @@ func TestUpdateNeverReplacesAnUnreadableRecord(t *testing.T) {
 	if err := os.WriteFile(path, []byte("{ not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	read, err := record.Update(path, 1, record.Delta{Select: []contract.Field{{Key: "codex-session-relay", Value: "/x"}}})
+	read, err := record.Update(context.Background(), path, 1, record.Delta{Select: []contract.Field{{Key: "codex-session-relay", Value: "/x"}}})
 	if err != nil {
 		t.Fatalf("state %s exception %s err %v", read.State, read.Exception, err)
 	}
@@ -305,7 +306,7 @@ func TestPlacementNeedsNonBlankStrings(t *testing.T) {
 // removed on release, and a file left by a dead process (older than 300 s) is taken over.
 func TestCrwLockIsExclusiveAndExpiresOnlyWhenStale(t *testing.T) {
 	target := filepath.Join(t.TempDir(), record.Name)
-	first, err := record.Lock(target, 0)
+	first, err := record.Lock(context.Background(), target, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,7 +314,7 @@ func TestCrwLockIsExclusiveAndExpiresOnlyWhenStale(t *testing.T) {
 		t.Fatalf("the lock file records %q, not this pid", raw)
 	}
 	started := time.Now()
-	_, err = record.Lock(target, 150*time.Millisecond)
+	_, err = record.Lock(context.Background(), target, 150*time.Millisecond)
 	var busy *record.Busy
 	if !errors.As(err, &busy) || time.Since(started) < 150*time.Millisecond {
 		t.Fatalf("a held lock was taken: %v", err)
@@ -326,14 +327,14 @@ func TestCrwLockIsExclusiveAndExpiresOnlyWhenStale(t *testing.T) {
 		t.Fatal(err)
 	}
 	fresh := time.Now()
-	if _, err := record.Lock(target, 100*time.Millisecond); !errors.As(err, &busy) {
+	if _, err := record.Lock(context.Background(), target, 100*time.Millisecond); !errors.As(err, &busy) {
 		t.Fatal("a fresh lock file was treated as stale")
 	}
 	old := fresh.Add(-record.StaleLock - time.Minute)
 	if err := os.Chtimes(target+record.LockSuffix, old, old); err != nil {
 		t.Fatal(err)
 	}
-	taken, err := record.Lock(target, 100*time.Millisecond)
+	taken, err := record.Lock(context.Background(), target, 100*time.Millisecond)
 	if err != nil {
 		t.Fatalf("a stale lock file blocked for ever: %v", err)
 	}
@@ -347,12 +348,12 @@ func TestPromotionLockContentionAndTheFileIsNeverUnlinked(t *testing.T) {
 	if state, _ := record.Probe(path + record.PromotionLockSuffix); state != record.NoFile {
 		t.Fatalf("before any promotion: %s", state)
 	}
-	held, err := record.Promote(path, 0)
+	held, err := record.Promote(context.Background(), path, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var busy *record.Busy
-	if _, err := record.Promote(path, 120*time.Millisecond); !errors.As(err, &busy) {
+	if _, err := record.Promote(context.Background(), path, 120*time.Millisecond); !errors.As(err, &busy) {
 		t.Fatalf("a second promotion started while one was held: %v", err)
 	}
 	if state, _ := record.Probe(path + record.PromotionLockSuffix); state != record.Held {
@@ -369,11 +370,11 @@ func TestPromotionLockContentionAndTheFileIsNeverUnlinked(t *testing.T) {
 	if state, _ := record.Probe(path + record.PromotionLockSuffix); state != record.Held {
 		t.Fatalf("another process's lock probed %s", state)
 	}
-	if _, err := record.Promote(path, 120*time.Millisecond); !errors.As(err, &busy) {
+	if _, err := record.Promote(context.Background(), path, 120*time.Millisecond); !errors.As(err, &busy) {
 		t.Fatalf("a promotion started while another process held the lock: %v", err)
 	}
 	release()
-	again, err := record.Promote(path, time.Second)
+	again, err := record.Promote(context.Background(), path, time.Second)
 	if err != nil {
 		t.Fatalf("the lock was not released with its holder: %v", err)
 	}
@@ -393,7 +394,7 @@ func TestReleaseCandidateKeepsWhatMayBeInUse(t *testing.T) {
 	install := func(env string) record.Object {
 		return record.Object{{Key: "location", Value: filepath.Join(env, "bin")}, {Key: "environment", Value: env}}
 	}
-	if _, err := record.Update(path, 1, record.Delta{Installs: []record.Named{{Component: "c", Entry: install(environment)}, {Component: "c", Entry: install(other)}},
+	if _, err := record.Update(context.Background(), path, 1, record.Delta{Installs: []record.Named{{Component: "c", Entry: install(environment)}, {Component: "c", Entry: install(other)}},
 		Select: []contract.Field{{Key: "c", Value: filepath.Join(other, "bin")}}}); err != nil {
 		t.Fatal(err)
 	}
@@ -407,7 +408,7 @@ func TestReleaseCandidateKeepsWhatMayBeInUse(t *testing.T) {
 	if _, why := record.ReleaseCandidate(path, 1, environment, nil); !strings.HasPrefix(why, "kept: whether the owned pointer") {
 		t.Fatalf("an unread pointer: %s", why)
 	}
-	lock, err := record.Lock(path, 0)
+	lock, err := record.Lock(context.Background(), path, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -451,14 +452,14 @@ func TestUnderIsContainmentNotAStringPrefix(t *testing.T) {
 func TestOutgoingIsReplacedWholeAndRemovedWhenNothingWasThere(t *testing.T) {
 	path := filepath.Join(t.TempDir(), record.Name)
 	outgoing := record.Object{{Key: "codex-session-relay", Value: record.Object{{Key: "selected", Value: "/old/bin"}}}}
-	if _, err := record.Update(path, 1, record.Delta{Outgoing: &record.Outgoing{Value: outgoing}}); err != nil {
+	if _, err := record.Update(context.Background(), path, 1, record.Delta{Outgoing: &record.Outgoing{Value: outgoing}}); err != nil {
 		t.Fatal(err)
 	}
 	read := record.Load(path, 1)
 	if got := record.Get(read.Value.(record.Object), "outgoing"); golden.Canon(got) != golden.Canon(outgoing) {
 		t.Fatalf("outgoing: %s", golden.Canon(got))
 	}
-	if _, err := record.Update(path, 1, record.Delta{Outgoing: &record.Outgoing{}}); err != nil {
+	if _, err := record.Update(context.Background(), path, 1, record.Delta{Outgoing: &record.Outgoing{}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, has := record.Lookup(record.Load(path, 1).Value.(record.Object), "outgoing"); has {

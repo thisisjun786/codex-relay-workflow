@@ -606,7 +606,7 @@ func observeOmission(ctx context.Context, selection store.StateSelection, root, 
 	if err = omissionConfinedFacts(directory, rootPath, session, turn); err != nil {
 		return fail(err)
 	}
-	marker, unreadable := ReadAssignment(directory)
+	marker, unreadable := ReadAssignment(ctx, directory)
 	if len(unreadable) > 0 {
 		return omissionUnmeasured(result, "marker_unreadable")
 	}
@@ -681,7 +681,7 @@ func observeOmission(ctx context.Context, selection store.StateSelection, root, 
 	}
 	result = result.Set("turnAdmission", admission)
 	result = result.Set("managedRequests", c.Managed)
-	dispositionRaw, readable := ReadDisposition(directory, session, turn)
+	dispositionRaw, readable := ReadDisposition(ctx, directory, session, turn)
 	if !readable {
 		return omissionUnmeasured(result, "disposition_unreadable_or_malformed")
 	}

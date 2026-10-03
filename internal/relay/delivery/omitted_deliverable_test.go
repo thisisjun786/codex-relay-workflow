@@ -195,7 +195,7 @@ func stageDeliverable(t *testing.T, c deliverableCase) ([]store.ManifestEntry, s
 	}
 	artifact := filepath.Join(work, "deliver.txt")
 	writeTestFile(t, artifact, "the delivered bytes")
-	entries, err := store.BuildManifest([]string{artifact}, []string{work})
+	entries, err := store.BuildManifest(context.Background(), []string{artifact}, []string{work})
 	if err != nil {
 		t.Fatal(err)
 	}

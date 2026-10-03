@@ -1909,7 +1909,7 @@ entries, an outgoing naming it) is dropped first, unless a runtime was installed
 again. Remove, the reclaim and the already-installed reading take the directory's `<env>.crw-lock`
 first and the promotion lock after it, the order of decision 33, and the host record's `.crw-lock`
 inside both. Every command's lock waits before its first write honour its context
-(`record.LockContext`, `record.PromoteContext`, `record.UpdateContext`): the directory, promotion
+(`record.Lock`, `record.Promote` and `record.Update`, each given the command's context): the directory, promotion
 and ownership locks, the settings and bridge-record locks of `hook`, `register-mcp` and a
 promotion's or rollback's settings transition, a build's first record writes and the commit of a
 selection (which undoes the settings transition when it is interrupted); so a command interrupted
@@ -1917,7 +1917,8 @@ selection (which undoes the settings transition when it is interrupted); so a co
 (`register-mcp` and `hook` with the outcome `interrupted`). A wait inside a sequence already
 under way - a restore after a failed promotion or rollback, the entry drop after a directory was
 set aside, the claim settled after a promotion, the snapshot that follows it - is bounded and runs
-to completion whatever the context says, because stopping there would leave the host
+to completion whatever the context says (the same three functions, called with a context
+nothing cancels), because stopping there would leave the host
 half-written. The process table is read so that
 nothing unread passes for absent. A pid whose entries are gone (ENOENT, ESRCH: exited, a zombie, a
 kernel thread) is skipped. The kernel shows a process's exe only with ptrace access, which it

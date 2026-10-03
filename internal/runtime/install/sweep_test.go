@@ -126,7 +126,7 @@ func TestRemoveTakesTheDirectoryLockBeforeThePromotionLock(t *testing.T) {
 	old := runtimeDir(h, "0.9.0", first, t)
 	h.mustInstall(t, "install", first)
 	h.mustInstall(t, "update", archive(t, "0.9.1", ""))
-	held, err := record.Lock(old, 0)
+	held, err := record.Lock(context.Background(), old, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
