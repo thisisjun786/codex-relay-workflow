@@ -1,0 +1,73 @@
+[
+  {
+    "id": "jaw-skills-array",
+    "oracle": [
+      {
+        "id": "0",
+        "source": "jaw",
+        "name": "one",
+        "description": "",
+        "rawUrl": "https://raw.githubusercontent.com/lidge-jun/cli-jaw-skills/main/0/SKILL.md"
+      }
+    ],
+    "classification": "intentionally-changed",
+    "reason": "Assignment requires strict untrusted catalog shape and path/name safety"
+  },
+  {
+    "id": "jaw-unsafe-entry",
+    "oracle": [
+      {
+        "id": "one",
+        "source": "jaw",
+        "name": "one",
+        "description": "",
+        "rawUrl": "https://raw.githubusercontent.com/lidge-jun/cli-jaw-skills/main/../outside/SKILL.md"
+      }
+    ],
+    "classification": "intentionally-changed",
+    "reason": "Assignment requires strict untrusted catalog shape and path/name safety"
+  },
+  {
+    "id": "jaw-unsafe-id",
+    "oracle": [
+      {
+        "id": "$(echo evil)",
+        "source": "jaw",
+        "name": "$(echo evil)",
+        "description": "",
+        "rawUrl": "https://raw.githubusercontent.com/lidge-jun/cli-jaw-skills/main/$(echo evil)/SKILL.md"
+      }
+    ],
+    "classification": "intentionally-changed",
+    "reason": "Assignment requires strict untrusted catalog shape and path/name safety"
+  },
+  {
+    "id": "clawhub-summary-number",
+    "oracle": [
+      {
+        "id": "one",
+        "source": "clawhub",
+        "name": "one",
+        "description": 42,
+        "rawUrl": "https://clawhub.ai/api/v1/packages/one/file?path=SKILL.md"
+      }
+    ],
+    "classification": "intentionally-changed",
+    "reason": "Assignment requires strict untrusted catalog shape and path/name safety"
+  },
+  {
+    "id": "hermes-unsafe-path",
+    "oracle": [
+      {
+        "id": "one",
+        "source": "hermes",
+        "name": "one",
+        "description": "Description",
+        "category": "..",
+        "rawUrl": "https://raw.githubusercontent.com/NousResearch/hermes-agent/main/skills/../outside/SKILL.md"
+      }
+    ],
+    "classification": "intentionally-changed",
+    "reason": "Assignment requires strict untrusted catalog shape and path/name safety"
+  }
+]
