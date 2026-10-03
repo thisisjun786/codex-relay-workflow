@@ -404,7 +404,9 @@ func SettingsFreeRefusalCode(findings []contract.OrderedObject) string {
 		return ""
 	}
 	code := findingText(findings[0], "code")
-	if code == SettingsNotPreserved {
+	// An MCP finding is about overrides the resume did transmit, so it is no difference nothing could
+	// have made agree.
+	if code == SettingsNotPreserved && findingText(findings[0], "field") != "mcpServers" {
 		return SettingsDifferAfterLoad
 	}
 	return code
