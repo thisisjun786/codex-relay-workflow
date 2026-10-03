@@ -620,6 +620,8 @@ only a pending proposal; where the issue cannot be written, the parent reports t
 nothing. The Launch packet that [crw-run](../../crw-run/SKILL.md#prepare-and-dispatch) keeps for an
 issue with no recorded pair is the form of an issue this rule has not reached yet, and it is no default
 pair for an issue without a line.
+The line may also carry the issue's classification, its bundle and the source of the choice, in the form
+given under [The extended line](#the-extended-line); a line without them stays valid.
 
 **The packet.** The first packet of a SOL issue takes the form of the "SOL packet" section of
 [task-packet.md](../../crw-run/references/task-packet.md); a Sonnet issue's takes the Launch packet.
@@ -668,8 +670,174 @@ replacement moves the pair, which is the one change of settings
 [Completion follow-up in an existing execution workflow](#completion-follow-up-in-an-existing-execution-workflow)
 allows.
 
-Choosing by the quota left on each side, instead of by this table, is future work and is not part of
-this rule.
+##### Classify the issue by its kind of work
+
+The shape table names shapes; the classification names the features that make an issue one shape or
+another, so that two planners reading one issue write the same tags and a later review can say which tag
+was wrong. Every tag is a feature visible when the issue is planned: it needs no result, no run and no
+child. The tags and their values are fixed English words, written the same in an issue of any language, so
+a reader or a check can match them. No rule here names a programming language, a product or a repository;
+examples stand only in the last column.
+
+| Tag | Value | Read as | Example |
+| --- | --- | --- | --- |
+| `answer` | `reference` | something outside the issue decides what is right: an original, a specification, a golden output, a contract, a naming convention, an existing pattern, or a procedure whose order is the point | moving a module to another language and checking it against the original's outputs; an installation runbook |
+| `answer` | `found` | nothing outside the issue decides; the child designs the answer or has to find it | a retry state machine; a failure of unknown cause |
+| `answer` | `mixed` | one part has an outside reference and another part has none, and the [boundary rules](issue-boundaries.md) do not split them | a port that also replaces its slowest part with a new mechanism |
+| `output` | `code` | a change to code or its tests; documents that only accompany it do not change this | a new subcommand with its tests |
+| `output` | `writing` | documents, skills, prompts, reports | rewriting a skill's procedure |
+| `output` | `screen` | screens, layouts, images, design | a settings page judged by eye |
+| `output` | `data` | transformation or reconciliation of recorded data | matching two ledgers row by row |
+| `output` | `investigation` | opens no pull request: a finding, a measurement or an observed state, including an operational check | a read-only audit of a record |
+| `procedure` | `goal` | one goal that a measurable check ends | cutting a suite's wall time to a target |
+| `procedure` | `steps` | long procedural instructions the child follows in order or exactly | a migration with a fixed order of operations |
+| `procedure` | `open` | exploratory: the next step depends on what the last one showed | finding why a failure appears only under load |
+| `reach` | `one`, `several` | the number of modules the work touches | a fix inside one module; a rename across a command's documentation, specs and tests |
+| `check` | `machine`, `read`, `look` | how the result is verified: a machine check (tests, a build, a measurement, a comparison), reading and judging, or looking at screens or images | a test suite; a read-through against a checklist; a look at rendered pages |
+| `history` | `fresh`, `retried` | `retried` when an earlier fix of this same problem has already failed twice or more | a flake that two fixes did not remove |
+| `core` | `plain`, `security` | `security` when the core of the work is a security judgment: deletion protection, a permission or sandbox decision, secret detection | a rule that decides what a sandbox may be asked to do |
+
+Write the seven tags when the issue is written or refined, from what the issue states; where its text does
+not settle a tag, amend the issue first and do not guess. Each tag takes one value: an issue that has both
+kinds of answer is `mixed`, and every other tag takes the value of the work that ends the issue. `reach`
+and `check` are recorded although no row below reads them yet, because a later change to the table can
+cite only the features that were written down when the issue was planned.
+
+##### Bundles
+
+The tags map to three bundles: **Sonnet fixed** (the issue runs on the Sonnet pair), **SOL fixed** (the SOL
+pair) and **flexible** (either works, and the count rule below picks). Read the rows in order; the first
+that applies decides.
+
+| Order | When the tags read | Bundle | Axis on the line | It restates |
+| --- | --- | --- | --- | --- |
+| 1 | `core=security` | Sonnet fixed | `reference exists` for `answer=reference`, `answer must be found` for `found` or `mixed` | the security rule |
+| 2 | `history=retried` | SOL fixed | `answer must be found` | the failure history: a fix that failed twice is an answer still to be found |
+| 3 | `answer=reference` | Sonnet fixed | `reference exists` | the shapes of the first three rows wherever something outside the issue decides |
+| 4 | `answer=found`, `output=code`, `procedure=goal` or `open` | SOL fixed | `answer must be found` | the shapes of a new mechanism, a measured result, an unknown cause and a new structure |
+| 5 | anything else: `answer=mixed`; `answer=found` with an `output` other than `code`; `answer=found`, `output=code`, `procedure=steps` | flexible | `half-half` | the ambiguous case |
+
+Row 5 is an extension that reads the ambiguous case of the half-and-half rule. The shape table's third row
+sends writing, screens, operations and investigations to Sonnet by shape, while the axis sends an answer
+that nobody outside the issue decides to SOL; for such an issue the two disagree. The row's text is
+unchanged: its examples have an answer from outside, which row 3 sends to Sonnet. Row 5 also holds a
+disagreement one level down: an unknown-cause failure that comes with a fixed order of investigation steps
+is SOL by its answer and Sonnet by its long procedure, while the SOL shapes name only `goal` and `open`.
+The 180 combinations of `answer`, `output`, `procedure`, `history` and `core` (3 x 5 x 3 x 2 x 2) are
+each caught by exactly one row.
+
+**A flexible issue's pair.** The aim is roughly half of a project's issues on each pair, and the flexible
+bundle is the part that can move toward it. The half-and-half rule names the counts; for a flexible issue
+apply them in this order. First, once one pair holds more than 60 percent of the project's lines, the other pair, whatever
+the working children say. Otherwise the pair with fewer working children in this parent. Where those tie,
+or no child is working, the pair that fewer of the project's lines name. Where that ties too, either pair is
+correct: the parent picks one and records the pick. Working children 1:1 with lines 6:5 are a tie on the
+children and go to the pair with five lines. A fixed bundle is never moved to balance the count; only a
+flexible issue moves.
+
+**A pair of the other family.** A pair of the other family than a fixed bundle's stands only with its reason
+on the line: the user's choice, or the move to Sonnet under [When SOL fails](#child-pair-by-issue-type)
+with its cause and date. Under row 1 the Sonnet pair is the security rule's own and needs no further reason.
+
+##### The extended line
+
+The line may carry the classification, the bundle and the source of the choice after its reason:
+
+    Child pair: Sonnet (reference exists) - rewriting a skill's procedure [class: answer=reference, output=writing, procedure=steps, reach=one, check=read, history=fresh, core=plain; bundle: Sonnet fixed; source: table]
+
+A line in the form given under "The line" stays valid. It is a prefix of the extended form and states the
+pair, the axis and the reason without tags, bundle or source:
+
+    Child pair: SOL (answer must be found) - a new retry state machine
+
+The bracketed group is the last bracketed segment of the line and starts with `[class:`. It holds the seven
+tags in the order of the table above, then `bundle:` (`Sonnet fixed`, `SOL fixed` or `flexible`), then
+`source:`, the step that decided the pair the line names:
+
+- `user choice`: the user named the pair for this scope, and the reason says so (precedence above).
+- `table`: this section's rules decided: the family of a fixed bundle, the count rule for a flexible issue,
+  or the move to Sonnet under When SOL fails. After that move the tags and the bundle stay as classified,
+  the source reads `table` and the reason names the cause and the date. A flexible issue whose source is
+  `table` was chosen by the count, unless its reason names such a move.
+- `quota`: reserved for [the place for a quota rule](#the-place-for-a-quota-rule), and not written before
+  that rule exists.
+
+The axis is the one the Bundles row gives. A Korean issue body may keep the label `자식 pair`; the key
+words after it stay as written here.
+
+The line sits on a line of its own after a blank line, outside any list, in a section the size check does
+not read. The check keeps a heading that is deeper than a section it already reads inside that section, so
+the line gets a heading of the same level as the last heading the check reads, or a shallower one, whose
+words the check does not know: `## Child pair` after `## Verification` closes that section. The report then
+lists the heading under `unread_headings`, a note that changes no count. With the line there, the check
+returns the same decision, counts, edit regions and verification kinds for the body with the extended line,
+with the line in the older form and without any line. The tag, bundle and source words match none of the
+check's word lists; the reason, being free text, can, so a line left in a section the check reads, or at the
+end of one of its lists, is read as that text and can change the counts.
+
+##### The record at release
+
+When a child is released, the dispatching parent records the pair choice in its coordination record, one row
+per release, beside the launch record
+([Record the pair choice at release](../../crw-run/SKILL.md#record-the-pair-choice-at-release) gives the
+steps).
+
+**Where, and why there.** The relay's release request has fixed fields and refuses one it does not know, and
+its settings record holds a model and an effort and accepts any pair of the role, so it cannot say why a pair
+was chosen; a field there would be a change to the relay, which this rule does not make. The coordination
+record already holds each issue's launch facts (request id, task id, settings), outlasts the child, and is
+read by the management session and by Jun across projects. The issue's line states the choice made when the
+plan was written; the row states what was acted on at release, and the two can differ: an older-form line
+classified only at release, a user's choice made after planning, a move to Sonnet under When SOL fails.
+
+**What the row holds.** The issue; the line as read, quoted, which restores the plan-time statement after
+the issue or the rules change; the seven tags; the bundle; the pair as a family, with its model and effort
+left in the launch record's settings entry, read from the creation receipt; the source at release, one of
+`user choice`, `issue body`, `table` and `quota`, where `issue body` means a line already stated the pair
+and the parent followed it; the mark `derived at release` when the line carried no tags; for a flexible
+issue whose pair the parent itself chose, the counts it used; for a move under When SOL fails, its cause and
+date; the version of the plugin manifest the rules were read from, which says which revision of these rules
+classified the issue; the request id and the date. A later change of the pair (a user's choice, a move under
+When SOL fails, a replacement) adds a row and overwrites none.
+
+**A line without tags.** The parent classifies the issue by the tags above, takes the bundle from the Bundles
+rows, and marks the row `derived at release`. Derived tags are not a selection: the pair stays the line's
+(precedence above), the line is not rewritten, and where the family of the derived bundle differs from the
+pair the row says so. For an issue with no line at all the rule under "The line" holds: the parent writes the
+line, in the extended form, and reads it back first.
+
+##### Review the classification and change the table
+
+**Result metrics never change the table.** Quality, speed, cost, review rounds, failed checks, quota used and
+which model did better are not inputs to a tag, a Bundles row or a shape row, and no counter, score or
+automation edits any of them. Judging a result is qualitative, and a table steered by results could tip all
+work to one model. The table is refined only by what was visible when the issue was planned, and a
+classification is judged against that: a success or a failure after release never reclassifies an issue.
+
+**The review.** A review asks one question of each released issue: was the classification right? It reads the
+issue as planned, its line, its release row, and what the delivered change and its packet show about the kind
+of work: the modules the change touched, the procedure the packet had to spell out, the form of verification
+the criteria used. Examples of a wrong tag: `procedure=goal`, but the packet needed long procedural
+instructions; `reach=one`, but the change touched several modules; `answer=reference`, but no reference
+existed; `check=machine`, but only a reading could judge the criteria. A user's choice and a move under When
+SOL fails are not classification errors. The output lists the issue, the tag that was wrong, the value that
+held and the evidence, a pull request or a packet line, and says nothing about which model did better. The
+parent runs it for its own project at close, from the release rows; the management session runs it across
+projects when a change is considered; Jun can ask for it.
+
+**Changing the table.** A change to a tag, a Bundles row or a shape row is a decision of the management
+session or Jun. The decision is recorded with its evidence: the issues whose classification was wrong, the
+tag that was wrong in each and the feature that shows it, and what the change would have given each of
+them. The change is then an edit of this section through an ordinary pull request. It applies to lines
+written after it, and the lines and release rows already written keep their values. No number of wrong
+cases triggers a change by itself; the cases are evidence to read.
+
+##### The place for a quota rule
+
+Choosing a flexible issue's pair by the quota left on each side, instead of by the count above, is future
+work and is not part of this rule. When it exists it applies to the flexible bundle only: it yields a pair
+and the source `quota`, written onto the line and into the release row by the same steps, and a fixed
+bundle stays where its tags put it. Nothing in this section or in `crw-run` reads quota.
 
 ### The message both relations are read by
 
