@@ -12,6 +12,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -58,8 +59,8 @@ type acceptanceStand struct {
 
 // refreshDigest is the identity of a refresh: its refresh_id is the digest of everything it records but the time and the author, so a row written by hand under another content is not read as one.
 func refreshDigest(acceptance, relationship string, generation int64, event, revision, head, baseRepository, baseRef, baseTip, proofJSON, resolvedJSON string) string {
-	return "dbr-" + shaOf([]byte(dag.Canonical(map[string]any{"schema": SchemaBaseRefresh, "acceptance_id": acceptance, "relationship_id": relationship, "execution_generation": generation,
-		"event_id": event, "revision_hash": revision, "head_sha": head, "base_repository": baseRepository, "base_ref": baseRef, "base_tip_sha": baseTip, "proof": proofJSON, "resolved_paths": resolvedJSON})))[:32]
+	return registry.CoordinationID("dbr", dag.Canonical(map[string]any{"schema": SchemaBaseRefresh, "acceptance_id": acceptance, "relationship_id": relationship, "execution_generation": generation,
+		"event_id": event, "revision_hash": revision, "head_sha": head, "base_repository": baseRepository, "base_ref": baseRef, "base_tip_sha": baseTip, "proof": proofJSON, "resolved_paths": resolvedJSON}))
 }
 
 // ownStand is what an acceptance stands on before any base refresh was recorded for it: its own relationship, generation, event, revision and head.

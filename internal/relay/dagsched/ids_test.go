@@ -26,6 +26,26 @@ func TestExistingIDsAndDigestsKeepTheirBytes(t *testing.T) {
 	}
 }
 
+// The ids the transactions write, one constructor each, pinned against pre-images hashed outside this code (sha256 of the fields joined by "|", or of their canonical text for the
+// two that hash an object). The head, tip and base values differ from each other, so a call that passes them in another order is not the id pinned here.
+func TestScheduledIDsKeepTheirBytes(t *testing.T) {
+	a40, b40, c40, d40 := strings.Repeat("a", 40), strings.Repeat("b", 40), strings.Repeat("c", 40), strings.Repeat("d", 40)
+	rows := []struct{ name, got, want string }{
+		{"merge check id", mergeCheckID("acc-1", 2), "dmc-d1c106c2a1aa2e0594c66f3d4fb28703"},
+		{"re-validation id", revalidationID("acc-1", 3), "drv-18a4aac08500294bbe64fe621bb243e5"},
+		{"integration observation id", integrationObservationID("acc-1", "owner/repo", "dev", 4), "dio-fa8298d1efa1d72d7f0264bbf98a9b13"},
+		{"pair observation id", pairObservationID("plan-1", "node-a", "node-b", a40, b40, c40), "dco-4ef6c4be3d2b3c0127302e09de466322"},
+		{"tip observation id", tipObservationID("plan-1", "node-a", a40, d40, c40), "dto-90380824165464e762fecac1232d603d"},
+		{"decision id", decisionID("plan-1", "merge holds", dig("subject"), "approved", "user", "u-1", 3), "dec-b26dc5de3179df7ba05dd812dfef27df"},
+		{"summary id", summaryID("plan-1", "doc-1", 5, dig("subject"), 2), "sum-8493e879c1a6f96912dd7abeb421ad9b"},
+	}
+	for _, row := range rows {
+		if row.got != row.want {
+			t.Errorf("%s = %s, want %s", row.name, row.got, row.want)
+		}
+	}
+}
+
 // The evidence body is the text a merge check stores and its digest the acceptance's evidence digest: a check of another head is left out, the checks and the required names
 // are sorted, and an absent provider or stamp is absent from the row.
 func TestEvidenceBodyKeepsItsBytes(t *testing.T) {

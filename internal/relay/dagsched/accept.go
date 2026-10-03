@@ -351,7 +351,7 @@ func (s *Scheduler) accept(ctx context.Context, plan, node, actor string, in Acc
 			}
 			seq := last.Int64 + 1
 			if _, err := tx.ExecContext(txCtx, "INSERT INTO dag_acceptance_revalidations (revalidation_id, acceptance_id, criteria_set_digest, event_id, verdict_turn_id, reval_seq, revalidated_by, revalidated_at) VALUES (?,?,?,?,?,?,?,?)",
-				"drv-"+shaOf([]byte(existing + "|" + itoa64(seq)))[:32], existing, head.SetDigest, head.EventID, head.VerdictTurn, seq, actor, s.now()); err != nil {
+				revalidationID(existing, seq), existing, head.SetDigest, head.EventID, head.VerdictTurn, seq, actor, s.now()); err != nil {
 				return err
 			}
 			out.Revalidated = true

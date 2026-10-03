@@ -167,7 +167,7 @@ func (s *Scheduler) EnqueueSummary(ctx context.Context, plan, actor, document st
 		entry := SummaryEntry{PlanID: plan, ProjectKey: progress.ProjectKey, Document: document, PlanRevision: progress.Reading.PlanRevision, Seq: newest.Seq + 1, SubjectDigest: progress.Digest,
 			StateDigest: progress.Reading.StateDigest, Summary: SummaryText(progress), State: SummaryPending, EnqueuedBy: actor, CreatedAt: now, UpdatedAt: now}
 		entry.SummarySHA256 = sha(entry.Summary)
-		entry.SummaryID = "sum-" + shaOf([]byte(dag.Canonical(map[string]any{"plan_id": plan, "document": document, "plan_revision": entry.PlanRevision, "subject_digest": entry.SubjectDigest, "seq": entry.Seq})))[:32]
+		entry.SummaryID = summaryID(plan, document, entry.PlanRevision, entry.SubjectDigest, entry.Seq)
 		rows, err := q.QueryContext(txCtx, "SELECT summary_id FROM dag_summary_outbox WHERE plan_id = ? AND document = ? AND state IN ('pending','claimed','failed') ORDER BY seq", plan, document)
 		if err != nil {
 			return err

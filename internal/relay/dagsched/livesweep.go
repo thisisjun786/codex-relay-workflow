@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
-	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
@@ -357,12 +356,12 @@ func (s *Scheduler) recordMeasured(ctx context.Context, tx store.Querier, plan, 
 	var nodes []string
 	switch m.Kind {
 	case MemberPair:
-		id = "dco-" + shaOf([]byte(strings.Join([]string{plan, m.LeftNode, m.RightNode, m.LeftHead, m.RightHead, m.base}, "|")))[:32]
+		id = pairObservationID(plan, m.LeftNode, m.RightNode, m.LeftHead, m.RightHead, m.base)
 		find = "SELECT observation_id, conflict_count FROM dag_conflict_observations WHERE plan_id = ? AND left_node_id = ? AND right_node_id = ? AND left_head = ? AND right_head = ? AND base_sha = ?"
 		findArgs = []any{plan, m.LeftNode, m.RightNode, m.LeftHead, m.RightHead, m.base}
 		nodes = []string{m.LeftNode, m.RightNode}
 	default:
-		id = "dto-" + shaOf([]byte(strings.Join([]string{plan, m.LeftNode, m.LeftHead, m.RightHead, m.base}, "|")))[:32]
+		id = tipObservationID(plan, m.LeftNode, m.LeftHead, m.RightHead, m.base)
 		find = "SELECT observation_id, conflict_count FROM dag_tip_conflict_observations WHERE plan_id = ? AND node_id = ? AND head = ? AND tip_sha = ? AND base_sha = ?"
 		findArgs = []any{plan, m.LeftNode, m.LeftHead, m.RightHead, m.base}
 		nodes = []string{m.LeftNode}

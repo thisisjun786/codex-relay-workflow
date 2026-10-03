@@ -2,16 +2,13 @@ package dagsched
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"fmt"
 	"sort"
-	"strconv"
-	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -156,8 +153,7 @@ func (s *Scheduler) ObserveIntegration(ctx context.Context, plan, node, actor st
 				}
 			}
 			obs.Seq = lastSeq.Int64 + 1
-			sum := sha256.Sum256([]byte(acc.AcceptanceID + "|" + r.target.Repository + "|" + r.target.BaseRef + "|" + strconv.FormatInt(obs.Seq, 10)))
-			obs.ObservationID = "dio-" + hex.EncodeToString(sum[:])[:32]
+			obs.ObservationID = integrationObservationID(acc.AcceptanceID, r.target.Repository, r.target.BaseRef, obs.Seq)
 			// a merge turn that landed this head on this branch carries the observation
 			var turn sql.NullString
 			if err := tx.QueryRowContext(txCtx, "SELECT turn_id FROM merge_turns WHERE repository = ? AND base_ref = ? AND candidate_head = ? AND state = 'landed' ORDER BY turn_id LIMIT 1",
@@ -258,7 +254,7 @@ func landingRef(observations []string) string {
 	}
 	sorted := append([]string(nil), observations...)
 	sort.Strings(sorted)
-	return "dio-set-" + shaOf([]byte(strings.Join(sorted, "|")))[:32]
+	return registry.CoordinationID("dio-set", sorted...)
 }
 
 // ExecutionIntegrated says, for the relationship whose merged mark is (event, generation, revision), whether it executed a plan node and whether every node it executed has landed (CRW-429: the cleanup
