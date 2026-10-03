@@ -69,6 +69,7 @@
      "observation",
      "processEnding",
      "recordVersion",
+     "runtime",
      "sessionId",
      "signal",
      "stdoutReading",
@@ -335,6 +336,18 @@
      0
     ],
     "value": "^[0-9]{8}$"
+   },
+   {
+    "kind": "set_eq",
+    "path": [
+     "rows",
+     0,
+     "runtime"
+    ],
+    "value": [
+     "build",
+     "executable"
+    ]
    }
   ],
   "observe": [

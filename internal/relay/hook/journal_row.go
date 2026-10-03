@@ -24,7 +24,11 @@ var prescanRowFields = []string{"recordVersion", "event", "at", "adapterOutcome"
 // Existing readers must retain their other validation; this is not a general
 // relaxation for rows whose acceptance happens to be null.
 func NativePrescanUnreachable(row Object) bool {
-	if len(row) != len(prescanRowFields) {
+	fields := len(prescanRowFields)
+	if _, present := row.Lookup("runtime"); present {
+		fields++
+	}
+	if len(row) != fields || !RuntimeRecorded(row) {
 		return false
 	}
 	for _, name := range prescanRowFields {
@@ -88,6 +92,32 @@ func NativePrescanUnreachable(row Object) bool {
 	spelled := strings.TrimPrefix(detail, prefix)
 	socket, ok := pythonQuotedPath(spelled)
 	return ok && journalAbsolutePath(socket) && filepath.Base(socket) == "control.sock" && pyvalue.StrRepr(socket) == spelled
+}
+
+// RuntimeRecorded permits legacy rows without runtime and validates new attribution.
+// This is shape evidence; a stored build or path is not authenticated or executed.
+func RuntimeRecorded(row Object) bool {
+	value, present := row.Lookup("runtime")
+	if !present {
+		return true
+	}
+	runtime, ok := value.(Object)
+	if !ok || len(runtime) != 2 {
+		return false
+	}
+	build, ok := runtime.Get("build").(string)
+	if !ok || build == "" {
+		return false
+	}
+	path, present := runtime.Lookup("executable")
+	if !present {
+		return false
+	}
+	if path == nil {
+		return true
+	}
+	executable, ok := path.(string)
+	return ok && journalAbsolutePath(executable)
 }
 
 // Count is completion._is_count: an integer of any size, never a bool, that is non-negative
