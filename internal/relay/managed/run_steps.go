@@ -407,7 +407,7 @@ func (r *startRun) sendBusiness(ctx context.Context) error {
 		return err
 	}
 	var err error
-	r.sent, err = r.m.Adapter.SendMessage(ctx, SendRequest{RequestID: r.identity.DispatchRequestID, ThreadID: r.task, Message: r.m.packet(r.identity, r.row, r.req, r.assignment), Settings: r.childSettings, GuardRPCRequests: 10, BeforeStart: r.businessGuard})
+	r.sent, err = r.m.Adapter.SendMessage(ctx, SendRequest{RequestID: r.identity.DispatchRequestID, ThreadID: r.task, Message: r.m.packet(r.identity, r.row, r.req, r.assignment), Settings: settingsWithRole(r.childSettings, "child"), GuardRPCRequests: 10, BeforeStart: r.businessGuard})
 	return err
 }
 

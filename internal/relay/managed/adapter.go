@@ -16,9 +16,9 @@ type Adapter interface {
 }
 
 type CreateThreadRequest struct {
-	RequestID, CWD, Prompt, Title, Sandbox, Model, ReasoningEffort, Role string
-	RuntimeWorkspaceRoots                                                []string
-	ExpectedSandboxPolicy                                                map[string]any
+	RequestID, CWD, Prompt, Title, Sandbox, Model, ReasoningEffort, Role, MCPProfile string
+	RuntimeWorkspaceRoots                                                            []string
+	ExpectedSandboxPolicy                                                            map[string]any
 }
 
 type SendRequest struct {

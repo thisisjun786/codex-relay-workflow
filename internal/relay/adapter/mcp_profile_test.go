@@ -371,7 +371,7 @@ func TestManagedStartCreatesAndResumesTheChildUnderTheStatedProfile(t *testing.T
 	}
 	c.withStore(func(s *store.Store) {
 		var recorded string
-		if err := s.DB.QueryRow("SELECT settings FROM authorized_settings WHERE task_id = 'managed-child'").Scan(&recorded); err != nil || !strings.Contains(recorded, `"mcpProfile":"ui-qa"`) {
+		if err := s.DB.QueryRow("SELECT settings FROM authorized_settings WHERE task_id = 'managed-child'").Scan(&recorded); err != nil || !strings.Contains(recorded, `"mcpProfile": "ui-qa"`) {
 			t.Fatalf("the child's record %q (%v) does not state its profile", recorded, err)
 		}
 	})

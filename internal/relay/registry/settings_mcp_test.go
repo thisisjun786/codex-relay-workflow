@@ -37,7 +37,7 @@ func TestResumeParamsSwitchOffWhatTheRowsMCPExpectationSays(t *testing.T) {
 	config, _ := row.ResumeParams("t-1").Lookup("config")
 	servers, _ := config.(contract.OrderedObject).Lookup("mcp_servers")
 	plugins, _ := config.(contract.OrderedObject).Lookup("plugins")
-	if canonical(servers) != `{"gemini_notebook":{"enabled":false},"oracle":{"enabled":false}}` || canonical(plugins) != `{"cua@openai-bundled":{"enabled":false}}` {
+	if canonical(servers) != `{"gemini_notebook": {"enabled": false}, "oracle": {"enabled": false}}` || canonical(plugins) != `{"cua@openai-bundled": {"enabled": false}}` {
 		t.Fatalf("mcp_servers=%s plugins=%s", canonical(servers), canonical(plugins))
 	}
 	if effort, _ := config.(contract.OrderedObject).Lookup("model_reasoning_effort"); effort != "xhigh" {
