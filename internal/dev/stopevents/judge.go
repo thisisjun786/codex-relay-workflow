@@ -184,6 +184,21 @@ func (r *reading) noteExcluded(one row, reason string) {
 	for _, field := range []string{"acceptance", "eventKey", "acceptedAs", "adapterOutcome", "guardInvoked", "guardDecision", "held", "eventIdentity"} {
 		evidence[field] = body.Get(field)
 	}
+	if body.Get("adapterOutcome") == "stdin_unreadable" {
+		// Historical adapter.go details identify the branch, not the discarded read error.
+		// Elapsed time cannot establish a timeout, a host restart or a session identity.
+		detail := body.Get("detail").(string) // rowShape already requires a string here.
+		kind := "detail_unrecognized"
+		switch {
+		case detail == "the Stop payload could not be read from stdin":
+			kind = "read_failed_cause_unrecorded"
+		case strings.HasPrefix(detail, "the Stop payload is not UTF-8: "):
+			kind = "invalid_utf8"
+		}
+		evidence["stdinRead"] = map[string]any{
+			"case": kind, "detail": detail, "elapsedMs": body.Get("elapsedMs"),
+		}
+	}
 	r.excludedInvocations = append(r.excludedInvocations, map[string]any{
 		"row": shown(one.where), "at": body.Get("at"),
 		"sessionId": body.Get("sessionId"), "turnId": body.Get("turnId"),

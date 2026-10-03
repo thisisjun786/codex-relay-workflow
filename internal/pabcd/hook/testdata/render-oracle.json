@@ -1,0 +1,261 @@
+{
+  "oracle": "v0.2.40 3c1459ac",
+  "normalization": [
+    {
+      "input": " const answer = \"hello\" + 42; ",
+      "want": "I I = S + N;"
+    },
+    {
+      "input": "console.log(x)",
+      "want": "I.I(I)"
+    },
+    {
+      "input": "logger.info(y)",
+      "want": "I.I(I)"
+    },
+    {
+      "input": "'a\\'b' 1.2e3 $value",
+      "want": "S N I"
+    },
+    {
+      "input": "\"unterminated",
+      "want": "\"I"
+    },
+    {
+      "input": "let x﻿=1",
+      "want": "I I =N"
+    },
+    {
+      "input": "\"a b\"",
+      "want": "\"I I\""
+    },
+    {
+      "input": "`a\\`b`",
+      "want": "S"
+    },
+    {
+      "input": "\"a\\\"",
+      "want": "S"
+    },
+    {
+      "input": "'a\\'",
+      "want": "S"
+    },
+    {
+      "input": "`a\\`",
+      "want": "S"
+    }
+  ],
+  "patches": [
+    {
+      "name": "same",
+      "input": "*** Begin Patch\n*** Update File: a.ts\n-console.log(x)\n+logger.info(x)\n*** Update File: b.ts\n-console.log(y)\n+logger.info(y)\n*** End Patch",
+      "want": [
+        {
+          "file": "a.ts",
+          "digestParts": [
+            "fcfe9608",
+            "b90db403",
+            "65322be9",
+            "67c54d42",
+            "435627bf",
+            "63de9aba",
+            "2d18e1de",
+            "f99c4032"
+          ]
+        },
+        {
+          "file": "b.ts",
+          "digestParts": [
+            "fcfe9608",
+            "b90db403",
+            "65322be9",
+            "67c54d42",
+            "435627bf",
+            "63de9aba",
+            "2d18e1de",
+            "f99c4032"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "different",
+      "input": "*** Update File: a.ts\n-const x = 1\n+const x: number = 1",
+      "want": [
+        {
+          "file": "a.ts",
+          "digestParts": [
+            "02bd69cc",
+            "68dc8230",
+            "d625d70f",
+            "47cf45da",
+            "cc1fd10c",
+            "9285c514",
+            "0ea076f3",
+            "31ac4486"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "skip",
+      "input": "*** Delete File: gone.ts\n*** Update File: context.ts\n context\n*** End Patch",
+      "want": []
+    },
+    {
+      "name": "headers",
+      "input": "*** Update File: a.ts\n--- a.ts\n+++ a.ts\n-old()\n+updated()\n*** End Patch",
+      "want": [
+        {
+          "file": "a.ts",
+          "digestParts": [
+            "d8b58de3",
+            "a0bf46ff",
+            "a06fb2c3",
+            "d005bb6d",
+            "ed0bf29b",
+            "13b033da",
+            "baa3a03d",
+            "287f9aea"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "crlf",
+      "input": "*** Add File: new.tsx\r\n+const x = \"hello\";\r\n*** Move to: other.tsx\r\n*** End Patch\r\n",
+      "want": [
+        {
+          "file": "new.tsx",
+          "digestParts": [
+            "5b3b00e5",
+            "ad8a13d8",
+            "602deacc",
+            "be8073a5",
+            "28adb936",
+            "a731a9ed",
+            "68b56fad",
+            "eae384d8"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "unicode",
+      "input": "*** Update File: a.ts\n+const x = \"a b\";",
+      "want": [
+        {
+          "file": "a.ts",
+          "digestParts": [
+            "32c3ef7a",
+            "4355080d",
+            "abbb8cdc",
+            "66870caa",
+            "a135af70",
+            "6a7d48f6",
+            "8393ed97",
+            "be73dd41"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "lone-cr",
+      "input": "*** Update File: a.ts\r\n+x\r",
+      "want": [
+        {
+          "file": "a.ts",
+          "digestParts": [
+            "6e09a918",
+            "26ff6ad1",
+            "4fa8aa94",
+            "03a8230f",
+            "d5668b80",
+            "b5cece49",
+            "f92a0f22",
+            "8707ddc6"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "directive-cr",
+      "input": "*** Update File: a.ts\r\n+x",
+      "want": [
+        {
+          "file": "a.ts",
+          "digestParts": [
+            "6e09a918",
+            "26ff6ad1",
+            "4fa8aa94",
+            "03a8230f",
+            "d5668b80",
+            "b5cece49",
+            "f92a0f22",
+            "8707ddc6"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "directive-u2028",
+      "input": "*** Update File: a.ts \n+x",
+      "want": []
+    }
+  ],
+  "advisory": "[crw advisory — C-RENDER-GROUNDING-01] Render-artifact files were modified during this cycle, but no render-observation tool call (view_image, browser:control-in-app-browser, chrome:control-chrome, computer-use:computer-use) was recorded. Before C->D, RUN the artifact in its execution environment, OBSERVE the output (read the screenshot back), and FIX any defect. Well-formed (tsc/lint) is not correct -- a static parse does not confirm the artifact renders correctly. Defaults: 1280x720 viewport; drive stateful artifacts until first interactive state change. One clean observation suffices.",
+  "defects": {
+    "tail": {
+      "rows": [],
+      "bytes": " {\"kind\":\"artifact-modified\",\"detail\":\"old.html\",\"sessionId\":\"s1\"}{\"ts\":\"<TS>\",\"kind\":\"observation\",\"detail\":\"view_image\",\"sessionId\":\"s1\"}\n",
+      "classification": "intentionally-changed",
+      "reason": "append LF protects existing unterminated record"
+    },
+    "outside": {
+      "rows": [
+        {
+          "kind": "observation",
+          "detail": "view_image",
+          "sessionId": "s1"
+        },
+        {
+          "kind": "native-observation",
+          "detail": "view_image",
+          "sessionId": "s1",
+          "screenshotPath": "${ROOT}/outside.png"
+        },
+        {
+          "kind": "observation",
+          "detail": "view_image",
+          "sessionId": "s1"
+        },
+        {
+          "kind": "native-observation",
+          "detail": "view_image",
+          "sessionId": "s1",
+          "screenshotPath": "${ROOT}/ws/.codexclaw/evidence/s1/qa/case/escape.png"
+        }
+      ],
+      "classification": "intentionally-changed",
+      "reason": "workspace-confined screenshot proof rejects outside path and symlink"
+    },
+    "failedApp": {
+      "rows": [
+        {
+          "kind": "observation",
+          "detail": "computer-use:computer-use",
+          "sessionId": "s1"
+        },
+        {
+          "kind": "native-observation",
+          "detail": "computer-use:computer-use",
+          "sessionId": "s1",
+          "nativeApp": "Finder"
+        }
+      ],
+      "classification": "identical",
+      "reason": "failed CUA still records declared app in oracle; port kept"
+    }
+  }
+}

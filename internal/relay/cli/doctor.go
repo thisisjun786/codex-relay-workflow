@@ -18,6 +18,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/service"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/buildinfo"
 )
 
 const policyVariable = "CODEX_THREAD_BRIDGE_EXECUTION_POLICY"
@@ -207,7 +208,7 @@ func ownershipReport(ctx context.Context, services dispatch.Services) contract.O
 	}
 	return append(report,
 		contract.Field{Key: "phase", Value: phase},
-		contract.Field{Key: "runtime_build", Value: runtimeBuild()},
+		contract.Field{Key: "runtime_build", Value: buildinfo.ID()},
 		contract.Field{Key: "detail", Value: detail},
 	)
 }
@@ -253,15 +254,6 @@ func readOwnership(ctx context.Context, dbPath string) (map[string]string, any, 
 		phase = record[at].Value
 	}
 	return meta, phase, nil
-}
-
-// runtimeBuild is the build this runtime publishes as its holder identity (takeover.json's
-// holder.build and a candidate's ready): the build cmd/crw stamped, else its version.
-func runtimeBuild() string {
-	if Build != "" {
-		return Build
-	}
-	return Version
 }
 
 func orEmpty(v any) any {
@@ -523,5 +515,5 @@ func runtimeBlock() contract.OrderedObject {
 			}
 		}
 	}
-	return contract.OrderedObject{{Key: "language", Value: "go"}, {Key: "version", Value: Version}, {Key: "build", Value: build}}
+	return contract.OrderedObject{{Key: "language", Value: "go"}, {Key: "version", Value: buildinfo.Version}, {Key: "build", Value: build}}
 }

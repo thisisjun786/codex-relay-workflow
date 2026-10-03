@@ -1169,6 +1169,31 @@ unreachable exemption. An unestablished guard call still makes the verdict
 `UNREADABLE`, even if it wrote no claim. Keyed unclaimable or failed claims remain
 in `unjudgedInvocations`; malformed rows remain in `rowsUnreadable`.
 
+For `no_event:stdin_unreadable`, `evidence.stdinRead` adds the recorded `detail`
+and `elapsedMs`, and a `case` naming what the detail establishes:
+
+| Case | What the recorded detail establishes |
+| --- | --- |
+| `read_failed_cause_unrecorded` | Reading stdin failed; the adapter discarded the underlying read error, so its cause is undetermined. |
+| `invalid_utf8` | The adapter read bytes but could not decode them as UTF-8. |
+| `detail_unrecognized` | The detail matches neither known branch; retain it without assigning a cause. |
+
+These diagnostics change no count, reason, exit code or verdict. Other outcomes
+omit `stdinRead`; malformed rows never receive it. A generic read failure cannot
+distinguish a host that supplies bytes or EOF late from a descriptor error or the
+work deadline. In particular, elapsed time near 100 ms does not prove a timeout,
+a restart, or which session was involved. Correlate the row with host stdin
+write/EOF/error logs and rollout evidence; when those are absent, report the cause
+as undetermined rather than attaching the nearest turn by timestamp.
+
+Host input that remains incomplete when the adapter must wait beyond its 100 ms
+allocation is the intended late-input release case in decisions
+[24](port/decisions.md#24-native-hook-review-boundaries-and-checkout-settings-authority)
+and [32](port/decisions.md#32-native-hook-allocations-bound-waiting-not-scheduling).
+Already-readable input is still taken. There is no separate stdin byte cap.
+Empty input whose writer closes normally reaches JSON parsing and is
+`stdin_not_json`, not `stdin_unreadable`.
+
 ### Limits
 
 The guarantee holds among the registrations of one Codex home, which is every registration one host
