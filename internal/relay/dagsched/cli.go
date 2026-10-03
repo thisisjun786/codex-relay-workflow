@@ -166,8 +166,13 @@ func runRegionDeclare(ctx context.Context, services dispatch.Services, args disp
 			{Key: "key", Value: optionalText(r.Key)}, {Key: "change", Value: r.Change}, {Key: "exclusive", Value: r.Exclusive},
 			{Key: "grade", Value: r.Grade}, {Key: "rule", Value: optionalText(r.Rule)}}
 	}
-	return contract.OrderedObject{{Key: "ok", Value: true}, {Key: "plan_id", Value: declared.PlanID}, {Key: "node_id", Value: declared.NodeID},
-		{Key: "declaration_seq", Value: declared.Seq}, {Key: "replayed", Value: declared.Replayed}, {Key: "regions", Value: list}}, nil
+	answer := contract.OrderedObject{{Key: "ok", Value: true}, {Key: "plan_id", Value: declared.PlanID}, {Key: "node_id", Value: declared.NodeID},
+		{Key: "declaration_seq", Value: declared.Seq}, {Key: "replayed", Value: declared.Replayed}, {Key: "regions", Value: list}}
+	if declared.Narrowed {
+		// printed only when the node already held its regions and this declaration narrowed them (CRW-411)
+		answer = append(answer, contract.Field{Key: "narrowed", Value: true})
+	}
+	return answer, nil
 }
 
 func runRelease(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
