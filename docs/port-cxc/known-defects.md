@@ -515,3 +515,11 @@ The pinned oracle already publishes through an exclusive 0600 temporary file and
 ## CRW-358 — goalplan definition integrity
 
 - Repeated unknown `criteriaIds` produce repeated identical reasons, so a caller that displays only the first four reasons can hide later diagnoses (pabcd-state/src/goalplan.ts:1574-1578 at v0.2.40); port: kept.
+
+## CRW-335: staged development-router limitations
+
+- The architecture decision-tree line has a trailing space, and the design-trends snapshot uses two Markdown hard-break lines; the tool-staged copies keep those bytes, so the full-range whitespace check reports three lines (CXC:plugins/codexclaw/skills/dev-architecture/SKILL.md:344; CXC:plugins/codexclaw/skills/dev-uiux-design/references/design-trends.md:13-14); port: kept.
+- AI-review guidance calls the AI stage a deterministic gate, then says unavailable or failed AI review is additive and may be bypassed by human review; repository/user review authority must settle the conflicting wording (CXC:plugins/codexclaw/skills/dev-code-reviewer/references/ai-assisted-review.md:12-32); port: kept.
+- The oracle describes worktree GC/list as a future contract rather than an implemented command; staging the renamed examples does not provide that implementation (CXC:plugins/codexclaw/skills/dev-devops/references/local-gc.md:87-105); port: kept.
+- Historical oracle references name a source-only search-policy test, repository-bootstrap workflow and CodexClaw issue; name substitution preserves the references without importing those upstream artifacts or proving their CRW counterparts exist (CXC:plugins/codexclaw/skills/dev-code-reviewer/SKILL.md:380-384; CXC:plugins/codexclaw/skills/dev-devops/references/repo-bootstrap.md:23; CXC:plugins/codexclaw/skills/dev-devops/references/native-desktop-acceptance.md:188-189,267); port: kept.
+- Four upstream references have an extra blank line at EOF; staging preserves it, so the full-range whitespace check reports four additional locations (CXC:plugins/codexclaw/skills/dev-frontend/references/core/product-density.md:53; CXC:plugins/codexclaw/skills/dev-frontend/references/core/soft-3d-asset-gates.md:70; CXC:plugins/codexclaw/skills/dev-frontend/references/core/ux-writing-ko.md:62; CXC:plugins/codexclaw/skills/dev-uiux-design/references/design-system-bootstrap.md:133); port: kept.
