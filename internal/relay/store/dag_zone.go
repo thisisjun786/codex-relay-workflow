@@ -519,6 +519,81 @@ BEGIN SELECT RAISE(ABORT, 'dag_summary_outbox entries are never deleted'); END`,
     PRIMARY KEY (observation_id, repository, path)
 )`,
 
+	// CRW-410: how a head conflicts with the tip of the branch it lands on, per node (dag_conflict_observations is for two nodes and a tip is not one). A node's head, the tip and their merge base are
+	// one row; head_source says where the head came from (the operator's word, the node's current acceptance, or the child's own checkout). The files git could not merge are in the table after it, under
+	// each name the observed checkout is known by, as dag_conflict_observation_files keeps them.
+	`CREATE TABLE IF NOT EXISTS dag_tip_conflict_observations (
+    observation_id TEXT PRIMARY KEY,
+    plan_id        TEXT NOT NULL REFERENCES dag_plans (plan_id),
+    node_id        TEXT NOT NULL CHECK (node_id <> ''),
+    repository     TEXT NOT NULL CHECK (repository <> ''),
+    head           TEXT NOT NULL,
+    head_source    TEXT NOT NULL CHECK (head_source IN ('explicit','acceptance','child_checkout')),
+    tip_ref        TEXT NOT NULL,
+    tip_sha        TEXT NOT NULL,
+    base_sha       TEXT NOT NULL,
+    conflict_count INTEGER NOT NULL CHECK (conflict_count >= 0),
+    method         TEXT NOT NULL,
+    observed_by    TEXT NOT NULL,
+    observed_at    TEXT NOT NULL,
+    UNIQUE (plan_id, node_id, head, tip_sha, base_sha)
+)`,
+	`CREATE TABLE IF NOT EXISTS dag_tip_conflict_observation_files (
+    observation_id TEXT NOT NULL REFERENCES dag_tip_conflict_observations (observation_id),
+    repository     TEXT NOT NULL CHECK (repository <> ''),
+    path           TEXT NOT NULL CHECK (path <> ''),
+    PRIMARY KEY (observation_id, repository, path)
+)`,
+
+	// CRW-410: declaration drift. A node whose declared regions do not cover a path it conflicted on (with another node's head, or with the tip) has a row for that path, written with the observation. observation_id
+	// names a row of dag_conflict_observations (prefix dco-) or of dag_tip_conflict_observations (prefix dto-), so it carries no foreign key.
+	`CREATE TABLE IF NOT EXISTS dag_conflict_drift (
+    observation_id TEXT NOT NULL CHECK (observation_id <> ''),
+    node_id        TEXT NOT NULL CHECK (node_id <> ''),
+    path           TEXT NOT NULL CHECK (path <> ''),
+    PRIMARY KEY (observation_id, node_id, path)
+)`,
+
+	// CRW-410: the sweep ledger. One row per sweep, as dag_passes keeps one per pass: what prompted it (a landing, a receipt, or a command), the node and the reference it rested on (the landing's integration observation id,
+	// the accepted receipt's acceptance id) and the checkout it measured in. The partial unique index makes the sweep of one landing or one acceptance a single row, so a second writer of the same trigger finds the first; a manual
+	// sweep repeats freely.
+	`CREATE TABLE IF NOT EXISTS dag_conflict_sweeps (
+    plan_id      TEXT NOT NULL REFERENCES dag_plans (plan_id),
+    sweep_seq    INTEGER NOT NULL CHECK (sweep_seq >= 1),
+    trigger_kind TEXT NOT NULL CHECK (trigger_kind IN ('landing','receipt','manual')),
+    trigger_node TEXT NOT NULL DEFAULT '',
+    trigger_ref  TEXT NOT NULL DEFAULT '',
+    repository   TEXT NOT NULL CHECK (repository <> ''),
+    observed_by  TEXT NOT NULL,
+    observed_at  TEXT NOT NULL,
+    PRIMARY KEY (plan_id, sweep_seq)
+)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS dag_conflict_sweeps_trigger ON dag_conflict_sweeps (plan_id, trigger_kind, trigger_ref) WHERE trigger_kind <> 'manual' AND trigger_ref <> ''`,
+
+	// CRW-410: what each sweep measured. A member is a pair of nodes (stored in sorted order, as dag_conflict_observations stores them) or one node against a tip, and it was observed (a new observation row), replayed (the same heads
+	// and base were recorded before: the existing row) or left unmeasured with a reason from the closed set. The member rows are what orders the measurements of a pair: the highest sweep_seq is the latest one, even when the
+	// observation behind it is an old row that the same heads replayed.
+	`CREATE TABLE IF NOT EXISTS dag_conflict_sweep_members (
+    plan_id           TEXT NOT NULL,
+    sweep_seq         INTEGER NOT NULL,
+    member_seq        INTEGER NOT NULL CHECK (member_seq >= 1),
+    kind              TEXT NOT NULL CHECK (kind IN ('pair','tip')),
+    left_node_id      TEXT NOT NULL CHECK (left_node_id <> ''),
+    right_node_id     TEXT NOT NULL DEFAULT '',
+    left_head         TEXT NOT NULL DEFAULT '',
+    right_head        TEXT NOT NULL DEFAULT '',
+    left_head_source  TEXT NOT NULL DEFAULT '' CHECK (left_head_source IN ('','explicit','acceptance','child_checkout')),
+    right_head_source TEXT NOT NULL DEFAULT '' CHECK (right_head_source IN ('','explicit','acceptance','child_checkout')),
+    status            TEXT NOT NULL CHECK (status IN ('observed','replayed','unmeasured')),
+    reason            TEXT NOT NULL DEFAULT '' CHECK (reason IN ('','head_unknown','checkout_mismatch','commit_missing','no_common_ancestor','tip_unreadable')),
+    observation_id    TEXT NOT NULL DEFAULT '',
+    conflicts         INTEGER NOT NULL DEFAULT 0 CHECK (conflicts >= 0),
+    CHECK ((status = 'unmeasured') = (reason <> '')),
+    CHECK ((status = 'unmeasured') = (observation_id = '')),
+    CHECK ((kind = 'pair' AND right_node_id <> '' AND left_node_id < right_node_id) OR (kind = 'tip' AND right_node_id = '')),
+    PRIMARY KEY (plan_id, sweep_seq, member_seq),
+    FOREIGN KEY (plan_id, sweep_seq) REFERENCES dag_conflict_sweeps (plan_id, sweep_seq)
+)`,
 	// CRW-430: a base refresh of an accepted node. The acceptance stays as it is (its id is the digest of its head, generation, event and revision, and every node that consumed it names that id), and this
 	// record says the same acceptance also stands on a LATER generation of its relationship whose head the relay proved to differ from the accepted head only by merges of the base branch (proof_json: the
 	// chain of merge commits, each with the tree git merges from its parents, and the files a hand resolved conflict touched). Integration is judged on the newest valid record's head and generation; the table is

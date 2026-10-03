@@ -28,6 +28,8 @@ type Scheduler struct {
 	// ExpectedEpoch is the coordinator epoch the caller's session holds (--expect-epoch): every write that decides checks it inside its own transaction (epoch.go). Zero names no epoch, which an
 	// unclaimed plan accepts.
 	ExpectedEpoch int64
+	// Checkout is the local checkout a conflict sweep measures in (conflicts, CRW-410); empty finds it from the parent_cwd of the plan's relationships.
+	Checkout string
 
 	// Test seams (zero in production): between the unlocked judgement and the intent, after the slot is reserved, and between the managed start and the bind.
 	testBeforeObserveTx      func()
@@ -44,6 +46,7 @@ type Scheduler struct {
 	testBetweenReadAndIntent func()
 	testAfterReserve         func() error
 	testAfterStart           func() error
+	testInSweepTx            func() error
 }
 
 // Selectors are what the managed identity fingerprints besides the request: the marker root, the socket and the state
