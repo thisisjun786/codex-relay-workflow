@@ -89,6 +89,7 @@ func Test28_MAL_1_LedgerPinnedAndEnvironmentSelection(t *testing.T) {
 	}
 }
 func Test28_MAL_2_ReplacedLedgerRefuses(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	socket := filepath.Join(root, "app.sock")
 	for _, replace := range []bool{false, true} {

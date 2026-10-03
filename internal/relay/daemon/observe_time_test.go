@@ -76,6 +76,7 @@ func noneStaged(n int) []bool { return make([]bool, n) }
 // A host that does not answer costs a tick at most the time bound and the read in flight, not the whole budget of
 // reads: each read can wait out the transport timeout, and the sweep and the deliveries wait behind them.
 func TestASlowHostCostsATickAtMostTheTimeBoundPlusOneRead(t *testing.T) {
+	t.Parallel()
 	_, _, tick := slowObservation(t, noneStaged(10), func(string) float64 { return 4 }, func(string) bool { return true })
 	first, elapsed, notes := tick()
 	second, _, _ := tick()
@@ -99,6 +100,7 @@ func TestASlowHostCostsATickAtMostTheTimeBoundPlusOneRead(t *testing.T) {
 // The bound is on elapsed time, measured on a monotonic clock: a wall clock that steps back inside every read
 // neither hides the time spent nor lengthens the pass.
 func TestTheTimeBoundIgnoresAWallClockThatStepsBack(t *testing.T) {
+	t.Parallel()
 	_, host, tick := slowObservation(t, noneStaged(10), func(string) float64 { return 4 }, func(string) bool { return true })
 	host.wallStep = -120
 	if served, elapsed, _ := tick(); len(served) != 3 || elapsed > 14 {
@@ -109,6 +111,7 @@ func TestTheTimeBoundIgnoresAWallClockThatStepsBack(t *testing.T) {
 // Slow reads the host does answer, and slow and fast reads in turn, stay inside the bound too: it is time, not a
 // count of failures, that is spent.
 func TestSlowReadsInTurnWithFastOnesStayInsideTheTimeBound(t *testing.T) {
+	t.Parallel()
 	cost := func(turn string) float64 {
 		if indexOf(turn)%2 == 0 {
 			return 4
@@ -124,6 +127,7 @@ func TestSlowReadsInTurnWithFastOnesStayInsideTheTimeBound(t *testing.T) {
 }
 
 func TestZeroMaxObserveSecondsSpendsTheWholeBudgetOnASlowHost(t *testing.T) {
+	t.Parallel()
 	d, _, tick := slowObservation(t, noneStaged(10), func(string) float64 { return 4 }, func(string) bool { return true })
 	d.Policy.MaxObserveSeconds = 0
 	if served, _, _ := tick(); len(served) != 10 {
@@ -134,6 +138,7 @@ func TestZeroMaxObserveSecondsSpendsTheWholeBudgetOnASlowHost(t *testing.T) {
 // A slow class cannot keep the other out of the tick: the first read of each class is made whatever the clock says,
 // and the classes rotate their relationships, so every one of them comes round.
 func TestASlowClassDoesNotKeepTheOtherOutOfTheTick(t *testing.T) {
+	t.Parallel()
 	staged := []bool{false, false, false, true, true, true}
 	for _, c := range []struct {
 		name string
@@ -143,6 +148,7 @@ func TestASlowClassDoesNotKeepTheOtherOutOfTheTick(t *testing.T) {
 		{"slow other relationships", func(i int) bool { return i < 3 }},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			cost := func(turn string) float64 {
 				if c.slow(indexOf(turn)) {
 					return 11
@@ -164,6 +170,7 @@ func TestASlowClassDoesNotKeepTheOtherOutOfTheTick(t *testing.T) {
 // With both classes slow the pass still makes its two first reads, one for each class, and nothing more: the bound
 // is the limit plus the read in flight, or those two reads if they alone take longer.
 func TestBothClassesSlowStillGetTheirFirstReadAndNothingMore(t *testing.T) {
+	t.Parallel()
 	staged := []bool{false, false, false, true, true, true}
 	_, _, tick := slowObservation(t, staged, func(string) float64 { return 11 }, nil)
 	var reads [][]int

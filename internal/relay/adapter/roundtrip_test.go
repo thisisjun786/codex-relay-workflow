@@ -10,7 +10,6 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
@@ -108,7 +107,7 @@ func Test28_EmitDeliverClaimAckRoundTrip(t *testing.T) {
 	}
 	emit := []string{"emit", "--relationship", "rel-1", "--generation", "1", "--outcome", "ready_for_review", "--turn-thread", "01child-task", "--turn-id", "turn-dispatch-1", "--turn-status", "completed", "--artifact", filepath.Join(seed.Work, "out.txt")}
 	// The seed relationship has Python's derived id, not the symbolic rel-1.
-	s, err := store.Open(context.Background(), filepath.Join(goState, "relay.sqlite3"), "")
+	s, err := openStore(context.Background(), filepath.Join(goState, "relay.sqlite3"), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +143,7 @@ func Test28_EmitDeliverClaimAckRoundTrip(t *testing.T) {
 		t.Fatalf("ack unverified: %v", ack)
 	}
 	// Every table, schema_meta too, compares whole.
-	left, err := store.Open(context.Background(), path, "")
+	left, err := openStore(context.Background(), path, "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -3,7 +3,6 @@ package dagsched
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"fmt"
 	"net/url"
 	"os"
@@ -26,6 +25,8 @@ type ConflictResult struct {
 	Conflicts                                                                        int
 	Files                                                                            []string
 	Replayed                                                                         bool
+	// Drift is the nodes whose declarations do not cover a conflicting file (CRW-410), as recorded with the observation.
+	Drift []DriftMark
 }
 
 var commitPattern = regexp.MustCompile("^[0-9a-f]{40}$")
@@ -34,6 +35,9 @@ var commitPattern = regexp.MustCompile("^[0-9a-f]{40}$")
 // working tree or a ref), as the measurement criterion c7 asks for: the number of merge-tree conflicts between parallel child branches. It is a record, not a gate: nothing in the
 // reading waits for it. The merge writes its trees into a throwaway object directory that borrows the checkout's objects, so the observed checkout is not changed. The pair is
 // stored once for a base and two heads: a repeat is a replay, and the nodes are stored in sorted order so the question asked either way round is one row.
+//
+// The measurement is recorded as a one-member sweep (trigger manual, livesweep.go): the observation, the files, the nodes whose declarations do not cover them (drift) and a ledger row, which orders it among the
+// measurements of the pair. Measuring every live pair and each head against the tip is ObserveLive's.
 func (s *Scheduler) ObserveConflicts(ctx context.Context, plan, actor string, in ConflictInput) (ConflictResult, error) {
 	out := ConflictResult{PlanID: plan}
 	left, right, leftHead, rightHead := in.LeftNode, in.RightNode, in.LeftHead, in.RightHead
@@ -64,79 +68,70 @@ func (s *Scheduler) ObserveConflicts(ctx context.Context, plan, actor string, in
 			return out, refuse(contract.RefusalDispositionConflict, "node %s is a %s node: it has no branch to merge", id, n.Kind)
 		}
 	}
-	parents, err := projectParents(ctx, q, snap.ProjectKey)
-	if err != nil {
+	if err := s.requireParent(ctx, q, snap, actor); err != nil {
 		return out, err
-	}
-	if len(parents) != 1 || parents[0] != actor {
-		return out, refuse(contract.RefusalScopeRoleMismatch, "task %s is not the registered parent of project %s", actor, snap.ProjectKey)
 	}
 	iso, err := isolate(ctx, in.Repository)
 	if err != nil {
 		return out, refuse(contract.RefusalMergeTargetUnreadable, "%s is not a repository git can read: %v", in.Repository, err)
 	}
 	defer iso.close()
-	for _, head := range []string{leftHead, rightHead} {
-		if code, _, err := iso.run(ctx, "cat-file", "-e", head+"^{commit}"); code != 0 {
-			return out, refuse(contract.RefusalMergeTargetUnreadable, "commit %s is not in %s: fetch the branch first (%v)", head, in.Repository, err)
-		}
-	}
-	code, base, err := iso.run(ctx, "merge-base", leftHead, rightHead)
-	if code != 0 {
-		return out, refuse(contract.RefusalMergeTargetUnreadable, "the heads %s and %s have no common ancestor in %s: %v", leftHead, rightHead, in.Repository, err)
-	}
-	out.BaseSHA = strings.TrimSpace(base)
-	files, err := iso.mergeTree(ctx, leftHead, rightHead)
+	pm, err := iso.measurePair(ctx, leftHead, rightHead)
 	if err != nil {
 		return out, err
 	}
-	out.Method, out.Files, out.Conflicts = "git merge-tree --write-tree", files, len(files)
-	names := repositoryNames(ctx, in.Repository)
-	sum := shaOf([]byte(strings.Join([]string{plan, left, right, leftHead, rightHead, out.BaseSHA}, "|")))
-	out.ObservationID = "dco-" + sum[:32]
-	err = s.Store.Compose(ctx, func(txCtx context.Context, _ *sql.Conn) error {
-		tx := s.Store.Q(txCtx)
-		current, _, err := dag.SnapshotAt(txCtx, tx, plan, 0)
-		if err != nil {
-			return err
+	if pm.Reason != "" {
+		return out, refuse(contract.RefusalMergeTargetUnreadable, "%s in %s", pm.Detail, in.Repository)
+	}
+	out.BaseSHA, out.Method, out.Files, out.Conflicts = pm.Base, mergeTreeMethod, pm.Files, len(pm.Files)
+	// the measurement is a one-member sweep of its own (trigger manual): the observation, its files and drift, and the ledger row that orders it among the measurements of the pair
+	member := SweepMember{Kind: MemberPair, LeftNode: left, RightNode: right, LeftHead: leftHead, RightHead: rightHead, LeftSource: HeadExplicit, RightSource: HeadExplicit,
+		Status: MemberObserved, Files: pm.Files, Conflicts: len(pm.Files), base: pm.Base}
+	res := SweepResult{PlanID: plan, Trigger: TriggerManual, Repository: in.Repository}
+	if err := s.recordSweep(ctx, plan, actor, &res, repositoryNames(ctx, in.Repository), []SweepMember{member}); err != nil {
+		return out, err
+	}
+	recorded := res.Members[0]
+	out.ObservationID, out.Replayed, out.Drift = recorded.ObservationID, recorded.Status == MemberReplayed, recorded.Drift
+	return out, nil
+}
+
+// mergeTreeMethod is how a conflict is measured, as every observation records it.
+const mergeTreeMethod = "git merge-tree --write-tree"
+
+// pairMeasure is what git says of two commits: their merge base and the files that do not merge, or why it could not be asked (Reason, with Detail; Missing is which commit, 1 or 2, is not in the
+// checkout).
+type pairMeasure struct {
+	Base           string
+	Files          []string
+	Reason, Detail string
+	Missing        int
+}
+
+// measurePair asks git whether two commits merge, in the throwaway repository. A commit the checkout lacks, and two commits with no common ancestor, are answers (Reason); a git that cannot be run or a
+// merge it cannot compute is an error and never a count.
+func (g *isolated) measurePair(ctx context.Context, left, right string) (pairMeasure, error) {
+	for i, head := range []string{left, right} {
+		code, _, err := g.run(ctx, "cat-file", "-e", head+"^{commit}")
+		if code < 0 {
+			return pairMeasure{}, err
 		}
-		for _, id := range []string{left, right} {
-			if _, ok := nodeOf(current, id); !ok {
-				return refuse(contract.RefusalUnregisteredScope, "plan %s no longer has the live node %s", plan, id)
-			}
+		if code != 0 {
+			return pairMeasure{Reason: ReasonCommitMissing, Missing: i + 1, Detail: fmt.Sprintf("commit %s is not in the checkout: fetch the branch first", head)}, nil
 		}
-		var count int64
-		var method string
-		var existing string
-		found, err := queryOne(txCtx, tx, "SELECT observation_id, conflict_count, method FROM dag_conflict_observations WHERE plan_id = ? AND left_node_id = ? AND right_node_id = ? AND left_head = ? AND right_head = ? AND base_sha = ?",
-			[]any{plan, left, right, leftHead, rightHead, out.BaseSHA}, &existing, &count, &method)
-		if err != nil {
-			return err
-		}
-		if found {
-			// the same branches and base merge the same way; a different answer would mean the repository changed under the heads, which cannot happen to a commit id
-			if int(count) != out.Conflicts {
-				return refuse(contract.RefusalDispositionConflict, "the pair was recorded with %d conflicts and merges with %d now", count, out.Conflicts)
-			}
-			out.ObservationID, out.Replayed = existing, true
-			return nil
-		}
-		if _, err = tx.ExecContext(txCtx, "INSERT INTO dag_conflict_observations (observation_id, plan_id, left_node_id, right_node_id, repository, left_head, right_head, base_sha, conflict_count, method, observed_by, observed_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-			out.ObservationID, plan, left, right, in.Repository, leftHead, rightHead, out.BaseSHA, out.Conflicts, out.Method, actor, s.now()); err != nil {
-			return err
-		}
-		// the files git could not merge, under each name the checkout is known by (CRW-409): what a release reads as the recent conflicts on a place. Written with the observation, so a repeat is a replay and
-		// leaves them as they were.
-		for _, name := range names {
-			for _, file := range files {
-				if _, err := tx.ExecContext(txCtx, "INSERT INTO dag_conflict_observation_files (observation_id, repository, path) VALUES (?,?,?)", out.ObservationID, name, file); err != nil {
-					return err
-				}
-			}
-		}
-		return nil
-	})
-	return out, err
+	}
+	code, base, err := g.run(ctx, "merge-base", left, right)
+	if code < 0 {
+		return pairMeasure{}, err
+	}
+	if code != 0 {
+		return pairMeasure{Reason: ReasonNoCommonAncestor, Detail: fmt.Sprintf("the commits %s and %s have no common ancestor", left, right)}, nil
+	}
+	files, err := g.mergeTree(ctx, left, right)
+	if err != nil {
+		return pairMeasure{}, err
+	}
+	return pairMeasure{Base: strings.TrimSpace(base), Files: files}, nil
 }
 
 // repositoryNames are the names an observed checkout is known by: its absolute path with links resolved and, when its origin remote names owner/name on the forge the relay talks to, that slug. A

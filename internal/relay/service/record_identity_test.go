@@ -82,9 +82,11 @@ func Test29GoRecordsCarryANullFenceBuildThePythonFenceReads(t *testing.T) {
 // creates the store and publishes its identity into daemon.json and the scope registration.
 // (The Python runs of the same bounds left with the Python runtime, todo 44.)
 func Test29SpentServiceRunCreatesNoStore(t *testing.T) {
+	t.Parallel()
 	for _, bound := range [][]string{{"--deadline", "0"}, {"--deadline-monotonic", "0"}, {"--max-segments", "0"}} {
 		spent := bound[0] != "--max-segments"
 		t.Run("go"+bound[0], func(t *testing.T) {
+			t.Parallel()
 			home := t.TempDir()
 			socket := home + "/socket"
 			if r := runProgram(t, home, "service", "enable"); r.Code != 0 {

@@ -11,16 +11,16 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"golang.org/x/sys/unix"
 )
 
 func Test28_WorkerObservationMatchesTheGolden(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	state := filepath.Join(root, "state")
 	scope := filepath.Join(root, "scopes")
 	socket := filepath.Join(root, "socket")
-	s, err := store.Open(context.Background(), filepath.Join(state, "relay.sqlite3"), socket)
+	s, err := openStore(context.Background(), filepath.Join(state, "relay.sqlite3"), socket)
 	if err != nil {
 		t.Fatal(err)
 	}
