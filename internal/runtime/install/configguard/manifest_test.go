@@ -1,6 +1,7 @@
 package configguard
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,6 +39,80 @@ func TestActivationPreservesAcceptedSurrogatesAndCutsUTF16(t *testing.T) {
 	}
 	if got := activationFailureMessage(strings.Repeat("a", 498) + "😀tail"); got != strings.Repeat("a", 498)+"😀" {
 		t.Fatalf("full pair cut=%q", got)
+	}
+}
+
+// These two recorded cases change intentionally to avoid losing settings or restoration records.
+func TestActivationIntentionallyChangedCases(t *testing.T) {
+	var cases []struct {
+		ID, Classification, Reason, Config string
+		Go                                 struct {
+			Error             bool
+			Config            string
+			ManifestPreserved bool
+		}
+	}
+	b, err := os.ReadFile("testdata/activation-changes.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = json.Unmarshal(b, &cases); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range cases {
+		t.Run(c.ID, func(t *testing.T) {
+			home := activationHome(t)
+			path := filepath.Join(home, "config.toml")
+			activationWrite(t, path, c.Config)
+			prior := `{"version":2,"configPath":"x","flags":{},"tableKeys":{"memories.dedicated_tools":{"table":"memories","key":"dedicated_tools","priorValue":"false","appliedValue":"true","setByCodexclaw":true}}}` + "\n"
+			if c.Go.ManifestPreserved {
+				activationWrite(t, manifestPath(home), prior)
+				if err := os.Chmod(manifestPath(home), 0200); err != nil {
+					t.Fatal(err)
+				}
+				defer os.Chmod(manifestPath(home), 0600)
+				if _, err := os.ReadFile(manifestPath(home)); err == nil {
+					t.Skip("effective privileges allow reading mode0200")
+				}
+			} else {
+				if err := os.Chmod(home, 0500); err != nil {
+					t.Fatal(err)
+				}
+				probe, err := os.CreateTemp(home, ".probe-")
+				os.Chmod(home, 0700)
+				if err == nil {
+					probe.Close()
+					os.Remove(probe.Name())
+					t.Skip("effective privileges allow creating in mode0500")
+				}
+				defer os.Chmod(home, 0700)
+			}
+			run := func(args []string) CodexRunResult {
+				if args[1] == "list" {
+					hooks := "true"
+					if !c.Go.ManifestPreserved {
+						hooks = "false"
+					}
+					return CodexRunResult{Stdout: "multi_agent true\ngoals true\nhooks " + hooks + "\ndefault_mode_request_user_input true"}
+				}
+				if err := os.Chmod(home, 0500); err != nil {
+					t.Fatal(err)
+				}
+				return CodexRunResult{}
+			}
+			_, err := Activate(ActivateDeps{Run: run, CodexHome: home, Now: func() string { return "2026-06-30T00:00:00.000Z" }})
+			if (err != nil) != c.Go.Error || activationRead(t, path) != c.Go.Config {
+				t.Fatalf("case %s: error=%v config=%q", c.ID, err, activationRead(t, path))
+			}
+			if c.Go.ManifestPreserved {
+				if err := os.Chmod(manifestPath(home), 0600); err != nil {
+					t.Fatal(err)
+				}
+				if activationRead(t, manifestPath(home)) != prior {
+					t.Fatal("unreadable restoration record replaced")
+				}
+			}
+		})
 	}
 }
 
