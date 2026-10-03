@@ -61,8 +61,9 @@ is still unknown.
 
 A local validation run the parent starts for that route follows the `Processes you start:` line of
 the [Launch packet](task-packet.md#launch-packet): it records its pid when it starts or runs under
-`timeout`, and is stopped only by that pid or its own process group, never by pattern or name,
-because children run their own tests on the same host at the same time.
+`timeout`, and is stopped only by that pid, its own process group or the handle the execution tool
+returned for it, never by pattern or name, because children run their own tests on the same host at
+the same time.
 
 ## Inspect review content and coverage
 
