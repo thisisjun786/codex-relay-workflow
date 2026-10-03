@@ -1,6 +1,7 @@
 package dagsched
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -254,33 +255,58 @@ func (g *refreshRepo) blobAt(ctx context.Context, commit, path string) (string, 
 	return "", nil
 }
 
-var (
-	conflictStartPattern = regexp.MustCompile("(?m)^<{7}( |$)")
-	conflictEndPattern   = regexp.MustCompile("(?m)^>{7}( |$)")
-)
+// markerLine is whether a line is a conflict marker of the given kind: at least seven of the character at the start, then a space or the end of the line (the width is the conflict-marker-size attribute's,
+// seven by default).
+func markerLine(line []byte, c byte) bool {
+	n := 0
+	for n < len(line) && line[n] == c {
+		n++
+	}
+	return n >= 7 && (n == len(line) || line[n] == ' ')
+}
 
-// maxMarkerScan bounds the blob read for conflict markers; a larger file is recorded by its blob id and read by the parent.
-const maxMarkerScan = 8 << 20
-
-// hasConflictMarkers is whether a resolved file still holds the start and the end line of a conflict (git's own labels differ from the working tree's, so the tree comparison alone cannot tell a file that
-// was committed with its markers from one that was edited).
+// hasConflictMarkers is whether a resolved file still holds the start line and the end line of a conflict, wherever they are in the file and however large it is (git's own labels differ from the working tree's,
+// so the tree comparison alone cannot tell a file that was committed with its markers from one that was edited). The blob is streamed and the read stops at the second marker.
 func (g *refreshRepo) hasConflictMarkers(ctx context.Context, blob string) (bool, error) {
 	if blob == "" {
 		return false, nil
 	}
-	_, size, err := g.run(ctx, nil, "cat-file", "-s", blob)
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	cmd := exec.CommandContext(runCtx, "git", "--git-dir="+g.gitdir, "cat-file", "blob", blob)
+	cmd.Env = g.env
+	out, err := cmd.StdoutPipe()
 	if err != nil {
 		return false, err
 	}
-	var n int
-	if _, err := fmt.Sscanf(strings.TrimSpace(size), "%d", &n); err != nil || n > maxMarkerScan {
-		return false, nil
-	}
-	_, body, err := g.run(ctx, nil, "cat-file", "blob", blob)
-	if err != nil {
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
 		return false, err
 	}
-	return conflictStartPattern.MatchString(body) && conflictEndPattern.MatchString(body), nil
+	reader := bufio.NewReaderSize(out, 64<<10)
+	var started, ended, lineStart bool
+	lineStart = true
+	for !(started && ended) {
+		segment, more, err := reader.ReadLine()
+		if err != nil {
+			break
+		}
+		if lineStart {
+			started = started || markerLine(segment, '<')
+			ended = ended || markerLine(segment, '>')
+		}
+		lineStart = !more
+	}
+	if started && ended {
+		cancel()
+		_ = cmd.Wait()
+		return true, nil
+	}
+	if err := cmd.Wait(); err != nil {
+		return false, fmt.Errorf("git cat-file blob %s: %w: %s", blob, err, strings.TrimSpace(stderr.String()))
+	}
+	return false, nil
 }
 
 // refreshPathsText names up to ten paths for a refusal.

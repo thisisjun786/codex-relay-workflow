@@ -286,20 +286,15 @@ func (s *Scheduler) artifactVerified(ctx context.Context, q store.Querier, plan 
 	if err != nil {
 		return EdgeStatus{}, err
 	}
-	// what the acceptance stands on: its own generation and event, or the later generation a recorded base refresh carried it to (baserefresh.go)
-	stand, err := s.standOf(ctx, q, a)
-	if err != nil {
-		return EdgeStatus{}, err
-	}
 	if relFound && (rel.Status == "active" || rel.Status == "paused") {
-		if rel.Generation != stand.Generation {
+		if rel.Generation != a.ExecutionGeneration {
 			return blocked(BlockedStaleHead, "the relationship moved to generation "+itoa64(rel.Generation)), nil
 		}
-		head, err := delivery.HeadRevisionFrom(ctx, q, a.RelationshipID, stand.Generation)
+		head, err := delivery.HeadRevisionFrom(ctx, q, a.RelationshipID, a.ExecutionGeneration)
 		if err != nil {
 			return EdgeStatus{}, err
 		}
-		if id, _ := objString(head, "eventId"); id != stand.EventID {
+		if id, _ := objString(head, "eventId"); id != a.EventID {
 			return blocked(BlockedStaleHead, "the accepted revision is no longer the head of its generation"), nil
 		}
 	}
@@ -324,8 +319,8 @@ func (s *Scheduler) artifactVerified(ctx context.Context, q store.Querier, plan 
 		if err != nil || st != nil {
 			return valueOf(st), err
 		}
-		if observed != "" && observed != stand.Head {
-			return blocked(BlockedStaleHead, "the pull request head was observed at "+observed+" after "+stand.Head+" was accepted"), nil
+		if observed != "" && observed != a.HeadSHA {
+			return blocked(BlockedStaleHead, "the pull request head was observed at "+observed+" after "+a.HeadSHA+" was accepted"), nil
 		}
 	}
 	// 9. the accepted result still rests on the plan as it is now: a stale predecessor opens no edge, so nothing is released onto it (contract 8.2, E-25). This is the last check, so the reasons

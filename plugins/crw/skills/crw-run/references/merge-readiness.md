@@ -694,9 +694,10 @@ In a DAG-managed project the node is accepted (`dag-ready` reads it `done:accept
    `dag-merge-judge` and `dag-merge-request` judge the pull request head against the accepted head and read `stale_head` for a refreshed pull request, so the candidate is merged by hand (`gh pr merge --match-head-commit <head>`) and not through the merge lane.
 6. **Observe the landing:**
 
-       codex-session-relay --state "$RELAY_STATE" dag-integration-observe --plan <plan> --node <node> --actor <id>
+       codex-session-relay --state "$RELAY_STATE" dag-integration-observe --plan <plan> --node <node> \
+         --actor <id> --expect-epoch <the epoch you hold>
 
-   The answer says `integrated: true`, `mark_present: true` and `slot_released: true`, and `dag-ready` reads the node `done:integrated`. An observation made before the record stays a fact and changes nothing; observing again after the record integrates the node.
+   The answer says `integrated: true`, `mark_present: true` and `slot_released: true`, and `dag-ready` reads the node `done:integrated`. An observation made before the record stays a fact and changes nothing; observing again after the record integrates the node. A node with no outgoing edge that waits for a landing (a terminal node) is observed against a named target the first time: add `--target <repository>@<ref>`.
 
 **A node found already in this state** (the pull request merged and the mark on the later generation, `dag-integration-observe` answering `is_ancestor` true, `integrated` false, `mark_present` false, the node holding its slot) needs only steps 4 and 6. Check the commits first: `git -C <checkout> fetch origin`, then call step 4 without `--resolved`; the refusal, if the chain has a hand resolution, names the files to read. The relay does not close the relationship afterwards by its own settling (it looks for an acceptance of the marked head); archive it by hand as settling would: `codex-session-relay --state "$RELAY_STATE" relationship-status --relationship <rel> --status archived --actor <id>`.
 

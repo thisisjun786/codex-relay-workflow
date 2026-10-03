@@ -171,6 +171,16 @@ func TestBaseRefreshRefusesWhatIsMoreThanMergesOfTheBase(t *testing.T) {
 			s.head = s.repo.git("rev-parse", "HEAD")
 			s.repo.git("checkout", "-q", "dev")
 		}},
+		{"a merge of a branch the base itself merged", RefreshNotFromBase, func(s *refreshScenario) {
+			s.repo.git("checkout", "-q", "-b", "landed-side", "dev")
+			s.repo.commit("landed-side.txt", "a branch the base merged")
+			s.repo.git("checkout", "-q", "dev")
+			s.repo.git("merge", "-q", "--no-ff", "-m", "the base merges the side branch", "landed-side")
+			s.repo.git("checkout", "-q", "feature")
+			s.repo.git("merge", "-q", "--no-ff", "-m", "merge the side branch itself", "landed-side")
+			s.head = s.repo.git("rev-parse", "HEAD")
+			s.repo.git("checkout", "-q", "dev")
+		}},
 		{"the parents the other way round", RefreshNotBuiltOnAccepted, func(s *refreshScenario) {
 			s.repo.commit("other.txt", "dev one")
 			s.repo.git("checkout", "-q", "-b", "swapped", "dev")
@@ -317,6 +327,11 @@ func TestBaseRefreshReplayAndAPullRequestThatMovedOn(t *testing.T) {
 		t.Fatalf("replay = %v %+v (rows %d)", err, again, s.refreshRows())
 	}
 	s.repo.commit("other-four.txt", "dev four")
+	// the base moved on: the replay answers with what the first record holds, not with the tip read now
+	if moved, err := s.record("shared.json"); err != nil || !moved.Replayed || moved.BaseTipSHA != first.BaseTipSHA || len(moved.Steps) != 3 || moved.RefreshID != first.RefreshID || strings.Join(moved.Resolved, ",") != "shared.json" ||
+		moved.Steps[1].Resolved[0].Blob != first.Steps[1].Resolved[0].Blob {
+		t.Fatalf("replay after the base moved = %v %+v, want the first record's content", err, moved)
+	}
 	oldHead := s.head
 	s.head = s.mergeDev("merge dev 4", "", "")
 	s.forge.by["owner/repo#7"] = openPR("owner/repo", 7, s.head)
@@ -394,8 +409,9 @@ func TestBaseRefreshRowsAreTrustedOnlyWhenTheyDigestToTheirId(t *testing.T) {
 	})
 }
 
-// An edge that waits for the node's verified result reads the refreshed generation as current: the relationship moved to generation 2, which is where the acceptance now also stands.
-func TestBaseRefreshMakesTheRefreshedGenerationCurrentForArtifactEdges(t *testing.T) {
+// An edge that waits for the node's verified result (artifact_verified) keeps reading the accepted generation: this path moves what integration is judged on and nothing else, so while the relationship is at
+// the later generation the edge reads blocked:stale_head before and after the record, as the release of a successor that pins the accepted head reads merge_candidate_moved.
+func TestBaseRefreshLeavesAnArtifactEdgeReadingTheAcceptedGeneration(t *testing.T) {
 	s := newRefreshScenario(t)
 	if st := s.status("g", "ia"); !st.Satisfied {
 		t.Fatalf("the edge before generation 2 = %+v", st)
@@ -403,20 +419,83 @@ func TestBaseRefreshMakesTheRefreshedGenerationCurrentForArtifactEdges(t *testin
 	s.openGeneration()
 	s.refreshBase()
 	if st := s.status("g", "ia"); st.Satisfied || st.Reason != BlockedStaleHead {
-		t.Fatalf("the edge while generation 2 is open and nothing is recorded = %+v, want blocked:stale_head", st)
+		t.Fatalf("the edge while generation 2 is open = %+v, want blocked:stale_head", st)
 	}
 	if _, err := s.record("shared.json"); err != nil {
 		t.Fatal(err)
 	}
-	if st := s.status("g", "ia"); !st.Satisfied {
-		t.Fatalf("the edge after the record = %+v, want satisfied", st)
+	if st := s.status("g", "ia"); st.Satisfied || st.Reason != BlockedStaleHead {
+		t.Fatalf("the edge after the record = %+v, want it unchanged", st)
 	}
-	// and a head the child moved after the ruling is not the head the record named
-	s.exec("INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at)"+
-		" VALUES ('evt-newer', ?, 2, ?, 'ready_for_review', 'child', 'child-I', 'turn-newer', 'completed', '{}', 'final', 't1', 't1')", s.rid, dig("a newer revision"))
-	s.exec("INSERT INTO revision_lineage (relationship_id, execution_generation, event_id, revision_hash, declared_by, recorded_at) VALUES (?, 2, 'evt-newer', ?, 'child', 't1')", s.rid, dig("a newer revision"))
-	if st := s.status("g", "ia"); st.Satisfied {
-		t.Fatalf("the edge with a newer report on generation 2 = %+v, want it not satisfied", st)
+}
+
+// Whoever claimed the plan after this session holds the epoch: the record is fenced like every command that decides.
+func TestBaseRefreshIsFencedByTheCoordinatorEpoch(t *testing.T) {
+	s := newRefreshScenario(t)
+	s.openGeneration()
+	s.refreshBase()
+	claim := s.claim(s.sched, "g", "parent", "nonce-one")
+	s.sched.ExpectedEpoch = claim.Epoch + 1
+	if _, err := s.record("shared.json"); refusalReason(err) != "stale_coordinator_epoch" || s.refreshRows() != 0 {
+		t.Fatalf("record under another epoch = %v (rows %d)", err, s.refreshRows())
+	}
+	s.sched.ExpectedEpoch = claim.Epoch
+	if _, err := s.record("shared.json"); err != nil || s.refreshRows() != 1 {
+		t.Fatalf("record under the epoch held = %v (rows %d)", err, s.refreshRows())
+	}
+}
+
+// The report the parent ruled verified names the head it describes; the head the forge shows has to be that head (a report that names none leaves nothing to compare, an abbreviation counts).
+func TestBaseRefreshWantsTheForgeHeadTheReportNames(t *testing.T) {
+	report := func(s *refreshScenario, head string) {
+		s.exec("INSERT INTO work_reports (event_id, submission_no, relationship_id, execution_generation, revision_hash, repository, pr_number, pr_url, head_sha, cxc_status, cxc_reason, contract_version, summary, next_action, recorded_at)"+
+			" VALUES (?, 1, ?, 2, ?, 'owner/repo', 7, NULL, ?, 'DONE', 'proved', 'v1', 'done', 'merge', 't')", s.event2, s.rid, s.revision2, head)
+	}
+	t.Run("another head", func(t *testing.T) {
+		s := newRefreshScenario(t)
+		s.openGeneration()
+		s.refreshBase()
+		report(s, s.h1)
+		if _, err := s.record("shared.json"); refusalReason(err) != "disposition_conflict" || !strings.Contains(err.Error(), "names the head") || s.refreshRows() != 0 {
+			t.Fatalf("record = %v (rows %d)", err, s.refreshRows())
+		}
+	})
+	t.Run("the head, abbreviated", func(t *testing.T) {
+		s := newRefreshScenario(t)
+		s.openGeneration()
+		s.refreshBase()
+		report(s, s.head[:12])
+		if _, err := s.record("shared.json"); err != nil || s.refreshRows() != 1 {
+			t.Fatalf("record = %v (rows %d)", err, s.refreshRows())
+		}
+	})
+}
+
+// A proof that finishes after another record landed does not put the acceptance back: the call is refused and repeated.
+func TestBaseRefreshProvedWhileAnotherRecordLandsIsRefused(t *testing.T) {
+	s := newRefreshScenario(t)
+	s.openGeneration()
+	s.refreshBase()
+	slow := s.head
+	s.sched.testBeforeRefreshTx = func() {
+		s.sched.testBeforeRefreshTx = nil
+		s.repo.commit("other-late.txt", "dev late")
+		s.head = s.mergeDev("merge dev late", "", "")
+		s.forge.by["owner/repo#7"] = openPR("owner/repo", 7, s.head)
+		if _, err := s.record("shared.json"); err != nil {
+			t.Errorf("the record that landed first = %v", err)
+		}
+		s.forge.by["owner/repo#7"] = openPR("owner/repo", 7, slow)
+	}
+	if _, err := s.record("shared.json"); refusalReason(err) != "disposition_conflict" || !strings.Contains(err.Error(), "while this one was being proved") {
+		t.Fatalf("the slow record = %v", err)
+	}
+	if s.refreshRows() != 1 {
+		t.Fatalf("rows = %d, want only the record that landed first", s.refreshRows())
+	}
+	var head string
+	if err := s.s.DB.QueryRow("SELECT head_sha FROM dag_base_refreshes").Scan(&head); err != nil || head == slow {
+		t.Fatalf("the stand holds %s (%v), want the newer head", head, err)
 	}
 }
 

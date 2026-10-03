@@ -3,6 +3,7 @@ package dagsched
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"sort"
@@ -85,6 +86,37 @@ func (s *Scheduler) standOf(ctx context.Context, q store.Querier, a Acceptance) 
 		}
 	}
 	return own, rows.Err()
+}
+
+// decodeRefreshProof reads back the proof and the resolved paths a record stores.
+func decodeRefreshProof(proofJSON, resolvedJSON string) ([]RefreshStep, []string, error) {
+	var proof struct {
+		Steps []struct {
+			Previous   string `json:"previous"`
+			BaseParent string `json:"base_parent"`
+			Head       string `json:"head"`
+			Tree       string `json:"tree"`
+			Resolved   []struct {
+				Path string `json:"path"`
+				Blob string `json:"blob"`
+			} `json:"resolved"`
+		} `json:"steps"`
+	}
+	if err := json.Unmarshal([]byte(proofJSON), &proof); err != nil {
+		return nil, nil, err
+	}
+	var paths []string
+	if err := json.Unmarshal([]byte(resolvedJSON), &paths); err != nil {
+		return nil, nil, err
+	}
+	steps := make([]RefreshStep, len(proof.Steps))
+	for i, st := range proof.Steps {
+		steps[i] = RefreshStep{Previous: st.Previous, BaseParent: st.BaseParent, Head: st.Head, Tree: st.Tree}
+		for _, r := range st.Resolved {
+			steps[i].Resolved = append(steps[i].Resolved, RefreshResolved{Path: r.Path, Blob: r.Blob})
+		}
+	}
+	return steps, paths, nil
 }
 
 // refreshCheckout is where the commits are read: the target itself when it is a local checkout, else the checkout the caller names.
@@ -172,6 +204,11 @@ func (s *Scheduler) RecordBaseRefresh(ctx context.Context, plan, node, actor str
 	if head.SetDigest != n.CriteriaSetDigest {
 		return out, refuse(contract.RefusalCriteriaSetChanged, "generation %d of %s was ruled against criteria %s and the plan fixed %s for %s", rel.Generation, rel.ID, head.SetDigest, n.CriteriaSetDigest, node)
 	}
+	// what the acceptance stands on before this call proves anything: a record that lands while the proof is read makes this one a call to repeat, so a proof that finishes late never puts the acceptance back
+	standBefore, err := s.standOf(ctx, q, acc)
+	if err != nil {
+		return out, err
+	}
 	if s.PRs == nil || s.Tips == nil {
 		return out, errors.New("this scheduler has no pull request reader or target reader, so it cannot read the head to refresh")
 	}
@@ -218,6 +255,14 @@ func (s *Scheduler) RecordBaseRefresh(ctx context.Context, plan, node, actor str
 		if !g.hasCommit(ctx, c.sha) {
 			return out, refuse(contract.RefusalMergeTargetUnreadable, "%s (%s) is not in %s: fetch it there first (git fetch) and record the refresh again", c.what, c.sha, checkout)
 		}
+	}
+	// the report the parent ruled verified names the head it describes: a head the forge shows now that the report does not name is not what was verified (a report that names none leaves nothing to compare)
+	var reported sql.NullString
+	if _, err := queryOne(ctx, q, "SELECT head_sha FROM work_reports WHERE event_id = ? AND relationship_id = ? ORDER BY submission_no DESC LIMIT 1", []any{head.EventID, rel.ID}, &reported); err != nil {
+		return out, err
+	}
+	if said := strings.ToLower(strings.TrimSpace(reported.String)); said != "" && !(len(said) >= 7 && strings.HasPrefix(pr.HeadSHA, said)) {
+		return out, refuse(contract.RefusalDispositionConflict, "the report of generation %d (event %s) names the head %s and pull request %s#%d is at %s now: the head that was verified is not the head to refresh", rel.Generation, head.EventID, said, forge, number, pr.HeadSHA)
 	}
 	proof, refusal, err := proveBaseRefresh(ctx, g, acc.HeadSHA, pr.HeadSHA, tip.SHA)
 	if err != nil {
@@ -279,6 +324,16 @@ func (s *Scheduler) RecordBaseRefresh(ctx context.Context, plan, node, actor str
 		if err := s.observableRelationship(txCtx, tx, acc, actor); err != nil {
 			return err
 		}
+		if standNow, err := s.standOf(txCtx, tx, now); err != nil {
+			return err
+		} else if standNow != standBefore {
+			return refuse(contract.RefusalDispositionConflict, "the base refresh recorded for %s changed while this one was being proved: read the head again and call again", node)
+		}
+		if landed, _, err := s.nodeIntegrated(txCtx, tx, plan, current, now); err != nil {
+			return err
+		} else if landed {
+			return refuse(contract.RefusalDispositionConflict, "%s landed while its base refresh was being proved: there is nothing to refresh", node)
+		}
 		relNow, found, err := loadRelationship(txCtx, tx, acc.RelationshipID)
 		if err != nil {
 			return err
@@ -300,13 +355,19 @@ func (s *Scheduler) RecordBaseRefresh(ctx context.Context, plan, node, actor str
 		}
 		out.EventID, out.RevisionHash = head.EventID, head.RevisionHash
 		out.RefreshID = refreshDigest(acc.AcceptanceID, rel.ID, rel.Generation, head.EventID, head.RevisionHash, pr.HeadSHA, acc.Repository, pr.BaseRef, tip.SHA, proofJSON, resolvedJSON)
-		var existing string
+		var existing, baseRepo, baseRef, baseTip, storedProof, storedResolved string
 		var seq int64
-		if has, err := queryOne(txCtx, tx, "SELECT refresh_id, refresh_seq FROM dag_base_refreshes WHERE acceptance_id = ? AND event_id = ? AND head_sha = ?", []any{acc.AcceptanceID, head.EventID, pr.HeadSHA}, &existing, &seq); err != nil {
+		if has, err := queryOne(txCtx, tx, "SELECT refresh_id, refresh_seq, base_repository, base_ref, base_tip_sha, proof_json, resolved_paths_json FROM dag_base_refreshes WHERE acceptance_id = ? AND event_id = ? AND head_sha = ?",
+			[]any{acc.AcceptanceID, head.EventID, pr.HeadSHA}, &existing, &seq, &baseRepo, &baseRef, &baseTip, &storedProof, &storedResolved); err != nil {
 			return err
 		} else if has {
-			// the same generation head and pull request head recorded before: a replay (the proof is read again, the tip of the base may have moved on since, and the record stays the first one)
+			// the same generation head and pull request head recorded before: a replay, answered with what the first record holds (the tip of the base may have moved on since, and the record stays the first one)
+			steps, paths, err := decodeRefreshProof(storedProof, storedResolved)
+			if err != nil {
+				return err
+			}
 			out.Replayed, out.RefreshID, out.Seq = true, existing, seq
+			out.BaseRepository, out.BaseRef, out.BaseTipSHA, out.Steps, out.Resolved = baseRepo, baseRef, baseTip, steps, paths
 			return nil
 		}
 		var last sql.NullInt64
