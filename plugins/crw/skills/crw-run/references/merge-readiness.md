@@ -537,7 +537,10 @@ by several commits).
 Then merge as above: reread the head and base, merge with the expected-head guard on N.
 
 **What still goes back to the child.** A conflict comes before an update: the forge refused the
-call, or the state reads `DIRTY`. That update did not happen, so the branch is where the last one
+call, or the state reads `DIRTY`. When every conflicting file lies in a place the plan declared
+`mechanical`, the parent settles the conflict itself ([Resolve a mechanical conflict
+yourself](#resolve-a-mechanical-conflict-yourself)); a conflict anywhere else is the child's.
+That update did not happen, so the branch is where the last one
 left it: at P when this was the first attempt, at the newest head the parent made when it was a
 repeat. The correction is the old base-refresh correction that names that head and the conflicting
 base, and it carries the [restoration block](task-packet.md#restoration-block) when an earlier
@@ -589,7 +592,9 @@ waiter.
 
 **Record the refresh** where the merge is recorded. `assignment-mark merged --evidence` carries the
 check's `evidence:` line exactly as printed (previous head, dev tip, new head, tree OID and the rule
-applied), one line per step when the candidate was refreshed more than once, and the
+applied), one line per step when the candidate was refreshed more than once (after a conflict settled by
+a mechanical rule also the `applied:` lines and the wording given in [Resolve a mechanical conflict
+yourself](#resolve-a-mechanical-conflict-yourself)), and the
 `merge-evidence` verdict on N, because `--expected-event` pins the child's report, which names P:
 the merged head and the receipt revision differ, as they already do after a child's base refresh,
 and the evidence text is the only place that difference is explained. The merge record in the
@@ -606,8 +611,8 @@ lands still leaves its returned episode behind:
       ci_reruns=<reruns the parent asked for, at most one per head>
       dev_after=<success|failure|unread|pending> evidence=<the evidence line, once per step>
     merge-lane-episode: pr=<N> at=<UTC> outcome=<handled|returned>
-      because=<the refresh passed the check | a forge conflict | a refusal (code) | an exit 2 not
-      cleared | stale_base | a merge state still UNKNOWN>
+      because=<the refresh passed the check | the mechanical check passed | a forge conflict | a refusal
+      (code) | an exit 2 not cleared | stale_base | a merge state still UNKNOWN>
 
 An entry for a candidate that was refreshed once and landed after one rerun reads, in shape only
 (the numbers are illustrative): verified 01:02:00Z, granted 01:20:00Z, landed 01:41:30Z,
@@ -629,7 +634,8 @@ An entry for a candidate that was refreshed once and landed after one rerun read
   has no run.
 - Conflicts are counted as episodes, for the base reason only. An episode is one occasion on which
   the only block on a candidate was the base. It is handled when the parent's refresh passed the
-  check, and returned when the candidate went back to its child for the base: a forge conflict, a
+  check (`base-refresh check`, or `base-refresh mechanical` for a conflict settled by a rule), and returned
+  when the candidate went back to its child for the base: a forge conflict the rules do not settle, a
   refusal, an exit 2 that a second ask did not clear, a `stale_base`, a merge state still
   `UNKNOWN`. Each episode has one record, whether or not the candidate lands later; a candidate
   that needs no refresh has none.
@@ -654,9 +660,114 @@ infrastructure failure before the code ran, or undetermined. Those three are rep
 count and are not in it; so are a landing not yet landed (`pending`) and one not read (`unread`),
 and none of them is ever counted as zero.
 
+### Resolve a mechanical conflict yourself
+
+A conflict is not always a reason to return a candidate. Two conflicts are frequent and have a fixed answer:
+the `plugin.json` version suffix, which is derived from the payload and is wrong on both sides once the
+other lands, and entries that two pull requests append to the end of one append-only list. When the plan
+declared the place `mechanical` ([Release by region grade](region-grades.md)) the parent settles the
+conflict by the rule of the place and proves the result with `crw skill base-refresh mechanical`, so the
+candidate does not make a round trip of a whole generation for a merge whose answer was declared.
+`check` cannot prove such a head, because it is not a pure merge of the base.
+
+Do it only when the three conditions of the refresh above hold at the verified head P, with one change: the
+forge reports a conflict (the update call answered 422 with a merge conflict, or the state reads
+`DIRTY`) instead of none. And only when the declarations are known: the file of the regions the candidate
+declared, and one for every node whose landing the conflict comes from (`dag-ready`'s `release.basis` names
+the holders, keeps at most 16 rows and says by `basis_omitted` when it dropped some). The check takes the
+rule of a place only when every declaration given names it, as the scheduler's overlap judgement does, and
+it cannot know that the set it was given is complete: a parent that cannot name every node does not go on, and
+the candidate goes back to its child. Where the installed `crw skill base-refresh` does not list `mechanical`
+among its commands, the parent does not settle a conflict either.
+
+1. Read D, the tip of the base, from the forge as for any refresh. In a checkout of your own (never the child's
+   worktree, never one that holds other work), fetch P and D, check P out in a worktree of its own and merge D
+   with a merge commit: `git merge --no-ff -m "Merge branch 'dev' into <branch>" <D>`. `git diff --name-only
+   --diff-filter=U` lists the conflicting files. A file no declaration covers, a conflict that is not a change
+   both sides made to one text file (a deleted or renamed file, a binary file, a link), and a place whose rule
+   is `renumber` end it here: `git merge --abort`, and the candidate goes back to its child (below).
+2. Settle each conflicting file by its rule and by nothing else. A file that merged cleanly stays as git made it.
+   - `union`: keep every line of both sides, each side's lines in their own order, and add nothing. `git show
+     :1:<path>` is the base, `:2:<path>` the candidate and `:3:<path>` the dev tip. When both sides only
+     appended to the end of the list, the result is the candidate's file followed by the lines the dev tip
+     added after the base's last line: `{ git show :2:<path>; git show :3:<path> | tail -n +$(( $(git show
+     :1:<path> | wc -l) + 1 )); } > <path>`. Do not settle it by deleting the conflict markers: git moves a
+     line both sides added out of the conflict, so what is left holds it once, and the check counts it twice.
+   - `regenerate:<command>`: discard both sides' versions, take either side's (`git checkout --theirs
+     <path>`) and run the declared command on the merged tree, from the repository root. For
+     `plugins/crw/.codex-plugin/plugin.json` that is `go run -tags dev ./cmd/crw-dev ci plugin
+     --record-version`, after the merge of the skills has settled, because the suffix digests the whole
+     payload. Declare a command that works from the root of a fresh checkout with the caller's `PATH`: the
+     check runs it there.
+3. Add the settled files and commit; the merge commit has the parents P and D in that order. Before pushing
+   anything run, with N the new commit:
+
+       crw skill base-refresh mechanical --repo <your checkout> --previous P --head N --base D \
+         --repository OWNER/NAME --regions <the candidate's declaration> --regions <each landed node's>
+
+   Exit 0 says the head is P merged with D, every conflict is in a mechanical place, the head differs from
+   git's clean three-way result only there, every union keeps all lines of both sides (the result has as many
+   lines as the base plus both sides' additions), and each regeneration command, run twice on a checkout of the
+   head (the second time from the dev tip's version of the file), leaves the head's files as they are. The
+   command comes from the declaration and runs the head's own code with your rights, as running that head's
+   tests would, so it is a head whose changes were verified at P that it is run on. Exit 1 is a refusal, and its
+   first line names the code:
+   - `no_update`, `not_built_on_previous`, `not_a_merge`, `parents_swapped`, `not_from_base`, `not_the_dev_tip`:
+     N is not an update of P by D, as for `check`; `nothing_resolved`: nothing conflicted and nothing was settled
+     by a rule, so the proof of N is `check`.
+   - `conflict_outside_mechanical`, `differs_outside_mechanical`: a conflicting file, or a file where N differs
+     from git's result, is not covered by one rule that every declaration given names (no symbol region, no
+     region of another grade touching it, no shared contract surface, and two trees that hold one are exclusive
+     together); `conflict_not_content`: the conflict is not one text file that both sides changed (a deletion, a
+     rename that git followed or that cannot be excluded, a moved file, a binary file, a link); `ambiguous_base`:
+     more than one merge base; `rule_unchecked`: the rule is `renumber`, which names no id and has no check.
+   - `union_not_additions`: a side changed or removed a line of the base; `union_line_lost`: a line of a side is
+     missing from the result or out of its side's order, or a line both sides added stands once; `union_line_added`:
+     the result holds a line more often than the two sides give it (a line of its own, a repeated line, a conflict
+     marker); `union_not_conflicted`: the path merged cleanly and N changed it; `union_result_not_a_file`: N
+     removed the file or changed its mode.
+   - `regeneration_differs`: the command changes a file N has (the version suffix left at one side's value), or
+     N holds the file with a mode that git's merge does not give it (a rule rebuilds bytes and leaves the mode alone);
+     `regeneration_not_deterministic`: the two runs differ, or the result depends on what the file held before;
+     `regeneration_touches_outside`: the command changes a tracked file outside its regions, its bytes or its
+     executable bit;
+     `regeneration_failed`: it exits non-zero.
+
+   Exit 2 means git or a command could not answer (a timeout, a command that cannot start, a declaration that
+   cannot be read): it is not a pass, so fix the cause and ask again, and where a second ask does not clear it
+   the candidate goes back.
+4. Only on exit 0, push N to the candidate's branch as a fast-forward from P (`git push origin N:<branch>`, never
+   forced). A rejected push means the branch moved, so start again from the top. A refused N is never pushed:
+   the branch stays at P and the correction is the plain base-refresh correction that names P and the
+   conflicting files, with the first line and the `facts:` line of the refusal. From the push on, N is a head the
+   parent made, and everything under "On the new head N nothing about P carries over" above applies to it
+   unchanged: every required job and the review on N, the one rerun, the order around `dag-accept` and the merge
+   lane. The check proves the resolution, not that N works: the jobs do.
+
+**The evidence.** The merged mark and the merge record name the rule applied in plain words, say that the check
+passed, and carry the check's output as printed:
+
+    base refresh by mechanical resolution, check passed: append-only union of docs/port/refactor-backlog.md; plugin.json version regenerated
+    evidence: previous=<P> dev_tip=<D> head=<N> tree=<N's tree> rule=mechanical_resolution
+    applied: union path=docs/port/refactor-backlog.md base_lines=<n> previous_added=<n> dev_added=<n> result_lines=<n>
+    applied: regenerate path=plugins/crw/.codex-plugin/plugin.json command="<command>" runs=2 identical=yes matches_head=yes
+
+The words for the two usual rules are "append-only union of <path>" and "plugin.json version regenerated"; any other
+regeneration reads "<path> regenerated by <command>". Copy the `evidence:` and `applied:` lines, do not retype them, and
+add the `merge-evidence` verdict on N, as for any refresh. A pass is a fact about the resolution: it does not say that a
+job, a review or a merge happened on N.
+
+**What goes back to the child.** A refusal, an exit 2 that a second ask does not clear, a conflict in a file no
+declaration covers or whose declaration the parent cannot complete, a place whose rule is `renumber`, and a
+conflict of any other kind. The correction is the base-refresh correction: it names P, the base tip and the
+conflicting files, quotes the refusal, and says which rule the plan declared for each place. The child resolves
+the rest, and the hunks it settled by a rule are `mechanical` in its handoff ([What a handoff
+discloses](task-packet.md#what-a-handoff-discloses)); the parent may run the same check on the child's merge
+(`--previous` the head it verified, `--head` the child's merge commit) instead of reproducing the hunks by hand.
+
 ### A base conflict after the ruling and before the acceptance
 
-The verdict `verified` was given, and before `dag-accept` (or, in a project with no plan, before the merged mark) the base conflicts: the forge refuses the update, the state reads `DIRTY`, or another project's landing changed the head you refreshed. The candidate goes back to its child, and the way is the needs-changes ruling on the same receipt: the relay replaces a `verified` ruling by `needs_changes` while nothing rests on it, opens the next generation and queues the correction to the same child. (A criteria re-review that is open is decided first, as it always was.) It needs nothing from a conflict handling of the parent's own.
+The verdict `verified` was given, and before `dag-accept` (or, in a project with no plan, before the merged mark) the base conflicts: the forge refuses the update, the state reads `DIRTY`, or another project's landing changed the head you refreshed. A conflict whose every file lies in a `mechanical` place is the parent's to settle first ([Resolve a mechanical conflict yourself](#resolve-a-mechanical-conflict-yourself)); any other candidate goes back to its child, and the way is the needs-changes ruling on the same receipt: the relay replaces a `verified` ruling by `needs_changes` while nothing rests on it, opens the next generation and queues the correction to the same child. (A criteria re-review that is open is decided first, as it always was.) It needs nothing from a conflict handling of the parent's own.
 
 1. **Check that nothing rests on the ruling.** Read `codex-session-relay --state "$RELAY_STATE" assignment-show --relationship <rel>`: the state is `verified` and the head is the event you ruled. No `dag-accept` was recorded for the node: `dag-ready --plan <plan>` reads it as `verifying`, and a node with an acceptance never does (it reads `done:accepted`, `done:integrated`, `stale` or `blocked:stale_head`, an accepted node whose head moved). No `assignment-mark --mark merged` was either. A merge turn of this candidate that you hold is `holding` (`merge-turn-show` names its state); one that is `merging` or of unknown effect is resolved first (`merge-turn-resolve`), and one that landed means the work is on the target, which new work corrects and a ruling does not.
 2. **Rule `needs_changes` on the same receipt:**

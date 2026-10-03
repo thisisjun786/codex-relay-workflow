@@ -187,6 +187,7 @@ func emitted(t *testing.T, value any) string {
 // ExecutionPolicy.from_file gave for the same bytes (the golden, which began as Python's): SHA-256
 // of exactly the bytes read, never of a re-encoding. A synthetic file, never the host's.
 func TestLaunchPolicy_digest_is_the_parsers_and_pythons(t *testing.T) {
+	t.Parallel()
 	fixture := loadLaunchFixture(t)
 	root := t.TempDir()
 	state := buildLaunchCase(t, root, fixture, fixture.Cases["record"])

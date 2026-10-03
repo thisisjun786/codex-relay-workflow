@@ -15,9 +15,11 @@ import (
 )
 
 func Test28_MSC_5_StableReadAndMutations(t *testing.T) {
+	t.Parallel()
 	shareGoldens(t)
 	for _, kind := range []string{"quiet", "rename", "write", "mapped"} {
 		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			file := filepath.Join(root, "quiet.txt")
 			if err := os.WriteFile(file, []byte("original content"), 0600); err != nil {

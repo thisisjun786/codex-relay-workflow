@@ -30,6 +30,7 @@ func reasonIs(t *testing.T, err error, reason string) {
 	}
 }
 func Test27_MRS_1_ReservationReplayAndCheckpoint(t *testing.T) {
+	t.Parallel()
 	r, id := fixtureReservation(t)
 	ctx := context.Background()
 	first, err := r.Reserve(ctx, id)
@@ -61,6 +62,7 @@ func Test27_MRS_1_ReservationReplayAndCheckpoint(t *testing.T) {
 	}
 }
 func Test27_MRS_2_OnePendingRequestPerIssue(t *testing.T) {
+	t.Parallel()
 	r, id := fixtureReservation(t)
 	ctx := context.Background()
 	if _, err := r.Reserve(ctx, id); err != nil {
@@ -78,6 +80,7 @@ func Test27_MRS_2_OnePendingRequestPerIssue(t *testing.T) {
 	reasonIs(t, err, "duplicate_assignment")
 }
 func Test27_MRS_2_ActiveAndPausedOwnersExcludeReservation(t *testing.T) {
+	t.Parallel()
 	r, id := fixtureReservation(t)
 	ctx := context.Background()
 	reg := &registry.Registry{Store: r.Store, Now: r.Now}
@@ -95,6 +98,7 @@ func Test27_MRS_2_ActiveAndPausedOwnersExcludeReservation(t *testing.T) {
 }
 
 func Test27_MRS_2_ResumeCannotPassPendingReservation(t *testing.T) {
+	t.Parallel()
 	r, id := fixtureReservation(t)
 	ctx := context.Background()
 	if _, err := r.Reserve(ctx, id); err != nil {
@@ -123,6 +127,7 @@ func Test27_MRS_2_ResumeCannotPassPendingReservation(t *testing.T) {
 }
 
 func Test27_MRS_2_PendingIndexIsDatabaseConstraint(t *testing.T) {
+	t.Parallel()
 	r, id := fixtureReservation(t)
 	ctx := context.Background()
 	if _, err := r.Reserve(ctx, id); err != nil {
@@ -139,6 +144,7 @@ func Test27_MRS_2_PendingIndexIsDatabaseConstraint(t *testing.T) {
 }
 
 func Test27_MRS_2_TwoConnectionsReserveOneIssue(t *testing.T) {
+	t.Parallel()
 	r, id := fixtureReservation(t)
 	ctx := context.Background()
 	var wg sync.WaitGroup
@@ -186,6 +192,7 @@ func Test27_MRS_2_TwoConnectionsReserveOneIssue(t *testing.T) {
 }
 
 func Test27_MRS_4_ArmAndReleaseRaceHasOneWinner(t *testing.T) {
+	t.Parallel()
 	r, id := fixtureReservation(t)
 	ctx := context.Background()
 	if _, err := r.Reserve(ctx, id); err != nil {
@@ -239,6 +246,7 @@ func Test27_MRS_4_ArmAndReleaseRaceHasOneWinner(t *testing.T) {
 }
 
 func Test27_MRS_3_OnlyAcceptedReceiptPublishesChild(t *testing.T) {
+	t.Parallel()
 	r, id := fixtureReservation(t)
 	ctx := context.Background()
 	if _, err := r.Reserve(ctx, id); err != nil {
@@ -282,6 +290,7 @@ func Test27_MRS_3_OnlyAcceptedReceiptPublishesChild(t *testing.T) {
 	}
 }
 func Test27_MRS_4_ReleaseAndArmSameRevision(t *testing.T) {
+	t.Parallel()
 	r, id := fixtureReservation(t)
 	ctx := context.Background()
 	if _, err := r.Reserve(ctx, id); err != nil {

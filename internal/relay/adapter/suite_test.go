@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -22,6 +23,20 @@ import (
 var suiteDirectory string
 var suiteBinary string
 var suiteAlias string
+
+// openStore is store.Open for tests that run beside tests which start processes. A store opened
+// without a socket creates its write gate held EX, lets it go, and takes it SH without waiting a
+// moment later. A flock belongs to the open file description, and a child another test forks
+// while the gate is open shares that description until its exec, so a busy host can leave the EX
+// hold standing when the SH is asked for, and the open is refused. The descriptors are therefore
+// open only under syscall.ForkLock held for reading, which every process start takes for writing
+// across its fork, as internal/testsupport does for the locks it takes. Opening never starts a
+// process, so it cannot wait on that lock forever.
+func openStore(ctx context.Context, path, socket string) (*store.Store, error) {
+	syscall.ForkLock.RLock()
+	defer syscall.ForkLock.RUnlock()
+	return store.Open(ctx, path, socket)
+}
 
 // installSuiteBinary puts the crw every binary scenario runs, one clock-injected build, at
 // <suite>/crw with its codex-session-relay alias beside it. Production defaults are unchanged

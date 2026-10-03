@@ -2,10 +2,7 @@ package delivery
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
-	"sort"
 	"strings"
 	"unicode/utf8"
 
@@ -13,14 +10,6 @@ import (
 	py "github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
-
-type reportSection struct {
-	name       string
-	lines      []string
-	rank, keep int
-	essential  bool
-	last       bool
-}
 
 func reportString(value any) string { return pyvalue.Str(value) }
 func reportValue(row map[string]any, key string) string {
@@ -97,128 +86,40 @@ func (d *Service) PreviewReport(ctx context.Context, event, request string, budg
 	}
 	return composeWorkCompletion(ctx, d.Store, row, receipt, request, report, budget)
 }
-func reportCompose(sections []reportSection, event string, budget int) (string, error) {
-	blocks := make([][]string, len(sections))
-	order := make([]int, len(sections))
-	removed := []string{}
-	lineCount, totalBytes := 0, 0
-	for _, section := range sections {
-		lineCount += len(section.lines)
-		for _, line := range section.lines {
-			totalBytes += len(line)
-		}
-	}
-	tail := -1
-	for i, section := range sections {
-		blocks[i] = append([]string{}, section.lines...)
-		order[i] = i
-		if section.last {
-			tail = i
-		}
-	}
-	sort.SliceStable(order, func(i, j int) bool { return sections[order[i]].rank > sections[order[j]].rank })
-	omission := func() string {
-		return "omitted: " + strings.Join(removed, ", ") + " - read in full with codex-session-relay show --event " + event
-	}
-	rendered := func() string {
-		lines := []string{}
-		for i, block := range blocks {
-			if i != tail {
-				lines = append(lines, block...)
-			}
-		}
-		if len(removed) > 0 {
-			lines = append(lines, "", omission())
-		}
-		if tail >= 0 {
-			lines = append(lines, blocks[tail]...)
-		}
-		return strings.Join(lines, "\n")
-	}
-	overBudget := func() bool {
-		count, total := lineCount, totalBytes
-		if len(removed) > 0 {
-			count += 2
-			total += len(omission())
-		}
-		return total+max(count-1, 0) > budget
-	}
-	for _, i := range order {
-		if !overBudget() {
-			break
-		}
-		if sections[i].essential || len(blocks[i]) == 0 {
-			continue
-		}
-		removed = append(removed, sections[i].name)
-		lineCount -= len(blocks[i])
-		for _, line := range blocks[i] {
-			totalBytes -= len(line)
-		}
-		blocks[i] = nil
-	}
-	for _, i := range order {
-		section := sections[i]
-		if !section.essential || len(section.lines) <= section.keep {
-			continue
-		}
-		kept := len(section.lines)
-		markerBytes := 0
-		for overBudget() && kept > section.keep {
-			kept--
-			lineCount--
-			totalBytes -= len(section.lines[kept])
-			marker := fmt.Sprintf("  ... %d more, see the full record", len(section.lines)-kept)
-			totalBytes += len(marker) - markerBytes
-			if markerBytes == 0 {
-				lineCount++
-			}
-			markerBytes = len(marker)
-			blocks[i] = append(append([]string{}, section.lines[:kept]...), marker)
-			if !reportContains(removed, section.name) {
-				removed = append(removed, section.name)
-			}
-		}
-	}
-	text := rendered()
-	if len(text) > budget {
-		return "", fmt.Errorf("a message budget of %d bytes cannot hold this report even reduced to its required parts; raise the budget rather than shipping a message that lost them", budget)
-	}
-	return text, nil
-}
-func workRestoreLines(r map[string]any) []string {
-	restoreLines := []string{}
-	if pyvalue.Truthy(r["restore"]) {
-		restore := py.Dict(r["restore"], false)
-		restoreLines = []string{"", "workflow restore:"}
-		for _, entry := range [][2]string{{"mode", "mode"}, {"scope", "scope"}, {"phase", "phase"}, {"phaseObservedAt", "phase observed"}, {"plan", "plan"}, {"evidence", "evidence"}, {"remaining", "remaining"}} {
-			if value := reportValue(restore, entry[0]); pyvalue.Truthy(restore[entry[0]]) {
-				restoreLines = append(restoreLines, "  "+entry[1]+": "+value)
-			}
-		}
-		pointers := map[string]string{"development": "codexclaw:cxc-dev", "loop": "codexclaw:cxc-loop with codexclaw:cxc-pabcd", "lost-context": "codexclaw:cxc-lost-context", "pull-request": "codexclaw:cxc-dev references/stacked-prs.md", "review-repair": "codexclaw:cxc-review-repair"}
-		for _, raw := range py.Items(restore["skills"]) {
-			py.HashKey(raw)
-			if pointer := pointers[reportString(raw)]; pointer != "" {
-				restoreLines = append(restoreLines, "  read: "+pointer)
-			} else {
-				panic(&py.PythonError{Class: "KeyError", Detail: pyvalue.Repr(pyvalue.Repr(raw) + " has no recorded owner; name the owning skill rather than sending a recipient to reload everything")})
-			}
-		}
-	}
-	return restoreLines
-}
-func reportContains(values []string, word string) bool {
-	for _, v := range values {
-		if v == word {
-			return true
-		}
-	}
-	return false
-}
+
+// composeWorkCompletion builds the verification request the parent reads. The section builders
+// run in a fixed order because a stored value of the wrong shape fails where it is first read
+// (a Python error that renderWorkReport returns): the first fault in this order is the one
+// reported.
 func composeWorkCompletion(ctx context.Context, s *store.Store, row Row, receipt Obj, request string, r map[string]any, budget int) (string, error) {
-	event := row.S("event_id")
-	rid := row.S("relationship_id")
+	event, rid := row.S("event_id"), row.S("relationship_id")
+	purpose := completionPurpose(receipt)
+	sender, scope, err := completionParties(ctx, s, rid)
+	if err != nil {
+		return "", err
+	}
+	evidence := completionVerificationLines(r)
+	unresolved := unresolvedSection(r)
+	pr := completionPullRequestLines(r)
+	handoff, confirmations := completionHandoffLines(r)
+	manifest := completionManifestLines(receipt)
+	manifestRef := completionManifestRefLines(receipt)
+	nonVerification := "a child report is the child describing its own execution, not a verdict"
+	if r["cxc_status"] == "DONE" {
+		nonVerification = "a DONE report is the child proving its own criteria, not the parent's verdict"
+	}
+	restore := restoreSection(r)
+	sections := []reportSection{
+		reportHeaderSection("[codex-session-relay] verification request", "result: "+reportValue(r, "summary"), r, "  this is the child reporting on its own work. It is not a verification: "+nonVerification),
+		{"pull request", pr, 1, 2, true, false}, {"merge readiness", handoff, 1, 2, true, false}, {"acceptance confirmations", confirmations, 1, len(confirmations), true, false}, {"verification", evidence, 4, 0, false, false}, unresolved, {"next", []string{"next: " + reportValue(r, "next_action")}, 0, 1, true, false}, restore, {"deliverables", manifest, 6, 0, false, false}, {"manifest reference", manifestRef, 2, 2, true, false},
+		completionRecordSection(row, receipt, request, r, purpose, sender, scope),
+		respondSection(event),
+	}
+	return reportCompose(sections, event, budget)
+}
+
+// completionPurpose is what the message is for, as the receipt's outcome names it.
+func completionPurpose(receipt Obj) string {
 	purpose := "completion"
 	switch reportField(receipt, "outcome") {
 	case "ready_for_review":
@@ -226,15 +127,14 @@ func composeWorkCompletion(ctx context.Context, s *store.Store, row Row, receipt
 	case "blocked_needs_input":
 		purpose = "blocked"
 	}
-	digest := sha256.Sum256([]byte("child_to_parent|" + rid + "|" + purpose + "|" + event))
-	messageID := hex.EncodeToString(digest[:])[:32]
-	kind := "request"
-	if purpose == "progress" {
-		kind = "notification"
-	}
+	return purpose
+}
+
+// completionParties reads who sent the report and the scope it was written under.
+func completionParties(ctx context.Context, s *store.Store, rid string) (string, string, error) {
 	relationship, err := s.One(ctx, "SELECT * FROM relationships WHERE relationship_id = ?", rid)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	sender := "<unknown: the sending task was not read from the relationship>"
 	scope := "<unknown: no Linear scope was read>"
@@ -245,7 +145,7 @@ func composeWorkCompletion(ctx context.Context, s *store.Store, row Row, receipt
 		issue, _ := relationship.Get("issue_key").(string)
 		project, err := s.One(ctx, "SELECT project_key FROM relationship_scope WHERE relationship_id = ?", rid)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 		if issue != "" {
 			if project != nil && project.Get("project_key") != nil {
@@ -257,7 +157,11 @@ func composeWorkCompletion(ctx context.Context, s *store.Store, row Row, receipt
 			scope = "<unknown: neither a project nor an issue scope was readable>"
 		}
 	}
-	recipient := row.S("recipient_task_id")
+	return sender, scope, nil
+}
+
+// completionVerificationLines are the evidence the child recorded, one line per check.
+func completionVerificationLines(r map[string]any) []string {
 	evidence := []string{"", "verification:"}
 	if items := py.Items(r["evidence"]); len(items) > 0 {
 		for _, raw := range items {
@@ -282,18 +186,11 @@ func composeWorkCompletion(ctx context.Context, s *store.Store, row Row, receipt
 	} else {
 		evidence = []string{"", "verification: none recorded"}
 	}
-	unresolved := []string{"", "unresolved: none"}
-	if items := py.Items(r["unresolved"]); len(items) > 0 {
-		unresolved = []string{"", "unresolved:"}
-		for _, raw := range items {
-			if v, ok := raw.(string); ok {
-				unresolved = append(unresolved, "  - "+unheaded(v))
-			} else {
-				v := py.Dict(raw, false)
-				unresolved = append(unresolved, strings.TrimRight("  - "+unheaded(pyvalue.Str(v["id"]))+": "+pyvalue.Str(py.Or(v["note"], "")), ": "))
-			}
-		}
-	}
+	return evidence
+}
+
+// completionPullRequestLines name the pull request and its base, head and criteria.
+func completionPullRequestLines(r map[string]any) []string {
 	pr := []string{"", "repository: " + reportValue(r, "repository"), "pull request: none recorded for this event"}
 	if r["pr_number"] != nil {
 		pr = []string{"", "pull request: " + reportValue(r, "repository") + "#" + pyStr(r["pr_number"])}
@@ -312,8 +209,12 @@ func composeWorkCompletion(ctx context.Context, s *store.Store, row Row, receipt
 			pr = append(pr, "  "+pair[1]+": "+reportValue(r, pair[0]))
 		}
 	}
-	handoff := []string{}
-	confirmations := []string{}
+	return pr
+}
+
+// completionHandoffLines are the merge-readiness block and the accepted-thread confirmations.
+func completionHandoffLines(r map[string]any) (handoff, confirmations []string) {
+	handoff, confirmations = []string{}, []string{}
 	if h, ok := r["handoff"].(map[string]any); ok {
 		coverage := py.Dict(h["review_coverage"], true)
 		checks := py.Or(h["checks"], []any{})
@@ -349,6 +250,11 @@ func composeWorkCompletion(ctx context.Context, s *store.Store, row Row, receipt
 			confirmations = append([]string{fmt.Sprintf("  accepted by your decision (%d) - confirm each was yours:", len(confirmations))}, confirmations...)
 		}
 	}
+	return handoff, confirmations
+}
+
+// completionManifestLines list the deliverables the receipt declared.
+func completionManifestLines(receipt Obj) []string {
 	manifest := []string{"", "deliverables: none (execution-only outcome)"}
 	if value := reportField(receipt, "manifest"); pyvalue.Truthy(value) {
 		manifest = []string{"", fmt.Sprintf("deliverables: %d", py.Len(value))}
@@ -361,6 +267,11 @@ func composeWorkCompletion(ctx context.Context, s *store.Store, row Row, receipt
 			manifest = append(manifest, line)
 		}
 	}
+	return manifest
+}
+
+// completionManifestRefLines show the manifest reference, cut at 240 bytes on a character boundary.
+func completionManifestRefLines(receipt Obj) []string {
 	manifestRef := []string{}
 	if ref := reportField(receipt, "manifestRef"); ref != nil && ref != "" {
 		text := pyStr(ref)
@@ -377,17 +288,21 @@ func composeWorkCompletion(ctx context.Context, s *store.Store, row Row, receipt
 			manifestRef = []string{"", "manifestRef: " + text}
 		}
 	}
-	meaning := map[string]string{"DONE": "the child proved every recorded criterion against its own work", "NOOP": "nothing needed doing, and the finding that established that is the deliverable", "BLOCKED": "an external dependency is in the way", "UNSAFE": "a human risk decision is required before this can proceed", "NEEDS_HUMAN": "a judgment only the user can make", "BUDGET_EXHAUSTED": "a bound the plan actually stated ran out; best-so-far is adopted"}
-	nonVerification := "a child report is the child describing its own execution, not a verdict"
-	if r["cxc_status"] == "DONE" {
-		nonVerification = "a DONE report is the child proving its own criteria, not the parent's verdict"
+	return manifestRef
+}
+
+// completionRecordSection is the relay record block: the ids, parties, scope and receipt identity.
+func completionRecordSection(row Row, receipt Obj, request string, r map[string]any, purpose, sender, scope string) reportSection {
+	event, rid, recipient := row.S("event_id"), row.S("relationship_id"), row.S("recipient_task_id")
+	messageID := reportMessageID("child_to_parent", rid, purpose, event)
+	kind := "request"
+	if purpose == "progress" {
+		kind = "notification"
 	}
-	restoreLines := workRestoreLines(r)
-	sections := []reportSection{
-		{"header", []string{"[codex-session-relay] verification request", "result: " + reportValue(r, "summary"), "cxc: " + reportValue(r, "cxc_status") + " - " + reportValue(r, "cxc_reason"), "  meaning: " + meaning[reportValue(r, "cxc_status")], "  this is the child reporting on its own work. It is not a verification: " + nonVerification}, 0, 5, true, false},
-		{"pull request", pr, 1, 2, true, false}, {"merge readiness", handoff, 1, 2, true, false}, {"acceptance confirmations", confirmations, 1, len(confirmations), true, false}, {"verification", evidence, 4, 0, false, false}, {"unresolved", unresolved, 2, 2, true, false}, {"next", []string{"next: " + reportValue(r, "next_action")}, 0, 1, true, false}, {"workflow restore", restoreLines, 3, 0, false, false}, {"deliverables", manifest, 6, 0, false, false}, {"manifest reference", manifestRef, 2, 2, true, false},
-		{"relay record", []string{"", "relay record:", "  requestId: " + request, "  eventId: " + event, fmt.Sprintf("  submission: %d  contract: relay-report/1", r["submission_no"]), "  message: " + kind + " - an answer is owed by the recipient", "  messageId: " + messageID + "  child_to_parent/" + purpose + "  envelope: relay-envelope/1", "  relationshipId: " + rid, "  from: child " + sender + "  to: parent " + recipient, "  scope: " + scope, "  observedAt: " + reportValue(r, "recorded_at"), "  executionGeneration: " + pyStr(reportField(receipt, "executionGeneration")), "  attempt: " + pyStr(reportField(receipt, "attempt")), "  outcome: " + pyStr(reportField(receipt, "outcome")), "  revisionHash: " + pyStr(reportField(receipt, "revisionHash"))}, 5, 7, true, false},
-		{"respond", []string{"", "To respond, from inside your own turn:", "  claim     --event " + event + " --turn <your turn id>", "  ack-proof --event " + event + " --turn <your turn id>", "  ack       --event " + event + " --ack-turn <your turn id> --ack-proof <proof>", "  verdict   --event " + event + " --verdict <verified|needs_changes|unverified|aborted> --verdict-turn <your turn id>", "", "The proof is sha256(eventId|<your own turn id>). This message does not and cannot", "contain that turn id, which is what distinguishes acknowledging from echoing.", "Full record: codex-session-relay show --event " + event}, 0, 7, true, false},
-	}
-	return reportCompose(sections, event, budget)
+	return reportSection{"relay record", []string{"", "relay record:", "  requestId: " + request, "  eventId: " + event, fmt.Sprintf("  submission: %d  contract: relay-report/1", r["submission_no"]), "  message: " + kind + " - an answer is owed by the recipient", "  messageId: " + messageID + "  child_to_parent/" + purpose + "  envelope: relay-envelope/1", "  relationshipId: " + rid, "  from: child " + sender + "  to: parent " + recipient, "  scope: " + scope, "  observedAt: " + reportValue(r, "recorded_at"), "  executionGeneration: " + pyStr(reportField(receipt, "executionGeneration")), "  attempt: " + pyStr(reportField(receipt, "attempt")), "  outcome: " + pyStr(reportField(receipt, "outcome")), "  revisionHash: " + pyStr(reportField(receipt, "revisionHash"))}, 5, 7, true, false}
+}
+
+// respondSection tells the recipient how to answer.
+func respondSection(event string) reportSection {
+	return reportSection{"respond", []string{"", "To respond, from inside your own turn:", "  claim     --event " + event + " --turn <your turn id>", "  ack-proof --event " + event + " --turn <your turn id>", "  ack       --event " + event + " --ack-turn <your turn id> --ack-proof <proof>", "  verdict   --event " + event + " --verdict <verified|needs_changes|unverified|aborted> --verdict-turn <your turn id>", "", "The proof is sha256(eventId|<your own turn id>). This message does not and cannot", "contain that turn id, which is what distinguishes acknowledging from echoing.", "Full record: codex-session-relay show --event " + event}, 0, 7, true, false}
 }

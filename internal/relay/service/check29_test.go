@@ -81,6 +81,7 @@ func plainStopProblem(pythonOK bool, result capture, oracle map[capture]bool) er
 }
 
 func Test29D1EvidenceComparisonRules(t *testing.T) {
+	t.Parallel()
 	python := capture{Out: `{"ok":true,"reason":null,"detail":null,"supervisor":"exited","worker":"gone"}`}
 	exited := capture{Out: `{"ok":true,"reason":null,"detail":null,"supervisor":"exited","worker":"exited"}`}
 	replaced := capture{Code: 2, Out: `{"ok":false,"reason":"replaced_by_new_launch","detail":"lock held","supervisor":"exited","worker":"exited"}`}
@@ -100,6 +101,7 @@ func Test29D1EvidenceComparisonRules(t *testing.T) {
 		{"stderr", true, capture{Out: python.Out, Err: "unexpected"}, true},
 	} {
 		t.Run(one.name, func(t *testing.T) {
+			t.Parallel()
 			if err := plainStopProblem(one.pythonOK, one.result, oracle); (err != nil) != one.refused {
 				t.Fatalf("refused=%v error=%v", one.refused, err)
 			}
@@ -290,6 +292,7 @@ func launchSnapshotProblem(pythonOK map[string]bool, action string, result captu
 }
 
 func Test29D3EvidenceComparisonRules(t *testing.T) {
+	t.Parallel()
 	start := capture{Out: `{"ok":true,"reason":null,"status":{"launchPolicy":{"runningDigest":null,"matchesRunning":false}}}`}
 	restart := capture{Out: `{"ok":true,"reason":null,"start":` + start.Out + `}`}
 	refused := capture{Code: 2, Out: `{"ok":false,"reason":"replaced_by_new_launch"}`}
@@ -317,6 +320,7 @@ func Test29D3EvidenceComparisonRules(t *testing.T) {
 		{"stderr", ok, "start", capture{Out: start.Out, Err: "unexpected"}, true},
 	} {
 		t.Run(one.name, func(t *testing.T) {
+			t.Parallel()
 			if err := launchSnapshotProblem(one.pythonOK, one.action, one.result, oracle); (err != nil) != one.refused {
 				t.Fatalf("refused=%v error=%v", one.refused, err)
 			}

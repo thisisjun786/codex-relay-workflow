@@ -1105,7 +1105,9 @@ head that landed is not the head the receipt names: `--expected-event` still pin
 report, and the mark records a revision, not a commit. So the `--evidence` text names the head
 that landed, the head the report named, and the check between them: the `evidence:` line of the
 `base-refresh check` as it printed it (previous head, dev tip, new head, tree OID and the rule
-applied, one line for each step of a chain) and the `merge-evidence` verdict on the landed head.
+applied, one line for each step of a chain; after a conflict settled by a mechanical rule the `base-refresh mechanical`
+output instead, with its `applied:` lines and the wording of [Resolve a mechanical conflict
+yourself](merge-readiness.md#resolve-a-mechanical-conflict-yourself)) and the `merge-evidence` verdict on the landed head.
 Nothing else in the record says why the two heads differ, and `merge-evidence` on the landed head
 is the reading to quote, not the child's record.
 

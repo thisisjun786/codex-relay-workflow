@@ -18,6 +18,7 @@ func (refusedRPC) Call(context.Context, string, map[string]any) (json.RawMessage
 }
 
 func Test28PythonErrorLabelsPersisted(t *testing.T) {
+	t.Parallel()
 	// The lifecycle half is Test28HostDecodedValueParity's.
 	l, err := ledger.OpenWithOptions(filepath.Join(t.TempDir(), "ops.sqlite3"), ledger.Options{Encode: encodeReceipt})
 	if err != nil {

@@ -82,7 +82,7 @@ func capture(t *testing.T, s scenario) {
 	var err error
 	if s.store {
 		// The store gets a directory of its own: a directory holds one store's takeover.json.
-		db, err = store.Open(context.Background(), filepath.Join(root, "go", "go-store.sqlite3"), "")
+		db, err = openStore(context.Background(), filepath.Join(root, "go", "go-store.sqlite3"), "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -285,6 +285,7 @@ func sendScenario(response map[string]any, actions ...[]any) scenario {
 	return scenario{settings: authorized(), answers: []map[string]any{{"thread": map[string]any{"status": map[string]any{"type": "idle"}}}, response, {"turn": map[string]any{"id": "fake-turn-1"}}}, actions: actions}
 }
 func Test28_BAD_1_ForwardPagingAndFingerprint(t *testing.T) {
+	t.Parallel()
 	first := page(item("t1", "i1", "noise"))
 	first["nextCursor"] = "1"
 	first["backwardsCursor"] = "back-0"
@@ -298,6 +299,7 @@ func Test28_BAD_1_ForwardPagingAndFingerprint(t *testing.T) {
 	capture(t, scenario{answers: []map[string]any{page(item("t1", "i1", "original")), page(item("t1", "i1", "original plus a delivery token"))}, actions: [][]any{{"fingerprint", "01child-task"}, {"fingerprint", "01child-task"}}})
 }
 func Test28_BAD_2_TurnLookup(t *testing.T) {
+	t.Parallel()
 	more := page(map[string]any{"id": "other", "status": "completed"})
 	more["nextCursor"] = "keep-going"
 	capture(t, scenario{page: 1, answers: []map[string]any{more, more, more, more}, actions: [][]any{{"turn", "01child-task", "wanted"}}})
@@ -305,6 +307,7 @@ func Test28_BAD_2_TurnLookup(t *testing.T) {
 	capture(t, scenario{answers: []map[string]any{page(map[string]any{"id": "wanted", "status": "completed", "startedAt": 1789420929})}, actions: [][]any{{"turn", "01child-task", "wanted"}}})
 }
 func Test28HostDecodedValueParity(t *testing.T) {
+	t.Parallel()
 	capture(t, scenario{store: true, answers: []map[string]any{{"thread": map[string]any{"status": "idle"}}, page(), page(), page(), page(), {"goal": nil}}, actions: [][]any{{"lifecycle-observe", "01child-task"}}})
 	capture(t, scenario{answers: []map[string]any{{"rawResponse": map[string]any{"data": []any{map[string]any{"id": json.Number("7")}, map[string]any{"id": nil}, map[string]any{"id": json.Number("1.5")}, map[string]any{"id": []any{"turn"}}, map[string]any{"id": map[string]any{"turn": 1}}, map[string]any{"id": "turn"}}}}}, actions: [][]any{{"turn-ids", "01child-task"}}})
 	for _, value := range []any{[]any{"raw"}, map[string]any{"raw": true}} {
@@ -325,9 +328,11 @@ func Test28HostDecodedValueParity(t *testing.T) {
 	}
 }
 func Test28_BAD_3_ThreadGoalAndAbsentOperation(t *testing.T) {
+	t.Parallel()
 	capture(t, scenario{answers: []map[string]any{{"thread": map[string]any{"status": map[string]any{"type": "idle"}, "canAcceptDirectInput": false}}, {"goal": nil}, {"goal": map[string]any{"status": "budgetLimited"}}}, actions: [][]any{{"thread", "01child-task"}, {"goal", "01child-task"}, {"goal", "01child-task"}, {"operation", "del-aaaaaaaaaaaa-a1"}}})
 }
 func Test28_BAD_4_ArchiveDiscovery(t *testing.T) {
+	t.Parallel()
 	found := page(map[string]any{"id": "01child-task"})
 	for _, answers := range [][]map[string]any{{page(), page(), page(), page(), found}, {page(), found}, {page(), page(), page(), page(), page()}} {
 		capture(t, scenario{store: true, answers: answers, actions: [][]any{{"archive", "01child-task", "/corrected/cwd"}}})
@@ -348,10 +353,12 @@ func Test28_BAD_4_ArchiveDiscovery(t *testing.T) {
 	capture(t, scenario{page: 1, store: true, answers: answers, actions: [][]any{{"archive", "01child-task", nil}, {"archive", "01child-task", nil}}})
 }
 func Test28ArchiveListingErrorMatchesTheGolden(t *testing.T) {
+	t.Parallel()
 	answers := []map[string]any{{"thread": map[string]any{"status": map[string]any{"type": "idle"}, "canAcceptDirectInput": true}}, {"error": "listing failed"}, {"error": "listing failed"}, {"error": "listing failed"}, {"error": "listing failed"}, {"goal": nil}}
 	capture(t, scenario{store: true, answers: answers, actions: [][]any{{"lifecycle-observe", "01child-task"}}})
 }
 func Test28_BAD_5_ExecSourceDiscovery(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		source string
 		at     int
@@ -386,13 +393,16 @@ func Test28_BAD_5_ExecSourceDiscovery(t *testing.T) {
 	capture(t, scenario{page: 1, store: true, answers: answers, actions: [][]any{{"archive", "01child-task", nil}, {"archive", "01child-task", nil}}})
 }
 func Test28_BAD_6_CrossCallerLedger(t *testing.T) {
+	t.Parallel()
 	capture(t, sendScenario(resume(), []any{"send", "del-bbbbbbbbbbbb-a1", "thread-1", "hello"}, []any{"operation", "del-bbbbbbbbbbbb-a1"}, []any{"operation", "del-cccccccccccc-a9"}))
 }
 func Test28_BAD_7_GuardedWireShape(t *testing.T) {
+	t.Parallel()
 	capture(t, sendScenario(resume(), []any{"send", "del-100000000000-a1", "thread-1", "hi"}))
 	capture(t, scenario{settings: authorized(), actions: [][]any{{"no-settings", "send-without-settings", "thread-1", "hello"}}})
 }
 func Test28_BAD_8_SettingsWithhold(t *testing.T) {
+	t.Parallel()
 	shareGoldens(t)
 	for _, kind := range []string{"omitted", "null", "empty"} {
 		r := resume()
@@ -412,6 +422,7 @@ func Test28_BAD_8_SettingsWithhold(t *testing.T) {
 	capture(t, sendScenario(r, []any{"send", "del-400000000000-a3", "thread-1", "hi"}))
 	for _, key := range []string{"model", "reasoningEffort", "cwd", "runtimeWorkspaceRoots", "sandbox", "approvalPolicy"} {
 		t.Run(key+"_null", func(t *testing.T) {
+			t.Parallel()
 			r := resume()
 			r[key] = nil
 			capture(t, sendScenario(r, []any{"send", "del-200000000000-a1", "thread-1", "hi"}))
@@ -434,6 +445,7 @@ func Test28_BAD_8_SettingsWithhold(t *testing.T) {
 	}
 }
 func Test28_BAD_9_ApprovalChannelRefusal(t *testing.T) {
+	t.Parallel()
 	for _, policy := range []any{"untrusted", map[string]any{"granular": map[string]any{"mcp_elicitations": true, "rules": true, "sandbox_approval": true}}} {
 		r := resume()
 		r["approvalPolicy"] = policy
@@ -441,6 +453,7 @@ func Test28_BAD_9_ApprovalChannelRefusal(t *testing.T) {
 	}
 }
 func Test28_BAD_10_RetainedReplay(t *testing.T) {
+	t.Parallel()
 	concurrencyCase(t, "replay")
 	capture(t, scenario{settings: authorized(), actions: [][]any{{"begin", "del-700000000000-a1", "thread-1", "hi"}, {"send", "del-700000000000-a1", "thread-1", "hi"}}})
 	capture(t, sendScenario(resume(), []any{"send", "del-600000000000-a1", "thread-1", "hi"}, []any{"send", "del-600000000000-a1", "thread-1", "hi"}, []any{"send", "del-600000000000-a1", "thread-1", "DIFFERENT"}, []any{"send", "del-600000000000-a1", "other-thread", "hi"}))

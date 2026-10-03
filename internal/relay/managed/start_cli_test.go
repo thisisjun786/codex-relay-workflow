@@ -14,6 +14,7 @@ import (
 )
 
 func Test27_MST_9_CLIRejectsUnknownFieldBeforeHostOrStore(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	raw := requestFixture(t)
 	var request map[string]any
@@ -32,6 +33,7 @@ func Test27_MST_9_CLIRejectsUnknownFieldBeforeHostOrStore(t *testing.T) {
 	}
 }
 func Test27_MST_9_MissingWorkerRefusesBeforeStoreCreation(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	state := filepath.Join(dir, "absent")
 	raw := requestFixture(t)
@@ -94,6 +96,7 @@ func Test27_MST_9_MissingStateOrSocketUsage(t *testing.T) {
 // selector checks and before any store is opened: a socket that cannot be resolved, and a build
 // that registers no host adapter (this package's tests register none).
 func Test27_MST_9_AStartThisBuildCannotMakeIsAHostError(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	state := filepath.Join(dir, "state")
 	if err := os.MkdirAll(state, 0o700); err != nil {

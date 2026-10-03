@@ -508,9 +508,12 @@ func (rc *Reconciler) bindPromotedAnchor(ctx context.Context, attempt, delivery 
 	if turn == "" {
 		return nil, nil
 	}
-	event, err := one(ctx, rc.Store, "SELECT relationship_id, execution_generation FROM events WHERE event_id = ?", attempt.S("event_id"))
+	event, err := one(ctx, rc.Store, "SELECT relationship_id, execution_generation, outcome, receipt FROM events WHERE event_id = ?", attempt.S("event_id"))
 	if err != nil || event == nil {
 		return nil, err
+	}
+	if keepsAnchor(event) {
+		return nil, nil
 	}
 	return BindAnchorIn(ctx, rc.Store, rc.Clock, event.S("relationship_id"), event.I("execution_generation"), turn)
 }
