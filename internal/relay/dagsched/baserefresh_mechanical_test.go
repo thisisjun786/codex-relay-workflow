@@ -58,10 +58,30 @@ func mechanicalRefreshAt(t *testing.T, rule string, mixed bool, target func(*git
 func mechanicalMerge(t *testing.T, s *refreshScenario, resolution string, mixed bool) {
 	t.Helper()
 	r := s.repo
+	r.git("checkout", "-q", "-b", "mechanical-landing", "dev")
 	r.commit("shared.json", "base\ndev\n")
 	if mixed {
 		r.commit("manual.txt", "dev\n")
 	}
+	regions := []Region{gr("shared.json", GradeMechanical, "union")}
+	// Give the landing the same declared rule as the candidate, even when the
+	// candidate deliberately declares a different grade or repository in a test.
+	var rule string
+	if err := s.s.DB.QueryRow("SELECT rule FROM dag_node_region_grades WHERE plan_id='g' AND node_id='I' AND path='shared.json' ORDER BY declaration_seq DESC LIMIT 1").Scan(&rule); err == nil && rule != "" {
+		regions[0].Rule = rule
+	}
+	if mixed {
+		regions = append(regions, gr("manual.txt", GradeLocal, ""))
+	}
+	for i := range regions {
+		regions[i].Repository = r.path
+	}
+	if _, err := s.sched.DeclareRegions(context.Background(), "g", "D", "parent", regions); err != nil {
+		t.Fatal(err)
+	}
+	s.acceptNode("g", "D", acceptOpts{HeadSHA: r.git("rev-parse", "HEAD"), PR: 8, Forge: "owner/repo", Repository: r.path})
+	r.git("checkout", "-q", "dev")
+	r.git("merge", "-q", "--no-ff", "-m", "land mechanical contributor", "mechanical-landing")
 	r.git("checkout", "-q", "feature")
 	if _, err := r.tryGit("merge", "-q", "--no-ff", "-m", "refresh base", "dev"); err == nil {
 		t.Fatal("expected real conflicts")
@@ -123,7 +143,7 @@ func TestBaseRefreshMechanicalUnion(t *testing.T) {
 }
 
 func TestBaseRefreshMechanicalAgainstRule(t *testing.T) {
-	for _, rule := range []string{RuleUnion, "regenerate:printf 'generated\\n' > shared.json"} {
+	for _, rule := range []string{RuleUnion} {
 		t.Run(rule, func(t *testing.T) {
 			s := mechanicalRefresh(t, rule, false)
 			mechanicalMerge(t, s, "base\nchild\n", false)
@@ -137,15 +157,18 @@ func TestBaseRefreshMechanicalAgainstRule(t *testing.T) {
 	}
 }
 
-func TestBaseRefreshMechanicalRegenerate(t *testing.T) {
+func TestBaseRefreshMechanicalRegenerateRequiresGeneratedParents(t *testing.T) {
 	rule := "regenerate:printf 'generated\\n' > shared.json"
 	s := mechanicalRefresh(t, rule, false)
 	mechanicalMerge(t, s, "generated\n", false)
-	got, err := s.record()
-	if err != nil || len(got.Resolved) != 0 {
-		t.Fatalf("matching regeneration=%v %+v", err, got)
+	if _, err := s.record(); refusalReason(err) != "disposition_conflict" || !strings.Contains(err.Error(), "--resolved") {
+		t.Fatalf("nongenerated parents must need a name: %v", err)
 	}
-	refreshRuleRecord(t, s, "shared.json", rule)
+	got, err := s.record("shared.json")
+	if err != nil || strings.Join(got.Resolved, ",") != "shared.json" {
+		t.Fatalf("exact name=%v %+v", err, got)
+	}
+	refreshRuleRecord(t, s, "shared.json", "")
 }
 
 func TestBaseRefreshMechanicalMixedNeedsExactManualNames(t *testing.T) {
@@ -171,6 +194,13 @@ func TestBaseRefreshMechanicalUnevaluableRefused(t *testing.T) {
 			s := mechanicalRefresh(t, rule, false)
 			mechanicalMerge(t, s, "generated\n", false)
 			_, err := s.record("shared.json")
+			if strings.HasPrefix(rule, RuleRegeneratePref) {
+				if err != nil {
+					t.Fatalf("failed reconstruction must be manual: %v", err)
+				}
+				refreshRuleRecord(t, s, "shared.json", "")
+				return
+			}
 			if err == nil || !strings.Contains(err.Error(), "shared.json") || !strings.Contains(err.Error(), rule) || s.refreshRows() != 0 {
 				t.Fatalf("unevaluable %s=%v", rule, err)
 			}
@@ -331,7 +361,7 @@ func TestBaseRefreshMechanicalEvaluationErrorIsUnreadable(t *testing.T) {
 	}
 }
 
-func TestBaseRefreshMechanicalRegenerateEachHop(t *testing.T) {
+func TestBaseRefreshMechanicalRegenerateManualEachHop(t *testing.T) {
 	rule := "regenerate:cat recipe.txt > shared.json"
 	s := mechanicalRefresh(t, rule, false)
 	s.repo.commit("recipe.txt", "generated one\n")
@@ -341,12 +371,15 @@ func TestBaseRefreshMechanicalRegenerateEachHop(t *testing.T) {
 	s.repo.commit("shared.json", "second base version\n")
 	s.head = s.mergeDev("second regenerated hop", "shared.json", "generated two\n")
 	s.forge.by["owner/repo#7"] = openPR("owner/repo", 7, s.head)
-	got, err := s.record()
-	if err != nil || len(got.Steps) != 2 || got.Steps[0].Head != first || len(got.Resolved) != 0 {
+	if _, err := s.record(); refusalReason(err) != "disposition_conflict" {
+		t.Fatalf("manual chain: %v", err)
+	}
+	got, err := s.record("shared.json")
+	if err != nil || len(got.Steps) != 2 || got.Steps[0].Head != first || strings.Join(got.Resolved, ",") != "shared.json" {
 		t.Fatalf("regenerated chain=%v %+v", err, got)
 	}
 	for _, st := range got.Steps {
-		if len(st.Resolved) != 1 || st.Resolved[0].Rule != rule {
+		if len(st.Resolved) != 1 || st.Resolved[0].Rule != "" {
 			t.Fatalf("missing per-hop rule: %+v", st)
 		}
 	}

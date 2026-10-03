@@ -1,0 +1,108 @@
+package search
+
+import (
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
+)
+
+const DefaultTTL = time.Hour
+
+// MaxBodyBytes limits both catalog parsing and cache reads/writes.
+const MaxBodyBytes = 4 << 20
+
+type CacheResult struct {
+	Text  string
+	Stale bool
+}
+type CacheOptions struct {
+	Dir      string
+	TTL      *time.Duration
+	Refresh  bool
+	Now      func() time.Time
+	Warnings io.Writer
+}
+
+// CacheDir resolves CRW_HOME (used untrimmed) or ~/.crw, at call time.
+func CacheDir(env host.LookupEnv) (string, error) {
+	home, err := host.CRWHome(env)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, "skill-cache"), nil
+}
+
+// CachedFetchText keeps the oracle's stale-on-fetch-or-write-error behavior.
+// Publication uses the existing atomic writer rather than an in-place overwrite.
+func CachedFetchText(key string, fetcher func() (string, error), opts CacheOptions) (CacheResult, error) {
+	if !safeComponent(key) {
+		return CacheResult{}, fmt.Errorf("invalid skill cache key")
+	}
+	dir := opts.Dir
+	if dir == "" {
+		var err error
+		dir, err = CacheDir(os.LookupEnv)
+		if err != nil {
+			return CacheResult{}, err
+		}
+	}
+	ttl := DefaultTTL
+	if opts.TTL != nil {
+		ttl = *opts.TTL
+	}
+	now := opts.Now
+	if now == nil {
+		now = time.Now
+	}
+	file := filepath.Join(dir, key+".cache")
+	if !opts.Refresh {
+		if info, err := os.Stat(file); err == nil && time.Duration(now().UnixMilli()-info.ModTime().UnixMilli())*time.Millisecond < ttl {
+			if body, err := readCache(file); err == nil {
+				return CacheResult{Text: body}, nil
+			}
+		}
+	}
+	body, err := fetcher()
+	if err == nil && len(body) > MaxBodyBytes {
+		err = fmt.Errorf("skill cache body exceeds %d bytes", MaxBodyBytes)
+	}
+	if err == nil {
+		err = os.MkdirAll(dir, 0o777)
+	}
+	if err == nil {
+		err = crwdir.Publish(file, []byte(body))
+	}
+	if err == nil {
+		return CacheResult{Text: body}, nil
+	}
+	stale, readErr := readCache(file)
+	if readErr != nil {
+		return CacheResult{}, err
+	}
+	warnings := opts.Warnings
+	if warnings == nil {
+		warnings = os.Stderr
+	}
+	_, _ = fmt.Fprintf(warnings, "skill-search: network fetch failed for %s; serving stale cache (%s)\n", key, err)
+	return CacheResult{Text: stale, Stale: true}, nil
+}
+func readCache(file string) (string, error) {
+	f, err := os.Open(file)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	body, err := io.ReadAll(io.LimitReader(f, MaxBodyBytes+1))
+	if err != nil {
+		return "", err
+	}
+	if len(body) > MaxBodyBytes {
+		return "", fmt.Errorf("skill cache body exceeds %d bytes", MaxBodyBytes)
+	}
+	return string(body), nil
+}

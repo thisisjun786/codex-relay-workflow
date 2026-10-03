@@ -100,8 +100,8 @@ func Register(family *Family, commands ...Command) {
 // Registered reports whether this build implements the relay command: a root subcommand (one
 // of whose subcommands, for service), or "service <sub>".
 func Registered(name string) bool {
-	for _, command := range order {
-		if command.Name == name || strings.HasPrefix(command.Name, name+" ") {
+	for _, command := range Names() {
+		if command == name || strings.HasPrefix(command, name+" ") {
 			return true
 		}
 	}
@@ -112,6 +112,11 @@ func Registered(name string) bool {
 func Lookup(name string) (Command, bool) {
 	command, ok := table[name]
 	if !ok {
+		for _, local := range jobCommands() {
+			if local.Name == name {
+				return local, true
+			}
+		}
 		return Command{}, false
 	}
 	return *command, true
@@ -122,6 +127,9 @@ func Names() []string {
 	names := make([]string, len(order))
 	for i, command := range order {
 		names[i] = command.Name
+	}
+	for _, local := range jobCommands() {
+		names = append(names, local.Name)
 	}
 	return names
 }
@@ -158,7 +166,8 @@ func Execute(ctx context.Context, argv0 string, argv []string, stdout, stderr io
 	}
 	name, line := root.Remaining[0], root.Remaining[1:]
 	var positionals []string
-	if name == "service" {
+	parentName := name
+	if name == "service" || name == "job" {
 		parent := argparse.Parse(name, line)
 		if code, done := parsedLine(stdout, stderr, prog, name, parent); done {
 			return code
@@ -167,19 +176,29 @@ func Execute(ctx context.Context, argv0 string, argv []string, stdout, stderr io
 		name += " " + parent.Remaining[0]
 		line = parent.Remaining[1:]
 	}
-	command := table[name]
-	if command == nil {
+	command, found := Lookup(name)
+	if !found {
 		// A command this build does not register: the parser that read its name refuses it.
 		parent, word, who := "", name, prog
 		if len(positionals) > 0 {
-			parent, word, who = "service", positionals[0], prog+" service"
+			parent, word, who = parentName, positionals[0], prog+" "+parentName
 		}
 		fmt.Fprintf(stderr, "%s\n%s: error: argument command: invalid choice: %q (see %s --help)\n", argparse.Usage(prog, parent), who, word, who)
 		return parserExit
 	}
+	missing := ""
+	if jobCommand(name) {
+		var operands []string
+		line, operands, missing = jobOperands(name, line)
+		positionals = append(positionals, operands...)
+	}
 	parsed := argparse.Parse(name, line)
 	if code, done := parsedLine(stdout, stderr, prog, name, parsed); done {
 		return code
+	}
+	if missing != "" {
+		fmt.Fprint(stderr, (argparse.Result{Message: "the following arguments are required: " + missing}).Error(prog, name))
+		return parserExit
 	}
 	ctx, admitted := store.WithAdmitted(ctx)
 	defer func() { _ = admitted.Release() }()
