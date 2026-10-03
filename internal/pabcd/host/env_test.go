@@ -2,6 +2,7 @@ package host
 
 import (
 	"errors"
+	"os/user"
 	"path/filepath"
 	"testing"
 
@@ -21,6 +22,18 @@ func TestCodexSQLiteHomePrecedence(t *testing.T) {
 		if got, err := CodexSQLiteHome(envOf(c.env)); err != nil || got != c.want {
 			t.Errorf("%v: %q, %v", c.env, got, err)
 		}
+	}
+}
+
+// With HOME unset the home is the account's passwd entry (Node's os.homedir()); an empty HOME is
+// not unset and wins (TestCodexSQLiteHomePrecedence).
+func TestHomeFallsBackToThePasswdEntryWhenHOMEIsUnset(t *testing.T) {
+	account, err := user.Current()
+	if err != nil {
+		t.Skip("no passwd entry:", err)
+	}
+	if got, err := Home(envOf(nil)); err != nil || got != account.HomeDir {
+		t.Errorf("Home = %q, %v, want %q", got, err, account.HomeDir)
 	}
 }
 
