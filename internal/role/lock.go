@@ -43,5 +43,4 @@ func lockStore(path string, sleep func(time.Duration)) (release func(), err erro
 	}
 }
 
-// refused is how a write that cannot start reads, as the oracle's refusal of a store it cannot read does.
-func refused(err error) error { return fmt.Errorf("cannot update subagent config: %w", err) }
+func refused(err error) error { return fmt.Errorf("cannot update subagent config: %w", err) } // as the oracle's refusal of a store it cannot read
