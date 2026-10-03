@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 
@@ -97,6 +98,12 @@ func Run(ctx context.Context, b *bundle.Bundle, runner Runner, cfg Config) (*rev
 			if !ok {
 				continue
 			}
+			if slices.ContainsFunc(out.Findings, func(f review.Finding) bool {
+				return strings.TrimSpace(f.Title) == "" || strings.TrimSpace(f.Explanation) == ""
+			}) {
+				s.invalidLast("blank_finding_text")
+				continue
+			}
 			for _, f := range out.Findings {
 				f.Grade, f.Security, _ = review.NormalizeGrade(f.Severity)
 				f.Perspective, f.Reviewers, f.Support, f.Verdict = string(lens), []int{id}, 1, review.VerdictUnverified
@@ -114,6 +121,9 @@ func Run(ctx context.Context, b *bundle.Bundle, runner Runner, cfg Config) (*rev
 		}
 	}
 	res, err := s.rules.Apply(grouped)
+	if canceled := ctx.Err(); canceled != nil {
+		return nil, canceled
+	}
 	if err != nil {
 		return nil, err
 	}

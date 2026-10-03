@@ -36,6 +36,6 @@ func prompt(stage, lens string, data any) ([]byte, error) {
 
 const reviewSchema = `{"type":"object","additionalProperties":false,"required":["findings"],"properties":{"findings":{"type":"array","items":{
 "type":"object","additionalProperties":false,"required":["file","line","endLine","title","explanation","severity","needsContext"],
-"properties":{"file":{"type":"string"},"line":{"type":"integer"},"endLine":{"type":"integer"},"title":{"type":"string"},"explanation":{"type":"string"},"severity":{"type":"string"},"needsContext":{"type":"boolean"}}}}}}`
+"properties":{"file":{"type":"string"},"line":{"type":"integer"},"endLine":{"type":"integer"},"title":{"type":"string","minLength":1},"explanation":{"type":"string","minLength":1},"severity":{"type":"string"},"needsContext":{"type":"boolean"}}}}}}`
 const groupSchema = `{"type":"object","additionalProperties":false,"required":["groups"],"properties":{"groups":{"type":"array","items":{"type":"array","minItems":1,"items":{"type":"integer","minimum":0}}}}}`
 const verifySchema = `{"type":"object","additionalProperties":false,"required":["verdict","needsContext"],"properties":{"verdict":{"type":"string","enum":["confirmed","rejected","uncertain"]},"needsContext":{"type":"boolean"}}}`

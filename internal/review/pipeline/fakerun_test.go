@@ -125,3 +125,18 @@ func TestFailureCountsAndContextPartition(t *testing.T) {
 		}
 	}
 }
+
+func TestBlankTextDoesNotEraseValidEvidence(t *testing.T) {
+	for _, field := range []string{"title", "explanation"} {
+		bad := sample(2, "bad text", "P2")
+		bad[field] = " "
+		run, _ := scripted(t, []agy.Result{findings(bad), findings(sample(3, "independent defect", "P1")), findings(), {Class: agy.ClassUnavailable, Reason: agy.ReasonQuota}})
+		a, err := Run(context.Background(), testBundle(), run, Config{Agy: agy.Config{Model: "requested-test-model"}, Head: fakeHead{}})
+		if err != nil || a == nil {
+			t.Fatalf("%s erased other evidence: %v", field, err)
+		}
+		if a.Status != review.StatusPartial || a.Reviewers.Failed != 1 || a.Calls[0].Class != "invalid" || len(a.Findings) != 1 || a.Findings[0].Title != "independent defect" {
+			t.Fatalf("%s: %+v", field, a)
+		}
+	}
+}

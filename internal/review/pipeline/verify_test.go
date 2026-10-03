@@ -77,3 +77,21 @@ func TestCanceledWaiterDoesNotInvokeRunner(t *testing.T) {
 		t.Fatalf("waiter %+v %v calls%d, first%v calls%d", a, err, waiterCalls, firstErr, calls.Load())
 	}
 }
+
+type cancelHead struct {
+	fakeHead
+	cancel context.CancelFunc
+}
+
+func (h cancelHead) Lines(string) (int, error) { h.cancel(); return 10, nil }
+func TestCancellationDuringFinalRules(t *testing.T) {
+	f := sample(2, "outside context", "P2")
+	f["needsContext"] = true
+	run, _ := scripted(t, []agy.Result{findings(f), findings(), findings()})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	a, err := Run(ctx, testBundle(), run, Config{Agy: agy.Config{Model: "requested-test-model"}, Head: cancelHead{cancel: cancel}})
+	if !errors.Is(err, context.Canceled) || a != nil {
+		t.Fatalf("canceled final Rules returned success: %+v %v", a, err)
+	}
+}
