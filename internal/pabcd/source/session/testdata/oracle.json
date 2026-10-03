@@ -275,6 +275,14 @@
   },
   {
    "ok": "$R/wt"
+  },
+  {
+   "ok": "$R/wt"
+  },
+  {
+   "ok": {
+    "ok": true
+   }
   }
  ],
  "resolve_symlinks_and_non_files": [
@@ -314,6 +322,57 @@
   },
   {
    "ok": "$R/main"
+  }
+ ],
+ "bind_native_path_with_invalid_utf8": [
+  {
+   "ok": "$R/wt"
+  },
+  {
+   "ok": {
+    "mode": "600",
+    "content": "{\n  \"version\": 1,\n  \"ownerSessionId\": \"s1\",\n  \"nativeCwd\": \"$R/native�\",\n  \"sourceRoot\": \"$R/wt\",\n  \"commonDir\": \"$R/main/.git\",\n  \"gitDir\": \"$R/main/.git/worktrees/wt\"\n}\n"
+   }
+  },
+  {
+   "ok": "$R/wt"
+  },
+  {
+   "ok": {
+    "ok": true
+   }
+  }
+ ],
+ "capture_state_dir_only": [
+  {
+   "ok": "$R/wt"
+  },
+  {
+   "ok": {
+    "kind": "resolved",
+    "commitSha": "76bdd1ab3b05b1c1e8ad8ac40a9dce05bedaca76",
+    "dirty": false,
+    "treeHash": null,
+    "sourceRoot": "$R/wt"
+   }
+  },
+  {
+   "ok": {
+    "kind": "resolved",
+    "commitSha": "76bdd1ab3b05b1c1e8ad8ac40a9dce05bedaca76",
+    "dirty": true,
+    "treeHash": "9583ee68d890648b5a25a7ed2374f5a23a4b730809098d1b400567c8a49e9d05",
+    "sourceRoot": "$R/wt"
+   }
+  },
+  {
+   "ok": {
+    "kind": "resolved",
+    "commitSha": "76bdd1ab3b05b1c1e8ad8ac40a9dce05bedaca76",
+    "dirty": false,
+    "treeHash": null,
+    "sourceRoot": "$R/wt"
+   }
   }
  ],
  "resolve_moved_or_removed_worktree": [

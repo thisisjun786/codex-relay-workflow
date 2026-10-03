@@ -46,7 +46,9 @@ type step struct {
 	} `json:"options"`
 }
 
-var cliNames = strings.NewReplacer("cxc session source", "crw relay session source", "`cxc loop init", "`crw pabcd loop init", "`cxc receipt test", "`crw pabcd receipt test")
+func cliNames() *strings.Replacer {
+	return strings.NewReplacer("cxc session source", "crw relay session source", "`cxc loop init", "`crw pabcd loop init", "`cxc receipt test", "`crw pabcd receipt test")
+}
 
 func readJSON(t *testing.T, name string, into any, replace *strings.Replacer) {
 	t.Helper()
@@ -93,7 +95,7 @@ func TestOracleParity(t *testing.T) {
 	var file scenarioFile
 	var golden map[string][]any
 	readJSON(t, "scenarios.json", &file, nil)
-	readJSON(t, "oracle.json", &golden, cliNames)
+	readJSON(t, "oracle.json", &golden, cliNames())
 	if len(golden) != len(file.Scenarios) {
 		t.Fatalf("%d scenarios, %d recorded answers", len(file.Scenarios), len(golden))
 	}

@@ -107,7 +107,10 @@
    {"do":"sh","script":"sed -i 's/\"version\": 1,/\"version\": 1.0, \"extra\": [7],/' main/.codexclaw/sources/s1.json"},
    {"do":"resolve","cwd":"main","session":"s1"},
    {"do":"sh","script":"sed -i 's/\"version\": 1.0,/\"version\": 1e0,/' main/.codexclaw/sources/s1.json"},
-   {"do":"resolve","cwd":"main","session":"s1"}
+   {"do":"resolve","cwd":"main","session":"s1"},
+   {"do":"sh","script":"sed -i 's/\"version\": 1e0,/\"version\": 1e0, \"big\": 1e400,/' main/.codexclaw/sources/s1.json"},
+   {"do":"resolve","cwd":"main","session":"s1"},
+   {"do":"gate","cwd":"main","session":"s1"}
   ]},
   {"id": "resolve_symlinks_and_non_files", "steps": [
    {"do":"sh","script":"mkdir -p main/.codexclaw/sources real && ln -s ../../../real main/.codexclaw/sources/s1.json"},
@@ -127,10 +130,22 @@
    {"do":"resolve","cwd":"main","session":"s1"},
    {"do":"bind","cwd":"main","session":"s1","target":"wt"}
   ]},
-
   {"id": "bind_path_with_invalid_utf8", "setup": "git -C main worktree add -q -b bad \"../$(printf 'bad\\377')\" && ln -s \"$(printf 'bad\\377')\" badlink", "steps": [
    {"do":"bind","cwd":"main","session":"s1","target":"badlink"},
    {"do":"resolve","cwd":"main","session":"s1"}
+  ]},
+  {"id": "bind_native_path_with_invalid_utf8", "setup": "mkdir \"$(printf 'native\\377')\" && ln -s \"$(printf 'native\\377')\" native-link", "steps": [
+   {"do":"bind","cwd":"native-link","session":"s1","target":"wt"},
+   {"do":"read","path":"native-link/.codexclaw/sources/s1.json"},
+   {"do":"resolve","cwd":"native-link","session":"s1"},
+   {"do":"gate","cwd":"native-link","session":"s1"}
+  ]},
+  {"id": "capture_state_dir_only", "steps": [
+   {"do":"bind","cwd":"main","session":"s1","target":"wt"},
+   {"do":"sh","script":"mkdir -p wt/.codexclaw && echo a > wt/.codexclaw/a"},
+   {"do":"capture","cwd":"main","session":"s1","options":{}},
+   {"do":"capture","cwd":"main","session":"s1","options":{"excludeCodexclawArtifacts":false},"noHash":true},
+   {"do":"capture","cwd":"main","session":"s1","options":{"excludeCodexclawArtifacts":true}}
   ]},
   {"id": "resolve_moved_or_removed_worktree", "steps": [
    {"do":"bind","cwd":"main","session":"s1","target":"wt"},

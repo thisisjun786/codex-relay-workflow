@@ -139,6 +139,9 @@ func parseStatusZ(out []byte) []statusRecord {
 	return records
 }
 
+// DecodeUTF8 is decodeUTF8 for a caller that reads paths and git output the way Node does.
+func DecodeUTF8(b []byte) string { return decodeUTF8(b) }
+
 // decodeUTF8 decodes b as Node's Buffer.toString("utf8") does: each maximal invalid subpart becomes one U+FFFD
 // (the WHATWG rule), where Go's own conversion emits one per byte.
 func decodeUTF8(b []byte) string {

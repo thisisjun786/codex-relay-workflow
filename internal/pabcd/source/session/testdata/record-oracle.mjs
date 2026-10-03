@@ -14,7 +14,7 @@ const workRoot = realpathSync(workDir);
 const { bindSessionSource, resolveSessionSource } = await import(oracleDist + "/session-source.js");
 const { captureSessionSourceIdentity } = await import(oracleDist + "/session-source-identity.js");
 const { checkBoundSourceIdentity } = await import(oracleDist + "/source-gate.js");
-for (const name of Object.keys(process.env)) if (/^GIT_(DIR|WORK_TREE|COMMON_DIR|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|CONFIG_COUNT|CONFIG_PARAMETERS)$/.test(name)) delete process.env[name];
+for (const name of Object.keys(process.env)) if (name.startsWith("GIT_")) delete process.env[name];
 Object.assign(process.env, {
   GIT_CEILING_DIRECTORIES: workRoot, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1",
   GIT_AUTHOR_NAME: "fixture", GIT_AUTHOR_EMAIL: "fixture@example.invalid", GIT_AUTHOR_DATE: "2026-01-01T00:00:00Z",
@@ -57,4 +57,3 @@ for (const sc of scenarios) {
   rmSync(R, { recursive: true, force: true });
 }
 process.stdout.write(JSON.stringify(out, null, 1) + "\n");
-

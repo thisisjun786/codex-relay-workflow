@@ -8,8 +8,8 @@
 // process with the routing variables removed. Errors the oracle throws as messages are returned with that text; an
 // operating-system failure the oracle lets through is returned as Go reports it, in Go's words.
 //
-// Not literal: where Node decodes git's output as text, so that the bytes of a path that are not UTF-8 become U+FFFD and
-// name nothing, gitIdentity refuses output that is not valid UTF-8, which is the same refusal.
+// Not literal: canonical follows the 255 symbolic links Go's EvalSymlinks allows where realpath(3) stops at 40 (ELOOP), so a
+// chain of 41 to 255 links resolves here and fails in the oracle.
 package session
 
 import (
@@ -24,7 +24,6 @@ import (
 	"slices"
 	"strings"
 	"syscall"
-	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
@@ -56,7 +55,8 @@ type Binding struct {
 type worktree struct{ root, commonDir, gitDir string }
 
 // canonical is the absolute path with every symlink resolved (realpathSync.native), or an error when it does not exist. The
-// input is not cleaned first: ".." applies to the path the symlinks before it lead to, and a missing component fails.
+// input is not cleaned first: ".." applies to the path the symlinks before it lead to, and a missing component fails. The
+// result is text as Node reads it: bytes that are not UTF-8 become U+FFFD, so the path of such a directory names nothing.
 func canonical(path string) (string, error) {
 	if path == "" {
 		return "", &fs.PathError{Op: "realpath", Path: path, Err: fs.ErrNotExist}
@@ -68,7 +68,8 @@ func canonical(path string) (string, error) {
 		}
 		path = wd + string(filepath.Separator) + path
 	}
-	return filepath.EvalSymlinks(path)
+	resolved, err := filepath.EvalSymlinks(path)
+	return source.DecodeUTF8([]byte(resolved)), err
 }
 
 // gitProbeEnv is the environment without the routing variables, so a stray GIT_DIR cannot redirect a probe. These four and no
@@ -88,7 +89,7 @@ const probeOutputLimit = 1 << 20
 // one error.
 func git(cwd string, args ...string) (string, error) {
 	out, err := source.Run(cwd, gitProbeEnv(), probeOutputLimit, "git", args...)
-	return text.Trim(string(out)), err
+	return text.Trim(source.DecodeUTF8(out)), err
 }
 
 // gitIdentity is the worktree identity of cwd, or an error: a repository is mandatory on the source side.
@@ -103,10 +104,6 @@ func gitIdentity(cwd string) (worktree, error) {
 		{&w.gitDir, []string{"rev-parse", "--absolute-git-dir"}},
 	} {
 		out, err := git(cwd, probe.args...)
-		if err == nil && !utf8.ValidString(out) {
-			// Node decodes the output as text, so the path it gets for such a name does not exist.
-			err = fs.ErrNotExist
-		}
 		if err == nil {
 			*probe.into, err = canonical(out)
 		}
@@ -183,7 +180,9 @@ func readBinding(cwd, sessionID string) (*Binding, error) {
 	}
 	data, err := io.ReadAll(f)
 	var raw any
-	if err != nil || json.Unmarshal(data, &raw) != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber() // JSON.parse reads 1e400 as Infinity, where a float64 would fail the whole file
+	if err != nil || !json.Valid(data) || decoder.Decode(&raw) != nil {
 		return nil, corrupt
 	}
 	b, ok := raw.(map[string]any)
@@ -191,7 +190,8 @@ func readBinding(cwd, sessionID string) (*Binding, error) {
 		return nil, refusal("Invalid source binding.")
 	}
 	invalid := refusal("Source binding has invalid identity or paths.")
-	if version, _ := b["version"].(float64); version != 1 || b["ownerSessionId"] != sessionID {
+	number, _ := b["version"].(json.Number)
+	if version, _ := number.Float64(); version != 1 || b["ownerSessionId"] != sessionID {
 		return nil, invalid
 	}
 	native, err := canonical(cwd)
