@@ -58,6 +58,9 @@ func Listing(dir string) (string, error) {
 	}
 	h := sha256.New()
 	for _, name := range slices.Sorted(maps.Keys(files)) {
+		if strings.Contains(name, "\n") {
+			return "", fmt.Errorf("%q: a newline in a file name would let two files list as one", name)
+		}
 		sep := "  "
 		if files[name].exec {
 			sep = " x "

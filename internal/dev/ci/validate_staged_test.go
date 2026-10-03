@@ -40,7 +40,9 @@ func TestStagedSkillsAreValidated(t *testing.T) {
 	const staged = "port/cxc/skills/crw-kwrite/"
 	const good = "---\nname: cxc-kwrite\ndescription: \"Demo\"\n---\n\nSee [a](references/a.md).\n"
 	r := stagedRepo(t, good)
-	expectEqual(t, "clean", validate(t, r), result{0, "Validated 2 skills, local link paths and Python syntax.\n", ""})
+	if got := validate(t, r); got.code != 0 || !strings.HasPrefix(got.stdout, "Validated 2 skills, ") || got.stderr != "" { // the rest of the line is the Python rule's, which dev changed
+		t.Errorf("clean: %+v", got)
+	}
 	r.write(staged+"references/a.md", "# A, changed\n")
 	if got := validate(t, r); got.code != 1 || !strings.Contains(got.stderr, staged+"references/a.md: differs from the substituted original") {
 		t.Errorf("an unrecorded difference: %+v", got)

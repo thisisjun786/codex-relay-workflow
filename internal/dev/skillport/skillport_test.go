@@ -273,6 +273,14 @@ func TestListingTellsAnExecutableFromAnOddName(t *testing.T) {
 	}
 }
 
+func TestListingRefusesANewlineInAName(t *testing.T) {
+	dir := t.TempDir()
+	put(t, dir+"/a\nb", "x\n", 0o644)
+	if _, err := Listing(dir); err == nil {
+		t.Error("a file name with a newline was listed")
+	}
+}
+
 func TestUnsafeLayoutsAreRefused(t *testing.T) {
 	for _, row := range []struct {
 		name, rel string
