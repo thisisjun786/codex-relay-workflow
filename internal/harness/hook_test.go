@@ -253,15 +253,15 @@ func TestAnInterruptEndsAHookWaitingForItsInput(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("an interrupted hook is still waiting for its input")
 	}
-	// Input that arrives after the interrupt finds a hook that has already answered: it is not
-	// recorded, no handler runs and nothing is written.
-	go func() {
-		hold.Write([]byte(payload("Stop", t.TempDir(), "")))
-		hold.Close()
-	}()
-	time.Sleep(200 * time.Millisecond)
-	if out.Len() != 0 || errOut.Len() != 0 || len(p.ran) != 0 || len(records(t, home)) != 0 {
-		t.Errorf("input after the interrupt: %q %q, ran %v, %d records", out.String(), errOut.String(), p.ran, len(records(t, home)))
+	// Input that arrives after the interrupt finds a hook that has already answered: dispatch reads it,
+	// sees the finished context, and neither records it, runs a handler nor writes.
+	ended, stop := context.WithCancel(context.Background())
+	stop()
+	late := only("stop-checking-pabcd-continuation", func(Call) string { p.ran = append(p.ran, "late"); return "never" })[0]
+	var lateOut, lateErr strings.Builder
+	if code := dispatch(ended, late, strings.NewReader(payload("Stop", t.TempDir(), "")), &lateOut, &lateErr, lookup(env)); code != Interrupted ||
+		lateOut.Len() != 0 || lateErr.Len() != 0 || len(p.ran) != 0 || len(records(t, home)) != 0 {
+		t.Errorf("input after the interrupt: %d %q %q, ran %v, %d records", code, lateOut.String(), lateErr.String(), p.ran, len(records(t, home)))
 	}
 }
 
