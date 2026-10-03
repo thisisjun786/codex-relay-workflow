@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -238,48 +239,55 @@ func TestDescriptorIdentity_python_properties(t *testing.T) {
 			t.Fatalf("fired %v answer %+v sidecars %v", fired, answer, f.sidecarsOfTheMovedName())
 		}
 	})
-	t.Run("test_the_probe_re_asks_between_its_read_and_its_write", func(t *testing.T) {
-		t.Parallel()
-		f := newDescriptorFixture(t)
-		moved := filepath.Join(f.tmp, "moved.sqlite3")
-		fired := false
-		ctx := context.WithValue(context.Background(), diagnosticSeamsKey{}, diagnosticSeams{connect: func(open func() (*heldConn, error)) (*heldConn, error) {
-			conn, err := open()
-			if !fired {
-				fired = true
-				f.rename(f.path, moved)
+	for _, opts := range []ProbeOptions{{}, {Write: true}} {
+		t.Run(fmt.Sprintf("test_the_probe_re_asks_between_its_read_and_its_write/write=%v", opts.Write), func(t *testing.T) {
+			t.Parallel()
+			f := newDescriptorFixture(t)
+			moved := filepath.Join(f.tmp, "moved.sqlite3")
+			fired := false
+			ctx := context.WithValue(context.Background(), diagnosticSeamsKey{}, diagnosticSeams{connect: func(open func() (*heldConn, error)) (*heldConn, error) {
+				conn, err := open()
+				if !fired {
+					fired = true
+					f.rename(f.path, moved)
+				}
+				return conn, err
+			}})
+			report := ProbeWith(ctx, f.selection(), opts)
+			t.Cleanup(func() { f.rename(moved, f.path) })
+			if !fired || report.Access.DBWritable || report.Access.DBReadable || report.Store.StoreID != "" || report.Store.Inode != 0 {
+				t.Fatalf("fired %v report %+v", fired, report)
 			}
-			return conn, err
-		}})
-		report := Probe(ctx, f.selection())
-		t.Cleanup(func() { f.rename(moved, f.path) })
-		if !fired || report.Access.DBWritable || report.Access.DBReadable || report.Store.StoreID != "" || report.Store.Inode != 0 {
-			t.Fatalf("fired %v report %+v", fired, report)
-		}
-		if !strings.Contains(report.Access.Detail, "moved while it was being read") || len(f.sidecarsOfTheMovedName()) != 0 {
-			t.Fatalf("detail %q sidecars %v", report.Access.Detail, f.sidecarsOfTheMovedName())
-		}
-	})
+			if !strings.Contains(report.Access.Detail, "moved while it was being read") || len(f.sidecarsOfTheMovedName()) != 0 {
+				t.Fatalf("detail %q sidecars %v", report.Access.Detail, f.sidecarsOfTheMovedName())
+			}
+		})
+	}
+	// The write probe is the explicit one: its connect is the second of a probe that also reads.
 	t.Run("test_the_write_probe_asks_which_file_it_opened_before_it_can_write", func(t *testing.T) {
 		t.Parallel()
 		f := newDescriptorFixture(t)
 		ctx, state := f.moveBetweenTheCheckAndTheConnect(2)
-		report := Probe(ctx, f.selection())
+		report := ProbeWith(ctx, f.selection(), ProbeOptions{Write: true})
 		if !state.restored || len(f.sidecarsOfTheMovedName()) != 0 || len(state.statements) != 0 || report.Access.DBWritable {
 			t.Fatalf("state %+v sidecars %v report %+v", state, f.sidecarsOfTheMovedName(), report)
 		}
 		requireRefusedTheMove(t, report.Access.Detail)
 	})
-	t.Run("test_the_probe_read_leg_asks_before_its_first_select", func(t *testing.T) {
-		t.Parallel()
-		f := newDescriptorFixture(t)
-		ctx, state := f.moveBetweenTheCheckAndTheConnect(1)
-		report := Probe(ctx, f.selection())
-		if !state.restored || len(f.sidecarsOfTheMovedName()) != 0 || len(state.statements) != 0 || report.Access.DBReadable || report.Store.StoreID != "" {
-			t.Fatalf("state %+v sidecars %v report %+v", state, f.sidecarsOfTheMovedName(), report)
-		}
-		requireRefusedTheMove(t, report.Access.Detail)
-	})
+	for _, opts := range []ProbeOptions{{}, {Write: true}} {
+		t.Run(fmt.Sprintf("test_the_probe_read_leg_asks_before_its_first_select/write=%v", opts.Write), func(t *testing.T) {
+			t.Parallel()
+			f := newDescriptorFixture(t)
+			ctx, state := f.moveBetweenTheCheckAndTheConnect(1)
+			report := ProbeWith(ctx, f.selection(), opts)
+			// The default judges only a read that succeeded. The write probe's own connection is a
+			// separate leg that meets the restored store, so its answer is not tied to the read's.
+			if !state.restored || len(f.sidecarsOfTheMovedName()) != 0 || len(state.statements) != 0 || report.Access.DBReadable || (!opts.Write && report.Access.DBWritable) || report.Store.StoreID != "" {
+				t.Fatalf("state %+v sidecars %v report %+v", state, f.sidecarsOfTheMovedName(), report)
+			}
+			requireRefusedTheMove(t, report.Access.Detail)
+		})
+	}
 	t.Run("test_read_only_rows_asks_before_the_callers_statement", func(t *testing.T) {
 		t.Parallel()
 		f := newDescriptorFixture(t)
@@ -397,7 +405,7 @@ func TestDescriptorIdentity_python_properties(t *testing.T) {
 		ctx := context.WithValue(context.Background(), diagnosticSeamsKey{}, diagnosticSeams{hold: func(string) (*os.File, string, string) { return nil, "", "refused for the test" }})
 		report := Probe(ctx, f.selection())
 		s := report.Store
-		if !report.Access.DBExists || s.Device != 0 || s.Inode != 0 || s.Links != 0 || report.Access.DBReadable {
+		if !report.Access.DBExists || s.Device != 0 || s.Inode != 0 || s.Links != 0 || report.Access.DBReadable || report.Access.DBWritable {
 			t.Fatalf("report %+v", report)
 		}
 		requireVerdict(t, CompareStore(s, CompareExpectations{Inode: f.mine.PhysicalIdentity()}), Unproven)
@@ -413,7 +421,7 @@ func TestDescriptorIdentity_python_properties(t *testing.T) {
 		report := Probe(f.moveWhileHeld(&fired, func() { f.rename(f.path, moved) }), f.selection())
 		t.Cleanup(func() { f.rename(moved, f.path) })
 		s := report.Store
-		if !fired || !report.Access.DBExists || !strings.Contains(report.Access.Detail, "could not be held open") || s.Device != 0 || s.Inode != 0 || s.Links != 0 || report.Access.DBReadable {
+		if !fired || !report.Access.DBExists || !strings.Contains(report.Access.Detail, "could not be held open") || s.Device != 0 || s.Inode != 0 || s.Links != 0 || report.Access.DBReadable || report.Access.DBWritable {
 			t.Fatalf("fired %v report %+v", fired, report)
 		}
 		requireVerdict(t, CompareStore(s, CompareExpectations{Inode: f.mine.PhysicalIdentity()}), Unproven)

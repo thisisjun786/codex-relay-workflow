@@ -568,7 +568,7 @@ Global options come BEFORE the subcommand:
 | `status` | observable delivery, acknowledgement and verification state |
 | `show` | the full record for one event: receipt, manifest, attempts, sent bytes, verdict |
 | `daemon` | run the bounded reconciliation and delivery loop |
-| `doctor` | environment and capability check; optional `--require-worker-policy` readiness gate |
+| `doctor` | environment and capability check, read-only by default (`--probe-write` measures writability by writing); optional `--require-worker-policy` readiness gate |
 
 Every command prints JSON. Exit 0 success, 2 a refusal with a machine-readable `reason`, 3 a host
 problem, 4 usage.
