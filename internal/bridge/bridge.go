@@ -62,6 +62,9 @@ func directory(path string) (string, error) {
 	return absolute, nil
 }
 func (b *Bridge) call(ctx context.Context, method string, params map[string]any) (map[string]any, error) {
+	if scope, ok := ctx.Value(subscriptionScopeKey{}).(*subscriptionScope); ok && scope.watch != nil {
+		ctx = scope.watch.Context(ctx)
+	}
 	raw, err := b.RPC.Call(ctx, method, params)
 	if err != nil {
 		return nil, err
@@ -126,6 +129,7 @@ type mutation struct {
 }
 
 func (b *Bridge) mutate(ctx context.Context, op mutation) (ledger.Receipt, error) {
+	ctx = context.WithValue(ctx, subscriptionScopeKey{}, &subscriptionScope{})
 	if b.waiting != nil {
 		b.waiting(op.requestID)
 	}

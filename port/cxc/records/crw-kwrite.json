@@ -1,0 +1,45 @@
+{
+  "origin": {
+    "tag": "v0.2.40",
+    "commit": "3c1459acadeb1906d97c00a598e1457327ae372d",
+    "skills_listing_sha256": "79d9580f39ca27221cb9c24337080e3fe4a1e71f76338c7329fca63f76a32e89"
+  },
+  "table_sha256": "25b5d19d9da7e07d474d2b31bc4d4139c68607457f59174a597f17505f7f23eb",
+  "from": "kwrite",
+  "files": {
+    "SKILL.md": {
+      "original": "6e34679b746f8987a02f24c9b484ccd5b6ebbc2f2efde012c400b1038345dc9a"
+    },
+    "agents/openai.yaml": {
+      "original": "70ee2ddcf908e147812c599d37c96d7102a8f6ed39a3ebbbb4b990a237aa6615"
+    },
+    "references/ai-tell-taxonomy.md": {
+      "original": "61b7afe23f3c2b9d579887d3b18450665c475ee8c357c36f1303b8fb6cd8e02c"
+    }
+  },
+  "edits": [
+    {
+      "file": "SKILL.md",
+      "reason": "Remove unsupported frontmatter metadata and resolve the reader-document link through the renamed CRW dev folder.",
+      "hunks": [
+        {
+          "line": 4,
+          "old": [
+            "metadata:\n",
+            "  last-verified: \"2026-07-07\"\n",
+            "  short-description: \"Korean prose polishing: AI-tell removal + register consistency + meaning-exact revision.\"\n"
+          ]
+        },
+        {
+          "line": 74,
+          "old": [
+            "  [Reader documents](../dev/references/reader-documents.md) first (두괄식: 결론이\n"
+          ],
+          "new": [
+            "  [Reader documents](../crw-dev/references/reader-documents.md) first (두괄식: 결론이\n"
+          ]
+        }
+      ]
+    }
+  ]
+}

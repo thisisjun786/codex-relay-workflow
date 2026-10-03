@@ -14,9 +14,14 @@ import (
 func TestModeTableDrivesUsageAndDispatch(t *testing.T) {
 	var out, errOut strings.Builder
 	if code := run(context.Background(), "crw", []string{"nope"}, &out, &errOut); code != parserExit ||
-		!strings.Contains(errOut.String(), "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,help,version} ...") ||
-		!strings.Contains(errOut.String(), "(choose from 'relay', 'bridge', 'hook', 'skill', 'doctor', 'install', 'help', 'version')") {
+		!strings.Contains(errOut.String(), "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,review,help,version} ...") ||
+		!strings.Contains(errOut.String(), "(choose from 'relay', 'bridge', 'hook', 'skill', 'doctor', 'install', 'review', 'help', 'version')") {
 		t.Fatalf("unknown mode: %d %q", code, errOut.String())
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := run(context.Background(), "crw", []string{"review"}, &out, &errOut); code != parserExit || !strings.Contains(errOut.String(), "crw review: error: the following arguments are required") {
+		t.Errorf("crw review: %d %q", code, errOut.String())
 	}
 	out.Reset()
 	errOut.Reset()

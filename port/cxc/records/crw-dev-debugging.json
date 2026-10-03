@@ -1,0 +1,103 @@
+{
+  "origin": {
+    "tag": "v0.2.40",
+    "commit": "3c1459acadeb1906d97c00a598e1457327ae372d",
+    "skills_listing_sha256": "79d9580f39ca27221cb9c24337080e3fe4a1e71f76338c7329fca63f76a32e89"
+  },
+  "table_sha256": "25b5d19d9da7e07d474d2b31bc4d4139c68607457f59174a597f17505f7f23eb",
+  "from": "dev-debugging",
+  "files": {
+    "SKILL.md": {
+      "original": "c4274ee637e72cd95155401347681c18bbee089f7fa53527414fd81004d05ecc"
+    },
+    "agents/openai.yaml": {
+      "original": "e0d5830bb571144fa377d6bd37aab573de54626d475bc572fc55451fe552e13a"
+    },
+    "references/async-debugging.md": {
+      "original": "5b81c89cfda09f5769b0b41118d279ce41742b084104243cc601b7a82fe23d43"
+    },
+    "references/logic-analysis.md": {
+      "original": "4cff71d8e073e95c21dffff4dc7c87ec589892d8a007c86f1e9cc50592ef82a7"
+    },
+    "references/methodologies.md": {
+      "original": "46d556490a8569c91c39109fb509d4de94e8638c4c88f2b6673ee350a3ea4d80"
+    },
+    "references/performance-debugging.md": {
+      "original": "07c76b958747c71ef2a850ef608580dbfd1cacfbff2f2561dcb0cb462034eabd"
+    },
+    "references/postmortem-template.md": {
+      "original": "8ef3754db6289f2286623f5497ea7a4a72f498b121ea36f8463295a0e21995a4"
+    },
+    "references/runtimes/beam.md": {
+      "original": "20d567e5b5bd77a7bf5562d774eaed18e263d42a584aa8d3689ce25dc7530cd2"
+    },
+    "references/runtimes/c-cpp.md": {
+      "original": "7c1dc2513692a59e252ae5d04a9ea057465fa593118a676f4b4ac4283c286892"
+    },
+    "references/runtimes/go.md": {
+      "original": "c89ad564b8ad355dc91052f99f2e52d76ead59e0ff378262fc2c2fe85571a797"
+    },
+    "references/runtimes/js/nextjs-react.md": {
+      "original": "2c5e580562e9db8df1cc536561ced63701a1205cd8efcf443ff8bfe496ff8f57"
+    },
+    "references/runtimes/js/node-backend.md": {
+      "original": "67ec2a4118f96058c1b1779257b767c1f1a6bba077f3b633d546fc0b804b6d0a"
+    },
+    "references/runtimes/js/vite-vitest.md": {
+      "original": "d3c1a5593be32002c0eb3ebe2a9eb7600b57e63b65183321b86935882dc5f855"
+    },
+    "references/runtimes/jvm.md": {
+      "original": "94d1fae81b8c8cbc1c6dfd874daaeca0dfed7ad5d949a6cb45484a047e6f1cd4"
+    },
+    "references/runtimes/node.md": {
+      "original": "7da2c46c478396ed696cb8996ae249cee7c6ddee7733ae66e2e03693350cc329"
+    },
+    "references/runtimes/python.md": {
+      "original": "f28a4198d8fb45d2264532a98cd3a7f29acab4f6c5251722b2e308575f748d63"
+    },
+    "references/runtimes/ruby.md": {
+      "original": "9671feac33754dec819f7c262367d8ab0fb02fc0604003f8111cc840d8f05dfa"
+    },
+    "references/runtimes/rust.md": {
+      "original": "4e8d1e1da00e34e917bdda4224743d011b51ad7bc667606b99e456ff321e4fac"
+    },
+    "references/runtimes/swift.md": {
+      "original": "916896dc69c3a941676c5e46dc30581c2db31fed217218b1fcba3b8f75e2fa81"
+    },
+    "references/tool-guides.md": {
+      "original": "80fb83fd472bb3e2b7d2939cfa5c24b1e16576e1151b1274d67f18b064baf2e6"
+    },
+    "references/tools/playwright.md": {
+      "original": "1e5328c46a00737f91f73aa884f492d8a991c22ccae4ec710f49c8deda52bd46"
+    }
+  },
+  "edits": [
+    {
+      "file": "SKILL.md",
+      "reason": "Normalize frontmatter to the repository-supported name and description fields; preserve the invocation description and record the removed oracle metadata.",
+      "hunks": [
+        {
+          "line": 4,
+          "old": [
+            "metadata:\n",
+            "  last-verified: \"2026-07-02\"\n",
+            "  short-description: \"Phases 0-4 systematic root-cause debugging method (any language).\"\n",
+            "  keywords: [debug, error, stack trace, root cause, flaky, regression, crash, bisect, \"logic analysis\", \"comprehension\", \"unknown system\", \"reverse engineering\"]\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "agents/openai.yaml",
+      "reason": "Add the required interface default prompt naming the staged CRW skill; preserve the oracle display text and implicit-invocation policy.",
+      "hunks": [
+        {
+          "line": 4,
+          "new": [
+            "  default_prompt: \"Use $crw-dev-debugging to guide this task and verify its result.\"\n"
+          ]
+        }
+      ]
+    }
+  ]
+}
