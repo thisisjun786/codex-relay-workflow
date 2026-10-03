@@ -131,11 +131,13 @@ func TestLineDiffRoundTrips(t *testing.T) {
 		{"empty", []Hunk{{Line: 1}}},
 		{"no-op", []Hunk{{Line: 1, Old: []string{"x\n"}, New: []string{"x\n"}}}},
 		{"out of range", []Hunk{{Line: 9, Old: []string{"a\n"}}}},
-		{"unordered", []Hunk{{Line: 2, Old: []string{"b\n"}, New: []string{"b!\n"}}, {Line: 1, Old: []string{"a\n"}, New: []string{"x\n"}}}},
+		{"unordered", []Hunk{{Line: 2, Old: []string{"b!\n"}, New: []string{"b\n"}}, {Line: 1, Old: []string{"a\n"}, New: []string{"x\n"}}}},
 		{"old is not a whole line", []Hunk{{Line: 1, Old: []string{"a"}, New: []string{"x\n"}}}},
 	} {
 		if got, err := revert(staged, row.hunks); err == nil {
 			t.Errorf("%s: restored %q", row.name, got)
+		} else if row.name == "unordered" && !strings.Contains(err.Error(), "before the end") {
+			t.Errorf("unordered hunks reached the wrong refusal: %v", err)
 		}
 	}
 }
@@ -349,5 +351,13 @@ func TestLineDiffFallbackAndOverflow(t *testing.T) {
 		if _, err := revert([]string{"x\n"}, hs); err == nil {
 			t.Fatal("invalid position accepted")
 		}
+	}
+}
+
+func TestOverlappingHunksReachOrderingGuard(t *testing.T) {
+	staged := splitLines("x\nb\n")
+	hunks := []Hunk{{Line: 1, Old: []string{"a\n", "removed\n"}, New: []string{"x\n"}}, {Line: 2, Old: []string{"old\n"}, New: []string{"b\n"}}}
+	if _, err := revert(staged, hunks); err == nil || !strings.Contains(err.Error(), "before the end") {
+		t.Fatalf("overlap must reach ordering guard: %v", err)
 	}
 }
