@@ -180,3 +180,24 @@ func TestShellWriteLiteralSecurity(t *testing.T) {
 		t.Fatalf("boundary %q", got)
 	}
 }
+
+func TestShellWriteLiteralReviewRegressions(t *testing.T) {
+	for _, command := range []string{
+		"printf x \\ #word 2>target",
+		": 2> \\\n target",
+		": >\\\n| target",
+		"cat <<EOF$X\n'\nEOF$X\n: 2>target",
+		"cat <<''\n'\n\n: 2>target",
+		"cat <\\\n<EOF\n'\nEOF\n: 2>target",
+		"cat <<EOF\n'\nEO\\\nF\n: 2>target",
+	} {
+		t.Run(command, func(t *testing.T) {
+			if got := ShellWriteDestinations(command); !slices.Contains(got, "target") {
+				t.Fatalf("literal target missing: %q", got)
+			}
+		})
+	}
+	if got := ShellWriteDestinations(": >a\rb"); !slices.Equal(got, []string{"a", "a\rb"}) {
+		t.Fatalf("carriage return filename: %q", got)
+	}
+}
