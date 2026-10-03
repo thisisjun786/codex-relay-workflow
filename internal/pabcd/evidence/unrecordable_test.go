@@ -277,7 +277,7 @@ func stateOf(raw []byte) map[string]any {
 	return m
 }
 
-// TestResolveTombstone replays the oracle's resolveTombstone. Two cases are intentionally changed (the data-loss fix): the oracle
+// TestResolveTombstone replays the oracle's resolveTombstone. Three cases are intentionally changed (the data-loss fix): the oracle
 // writes back the verdicts its read kept, so the 65th and 66th of a list past the cap, and an entry it cannot parse, are lost
 // from the file; the port writes nothing when the file holds more verdicts than the read kept, and the call reports false.
 func TestResolveTombstone(t *testing.T) {
