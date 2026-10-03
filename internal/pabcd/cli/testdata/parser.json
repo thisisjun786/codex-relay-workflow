@@ -1,0 +1,179 @@
+[
+  {
+    "argv": [],
+    "cwd": "/unused",
+    "result": {
+      "error": "unknown receipt verb '' (expected test); run crw pabcd receipt --help"
+    }
+  },
+  {
+    "argv": [
+      "help",
+      "ignored"
+    ],
+    "cwd": "/unused",
+    "result": {
+      "verb": "help",
+      "cwd": "/unused",
+      "command": []
+    }
+  },
+  {
+    "argv": [
+      "--help"
+    ],
+    "cwd": "/unused",
+    "result": {
+      "verb": "help",
+      "cwd": "/unused",
+      "command": []
+    }
+  },
+  {
+    "argv": [
+      "-h"
+    ],
+    "cwd": "/unused",
+    "result": {
+      "verb": "help",
+      "cwd": "/unused",
+      "command": []
+    }
+  },
+  {
+    "argv": [
+      "TEST",
+      "--session",
+      " s1 ",
+      "--cwd",
+      "work",
+      "--generated",
+      "build",
+      "--generated",
+      ".\\docs\\api",
+      "--",
+      "npm",
+      "test",
+      ""
+    ],
+    "cwd": "/unused",
+    "result": {
+      "verb": "test",
+      "cwd": "work",
+      "command": [
+        "npm",
+        "test"
+      ],
+      "session": " s1 ",
+      "generated": [
+        "build",
+        "docs/api"
+      ]
+    }
+  },
+  {
+    "argv": [
+      "test",
+      "--generated"
+    ],
+    "cwd": "/unused",
+    "result": {
+      "error": "receipt test: --generated needs a repo-relative path"
+    }
+  },
+  {
+    "argv": [
+      "test",
+      "--generated",
+      ""
+    ],
+    "cwd": "/unused",
+    "result": {
+      "error": "receipt test: --generated needs a repo-relative path"
+    }
+  },
+  {
+    "argv": [
+      "test",
+      "--session"
+    ],
+    "cwd": "/unused",
+    "result": {
+      "verb": "test",
+      "cwd": "/unused",
+      "command": []
+    }
+  },
+  {
+    "argv": [
+      "test",
+      "--cwd"
+    ],
+    "cwd": "/unused",
+    "result": {
+      "verb": "test",
+      "cwd": "/unused",
+      "command": []
+    }
+  },
+  {
+    "argv": [
+      "test",
+      "--generated",
+      "--",
+      "cmd"
+    ],
+    "cwd": "/unused",
+    "result": {
+      "error": "unexpected argument 'cmd' before --"
+    }
+  },
+  {
+    "argv": [
+      "test",
+      "--",
+      "cmd",
+      "",
+      "arg"
+    ],
+    "cwd": "/unused",
+    "result": {
+      "verb": "test",
+      "cwd": "/unused",
+      "command": [
+        "cmd",
+        "arg"
+      ]
+    }
+  },
+  {
+    "argv": [
+      "test",
+      "cmd"
+    ],
+    "cwd": "/unused",
+    "result": {
+      "error": "unexpected argument 'cmd' before --"
+    }
+  },
+  {
+    "argv": [
+      "test",
+      "--session=s1"
+    ],
+    "cwd": "/unused",
+    "result": {
+      "error": "unexpected argument '--session=s1' before --"
+    }
+  },
+  {
+    "argv": [
+      "test",
+      "--help"
+    ],
+    "cwd": "/unused",
+    "result": {
+      "error": "unexpected argument '--help' before --"
+    }
+  }
+]
