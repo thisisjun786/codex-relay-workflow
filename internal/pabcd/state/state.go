@@ -79,7 +79,7 @@ type UnverifiedSubagent struct {
 }
 
 // DcloseRecoveryMarker is what a D-close recorded about itself before it started writing, so a retry replays the same
-// decision. A nil NextWorkPhaseID is an authoritative "no successor"; Legacy marks a marker whose successor was absent
+// decision. A nil NextWorkPhaseID with Legacy false is an authoritative "no successor"; Legacy marks a marker whose successor was absent
 // or malformed, which recovery must refuse instead of guessing.
 type DcloseRecoveryMarker struct {
 	SessionID         string  `json:"sessionId"`
@@ -218,8 +218,9 @@ func MatchesDcloseRecovery(s State, closePhaseID string) bool {
 	return m != nil && m.SessionID == s.SessionID && s.CheckEpoch != nil && m.CheckEpoch == *s.CheckEpoch && m.ClosedWorkPhaseID == closePhaseID
 }
 
-// Encode is JSON.stringify(s, null, 2): the bytes the oracle publishes for a state, without a trailing newline. HTML is
-// not escaped, and U+2028 and U+2029 are written literally.
+// Encode is JSON.stringify(s, null, 2) for a state ReadStateStrict or DefaultState built (a NaN or infinite counter, or a
+// negative zero, set by hand is an error or prints differently): the bytes the oracle publishes, without a trailing newline.
+// HTML is not escaped, and U+2028 and U+2029 are written literally.
 func Encode(s State) ([]byte, error) {
 	var b bytes.Buffer
 	enc := json.NewEncoder(&b)

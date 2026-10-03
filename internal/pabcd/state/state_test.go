@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -34,16 +35,6 @@ func putIn(t *testing.T, cwd, id, text string) {
 	if err := os.WriteFile(StatePath(cwd, id), []byte(text), 0o644); err != nil {
 		t.Fatal(err)
 	}
-}
-
-// persist is writeState for a test: the file Encode(s) makes, read back through ReadStateStrict.
-func persist(t *testing.T, s State) (State, bool) {
-	t.Helper()
-	b, err := Encode(s)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return ReadStateStrict(put(t, s.SessionID, string(b)), s.SessionID)
 }
 
 func str(s string) *string { return &s }
@@ -91,6 +82,10 @@ func TestRestoreRules(t *testing.T) {
 		{"050 dirty snapshot without a tree hash is rejected", `{"phase":"B","phaseEntrySource":{"kind":"resolved","commitSha":"abc","dirty":true,"capturedAt":"t"}}`, func(s State) bool { return s.PhaseEntrySource == nil }},
 		{"050 snapshot found outside B is dropped", `{"phase":"P","phaseEntrySource":{"kind":"resolved","commitSha":"abc","dirty":false,"capturedAt":"t"}}`, func(s State) bool { return s.PhaseEntrySource == nil }},
 		{"050 B keeps its own snapshot", `{"phase":"B","phaseEntrySource":{"kind":"resolved","commitSha":"abc","dirty":false,"capturedAt":"t"}}`, func(s State) bool { return s.PhaseEntrySource != nil && s.PhaseEntrySource.CommitSha == "abc" }},
+		{"L8 round-trips a full tracker and drops unknown nested keys", `{"phase":"P","interview":{"roundId":9,"dimensions":{"goal":{"level":"max","known":["k"],"unknown":[],"confidence":1,"EVIL":1}},"contradictions":[],"assumptions":[],"EVIL":"drop"}}`, func(s State) bool {
+			b, _ := Encode(s)
+			return s.Interview != nil && s.Interview.RoundID == 9 && s.Interview.Dimensions.Goal.Level == "max" && !bytes.Contains(b, []byte("EVIL"))
+		}},
 		{"L8 fresh session reads interview null", `{"phase":"P"}`, func(s State) bool { return s.Interview == nil }},
 		{"L8 HIGH-1 persisted flags.interview true with a non-ready tracker reads false", `{"phase":"I","flags":{"interview":true},"interview":{"roundId":1,"dimensions":{},"contradictions":[],"assumptions":[]}}`, func(s State) bool { return !s.Flags.Interview && s.Interview != nil }},
 		{"wp5 marker without the successor field restores as legacy", `{"phase":"IDLE","checkEpoch":"c","dcloseRecovery":{"sessionId":"s","checkEpoch":"c","closedWorkPhaseId":"wp-1"}}`, func(s State) bool {
@@ -118,8 +113,8 @@ func TestPersistedStatesRoundTrip(t *testing.T) {
 	full.InjectedTurns, full.StopBlockTurnID, full.StopBlockCapNotified = []string{"t1", "t2"}, str("turn-new"), true
 	full.LoopArmSeen, full.IdleEditNudges, full.CheckEpoch = true, 7, str("c-valid")
 	full.DcloseRecovery = &DcloseRecoveryMarker{SessionID: "rt", CheckEpoch: "c-valid", ClosedWorkPhaseID: "wp-1", NextWorkPhaseID: str("wp-2")}
-	full.Flags = Flags{Interview: true, AuditPassed: true} // Interview is derived from the tracker: no tracker, so false
-	got, unreadable := persist(t, full)
+	full.Flags = Flags{Interview: true, AuditPassed: true}                      // Interview is derived from the tracker: no tracker, so false
+	got, unreadable := ReadStateStrict(put(t, "rt", mustEncode(t, full)), "rt") // Encode stands in for writeState
 	if unreadable {
 		t.Fatal("unreadable")
 	}
@@ -144,17 +139,6 @@ func mustEncode(t *testing.T, s State) string {
 		t.Fatal(err)
 	}
 	return string(b)
-}
-
-func TestInterviewTrackerSurvivesRestoreWithoutUnknownKeys(t *testing.T) {
-	dim := `{"level":"max","known":["k"],"unknown":[],"confidence":1,"EVIL":1}`
-	text := `{"phase":"P","orchestrationActive":true,"injectedTurns":["t1"],"interview":{"roundId":9,"dimensions":{"goal":` + dim + `,"constraint":` + dim + `,"success":` + dim + `,"ontology":` + dim + `},"contradictions":[],"assumptions":[{"id":"a","text":"x","recorded":true}],"scanRounds":1,"EVIL":"drop"}}`
-	s, unreadable := restore("iv-1", []byte(text), at())
-	b, _ := Encode(s)
-	if unreadable || s.Phase != PhaseP || !s.OrchestrationActive || len(s.InjectedTurns) != 1 || s.Interview == nil || s.Interview.RoundID != 9 ||
-		s.Interview.Dimensions.Goal.Level != "max" || !s.Flags.Interview || bytes.Contains(b, []byte("EVIL")) {
-		t.Fatalf("%+v unreadable=%v\n%s", s, unreadable, b)
-	}
 }
 
 func TestDefaultStateAndPhaseLists(t *testing.T) {
@@ -232,7 +216,20 @@ func TestFindForeignSessionCopiesTakesASymlinkAliasForAnotherTree(t *testing.T) 
 func TestSourceIdentityConvertsToTheSourceType(t *testing.T) {
 	hash, root := "h", "/ws"
 	got := SourceIdentity{Kind: source.KindResolved, CommitSha: "c", Dirty: true, CapturedAt: "t", TreeHash: &hash, SourceRoot: &root}.Identity()
-	if got.Kind != source.KindResolved || got.TreeHash != "h" || *got.SourceRoot != "/ws" || (SourceIdentity{}).Identity().TreeHash != "" {
+	if got.Kind != source.KindResolved || got.CommitSha != "c" || !got.Dirty || got.CapturedAt != "t" || got.TreeHash != "h" || *got.SourceRoot != "/ws" || (SourceIdentity{}).Identity().TreeHash != "" {
+		t.Fatalf("%+v", got)
+	}
+}
+
+// A receiptClaimed cut inside an astral character leaves a lone surrogate in the oracle (written as an escape); a Go string
+// cannot hold one, so the cut leaves U+FFFD (a documented exception, see the package comment).
+func TestReceiptClaimCutInsideAnAstralCharacterLeavesAReplacement(t *testing.T) {
+	text := `[{"agentId":"a","recordedAt":"t","receiptClaimed":"` + strings.Repeat("a", 255) + "\U0001F600b" + `"}]`
+	var raw any
+	if err := json.Unmarshal([]byte(text), &raw); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := ReconstructUnverified(raw); len(got) != 1 || got[0].ReceiptClaimed != strings.Repeat("a", 255)+"\uFFFD" {
 		t.Fatalf("%+v", got)
 	}
 }

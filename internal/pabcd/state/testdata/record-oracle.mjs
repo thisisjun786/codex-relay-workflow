@@ -19,7 +19,7 @@ const [oracleDist, workRoot] = process.argv.slice(2);
 const { readStateStrict } = await import(oracleDist + "/state.js");
 
 const id = (extra = {}) => ({ kind: "resolved", commitSha: "abc", dirty: false, capturedAt: "2026-01-01T00:00:00Z", ...extra });
-const dims = (level) => Object.fromEntries(["goal", "constraint", "success", "ontology"].map((d) => [d, { level, known: ["k"], unknown: [], confidence: 1 }]));
+const dims = (level) => Object.fromEntries(["goal", "constraint", "success", "ontology"].map((d) => [d, { level, known: ["k"], unknown: [], confidence: 1, EVIL: 1 }]));
 const ready = { roundId: 2, dimensions: dims("max"), contradictions: [], assumptions: [{ id: "a", text: "x", recorded: true }], scanRounds: 1, lastScanRoundId: 1 };
 const marker = (extra = {}) => ({ sessionId: "rec-s1", checkEpoch: "c1", closedWorkPhaseId: "wp1", nextWorkPhaseId: "wp2", ...extra });
 const unv = (extra = {}) => ({ agentId: "a1", turnId: "t1", agentType: "executor", attempts: 3, receiptClaimed: "r", recordedAt: "2026-01-01T00:00:00Z", resolvable: true, ...extra });
@@ -37,6 +37,7 @@ for (const [name, text] of Object.entries({
 add("no_phase", {}); add("phase_number", { phase: 5 }); add("phase_lowercase", { phase: "idle" }); add("phase_unknown", { phase: "Z" });
 for (const p of ["IDLE", "I", "P", "A", "B", "C", "D"]) add("phase_" + p, { phase: p });
 add("slug_text", { phase: "P", slug: "my-slug" }); add("slug_number", { phase: "P", slug: 5 });
+add("slug_escape_text", '{"phase":"P","slug":"\\\\u2028 \\u2028"}');
 add("slug_markup", { phase: "P", slug: "<script>a&b</script>" }); add("slug_separators", { phase: "P", slug: "a\u2028b\u2029c" }); add("slug_astral", { phase: "P", slug: "x\u{1F600}y" });
 add("updatedAt_text", { phase: "P", updatedAt: "2025-05-05T05:05:05.000Z" }); add("updatedAt_number", { phase: "P", updatedAt: 5 });
 add("flags_set", { phase: "P", flags: { auditPassed: true, checkPassed: true, interview: true, bogus: 1 } });
