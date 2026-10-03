@@ -6,6 +6,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 const relabelModel = "relabelled/model"
@@ -33,12 +34,12 @@ func Test_test_the_launch_and_the_comparison_follow_the_authorization_not_the_ar
 	host.Respond("thread/read", fakehost.Reply{Result: map[string]any{"thread": map[string]any{"status": map[string]any{"type": "idle"}}}})
 	host.Respond("thread/resume", start)
 	created, err := b.CreateThread(context.Background(), input)
-	if err != nil || created["status"] != "accepted" || hostParams(t, host, "thread/start")["model"] != relabelModel || object(hostParams(t, host, "thread/start")["config"])["model_reasoning_effort"] != relabelEffort || object(object(created["settings"])["requested"])["model"] != relabelModel || object(object(created["settings"])["requested"])["reasoningEffort"] != relabelEffort || object(created["executionPolicy"])["model"] != relabelModel {
+	if err != nil || created["status"] != "accepted" || hostParams(t, host, "thread/start")["model"] != relabelModel || pyjson.Map(hostParams(t, host, "thread/start")["config"])["model_reasoning_effort"] != relabelEffort || pyjson.Map(pyjson.Map(created["settings"])["requested"])["model"] != relabelModel || pyjson.Map(pyjson.Map(created["settings"])["requested"])["reasoningEffort"] != relabelEffort || pyjson.Map(created["executionPolicy"])["model"] != relabelModel {
 		t.Fatalf("created=%v err=%v", created, err)
 	}
 	message := SendMessage{RequestID: "relabelled-send", ThreadID: "thread-1", Message: "again", Expected: map[string]any{"model": input.Model, "reasoning_effort": input.Effort}}
 	delivered, err := b.SendMessageToThread(context.Background(), message)
-	if err != nil || delivered["status"] != "accepted" || hostParams(t, host, "thread/resume")["model"] != relabelModel || object(hostParams(t, host, "thread/resume")["config"])["model_reasoning_effort"] != relabelEffort || object(delivered["executionPolicy"])["model"] != relabelModel {
+	if err != nil || delivered["status"] != "accepted" || hostParams(t, host, "thread/resume")["model"] != relabelModel || pyjson.Map(hostParams(t, host, "thread/resume")["config"])["model_reasoning_effort"] != relabelEffort || pyjson.Map(delivered["executionPolicy"])["model"] != relabelModel {
 		t.Fatalf("delivered=%v err=%v", delivered, err)
 	}
 }
@@ -53,7 +54,7 @@ func Test_test_a_worktree_launch_follows_the_authorization_not_the_arguments(t *
 	host.Respond("thread/start", fakehost.Reply{Result: start})
 	host.Respond("turn/start", fakehost.Reply{Result: map[string]any{"turn": map[string]any{"id": "turn-1"}}})
 	receipt, err := b.CreateWorktreeThread(context.Background(), input)
-	if err != nil || receipt["status"] != "accepted" || hostParams(t, host, "thread/start")["model"] != relabelModel || object(hostParams(t, host, "thread/start")["config"])["model_reasoning_effort"] != relabelEffort || object(object(receipt["settings"])["requested"])["model"] != relabelModel || object(object(receipt["settings"])["requested"])["reasoningEffort"] != relabelEffort || object(receipt["executionPolicy"])["model"] != relabelModel {
+	if err != nil || receipt["status"] != "accepted" || hostParams(t, host, "thread/start")["model"] != relabelModel || pyjson.Map(hostParams(t, host, "thread/start")["config"])["model_reasoning_effort"] != relabelEffort || pyjson.Map(pyjson.Map(receipt["settings"])["requested"])["model"] != relabelModel || pyjson.Map(pyjson.Map(receipt["settings"])["requested"])["reasoningEffort"] != relabelEffort || pyjson.Map(receipt["executionPolicy"])["model"] != relabelModel {
 		t.Fatalf("receipt=%v err=%v", receipt, err)
 	}
 }

@@ -131,14 +131,14 @@ func Moment(value any) *time.Time {
 // Malformed is malformed: the first published record that is not the shape a fact must be.
 func Malformed(marker Obj) string {
 	for _, key := range singleKeys {
-		if v, ok := get(marker, key); ok {
+		if v, ok := marker.Lookup(key); ok {
 			if _, record := v.(Obj); !record {
 				return key
 			}
 		}
 	}
 	for _, key := range listedKeys {
-		v, ok := get(marker, key)
+		v, ok := marker.Lookup(key)
 		if !ok {
 			continue
 		}
@@ -153,7 +153,7 @@ func Malformed(marker Obj) string {
 		}
 	}
 	for _, key := range append(append([]string{}, singleKeys...), listedKeys...) {
-		v, ok := get(marker, key)
+		v, ok := marker.Lookup(key)
 		if !ok {
 			continue
 		}
@@ -164,14 +164,14 @@ func Malformed(marker Obj) string {
 		for _, raw := range items {
 			item := raw.(Obj)
 			for _, field := range identityFields[key] {
-				if value, present := get(item, field); present {
+				if value, present := item.Lookup(field); present {
 					if _, text := value.(string); !text {
 						return key + "." + field
 					}
 				}
 			}
 			for _, field := range numberFields[key] {
-				value, present := get(item, field)
+				value, present := item.Lookup(field)
 				if !present {
 					continue
 				}
@@ -180,7 +180,7 @@ func Malformed(marker Obj) string {
 				}
 			}
 			if key == "resolutions" {
-				if entries, present := get(item, "adjudicated"); present {
+				if entries, present := item.Lookup("adjudicated"); present {
 					list, isList := entries.([]any)
 					if !isList {
 						return key + ".adjudicated"
@@ -529,7 +529,7 @@ func obstructedClaim(marker Obj, sessionID any) Obj {
 		if !ok || !SameIdentity(Claimant(claim), sessionID) {
 			continue
 		}
-		if value, present := get(claim, "dispatchRequestId"); present {
+		if value, present := claim.Lookup("dispatchRequestId"); present {
 			if _, text := value.(string); !text {
 				return claim
 			}
@@ -548,11 +548,11 @@ func selectingClaim(marker Obj, sessionID any, assignment string) Obj {
 		if !Named(presented) || !utf8.ValidString(presented.(string)) || !SameIdentity(AssignmentID(presented.(string)), assignment) {
 			continue
 		}
-		intentValue, _ := get(marker, "intent")
+		intentValue, _ := marker.Lookup("intent")
 		intent, readable := intentValue.(Obj)
 		if readable {
 			for _, field := range identityFields["intent"] {
-				if value, present := get(intent, field); present {
+				if value, present := intent.Lookup(field); present {
 					if _, text := value.(string); !text {
 						readable = false
 					}
@@ -596,7 +596,7 @@ func recencyLess(a, b candidate) bool {
 	return filepath.Base(a.directory) < filepath.Base(b.directory)
 }
 
-func fieldOfAny(o Obj, key string) any { v, _ := get(o, key); return v }
+func fieldOfAny(o Obj, key string) any { v, _ := o.Lookup(key); return v }
 
 // SelectAssignment is select_assignment: which assignment under this workspace a session's turn
 // is about. A claim naming THIS assignment is consulted before recency. It returns ("", nil,
@@ -624,7 +624,7 @@ func SelectAssignmentContext(ctx context.Context, root, workspace string, sessio
 			return "", nil, nil, err
 		}
 		facts, problems := ReadAssignmentContext(ctx, directory)
-		_, hasIntent := get(facts, "intent")
+		_, hasIntent := facts.Lookup("intent")
 		unreadableIntent := false
 		for _, p := range problems {
 			if p == "intent" {
@@ -732,7 +732,7 @@ func pyEqual(a, b any) bool {
 			return false
 		}
 		for _, f := range x {
-			other, present := get(y, f.Key)
+			other, present := y.Lookup(f.Key)
 			if !present || !pyEqual(f.Value, other) {
 				return false
 			}
@@ -759,7 +759,7 @@ func publishOrCompare(target string, payload Obj, fields []string, root string, 
 		}
 	}
 	for _, f := range since {
-		if stored, present := get(existing, f); present && !pyEqual(stored, fieldOf(payload, f)) {
+		if stored, present := existing.Lookup(f); present && !pyEqual(stored, fieldOf(payload, f)) {
 			return Conflict, nil
 		}
 	}
@@ -881,7 +881,7 @@ func BindIdentity(root, workspace string, assignment any, sessionID, taskID any,
 		return Obj{{Key: "assignmentId", Value: assignment}, {Key: "outcome", Value: Bound}, {Key: "sessionId", Value: sessionID}, {Key: "taskId", Value: taskID}}, nil
 	}
 	marker, unreadable := ReadAssignment(directory)
-	winnerValue, _ := get(marker, "bound")
+	winnerValue, _ := marker.Lookup("bound")
 	winner, ok := winnerValue.(Obj)
 	if !ok {
 		labels := unreadable

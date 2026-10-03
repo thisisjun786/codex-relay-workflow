@@ -7,6 +7,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 func Test_test_an_exception_is_not_evidence_that_a_pair_matches_its_roles_policy(t *testing.T) {
@@ -21,7 +22,7 @@ func Test_test_an_exception_is_not_evidence_that_a_pair_matches_its_roles_policy
 	host.Respond("thread/read", fakehost.Reply{Result: map[string]any{"thread": map[string]any{"status": map[string]any{"type": "notLoaded"}}}})
 	input := SendMessage{RequestID: "excepted-send", ThreadID: "thread-1", Message: "work", Exception: "one-task", Role: "parent", Expected: map[string]any{"model": "gpt-6-astra", "reasoning_effort": "high", "cwd": cwd}}
 	receipt, err := b.SendMessageToThread(context.Background(), input)
-	if err != nil || receipt["status"] != "failed" || object(receipt["rpcError"])["code"] != "unverified_pair_for_unloaded_thread" || host.Count("thread/resume") != 0 || host.Count("turn/start") != 0 {
+	if err != nil || receipt["status"] != "failed" || pyjson.Map(receipt["rpcError"])["code"] != "unverified_pair_for_unloaded_thread" || host.Count("thread/resume") != 0 || host.Count("turn/start") != 0 {
 		t.Fatalf("receipt=%v err=%v", receipt, err)
 	}
 }

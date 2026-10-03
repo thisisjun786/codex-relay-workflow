@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -42,7 +43,7 @@ func Test26_MTW_3_real_sender_wakes_parent_once_on_own_thread(t *testing.T) {
 	before := len(f.host.threads[parent].turns)
 	sent, err := f.delivery.Attempt(f.ctx, event, f.host, nil, "")
 	mustDo(t, err)
-	if str(sent, "deliveryState") != Dispatched || len(f.host.threads[parent].turns) != before+1 || len(f.host.sends) != 1 || f.host.sends[0].thread != parent {
+	if pyjson.Text(sent.Get("deliveryState")) != Dispatched || len(f.host.threads[parent].turns) != before+1 || len(f.host.sends) != 1 || f.host.sends[0].thread != parent {
 		t.Fatal(sent, f.host.sends, f.row(event))
 	}
 	text := f.host.threads[parent].items[len(f.host.threads[parent].items)-1][1]
@@ -59,14 +60,14 @@ func Test26_MTW_3_real_sender_wakes_parent_once_on_own_thread(t *testing.T) {
 	}
 	state, err := f.delivery.SnapshotItem(f.ctx, event)
 	mustDo(t, err)
-	if str(state, "phase") != "awaiting_grant_acknowledgement" {
+	if pyjson.Text(state.Get("phase")) != "awaiting_grant_acknowledgement" {
 		t.Fatal(state)
 	}
 	_, err = m.Acknowledge(f.ctx, turn, parent, grant, "read the grant")
 	mustDo(t, err)
 	state, err = f.delivery.SnapshotItem(f.ctx, event)
 	mustDo(t, err)
-	if str(state, "phase") != "grant_acknowledged" {
+	if pyjson.Text(state.Get("phase")) != "grant_acknowledged" {
 		t.Fatal(state)
 	}
 	again, err := f.delivery.Attempt(f.ctx, event, f.host, nil, "")
@@ -85,7 +86,7 @@ func Test26_MTW_4_answered_grant_is_suppressed_before_send(t *testing.T) {
 	mustDo(t, err)
 	answer, err := f.delivery.Attempt(f.ctx, event, f.host, nil, "")
 	mustDo(t, err)
-	if str(answer, "sendAttempted") != "no" || str(answer, "supersededReason") != "merge_turn_grant_answered" || len(f.host.sends) != 0 {
+	if pyjson.Text(answer.Get("sendAttempted")) != "no" || pyjson.Text(answer.Get("supersededReason")) != "merge_turn_grant_answered" || len(f.host.sends) != 0 {
 		t.Fatal(answer, f.host.sends)
 	}
 }
@@ -98,12 +99,12 @@ func Test26_MTW_4_generation_advance_does_not_suppress_grant(t *testing.T) {
 	mustDo(t, err)
 	sent, err := f.delivery.Attempt(f.ctx, event, f.host, nil, "")
 	mustDo(t, err)
-	if str(sent, "deliveryState") != Dispatched {
+	if pyjson.Text(sent.Get("deliveryState")) != Dispatched {
 		t.Fatal(sent)
 	}
 	state, err := f.delivery.SnapshotItem(f.ctx, event)
 	mustDo(t, err)
-	if str(state, "phase") != "awaiting_grant_acknowledgement" {
+	if pyjson.Text(state.Get("phase")) != "awaiting_grant_acknowledgement" {
 		t.Fatal(state)
 	}
 	record, err := m.Turn(f.ctx, turn)
@@ -146,7 +147,7 @@ func Test26_MTW_5_queuing_grant_does_not_supersede_child_correction(t *testing.T
 	}
 	sent, e := f.delivery.Attempt(f.ctx, correction, f.host, nil, "")
 	mustDo(t, e)
-	if str(sent, "deliveryState") != Dispatched || len(f.host.threads[child].turns) != 1 {
+	if pyjson.Text(sent.Get("deliveryState")) != Dispatched || len(f.host.threads[child].turns) != 1 {
 		t.Fatal(sent, f.host.sends)
 	}
 }

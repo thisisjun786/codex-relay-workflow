@@ -11,6 +11,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 func Test_test_environment_mismatch_retains_actual_receipt_and_withholds_prompt(t *testing.T) {
@@ -37,15 +38,15 @@ func Test_test_environment_mismatch_retains_actual_receipt_and_withholds_prompt(
 			}
 			host.Respond("thread/start", fakehost.Reply{Result: created})
 			receipt, err := b.CreateWorktreeThread(context.Background(), input)
-			if err != nil || receipt["status"] != "failed" || receipt["recoveryRequired"] != true || object(receipt["initialPrompt"])["state"] != "not_sent" || host.Count("turn/start") != 0 {
+			if err != nil || receipt["status"] != "failed" || receipt["recoveryRequired"] != true || pyjson.Map(receipt["initialPrompt"])["state"] != "not_sent" || host.Count("turn/start") != 0 {
 				t.Fatalf("receipt=%v err=%v", receipt, err)
 			}
 			for key, value := range scenario.change {
 				if key == "runtimeWorkspaceRoots" {
 					value = []string{"/wrong"}
 				}
-				if !reflect.DeepEqual(object(receipt["creation"])[key], value) {
-					t.Fatalf("creation %s=%v want %v", key, object(receipt["creation"])[key], value)
+				if !reflect.DeepEqual(pyjson.Map(receipt["creation"])[key], value) {
+					t.Fatalf("creation %s=%v want %v", key, pyjson.Map(receipt["creation"])[key], value)
 				}
 			}
 			if _, err := os.Stat(filepath.Join(input.Destination, "tracked")); err != nil {
@@ -79,7 +80,7 @@ func Test_test_checkout_change_during_thread_start_withholds_prompt(t *testing.T
 	close(release)
 	select {
 	case receipt := <-result:
-		if receipt["status"] != "failed" || receipt["threadId"] != "thread-1" || object(receipt["checkoutBeforeDispatch"])["detached"] != false || host.Count("turn/start") != 0 {
+		if receipt["status"] != "failed" || receipt["threadId"] != "thread-1" || pyjson.Map(receipt["checkoutBeforeDispatch"])["detached"] != false || host.Count("turn/start") != 0 {
 			t.Fatalf("receipt=%v calls=%v", receipt, host.Requests())
 		}
 	case <-time.After(5 * time.Second):
@@ -108,7 +109,7 @@ func Test_test_a_worktree_exception_covers_only_the_destination_it_names(t *test
 	start["model"] = input.Model
 	host.Respond("thread/start", fakehost.Reply{Result: start})
 	receipt, err := b.CreateWorktreeThread(context.Background(), input)
-	if err != nil || receipt["status"] != "accepted" || hostParams(t, host, "thread/start")["model"] != input.Model || object(hostParams(t, host, "thread/start")["config"])["model_reasoning_effort"] != input.Effort || object(receipt["executionPolicy"])["exception"] != "this-worktree" {
+	if err != nil || receipt["status"] != "accepted" || hostParams(t, host, "thread/start")["model"] != input.Model || pyjson.Map(hostParams(t, host, "thread/start")["config"])["model_reasoning_effort"] != input.Effort || pyjson.Map(receipt["executionPolicy"])["exception"] != "this-worktree" {
 		t.Fatalf("receipt=%v err=%v", receipt, err)
 	}
 }
@@ -123,7 +124,7 @@ func Test_test_a_worktree_launch_transmits_the_pair_it_was_authorized_for(t *tes
 		t.Fatalf("receipt=%v err=%v", receipt, err)
 	}
 	start := hostParams(t, host, "thread/start")
-	if start["model"] != input.Model || object(start["config"])["model_reasoning_effort"] != input.Effort || object(receipt["executionPolicy"])["model"] != input.Model || object(receipt["executionPolicy"])["reasoningEffort"] != input.Effort || object(object(receipt["settings"])["requested"])["model"] != input.Model || object(object(receipt["settings"])["requested"])["reasoningEffort"] != input.Effort || object(receipt["creation"])["model"] != input.Model || object(receipt["settings"])["verification"] != "observed_at_creation" {
+	if start["model"] != input.Model || pyjson.Map(start["config"])["model_reasoning_effort"] != input.Effort || pyjson.Map(receipt["executionPolicy"])["model"] != input.Model || pyjson.Map(receipt["executionPolicy"])["reasoningEffort"] != input.Effort || pyjson.Map(pyjson.Map(receipt["settings"])["requested"])["model"] != input.Model || pyjson.Map(pyjson.Map(receipt["settings"])["requested"])["reasoningEffort"] != input.Effort || pyjson.Map(receipt["creation"])["model"] != input.Model || pyjson.Map(receipt["settings"])["verification"] != "observed_at_creation" {
 		t.Fatalf("receipt=%v start=%v", receipt, start)
 	}
 }
@@ -135,10 +136,10 @@ func Test_test_a_dispatched_worktree_task_is_annotated_like_the_other_paths(t *t
 	worktreeHost(host, input.Destination)
 	host.Respond("thread/read", fakehost.Reply{Result: map[string]any{"thread": map[string]any{"cwd": input.Destination, "model": input.Model, "reasoningEffort": input.Effort}}})
 	receipt, err := b.CreateWorktreeThread(context.Background(), input)
-	if err != nil || receipt["status"] != "accepted" || receipt["turnId"] != "turn-1" || object(receipt["settings"])["verification"] != "observed_at_creation" {
+	if err != nil || receipt["status"] != "accepted" || receipt["turnId"] != "turn-1" || pyjson.Map(receipt["settings"])["verification"] != "observed_at_creation" {
 		t.Fatalf("receipt=%v err=%v", receipt, err)
 	}
-	annotation := object(receipt["settingsAfterDispatch"])
+	annotation := pyjson.Map(receipt["settingsAfterDispatch"])
 	if annotation["concurrentChange"] != false || !reflect.DeepEqual(annotation["covers"], []string{"cwd", "model", "reasoningEffort"}) || len(annotation["unobserved"].([]string)) != 0 {
 		t.Fatalf("annotation=%v", annotation)
 	}

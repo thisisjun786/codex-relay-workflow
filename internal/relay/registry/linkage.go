@@ -295,7 +295,7 @@ func (l linkage) rolePolicyFinding(ctx context.Context, role, task string) (cont
 }
 
 func findingText(finding contract.OrderedObject, key string) string {
-	v, _ := getField(finding, key)
+	v, _ := finding.Lookup(key)
 	s, _ := v.(string)
 	return s
 }

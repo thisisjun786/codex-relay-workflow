@@ -108,7 +108,7 @@ func (r *Router) RegisterProduct(ctx context.Context, value any) (Object, error)
 	var changed []any
 	revised := Object{"cancelled": []any{}, "queued": []any{}}
 	err = r.Store.Compose(ctx, func(ctx context.Context, _ *sql.Conn) error {
-		product := text(registry["product"])
+		product := pyjson.Text(registry["product"])
 		before, err := r.Registry(ctx, product)
 		if err != nil {
 			return err
@@ -139,7 +139,7 @@ func (r *Router) RegisterProduct(ctx context.Context, value any) (Object, error)
 				return routeRefused("route_state_conflict", fmt.Sprintf("%s has simulated routes or test bindings on its test target %s; they would be left on a target the product no longer names", product, quote.Value(before["testTarget"])))
 			}
 		}
-		target := object(registry["testTarget"])
+		target := pyjson.Map(registry["testTarget"])
 		if target != nil {
 			real := []string{}
 			bindings, err := r.Bindings(ctx, product)
@@ -152,7 +152,7 @@ func (r *Router) RegisterProduct(ctx context.Context, value any) (Object, error)
 					where = b["ref"]
 				}
 				if b["test"] != true && where == target["project"] {
-					real = append(real, text(b["ref"]))
+					real = append(real, pyjson.Text(b["ref"]))
 				}
 			}
 			rows, err := r.Store.All(ctx, "SELECT fault_id FROM incident_routes WHERE product_key=? AND origin!='simulated' AND json_extract(target, '$.project')=? LIMIT 5", product, target["project"])
@@ -160,7 +160,7 @@ func (r *Router) RegisterProduct(ctx context.Context, value any) (Object, error)
 				return err
 			}
 			for _, row := range rows {
-				real = append(real, text(row.Get("fault_id")))
+				real = append(real, pyjson.Text(row.Get("fault_id")))
 			}
 			if len(real) > 0 {
 				return routeRefused("route_state_conflict", fmt.Sprintf("%s does real work in %s (%s); a test target there would share that project's target with it", product, target["project"], strings.Join(real, ", ")))
@@ -198,8 +198,8 @@ func (r *Router) Bind(ctx context.Context, value any) (Object, error) {
 	var binding Object
 	var changed, queued any
 	err := r.Store.Compose(ctx, func(ctx context.Context, _ *sql.Conn) error {
-		product := object(value)["product"]
-		registry, err := r.Registry(ctx, text(product))
+		product := pyjson.Map(value)["product"]
+		registry, err := r.Registry(ctx, pyjson.Text(product))
 		if err != nil {
 			return err
 		}
@@ -215,14 +215,14 @@ func (r *Router) Bind(ctx context.Context, value any) (Object, error) {
 		if err != nil {
 			return err
 		}
-		if err = r.Store.BindProduct(ctx, store.ProductBindingsRow{ProductKey: text(binding["product"]), Kind: text(binding["kind"]), Ref: text(binding["ref"]), Record: encoded, ObservedAt: nullText(binding["observedAt"]), RecordedAt: r.Clock.ISO()}); err != nil {
+		if err = r.Store.BindProduct(ctx, store.ProductBindingsRow{ProductKey: pyjson.Text(binding["product"]), Kind: pyjson.Text(binding["kind"]), Ref: pyjson.Text(binding["ref"]), Record: encoded, ObservedAt: nullText(binding["observedAt"]), RecordedAt: r.Clock.ISO()}); err != nil {
 			return err
 		}
-		changed, err = r.redecide(ctx, text(product))
+		changed, err = r.redecide(ctx, pyjson.Text(product))
 		if err != nil {
 			return err
 		}
-		evaluation, err := r.evaluateProjects(ctx, text(product))
+		evaluation, err := r.evaluateProjects(ctx, pyjson.Text(product))
 		if err != nil {
 			return err
 		}
@@ -247,7 +247,7 @@ func (r *Router) SetPolicy(ctx context.Context, value any) (Object, error) {
 		if err != nil {
 			return err
 		}
-		if err = r.Store.SetRoutingPolicy(ctx, "project_creation", encoded, text(policy["basis"]), r.Clock.ISO()); err != nil {
+		if err = r.Store.SetRoutingPolicy(ctx, "project_creation", encoded, pyjson.Text(policy["basis"]), r.Clock.ISO()); err != nil {
 			return err
 		}
 		registries, err := r.Registries(ctx)
@@ -278,11 +278,11 @@ func (r *Router) ShowProducts(ctx context.Context, product any) (Object, error) 
 		return nil, err
 	}
 	if product != nil {
-		registry, ok := registries[text(product)]
+		registry, ok := registries[pyjson.Text(product)]
 		if !ok {
 			return nil, routeRefused("route_product_unknown", fmt.Sprintf("%s is not a registered product", quote.Value(product)))
 		}
-		registries = map[string]Object{text(product): registry}
+		registries = map[string]Object{pyjson.Text(product): registry}
 	}
 	out := []any{}
 	for _, key := range registryKeys(registries) {
@@ -306,7 +306,7 @@ func (r *Router) ShowProducts(ctx context.Context, product any) (Object, error) 
 	return Object{"products": out, "policy": p}, nil
 }
 func (r *Router) RunIssue(ctx context.Context, run any) (any, error) {
-	if text(run) == "" {
+	if pyjson.Text(run) == "" {
 		return nil, nil
 	}
 	row, err := r.Store.One(ctx, "SELECT issue_key FROM relationships WHERE relationship_id=?", run)
@@ -334,7 +334,7 @@ func registryKeys(registries map[string]Object) []string {
 }
 func active(state any) bool { return state == "observed" || state == "open" || state == "fix_pending" }
 func snapshot(route, fault Object) Object {
-	target := object(route["target"])
+	target := pyjson.Map(route["target"])
 	count := fault["occurrence_count"]
 	if count == nil {
 		count = int64(0)
@@ -348,14 +348,14 @@ func (r *Router) Show(ctx context.Context, product any, attention bool, limit, a
 	}
 	shown, proposals := []any{}, []any{}
 	for _, value := range list(page["routes"]) {
-		route := object(value)
-		fault, err := r.Ledger.Get(ctx, text(route["fault_id"]))
+		route := pyjson.Map(value)
+		fault, err := r.Ledger.Get(ctx, pyjson.Text(route["fault_id"]))
 		if err != nil {
 			return nil, err
 		}
 		now := snapshot(route, fault)
 		waiting := Attention(now)
-		target := object(route["target"])
+		target := pyjson.Map(route["target"])
 		entry := Object{"faultId": route["fault_id"], "product": route["product_key"], "workspace": route["workspace"], "disposition": route["disposition"], "stage": route["stage"], "hold": target["hold"], "unverifiedCause": target["unverifiedCause"], "project": target["project"], "owner": target["owner"], "team": target["team"], "origin": route["origin"], "classification": route["classification"], "supersededBy": route["superseded_by"], "detail": route["detail"], "attention": waiting, "ledger": Object{"state": now["state"], "severity": now["severity"], "occurrences": now["occurrenceCount"], "issue": now["externalRef"], "linkState": now["linkState"], "linkedProject": fault["linkedProject"]}}
 		if !attention || waiting != nil {
 			if route["disposition"] == "project_proposal" {

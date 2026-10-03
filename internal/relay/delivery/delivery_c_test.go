@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -23,7 +24,7 @@ func TestDEL21_a_deactivation_is_reported_during_a_backoff_and_never_shortens_it
 		f.setStatus("cancelled")
 		record := f.mustAttempt(event, nil)
 		expected.same("record", record)
-		if str(record, "withheldReason") != RelationshipNotActive || f.row(event).F("next_eligible_at") < deferred {
+		if pyjson.Text(record.Get("withheldReason")) != RelationshipNotActive || f.row(event).F("next_eligible_at") < deferred {
 			t.Fatalf("record %v", record)
 		}
 		expected.same("after", f.row(event).F("next_eligible_at"))
@@ -114,7 +115,7 @@ func TestDEL24_guarded_transitions_prevent_duplicate_sends(t *testing.T) {
 		f.clock.Advance(3600)
 		second := f.mustAttempt(event, at(f.clock.Now()))
 		expected.same("second", second)
-		outcome, err := NewReconciler(f.delivery).ReconcileAttempt(f.ctx, str(first, "requestId"), f.host, nil)
+		outcome, err := NewReconciler(f.delivery).ReconcileAttempt(f.ctx, pyjson.Text(first.Get("requestId")), f.host, nil)
 		mustDo(t, err)
 		expected.same("reconciled", outcome)
 		f.clock.Advance(100000)
@@ -133,7 +134,7 @@ func TestDEL25_receipt_recovery_keeps_the_dispatch_turn_and_its_provenance(t *te
 	f.host.script = []string{"in_progress"}
 	record := f.mustAttempt(event, nil)
 	turn := f.host.startTurn(parent, "", "inProgress", "")
-	request := str(record, "requestId")
+	request := pyjson.Text(record.Get("requestId"))
 	f.host.ledger[request] = Obj{{Key: "requestId", Value: request}, {Key: "status", Value: "accepted"}, {Key: "resumed", Value: Obj{{Key: "approvalPolicy", Value: "never"}}}, {Key: "turnId", Value: turn.TurnID}}
 	outcome, err := NewReconciler(f.delivery).ReconcileAttempt(f.ctx, request, f.host, nil)
 	mustDo(t, err)
@@ -209,9 +210,9 @@ func TestDEL27_the_completion_message_is_a_verification_request_with_the_ack_ins
 	mustDo(t, err)
 	expected.same("message", message)
 	receipt, _ := f.delivery.Receipt(f.ctx, event)
-	manifest, _ := get(receipt, "manifest")
+	manifest, _ := receipt.Lookup("manifest")
 	entry := manifest.([]any)[0].(Obj)
-	for _, want := range []string{"verification request", str(receipt, "revisionHash"), str(entry, "path"), str(entry, "sha256"), "ack-proof", "show --event"} {
+	for _, want := range []string{"verification request", pyjson.Text(receipt.Get("revisionHash")), pyjson.Text(entry.Get("path")), pyjson.Text(entry.Get("sha256")), "ack-proof", "show --event"} {
 		if !strings.Contains(message, want) {
 			t.Fatalf("message lacks %q", want)
 		}

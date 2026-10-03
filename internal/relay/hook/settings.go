@@ -13,6 +13,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
@@ -73,64 +74,64 @@ func Complaints(value any) []string {
 		return []string{"the configuration is a " + pyvalue.TypeName(value) + ", not an object"}
 	}
 	found := []string{}
-	version := get(o, "configVersion")
+	version := o.Get("configVersion")
 	validVersion := version == true || version == int64(1) || version == float64(1) || version == int(1)
 	if !validVersion {
 		found = append(found, "configVersion must be 1, found "+pyvalue.Repr(version))
 	}
 	for _, k := range []string{"relayExecutable", "markerRoot"} {
-		v := get(o, k)
+		v := o.Get(k)
 		if !delivery.Named(v) {
 			found = append(found, k+" must be a non-empty string")
-		} else if !filepath.IsAbs(text(v)) {
+		} else if !filepath.IsAbs(pyjson.Text(v)) {
 			found = append(found, k+" must be an absolute path, because this hook runs in the session's workspace and a relative path resolves there")
 		}
 	}
 	for _, k := range []string{"dbPath", "socketPath"} {
-		v := get(o, k)
+		v := o.Get(k)
 		if v == nil {
 			continue
 		}
 		if !delivery.Named(v) {
 			found = append(found, k+" must be a non-empty string when it is present at all")
-		} else if !filepath.IsAbs(text(v)) {
+		} else if !filepath.IsAbs(pyjson.Text(v)) {
 			found = append(found, k+" must be an absolute path")
 		}
 	}
-	mode := text(get(o, "mode"))
+	mode := pyjson.Text(o.Get("mode"))
 	if mode != Observe && mode != Hold {
 		found = append(found, "mode must be one of observe, hold")
 	}
-	if mode == Hold && !delivery.Named(get(o, "isolationAssertedBy")) {
+	if mode == Hold && !delivery.Named(o.Get("isolationAssertedBy")) {
 		found = append(found, "holding requires isolationAssertedBy to name who established that a held child cannot write the facts the decision reads; observing requires nothing, which is why it is the default")
 	}
-	if p := get(o, "journalPolicy"); p != nil && !slices.Contains(JournalPolicies, text(p)) {
+	if p := o.Get("journalPolicy"); p != nil && !slices.Contains(JournalPolicies, pyjson.Text(p)) {
 		found = append(found, "journalPolicy must be one of every_invocation, faults_only, no_journal")
 	}
-	owner := get(o, "owner")
+	owner := o.Get("owner")
 	if owner != nil && owner != "user" && owner != "plugin" {
 		found = append(found, "owner must be one of user, plugin when it is present at all, found "+pyvalue.Repr(owner))
 	}
 	// adapterInterpreter and adapterEntryPoint named the adapter the retired Python launchers ran;
 	// nothing reads them, and a document that still carries them is read as it is (decision 66).
 	if owner == "plugin" {
-		budget, _ := seconds(get(o, "timeoutSeconds"))
-		if number, ok := get(o, "timeoutSeconds").(json.Number); ok {
+		budget, _ := seconds(o.Get("timeoutSeconds"))
+		if number, ok := o.Get("timeoutSeconds").(json.Number); ok {
 			budget, _ = number.Float64()
 		}
 		if budget > 7 {
 			found = append(found, "timeoutSeconds must not exceed 7 when owner is plugin, because the packaged launcher waits the budget plus 2s capped at 9s and has to outlast the adapter it runs")
 		}
 	}
-	if budget := get(o, "timeoutSeconds"); budget != nil {
+	if budget := o.Get("timeoutSeconds"); budget != nil {
 		if _, ok := seconds(budget); !ok {
 			found = append(found, "timeoutSeconds must be a positive number of seconds, at most 86400")
 		}
 	}
-	if root := get(o, "journalRoot"); root != nil {
+	if root := o.Get("journalRoot"); root != nil {
 		if !delivery.Named(root) {
 			found = append(found, "journalRoot must be a non-empty string when it is present at all")
-		} else if !filepath.IsAbs(text(root)) {
+		} else if !filepath.IsAbs(pyjson.Text(root)) {
 			found = append(found, "journalRoot must be an absolute path")
 		}
 	}
@@ -266,12 +267,12 @@ func defaultCodexHome() string {
 // is the byte it stands for). A directory the environment selects is already the bytes it names:
 // encoding it again would turn a literal ED B2..B3 run in it into another directory.
 func RoutingState(config Object) (string, error) {
-	if db := text(get(config, "dbPath")); db != "" {
+	if db := pyjson.Text(config.Get("dbPath")); db != "" {
 		if encoded, ok := pyvalue.FSEncode(db); ok {
 			db = encoded
 		}
 		return filepath.Dir(db), nil
 	}
-	selected, err := store.ResolveStateDir("", text(get(config, "socketPath")))
+	selected, err := store.ResolveStateDir("", pyjson.Text(config.Get("socketPath")))
 	return selected.Path, err
 }

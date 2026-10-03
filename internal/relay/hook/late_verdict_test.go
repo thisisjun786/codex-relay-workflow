@@ -73,10 +73,10 @@ func Test33LateVerdictPython(t *testing.T) {
 					if err != nil {
 						return nil, err
 					}
-					if attempt == 0 && get(verdict, "decision") != "block" {
+					if attempt == 0 && verdict.Get("decision") != "block" {
 						return nil, fmt.Errorf("first verdict: %v", verdict)
 					}
-					if attempt == 1 && get(verdict, "state") != "hold_in_flight" {
+					if attempt == 1 && verdict.Get("state") != "hold_in_flight" {
 						return nil, fmt.Errorf("next Stop: %v", verdict)
 					}
 					if attempt == 0 && edge == "guard_timeout" {
@@ -107,7 +107,7 @@ func Test33LateVerdictPython(t *testing.T) {
 			actual := lateVerdictSnapshot(t, home)
 			if edge == "guard_timeout" {
 				// Native cancellation diagnostic (decision 24), not a Python process group.
-				rows, _ := evidence.List(get(actual, "rows"))
+				rows, _ := evidence.List(actual.Get("rows"))
 				rows[0] = withoutKeys(object(rows[0]), "detail")
 			}
 			// Both Stops' answers and the snapshot are the goldens, which began as what Python's
@@ -169,7 +169,7 @@ func lateVerdictSnapshot(t *testing.T, home string) Object {
 		rows = append(rows, read(path))
 	}
 	slices.SortStableFunc(rows, func(a, b any) int {
-		state := func(v any) string { s, _ := get(object(v), "guardState").(string); return s }
+		state := func(v any) string { s, _ := object(v).Get("guardState").(string); return s }
 		return strings.Compare(state(a), state(b))
 	})
 	records := Object{}

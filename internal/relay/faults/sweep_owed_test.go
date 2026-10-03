@@ -88,7 +88,7 @@ func TestCRW263SweepFilesAnUnreportedTurnOnlyWhenItIsOwed(t *testing.T) {
 				}
 				return
 			}
-			if len(filed) != 1 || filed[0].Severity != Broken || filed[0].OccurrenceKey != "observation:rel:turn" || len(rows) != 1 || text(rows[0], "severity") != Broken {
+			if len(filed) != 1 || filed[0].Severity != Broken || filed[0].OccurrenceKey != "observation:rel:turn" || len(rows) != 1 || rows[0].Text("severity") != Broken {
 				t.Fatalf("a genuine omission was not recorded as report_omitted (broken): %d observations, ledger rows %v", len(filed), rows)
 			}
 		})

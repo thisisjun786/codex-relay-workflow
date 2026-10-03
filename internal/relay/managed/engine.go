@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -50,8 +50,6 @@ func (m *Start) ready(ctx context.Context, req map[string]any) (string, error) {
 	}
 	return m.Readiness(ctx, req)
 }
-func obj(value any) map[string]any { result, _ := value.(map[string]any); return result }
-func str(value any) string         { result, _ := value.(string); return result }
 func stringsOf(values any) []string {
 	out := []string{}
 	for _, v := range values.([]any) {
@@ -62,432 +60,46 @@ func stringsOf(values any) []string {
 func nullableSQL(value string) sql.NullString {
 	return sql.NullString{String: value, Valid: value != ""}
 }
+
+// Run is one managed start. The request is read and its identity fixed (begin), then each step below runs in
+// turn: a step either settles the request, with the answer it journals or with an error, or hands over to
+// the next, and a start that no step settles admits its business turn. The steps are in run_steps.go; the
+// guard that runs just before the business send is in business_guard.go.
+//
+// Stage by stage: preflight, reserve and declareIntent make the request exist; decideScope is the project
+// scope decision, which arms it; createChild, retryStandby, incompleteCreation and verifyCreation are the
+// creation and the retry of its standby turn; bindMarker through readback register the child; businessTurn,
+// checkBusiness and confirmRegistration are the standby check and the business turn; admit ends it.
 func (m *Start) Run(ctx context.Context, raw []byte) (contract.OrderedObject, error) {
-	req, err := ParseRequest(raw)
+	run, err := m.begin(ctx, raw)
 	if err != nil {
 		return nil, err
 	}
-	if m.Adapter == nil {
-		return nil, fmt.Errorf("managed start requires an observed bridge ledger identity")
-	}
-	ledger, err := m.Adapter.LedgerIdentityRecord(ctx)
-	if err != nil {
-		return nil, err
-	}
-	for _, key := range []string{"realPath", "device", "inode"} {
-		if ledger == nil || ledger[key] == nil {
-			return nil, fmt.Errorf("managed start requires an observed bridge ledger identity")
+	defer run.finish()
+	for _, step := range []func(context.Context) (contract.OrderedObject, error){
+		run.preflight,
+		run.reserve,
+		run.declareIntent,
+		run.decideScope,
+		run.createChild,
+		run.retryStandby,
+		run.incompleteCreation,
+		run.verifyCreation,
+		run.bindMarker,
+		run.register,
+		run.registerCriteria,
+		run.authorizeSettings,
+		run.registerRelationship,
+		run.readback,
+		run.businessTurn,
+		run.checkBusiness,
+		run.confirmRegistration,
+	} {
+		if answer, err := step(ctx); answer != nil || err != nil {
+			return answer, err
 		}
 	}
-	if err := m.Adapter.RequireLedger(ctx, ledger); err != nil {
-		return nil, err
-	}
-	identity, err := RequestIdentity(ctx, req, m.Store, m.Socket, m.MarkerRoot, m.StateSelector, ledger)
-	if err != nil {
-		return nil, err
-	}
-	assignment := delivery.AssignmentID(identity.DispatchRequestID)
-	reservation := Reservation{Store: m.Store, Now: m.now}
-	row, err := m.Store.ManagedStartRequest(ctx, identity.RequestID)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return nil, err
-	}
-	if err == nil && row.RequestFingerprint != identity.Fingerprint {
-		return nil, refusal("relationship_conflict", "managed request id belongs to different input or selectors")
-	}
-	physical, err := m.Store.Locate(ctx)
-	if err != nil {
-		return nil, err
-	}
-	result := func(row store.ManagedStartRequestsRow) startResult {
-		r := NewStartResult(identity, row, assignment, store.PathlibParent(m.Store.Path))
-		if row.RequestID == "" {
-			r.Revision = nil
-			r.ReservationState = nil
-		}
-		r.Ledger = contract.OrderedObject{}
-		for _, key := range []string{"path", "realPath", "device", "inode"} {
-			if value, ok := ledger[key]; ok {
-				r.Ledger = append(r.Ledger.(contract.OrderedObject), contract.Field{Key: key, Value: value})
-			}
-		}
-		return r
-	}
-	answer := func(row store.ManagedStartRequestsRow, state, stage, reason string) (contract.OrderedObject, error) {
-		return result(row).Observe(ctx, m.Store, m.now(), state, stage, reason)
-	}
-	readiness, err := m.ready(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-	if readiness != "" {
-		return answer(row, "refused", "preflight", readiness)
-	}
-	release, err := Lock(m.Store.Path, identity.RequestID)
-	if err != nil {
-		return nil, err
-	}
-	defer release()
-	row, err = reservation.Reserve(ctx, identity)
-	if err != nil {
-		return nil, err
-	}
-	if row.State == "attached" {
-		recipients := stringsOf(req["allowedRecipients"])
-		task := row.ChildTaskID.String
-		present := false
-		for _, v := range recipients {
-			if v == task {
-				present = true
-			}
-		}
-		if !present {
-			recipients = append(recipients, task)
-		}
-		problem, e := m.registeredProblem(ctx, identity, row, req, recipients, false)
-		if e != nil {
-			return nil, e
-		}
-		if problem != "" {
-			return answer(row, "refused", "replay", problem)
-		}
-	}
-	declared, err := delivery.DeclareIntent(identity.MarkerRoot, delivery.IntentDeclaration{Workspace: identity.Workspace, DispatchRequestID: identity.DispatchRequestID, IssueKey: identity.IssueKey, DeclaredAt: m.now(), CriteriaSource: req["criteriaSource"], BaselineRevision: req["baselineRevision"], AuthorizedSettings: deliveryValue(obj(obj(req["child"])["settings"])), DBPath: m.Store.Path})
-	if err != nil {
-		return nil, err
-	}
-	if field(declared, "outcome") == delivery.Conflict {
-		return answer(row, "refused", "intent", "intent_conflict")
-	}
-	if row.State == "reserved" {
-		// A reserved request has armed nothing, so no host effect can exist yet: one whose project scope
-		// will be refused stops here, and managed-release can still release its reservation.
-		if err := m.scopeRefusal(ctx, identity, req); err != nil {
-			return nil, err
-		}
-		row, err = reservation.Arm(ctx, identity.RequestID, identity.Fingerprint, row.Revision)
-		if err != nil {
-			return nil, err
-		}
-	}
-	if err := m.Adapter.RequireLedger(ctx, ledger); err != nil {
-		return nil, err
-	}
-	receipt, err := m.Adapter.GetOperation(ctx, identity.CreateRequestID)
-	if err != nil {
-		return nil, err
-	}
-	// A start that creates holds the project's lock (create) until its child is registered; this lets it go
-	// on every way out, and right after Register on the way through.
-	projectLock := func() {}
-	defer func() { projectLock() }()
-	if receipt == nil || receipt["status"] == "not_attempted" {
-		var notReady string
-		receipt, notReady, projectLock, err = m.create(ctx, identity, req, ledger)
-		if err != nil {
-			return nil, err
-		}
-		if notReady != "" {
-			return answer(row, "refused", "creation", notReady)
-		}
-	}
-	if str(receipt["status"]) == "failed" {
-		receipt, err = m.recoverStandby(ctx, identity, req, ledger, physical, receipt)
-		if err != nil {
-			return nil, err
-		}
-	}
-	if str(receipt["status"]) != "accepted" {
-		outcome := "unknown"
-		if receipt != nil && receipt["status"] == "failed" {
-			outcome = "failed"
-		}
-		var attemptedTask any
-		if receipt != nil {
-			attemptedTask = receipt["threadId"]
-		}
-		_, err = delivery.RecordAttempt(identity.MarkerRoot, identity.Workspace, assignment, outcome, m.now(), attemptedTask)
-		if err != nil {
-			return nil, err
-		}
-		incomplete := result(row)
-		var retained any
-		if receipt != nil {
-			retained = receipt["threadId"]
-		}
-		recovery := contract.OrderedObject{}
-		for _, key := range []string{"recoveryReason", "recoveryRequestId", "recoveryStatus"} {
-			if receipt != nil {
-				if value, ok := receipt[key]; ok {
-					recovery = append(recovery, contract.Field{Key: key, Value: value})
-				}
-			}
-		}
-		incomplete.Observed = contract.OrderedObject{{Key: "retainedChildTaskId", Value: retained}, {Key: "standbyRecovery", Value: recovery}}
-		return incomplete.Observe(ctx, m.Store, m.now(), "incomplete", "creation", "creation_"+outcome)
-	}
-	task, standby := str(receipt["threadId"]), str(receipt["turnId"])
-	if !delivery.ValidSegment(task) || !delivery.ValidSegment(standby) {
-		return answer(row, "incomplete", "creation", "creation_identity_unobserved")
-	}
-	childSettings := obj(obj(req["child"])["settings"])
-	if !creationMatches(childSettings, obj(receipt["creation"])) {
-		return answer(row, "refused", "creation", "creation_settings_unverified")
-	}
-	row, err = reservation.Receipt(ctx, identity.RequestID, identity.Fingerprint, receipt)
-	if err != nil {
-		return nil, err
-	}
-	bound, err := delivery.BindIdentity(identity.MarkerRoot, identity.Workspace, assignment, task, task, m.now())
-	if err != nil {
-		return nil, err
-	}
-	if field(bound, "outcome") == delivery.Conflict {
-		return answer(row, "refused", "binding", "marker_identity_conflict")
-	}
-	parent := obj(req["parent"])
-	recipients := stringsOf(req["allowedRecipients"])
-	found := false
-	for _, who := range recipients {
-		if who == task {
-			found = true
-		}
-	}
-	if !found {
-		recipients = append(recipients, task)
-	}
-	reg := &registry.Registry{Store: m.Store, Now: m.now}
-	record, err := reg.Register(ctx, registry.Registration{Parent: registry.Endpoint{TaskID: str(parent["taskId"]), HostID: str(parent["hostId"]), Cwd: nullableSQL(str(obj(parent["settings"])["cwd"]))}, Child: registry.Endpoint{TaskID: task, HostID: str(obj(req["child"])["hostId"]), Cwd: nullableSQL(identity.Workspace), CXCSession: nullableSQL(task)}, IssueKey: identity.IssueKey, ArtifactRoots: stringsOf(req["artifactRoots"]), AllowedRecipients: recipients, ScopeRef: nullableSQL(str(req["scopeRef"])), DispatchRequestID: identity.DispatchRequestID, DispatchTurnID: nullableSQL(standby), ProjectKey: str(req["projectKey"]), ManagedRequestID: identity.RequestID})
-	projectLock()
-	if err != nil {
-		return nil, err
-	}
-	row, err = m.Store.ManagedStartRequest(ctx, identity.RequestID)
-	if err != nil {
-		return nil, err
-	}
-	criteria := &delivery.Criteria{Store: m.Store, Clock: managedClock{now: m.now}}
-	entries := make([]any, 0)
-	for _, item := range req["criteria"].([]any) {
-		v := obj(item)
-		entries = append(entries, delivery.Obj{{Key: "id", Value: v["id"]}, {Key: "title", Value: v["title"]}, {Key: "required", Value: v["required"]}})
-	}
-	if _, err = criteria.EnsureRegistered(ctx, record.ID, entries, req["criteriaSource"]); err != nil {
-		return nil, err
-	}
-	for _, entry := range []struct {
-		task, role string
-		settings   map[string]any
-	}{{str(parent["taskId"]), "parent", obj(parent["settings"])}, {task, "child", childSettings}} {
-		settings := map[string]any{}
-		for key, v := range entry.settings {
-			settings[key] = v
-		}
-		settings["citedRole"] = entry.role
-		if _, err = EnsureSettings(ctx, m.Store, entry.task, settings, "managed_start", m.now()); err != nil {
-			return nil, err
-		}
-	}
-	if _, err = delivery.RegisterRelationship(ctx, identity.MarkerRoot, identity.Workspace, assignment, record.ID, identity.DispatchRequestID, m.now(), m.Store.Path); err != nil {
-		return nil, err
-	}
-	problem, err := m.registeredProblem(ctx, identity, row, req, recipients, true)
-	if err != nil {
-		return nil, err
-	}
-	if problem != "" {
-		return answer(row, "refused", "readback", problem)
-	}
-	if err = m.Adapter.RequireLedger(ctx, ledger); err != nil {
-		return nil, err
-	}
-	sent, err := m.Adapter.GetOperation(ctx, identity.DispatchRequestID)
-	if err != nil {
-		return nil, err
-	}
-	if sent == nil || sent["status"] == "not_attempted" {
-		turn, err := m.Adapter.ReadTurn(ctx, task, standby)
-		if err != nil {
-			return nil, err
-		}
-		if turn == nil || turn.Status != "completed" {
-			return answer(row, "incomplete", "standby", "standby_incomplete")
-		}
-		if check, ok := m.Adapter.(interface {
-			Lifecycle(context.Context, string, string) (bool, string, error)
-		}); ok {
-			may, reason, e := check.Lifecycle(ctx, task, identity.Workspace)
-			if e != nil {
-				return nil, e
-			}
-			if !may {
-				return answer(row, "incomplete", "business", reason)
-			}
-		}
-		readiness, err = m.ready(ctx, req)
-		if err != nil {
-			return nil, err
-		}
-		if readiness != "" {
-			return answer(row, "refused", "business", readiness)
-		}
-		if err = m.Adapter.RequireLedger(ctx, ledger); err != nil {
-			return nil, err
-		}
-		sent, err = m.Adapter.SendMessage(ctx, SendRequest{RequestID: identity.DispatchRequestID, ThreadID: task, Message: m.packet(identity, row, req, assignment), Settings: childSettings, GuardRPCRequests: 10, BeforeStart: func(guardCtx context.Context) (map[string]any, error) {
-			refuse := func(code string) (map[string]any, error) {
-				return map[string]any{"code": code, "message": "Managed business start withheld: " + code}, nil
-			}
-			if err := m.Adapter.RequireLedger(guardCtx, ledger); err != nil {
-				return refuse("managed_store_changed")
-			}
-			if code, err := m.ready(guardCtx, req); err != nil {
-				return nil, err
-			} else if code != "" {
-				return refuse(code)
-			}
-			info, err := os.Stat(m.Store.Path)
-			if err != nil {
-				return refuse("managed_store_changed")
-			}
-			stat, ok := info.Sys().(*syscall.Stat_t)
-			if !ok || uint64(stat.Dev) != physical.Device || stat.Ino != physical.Inode {
-				return refuse("managed_store_changed")
-			}
-			read, err := store.OpenReadOnly(guardCtx, m.Store.Path, 5*time.Second)
-			if err != nil {
-				return refuse("managed_store_changed")
-			}
-			defer read.Close()
-			var status, issue, parentTask, parentHost, childTask, childHost, scope, rootsJSON, recipientsJSON string
-			var generation int64
-			err = read.QueryRowContext(guardCtx, "SELECT status,issue_key,parent_task_id,parent_host_id,child_task_id,child_host_id,scope_ref,artifact_roots,allowed_recipients,execution_generation FROM relationships WHERE relationship_id=?", row.RelationshipID.String).Scan(&status, &issue, &parentTask, &parentHost, &childTask, &childHost, &scope, &rootsJSON, &recipientsJSON, &generation)
-			if err != nil || status != "active" {
-				return refuse("relationship_not_active")
-			}
-			if generation != row.ExecutionGeneration.Int64 {
-				return refuse("stale_generation")
-			}
-			var roots, allowed []string
-			if json.Unmarshal([]byte(rootsJSON), &roots) != nil || json.Unmarshal([]byte(recipientsJSON), &allowed) != nil {
-				return refuse("managed_scope_changed")
-			}
-			if issue != identity.IssueKey || parentTask != str(parent["taskId"]) || parentHost != str(parent["hostId"]) || childTask != task || childHost != str(obj(req["child"])["hostId"]) || scope != str(req["scopeRef"]) || !jsonSame(roots, stringsOf(req["artifactRoots"])) || !jsonSame(allowed, recipients) {
-				return refuse("managed_scope_changed")
-			}
-			var dispatchTurn, dispatchID string
-			err = read.QueryRowContext(guardCtx, "SELECT dispatch_turn_id,dispatch_request_id FROM generations WHERE relationship_id=? AND execution_generation=?", row.RelationshipID.String, row.ExecutionGeneration.Int64).Scan(&dispatchTurn, &dispatchID)
-			if err != nil || dispatchTurn != standby || dispatchID != identity.DispatchRequestID {
-				return refuse("managed_identity_changed")
-			}
-			var mode string
-			if read.QueryRowContext(guardCtx, "SELECT mode FROM verification_mode WHERE relationship_id=?", row.RelationshipID.String).Scan(&mode) != nil || mode != "managed" {
-				return refuse("managed_criteria_changed")
-			}
-			for _, role := range []string{"parent", "child"} {
-				who := task
-				if role == "parent" {
-					who = str(parent["taskId"])
-				}
-				var current string
-				if read.QueryRowContext(guardCtx, "SELECT settings FROM authorized_settings WHERE task_id=?", who).Scan(&current) != nil {
-					return refuse("managed_settings_changed")
-				}
-				var recorded any
-				if json.Unmarshal([]byte(current), &recorded) != nil {
-					return refuse("managed_settings_changed")
-				}
-				expected := map[string]any{}
-				for k, v := range obj(obj(req[role])["settings"]) {
-					expected[k] = v
-				}
-				expected["citedRole"] = role
-				if !jsonSame(recorded, expected) {
-					return refuse("managed_settings_changed")
-				}
-			}
-			criteriaRows, e := read.QueryContext(guardCtx, "SELECT criterion_id,title,required,source_ref,set_digest FROM canonical_criteria WHERE relationship_id=?", row.RelationshipID.String)
-			if e != nil {
-				return refuse("managed_criteria_changed")
-			}
-			type criterion struct {
-				id, title, source, digest string
-				required                  int64
-			}
-			var found []criterion
-			for criteriaRows.Next() {
-				var entry criterion
-				if e = criteriaRows.Scan(&entry.id, &entry.title, &entry.required, &entry.source, &entry.digest); e != nil {
-					criteriaRows.Close()
-					return refuse("managed_criteria_changed")
-				}
-				found = append(found, entry)
-			}
-			e = criteriaRows.Err()
-			criteriaRows.Close()
-			if e != nil {
-				return refuse("managed_criteria_changed")
-			}
-			entries := make([]any, 0)
-			for _, item := range req["criteria"].([]any) {
-				v := obj(item)
-				entries = append(entries, delivery.Obj{{Key: "id", Value: v["id"]}, {Key: "title", Value: v["title"]}, {Key: "required", Value: v["required"]}})
-			}
-			normal, e := delivery.NormaliseCriteria(entries)
-			if e != nil || len(normal) != len(found) {
-				return refuse("managed_criteria_changed")
-			}
-			digest := delivery.SetDigest(normal)
-			for _, item := range found {
-				match := false
-				for _, expected := range normal {
-					if item.id == expected.ID && item.title == expected.Title && ((item.required == 1) == expected.Required) {
-						match = true
-					}
-				}
-				if !match || item.source != str(req["criteriaSource"]) || item.digest != digest {
-					return refuse("managed_criteria_changed")
-				}
-			}
-			code, e := hostReady(guardCtx, m.Adapter, task)
-			if e != nil {
-				return nil, e
-			}
-			if code != "" {
-				return map[string]any{"code": code, "message": "Managed turn withheld: " + code}, nil
-			}
-			return nil, nil
-		}})
-		if err != nil {
-			return nil, err
-		}
-	}
-	if sent == nil || sent["status"] != "accepted" {
-		status := "unknown"
-		if sent != nil {
-			if value, present := sent["status"]; present {
-				status = pyvalue.Str(value)
-			}
-		}
-		return answer(row, "incomplete", "business", "business_"+status)
-	}
-	turn := str(sent["turnId"])
-	if !delivery.ValidSegment(turn) || str(sent["threadId"]) != task {
-		return answer(row, "incomplete", "business", "business_identity_unobserved")
-	}
-	problem, err = m.registeredProblem(ctx, identity, row, req, recipients, true)
-	if err != nil {
-		return nil, err
-	}
-	if problem != "" {
-		return answer(row, "incomplete", "business_accepted", problem)
-	}
-	if err = reg.AdmitExplicitly(ctx, record.ID, row.ExecutionGeneration.Int64, turn, str(parent["taskId"]), "managed business dispatch confirmed by its retained bridge receipt"); err != nil {
-		return nil, err
-	}
-	resultRow := result(row)
-	resultRow.BusinessTurnID = turn
-	return resultRow.Observe(ctx, m.Store, m.now(), "admitted", "business_accepted", "")
+	return run.admit(ctx)
 }
 
 // create is the one place a managed start asks the host for its child. Every refusal that can be decided
@@ -504,7 +116,7 @@ func (m *Start) Run(ctx context.Context, raw []byte) (contract.OrderedObject, er
 // every way out of the caller.
 func (m *Start) create(ctx context.Context, id Identity, req, ledger map[string]any) (map[string]any, string, func(), error) {
 	release := func() {}
-	if project := str(req["projectKey"]); project != "" {
+	if project := pyjson.Text(req["projectKey"]); project != "" {
 		held, err := LockProject(ctx, m.Store.Path, project)
 		if err != nil {
 			return nil, "", release, err
@@ -534,11 +146,11 @@ func (m *Start) create(ctx context.Context, id Identity, req, ledger map[string]
 	if err := m.requestRefusal(ctx, req); err != nil {
 		return nil, "", release, err
 	}
-	child := obj(req["child"])
-	settings := obj(child["settings"])
-	sandbox := obj(settings["sandbox"])
-	kind := map[string]string{"workspaceWrite": "workspace-write", "readOnly": "read-only", "dangerFullAccess": "danger-full-access"}[str(sandbox["type"])]
-	receipt, err := m.Adapter.CreateThread(ctx, CreateThreadRequest{RequestID: id.CreateRequestID, CWD: str(settings["cwd"]), Prompt: bootstrap, Title: str(child["title"]), Sandbox: kind, Model: str(settings["model"]), ReasoningEffort: str(settings["reasoningEffort"]), RuntimeWorkspaceRoots: stringsOf(settings["runtimeWorkspaceRoots"]), ExpectedSandboxPolicy: sandbox, Role: "child"})
+	child := pyjson.Map(req["child"])
+	settings := pyjson.Map(child["settings"])
+	sandbox := pyjson.Map(settings["sandbox"])
+	kind := map[string]string{"workspaceWrite": "workspace-write", "readOnly": "read-only", "dangerFullAccess": "danger-full-access"}[pyjson.Text(sandbox["type"])]
+	receipt, err := m.Adapter.CreateThread(ctx, CreateThreadRequest{RequestID: id.CreateRequestID, CWD: pyjson.Text(settings["cwd"]), Prompt: bootstrap, Title: pyjson.Text(child["title"]), Sandbox: kind, Model: pyjson.Text(settings["model"]), ReasoningEffort: pyjson.Text(settings["reasoningEffort"]), RuntimeWorkspaceRoots: stringsOf(settings["runtimeWorkspaceRoots"]), ExpectedSandboxPolicy: sandbox, Role: "child"})
 	return receipt, "", release, err
 }
 
@@ -551,13 +163,8 @@ func (m *Start) requestRefusal(ctx context.Context, req map[string]any) error {
 	if err := separatorRefusal(req); err != nil {
 		return err
 	}
-	parent := obj(req["parent"])
-	settings := map[string]any{}
-	for key, value := range obj(parent["settings"]) {
-		settings[key] = value
-	}
-	settings["citedRole"] = "parent"
-	return SettingsConflict(ctx, m.Store, str(parent["taskId"]), settings)
+	parent := pyjson.Map(req["parent"])
+	return SettingsConflict(ctx, m.Store, pyjson.Text(parent["taskId"]), settingsWithRole(pyjson.Map(parent["settings"]), "parent"))
 }
 
 // scopeRefusal is the project-scope decision Register makes once the child exists, asked while it does
@@ -566,7 +173,7 @@ func (m *Start) requestRefusal(ctx context.Context, req map[string]any) error {
 // nothing to decide.
 func (m *Start) scopeRefusal(ctx context.Context, id Identity, req map[string]any) error {
 	reg := &registry.Registry{Store: m.Store, Now: m.now}
-	return reg.PrecheckScope(ctx, str(obj(req["parent"])["taskId"]), id.IssueKey, str(req["projectKey"]))
+	return reg.PrecheckScope(ctx, pyjson.Text(pyjson.Map(req["parent"])["taskId"]), id.IssueKey, pyjson.Text(req["projectKey"]))
 }
 
 func deliveryValue(v any) any {
@@ -592,14 +199,6 @@ func deliveryValue(v any) any {
 		return v
 	}
 }
-func field(o delivery.Obj, key string) any {
-	for _, f := range o {
-		if f.Key == key {
-			return f.Value
-		}
-	}
-	return nil
-}
 func creationMatches(expected, created map[string]any) bool {
 	if created == nil {
 		return false
@@ -609,7 +208,7 @@ func creationMatches(expected, created map[string]any) bool {
 	return len(settings.Mismatches(observed, true, true, false)) == 0
 }
 func (m *Start) recoverStandby(ctx context.Context, id Identity, req map[string]any, ledger map[string]any, physical store.Location, receipt map[string]any) (map[string]any, error) {
-	task := str(receipt["threadId"])
+	task := pyjson.Text(receipt["threadId"])
 	effects, ok := receipt["attemptedEffects"].([]any)
 	attemptedStart, attemptedTurn := false, false
 	for _, effect := range effects {
@@ -620,8 +219,8 @@ func (m *Start) recoverStandby(ctx context.Context, id Identity, req map[string]
 			attemptedTurn = true
 		}
 	}
-	settings := obj(obj(req["child"])["settings"])
-	if !delivery.ValidSegment(task) || receipt["turnId"] != nil || !ok || !attemptedStart || attemptedTurn || !creationMatches(settings, obj(receipt["creation"])) {
+	settings := pyjson.Map(pyjson.Map(req["child"])["settings"])
+	if !delivery.ValidSegment(task) || receipt["turnId"] != nil || !ok || !attemptedStart || attemptedTurn || !creationMatches(settings, pyjson.Map(receipt["creation"])) {
 		return receipt, nil
 	}
 	digest := sha256.Sum256([]byte(id.RequestID))
@@ -634,9 +233,7 @@ func (m *Start) recoverStandby(ctx context.Context, id Identity, req map[string]
 		return nil, err
 	}
 	if recovered == nil || recovered["status"] == "not_attempted" {
-		if check, ok := m.Adapter.(interface {
-			Lifecycle(context.Context, string, string) (bool, string, error)
-		}); ok {
+		if check, ok := m.Adapter.(lifecycleChecker); ok {
 			may, reason, e := check.Lifecycle(ctx, task, id.Workspace)
 			if e != nil {
 				return nil, e
@@ -720,7 +317,7 @@ func (m *Start) registeredProblem(ctx context.Context, id Identity, row store.Ma
 	if record.Status != "active" {
 		return "relationship_not_active", nil
 	}
-	if record.Parent.TaskID != str(obj(req["parent"])["taskId"]) || record.Parent.HostID != str(obj(req["parent"])["hostId"]) || record.Child.TaskID != row.ChildTaskID.String || record.Child.HostID != str(obj(req["child"])["hostId"]) || !jsonSame(record.Roots, stringsOf(req["artifactRoots"])) || record.ScopeRef.String != str(req["scopeRef"]) || !jsonSame(record.Recipients, recipients) {
+	if record.Parent.TaskID != pyjson.Text(pyjson.Map(req["parent"])["taskId"]) || record.Parent.HostID != pyjson.Text(pyjson.Map(req["parent"])["hostId"]) || record.Child.TaskID != row.ChildTaskID.String || record.Child.HostID != pyjson.Text(pyjson.Map(req["child"])["hostId"]) || !jsonSame(record.Roots, stringsOf(req["artifactRoots"])) || record.ScopeRef.String != pyjson.Text(req["scopeRef"]) || !jsonSame(record.Recipients, recipients) {
 		return "managed_scope_changed", nil
 	}
 	if record.Generation != row.ExecutionGeneration.Int64 {
@@ -743,16 +340,11 @@ func (m *Start) registeredProblem(ctx context.Context, id Identity, row store.Ma
 	if err != nil {
 		return "", err
 	}
-	entries := make([]any, 0)
-	for _, item := range req["criteria"].([]any) {
-		v := obj(item)
-		entries = append(entries, delivery.Obj{{Key: "id", Value: v["id"]}, {Key: "title", Value: v["title"]}, {Key: "required", Value: v["required"]}})
-	}
-	normal, err := delivery.NormaliseCriteria(entries)
+	normal, err := delivery.NormaliseCriteria(criteriaEntries(req))
 	if err != nil {
 		return "", err
 	}
-	if registered == nil || mode != delivery.Managed || field(registered, "setDigest") != delivery.SetDigest(normal) || field(registered, "sourceRef") != req["criteriaSource"] {
+	if registered == nil || mode != delivery.Managed || registered.Get("setDigest") != delivery.SetDigest(normal) || registered.Get("sourceRef") != req["criteriaSource"] {
 		return "managed_criteria_changed", nil
 	}
 	var storedCriteria []struct {
@@ -791,14 +383,14 @@ func (m *Start) registeredProblem(ctx context.Context, id Identity, row store.Ma
 				found = true
 			}
 		}
-		if !found || item.Source != str(req["criteriaSource"]) || item.Digest != delivery.SetDigest(normal) {
+		if !found || item.Source != pyjson.Text(req["criteriaSource"]) || item.Digest != delivery.SetDigest(normal) {
 			return "managed_criteria_changed", nil
 		}
 	}
 	for _, role := range []string{"parent", "child"} {
 		task := row.ChildTaskID.String
 		if role == "parent" {
-			task = str(obj(req["parent"])["taskId"])
+			task = pyjson.Text(pyjson.Map(req["parent"])["taskId"])
 		}
 		var stored string
 		e := m.Store.Querier(ctx).QueryRowContext(ctx, "SELECT settings FROM authorized_settings WHERE task_id=?", task).Scan(&stored)
@@ -812,12 +404,7 @@ func (m *Start) registeredProblem(ctx context.Context, id Identity, row store.Ma
 		if e := json.Unmarshal([]byte(stored), &current); e != nil {
 			return "", e
 		}
-		expected := map[string]any{}
-		for k, v := range obj(obj(req[role])["settings"]) {
-			expected[k] = v
-		}
-		expected["citedRole"] = role
-		if !jsonSame(current, expected) {
+		if !jsonSame(current, settingsWithRole(pyjson.Map(pyjson.Map(req[role])["settings"]), role)) {
 			return "managed_settings_changed", nil
 		}
 	}
@@ -829,9 +416,9 @@ func (m *Start) registeredProblem(ctx context.Context, id Identity, row store.Ma
 	if len(unreadable) > 0 || delivery.Malformed(marker) != "" {
 		return "managed_marker_unreadable", nil
 	}
-	bound, _ := field(marker, "bound").(delivery.Obj)
-	relationship, _ := field(marker, "relationship").(delivery.Obj)
-	if field(bound, "taskId") != row.ChildTaskID.String || field(bound, "sessionId") != row.ChildTaskID.String || field(relationship, "relationshipId") != row.RelationshipID.String {
+	bound, _ := marker.Get("bound").(delivery.Obj)
+	relationship, _ := marker.Get("relationship").(delivery.Obj)
+	if bound.Get("taskId") != row.ChildTaskID.String || bound.Get("sessionId") != row.ChildTaskID.String || relationship.Get("relationshipId") != row.RelationshipID.String {
 		return "managed_marker_changed", nil
 	}
 	return "", nil
@@ -842,7 +429,7 @@ func (m *Start) packet(id Identity, row store.ManagedStartRequestsRow, req map[s
 	// The row's standby turn is the anchor of the row's generation: the send is refused unless
 	// generations.dispatch_turn_id of row.ExecutionGeneration is this very turn (the guard in Run), and
 	// registration records generation 1, so the text managed-start sends today is generation 1's.
-	return routingText(string(encoded), row.ExecutionGeneration.Int64, row.StandbyTurnID.String, str(req["prompt"]))
+	return routingText(string(encoded), row.ExecutionGeneration.Int64, row.StandbyTurnID.String, pyjson.Text(req["prompt"]))
 }
 
 // routingText is the message that carries a child its routing record and its assignment. Its bytes are

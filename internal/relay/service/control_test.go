@@ -48,7 +48,7 @@ func Test30ControlSocketRealSurface(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if get(answer, "decision") != "release" || get(answer, "state") != "unmanaged" {
+	if answer.Get("decision") != "release" || answer.Get("state") != "unmanaged" {
 		t.Fatal(answer)
 	}
 	// control.sock serves guard-evaluate only, as Python's GuardServer does: decision-25
@@ -167,7 +167,7 @@ func Test30ControlDisconnectBeforeARequestIsNoFailure(t *testing.T) {
 		}
 		answer, err := hook.RequestGuard(ctx, conn, hook.Object{}, hook.GuardOptions{Root: root, Mode: hook.Observe, Now: "2026-01-01T00:00:00Z"})
 		_ = conn.Close()
-		if err != nil || get(answer, "decision") != "release" {
+		if err != nil || answer.Get("decision") != "release" {
 			t.Fatal(answer, err)
 		}
 		if err = server.Close(); err != nil {

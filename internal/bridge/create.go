@@ -6,6 +6,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"path/filepath"
 )
 
@@ -33,7 +34,7 @@ func (b *Bridge) CreateThread(ctx context.Context, in CreateThread) (ledger.Rece
 		return nil, &Invalid{"Unsupported sandbox"}
 	}
 	for _, pair := range [][3]any{{in.Prompt, "prompt", 100000}, {in.Title, "title", 500}} {
-		if value := text(pair[0]); value != "" {
+		if value := pyjson.Text(pair[0]); value != "" {
 			if err := nonempty(value, pair[1].(string), pair[2].(int)); err != nil {
 				return nil, err
 			}

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -58,7 +59,7 @@ func readRegistrations(path, event string) ([]registration, bool) {
 			if !ok {
 				continue
 			}
-			command := text(em["command"])
+			command := pyjson.Text(em["command"])
 			words, ok := shellSplit(command)
 			if !ok {
 				continue

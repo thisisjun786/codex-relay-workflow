@@ -1,6 +1,7 @@
 package delivery
 
 import (
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"strings"
 	"testing"
 )
@@ -67,7 +68,7 @@ func Test21_AMA1_interleaved_earlier_caller_cannot_shift_the_token(t *testing.T)
 		h.eq(record != nil)
 		sent := h.host.sends[len(h.host.sends)-1]
 		h.eq(amaToken(t, sent.message))
-		h.eq(str(record, "requestId"))
+		h.eq(pyjson.Text(record.Get("requestId")))
 		for _, s := range h.host.sends {
 			h.eq(amaToken(t, s.message))
 		}
@@ -81,9 +82,9 @@ func Test21_AMA2_inspection_after_send_reports_the_sent_attempt_not_the_next_one
 		rows := amaMessages(h, event)
 		h.eq(len(rows))
 		entry := rows[0].(Obj)
-		h.eq(str(entry, "requestId"))
-		h.eq(str(entry, "status"))
-		h.eq(amaToken(t, str(entry, "message")))
+		h.eq(pyjson.Text(entry.Get("requestId")))
+		h.eq(pyjson.Text(entry.Get("status")))
+		h.eq(amaToken(t, pyjson.Text(entry.Get("message"))))
 		preview, err := h.delivery.PreviewMessage(h.ctx, event)
 		mustDo(t, err)
 		h.eq(amaToken(t, preview))
@@ -96,15 +97,15 @@ func Test21_AMA3_lost_response_reconciliation_searches_the_token_that_was_sent(t
 		event := h.queuedEvent(regOpts{})
 		h.host.script = []string{"transport_unknown"}
 		record := h.mustAttempt(event, nil)
-		request := str(record, "requestId")
+		request := pyjson.Text(record.Get("requestId"))
 		message := h.host.sends[len(h.host.sends)-1].message
 		h.eq(amaToken(t, message))
 		h.eq(amaSent(h, request))
-		h.eq(str(record, "deliveryState"))
+		h.eq(pyjson.Text(record.Get("deliveryState")))
 		h.host.startTurn(parent, "", "completed", message)
 		resolved := h.reconcile(request, h.host)
-		h.eq(str(resolved, "state"))
-		h.eq(str(resolved, "evidence"))
+		h.eq(pyjson.Text(resolved.Get("state")))
+		h.eq(pyjson.Text(resolved.Get("evidence")))
 		h.eq(strings.Contains(message, request))
 	})
 }
@@ -115,9 +116,9 @@ func Test21_AMA4_show_message_returns_the_sent_attempt_after_a_send(t *testing.T
 		record := h.mustAttempt(event, nil)
 		entries := amaMessages(h, event)
 		h.eq(len(entries))
-		h.eq(str(entries[0].(Obj), "requestId"))
-		h.eq(str(entries[0].(Obj), "status"))
-		h.eq(amaToken(t, str(entries[0].(Obj), "message")))
+		h.eq(pyjson.Text(entries[0].(Obj).Get("requestId")))
+		h.eq(pyjson.Text(entries[0].(Obj).Get("status")))
+		h.eq(amaToken(t, pyjson.Text(entries[0].(Obj).Get("message"))))
 		h.eq(len(entries) == 0) // cmd_show previewMessage absence is exercised at the CLI surface.
 		_ = record
 	})
@@ -135,7 +136,7 @@ func Test21_AMA5_show_message_offers_a_preview_only_before_anything_is_prepared(
 		record := h.mustAttempt(event, nil)
 		after := amaMessages(h, event)
 		h.eq(len(after) == 0)
-		h.eq(str(after[0].(Obj), "requestId"))
+		h.eq(pyjson.Text(after[0].(Obj).Get("requestId")))
 		_ = record
 	})
 }
@@ -151,14 +152,14 @@ func Test21_AMA6_show_message_after_a_retry_lists_both_attempts_distinctly(t *te
 		ids, statuses := []any{}, []any{}
 		for _, v := range entries {
 			e := v.(Obj)
-			ids = append(ids, str(e, "requestId"))
-			statuses = append(statuses, str(e, "status"))
+			ids = append(ids, pyjson.Text(e.Get("requestId")))
+			statuses = append(statuses, pyjson.Text(e.Get("status")))
 		}
 		h.eq(ids)
 		h.eq(statuses)
 		for _, v := range entries {
 			e := v.(Obj)
-			h.eq(amaToken(t, str(e, "message")))
+			h.eq(amaToken(t, pyjson.Text(e.Get("message"))))
 		}
 	})
 }

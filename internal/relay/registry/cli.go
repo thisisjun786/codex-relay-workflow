@@ -135,7 +135,7 @@ func cmdDispositionsShow(ctx context.Context, selection store.StateSelection, p 
 	if err != nil {
 		return nil, err
 	}
-	if readable, _ := getField(report, "readable"); readable != true {
+	if readable, _ := report.Lookup("readable"); readable != true {
 		return nil, &DispositionsExit{report}
 	}
 	return report, nil
@@ -303,7 +303,7 @@ func (r *Registry) RegisterWithSettings(ctx context.Context, in Registration, wr
 			if _, err := r.RecordSettings(ctx, w.task, w.values, "creation_result", w.role, citation); err != nil {
 				return err
 			}
-			recorded = setField(recorded, w.task, "recorded")
+			recorded = recorded.Set(w.task, "recorded")
 		}
 		return nil
 	})
@@ -328,9 +328,9 @@ func (r *Registry) refuseRoleDisagreement(ctx context.Context, writes []settings
 		if w.role == "" {
 			continue
 		}
-		settings = setField(settings, "citedRole", w.role)
+		settings = settings.Set("citedRole", w.role)
 		if w.exception.Valid {
-			settings = setField(settings, "citedException", w.exception.String)
+			settings = settings.Set("citedException", w.exception.String)
 		}
 		bound, contested, err := boundRole(ctx, r.Store, w.task)
 		if err != nil {
