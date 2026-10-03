@@ -255,10 +255,15 @@ func TestPlanTodayLocalDate(t *testing.T) {
 	if len(names) != 1 || (names[0] != before+"_fresh_unit" && names[0] != after+"_fresh_unit") {
 		t.Fatal(names)
 	}
-	for _, date := range []time.Time{time.Date(2026, 1, 2, 0, 0, 0, 0, time.FixedZone("local", -7*3600)), time.Date(2000, 12, 31, 0, 0, 0, 0, time.UTC)} {
-		want := fmt.Sprintf("%02d%02d%02d", date.Year()%100, date.Month(), date.Day())
-		if YYMMDD(date) != want {
-			t.Fatalf("date %v", date)
+	for _, c := range []struct {
+		date time.Time
+		want string
+	}{
+		{time.Date(2026, 1, 2, 0, 0, 0, 0, time.FixedZone("local", -7*3600)), "260102"},
+		{time.Date(2000, 12, 31, 0, 0, 0, 0, time.UTC), "001231"},
+	} {
+		if got := YYMMDD(c.date); got != c.want {
+			t.Fatalf("date %v = %q; want %q", c.date, got, c.want)
 		}
 	}
 }
