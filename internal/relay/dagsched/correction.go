@@ -299,6 +299,9 @@ func (s *Scheduler) RecordCorrection(ctx context.Context, plan, node, actor, sup
 				return refuse(contract.RefusalDispositionConflict, "the restoration note does not carry the instruction manifest %s was prepared with (generation %d, its path and its file hash): the child was not told this manifest as prepared", digest, rel.Generation)
 			}
 		}
+		if digest == "" {
+			return refuse(contract.RefusalDispositionConflict, "no generation of %s before generation %d has a recorded manifest to carry over, and the ruling names none", node, rel.Generation)
+		}
 		if suppliedDigest != "" && suppliedDigest != digest {
 			return refuse(contract.RefusalDispositionConflict, "the digest given (%s) is not the one the child was told (%s)", suppliedDigest, digest)
 		}
