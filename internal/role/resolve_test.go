@@ -169,7 +169,12 @@ func TestProjectConfigTrustTokenOutsideARepositoryBindsTheDirectory(t *testing.T
 func TestProjectConfigTrustTokenRefusesGitOutputThatIsNotUTF8(t *testing.T) {
 	plainGit(t)
 	root := repo(t, "{}", true)
-	stubGit(t, "printf '/tmp/\\377'")
+	bad := filepath.Join(t.TempDir(), "bad\xff") // a real directory, so only the check can refuse it
+	if err := os.Mkdir(bad, 0o755); err != nil {
+		t.Skipf("this file system takes no such name: %v", err)
+	}
+	t.Setenv("CRW_TEST_ROOT", bad)
+	stubGit(t, `printf '%s' "$CRW_TEST_ROOT"`)
 	if got, ok := ProjectConfigTrustToken(root); ok || got != "" {
 		t.Fatalf("token %q for a root that is not text", got)
 	}
