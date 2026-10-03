@@ -1,0 +1,1530 @@
+{
+  "oracle": "CXC v0.2.40 3c1459ac",
+  "parser": [
+    {
+      "id": "argv_0",
+      "argv": [
+        "CONSTRUCTOR"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "constructor",
+        "attest": null,
+        "cwd": "/ws",
+        "json": false
+      }
+    },
+    {
+      "id": "argv_1",
+      "argv": [
+        "__PROTO__"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "__proto__",
+        "attest": null,
+        "cwd": "/ws",
+        "json": false
+      }
+    },
+    {
+      "id": "argv_2",
+      "argv": [
+        "a",
+        "--attest",
+        "{\"from\":\"P\",\"from\":\"C\",\"to\":\"D\",\"did\":\"𝒜\"}"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "A",
+        "attest": {
+          "from": "C",
+          "to": "D",
+          "did": "𝒜"
+        },
+        "cwd": "/ws",
+        "json": false
+      }
+    },
+    {
+      "id": "argv_3",
+      "argv": [
+        "a",
+        "--attest",
+        "{\"from\":\"P\",\"to\":\"A\",\"exitCode\":-0}"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "A",
+        "attest": {
+          "from": "P",
+          "to": "A",
+          "did": "",
+          "exitCode": 0
+        },
+        "cwd": "/ws",
+        "json": false
+      }
+    },
+    {
+      "id": "argv_4",
+      "argv": [
+        ""
+      ],
+      "cwd": "/ws",
+      "want": {
+        "error": "unknown orchestrate verb '' (expected I|P|A|B|C|D|status|reset); run cxc orchestrate --help",
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "argv_5",
+      "argv": [
+        "İ"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "error": "unknown orchestrate verb 'İ' (expected I|P|A|B|C|D|status|reset); run cxc orchestrate --help",
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "argv_6",
+      "argv": [
+        "K"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "error": "unknown orchestrate verb 'K' (expected I|P|A|B|C|D|status|reset); run cxc orchestrate --help",
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "argv_7",
+      "argv": [
+        "A",
+        "--cwd",
+        "ignored",
+        "--help"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "help": true,
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "argv_8",
+      "argv": [
+        "a",
+        "--session",
+        "one",
+        "--session",
+        "two",
+        "--cwd",
+        "first",
+        "--cwd",
+        "second"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "A",
+        "attest": null,
+        "session": "two",
+        "cwd": "second",
+        "json": false
+      }
+    },
+    {
+      "id": "argv_9",
+      "argv": [],
+      "cwd": "/ws",
+      "want": {
+        "help": true,
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "argv_10",
+      "argv": [
+        "status"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "status",
+        "attest": null,
+        "cwd": "/ws",
+        "json": false
+      }
+    },
+    {
+      "id": "argv_11",
+      "argv": [
+        "a",
+        "--attest",
+        "{\"from\":\"P\",\"to\":\"A\",\"did\":\" x y \",\"auditVerdict\":\" PASS \",\"exitCode\":1e999}"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "A",
+        "attest": {
+          "from": "P",
+          "to": "A",
+          "did": "x y",
+          "auditVerdict": "pass"
+        },
+        "cwd": "/ws",
+        "json": false
+      }
+    },
+    {
+      "id": "argv_12",
+      "argv": [
+        "idle"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "error": "unknown orchestrate verb 'idle' (expected I|P|A|B|C|D|status|reset); run cxc orchestrate --help",
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "argv_13",
+      "argv": [
+        "wat",
+        "--session",
+        "first",
+        "--session",
+        "last",
+        "--cwd",
+        "one",
+        "--cwd",
+        "two"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "error": "unknown orchestrate verb 'wat' (expected I|P|A|B|C|D|status|reset); run cxc orchestrate --help",
+        "session": "first",
+        "cwd": "one"
+      }
+    },
+    {
+      "id": "argv_14",
+      "argv": [
+        "--help"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "help": true,
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "argv_15",
+      "argv": [
+        "help"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "help": true,
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "argv_16",
+      "argv": [
+        "-h"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "help": true,
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "argv_17",
+      "argv": [
+        "status",
+        "--session",
+        "help"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "help": true,
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "argv_18",
+      "argv": [
+        "A",
+        "unknown",
+        "--other",
+        "x",
+        "--json"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "A",
+        "attest": null,
+        "cwd": "/ws",
+        "json": true
+      }
+    },
+    {
+      "id": "argv_19",
+      "argv": [
+        "--session",
+        "s",
+        "status"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "error": "unknown orchestrate verb '--session' (expected I|P|A|B|C|D|status|reset); run cxc orchestrate --help",
+        "session": "s",
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "argv_20",
+      "argv": [
+        " status "
+      ],
+      "cwd": "/ws",
+      "want": {
+        "error": "unknown orchestrate verb ' status ' (expected I|P|A|B|C|D|status|reset); run cxc orchestrate --help",
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "argv_21",
+      "argv": [
+        "STATUS"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "status",
+        "attest": null,
+        "cwd": "/ws",
+        "json": false
+      }
+    },
+    {
+      "id": "argv_22",
+      "argv": [
+        "constructor"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "constructor",
+        "attest": null,
+        "cwd": "/ws",
+        "json": false
+      }
+    },
+    {
+      "id": "argv_23",
+      "argv": [
+        "__proto__"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "__proto__",
+        "attest": null,
+        "cwd": "/ws",
+        "json": false
+      }
+    },
+    {
+      "id": "argv_24",
+      "argv": [
+        "toString"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "error": "unknown orchestrate verb 'toString' (expected I|P|A|B|C|D|status|reset); run cxc orchestrate --help",
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "argv_25",
+      "argv": [
+        "a",
+        "--session",
+        ""
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "A",
+        "attest": null,
+        "session": "",
+        "cwd": "/ws",
+        "json": false
+      }
+    },
+    {
+      "id": "argv_26",
+      "argv": [
+        "a",
+        "--session"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "A",
+        "attest": null,
+        "cwd": "/ws",
+        "json": false
+      }
+    },
+    {
+      "id": "argv_27",
+      "argv": [
+        "a",
+        "--cwd"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "A",
+        "attest": null,
+        "cwd": "/ws",
+        "json": false
+      }
+    },
+    {
+      "id": "argv_28",
+      "argv": [
+        "a",
+        "--cwd",
+        ""
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "A",
+        "attest": null,
+        "cwd": "",
+        "json": false
+      }
+    },
+    {
+      "id": "argv_29",
+      "argv": [
+        "a",
+        "--session",
+        "--json"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "A",
+        "attest": null,
+        "session": "--json",
+        "cwd": "/ws",
+        "json": false
+      }
+    },
+    {
+      "id": "argv_30",
+      "argv": [
+        "a",
+        "--cwd",
+        "--json"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "A",
+        "attest": null,
+        "cwd": "--json",
+        "json": false
+      }
+    },
+    {
+      "id": "argv_31",
+      "argv": [
+        "a",
+        "--session=x",
+        "--cwd=y",
+        "--json=true"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "A",
+        "attest": null,
+        "cwd": "/ws",
+        "json": false
+      }
+    },
+    {
+      "id": "argv_32",
+      "argv": [
+        "a",
+        "--attest"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "A",
+        "attest": null,
+        "attestError": "--attest requires a JSON argument",
+        "cwd": "/ws",
+        "json": false
+      }
+    },
+    {
+      "id": "argv_33",
+      "argv": [
+        "a",
+        "--attest",
+        ""
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "A",
+        "attest": null,
+        "attestError": "attest JSON is not valid JSON",
+        "cwd": "/ws",
+        "json": false
+      }
+    },
+    {
+      "id": "argv_34",
+      "argv": [
+        "a",
+        "--attest",
+        "{}"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "A",
+        "attest": null,
+        "attestError": "attest JSON missing valid from/to",
+        "cwd": "/ws",
+        "json": false
+      }
+    },
+    {
+      "id": "argv_35",
+      "argv": [
+        "a",
+        "--attest",
+        "[]"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "A",
+        "attest": null,
+        "attestError": "attest JSON missing valid from/to",
+        "cwd": "/ws",
+        "json": false
+      }
+    },
+    {
+      "id": "argv_36",
+      "argv": [
+        "a",
+        "--attest",
+        "null"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "A",
+        "attest": null,
+        "attestError": "attest JSON missing valid from/to",
+        "cwd": "/ws",
+        "json": false
+      }
+    },
+    {
+      "id": "argv_37",
+      "argv": [
+        "a",
+        "--attest",
+        "{\"from\":1,\"to\":\"A\"}"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "A",
+        "attest": null,
+        "attestError": "attest JSON missing valid from/to",
+        "cwd": "/ws",
+        "json": false
+      }
+    },
+    {
+      "id": "argv_38",
+      "argv": [
+        "a",
+        "--attest",
+        "{\"from\":\"bad\",\"to\":\"worse\"}"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "A",
+        "attest": {
+          "from": "bad",
+          "to": "worse",
+          "did": ""
+        },
+        "cwd": "/ws",
+        "json": false
+      }
+    },
+    {
+      "id": "argv_39",
+      "argv": [
+        "a",
+        "--attest",
+        "{}",
+        "--attest",
+        "{\"from\":\"P\",\"to\":\"A\",\"did\":\" x y \",\"auditVerdict\":\" PASS \",\"exitCode\":1e999}"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "A",
+        "attest": {
+          "from": "P",
+          "to": "A",
+          "did": "x y",
+          "auditVerdict": "pass"
+        },
+        "attestError": "attest JSON missing valid from/to",
+        "cwd": "/ws",
+        "json": false
+      }
+    },
+    {
+      "id": "argv_40",
+      "argv": [
+        "a",
+        "--attest",
+        "{\"from\":\"P\",\"to\":\"A\",\"did\":\" x y \",\"auditVerdict\":\" PASS \",\"exitCode\":1e999}",
+        "--attest",
+        "bad"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "A",
+        "attest": {
+          "from": "P",
+          "to": "A",
+          "did": "x y",
+          "auditVerdict": "pass"
+        },
+        "attestError": "attest JSON is not valid JSON",
+        "cwd": "/ws",
+        "json": false
+      }
+    },
+    {
+      "id": "argv_41",
+      "argv": [
+        "a",
+        "--attest",
+        "{\"from\":\"P\",\"to\":\"A\",\"did\":\" x y \",\"auditVerdict\":\" PASS \",\"exitCode\":1e999}",
+        "--attest",
+        "{\"from\":\"P\",\"to\":\"A\",\"did\":\" x y \",\"auditVerdict\":\" PASS \",\"exitCode\":1e999}"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "A",
+        "attest": {
+          "from": "P",
+          "to": "A",
+          "did": "x y",
+          "auditVerdict": "pass"
+        },
+        "cwd": "/ws",
+        "json": false
+      }
+    },
+    {
+      "id": "argv_42",
+      "argv": [
+        "a",
+        "--attest",
+        "{\"from\":\"P\",\"to\":\"A\"} trailing"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "A",
+        "attest": null,
+        "attestError": "attest JSON is not valid JSON",
+        "cwd": "/ws",
+        "json": false
+      }
+    },
+    {
+      "id": "argv_43",
+      "argv": [
+        "a",
+        "--attest",
+        "﻿{\"from\":\"P\",\"to\":\"A\",\"did\":\" x y \",\"auditVerdict\":\" PASS \",\"exitCode\":1e999}"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "A",
+        "attest": null,
+        "attestError": "attest JSON is not valid JSON",
+        "cwd": "/ws",
+        "json": false
+      }
+    },
+    {
+      "id": "argv_44",
+      "argv": [
+        "a",
+        "--attest-file"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "A",
+        "attest": null,
+        "attestError": "--attest-file requires a path argument",
+        "cwd": "/ws",
+        "json": false
+      }
+    },
+    {
+      "id": "argv_45",
+      "argv": [
+        "a",
+        "--attest",
+        "{\"from\":\"P\",\"to\":\"A\",\"did\":\" x y \",\"auditVerdict\":\" PASS \",\"exitCode\":1e999}",
+        "--attest-file",
+        "f"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "A",
+        "attest": {
+          "from": "P",
+          "to": "A",
+          "did": "x y",
+          "auditVerdict": "pass"
+        },
+        "attestError": "pass --attest OR --attest-file, not both",
+        "cwd": "/ws",
+        "json": false
+      }
+    },
+    {
+      "id": "argv_46",
+      "argv": [
+        "a",
+        "--attest-file",
+        "f",
+        "--attest",
+        "{\"from\":\"P\",\"to\":\"A\",\"did\":\" x y \",\"auditVerdict\":\" PASS \",\"exitCode\":1e999}"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "A",
+        "attest": {
+          "from": "P",
+          "to": "A",
+          "did": "x y",
+          "auditVerdict": "pass"
+        },
+        "attestError": "pass --attest OR --attest-file, not both",
+        "cwd": "/ws",
+        "json": false
+      }
+    },
+    {
+      "id": "argv_47",
+      "argv": [
+        "a",
+        "--attest",
+        "{\"from\":\"P\",\"to\":\"A\",\"did\":\" x y \",\"auditVerdict\":\" PASS \",\"exitCode\":1e999}",
+        "--attest-file"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "A",
+        "attest": {
+          "from": "P",
+          "to": "A",
+          "did": "x y",
+          "auditVerdict": "pass"
+        },
+        "attestError": "--attest-file requires a path argument",
+        "cwd": "/ws",
+        "json": false
+      }
+    }
+  ],
+  "files": [
+    {
+      "id": "file_trailing_data",
+      "files": {
+        "att.json": "{\"from\":\"P\",\"to\":\"A\",\"did\":\" x y \",\"auditVerdict\":\" PASS \",\"exitCode\":1e999} trailing"
+      },
+      "argv": [
+        "a",
+        "--attest-file",
+        "att.json",
+        "--cwd",
+        "$R"
+      ],
+      "want": {
+        "verb": "A",
+        "attest": null,
+        "attestError": "could not read the attest file at $R/att.json (Unexpected non-whitespace character after JSON at position 77 (line 1 column 78))",
+        "cwd": "$R",
+        "json": false
+      }
+    },
+    {
+      "id": "file_empty_path",
+      "files": {},
+      "argv": [
+        "a",
+        "--attest-file",
+        "",
+        "--cwd",
+        "$R"
+      ],
+      "want": {
+        "verb": "A",
+        "attest": null,
+        "attestError": "could not read the attest file at $R (EISDIR: illegal operation on a directory, read)",
+        "cwd": "$R",
+        "json": false
+      }
+    },
+    {
+      "id": "file_valid_late_cwd",
+      "files": {
+        "att.json": "{\"from\":\"P\",\"to\":\"A\",\"did\":\" x y \",\"auditVerdict\":\" PASS \",\"exitCode\":1e999}"
+      },
+      "argv": [
+        "a",
+        "--session",
+        "s1",
+        "--attest-file",
+        "att.json",
+        "--cwd",
+        "$R"
+      ],
+      "want": {
+        "verb": "A",
+        "attest": {
+          "from": "P",
+          "to": "A",
+          "did": "x y",
+          "auditVerdict": "pass"
+        },
+        "session": "s1",
+        "cwd": "$R",
+        "json": false
+      }
+    },
+    {
+      "id": "file_bom",
+      "files": {
+        "att.json": "﻿{\"from\":\"P\",\"to\":\"A\",\"did\":\" x y \",\"auditVerdict\":\" PASS \",\"exitCode\":1e999}"
+      },
+      "argv": [
+        "a",
+        "--attest-file",
+        "att.json",
+        "--cwd",
+        "$R"
+      ],
+      "want": {
+        "verb": "A",
+        "attest": {
+          "from": "P",
+          "to": "A",
+          "did": "x y",
+          "auditVerdict": "pass"
+        },
+        "cwd": "$R",
+        "json": false
+      }
+    },
+    {
+      "id": "file_crlf",
+      "files": {
+        "att.json": "{\r\n\"from\":\"P\",\r\n\"to\":\"A\",\r\n\"did\":\"crlf attest\"\r\n}\r\n"
+      },
+      "argv": [
+        "a",
+        "--attest-file",
+        "att.json",
+        "--cwd",
+        "$R"
+      ],
+      "want": {
+        "verb": "A",
+        "attest": {
+          "from": "P",
+          "to": "A",
+          "did": "crlf attest"
+        },
+        "cwd": "$R",
+        "json": false
+      }
+    },
+    {
+      "id": "file_missing",
+      "files": {},
+      "argv": [
+        "a",
+        "--attest-file",
+        "missing.json",
+        "--cwd",
+        "$R"
+      ],
+      "want": {
+        "verb": "A",
+        "attest": null,
+        "attestError": "could not read the attest file at $R/missing.json (ENOENT: no such file or directory, open '$R/missing.json')",
+        "cwd": "$R",
+        "json": false
+      }
+    },
+    {
+      "id": "file_invalid_json",
+      "files": {
+        "att.json": "{nope}"
+      },
+      "argv": [
+        "a",
+        "--attest-file",
+        "att.json",
+        "--cwd",
+        "$R"
+      ],
+      "want": {
+        "verb": "A",
+        "attest": null,
+        "attestError": "could not read the attest file at $R/att.json (Expected property name or '}' in JSON at position 1 (line 1 column 2))",
+        "cwd": "$R",
+        "json": false
+      }
+    },
+    {
+      "id": "file_shape",
+      "files": {
+        "att.json": "{\"did\":\"x\"}"
+      },
+      "argv": [
+        "a",
+        "--attest-file",
+        "att.json",
+        "--cwd",
+        "$R"
+      ],
+      "want": {
+        "verb": "A",
+        "attest": null,
+        "attestError": "attest file $R/att.json is missing valid from/to",
+        "cwd": "$R",
+        "json": false
+      }
+    },
+    {
+      "id": "file_both",
+      "files": {
+        "att.json": "{\"from\":\"P\",\"to\":\"A\",\"did\":\" x y \",\"auditVerdict\":\" PASS \",\"exitCode\":1e999}"
+      },
+      "argv": [
+        "a",
+        "--attest-file",
+        "att.json",
+        "--attest",
+        "{\"from\":\"P\",\"to\":\"A\",\"did\":\" x y \",\"auditVerdict\":\" PASS \",\"exitCode\":1e999}",
+        "--cwd",
+        "$R"
+      ],
+      "want": {
+        "verb": "A",
+        "attest": {
+          "from": "P",
+          "to": "A",
+          "did": "x y",
+          "auditVerdict": "pass"
+        },
+        "attestError": "pass --attest OR --attest-file, not both",
+        "cwd": "$R",
+        "json": false
+      }
+    },
+    {
+      "id": "file_last_wins",
+      "files": {
+        "att.json": "{\"from\":\"P\",\"to\":\"A\",\"did\":\" x y \",\"auditVerdict\":\" PASS \",\"exitCode\":1e999}"
+      },
+      "argv": [
+        "a",
+        "--attest-file",
+        "missing.json",
+        "--attest-file",
+        "att.json",
+        "--cwd",
+        "$R"
+      ],
+      "want": {
+        "verb": "A",
+        "attest": {
+          "from": "P",
+          "to": "A",
+          "did": "x y",
+          "auditVerdict": "pass"
+        },
+        "cwd": "$R",
+        "json": false
+      }
+    },
+    {
+      "id": "file_error_sticks",
+      "files": {
+        "att.json": "{\"from\":\"P\",\"to\":\"A\",\"did\":\" x y \",\"auditVerdict\":\" PASS \",\"exitCode\":1e999}"
+      },
+      "argv": [
+        "a",
+        "--attest-file",
+        "att.json",
+        "--cwd",
+        "$R",
+        "--attest-file"
+      ],
+      "want": {
+        "verb": "A",
+        "attest": {
+          "from": "P",
+          "to": "A",
+          "did": "x y",
+          "auditVerdict": "pass"
+        },
+        "attestError": "--attest-file requires a path argument",
+        "cwd": "$R",
+        "json": false
+      }
+    },
+    {
+      "id": "file_double_bom",
+      "files": {
+        "att.json": "﻿﻿{\"from\":\"P\",\"to\":\"A\",\"did\":\" x y \",\"auditVerdict\":\" PASS \",\"exitCode\":1e999}"
+      },
+      "argv": [
+        "a",
+        "--attest-file",
+        "att.json",
+        "--cwd",
+        "$R"
+      ],
+      "want": {
+        "verb": "A",
+        "attest": null,
+        "attestError": "could not read the attest file at $R/att.json (Unexpected token '﻿', \"﻿{\"from\":\"\"... is not valid JSON)",
+        "cwd": "$R",
+        "json": false
+      }
+    }
+  ],
+  "hints": [
+    {
+      "verb": "I",
+      "from": null,
+      "want": " Every attest names the edge it advances: {\"from\":\"<see status>\",\"to\":\"I\",\"did\":\"...\"}. A goalplan-bound session also needs \"workPhaseId\". Run `cxc orchestrate status --session <id>` to read the current phase."
+    },
+    {
+      "verb": "I",
+      "from": "",
+      "want": " Note  -> I is not a legal edge, so no attest can advance it: legal from  is ."
+    },
+    {
+      "verb": "I",
+      "from": "IDLE",
+      "want": " Every attest names the edge it advances: {\"from\":\"IDLE\",\"to\":\"I\",\"did\":\"...\"}. A goalplan-bound session also needs \"workPhaseId\"."
+    },
+    {
+      "verb": "I",
+      "from": "I",
+      "want": " Note I -> I is not a legal edge, so no attest can advance it: legal from I is P|IDLE."
+    },
+    {
+      "verb": "I",
+      "from": "P",
+      "want": " Every attest names the edge it advances: {\"from\":\"P\",\"to\":\"I\",\"did\":\"...\"}. A goalplan-bound session also needs \"workPhaseId\"."
+    },
+    {
+      "verb": "I",
+      "from": "A",
+      "want": " Every attest names the edge it advances: {\"from\":\"A\",\"to\":\"I\",\"did\":\"...\"}. A goalplan-bound session also needs \"workPhaseId\"."
+    },
+    {
+      "verb": "I",
+      "from": "B",
+      "want": " Every attest names the edge it advances: {\"from\":\"B\",\"to\":\"I\",\"did\":\"...\"}. A goalplan-bound session also needs \"workPhaseId\"."
+    },
+    {
+      "verb": "I",
+      "from": "C",
+      "want": " Every attest names the edge it advances: {\"from\":\"C\",\"to\":\"I\",\"did\":\"...\"}. A goalplan-bound session also needs \"workPhaseId\"."
+    },
+    {
+      "verb": "I",
+      "from": "D",
+      "want": " Every attest names the edge it advances: {\"from\":\"D\",\"to\":\"I\",\"did\":\"...\"}. A goalplan-bound session also needs \"workPhaseId\"."
+    },
+    {
+      "verb": "I",
+      "from": "Z",
+      "want": " Note Z -> I is not a legal edge, so no attest can advance it: legal from Z is ."
+    },
+    {
+      "verb": "P",
+      "from": null,
+      "want": " Every attest names the edge it advances: {\"from\":\"<see status>\",\"to\":\"P\",\"did\":\"...\"}. A goalplan-bound session also needs \"workPhaseId\". Run `cxc orchestrate status --session <id>` to read the current phase."
+    },
+    {
+      "verb": "P",
+      "from": "",
+      "want": " Note  -> P is not a legal edge, so no attest can advance it: legal from  is ."
+    },
+    {
+      "verb": "P",
+      "from": "IDLE",
+      "want": " Every attest names the edge it advances: {\"from\":\"IDLE\",\"to\":\"P\",\"did\":\"...\"}. A goalplan-bound session also needs \"workPhaseId\"."
+    },
+    {
+      "verb": "P",
+      "from": "I",
+      "want": " Every attest names the edge it advances: {\"from\":\"I\",\"to\":\"P\",\"did\":\"...\"}. A goalplan-bound session also needs \"workPhaseId\"."
+    },
+    {
+      "verb": "P",
+      "from": "P",
+      "want": " Note P -> P is not a legal edge, so no attest can advance it: legal from P is I|A."
+    },
+    {
+      "verb": "P",
+      "from": "A",
+      "want": " Every attest names the edge it advances: {\"from\":\"A\",\"to\":\"P\",\"did\":\"...\"}. A goalplan-bound session also needs \"workPhaseId\"."
+    },
+    {
+      "verb": "P",
+      "from": "B",
+      "want": " Note B -> P is not a legal edge, so no attest can advance it: legal from B is I|C."
+    },
+    {
+      "verb": "P",
+      "from": "C",
+      "want": " Every attest names the edge it advances: {\"from\":\"C\",\"to\":\"P\",\"did\":\"...\"}. A goalplan-bound session also needs \"workPhaseId\"."
+    },
+    {
+      "verb": "P",
+      "from": "D",
+      "want": " Note D -> P is not a legal edge, so no attest can advance it: legal from D is I|IDLE."
+    },
+    {
+      "verb": "P",
+      "from": "Z",
+      "want": " Note Z -> P is not a legal edge, so no attest can advance it: legal from Z is ."
+    },
+    {
+      "verb": "A",
+      "from": null,
+      "want": " Every attest names the edge it advances: {\"from\":\"<see status>\",\"to\":\"A\",\"did\":\"...\"}, plus \"planUnit\":\"devlog/_plan/YYMMDD_slug\". A goalplan-bound session also needs \"workPhaseId\". Run `cxc orchestrate status --session <id>` to read the current phase."
+    },
+    {
+      "verb": "A",
+      "from": "",
+      "want": " Note  -> A is not a legal edge, so no attest can advance it: legal from  is ."
+    },
+    {
+      "verb": "A",
+      "from": "IDLE",
+      "want": " Note IDLE -> A is not a legal edge, so no attest can advance it: legal from IDLE is I|P."
+    },
+    {
+      "verb": "A",
+      "from": "I",
+      "want": " Note I -> A is not a legal edge, so no attest can advance it: legal from I is P|IDLE."
+    },
+    {
+      "verb": "A",
+      "from": "P",
+      "want": " Every attest names the edge it advances: {\"from\":\"P\",\"to\":\"A\",\"did\":\"...\"}, plus \"planUnit\":\"devlog/_plan/YYMMDD_slug\". A goalplan-bound session also needs \"workPhaseId\"."
+    },
+    {
+      "verb": "A",
+      "from": "A",
+      "want": " Note A -> A is not a legal edge, so no attest can advance it: legal from A is I|B|P."
+    },
+    {
+      "verb": "A",
+      "from": "B",
+      "want": " Note B -> A is not a legal edge, so no attest can advance it: legal from B is I|C."
+    },
+    {
+      "verb": "A",
+      "from": "C",
+      "want": " Note C -> A is not a legal edge, so no attest can advance it: legal from C is I|D|B|P."
+    },
+    {
+      "verb": "A",
+      "from": "D",
+      "want": " Note D -> A is not a legal edge, so no attest can advance it: legal from D is I|IDLE."
+    },
+    {
+      "verb": "A",
+      "from": "Z",
+      "want": " Note Z -> A is not a legal edge, so no attest can advance it: legal from Z is ."
+    },
+    {
+      "verb": "B",
+      "from": null,
+      "want": " Every attest names the edge it advances: {\"from\":\"<see status>\",\"to\":\"B\",\"did\":\"...\"}, plus \"auditOutput\":\"<reviewer verdict tail>\" and \"auditVerdict\":\"pass|near-pass|fail\". A goalplan-bound session also needs \"workPhaseId\". Run `cxc orchestrate status --session <id>` to read the current phase."
+    },
+    {
+      "verb": "B",
+      "from": "",
+      "want": " Note  -> B is not a legal edge, so no attest can advance it: legal from  is ."
+    },
+    {
+      "verb": "B",
+      "from": "IDLE",
+      "want": " Note IDLE -> B is not a legal edge, so no attest can advance it: legal from IDLE is I|P."
+    },
+    {
+      "verb": "B",
+      "from": "I",
+      "want": " Note I -> B is not a legal edge, so no attest can advance it: legal from I is P|IDLE."
+    },
+    {
+      "verb": "B",
+      "from": "P",
+      "want": " Note P -> B is not a legal edge, so no attest can advance it: legal from P is I|A."
+    },
+    {
+      "verb": "B",
+      "from": "A",
+      "want": " Every attest names the edge it advances: {\"from\":\"A\",\"to\":\"B\",\"did\":\"...\"}, plus \"auditOutput\":\"<reviewer verdict tail>\" and \"auditVerdict\":\"pass|near-pass|fail\". A goalplan-bound session also needs \"workPhaseId\"."
+    },
+    {
+      "verb": "B",
+      "from": "B",
+      "want": " Note B -> B is not a legal edge, so no attest can advance it: legal from B is I|C."
+    },
+    {
+      "verb": "B",
+      "from": "C",
+      "want": " Every attest names the edge it advances: {\"from\":\"C\",\"to\":\"B\",\"did\":\"...\"}, plus \"auditOutput\":\"<reviewer verdict tail>\" and \"auditVerdict\":\"pass|near-pass|fail\". A goalplan-bound session also needs \"workPhaseId\"."
+    },
+    {
+      "verb": "B",
+      "from": "D",
+      "want": " Note D -> B is not a legal edge, so no attest can advance it: legal from D is I|IDLE."
+    },
+    {
+      "verb": "B",
+      "from": "Z",
+      "want": " Note Z -> B is not a legal edge, so no attest can advance it: legal from Z is ."
+    },
+    {
+      "verb": "C",
+      "from": null,
+      "want": " Every attest names the edge it advances: {\"from\":\"<see status>\",\"to\":\"C\",\"did\":\"...\"}. A goalplan-bound session also needs \"workPhaseId\". Run `cxc orchestrate status --session <id>` to read the current phase."
+    },
+    {
+      "verb": "C",
+      "from": "",
+      "want": " Note  -> C is not a legal edge, so no attest can advance it: legal from  is ."
+    },
+    {
+      "verb": "C",
+      "from": "IDLE",
+      "want": " Note IDLE -> C is not a legal edge, so no attest can advance it: legal from IDLE is I|P."
+    },
+    {
+      "verb": "C",
+      "from": "I",
+      "want": " Note I -> C is not a legal edge, so no attest can advance it: legal from I is P|IDLE."
+    },
+    {
+      "verb": "C",
+      "from": "P",
+      "want": " Note P -> C is not a legal edge, so no attest can advance it: legal from P is I|A."
+    },
+    {
+      "verb": "C",
+      "from": "A",
+      "want": " Note A -> C is not a legal edge, so no attest can advance it: legal from A is I|B|P."
+    },
+    {
+      "verb": "C",
+      "from": "B",
+      "want": " Every attest names the edge it advances: {\"from\":\"B\",\"to\":\"C\",\"did\":\"...\"}. A goalplan-bound session also needs \"workPhaseId\"."
+    },
+    {
+      "verb": "C",
+      "from": "C",
+      "want": " Note C -> C is not a legal edge, so no attest can advance it: legal from C is I|D|B|P."
+    },
+    {
+      "verb": "C",
+      "from": "D",
+      "want": " Note D -> C is not a legal edge, so no attest can advance it: legal from D is I|IDLE."
+    },
+    {
+      "verb": "C",
+      "from": "Z",
+      "want": " Note Z -> C is not a legal edge, so no attest can advance it: legal from Z is ."
+    },
+    {
+      "verb": "D",
+      "from": null,
+      "want": " Every attest names the edge it advances: {\"from\":\"<see status>\",\"to\":\"D\",\"did\":\"...\"}, plus \"checkOutput\":\"<command output tail>\" and \"exitCode\":0. A goalplan-bound session also needs \"workPhaseId\" and \"testReceiptPath\". Run `cxc orchestrate status --session <id>` to read the current phase."
+    },
+    {
+      "verb": "D",
+      "from": "",
+      "want": " Note  -> D is not a legal edge, so no attest can advance it: legal from  is ."
+    },
+    {
+      "verb": "D",
+      "from": "IDLE",
+      "want": " Note IDLE -> D is not a legal edge, so no attest can advance it: legal from IDLE is I|P."
+    },
+    {
+      "verb": "D",
+      "from": "I",
+      "want": " Note I -> D is not a legal edge, so no attest can advance it: legal from I is P|IDLE."
+    },
+    {
+      "verb": "D",
+      "from": "P",
+      "want": " Note P -> D is not a legal edge, so no attest can advance it: legal from P is I|A."
+    },
+    {
+      "verb": "D",
+      "from": "A",
+      "want": " Note A -> D is not a legal edge, so no attest can advance it: legal from A is I|B|P."
+    },
+    {
+      "verb": "D",
+      "from": "B",
+      "want": " Note B -> D is not a legal edge, so no attest can advance it: legal from B is I|C."
+    },
+    {
+      "verb": "D",
+      "from": "C",
+      "want": " Every attest names the edge it advances: {\"from\":\"C\",\"to\":\"D\",\"did\":\"...\"}, plus \"checkOutput\":\"<command output tail>\" and \"exitCode\":0. A goalplan-bound session also needs \"workPhaseId\" and \"testReceiptPath\"."
+    },
+    {
+      "verb": "D",
+      "from": "D",
+      "want": " Note D -> D is not a legal edge, so no attest can advance it: legal from D is I|IDLE."
+    },
+    {
+      "verb": "D",
+      "from": "Z",
+      "want": " Note Z -> D is not a legal edge, so no attest can advance it: legal from Z is ."
+    },
+    {
+      "verb": "status",
+      "from": null,
+      "want": ""
+    },
+    {
+      "verb": "status",
+      "from": "",
+      "want": ""
+    },
+    {
+      "verb": "status",
+      "from": "IDLE",
+      "want": ""
+    },
+    {
+      "verb": "status",
+      "from": "I",
+      "want": ""
+    },
+    {
+      "verb": "status",
+      "from": "P",
+      "want": ""
+    },
+    {
+      "verb": "status",
+      "from": "A",
+      "want": ""
+    },
+    {
+      "verb": "status",
+      "from": "B",
+      "want": ""
+    },
+    {
+      "verb": "status",
+      "from": "C",
+      "want": ""
+    },
+    {
+      "verb": "status",
+      "from": "D",
+      "want": ""
+    },
+    {
+      "verb": "status",
+      "from": "Z",
+      "want": ""
+    },
+    {
+      "verb": "reset",
+      "from": null,
+      "want": ""
+    },
+    {
+      "verb": "reset",
+      "from": "",
+      "want": ""
+    },
+    {
+      "verb": "reset",
+      "from": "IDLE",
+      "want": ""
+    },
+    {
+      "verb": "reset",
+      "from": "I",
+      "want": ""
+    },
+    {
+      "verb": "reset",
+      "from": "P",
+      "want": ""
+    },
+    {
+      "verb": "reset",
+      "from": "A",
+      "want": ""
+    },
+    {
+      "verb": "reset",
+      "from": "B",
+      "want": ""
+    },
+    {
+      "verb": "reset",
+      "from": "C",
+      "want": ""
+    },
+    {
+      "verb": "reset",
+      "from": "D",
+      "want": ""
+    },
+    {
+      "verb": "reset",
+      "from": "Z",
+      "want": ""
+    },
+    {
+      "verb": "constructor",
+      "from": null,
+      "want": " Every attest names the edge it advances: {\"from\":\"<see status>\",\"to\":\"function Object() { [native code] }\",\"did\":\"...\"}. A goalplan-bound session also needs \"workPhaseId\". Run `cxc orchestrate status --session <id>` to read the current phase."
+    },
+    {
+      "verb": "constructor",
+      "from": "",
+      "want": " Note  -> function Object() { [native code] } is not a legal edge, so no attest can advance it: legal from  is ."
+    },
+    {
+      "verb": "constructor",
+      "from": "IDLE",
+      "want": " Note IDLE -> function Object() { [native code] } is not a legal edge, so no attest can advance it: legal from IDLE is I|P."
+    },
+    {
+      "verb": "constructor",
+      "from": "I",
+      "want": " Note I -> function Object() { [native code] } is not a legal edge, so no attest can advance it: legal from I is P|IDLE."
+    },
+    {
+      "verb": "constructor",
+      "from": "P",
+      "want": " Note P -> function Object() { [native code] } is not a legal edge, so no attest can advance it: legal from P is I|A."
+    },
+    {
+      "verb": "constructor",
+      "from": "A",
+      "want": " Note A -> function Object() { [native code] } is not a legal edge, so no attest can advance it: legal from A is I|B|P."
+    },
+    {
+      "verb": "constructor",
+      "from": "B",
+      "want": " Note B -> function Object() { [native code] } is not a legal edge, so no attest can advance it: legal from B is I|C."
+    },
+    {
+      "verb": "constructor",
+      "from": "C",
+      "want": " Note C -> function Object() { [native code] } is not a legal edge, so no attest can advance it: legal from C is I|D|B|P."
+    },
+    {
+      "verb": "constructor",
+      "from": "D",
+      "want": " Note D -> function Object() { [native code] } is not a legal edge, so no attest can advance it: legal from D is I|IDLE."
+    },
+    {
+      "verb": "constructor",
+      "from": "Z",
+      "want": " Note Z -> function Object() { [native code] } is not a legal edge, so no attest can advance it: legal from Z is ."
+    },
+    {
+      "verb": "__proto__",
+      "from": null,
+      "want": " Every attest names the edge it advances: {\"from\":\"<see status>\",\"to\":\"[object Object]\",\"did\":\"...\"}. A goalplan-bound session also needs \"workPhaseId\". Run `cxc orchestrate status --session <id>` to read the current phase."
+    },
+    {
+      "verb": "__proto__",
+      "from": "",
+      "want": " Note  -> [object Object] is not a legal edge, so no attest can advance it: legal from  is ."
+    },
+    {
+      "verb": "__proto__",
+      "from": "IDLE",
+      "want": " Note IDLE -> [object Object] is not a legal edge, so no attest can advance it: legal from IDLE is I|P."
+    },
+    {
+      "verb": "__proto__",
+      "from": "I",
+      "want": " Note I -> [object Object] is not a legal edge, so no attest can advance it: legal from I is P|IDLE."
+    },
+    {
+      "verb": "__proto__",
+      "from": "P",
+      "want": " Note P -> [object Object] is not a legal edge, so no attest can advance it: legal from P is I|A."
+    },
+    {
+      "verb": "__proto__",
+      "from": "A",
+      "want": " Note A -> [object Object] is not a legal edge, so no attest can advance it: legal from A is I|B|P."
+    },
+    {
+      "verb": "__proto__",
+      "from": "B",
+      "want": " Note B -> [object Object] is not a legal edge, so no attest can advance it: legal from B is I|C."
+    },
+    {
+      "verb": "__proto__",
+      "from": "C",
+      "want": " Note C -> [object Object] is not a legal edge, so no attest can advance it: legal from C is I|D|B|P."
+    },
+    {
+      "verb": "__proto__",
+      "from": "D",
+      "want": " Note D -> [object Object] is not a legal edge, so no attest can advance it: legal from D is I|IDLE."
+    },
+    {
+      "verb": "__proto__",
+      "from": "Z",
+      "want": " Note Z -> [object Object] is not a legal edge, so no attest can advance it: legal from Z is ."
+    }
+  ],
+  "help": {
+    "linux": "cxc orchestrate — agent-gated IPABCD phase control\n\nUsage:\n  cxc orchestrate <I|P|A|B|C|D|status|reset> [--session <id>] [--attest <json> | --attest-file <path>] [--cwd <path>] [--json]\n  cxc orchestrate --help\n\nPhases:\n  IDLE -> P -> A -> B -> C -> D -> IDLE\n  I can be entered from IDLE/P/A/B/C/D to clarify requirements.\n  D is a closing action; the resting state after D is IDLE.\n\nAgent safety:\n  Mutating verbs (I/P/A/B/C/D/reset) require explicit --session <id>.\n  Use your current SessionStart id, or the reserved terminal key 'cli'.\n  status uses native CODEX_THREAD_ID when present; plain terminals may use latest-session fallback.\n  Missing/inherited binding? Run cxc session current, then cxc session bind in the native cwd.\n\nAttestation examples:\n  cxc orchestrate A --session <id> --attest '{\"from\":\"P\",\"to\":\"A\",\"did\":\"wrote and audited the plan\",\"planUnit\":\"devlog/_plan/260714_slug\",\"workPhaseId\":\"wp1\"}'\n  cxc orchestrate B --session <id> --attest '{\"from\":\"A\",\"to\":\"B\",\"did\":\"audit passed\",\"auditOutput\":\"VERDICT: PASS\",\"auditVerdict\":\"pass\",\"workPhaseId\":\"wp1\"}'\n  cxc orchestrate C --session <id> --attest '{\"from\":\"B\",\"to\":\"C\",\"did\":\"implemented <files>\",\"workPhaseId\":\"wp1\"}'\n  cxc orchestrate D --session <id> --attest '{\"from\":\"C\",\"to\":\"D\",\"did\":\"verified\",\"checkOutput\":\"tests passed\",\"exitCode\":0,\"testReceiptPath\":\".codexclaw/evidence/<session>/test-receipt.json\",\"workPhaseId\":\"wp1\"}'\n  Every attest carries from/to naming the edge; they are coerced before any gate runs.\n  (workPhaseId is required on gated edges whenever a goalplan is bound to the session,\n   and testReceiptPath is required on C -> D for a bound session — see `cxc receipt test`)\n\nStatus:\n  cxc orchestrate status --session <id>\n  cxc orchestrate status --session <id> --json",
+    "win32": "cxc orchestrate — agent-gated IPABCD phase control\n\nUsage:\n  cxc orchestrate <I|P|A|B|C|D|status|reset> [--session <id>] [--attest <json> | --attest-file <path>] [--cwd <path>] [--json]\n  cxc orchestrate --help\n\nPhases:\n  IDLE -> P -> A -> B -> C -> D -> IDLE\n  I can be entered from IDLE/P/A/B/C/D to clarify requirements.\n  D is a closing action; the resting state after D is IDLE.\n\nAgent safety:\n  Mutating verbs (I/P/A/B/C/D/reset) require explicit --session <id>.\n  Use your current SessionStart id, or the reserved terminal key 'cli'.\n  status uses native CODEX_THREAD_ID when present; plain terminals may use latest-session fallback.\n  Missing/inherited binding? Run cxc session current, then cxc session bind in the native cwd.\n\nAttestation examples (PowerShell single quotes do NOT protect embedded double\nquotes and cmd.exe ignores them entirely, so write the JSON to a file):\n  '{\"from\":\"P\",\"to\":\"A\",\"did\":\"wrote and audited the plan\",\"planUnit\":\"devlog/_plan/260714_slug\",\"workPhaseId\":\"wp1\"}' | Set-Content -Encoding utf8 .codexclaw/attest.json\n  cxc orchestrate A --session <id> --attest-file .codexclaw/attest.json\n  Every attest carries from/to naming the edge; they are coerced before any gate runs.\n  (workPhaseId is required on gated edges whenever a goalplan is bound to the session,\n   and testReceiptPath is required on C -> D for a bound session — see `cxc receipt test`)\n\nStatus:\n  cxc orchestrate status --session <id>\n  cxc orchestrate status --session <id> --json"
+  }
+}
