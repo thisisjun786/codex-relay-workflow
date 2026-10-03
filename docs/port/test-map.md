@@ -9,8 +9,9 @@ carried to Go and where the property it protects will live. Measured on `dev` at
 Todo 48 removed `scripts/port/check_test_map.py`, which kept this table honest: it compared the rows
 with the `test_*.py` files, required a class A, B or C, each `tests` cell to equal `grep -c 'def test_'`,
 a known destination kind, a coupling per C row and totals that agree with the rows. This document is
-now a record of the port, measured at the revision named below: no check reads it, and a later rename
-of a Go package or test does not update its `go-test:` pointers.
+now a record of the port, measured at the revision named below: no check compares it with the tree (the
+local-link check of `crw-dev ci validate` still reads it), and a later rename of a Go package or test does
+not update its `go-test:` pointers.
 
 Todo 44 deleted these test files with the Python implementation. The map is measured at the revision
 below, the last `dev` revision that held every one of them (the rows were kept current with the files

@@ -4782,8 +4782,8 @@ Invariants, each judged:
 What stays open: the `##` section names of `docs/port/cutover.md` are link targets of other pages (`#retention`, `#retention-scan-surface`, the step 0
 anchor in `docs/runtime-install.md`) that no check resolves, because `LinkErrors` ignores `#fragments`. A fragment-aware link check in
 `crw-dev ci validate` would cover every page instead of one document's heading list; it is proposed as a follow-up and not built here.
-`docs/port/inventory.md` and `docs/port/test-map.md` are records that no check reads, and the g1, g3 and g4 oracle reports keep the commands their
-steps ran.
+`docs/port/inventory.md` and `docs/port/test-map.md` are records that no check compares with the tree (the local-link check still reads them), and the
+g1, g3 and g4 oracle reports keep the commands their steps ran.
 
 Bypass: a Python program stored without a `.py` name and without a python shebang, a `.pyw` or `.pyi` file, and a file git ignores are not named. Nothing
 runs Python in the product or in CI, so the refusal is a hygiene guard and not a security boundary.

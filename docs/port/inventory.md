@@ -7,8 +7,9 @@ Measured on `dev` at `4b4cb46351f712ac1c35b64405c34370021cc691`.
 Todo 48 removed `scripts/port/check_inventory.py`, which kept this table honest: it compared the path
 column with `find packages scripts plugins -name '*.py' -not -path '*/tests/*' -not -path '*/__pycache__/*'`,
 each line count with `wc -l`, and required an owning issue per row and a consumer search and removal
-trigger per `retire-with-evidence` row. This document is now a record of the port: no check reads it.
-What it accounted for holds without it, because the tracked tree has no Python file and
+trigger per `retire-with-evidence` row. This document is now a record of the port: no check compares it
+with the tree any more (`crw-dev ci validate` still checks its local links). What it accounted for holds
+without the checker, because the tracked tree has no Python file and
 `crw-dev ci validate` refuses any `.py` file or python-shebang script (decision 75).
 
 ## Columns

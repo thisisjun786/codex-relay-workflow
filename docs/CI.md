@@ -8,7 +8,7 @@ Installing and operating the runtime is [runtime installation](runtime-install.m
 
 | Command | Where CI runs it |
 | --- | --- |
-| `crw-dev ci validate` | `validate`: skill metadata, local Markdown links, and that the repository tracks no Python: a `.py` file or a python-shebang script, tracked or not, fails it (`TestNoPythonIsTracked` holds the same for `make test`); CI installs no Python |
+| `crw-dev ci validate` | `validate`: skill metadata, local Markdown links, and that the repository tracks no Python: a `.py` file or a python-shebang script, tracked or untracked and not ignored, fails it (`TestNoPythonIsTracked` holds the tracked files for `make test`); CI installs no Python |
 | `crw-dev ci plugin` | `validate`: plugin package shape, payload hygiene and the recorded version digest ([below](#plugin-package)) |
 | `crw-dev ci contracts` | `validate`: the offline contract checks built into `crw-dev`: the hook replay, the operations shape check (`crw-dev ci operations`), the component definition, the start-policy self-test and the parent-title replay |
 | `bash scripts/ci/secrets.sh` | `secrets`: checksum-pinned Gitleaks scan of all fetched history |

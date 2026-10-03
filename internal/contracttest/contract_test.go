@@ -127,8 +127,13 @@ func TestCorpusKeepsItsDomains(t *testing.T) {
 			t.Errorf("contract/fixtures/%s is missing", domain)
 			continue
 		}
-		if entries, err := os.ReadDir(filepath.Join(root, "contract", "fixtures", domain)); err != nil || len(entries) == 0 {
-			t.Errorf("contract/fixtures/%s holds no fixture (%v)", domain, err)
+		entries, err := os.ReadDir(filepath.Join(root, "contract", "fixtures", domain))
+		if err != nil {
+			t.Errorf("contract/fixtures/%s: %v", domain, err)
+			continue
+		}
+		if !slices.ContainsFunc(entries, func(e os.DirEntry) bool { return e.Type().IsRegular() }) {
+			t.Errorf("contract/fixtures/%s holds no fixture file", domain)
 		}
 	}
 }
