@@ -72,27 +72,21 @@ func resolve(cwd, p string) string {
 
 func evidenceRoot(cwd string) string { return resolve(cwd, filepath.Join(crwdir.DirName, Subdir)) }
 
-// ExtractReceiptPath is the path after the first "EVIDENCE_RECORDED:" that is followed by something: JavaScript whitespace is
-// skipped (the newline too), and the path is the run of characters that are not whitespace. An occurrence with nothing after
-// it lets the scan go on. The oracle's regular expression takes the first match, not the last line its comment names.
+// ExtractReceiptPath is the path after the first "EVIDENCE_RECORDED:" in message: JavaScript whitespace is skipped (the newline
+// too) and the path is the run of characters that are not whitespace. A marker followed by nothing but whitespace gives none;
+// no other marker can follow it. The oracle's regular expression takes the first match, not the last line its comment names.
 func ExtractReceiptPath(message string) (string, bool) {
 	const marker = "EVIDENCE_RECORDED:"
-	isSpace := func(r rune) bool { return text.Trim(string(r)) == "" }
-	for from := 0; ; {
-		i := strings.Index(message[from:], marker)
-		if i < 0 {
-			return "", false
-		}
-		from += i + 1
-		rest := strings.TrimLeftFunc(message[from-1+len(marker):], isSpace)
-		end := strings.IndexFunc(rest, isSpace)
-		if end < 0 {
-			end = len(rest)
-		}
-		if end > 0 {
-			return rest[:end], true
-		}
+	i := strings.Index(message, marker)
+	if i < 0 {
+		return "", false
 	}
+	isSpace := func(r rune) bool { return text.Trim(string(r)) == "" }
+	rest := strings.TrimLeftFunc(message[i+len(marker):], isSpace)
+	if end := strings.IndexFunc(rest, isSpace); end >= 0 {
+		rest = rest[:end]
+	}
+	return rest, rest != ""
 }
 
 // insideDirectory is isPathInsideDirectory: file lies below directory. A relative path that merely starts with ".." counts as
