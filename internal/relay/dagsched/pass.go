@@ -58,6 +58,9 @@ func (r Reading) dispositionsJSON() string {
 		if n.Lifecycle != "" {
 			node["lifecycle"] = n.Lifecycle
 		}
+		if n.Release != nil {
+			node["release"] = n.Release.canonical()
+		}
 		nodes[i] = node
 	}
 	return dag.Canonical(nodes)
