@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install/configguard"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/scope"
@@ -326,5 +327,108 @@ func TestFeaturesHomeTrimAndFallback(t *testing.T) {
 	h.success("disable")
 	if _, err := os.Stat(filepath.Join(filepath.Dir(h.home), ".codex", configguard.SelfHealMarkerName)); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestFeaturesWarningFallback(t *testing.T) {
+	for _, key := range []string{"default_mode_request_user_input", "some_future_flag"} {
+		out := featureWarning(key, nil)
+		if !strings.Contains(out, "경고") || strings.Contains(out, "exit") || !strings.Contains(out, "codex features enable "+key) {
+			t.Fatal(out)
+		}
+		if key == "some_future_flag" && !strings.Contains(out, "이 플래그에 의존하는 기능이 비활성화된다.") {
+			t.Fatal(out)
+		}
+	}
+}
+
+func TestFeaturesRunnerBoundaries(t *testing.T) {
+	for _, mode := range []string{"utf8", "overflow", "missing", "denied", "cancelled"} {
+		t.Run(mode, func(t *testing.T) {
+			h := newFeatureHome(t, "")
+			h.env = h.env.With("CRW499_FAKE_MODE", mode)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if mode == "missing" {
+				h.env = h.env.With("PATH", t.TempDir())
+			}
+			if mode == "denied" {
+				if err := os.Chmod(filepath.Join(h.env.Get("PATH"), "codex"), 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if mode == "cancelled" {
+				cancel()
+			}
+			result := featureRunner(ctx, h.env)([]string{"features", "list"})
+			if mode == "utf8" {
+				if result.ExitCode != 3 || result.Stderr != "a\ufffd" {
+					t.Fatalf("%+v", result)
+				}
+			} else if result.ExitCode != 1 {
+				t.Fatalf("exit %d", result.ExitCode)
+			}
+			if mode == "overflow" && (len(result.Stdout) == 0 || len(result.Stdout) > 1<<20) {
+				t.Fatalf("output size %d", len(result.Stdout))
+			}
+			if mode == "missing" && result.Stderr != "spawnSync codex ENOENT" || mode == "denied" && result.Stderr != "spawnSync codex EACCES" {
+				t.Fatalf("%+v", result)
+			}
+		})
+	}
+}
+
+func TestFeaturesExternalOwnership(t *testing.T) {
+	for _, reason := range []string{"missing", "changed", "unverifiable"} {
+		t.Run(reason, func(t *testing.T) {
+			h := newFeatureHome(t, "[memories]\ngenerate_memories = true\n")
+			h.success("enable")
+			content := h.read("config.toml")
+			switch reason {
+			case "missing":
+				content = strings.ReplaceAll(content, "dedicated_tools = true\n", "")
+			case "changed":
+				content = strings.ReplaceAll(content, "dedicated_tools = true", "dedicated_tools = false")
+			case "unverifiable":
+				var m struct{ BackupPath string }
+				if err := json.Unmarshal([]byte(h.read(configguard.InstallManifestName)), &m); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Remove(m.BackupPath); err != nil {
+					t.Fatal(err)
+				}
+				content += "# foreign edit\n"
+			}
+			content = strings.ReplaceAll(content, "multi_agent = true", "multi_agent = false")
+			if err := os.WriteFile(filepath.Join(h.home, "config.toml"), []byte(content), 0644); err != nil {
+				t.Fatal(err)
+			}
+			out := h.success("disable")
+			if !strings.Contains(out, "memories.dedicated_tools ("+reason+")") || !strings.Contains(out, "multi_agent (missing)") {
+				t.Fatal(out)
+			}
+			if reason == "changed" && !strings.Contains(h.read("config.toml"), "dedicated_tools = false") {
+				t.Fatal("foreign value lost")
+			}
+		})
+	}
+}
+
+func TestFeaturesBackupAndEmptySuccess(t *testing.T) {
+	original := "# keep\n[features]\nmulti_agent = true\ngoals = true\nhooks = true\ndefault_mode_request_user_input = true\n[memories]\ndedicated_tools = true\n"
+	h := newFeatureHome(t, original)
+	if out := h.success("enable"); !strings.HasPrefix(out, "crw: enabled [none]\nbackup: ") {
+		t.Fatal(out)
+	}
+	backups, err := filepath.Glob(filepath.Join(h.home, "config.toml.crw-*.bak"))
+	if err != nil || len(backups) != 1 {
+		t.Fatalf("backups %v %v", backups, err)
+	}
+	b, err := os.ReadFile(backups[0])
+	if err != nil || string(b) != original {
+		t.Fatalf("backup %q %v", b, err)
+	}
+	if out := h.success("disable"); out != "crw: disabled [none]; kept pre-existing [multi_agent, goals, hooks, default_mode_request_user_input]\nleft to their current owner: memories.dedicated_tools (changed)\n" {
+		t.Fatal(out)
 	}
 }
