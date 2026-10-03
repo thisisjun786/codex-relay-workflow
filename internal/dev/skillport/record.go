@@ -7,7 +7,8 @@
 // every substituted original file in port/cxc/records/crw-<folder>.json. "skillport check" verifies the
 // staged tree against the records; crw-dev ci validate runs the same Check and validates the staged
 // skills like the plugin's own. Offline, Check proves each staged file is what its record holds under
-// the pinned name table; any difference is refused (recording hand edits is a later change). It holds
+// the pinned name table; a difference requires a justified edit recorded by "skillport edits --source DIR --reason TEXT NAME".
+// Hunks are checked by restoring the original; additions pin bytes and mode, removals require absence. It holds
 // no original: that the digests are the substituted originals is proved by check --source against an
 // extracted tree. Stage never overwrites; to refresh a skill, remove its directory and record with git.
 package skillport
@@ -166,6 +167,22 @@ func writeTemp(target string, data []byte) (string, error) {
 	return f.Name(), nil
 }
 
+// save replaces a record atomically.
+func save(root, name string, s *Skill) error {
+	data, err := encode(s)
+	if err != nil {
+		return err
+	}
+	tmp, err := writeTemp(recordPath(root, name), data)
+	if err != nil {
+		return err
+	}
+	if err = os.Rename(tmp, recordPath(root, name)); err != nil {
+		os.Remove(tmp)
+	}
+	return err
+}
+
 // validate refuses a record whose names cannot be trusted as paths.
 func (s *Skill) validate(name string) error {
 	if !validFolder(s.From) || name != prefix+s.From {
@@ -175,6 +192,17 @@ func (s *Skill) validate(name string) error {
 		if !localPath(p) {
 			return fmt.Errorf("file name %q is not a clean relative slash path", p)
 		}
+	}
+	seen := map[string]bool{}
+	for _, e := range s.Edits {
+		_, inOriginal := s.Files[e.File]
+		kind := e.Add && !inOriginal && !e.Remove && e.Hunks == nil && e.SHA256 != "" ||
+			e.Remove && inOriginal && !e.Add && e.Hunks == nil && e.SHA256 == "" && !e.Exec ||
+			!e.Add && !e.Remove && inOriginal && len(e.Hunks) > 0 && e.SHA256 == "" && !e.Exec
+		if !localPath(e.File) || seen[e.File] || !kind || strings.TrimSpace(e.Reason) == "" {
+			return fmt.Errorf("edit of %q is unusable: it needs a clean name, one kind, one edit per file and a reason", e.File)
+		}
+		seen[e.File] = true
 	}
 	return nil
 }
