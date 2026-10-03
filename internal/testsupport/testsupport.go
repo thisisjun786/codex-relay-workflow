@@ -45,6 +45,17 @@ const KeepRootEnv = "CRW_TEST_KEEP_ROOT"
 // rootPrefix starts the name of every isolation root made directly in TMPDIR.
 const rootPrefix = "crw-relay-test-"
 
+// executionPolicyEnvs are the variables that point a process at an execution policy and pin its
+// digest: EnvPolicy and EnvDigest of internal/bridge/execution, named here so that test support
+// does not depend on that package, as the other tests that name them do. A shell that runs the
+// tests holds both when it is an operating shell, and then doctor reports that policy, a
+// supervisor send is no longer held for want of a readable policy, a policy a test writes hashes
+// against the shell's digest and is refused, and every golden recorded without a policy differs.
+// The isolation drops them from the process and from every test process that inherits its
+// environment; a test that needs a policy sets it. The environment the crw build starts with
+// (startEnviron in crw.go) is taken before any TestMain and keeps them: go build does not read them.
+var executionPolicyEnvs = []string{"CODEX_THREAD_BRIDGE_EXECUTION_POLICY", "CODEX_THREAD_BRIDGE_EXECUTION_POLICY_DIGEST"}
+
 func init() {
 	if testing.Testing() {
 		if err := RefuseLiveState(); err != nil {
@@ -161,8 +172,9 @@ func NewTree(t *testing.T) *Tree {
 	}
 }
 
-// IsolateRelayState points every relay-owned home and state root at one temporary tree and
-// keeps the live-state refusal (RefuseLiveStateEnv) in force for the process and its children.
+// IsolateRelayState points every relay-owned home and state root at one temporary tree, drops the
+// execution policy the shell holds (executionPolicyEnvs) and keeps the live-state refusal
+// (RefuseLiveStateEnv) in force for the process and its children.
 // The caller invokes the returned cleanup when it is done; a TestMain uses Main, which does.
 func IsolateRelayState() (func() error, error) {
 	root, err := isolate()
@@ -182,8 +194,9 @@ func removeRoot(root string) error {
 }
 
 // isolate makes the isolation root and points the homes, the XDG directories and the relay's
-// state, scope and marker roots below it. The Go toolchain keeps the module and build caches it
-// had before (GOPATH, GOMODCACHE, GOCACHE), so a go command a test runs is not cold.
+// state, scope and marker roots below it, and unsets the execution-policy variables. The Go
+// toolchain keeps the module and build caches it had before (GOPATH, GOMODCACHE, GOCACHE), so a
+// go command a test runs is not cold.
 //
 // The root is made in TMPDIR, unless the process was started by a test process that isolated
 // (IsolationRootEnv): then it is made inside that process's root, which that process removes.
@@ -218,6 +231,11 @@ func isolate() (string, error) {
 	maps.Copy(env, toolchain)
 	for key, path := range env {
 		if err := os.Setenv(key, path); err != nil {
+			return "", errors.Join(err, RemoveTempTree(root))
+		}
+	}
+	for _, key := range executionPolicyEnvs {
+		if err := os.Unsetenv(key); err != nil {
 			return "", errors.Join(err, RemoveTempTree(root))
 		}
 	}
