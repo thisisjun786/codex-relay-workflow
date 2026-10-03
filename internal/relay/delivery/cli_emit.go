@@ -102,6 +102,10 @@ func cmdEmit(c *cliRun) (any, error) {
 		options.Continuation = []byte(dumps(Obj{{Key: "anchorTurnId", Value: anchor}, {Key: "actor", Value: actor}, {Key: "reason", Value: reason}}))
 	}
 	if c.opt("--supersedes-revision") != nil {
+		// Whatever the child names is recorded as it stated it, a suppressed receipt of this
+		// generation included (CRW-470): a staged receipt can be suppressed after the child names it,
+		// so no check here keeps the naming out; the head reads it through the suppressed receipt
+		// (registry.ReadThrough), and refuses nothing the child could not have known.
 		s := c.s("--supersedes-revision")
 		options.SupersedesRevision = &s
 	}

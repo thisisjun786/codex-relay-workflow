@@ -484,6 +484,10 @@ while a declared required check is not successful at its highest attempt on that
 the pull request is a draft. State every field; an unstated one is refused rather than read as
 zero. If the review is not finished, the turn ends `blocked_needs_input` and says so, which is
 not a lesser outcome than pretending it did.
+A thread that arrives after this record is not in `threadsSeen`. The parent's restatement reports it
+as a late finding unless the parent has recorded its own disposition for it
+([how](merge-readiness.md#a-late-thread-the-parent-dispositions-itself)); that never replaces the
+child's dispositions.
 
 Without `--socket` the receipt is STAGED: recorded and visible, deliverable only once an
 independent observation sees that turn end normally. Staged is real progress; it is not delivery
@@ -495,6 +499,27 @@ revisions in one generation are a fork and neither is current. The FIRST receipt
 generation omits it: a `needs_changes` correction opens the next generation, and naming the
 previous generation's revision there declares a predecessor that generation does not contain, which
 reads `unknown_predecessor` and leaves the whole generation with no current head.
+
+A receipt the relay suppressed is not a revision. The relay suppresses a staged receipt when the
+turn that staged it ends failed or interrupted, and a host or App Server restart does that, so
+after a restart the receipt you emitted before it may or may not still count, and you cannot tell.
+You do not have to: emit the new receipt and name the revision you emitted last, as above. The
+head reads a naming of a suppressed receipt as naming what that receipt itself replaced. When it
+replaced nothing, the new receipt has no predecessor, and with no other revision that counts it is
+the generation's only revision (`sole_revision`); when it replaced a revision that still counts,
+the new receipt replaces that one (`declared_chain`). Emit accepts the naming either way and
+records it as you stated it. That reading resolves the naming and nothing more: the generation is
+judged as always. A naming it cannot resolve still reads `unknown_predecessor` (a revision of
+another generation, a revision nobody emitted, a suppressed receipt whose own predecessor nobody
+holds), and revisions that stand unconnected still read `fork` (two re-emits naming the same
+suppressed receipt, or one naming a suppressed receipt that replaced nothing beside a revision
+that still counts): name the revision that yours replaces.
+
+A receipt is named by its revision, so the same bytes emitted again are the same receipt. If the
+receipt the restart cut off is suppressed and you emit an identical manifest, the answer says
+`"duplicate": true` and `"stage": "suppressed"` and nothing that counts is on record: change
+what the manifest holds (a handoff record carries the checks run since and the time of this emit)
+and emit that. `revision-head` shows what counts.
 
 ## A staged receipt needs a host-capable process
 
@@ -1005,7 +1030,9 @@ Read the handoff the report carries rather than collecting its contents again. T
 already paginated the review and enumerated the check runs, and the values are the ones the merge
 turn expects to be restated. What this side adds is currency: re-read the head and the base
 immediately before merging and compare the counts to the record. A disagreement is a fail-closed
-return to the same child, through the needs-changes verdict below, not a repair made here.
+return to the same child, through the needs-changes verdict below, not a repair made here. A late
+review thread on the record's head that the parent has itself dispositioned
+([how](merge-readiness.md#a-late-thread-the-parent-dispositions-itself)) is not a disagreement.
 
 The proof is over the parent's OWN acknowledging turn, which the delivered message cannot carry:
 the child does not know which turn will acknowledge, and quoting the delivered fields back cannot
@@ -1257,7 +1284,10 @@ generation is the way for the first two:
     tries to replace the verified ruling of the old event is refused with `stale_generation` or
     `superseded_revision` saying so;
   - the head is ambiguous: outside a plan, a fresh generation; for a plan node this build records no
-    route, so report it and open none.
+    route, so report it and open none. The reading, not the child's wording, says which case this
+    is: a re-emit that named a suppressed receipt of its own generation may read a head
+    ([the child emits](#the-child-emits)), so read `revision-head` first, rule that head like any
+    other, and treat the head as ambiguous only when it still reads so.
 
 A `needs_changes` verdict opens the generation itself. Open one by hand when nothing ruled it:
 

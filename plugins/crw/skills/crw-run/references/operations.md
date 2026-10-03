@@ -1266,7 +1266,9 @@ One disagreement is the parent's own to remove: a base that moved under an other
 The parent refreshes that itself under
 [Refresh the base yourself when only the base moved](merge-readiness.md#refresh-the-base-yourself-when-only-the-base-moved),
 and it is the one case where the parent builds the reading of the new head itself, because the
-record it would restate names the head the refresh replaced. Every other disagreement returns as
+record it would restate names the head the refresh replaced. A late review thread on the record's
+head that the parent has itself dispositioned under [OPS-9.4](#ops-94-a-new-head-invalidates-the-review-it-outran)
+is not a disagreement either. Every other disagreement returns as
 above.
 
 Two further things the parent does are not a second review round either. Deciding an acceptance
@@ -1299,7 +1301,10 @@ carry a green result forward across a head it never saw.
 
 A handoff record is invalidated the same way, and a review thread that appears on the SAME head
 counts: if it is not in the record's `threadsSeen`, the record did not see it and no longer
-describes the candidate. An invalidated record is not a verdict and is not a merge candidate. It
+describes the candidate, unless the parent has itself judged that thread and recorded its
+disposition for that head (`merge-evidence --restate <record> --late-dispositions <file>`, in
+[a late thread the parent dispositions itself](merge-readiness.md#a-late-thread-the-parent-dispositions-itself)).
+An invalidated record is not a verdict and is not a merge candidate. It
 returns to the child that produced it, through the correction path the assignment already uses.
 
 The one head the parent makes itself, a base refresh under that rule, is a head the child's evidence
@@ -1393,8 +1398,8 @@ code rather than with the repository it lands in.
 
 The skills and the runtime own different things. The skills hold workflow instructions that an agent
 reads; `cmd/` and `internal/` hold runtime code that a host executes. A rule that belongs to one does not move
-into the other just because they now share a commit. CXC and Paperthin stay outside this repository
-entirely and are not vendored by this decision.
+into the other just because they now share a commit. CXC stays outside this repository
+entirely and is not vendored by this decision.
 
 ### OPS-11.3 Four stages that are not one event
 
