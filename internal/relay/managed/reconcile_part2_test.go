@@ -20,6 +20,7 @@ func TestReconcileAbandonsOnlyUnresumableThreads(t *testing.T) {
 		{"resume refused", hostRefusal("thread/resume: no rollout found", "notLoaded", nil), true},
 		{"unknown thread", hostRefusal("thread/read: thread not found", "", nil), true},
 		{"settings mismatch", hostRefusal("thread/resume: settings differ", "notLoaded", map[string]any{"resumed": nil}), false},
+		{"settings contain missing-thread text", hostRefusal("thread/resume: settings differ: cwd '/tmp/thread not found'", "notLoaded", map[string]any{"resumed": map[string]any{"cwd": "/tmp/thread not found"}}), false},
 		{"connection unavailable", hostRefusal("thread/resume: establish timeout", "notLoaded", map[string]any{"rpcError": map[string]any{"code": "connection_unavailable"}}), false},
 		{"initialization refused", hostRefusal("initialize: refused", "notLoaded", nil), false},
 		{"busy", hostRefusal("thread/read: Thread is active", "active", nil), false},
@@ -123,6 +124,34 @@ func TestReconcileUUIDv7Window(t *testing.T) {
 	}
 	if len(h.reads) == 0 {
 		t.Fatal("in-window thread was not read")
+	}
+}
+
+func TestReconcileUUIDWindowEdgesAndLegacyFallback(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		delta  time.Duration
+		legacy string
+	}{
+		{"lower inclusive", -time.Minute, ""},
+		{"upper inclusive", 200 * time.Second, ""},
+		{"non-v7", 0, "00000000-0000-4000-8000-000000000001"},
+		{"malformed", 0, "00000000-0000-7000-8000-not-a-uuid"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			k := newReconcileKit(t, "lost")
+			digits := fmt.Sprintf("%012x", k.clock.now.Add(tc.delta).UnixMilli())
+			id := fmt.Sprintf("%s-%s-7000-8000-000000000001", digits[:8], digits[8:])
+			if tc.legacy != "" {
+				id = tc.legacy
+			}
+			k.host.addThreadAs(id)
+			got := k.run()
+			k.expect(got, "admitted", "", "adopted")
+			if got["childTaskId"] != id {
+				t.Fatalf("boundary/fallback candidate lost: %v", got)
+			}
+		})
 	}
 }
 

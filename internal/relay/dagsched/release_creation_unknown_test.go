@@ -2,6 +2,7 @@ package dagsched
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -243,14 +244,23 @@ func creationWorker(t *testing.T, k *realKit) (*service.Service, adapter.WorkerO
 }
 
 func TestReleaseCreationUnknownLegacyProfiles(t *testing.T) {
-	for _, named := range []bool{true, false} {
-		t.Run(fmt.Sprintf("named=%v", named), func(t *testing.T) {
+	for _, tc := range []struct {
+		named          bool
+		guard, changed string
+	}{
+		{true, "", ""}, {false, "", ""},
+		{true, "standby", "fingerprint"}, {true, "standby", "state"},
+		{false, "business", "fingerprint"}, {false, "business", "state"},
+	} {
+		t.Run(fmt.Sprintf("named=%v/%s/%s", tc.named, tc.guard, tc.changed), func(t *testing.T) {
+			named := tc.named
 			k := newRealKit(t)
 			st := keepThreads(k)
 			srv, observer := creationWorker(t, k)
 			clock := delivery.NewFakeClock()
 			var active *adapter.Adapter
 			var requests []string
+			bounds := shortBounds()
 			reload := func() {
 				t.Helper()
 				if active != nil {
@@ -264,7 +274,7 @@ func TestReleaseCreationUnknownLegacyProfiles(t *testing.T) {
 					t.Fatal(err)
 				}
 				var err error
-				active, err = adapter.Open(k.host.SocketPath, k.state, adapter.Options{Policy: policy.BridgePolicy(), Clock: clock, RPC: appserver.New(k.host.SocketPath, shortBounds())})
+				active, err = adapter.Open(k.host.SocketPath, k.state, adapter.Options{Policy: policy.BridgePolicy(), Clock: clock, RPC: appserver.New(k.host.SocketPath, bounds)})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -317,7 +327,68 @@ func TestReleaseCreationUnknownLegacyProfiles(t *testing.T) {
 				}
 				return fakehost.Reply{Result: map[string]any{"data": []any{map[string]any{"name": "extra", "pluginId": nil, "runtimeStatus": status}}, "nextCursor": nil}}
 			})
+			if tc.guard != "" {
+				bounds.Ack = 5 * time.Second
+			}
 			reload()
+			if tc.guard != "" {
+				if named {
+					st.mu.Lock()
+					st.notLoaded = true
+					st.mu.Unlock()
+				} else {
+					clock.Advance(180)
+				}
+				paused, resume := make(chan struct{}, 1), make(chan struct{})
+				var once sync.Once
+				defer once.Do(func() { close(resume) })
+				k.host.Handle("thread/resume", func(raw json.RawMessage) fakehost.Reply {
+					id, _ := paramsOf(raw)["threadId"].(string)
+					return fakehost.Reply{Result: k.startReply(id), Paused: paused, Release: resume}
+				})
+				type result struct {
+					res ReleaseResult
+					err error
+				}
+				finished := make(chan result, 1)
+				go func() {
+					res, err := k.sched.Release(context.Background(), "rp", "A", "parent", k.request())
+					finished <- result{res, err}
+				}()
+				select {
+				case <-paused:
+				case <-time.After(10 * time.Second):
+					t.Fatal("resume did not reach guard fault point")
+				}
+				turns := k.host.Count("turn/start")
+				if tc.changed == "fingerprint" {
+					k.exec("UPDATE managed_start_requests SET request_fingerprint='changed' WHERE request_id=?", first.RequestID)
+				} else {
+					k.exec("UPDATE managed_start_requests SET state='reserved' WHERE request_id=?", first.RequestID)
+				}
+				once.Do(func() { close(resume) })
+				got := <-finished
+				if got.err != nil || got.res.Bound || k.host.Count("turn/start") != turns {
+					t.Fatalf("guard accepted invalid %s: %v %+v turns %d -> %d", tc.changed, got.err, got.res, turns, k.host.Count("turn/start"))
+				}
+				want := "creation_unknown"
+				if tc.guard == "business" {
+					want = "business_not_attempted"
+				}
+				if got.res.Reason != want {
+					t.Fatalf("guard did not withhold intended send: %+v", got.res)
+				}
+				operation := first.Managed.Get("businessRequestId").(string)
+				if tc.guard == "standby" {
+					sum := sha256.Sum256([]byte(first.RequestID))
+					operation = fmt.Sprintf("managed-standby-%x", sum)
+				}
+				receipt, err := (adapter.Managed{Adapter: active}).GetOperation(context.Background(), operation)
+				if err != nil || pyjson.Map(receipt["rpcError"])["code"] != "mcp_profile_required" {
+					t.Fatalf("reproof did not clear legacy admission: %v %v", receipt, err)
+				}
+				return
+			}
 			if named {
 				st.mu.Lock()
 				st.notLoaded, st.rejects["real-child"] = true, true

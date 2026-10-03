@@ -238,12 +238,14 @@ func abandonable(receipt map[string]any) bool {
 	if receipt["status"] != "failed" || receipt["turnId"] != nil {
 		return false
 	}
+	if _, resumed := receipt["resumed"]; resumed || pyjson.Map(receipt["rpcError"])["code"] == "connection_unavailable" {
+		return false
+	}
 	err := pyjson.Text(receipt["error"])
 	if strings.Contains(err, "thread not found") && (strings.HasPrefix(err, "thread/read:") || strings.HasPrefix(err, "thread/resume:")) {
 		return true
 	}
-	_, resumed := receipt["resumed"]
-	return !resumed && receipt["statusBeforeResume"] == "notLoaded" && strings.HasPrefix(err, "thread/resume:") && pyjson.Map(receipt["rpcError"])["code"] != "connection_unavailable"
+	return receipt["statusBeforeResume"] == "notLoaded" && strings.HasPrefix(err, "thread/resume:")
 }
 
 func (r *startRun) abandon(base reconciliation, thread, why string) decision {
