@@ -527,6 +527,18 @@ its report, so this text states none.
 This is an instruction the parent follows; nothing refuses a dispatch that skipped it, so the run records the answer where it records
 the dispatch.
 
+### Release by region grade
+
+The parent exists to run work in parallel, so an edit region is a signal for the merge order and for the handling of a conflict, not a gate on release. Two nodes that both write a file are not run one
+after the other for that reason alone. Only a change two branches cannot both make holds a release back: the same file renamed or deleted, the same function body rewritten in two directions, a shared
+contract surface (the contract schema, the CLI spec, the contract goldens), or an overlap whose resolution would cost more than the work. Every other overlap is released and settled when the branches meet.
+The parent orders the merges and settles the mechanical conflicts by their rule, and the child of the later pull request resolves the rest when it refreshes its base.
+
+In a DAG plan the scheduler applies this by grade: a region is declared `independent`, `mechanical` (with the rule that settles it: `union`, `renumber` or `regenerate:<command>`), `local` or `exclusive`,
+`dag-ready` releases mechanical and local overlaps and defers only exclusive ones, and the rule it released a node under, with the rows that rest on and the overlap count by grade, is in the reading and
+in the recorded pass. [Release by region grade](references/region-grades.md) says how to declare the grades, how to read the judgement, and what the parent does at merge time: deciding the merge order,
+settling a mechanical overlap, and when a candidate goes back to its child.
+
 ### Start policy and child cap
 
 Before this run creates its first child or registers an assignment for one, whichever comes first,
@@ -868,6 +880,8 @@ says so: the child merges the base, names the kind of each merge ([the kinds and
 each](references/task-packet.md#what-a-handoff-discloses)) and reruns that kind's checks and no
 more, so the correction does not ask for an audit of what the base moved under. The restoration
 block carries the siblings' landings and the conflicts the parent expects.
+
+A base conflict can show after the receipt was ruled `verified` and before the node is accepted. The needs-changes ruling on that same receipt carries it: the relay replaces the verified ruling and opens the next generation, as long as nothing rests on it. The steps, the refusals and what an older relay answers are in [a base conflict after the ruling and before the acceptance](references/merge-readiness.md#a-base-conflict-after-the-ruling-and-before-the-acceptance).
 
 Refresh the task's identity, ownership, current turn, checkout, and prior
 correction receipts before sending. Reuse its agreed model, effort, workflow,

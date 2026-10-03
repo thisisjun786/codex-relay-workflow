@@ -484,7 +484,6 @@ var errPaced = errors.New("paced")
 
 type superseded struct {
 	reason string
-	late   bool
 }
 
 func (s *superseded) Error() string { return "superseded: " + s.reason }
@@ -639,19 +638,6 @@ func (d *Service) supersedeIn(ctx context.Context, eventID, reason string) error
 	return d.annotateIn(ctx, eventID, reason)
 }
 
-func (d *Service) suppressIfSuperseded(ctx context.Context, eventID string) (string, error) {
-	var reason string
-	err := d.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
-		var err error
-		reason, err = d.SupersessionReason(ctx, eventID)
-		if err != nil || reason == "" {
-			return err
-		}
-		return d.supersedeIn(ctx, eventID, reason)
-	})
-	return reason, err
-}
-
 // ReadWorkReport reports whether a work report exists.
 func (d *Service) hasWorkReport(ctx context.Context, eventID string) (bool, error) {
 	row, err := one(ctx, d.Store, "SELECT 1 FROM work_reports WHERE event_id = ? LIMIT 1", eventID)
@@ -717,22 +703,22 @@ type claimed struct {
 
 // claim is _claim: authorization, staging and eligibility decided in one atomic statement,
 // with the attempt, its bytes and the send budget written in the same transaction.
+//
+// The transaction judges the event once, and the judgment reads every reviewable revision of the
+// event's generation. A superseded event is recorded as superseded in that same transaction and
+// refused once it has committed, so no supersession can land between a first judgment and a
+// second one, and the reason stored is the reason returned.
 func (d *Service) claim(ctx context.Context, eventID string, now float64, owner, recipient string) (claimed, error) {
-	reason, err := d.suppressIfSuperseded(ctx, eventID)
-	if err != nil {
-		return claimed{}, err
-	}
-	if reason != "" {
-		return claimed{}, &superseded{reason: reason}
-	}
 	var out claimed
-	err = d.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
-		late, err := d.SupersessionReason(ctx, eventID)
+	var gone *superseded
+	err := d.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
+		reason, err := d.SupersessionReason(ctx, eventID)
 		if err != nil {
 			return err
 		}
-		if late != "" {
-			return &superseded{reason: late, late: true}
+		if reason != "" {
+			gone = &superseded{reason: reason}
+			return d.supersedeIn(ctx, eventID, reason)
 		}
 		changed, err := execSQL(ctx, d.Store, "UPDATE deliveries SET state = ?, lease_owner = ?, lease_until = ?, attempt_count = attempt_count + 1, updated_at = ? WHERE event_id = ? AND state IN (?,?,?) AND hold_reason IS NULL AND (next_eligible_at IS NULL OR next_eligible_at <= ?) AND EXISTS (SELECT 1 FROM relationships r WHERE r.relationship_id = deliveries.relationship_id AND r.status = 'active' AND r.superseded_by IS NULL) AND EXISTS (SELECT 1 FROM events e WHERE e.event_id = deliveries.event_id AND e.stage = 'final') AND NOT EXISTS (SELECT 1 FROM events ev JOIN relationships rr ON rr.relationship_id = ev.relationship_id WHERE ev.event_id = deliveries.event_id AND ev.outcome NOT IN ('merge_turn_grant') AND ev.execution_generation < rr.execution_generation)"+
 			" AND NOT EXISTS (SELECT 1 FROM "+busyHeadSQL+" bh WHERE bh.recipient_task_id = deliveries.recipient_task_id AND (bh.first_seen_at, bh.created_at, bh.event_id) < ((SELECT ce.first_seen_at FROM events ce WHERE ce.event_id = deliveries.event_id), deliveries.created_at, deliveries.event_id))",
@@ -796,7 +782,13 @@ func (d *Service) claim(ctx context.Context, eventID string, now float64, owner,
 		}
 		return nil
 	})
-	return out, err
+	if err != nil {
+		return out, err
+	}
+	if gone != nil {
+		return claimed{}, gone
+	}
+	return out, nil
 }
 
 // journalRestorationAttempted records what the frozen bytes carried of a declared block
@@ -932,11 +924,6 @@ func (d *Service) Attempt(ctx context.Context, eventID string, adapter Adapter, 
 	case errors.Is(err, errNotClaimable):
 		return nil, nil
 	case errors.As(err, &gone):
-		if gone.late {
-			if _, err := d.suppressIfSuperseded(ctx, eventID); err != nil {
-				return nil, err
-			}
-		}
 		return Obj{{Key: "deliveryState", Value: Superseded}, {Key: "supersededReason", Value: gone.reason}, {Key: "eventId", Value: eventID}, {Key: "sendAttempted", Value: "no"}}, nil
 	case err != nil:
 		return nil, err
