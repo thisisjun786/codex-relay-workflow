@@ -166,10 +166,10 @@ func TestCRW398AdmissionAndReportBoundaries(t *testing.T) {
 			c.exec(t, "UPDATE relationships SET superseded_by='replacement'")
 		}},
 		{"ambiguous start", "unmeasured", "dispatch_uncorrelated", false, func(t *testing.T, c *unclaimedChild) {
-			c.exec(t, "INSERT INTO managed_start_requests SELECT 'req-2',issue_key,'fp-2',fingerprint_version,workspace,marker_root,socket_identity,'create-2',dispatch_request_id,state,revision,child_task_id,standby_turn_id,relationship_id,execution_generation,receipt_status,created_at,updated_at FROM managed_start_requests")
+			c.exec(t, "INSERT INTO managed_start_requests(request_id,issue_key,request_fingerprint,fingerprint_version,workspace,marker_root,socket_identity,create_request_id,dispatch_request_id,state,revision,child_task_id,standby_turn_id,relationship_id,execution_generation,receipt_status,created_at,updated_at) SELECT 'req-2',issue_key,'fp-2',fingerprint_version,workspace,marker_root,socket_identity,'create-2',dispatch_request_id,state,revision,child_task_id,standby_turn_id,relationship_id,execution_generation,receipt_status,created_at,updated_at FROM managed_start_requests")
 		}},
 		{"bounded facts exceeded", "unmeasured", "dispatch_uncorrelated", false, func(t *testing.T, c *unclaimedChild) {
-			c.exec(t, "WITH RECURSIVE numbers(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM numbers WHERE n<513) INSERT INTO assignment_settlements SELECT 'rel-1','child','business','completed',? FROM numbers", nsAt)
+			c.exec(t, "WITH RECURSIVE numbers(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM numbers WHERE n<513) INSERT INTO generation_turns SELECT 'rel-1',1,'later-' || n,'explicit_admission_bound:standby','child','admitted',? FROM numbers", nsAt)
 		}},
 		{"conflicting settlement", "unmeasured", "terminal_conflict", false, func(t *testing.T, c *unclaimedChild) {
 			c.exec(t, "INSERT INTO assignment_settlements VALUES('rel-1','child','business','failed',?)", nsAt)
