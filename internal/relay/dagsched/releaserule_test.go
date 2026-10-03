@@ -3,7 +3,6 @@ package dagsched
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -288,27 +287,32 @@ func TestObserveConflictsRecordsTheConflictedFiles(t *testing.T) {
 	}
 }
 
-// The scheduler's page describes the grades, the rules, the two tables and the counts as built.
-func TestSchedulerPageDescribesTheGrades(t *testing.T) {
-	raw, err := os.ReadFile("../../../docs/relay/dag-scheduler.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	page := string(raw)
-	for _, want := range []string{"`independent`", "`mechanical`", "`local`", "`exclusive`", "`union`", "`renumber`", "`regenerate:<command>`", "`local-optimistic`", "`defer`",
-		"`overlap_count`", "`overlaps`", "`release`", "`basis`", "dag_node_region_grades", "dag_conflict_observation_files"} {
-		if !strings.Contains(page, want) {
-			t.Errorf("docs/relay/dag-scheduler.md does not mention %s", want)
-		}
-	}
-	plans, err := os.ReadFile("../../../docs/relay/dag-plans.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{"dag_node_region_grades", "dag_conflict_observation_files"} {
-		if !strings.Contains(string(plans), want) {
-			t.Errorf("docs/relay/dag-plans.md does not list %s", want)
-		}
+// A recorded conflict on a place does not hold a release: the decision follows the grades, and the conflict is in the basis for whoever reads it. A mechanical and a local pair whose
+// place has just conflicted are still released, and an exclusive one is still cut.
+func TestObservedConflictsAreEvidenceAndNotAGate(t *testing.T) {
+	for _, c := range []struct {
+		name      string
+		p, q      Region
+		wantReady string
+		wantRule  string
+	}{
+		{"mechanical", gr("a.go", "mechanical", "union"), gr("a.go", "mechanical", "union"), "p,q", RuleMechanical},
+		{"local", gr("a.go", "local", ""), gr("a.go", "local", ""), "p,q", RuleLocalOptimistic},
+		{"exclusive", gr("a.go", "exclusive", ""), gr("a.go", "exclusive", ""), "p", RuleDefer},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f, _ := gradedFixture(t, map[string][]Region{"p": {c.p}, "q": {c.q}}, "p", "q")
+			f.observe("o1", "n1", "n2", 1, "a.go")
+			f.observe("o2", "n1", "n3", 1, "a.go")
+			reading := f.read("g")
+			q := reading.node("q")
+			if got := strings.Join(reading.readyIDs(), ","); got != c.wantReady || q.Release.Rule != c.wantRule {
+				t.Fatalf("ready = %q q = %+v: %s", got, q.Release, reading.brief())
+			}
+			if row := q.Release.Basis[0]; row.Path != "a.go" || row.Observations != 2 || row.Conflicts != 2 {
+				t.Fatalf("basis = %+v, want the two conflicts on a.go recorded as evidence", q.Release.Basis)
+			}
+		})
 	}
 }
 

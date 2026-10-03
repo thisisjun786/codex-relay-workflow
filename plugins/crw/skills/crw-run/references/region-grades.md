@@ -47,8 +47,8 @@ head lands and a different declaration is refused. A node with no declaration is
 
 `dag-ready` gives every implementation candidate a `release` object: the `rule` (`independent`, `mechanical`, `local-optimistic` or `defer`), the `overlaps` by grade (the
 holders it overlaps, each by the worst grade of their overlap) and the `basis` rows it rests on. A row names the holder, the repository and place, the grade of the overlap, the
-declared grade and rule of each side, and the recent conflict observations of the plan on that place: how many of the latest twenty there are, how many conflicted on it, and how
-many conflicted without naming a file in that repository (`unattributed`). The pass object adds `overlaps` and `overlap_count` (the local and exclusive overlaps; mechanical ones
+grade and rule each side was judged at, and the recent conflict observations of the plan on that place: how many of the latest twenty there are (`recent_observations`), how many
+conflicted on it (`recent_conflicts`), and how many conflicted without naming a file in that repository (`unattributed_conflicts`). The pass object adds `overlaps` and `overlap_count` (the local and exclusive overlaps; mechanical ones
 are left out of it). `dag-ready --record` keeps the same in the pass.
 
 The observations are evidence and not a second gate: the rule follows the grades. A place that keeps conflicting in the basis is a reason to regrade it at the next declaration,
@@ -60,7 +60,8 @@ and a pair released as `local-optimistic` is the pair to watch when the first of
 
 The queue is first in, first out until it is measured. A departure needs a reason in the coordination record, and the usual ones are these: a candidate whose change another
 candidate must read first goes ahead of it (a shared interface, a command, a field), and of two candidates that overlap the one with fewer overlapping hunks goes first, since the other
-one's refresh is then the smaller. Read the `release` rule of each: a `local-optimistic` pair is where a refresh will meet a conflict, and a pair that was only `mechanical` is not.
+one's refresh is then the smaller. Read the `release` rule of each. A grade is a declaration and not a forecast: a `mechanical` pair can still conflict as text and a `local` pair can merge cleanly. What the grade says
+is who settles a conflict and how, a rule for a mechanical overlap and the child of the later pull request for a local one.
 A landing leaves every other open pull request behind; only the candidate about to merge is refreshed ([Refresh the base yourself when only the base
 moved](merge-readiness.md#refresh-the-base-yourself-when-only-the-base-moved)).
 
@@ -85,4 +86,3 @@ the two nodes become one, one node is redefined, or the later work is dropped as
 
 For every merge, write down in the coordination record the grade the overlap was released under, the number of conflicting files and hunks the refresh met, and how long it took to settle.
 Those numbers are what a later change of the grades is calibrated on.
-
