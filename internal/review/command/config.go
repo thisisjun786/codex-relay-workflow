@@ -24,8 +24,7 @@ const (
 
 var issueID = regexp.MustCompile(`^[A-Z][A-Z0-9]*-[0-9]+$`)
 
-// Config is every setting of one run: a flag, else a CRW_REVIEW_* variable, else the default. It is the one place the model, the daily cap, the agy lock, the
-// ledger directory and the time limits are chosen. Paths are absolute once parsed.
+// Config is every setting of one run: a flag, else a CRW_REVIEW_* variable, else the default. Paths are absolute once parsed.
 type Config struct {
 	Repo, Base, Head, Issue, Out string
 	StateDir                     string        // holds ledger.jsonl and run.lock; default: the directory of the agy lock

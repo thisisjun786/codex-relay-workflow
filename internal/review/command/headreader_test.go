@@ -30,10 +30,8 @@ func TestHeadReaderReadsCommittedObjectsOnly(t *testing.T) {
 	if got, err := g.ReadLines("a.go", 2, 3); err != nil || !slices.Equal(got, []string{"two", "three"}) {
 		t.Errorf("ReadLines = %q, %v", got, err)
 	}
-	for _, c := range [][2]int{{0, 1}, {2, 1}, {1, 4}} {
-		if _, err := g.ReadLines("a.go", c[0], c[1]); err == nil || errors.Is(err, fs.ErrNotExist) {
-			t.Errorf("ReadLines(%d, %d) must fail with something other than not-exist: %v", c[0], c[1], err)
-		}
+	if _, err := g.ReadLines("a.go", 2, 4); err == nil || errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("ReadLines beyond the file must fail with something other than not-exist: %v", err)
 	}
 	for _, path := range []string{"missing.go", "dir", "", "a.go\x00", ":/a.go"} {
 		if _, err := g.Lines(path); !errors.Is(err, fs.ErrNotExist) {

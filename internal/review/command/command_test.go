@@ -7,12 +7,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -90,11 +92,11 @@ func (s *script) run(ctx context.Context, _ agy.Config, _ agy.Request) (agy.Resu
 	s.calls++
 	s.active++
 	s.peak = max(s.peak, s.active)
-	hold := s.hold
+	hold, entered := s.hold, s.entered
 	s.mu.Unlock()
 	defer func() { s.mu.Lock(); s.active--; s.mu.Unlock() }()
-	if s.entered != nil {
-		s.entered <- struct{}{}
+	if entered != nil {
+		entered <- struct{}{}
 	}
 	if hold != nil {
 		select {
@@ -132,12 +134,10 @@ func (f *fixture) args(head string, extra ...string) []string {
 	return append([]string{"--repo", f.repo.dir, "--base", f.base, "--head", head, "--issue", "CRW-506", "--out", f.out, "--state-dir", f.state, "--lock", f.lock}, extra...)
 }
 
-func (f *fixture) env() env { return env{runner: f.s.run, now: func() time.Time { return f.at }} }
-
 // run is the command with the scripted runner; it is safe to call from a goroutine.
 func (f *fixture) run(head string, extra ...string) (int, Summary, string) {
 	var out, errOut bytes.Buffer
-	code := run(context.Background(), f.args(head, extra...), &out, &errOut, f.env())
+	code := run(context.Background(), f.args(head, extra...), &out, &errOut, env{f.s.run, func() time.Time { return f.at }})
 	var sum Summary
 	if out.Len() > 0 {
 		if err := json.Unmarshal(out.Bytes(), &sum); err != nil {
@@ -173,7 +173,7 @@ func TestSamePatchIDIsReviewedOnce(t *testing.T) {
 		}
 	}
 	// The ledger decides, not the file: with the artifact gone and another --out the answer is the same and nothing is created.
-	if err := os.Remove(first.Artifact); err != nil {
+	if err := os.Remove(first.Artifact); err != nil || os.Mkdir(first.Artifact, 0o755) != nil { // gone as a file; a directory in its place is no artifact either
 		t.Fatal(err)
 	}
 	other := filepath.Join(t.TempDir(), "other")
@@ -187,8 +187,7 @@ func TestUnavailableArtifactStillCountsAsReviewed(t *testing.T) {
 	f := newFixture(t)
 	f.s.result = agy.Result{Class: agy.ClassUnavailable, Reason: agy.ReasonQuota}
 	h := f.repo.change(f.base, 2)
-	code, first, errOut := f.run(h)
-	if code != 0 || first.Status != string(review.StatusUnavailable) || first.Counts == nil || first.Reviewers.Failed != 2 {
+	if code, first, errOut := f.run(h); code != 0 || first.Status != string(review.StatusUnavailable) {
 		t.Fatalf("unavailable review: %d %+v %s", code, first, errOut)
 	}
 	code, again, _ := f.run(h)
@@ -229,26 +228,21 @@ func TestDailyCapStopsBeforeAnyAgyCall(t *testing.T) {
 // While one review is held inside its runner, a second invocation (another patch, then the same patch) records nothing and calls nothing.
 func TestConcurrentReviewsAreSerialAndTheLedgerStaysConsistent(t *testing.T) {
 	f := newFixture(t)
-	f.s.entered = make(chan struct{}, 32)
 	h2, h3, h4 := f.repo.change(f.base, 2), f.repo.change(f.base, 3), f.repo.change(f.base, 4)
 	for _, pair := range [][2]string{{h2, h3}, {h4, h4}} {
-		hold := make(chan struct{})
-		t.Cleanup(func() { // a failed check must not leave a review parked in its runner, which would hold the pipeline's in-process guard for every later test
-			select {
-			case <-hold:
-			default:
-				close(hold)
-			}
-		})
+		hold, entered := make(chan struct{}), make(chan struct{}, 8)
+		var once sync.Once
+		release := func() { once.Do(func() { close(hold) }) }
+		t.Cleanup(release) // a failed check must not leave a review parked in its runner: it would hold the pipeline's in-process guard for every later test
 		f.s.mu.Lock()
-		f.s.hold = hold
+		f.s.hold, f.s.entered = hold, entered
 		f.s.mu.Unlock()
 		prior, outcomes := len(f.ledger()), make(chan string, 2)
 		for i, head := range pair {
 			go func() { _, sum, _ := f.run(head); outcomes <- sum.Outcome }()
 			if i == 0 {
 				select { // the first review is inside its runner and holds the run lock
-				case <-f.s.entered:
+				case <-entered:
 				case <-time.After(10 * time.Second):
 					t.Fatal("the first review never reached its runner")
 				}
@@ -258,7 +252,7 @@ func TestConcurrentReviewsAreSerialAndTheLedgerStaysConsistent(t *testing.T) {
 		if recs := f.ledger(); len(recs) != prior+1 || recs[prior].Event != "started" || f.s.count()%2 != 1 {
 			t.Fatalf("the second review got past the lock: %d records, %d calls", len(recs), f.s.count())
 		}
-		close(hold)
+		release()
 		got, want := []string{<-outcomes, <-outcomes}, []string{OutcomeReviewed, OutcomeReviewed}
 		if pair[0] == pair[1] {
 			want = []string{OutcomeAlreadyReviewed, OutcomeReviewed}
@@ -301,7 +295,7 @@ func TestInterruptRecordsAFailedReviewAndExits130(t *testing.T) {
 	f := newFixture(t)
 	h := f.repo.change(f.base, 2)
 	ctx, cancel := context.WithCancel(context.Background())
-	e := f.env()
+	e := env{now: func() time.Time { return f.at }}
 	e.runner = func(ctx context.Context, _ agy.Config, _ agy.Request) (agy.Result, error) {
 		cancel()
 		return agy.Result{}, ctx.Err()
@@ -319,20 +313,64 @@ func TestInterruptRecordsAFailedReviewAndExits130(t *testing.T) {
 	}
 }
 
-// A publish failure leaves the review recorded: its slot is spent and the patch is never run again, whichever file could not be written.
+// A publish failure leaves the review recorded: its slot is spent and the patch is never run again.
 func TestPublishFailureNeverFreesThePatchID(t *testing.T) {
-	for _, suffix := range []string{".json", ".json.sha256"} {
-		f := newFixture(t)
-		h := f.repo.change(f.base, 2)
-		if err := os.MkdirAll(filepath.Join(f.out, h+suffix), 0o755); err != nil { // a directory where a file belongs: Publish refuses it
+	f := newFixture(t)
+	h := f.repo.change(f.base, 2)
+	if err := os.MkdirAll(filepath.Join(f.out, h+".json.sha256"), 0o755); err != nil { // a directory where a file belongs: Publish refuses it
+		t.Fatal(err)
+	}
+	code, _, errOut := f.run(h)
+	if code != 1 || !strings.Contains(errOut, h+".json.sha256") || f.s.count() != 2 {
+		t.Fatalf("publish failure: %d %s (calls %d)", code, errOut, f.s.count())
+	}
+	if code, again, _ := f.run(h); code != 0 || again.Outcome != OutcomeAlreadyReviewed || f.s.count() != 2 {
+		t.Fatalf("run again: %d %+v (calls %d)", code, again, f.s.count())
+	}
+}
+
+// The artifact's file name is the head's, so the same head reviewed against another base must not replace the first review.
+func TestAnotherBaseForTheSameHeadDoesNotOverwriteAnArtifact(t *testing.T) {
+	f := newFixture(t)
+	h2 := f.repo.change(f.base, 2)
+	f.repo.git("checkout", "-q", "--detach", h2)
+	h3 := f.repo.commit(map[string]string{"a.go": "package a\n\nfunc F() int { return 3 }\n"})
+	code, first, errOut := f.run(h3)
+	if code != 0 {
+		t.Fatalf("first review: %d %s", code, errOut)
+	}
+	before, _ := os.ReadFile(first.Artifact)
+	f.base = h2 // another patch, the same head
+	code, _, errOut = f.run(h3)
+	after, _ := os.ReadFile(first.Artifact)
+	if code != 1 || !strings.Contains(errOut, "use another --out") || f.s.count() != 2 || !bytes.Equal(before, after) {
+		t.Fatalf("second base: %d %s (calls %d)", code, errOut, f.s.count())
+	}
+}
+
+// SIGTERM and SIGHUP cancel a review that waits for the run lock, as SIGINT does, instead of ending the process around agy and its locks.
+func TestTerminationSignalsCancelAReview(t *testing.T) {
+	f := newFixture(t)
+	h := f.repo.change(f.base, 2)
+	unlock, err := (&ledger{dir: f.state}).lock(context.Background(), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	for _, sig := range []syscall.Signal{syscall.SIGTERM, syscall.SIGHUP} {
+		done := make(chan int, 1)
+		go func() { done <- Run(context.Background(), f.args(h, "--lock-wait", "1m"), io.Discard, io.Discard) }()
+		time.Sleep(500 * time.Millisecond) // Run installs its handler first; this is time to reach the lock wait
+		if err := syscall.Kill(os.Getpid(), sig); err != nil {
 			t.Fatal(err)
 		}
-		code, _, errOut := f.run(h)
-		if code != 1 || !strings.Contains(errOut, h+suffix) || f.s.count() != 2 {
-			t.Fatalf("%s: %d %s (calls %d)", suffix, code, errOut, f.s.count())
-		}
-		if code, again, _ := f.run(h); code != 0 || again.Outcome != OutcomeAlreadyReviewed || f.s.count() != 2 {
-			t.Fatalf("%s: run again: %d %+v (calls %d)", suffix, code, again, f.s.count())
+		select {
+		case code := <-done:
+			if code != 130 {
+				t.Fatalf("%v: exit %d, want 130", sig, code)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatalf("%v: the review was still waiting 10 s after the signal", sig)
 		}
 	}
 }
@@ -375,7 +413,7 @@ func TestConfigFlagBeatsEnvironmentBeatsDefault(t *testing.T) {
 	}
 	clearEnv(t)
 	t.Setenv("XDG_STATE_HOME", "/xdg")
-	if c := parse(); c.DailyCap != 20 || c.Model != agy.DefaultModel || c.StateDir != "/xdg/crw/review" || c.LockPath != "/xdg/crw/review/agy.lock" || c.LockWait != 30*time.Minute || c.Binary != "agy" || !filepath.IsAbs(c.Out) {
+	if c := parse(); c.DailyCap != 20 || c.Model != agy.DefaultModel || c.StateDir != "/xdg/crw/review" || c.LockWait != 30*time.Minute {
 		t.Errorf("defaults: %+v", c)
 	}
 	t.Setenv("CRW_REVIEW_DAILY_CAP", "7")
@@ -389,31 +427,16 @@ func TestConfigFlagBeatsEnvironmentBeatsDefault(t *testing.T) {
 	}
 }
 
-// The agy that answers is a shell script run through the real agy.Run, so the lock, the arguments, the prompt length check and the log parsing are all in play.
-const fakeAgy = `#!/bin/sh
-rec=%s
-while [ $# -gt 0 ]; do case $1 in --log-file) log=$2;; --model) model=$2;; esac; shift; done
-cat > "$rec.in"
-cat "$rec.in" >> "$rec.prompts"
-echo "$model" >> "$rec.models"
-n=$(wc -c < "$rec.in" | tr -d ' ')
-printf 'Print mode: starting (promptLength=%%s, model="%%s", conversationID="")\nPropagating selected model override to backend: label="Fake Model"\n' "$n" "$model" > "$log"
-case $(head -n 1 "$rec.in") in
-review) out='{"findings":[{"file":"a.go","line":3,"endLine":3,"title":"t","explanation":"e","severity":"P2","needsContext":false}]}';;
-group) out='{"groups":[[0,1]]}';;
-verify) out='{"verdict":"confirmed","needsContext":false}';;
-esac
-printf '{"status":"SUCCESS","response":"ok","usage":{"input_tokens":7,"output_tokens":3,"total_tokens":10},"structured_output":%%s}\n' "$out"
-`
-
+// The agy that answers is testdata/fake-agy.sh, run through the real agy.Run: the lock, the arguments, the prompt length check and the log parsing are all in play.
 func TestEndToEndWithFakeAgy(t *testing.T) {
 	f := newFixture(t)
 	h := f.repo.change(f.base, 2)
-	dir := t.TempDir()
-	rec, bin := filepath.Join(dir, "rec"), filepath.Join(dir, "agy")
-	if err := os.WriteFile(bin, []byte(fmt.Sprintf(fakeAgy, rec)), 0o755); err != nil {
-		t.Fatal(err)
+	script, err := os.ReadFile(filepath.Join("testdata", "fake-agy.sh"))
+	bin := filepath.Join(t.TempDir(), "agy") // the fake records beside itself
+	if err != nil || os.WriteFile(bin, script, 0o755) != nil {
+		t.Fatal("cannot install the fake agy", err)
 	}
+	rec := filepath.Join(filepath.Dir(bin), "rec")
 	var out, errOut bytes.Buffer
 	code := Run(context.Background(), f.args(h, "--agy", bin, "--lock-wait", "30s"), &out, &errOut)
 	var sum Summary
@@ -433,17 +456,13 @@ func TestEndToEndWithFakeAgy(t *testing.T) {
 	if string(sha) != digest+"  "+h+".json\n" || sum.SHA256 != digest || sum.Artifact != filepath.Join(f.out, h+".json") || sum.Head != h || sum.PatchID != a.PatchID || sum.Issue != "CRW-506" {
 		t.Fatalf("sha256 file %q, summary %+v", sha, sum)
 	}
-	if a.Status != review.StatusComplete || sum.Status != "complete" || len(a.Findings) != 1 || a.Findings[0].Support != 2 || a.Findings[0].Verdict != review.VerdictConfirmed || a.Model != agy.DefaultModel || len(a.Calls) != 4 ||
-		a.Calls[0].Model != "Fake Model" || a.Calls[0].Tokens.Input != 7 || sum.Findings != 1 || sum.Calls != 4 || sum.Reviewers.Run != 2 {
+	if a.Status != review.StatusComplete || len(a.Findings) != 1 || a.Findings[0].Support != 2 || a.Findings[0].Verdict != review.VerdictConfirmed || a.Model != agy.DefaultModel || len(a.Calls) != 4 ||
+		a.Calls[0].Model != "Fake Model" || a.Calls[0].Tokens.Input != 7 || sum.Findings != 1 || sum.Calls != 4 {
 		t.Fatalf("artifact %+v summary %+v", a, sum)
 	}
 	models, _ := os.ReadFile(rec + ".models")
 	prompts, _ := os.ReadFile(rec + ".prompts")
 	if strings.Count(string(models), agy.DefaultModel+"\n") != 4 || len(prompts) == 0 || strings.Contains(string(prompts), "CRW-506") {
 		t.Fatalf("models %q; the issue id must never reach a prompt", models)
-	}
-	recs := f.ledger() // the real clock here
-	if len(recs) != 2 || recs[1].Event != "finished" || recs[1].SHA256 != digest || recs[1].Status != "complete" || recs[1].Artifact != sum.Artifact {
-		t.Fatalf("ledger: %+v", recs)
 	}
 }

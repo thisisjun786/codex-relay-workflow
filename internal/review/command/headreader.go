@@ -10,9 +10,8 @@ import (
 	"strings"
 )
 
-// gitHead reads files of one commit from its Git objects, for the pipeline's location checks and verification context. It reads committed objects only,
-// never the working tree, with the environment hygiene of the bundle (internal/review/bundle/gitdiff.go): no system or global Git configuration, no
-// replace objects, no lazy fetch, literal paths, and plumbing commands that run no external diff, textconv or filter.
+// gitHead reads files of one commit from its Git objects (never the working tree) for the pipeline's location checks, with the environment hygiene of the bundle
+// (internal/review/bundle/gitdiff.go): no system or global Git configuration, replace objects or lazy fetch, literal paths, and plumbing commands only.
 type gitHead struct {
 	ctx        context.Context
 	repo, head string // head is a full commit id
@@ -36,8 +35,7 @@ func (g *gitHead) git(args ...string) ([]byte, error) {
 	return out, nil
 }
 
-// lines returns the lines of the blob at path, read once. A path with no blob at head (absent, a directory, a submodule) wraps fs.ErrNotExist, as
-// review.HeadReader requires.
+// lines returns the lines of the blob at path, read once; a path with no blob at head (absent, a directory, a submodule) wraps fs.ErrNotExist, as review.HeadReader requires.
 func (g *gitHead) lines(path string) ([]string, error) {
 	if l, ok := g.files[path]; ok {
 		return l, nil

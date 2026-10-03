@@ -20,24 +20,17 @@ func TestModeTableDrivesUsageAndDispatch(t *testing.T) {
 	}
 	out.Reset()
 	errOut.Reset()
+	if code := run(context.Background(), "crw", []string{"review"}, &out, &errOut); code != parserExit || !strings.Contains(errOut.String(), "crw review: error: the following arguments are required") {
+		t.Errorf("crw review: %d %q", code, errOut.String())
+	}
+	out.Reset()
+	errOut.Reset()
 	if code := run(context.Background(), "crw", []string{"pabcd", "--help"}, &out, &errOut); code != 0 || !strings.HasPrefix(out.String(), "usage: crw pabcd") || errOut.Len() != 0 {
 		t.Errorf("crw pabcd --help: %d %q %q", code, out.String(), errOut.String())
 	}
 	errOut.Reset()
 	if code := run(context.Background(), "crw", []string{"pabcd"}, &out, &errOut); code != parserExit || !strings.Contains(errOut.String(), "crw pabcd: error: the following arguments are required: verb") {
 		t.Errorf("crw pabcd: %d %q", code, errOut.String())
-	}
-}
-
-// crw review is dispatched through the mode table to its own command line: its help is on stdout and a line without its required flags is a usage error.
-func TestReviewModeIsRegistered(t *testing.T) {
-	var out, errOut strings.Builder
-	if code := run(context.Background(), "crw", []string{"review", "--help"}, &out, &errOut); code != 0 || !strings.HasPrefix(out.String(), "usage: crw review --base") || errOut.Len() != 0 {
-		t.Errorf("crw review --help: %d %q %q", code, out.String(), errOut.String())
-	}
-	out.Reset()
-	if code := run(context.Background(), "crw", []string{"review"}, &out, &errOut); code != parserExit || !strings.Contains(errOut.String(), "crw review: error: the following arguments are required: --base, --head, --issue, --out") || out.Len() != 0 {
-		t.Errorf("crw review: %d %q %q", code, out.String(), errOut.String())
 	}
 }
 

@@ -15,8 +15,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// A record is one line of ledger.jsonl. Event is started (a review began and counts toward the daily cap), finished (its result is recorded; the patch-id is
-// reviewed from then on), failed (it ended without a result: history only) or refused (the daily cap stopped it before any agy call).
+// A record is one line of ledger.jsonl. Event is started (counts toward the daily cap), finished (the patch-id is reviewed from then on), failed (history only) or refused (the daily cap stopped it).
 type record struct {
 	Time     string `json:"time"`
 	Event    string `json:"event"`
@@ -41,8 +40,7 @@ type ledger struct {
 
 func (l *ledger) path() string { return filepath.Join(l.dir, "ledger.jsonl") }
 
-// read returns the records. A complete line that is not a record fails closed, with its line number; a trailing fragment without a newline (an append that
-// was torn) is ignored.
+// read returns the records. A complete line that is not a record fails closed with its line number; a trailing fragment without a newline (a torn append) is ignored.
 func (l *ledger) read() ([]record, error) {
 	data, err := os.ReadFile(l.path())
 	if errors.Is(err, fs.ErrNotExist) {
@@ -94,9 +92,6 @@ func runsOn(recs []record, day string) (n int) {
 
 // append writes r as one line and syncs it, first cutting off a torn tail.
 func (l *ledger) append(r record) error {
-	if err := os.MkdirAll(l.dir, 0o700); err != nil {
-		return err
-	}
 	f, err := os.OpenFile(l.path(), os.O_WRONLY|os.O_APPEND|os.O_CREATE|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
 	if err != nil {
 		return err
@@ -121,8 +116,7 @@ func (l *ledger) append(r record) error {
 	return f.Sync()
 }
 
-// lock takes the run lock, an exclusive flock on run.lock held for the whole review, trying every 50 ms until wait has passed (negative tries once). The file is
-// never removed. It returns errBusy when the lock stayed busy and the context's error when the caller gave up.
+// lock takes the run lock, an exclusive flock on run.lock held for the whole review, polled every 50 ms until wait has passed (negative tries once); errBusy if it stayed busy.
 func (l *ledger) lock(ctx context.Context, wait time.Duration) (release func(), err error) {
 	if err = os.MkdirAll(l.dir, 0o700); err != nil {
 		return nil, err

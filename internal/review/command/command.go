@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
@@ -53,7 +55,6 @@ type Summary struct {
 	*Counts                // a review that ran
 }
 
-// Counts describes a review that ran.
 type Counts struct {
 	Reviewers review.ReviewerCounts `json:"reviewers"`
 	Findings  int                   `json:"findings"`
@@ -61,14 +62,17 @@ type Counts struct {
 	Calls     int                   `json:"calls"`
 }
 
-// env is what a test replaces.
 type env struct {
 	runner pipeline.Runner
 	now    func() time.Time
 }
 
-// Run is crw review; the package documentation says what it does and which status it exits with.
+// Run is crw review.
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	// agy runs in a process group of its own and holds no lock descriptor, so a SIGTERM or SIGHUP that ended this process without cancelling the run would leave
+	// agy running with both locks released. Cancelling the context makes the runner kill agy's group first.
+	ctx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGHUP)
+	defer stop()
 	return run(ctx, args, stdout, stderr, env{agy.Run, time.Now})
 }
 
@@ -119,8 +123,8 @@ func execute(ctx context.Context, cfg Config, e env) (*Summary, error) {
 		}
 		r, done := reviewed(recs, m.PatchID)
 		if done {
-			_, statErr := os.Stat(r.Artifact)
-			present := statErr == nil
+			info, statErr := os.Stat(r.Artifact)
+			present := statErr == nil && info.Mode().IsRegular()
 			sum.Outcome, sum.Artifact, sum.SHA256, sum.Status, sum.ReviewedHead, sum.ArtifactPresent = OutcomeAlreadyReviewed, r.Artifact, r.SHA256, r.Status, r.Head, &present
 		}
 		return recs, done, nil
@@ -144,6 +148,10 @@ func execute(ctx context.Context, cfg Config, e env) (*Summary, error) {
 		refused := entry("refused")
 		refused.Reason = sum.Reason
 		return sum, l.append(refused)
+	}
+	artifact := filepath.Join(cfg.Out, m.Head+".json")
+	if _, err = os.Lstat(artifact); err == nil { // the file name is the head's, the ledger key the patch's: the same head reviewed against another base lands here
+		return nil, fmt.Errorf("%s already exists but is no review of this patch (the same head, reviewed against another base?); use another --out", artifact)
 	}
 	if err = os.MkdirAll(cfg.Out, 0o755); err != nil {
 		return nil, err
@@ -170,7 +178,6 @@ func execute(ctx context.Context, cfg Config, e env) (*Summary, error) {
 		return fail(err)
 	}
 	digest := sha256.Sum256(data)
-	artifact := filepath.Join(cfg.Out, m.Head+".json")
 	finished := entry("finished")
 	finished.Artifact, finished.SHA256, finished.Status = artifact, hex.EncodeToString(digest[:]), string(a.Status)
 	// The review is recorded before its files are written, so that nothing after this point can let the patch be reviewed again.

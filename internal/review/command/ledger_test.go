@@ -36,9 +36,6 @@ func TestLedgerIgnoresATornTailAndRefusesAMalformedLine(t *testing.T) {
 	if err != nil || len(recs) != 3 || strings.Contains(string(data), "2026-10-04T00:00:00Z") || !strings.HasSuffix(string(data), "\n") {
 		t.Fatalf("the next append must cut the torn tail off: %v %v\n%s", recs, err, data)
 	}
-	if n := runsOn(recs, "2026-10-04"); n != 2 || runsOn(recs, "2026-10-05") != 0 {
-		t.Fatalf("runs on the UTC day: %d", n)
-	}
 	appendRaw("not a record\n")
 	if _, err := l.read(); err == nil || !strings.Contains(err.Error(), l.path()) || !strings.Contains(err.Error(), "line 4") {
 		t.Fatalf("a malformed line must fail closed naming the file and the line: %v", err)

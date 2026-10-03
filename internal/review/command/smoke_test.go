@@ -14,11 +14,8 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/review"
 )
 
-// TestSmokeRealAgy runs crw review once, end to end, on a small diff with the real agy: the real bundle, pipeline, runner and agy's host-wide lock, the account agy is
-// logged in with and the default model. Only the ledger and the output directory are temporary; the agy lock is the host's, so this waits for any other agy call on
-// the host. It is built only with the agysmoke tag and is meant to be run by hand, once:
-//
-//	go test -tags agysmoke -run TestSmokeRealAgy -v ./internal/review/command
+// TestSmokeRealAgy runs crw review once on a small diff with the real agy and its account, model and host-wide lock (only the ledger and the output directory are
+// temporary). Built only with the agysmoke tag, to be run by hand once: go test -tags agysmoke -run TestSmokeRealAgy -v ./internal/review/command
 func TestSmokeRealAgy(t *testing.T) {
 	r := newRepo(t)
 	base := r.commit(map[string]string{"sum.go": sumSource("_, x := range xs", "x")})
