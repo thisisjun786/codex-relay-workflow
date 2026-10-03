@@ -20,8 +20,9 @@ func WithArtifactReads(ctx context.Context) (context.Context, *ArtifactReads) {
 }
 
 // Count is how many artifacts HashArtifactContext went on to read under the counter's context: one for
-// each call that reads the bytes (a call refused before the read, or by a cancelled context, is not
-// counted), whatever the number of passes it makes over them.
+// each call that gets as far as its first pass over the bytes, whatever the number of passes it makes
+// (a call refused before that, for its path, its scope, its kind of file or a context that had already
+// ended, is not counted; one whose context ends during the read is).
 func (r *ArtifactReads) Count() int64 { return r.n.Load() }
 
 func countArtifactRead(ctx context.Context) {

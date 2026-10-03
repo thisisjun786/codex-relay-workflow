@@ -3,17 +3,14 @@ package supervisor
 import (
 	"context"
 	"database/sql"
-	"database/sql/driver"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
-	"sync/atomic"
 	"testing"
-
-	"modernc.org/sqlite"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -170,18 +167,6 @@ func (w *omissionWorld) dump() string {
 	return out.String()
 }
 
-// connectionsOpened counts the connections opened to any SQLite database through the driver registered
-// as "sqlite" (what sql.Open("sqlite", ...) uses, as the omission reader's own connection did before
-// PR #306) from the time the process loaded this package's tests.
-var connectionsOpened atomic.Int64
-
-func init() {
-	sqlite.RegisterConnectionHook(func(sqlite.ExecQuerierContext, string) error {
-		connectionsOpened.Add(1)
-		return nil
-	})
-}
-
 func mustMarshal(t *testing.T, value any) []byte {
 	t.Helper()
 	raw, err := json.Marshal(value)
@@ -201,46 +186,6 @@ func normalizedJSON(t *testing.T, raw []byte) any {
 	return value
 }
 
-// poolOpens counts the connections the store's own pool opens once countPoolOpens has installed it.
-type poolOpens struct{ n atomic.Int64 }
-
-type openCountingConnector struct {
-	inner driver.Driver
-	dsn   string
-	n     *atomic.Int64
-}
-
-func (c openCountingConnector) Connect(context.Context) (driver.Conn, error) {
-	c.n.Add(1)
-	return c.inner.Open(c.dsn)
-}
-func (c openCountingConnector) Driver() driver.Driver { return c.inner }
-
-// countPoolOpens points s at a second one-connection pool over the same file that counts the connections it
-// opens, and primes it, so a later count of 0 means nothing the code under test did asked the pool for another.
-func countPoolOpens(tb testing.TB, s *store.Store) *poolOpens {
-	tb.Helper()
-	path, err := filepath.EvalSymlinks(s.Path)
-	if err != nil {
-		tb.Fatal(err)
-	}
-	dsn := "file:" + path + "?mode=rw&_busy_timeout=30000"
-	counter := &poolOpens{}
-	db := sql.OpenDB(openCountingConnector{s.DB.Driver(), dsn, &counter.n})
-	db.SetMaxOpenConns(1)
-	original := s.DB
-	s.DB = db
-	tb.Cleanup(func() {
-		s.DB = original
-		_ = db.Close()
-	})
-	if _, err := db.ExecContext(context.Background(), "SELECT 1"); err != nil {
-		tb.Fatal(err)
-	}
-	counter.n.Store(0)
-	return counter
-}
-
 // A tick over relationships whose turn already reported has nothing to judge about a receipt: the
 // state (a final child receipt of the turn) says nothing is owed, so no artifact is read.
 func TestCRW300ReceiptedTickReadsNoArtifact(t *testing.T) {
@@ -253,31 +198,47 @@ func TestCRW300ReceiptedTickReadsNoArtifact(t *testing.T) {
 	}
 }
 
-// The counters the other tests lean on do count: a connection opened through the sqlite driver, a second
-// connection of the store's pool, and an artifact read.
-func TestCRW300CountersCount(t *testing.T) {
+// The detectors the other tests lean on do detect: a second open of the database file through the
+// read-only path, through the driver registered as "sqlite", and through a reconnect of the store's own
+// pool each show up, and an artifact read is counted once.
+func TestCRW300DetectorsDetect(t *testing.T) {
 	w := newOmissionWorld(t, 1, 0)
-	opened := connectionsOpened.Load()
-	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "other.sqlite3"))
+	opens, watching := watchDatabaseOpens(t, filepath.Dir(w.s.Path))
+	if !watching {
+		t.Skip("no inotify to watch the database file with")
+	}
+	if got := opens(); got != 0 {
+		t.Fatalf("%d opens were seen before anything opened the database", got)
+	}
+	ro, err := store.OpenReadOnly(w.ctx, w.s.Path, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Ping(); err != nil {
+	if err := ro.Close(); err != nil {
 		t.Fatal(err)
 	}
-	_ = db.Close()
-	if connectionsOpened.Load() == opened {
-		t.Error("a connection opened with sql.Open(\"sqlite\") was not counted")
+	if opens() == 0 {
+		t.Error("store.OpenReadOnly (the path LookupStoredReceiptAt takes) was not seen")
 	}
-	pool := countPoolOpens(t, w.s)
+	other, err := sql.Open("sqlite", "file:"+w.s.Path+"?mode=ro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := other.Ping(); err != nil {
+		t.Fatal(err)
+	}
+	_ = other.Close()
+	if opens() == 0 {
+		t.Error("a connection opened with sql.Open(\"sqlite\") was not seen")
+	}
 	w.s.DB.SetMaxIdleConns(0)
 	for i := 0; i < 2; i++ {
 		if _, err := w.s.DB.ExecContext(w.ctx, "SELECT 1"); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if pool.n.Load() == 0 {
-		t.Error("a reconnect of the store's pool was not counted")
+	if opens() == 0 {
+		t.Error("a reconnect of the store's pool was not seen")
 	}
 	ctx, reads := store.WithArtifactReads(w.ctx)
 	if _, _, _, err := store.HashArtifactContext(ctx, w.artifacts[0], []string{filepath.Dir(w.artifacts[0])}, false); err != nil {
@@ -298,14 +259,12 @@ func TestCRW300TickOpensNoConnectionAndChangesNoRow(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newOmissionWorld(t, tc.total, tc.owed)
 			before := w.dump()
-			pool := countPoolOpens(t, w.s)
-			opened := connectionsOpened.Load()
+			opens, watching := watchDatabaseOpens(t, filepath.Dir(w.s.Path))
 			result := w.tick(w.ctx)
-			if got := connectionsOpened.Load() - opened; got != 0 {
-				t.Errorf("the tick opened %d connections through the sqlite driver", got)
-			}
-			if got := pool.n.Load(); got != 0 {
-				t.Errorf("the tick opened %d connections on the store's pool", got)
+			if watching {
+				if got := opens(); got != 0 {
+					t.Errorf("the tick opened the database file %d times: it reads on the store's own connection", got)
+				}
 			}
 			if result.SupervisorStaged != 0 || result.SupervisorSent != 0 || result.Deferred != 0 || result.Attempts != 0 {
 				t.Errorf("the tick over a settled project did work: %+v", result)
