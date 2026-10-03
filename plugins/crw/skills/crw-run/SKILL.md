@@ -770,6 +770,8 @@ Paperthin's user-only skills.
 After verification, the coordinator applies [Default dev integration](../crw-plan/references/integrations.md#default-dev-integration),
 unless the assignment limits delivery. Read [Merge readiness](references/merge-readiness.md)
 to check current CI and reviewer evidence using the repository's actual configuration.
+Devin and Codex reviews are references there and not gates: the merge waits for neither, and the child
+waits for the one run of each before its receipt ([Devin and Codex reviews are references, not merge gates](references/merge-readiness.md#devin-and-codex-reviews-are-references-not-merge-gates)).
 Serialize integrations that share a target, verify the landing, and update the
 coordination record. Work inside a relay merge turn never runs in the background and records
 its steps ([Working inside a merge turn](references/relay.md#working-inside-a-merge-turn)). A capable child owns its commits, push, pull request and the
@@ -804,6 +806,8 @@ and a delivery that did not move, and one word cannot carry both. A condition ne
 vocabulary names is reported as a blocker against the state that does apply, under
 [OPS-6.2](references/operations.md#ops-62-record-shape).
 
+A child blocked on a person is answered with a decision, never with a verdict or a message the relay cannot see: the answer goes back through `decision-reply`; for a split approval or a scope change, which open the next generation of the same child, `dag-correct` then records that generation for its DAG node; and the child's result in it is ruled and accepted like any other. Follow [Answering a child that stopped for input](references/relay.md#answering-a-child-that-stopped-for-input). A message sent outside that route leaves only the trace `admit-turn` records, which the same section names as the fallback.
+
 After integration, apply [Implementation Done](../crw-plan/references/integrations.md#implementation-done)
 before reporting or recording the issue complete. Read back the one delivery PR's
 actual merge, intended repository/branch and landing revision. For legacy multi-PR
@@ -823,7 +827,9 @@ refreshes whatever a new head, a changed base or a changed dependency
 invalidated. Inside that, polling a check run the child is already carrying,
 reading again every finding on a hosted review it has resolved, and re-running a
 suite that passed and is still valid are the coordinator doing a level below
-itself. Read the head it reports, the conclusions on that head and its
+itself. The coordinator's own verification at the merge gate is the exception: it reads the diff and the
+code and reruns the tests the criteria rest on
+([the three gates](references/merge-readiness.md#the-three-gates)). Read the head it reports, the conclusions on that head and its
 per-finding trail, and accept them as the evidence table above defines them.
 
 Acceptance keeps its own work, which was never the child's. Confirm the reported
