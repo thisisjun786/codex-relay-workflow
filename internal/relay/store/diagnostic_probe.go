@@ -323,8 +323,13 @@ func judgeWrite(expected string, unstamped bool, stamp error, result *ProbeResul
 		unavailable("the database file: " + err.Error())
 		return
 	}
-	// A directory that cannot be written already said why.
-	result.Access.DBWritable = result.Access.DirectoryWritable
+	// The directory a writer needs is the database's own, which a link resolves elsewhere than
+	// the selected one: SQLite builds the log and the index beside the file it resolved.
+	if err := syscall.Access(filepath.Dir(expected), 0x2|0x1); err != nil {
+		unavailable("the database's directory: " + err.Error())
+		return
+	}
+	result.Access.DBWritable = true
 }
 
 func probeWrite(ctx context.Context, file *os.File, expected string, unstamped bool, result *ProbeResult, notes *[]string) {

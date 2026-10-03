@@ -292,43 +292,90 @@ func crashedCopy(t *testing.T, live string) string {
 func TestSidecarFreeReadsStillReadTheLog(t *testing.T) {
 	t.Parallel()
 	ctx := WithSidecarFreeReads(t.Context())
-	check := func(t *testing.T, dir, nonce string, mayCreate []string) {
-		t.Helper()
-		watch := testsupport.WatchDir(t, dir)
-		sel := StateSelection{Path: dir}
-		found := NonceLookup(ctx, sel, nonce)
-		if !found.Readable || !found.Found {
-			t.Errorf("NonceLookup missed a value committed to the log: %+v", found)
-		}
-		var rows []string
-		read := ReadOnlyRows(ctx, sel, "SELECT nonce FROM store_challenge WHERE written_by='wal-only'", nil, func(r RowScanner) error {
-			var n string
-			if err := r.Scan(&n); err != nil {
-				return err
+	// Each read meets the store on its own: a read that built the index of an unclean shutdown
+	// would otherwise leave the next one the ordinary live-store path instead of the fallback.
+	reads := map[string]func(t *testing.T, sel StateSelection, nonce string){
+		"NonceLookup": func(t *testing.T, sel StateSelection, nonce string) {
+			if found := NonceLookup(ctx, sel, nonce); !found.Readable || !found.Found {
+				t.Errorf("NonceLookup missed a value committed to the log: %+v", found)
 			}
-			rows = append(rows, n)
-			return nil
-		})
-		if !read.Readable || read.Detail != "" || !slices.Equal(rows, []string{nonce}) {
-			t.Errorf("ReadOnlyRows missed a row committed to the log: %+v %v", read, rows)
-		}
-		a := ProbeWith(ctx, sel, ProbeOptions{}).Access
-		if !a.DBReadable || a.DBWritable || !strings.HasPrefix(a.Detail, judgedPrefix+"store_owned_by_other:") {
-			t.Errorf("the Probe did not see the stamp committed to the log: %+v", a)
-		}
-		for _, name := range changedNames(watch.Drain()) {
-			if !slices.Contains(mayCreate, name) {
-				t.Errorf("a read created, removed or moved %q", name)
+		},
+		"ReadOnlyRows": func(t *testing.T, sel StateSelection, nonce string) {
+			var rows []string
+			read := ReadOnlyRows(ctx, sel, "SELECT nonce FROM store_challenge WHERE written_by='wal-only'", nil, func(r RowScanner) error {
+				var n string
+				if err := r.Scan(&n); err != nil {
+					return err
+				}
+				rows = append(rows, n)
+				return nil
+			})
+			if !read.Readable || read.Detail != "" || !slices.Equal(rows, []string{nonce}) {
+				t.Errorf("ReadOnlyRows missed a row committed to the log: %+v %v", read, rows)
 			}
+		},
+		"Probe": func(t *testing.T, sel StateSelection, _ string) {
+			a := ProbeWith(ctx, sel, ProbeOptions{}).Access
+			if !a.DBReadable || a.DBWritable || !strings.HasPrefix(a.Detail, judgedPrefix+"store_owned_by_other:") {
+				t.Errorf("the Probe did not see the stamp committed to the log: %+v", a)
+			}
+		},
+	}
+	run := func(t *testing.T, dirFor func() string, nonce string, mayCreate []string) {
+		for name, read := range reads {
+			t.Run(name, func(t *testing.T) {
+				dir := dirFor()
+				watch := testsupport.WatchDir(t, dir)
+				read(t, StateSelection{Path: dir}, nonce)
+				for _, changed := range changedNames(watch.Drain()) {
+					if !slices.Contains(mayCreate, changed) {
+						t.Errorf("a read created, removed or moved %q", changed)
+					}
+				}
+			})
 		}
 	}
 	t.Run("beside a live writer", func(t *testing.T) {
 		dir, nonce := walStore(t)
-		check(t, dir, nonce, nil)
+		run(t, func() string { return dir }, nonce, nil)
 	})
 	t.Run("after an unclean shutdown", func(t *testing.T) {
 		live, nonce := walStore(t)
-		check(t, crashedCopy(t, live), nonce, []string{"relay.sqlite3-shm"})
+		run(t, func() string { return crashedCopy(t, live) }, nonce, []string{"relay.sqlite3-shm"})
+	})
+}
+
+// A database reached through a link is written in the directory the link resolves to, which is
+// where SQLite builds the log and the index: the judgement asks that directory, not the selected
+// one, in both directions.
+func TestProbeJudgesALinkedDatabaseByItsRealDirectory(t *testing.T) {
+	t.Parallel()
+	if os.Geteuid() == 0 {
+		t.Skip("a privileged process writes whatever the mode says")
+	}
+	linked := func(t *testing.T, realMode, selectedMode os.FileMode) string {
+		t.Helper()
+		real := closedStore(t)
+		selected := stateDir(t)
+		must(t, os.Symlink(filepath.Join(real, "relay.sqlite3"), filepath.Join(selected, "relay.sqlite3")))
+		must(t, os.Chmod(real, realMode))
+		must(t, os.Chmod(selected, selectedMode))
+		t.Cleanup(func() { _ = os.Chmod(real, 0o700); _ = os.Chmod(selected, 0o700) })
+		return selected
+	}
+	t.Run("the database's directory cannot be written", func(t *testing.T) {
+		t.Parallel()
+		a := Probe(t.Context(), StateSelection{Path: linked(t, 0o500, 0o700)}).Access
+		if a.DBWritable || !a.DirectoryWritable || !strings.Contains(a.Detail, judgedPrefix+"the database's directory:") {
+			t.Errorf("access %+v", a)
+		}
+	})
+	t.Run("only the selected directory cannot be written", func(t *testing.T) {
+		t.Parallel()
+		a := Probe(t.Context(), StateSelection{Path: linked(t, 0o700, 0o500)}).Access
+		if !a.DBWritable || a.DirectoryWritable {
+			t.Errorf("access %+v", a)
+		}
 	})
 }
 

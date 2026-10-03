@@ -23,7 +23,7 @@ follows is about what is read before anything moves and what is put back when it
 | `crw install register-mcp [--owner plugin]` | Write the bridge record the plugin's declared server reads | OPS-2.2 |
 | `crw install hook [--owner plugin]` | Write the Stop settings the plugin's declared hook reads | OPS-6.3 |
 | `crw install register-service [--remove]` | Write and enable the one systemd user unit that starts the relay service when the user manager starts; with `--remove`, disable and delete it | OPS-4.1, OPS-6.1 |
-| `crw install status`, `crw doctor` | Read the installation, classify it and report the six check results; write nothing (the relay readings behind them are the relay's `doctor` without `--probe-write`, which creates no file of its own and never opens its write gate) | OPS-2.1, OPS-2.2, OPS-6.1 |
+| `crw install status`, `crw doctor` | Read the installation, classify it and report the six check results; write nothing (the relay readings behind them are the relay's `doctor` without `--probe-write`, which creates no file of its own and never opens its write gate; what it still does is named under [Installing the runtime](#installing-the-runtime)) | OPS-2.1, OPS-2.2, OPS-6.1 |
 | `crw-dev skills link --check` or `--apply` | Skill links into Codex, from a checkout | OPS-2.3 |
 
 Every `crw install` and `crw doctor` command prints one JSON document. Runtime installation is never
@@ -154,8 +154,10 @@ database read-only, creates no `.probe-` file and no SQLite sidecar where SQLite
 read-write connection and never opens `write-gate.lock`; `doctor --probe-write`, which writes a
 temporary file and begins and rolls back a write transaction, is not what they run
 ([decision 76](port/decisions.md#76-the-relays-doctor-reads-by-default-and-measures-writability-only-on-request-crw-399)).
-The ownership reading copies the database into the temporary directory, and the worker-policy reading
-takes the daemon lock for an instant when a worker record exists; neither writes the store. The
+The ownership reading copies the database into the temporary directory, the worker-policy reading
+takes the daemon lock for an instant when a worker record exists, and a store left after an unclean
+shutdown is read the plain way, which may create SQLite's `-shm` index beside it; none of these writes
+the store's data. The
 runtime opens it afterwards, for
 the relay commands the skills run and for the Stop hook's guard whenever it has to read the store,
 in the relay's default state directory with no variable set. Until todo 43 the Go build refused

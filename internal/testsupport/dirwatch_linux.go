@@ -45,11 +45,14 @@ func (w *DirWatch) Drain() []DirEvent {
 	buf := make([]byte, 64*1024)
 	for {
 		n, err := unix.Read(w.fd, buf)
-		if err == unix.EAGAIN || n <= 0 {
+		if err == unix.EAGAIN {
 			return events
 		}
 		if err != nil {
 			w.t.Fatalf("inotify read: %v", err)
+		}
+		if n <= 0 {
+			return events
 		}
 		// struct inotify_event: int wd, uint32 mask, uint32 cookie, uint32 len, then len bytes of name.
 		for offset := 0; offset+unix.SizeofInotifyEvent <= n; {
@@ -57,6 +60,9 @@ func (w *DirWatch) Drain() []DirEvent {
 			length := int(binary.NativeEndian.Uint32(buf[offset+12:]))
 			name := strings.TrimRight(string(buf[offset+unix.SizeofInotifyEvent:offset+unix.SizeofInotifyEvent+length]), "\x00")
 			offset += unix.SizeofInotifyEvent + length
+			if mask&unix.IN_Q_OVERFLOW != 0 {
+				w.t.Fatalf("the inotify queue overflowed: events were lost, so a watch that saw none proves nothing")
+			}
 			var op string
 			switch {
 			case mask&unix.IN_CREATE != 0:
