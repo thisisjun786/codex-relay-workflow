@@ -33,7 +33,7 @@ func f2Fail(ctx context.Context, l *Ledger, a map[string]string) (any, error) {
 			return e
 		}
 		if r == nil {
-			return fmt.Errorf("fault_unknown: no publication '%s'", id)
+			return fmt.Errorf("fault_unknown: no publication %q", id)
 		}
 		state = r.Text("state")
 		if state != "claimed" && state != "issued" {
@@ -176,7 +176,7 @@ func f2Write(ctx context.Context, l *Ledger, name string, a map[string]string) (
 			return e
 		}
 		if fault == nil {
-			return fmt.Errorf("fault_unknown: no fault '%s'", a["--fault"])
+			return fmt.Errorf("fault_unknown: no fault %q", a["--fault"])
 		}
 		stamp := l.Clock.ISO()
 		switch name {

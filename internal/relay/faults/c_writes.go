@@ -17,7 +17,7 @@ func cRetryCancel(ctx context.Context, l *Ledger, name string, a map[string]stri
 		return nil, e
 	}
 	if r == nil {
-		return nil, fmt.Errorf("fault_unknown: no publication '%s'", id)
+		return nil, fmt.Errorf("fault_unknown: no publication %q", id)
 	}
 	state := r.Text("state")
 	if name == "fault-retry" {
