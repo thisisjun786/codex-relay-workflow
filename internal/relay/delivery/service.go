@@ -11,6 +11,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -118,11 +119,11 @@ func (d *Service) ResolveRecipient(ctx context.Context, r Relationship, kind str
 		return "", nil, err
 	}
 	if readable, _ := reading.Lookup("readable"); readable != true {
-		return "", nil, refuse(RelationUnreadable, "the linkage could not be read for relationship %s, so who owns its scope is unknown; the relationship row is not used as a fallback because an unreadable store has said nothing about the owner", pyvalue.StrRepr(rid))
+		return "", nil, refuse(RelationUnreadable, "the linkage could not be read for relationship %q, so who owns its scope is unknown; the relationship row is not used as a fallback because an unreadable store has said nothing about the owner", rid)
 	}
 	contention, _ := reading.Lookup("contention")
 	if state, _ := reading.Lookup("state"); state == "ambiguous" {
-		return "", nil, refuse(DuplicateScopeOwner, "the linkage reports more than one candidate for relationship %s; this reader will not choose between them: %s", pyvalue.StrRepr(rid), pyReprValue(contention))
+		return "", nil, refuse(DuplicateScopeOwner, "the linkage reports more than one candidate for relationship %q; this reader will not choose between them: %s", rid, quote.Value(contention))
 	}
 	var live []any
 	items, _ := contention.([]any)
@@ -141,7 +142,7 @@ func (d *Service) ResolveRecipient(ctx context.Context, r Relationship, kind str
 		if drifting {
 			reason = RelationOwnerDrift
 		}
-		return "", nil, refuse(reason, "the linkage reports the hierarchy of relationship %s as inconsistent, so who owns its scope is not settled: %s. A resolved state with contention is not a resolved owner, and delivery waits for the hierarchy to settle rather than picking the side that happens to match the frozen row", pyvalue.StrRepr(rid), pyReprValue(live))
+		return "", nil, refuse(reason, "the linkage reports the hierarchy of relationship %q as inconsistent, so who owns its scope is not settled: %s. A resolved state with contention is not a resolved owner, and delivery waits for the hierarchy to settle rather than picking the side that happens to match the frozen row", rid, quote.Value(live))
 	}
 	var wanted string
 	switch kind {
@@ -150,7 +151,7 @@ func (d *Service) ResolveRecipient(ctx context.Context, r Relationship, kind str
 	case Completion, MergeTurnGrant:
 		wanted = "project"
 	default:
-		return "", nil, refuse(NotClaimable, "%s is not a delivery direction, so it has no resolvable recipient", pyvalue.StrRepr(kind))
+		return "", nil, refuse(NotClaimable, "%q is not a delivery direction, so it has no resolvable recipient", kind)
 	}
 	var level Obj
 	levels, _ := reading.Lookup("levels")
@@ -165,7 +166,7 @@ func (d *Service) ResolveRecipient(ctx context.Context, r Relationship, kind str
 	owner, _ := level.Lookup("owner")
 	if level == nil || owner == nil {
 		gaps, _ := reading.Lookup("gaps")
-		return "", nil, refuse(UnregisteredScope, "the linkage records no live %s owner for relationship %s; gaps %s. Nothing found is reported as nothing found, never as a delivery that may proceed", wanted, pyvalue.StrRepr(rid), pyReprValue(gaps))
+		return "", nil, refuse(UnregisteredScope, "the linkage records no live %s owner for relationship %q; gaps %s. Nothing found is reported as nothing found, never as a delivery that may proceed", wanted, rid, quote.Value(gaps))
 	}
 	current := ""
 	var revision any
@@ -177,7 +178,7 @@ func (d *Service) ResolveRecipient(ctx context.Context, r Relationship, kind str
 	}
 	scopeKey, _ := level.Lookup("scopeKey")
 	if current != frozen {
-		return "", nil, refuse(RelationOwnerDrift, "relationship %s names %s but the linkage says %s %s is owned by %s. A report that arrived after the relationship changed is held rather than credited to either task; re-register the assignment under the current owner and deliver that", pyvalue.StrRepr(rid), pyvalue.StrRepr(frozen), wanted, pyReprValue(scopeKey), pyvalue.StrRepr(current))
+		return "", nil, refuse(RelationOwnerDrift, "relationship %q names %q but the linkage says %s %s is owned by %q. A report that arrived after the relationship changed is held rather than credited to either task; re-register the assignment under the current owner and deliver that", rid, frozen, wanted, quote.Value(scopeKey), current)
 	}
 	return current, Obj{{Key: "source", Value: "linkage"}, {Key: "verified", Value: true}, {Key: "scopeKind", Value: wanted}, {Key: "scopeKey", Value: scopeKey}, {Key: "revision", Value: revision}}, nil
 }

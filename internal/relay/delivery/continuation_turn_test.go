@@ -30,6 +30,7 @@ func runJSON(t *testing.T, side *cliSide, args ...string) (map[string]any, int) 
 }
 
 func TestCRW255_a_later_turn_of_the_child_is_told_how_to_continue_and_is_admitted_by_the_claim(t *testing.T) {
+	t.Parallel()
 	work := filepath.Join(t.TempDir(), "work")
 	side := newSide(t, work)
 	artifact := filepath.Join(work, "out.txt")

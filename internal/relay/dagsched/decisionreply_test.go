@@ -2,6 +2,7 @@ package dagsched
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -356,4 +357,64 @@ func TestDecisionReplyWithUnchangedCriteriaCarriesTheManifestOver(t *testing.T) 
 		w.k.exec("UPDATE dag_acceptances SET state = 'superseded' WHERE node_id = 'A'")
 		w.refused("parent", "disposition_conflict", "child was not told")
 	})
+}
+
+// The generation a base refresh was recorded for has no execution of its own and carries the manifest of the one before it, so a decision that answers the child in that generation binds the manifest the child
+// was dispatched with (the newest one recorded before the generation), exactly as a ruling's correction does.
+func TestDecisionAfterABaseRefreshBindsTheManifestTheChildWasDispatchedWith(t *testing.T) {
+	s := newRefreshScenario(t)
+	s.openGeneration()
+	s.refreshBase()
+	if _, err := s.record("shared.json"); err != nil {
+		t.Fatal(err)
+	}
+	// the scenario seeds the dispatch manifest by hand and without the rule version a release records; the manifest the child was dispatched with is the whole one a release builds
+	snap := s.snapshot("g")
+	node, _ := nodeOf(snap, "I")
+	whole := doc{"schema": dag.SchemaManifest, "node_id": "I", "issue_key": node.IssueKey, "node_slice_digest": node.SliceDigest, "criteria_set_digest": node.CriteriaSetDigest, "inputs": []any{},
+		"rule_version": doc{"skills_digest": dig("skills"), "model": "gpt-5", "effort": "medium", "prompt_template": "template-1", "relay_build": "test-build"}, "base": doc{"repository": "owner/repo", "ref": "dev", "sha": head1},
+		"plan_revision_no": snap.Revision, "coordinator_epoch": 0, "created_by_task_id": "parent", "created_at": "2026-10-02T00:00:00Z"}
+	raw, err := json.Marshal(whole)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatched, err := (&dag.Repo{Store: s.sched.Store, Now: s.sched.Now}).PutManifest(context.Background(), raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.exec("UPDATE dag_node_executions SET manifest_digest = ? WHERE plan_id = 'g' AND node_id = 'I' AND execution_generation = 1", dispatched)
+	var child, digest string
+	if err := s.s.DB.QueryRow("SELECT child_task_id FROM relationships WHERE relationship_id = ?", s.rid).Scan(&child); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.s.DB.QueryRow("SELECT set_digest FROM canonical_criteria WHERE relationship_id = ? LIMIT 1", s.rid).Scan(&digest); err != nil {
+		t.Fatal(err)
+	}
+	s.exec("UPDATE relationships SET allowed_recipients = ? WHERE relationship_id = ?", fmt.Sprintf("[\"parent\",\"%s\"]", child), s.rid)
+	now := s.clock()
+	blocked := "evt-blocked-after-refresh"
+	s.exec("INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at)"+
+		" VALUES (?, ?, 2, ?, 'blocked_needs_input', 'child', ?, 'turn-blocked', 'completed', '{}', 'final', ?, ?)", blocked, s.rid, dig("blocked after the refresh"), child, now, now)
+	ack := delivery.NewAck(delivery.NewService(s.s, delivery.SystemClock{}))
+	record, err := ack.RecordDecision(context.Background(), delivery.DecisionRequest{EventID: blocked, Decision: "split_approval", Turn: "decision-turn", Note: "keep the first part", CriteriaDigest: digest})
+	if err != nil {
+		t.Fatalf("decision-reply = %v", err)
+	}
+	var decision string
+	for _, f := range record {
+		if f.Key == "eventId" {
+			decision = fmt.Sprint(f.Value)
+		}
+	}
+	s.exec("UPDATE deliveries SET state = 'dispatched', dispatch_turn_id = 'turn-decision' WHERE event_id = ?", decision)
+	if _, err := ack.BindDispatchedRevision(context.Background(), decision); err != nil {
+		t.Fatal(err)
+	}
+	res, err := s.sched.RecordCorrection(context.Background(), "g", "I", "parent", "")
+	if err != nil || res.Generation != 3 || !res.CarriedOver || res.ManifestDigest != dispatched || res.OpenedBy != "decision_reply" || res.DispatchTurnID != "turn-decision" {
+		t.Fatalf("dag-correct after the refresh = %v %+v, want generation 3 bound to the dispatch manifest %s carried over", err, res, dispatched)
+	}
+	if again, err := s.sched.RecordCorrection(context.Background(), "g", "I", "parent", ""); err != nil || !again.Replayed || !again.CarriedOver || again.OpenedBy != "decision_reply" {
+		t.Fatalf("replay = %v %+v", err, again)
+	}
 }

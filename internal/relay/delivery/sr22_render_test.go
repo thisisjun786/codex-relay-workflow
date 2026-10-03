@@ -38,6 +38,7 @@ func sr22Store(t *testing.T) (sr22Fixture, *store.Store) {
 }
 
 func Test24_SR_22_CompletionContextWholeMessageBytes(t *testing.T) {
+	t.Parallel()
 	captured, s := sr22Store(t)
 	d := NewService(s, NewFakeClock())
 

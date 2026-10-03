@@ -6,7 +6,7 @@ import (
 	"errors"
 	"strconv"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -148,7 +148,7 @@ func withContinuationHint(err error) error {
 	if !errors.As(err, &need) || !errors.As(err, &refused) {
 		return err
 	}
-	return store.RefusedBecause(refused.Reason, refused.Detail+"; to continue this generation from this turn, re-run this emit with --continues-anchor "+pyvalue.StrRepr(need.Anchor)+" --continuation-actor <your own task id> --continuation-reason <why this turn continues it>", err)
+	return store.RefusedBecause(refused.Reason, refused.Detail+"; to continue this generation from this turn, re-run this emit with --continues-anchor "+quote.Shell(need.Anchor)+" --continuation-actor <your own task id> --continuation-reason <why this turn continues it>", err)
 }
 
 // rowObj is dict(sqlite3.Row) of a deliveries row, in the table's column order.

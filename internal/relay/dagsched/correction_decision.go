@@ -56,14 +56,19 @@ func (s *Scheduler) recordDecisionOpened(ctx context.Context, q store.Querier, p
 		return refuse(contract.RefusalDispositionConflict, "generation %d of %s carries the reason decision_reply (request %q) and no split_approval or scope_change of this relationship opened it, so it is not recorded for node %s", rel.Generation, rel.ID, request, n.NodeID)
 	}
 
-	// what the child was dispatched with is the manifest of the previous generation, which RecordCorrection already required to be recorded
+	// what the child was dispatched with is the manifest of the newest generation recorded before this one (the generation right before it, except after a recorded base refresh, which has no execution of
+	// its own and carries the manifest of the one before it), which RecordCorrection already required to be there
 	var previous string
-	if _, err := queryOne(ctx, q, "SELECT manifest_digest FROM dag_node_executions WHERE plan_id = ? AND node_id = ? AND relationship_id = ? AND execution_generation = ?", []any{plan, n.NodeID, rel.ID, rel.Generation - 1}, &previous); err != nil {
+	if _, err := queryOne(ctx, q, "SELECT manifest_digest FROM dag_node_executions WHERE plan_id = ? AND node_id = ? AND relationship_id = ? AND execution_generation < ? ORDER BY execution_generation DESC LIMIT 1", []any{plan, n.NodeID, rel.ID, rel.Generation}, &previous); err != nil {
 		return err
 	}
 	was, stored, err := dag.ReadManifestOn(ctx, q, previous)
 	if err != nil || !stored {
-		return refuse(contract.RefusalRevisionMismatch, "the manifest %s that generation %d of %s was dispatched with cannot be read back: %v", previous, rel.Generation-1, rel.ID, err)
+		cause := "it is not stored"
+		if err != nil {
+			cause = err.Error()
+		}
+		return refuse(contract.RefusalRevisionMismatch, "the manifest %q the child of %s was dispatched with cannot be read back: %s", previous, rel.ID, cause)
 	}
 	if !criteriaOnly(n, snap, was) {
 		return refuse(contract.RefusalDispositionConflict, "node %s changed beyond its criteria since its child was dispatched with manifest %s: a decision tells the child its criteria and nothing else, so generation %d of %s is not recorded as consuming the changed node; "+
