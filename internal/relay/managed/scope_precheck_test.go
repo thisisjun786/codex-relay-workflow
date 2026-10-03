@@ -134,6 +134,7 @@ func (x *scopeRun) count(table string) int {
 // A project with no bound parent is refused as unregistered_scope before the host is asked for
 // anything, and the reservation it leaves was never armed, so managed-release can release it.
 func TestScopePrecheck_UnboundProjectIsRefusedBeforeCreation(t *testing.T) {
+	t.Parallel()
 	x := newScopeRun(t)
 	_, err := x.start.Run(x.ctx, x.raw)
 	reasonIs(t, err, "unregistered_scope")
@@ -156,6 +157,7 @@ func TestScopePrecheck_UnboundProjectIsRefusedBeforeCreation(t *testing.T) {
 
 // A project another task is the parent of is refused the same way.
 func TestScopePrecheck_ProjectHeldByAnotherParentIsRefusedBeforeCreation(t *testing.T) {
+	t.Parallel()
 	x := newScopeRun(t)
 	x.bind("other-parent")
 	_, err := x.start.Run(x.ctx, x.raw)
@@ -166,6 +168,7 @@ func TestScopePrecheck_ProjectHeldByAnotherParentIsRefusedBeforeCreation(t *test
 }
 
 func TestScopePrecheck_BoundProjectIsAdmittedAndReplayed(t *testing.T) {
+	t.Parallel()
 	x := newScopeRun(t)
 	x.bind("parent")
 	got := x.run()
@@ -180,6 +183,7 @@ func TestScopePrecheck_BoundProjectIsAdmittedAndReplayed(t *testing.T) {
 
 // The refusal is not final: once the parent is bound, the same request id creates its one child.
 func TestScopePrecheck_RetryAfterBindingCreatesTheChildOnce(t *testing.T) {
+	t.Parallel()
 	x := newScopeRun(t)
 	if _, err := x.start.Run(x.ctx, x.raw); err == nil {
 		t.Fatal("unbound project accepted")
@@ -196,6 +200,7 @@ func TestScopePrecheck_RetryAfterBindingCreatesTheChildOnce(t *testing.T) {
 
 // A retry that continues an existing child is not an attempt to create one.
 func TestScopePrecheck_RetryContinuesTheExistingChild(t *testing.T) {
+	t.Parallel()
 	x := newScopeRun(t)
 	x.bind("parent")
 	x.host.standby = "inProgress"
@@ -213,6 +218,7 @@ func TestScopePrecheck_RetryContinuesTheExistingChild(t *testing.T) {
 // An armed request that already has a creation result keeps the answer it had: the early check
 // belongs to the moment before a host effect, so removing the binding afterwards changes nothing.
 func TestScopePrecheck_ArmedRetryKeepsItsCreationAnswer(t *testing.T) {
+	t.Parallel()
 	x := newScopeRun(t)
 	x.bind("parent")
 	x.host.creationEnvironmentChanged = true
@@ -230,6 +236,7 @@ func TestScopePrecheck_ArmedRetryKeepsItsCreationAnswer(t *testing.T) {
 // The check is repeated right before the effect: a binding removed after the reservation was
 // armed still stops the creation, and the request stays armed and retryable with its own id.
 func TestScopePrecheck_BindingRemovedBeforeCreationStopsIt(t *testing.T) {
+	t.Parallel()
 	x := newScopeRun(t)
 	x.bind("parent")
 	removed := false

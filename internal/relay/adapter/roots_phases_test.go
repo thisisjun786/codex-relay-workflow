@@ -40,6 +40,7 @@ func rootScenario(write bool, status string, roots []any) scenario {
 	return scenario{settings: settings, answers: []map[string]any{{"thread": map[string]any{"id": parentLoaded, "status": map[string]any{"type": status}}}, response, {"turn": map[string]any{"id": "turn-1"}}}, actions: [][]any{{"send", "del-235000000000-a1", parentLoaded, "the child's report"}}}
 }
 func Test28_BLR_1_LoadedRootNarrowing(t *testing.T) {
+	t.Parallel()
 	for _, write := range []bool{false, true} {
 		capture(t, rootScenario(write, "idle", []any{rootsCWD}))
 	}
@@ -48,11 +49,13 @@ func Test28_BLR_1_LoadedRootNarrowing(t *testing.T) {
 	capture(t, s)
 }
 func Test28_BLR_2_ExactLoads(t *testing.T) {
+	t.Parallel()
 	capture(t, rootScenario(false, "idle", []any{recordedRoots[3], recordedRoots[2], recordedRoots[1], recordedRoots[0]}))
 	capture(t, rootScenario(false, "notLoaded", recordedRoots))
 	capture(t, rootScenario(false, "idle", recordedRoots))
 }
 func Test28_BLR_3_WiderOrUnloadedRootsWithhold(t *testing.T) {
+	t.Parallel()
 	capture(t, rootScenario(false, "idle", []any{rootsCWD, "/workspace/example/elsewhere"}))
 	s := rootScenario(false, "idle", []any{rootsCWD})
 	s.answers[1]["thread"].(map[string]any)["environments"] = []any{map[string]any{"environmentId": "local", "cwd": rootsCWD, "runtimeWorkspaceRoots": []any{rootsCWD, "/workspace/example/elsewhere"}}}
@@ -87,6 +90,7 @@ func Test28_BLR_3_WiderOrUnloadedRootsWithhold(t *testing.T) {
 	capture(t, s)
 }
 func Test28_TPH_1_EstablishmentBeforeReadOrResume(t *testing.T) {
+	t.Parallel()
 	for _, index := range []int{0, 1} {
 		s := sendScenario(resume(), []any{"send", "req-establish-read", "thread-1", "hello"})
 		s.answers[index] = map[string]any{"phase": "establish"}
@@ -94,6 +98,7 @@ func Test28_TPH_1_EstablishmentBeforeReadOrResume(t *testing.T) {
 	}
 }
 func Test28_TPH_2_TurnEstablishmentTransmitAndAckUncertain(t *testing.T) {
+	t.Parallel()
 	for _, phase := range []string{"establish", "transmit", "ack"} {
 		s := sendScenario(resume(), []any{"send", "req-" + phase, "thread-1", "hello"})
 		s.answers[2] = map[string]any{"phase": phase}

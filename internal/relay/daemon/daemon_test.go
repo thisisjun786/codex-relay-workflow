@@ -14,6 +14,7 @@ import (
 
 func TestMain(m *testing.M) { testsupport.Main(m) }
 func Test29InheritedDescriptionSurvivesClose(t *testing.T) {
+	t.Parallel()
 	directory := t.TempDir()
 	parent, err := Acquire(directory, true, nil)
 	if err != nil {
@@ -48,6 +49,7 @@ func Test29InheritedDescriptionSurvivesClose(t *testing.T) {
 	}
 }
 func Test29CadenceBounds(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	clock := &delivery.FakeClock{T: 10}
 	ticks := 0
@@ -84,6 +86,7 @@ func fixtureStore(ctx context.Context, path, socket string) (*store.Store, error
 	return store.Open(ctx, path, socket)
 }
 func Test29QuietConcurrentTicks(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s, err := fixtureStore(ctx, filepath.Join(t.TempDir(), "relay.sqlite3"), "")
 	if err != nil {
@@ -148,6 +151,7 @@ func seed(t *testing.T, s *store.Store, rid, parent, child, turn string) {
 	}
 }
 func Test29ObservationIsPerAssignment(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s, err := fixtureStore(ctx, filepath.Join(t.TempDir(), "relay.sqlite3"), "")
 	if err != nil {
@@ -172,6 +176,7 @@ func Test29ObservationIsPerAssignment(t *testing.T) {
 	}
 }
 func Test29AbsentAnchorDoesNotClaimHealthyPoll(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s, err := fixtureStore(ctx, filepath.Join(t.TempDir(), "relay.sqlite3"), "")
 	if err != nil {
@@ -189,6 +194,7 @@ func Test29AbsentAnchorDoesNotClaimHealthyPoll(t *testing.T) {
 	}
 }
 func Test29AdmissionRotationDoesNotSkipUnservedTurns(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s, err := fixtureStore(ctx, filepath.Join(t.TempDir(), "relay.sqlite3"), "")
 	if err != nil {

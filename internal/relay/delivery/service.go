@@ -569,6 +569,17 @@ func (d *Service) SupersessionReason(ctx context.Context, eventID string) (strin
 	if event.I("execution_generation") < rel.I("execution_generation") {
 		return StaleGeneration, nil
 	}
+	if event.S("outcome") == DecisionReply {
+		// a decision answers a receipt, not a revision: a newer generation replaces it, and so does a later receipt of the
+		// child in its own generation, because the child has moved on and the answer is no longer to what it asks. Later is
+		// read against the receipt that was answered, in the order RecordDecision uses (first seen, then stored), so a receipt
+		// staged before the decision and made final after it still counts.
+		later, err := one(ctx, d.Store, "SELECT 1 FROM events c JOIN events b ON b.event_id = ? WHERE c.relationship_id = ? AND c.execution_generation = ? AND c.stage = 'final' AND c.suppressed_reason IS NULL AND c.producer = 'child' AND c.event_id != b.event_id AND (c.first_seen_at > b.first_seen_at OR (c.first_seen_at = b.first_seen_at AND c.rowid > b.rowid))", pyjson.Text(loadsObj(event.S("receipt")).Get("answersEvent")), event.S("relationship_id"), event.I("execution_generation"))
+		if err != nil || later == nil {
+			return "", err
+		}
+		return SupersededRevision, nil
+	}
 	if event.S("outcome") == Revision {
 		answered, err := one(ctx, d.Store, "SELECT 1 FROM events WHERE relationship_id = ? AND execution_generation = ? AND stage = 'final' AND suppressed_reason IS NULL AND event_id != ? AND outcome NOT IN ('merge_turn_grant')", event.S("relationship_id"), event.I("execution_generation"), eventID)
 		if err != nil || answered == nil {
@@ -665,6 +676,9 @@ func (d *Service) render(ctx context.Context, row Row, record Obj, request strin
 	}
 	switch row.S("kind") {
 	case Revision:
+		if pyjson.Text(record.Get("kind")) == DecisionReply {
+			return renderDecision(row, record, request), nil
+		}
 		return renderRevision(row, record, request), nil
 	case Completion:
 		return renderCompletion(row, record, request), nil

@@ -61,7 +61,7 @@ func (c *Channel) refreshNotice(ctx context.Context, row store.SupervisorMessage
 		return false, err
 	}
 	obsolete := func(detail string) (bool, error) {
-		return false, Refusal{"superseded_revision", detail + ". Nothing is sent through this message; it is held as 'superseded_by_report', and staging the project stages what is owed now"}
+		return false, Refusal{"superseded_revision", detail + heldSupersededTail}
 	}
 	if notice == nil {
 		return obsolete("notification " + pyvalue.StrRepr(row.ObligationID) + " no longer exists")

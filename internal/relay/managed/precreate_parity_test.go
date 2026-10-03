@@ -25,6 +25,7 @@ func parityStore(t *testing.T) (*store.Store, *registry.Registry) {
 }
 
 func TestPrecreate_SeparatorRefusalIsRegistrationsAnswer(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name                   string
 		parent, host, issue    string
@@ -40,6 +41,7 @@ func TestPrecreate_SeparatorRefusalIsRegistrationsAnswer(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			ctx := context.Background()
 			_, reg := parityStore(t)
 			if c.project != "" {
@@ -80,6 +82,7 @@ func TestPrecreate_SeparatorRefusalIsRegistrationsAnswer(t *testing.T) {
 }
 
 func TestPrecreate_SettingsConflictIsEnsureSettingsAnswer(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s, _ := parityStore(t)
 	recorded := map[string]any{"model": "gpt-5", "citedRole": "parent"}

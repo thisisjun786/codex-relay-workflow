@@ -16,7 +16,6 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/managed"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // profileStart is what one managed start under a custom permission profile left behind.
@@ -99,7 +98,7 @@ func startUnderPermissionProfile(t *testing.T, requested, created, resumed any) 
 		}
 		return fakehost.Reply{Result: map[string]any{"data": data, "nextCursor": nil}}
 	})
-	s, err := store.Open(context.Background(), filepath.Join(state, "relay.sqlite3"), host.SocketPath)
+	s, err := openStore(context.Background(), filepath.Join(state, "relay.sqlite3"), host.SocketPath)
 	if err != nil {
 		t.Fatal(err)
 	}

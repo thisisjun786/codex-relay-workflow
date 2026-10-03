@@ -35,6 +35,8 @@ func init() {
 		dispatch.Command{Name: "dag-merge-judge", Run: runMergeJudge},
 		dispatch.Command{Name: "dag-merge-request", Run: runMergeRequest},
 		dispatch.Command{Name: "dag-conflict-observe", Run: runConflictObserve},
+		// dag-conflict-sweep measures every pair of the live heads and each against the tip: a measurement, like dag-conflict-observe, so it is not fenced by the coordinator epoch.
+		dispatch.Command{Name: "dag-conflict-sweep", Run: runConflictSweep},
 		dispatch.Command{Name: "dag-cap-basis-record", Run: runCapBasis},
 	)
 }
@@ -237,14 +239,19 @@ func runAccept(ctx context.Context, services dispatch.Services, args dispatch.Ar
 	}
 	defer closeStore()
 	sched.PRs = ForgePullRequestReader(ExecRunner)
+	sched.Tips = mergeturn.TargetReader{}
 	result, err := sched.Accept(ctx, args.Text("plan"), args.Text("node"), args.Text("actor"), input)
 	if err != nil {
 		return nil, hostFailure(err)
 	}
-	return contract.OrderedObject{{Key: "ok", Value: true}, {Key: "schema", Value: "dag-accept/1"}, {Key: "plan_id", Value: result.PlanID}, {Key: "node_id", Value: result.NodeID},
+	answer := contract.OrderedObject{{Key: "ok", Value: true}, {Key: "schema", Value: "dag-accept/1"}, {Key: "plan_id", Value: result.PlanID}, {Key: "node_id", Value: result.NodeID},
 		{Key: "acceptance_id", Value: result.AcceptanceID}, {Key: "relationship_id", Value: optionalText(result.RelationshipID)}, {Key: "execution_generation", Value: result.Generation},
 		{Key: "replayed", Value: result.Replayed}, {Key: "revalidated", Value: result.Revalidated}, {Key: "superseded_acceptance_id", Value: optionalText(result.SupersededID)},
-		{Key: "head_sha", Value: optionalText(result.HeadSHA)}, {Key: "evidence_digest", Value: optionalText(result.EvidenceDigest)}, {Key: "slot_released", Value: result.SlotReleased}}, nil
+		{Key: "head_sha", Value: optionalText(result.HeadSHA)}, {Key: "evidence_digest", Value: optionalText(result.EvidenceDigest)}, {Key: "slot_released", Value: result.SlotReleased}}
+	if result.Sweep != nil {
+		answer = append(answer, contract.Field{Key: "conflict_sweep", Value: result.Sweep.Object()})
+	}
+	return answer, nil
 }
 
 func runObserve(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
@@ -273,9 +280,13 @@ func runObserve(ctx context.Context, services dispatch.Services, args dispatch.A
 			{Key: "tip_sha", Value: o.TipSHA}, {Key: "is_ancestor", Value: o.IsAncestor}, {Key: "method", Value: o.Method}, {Key: "merge_turn_id", Value: optionalText(o.MergeTurnID)},
 			{Key: "observed_seq", Value: o.Seq}, {Key: "replayed", Value: o.Replayed}}
 	}
-	return contract.OrderedObject{{Key: "ok", Value: true}, {Key: "schema", Value: "dag-integration-observe/1"}, {Key: "plan_id", Value: result.PlanID}, {Key: "node_id", Value: result.NodeID},
+	answer := contract.OrderedObject{{Key: "ok", Value: true}, {Key: "schema", Value: "dag-integration-observe/1"}, {Key: "plan_id", Value: result.PlanID}, {Key: "node_id", Value: result.NodeID},
 		{Key: "acceptance_id", Value: result.AcceptanceID}, {Key: "observations", Value: list}, {Key: "integrated", Value: result.Integrated}, {Key: "mark_present", Value: result.MarkPresent},
-		{Key: "slot_released", Value: result.SlotReleased}}, nil
+		{Key: "slot_released", Value: result.SlotReleased}}
+	if result.Sweep != nil {
+		answer = append(answer, contract.Field{Key: "conflict_sweep", Value: result.Sweep.Object()})
+	}
+	return answer, nil
 }
 
 func runDecision(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
@@ -408,9 +419,54 @@ func runConflictObserve(ctx context.Context, services dispatch.Services, args di
 	for i, f := range result.Files {
 		files[i] = f
 	}
+	drift := make([]any, len(result.Drift))
+	for i, d := range result.Drift {
+		drift[i] = contract.OrderedObject{{Key: "node_id", Value: d.Node}, {Key: "path", Value: d.Path}}
+	}
 	return contract.OrderedObject{{Key: "ok", Value: true}, {Key: "schema", Value: "dag-conflict-observe/1"}, {Key: "plan_id", Value: result.PlanID}, {Key: "observation_id", Value: result.ObservationID},
 		{Key: "left_node_id", Value: result.LeftNode}, {Key: "right_node_id", Value: result.RightNode}, {Key: "left_head", Value: result.LeftHead}, {Key: "right_head", Value: result.RightHead},
-		{Key: "base_sha", Value: result.BaseSHA}, {Key: "conflicts", Value: int64(result.Conflicts)}, {Key: "files", Value: files}, {Key: "method", Value: result.Method}, {Key: "replayed", Value: result.Replayed}}, nil
+		{Key: "base_sha", Value: result.BaseSHA}, {Key: "conflicts", Value: int64(result.Conflicts)}, {Key: "files", Value: files}, {Key: "drift", Value: drift}, {Key: "method", Value: result.Method}, {Key: "replayed", Value: result.Replayed}}, nil
+}
+
+// runConflictSweep measures every pair of the plan's live heads and each head against the tips named by --target (or, without one, the base frozen in the manifest of --node's current execution), in the checkout
+// named by --repository (or the parent's), and records the observations and a ledger row. Heads are the ones named with --head (NODE=SHA), else the node's current accepted head, else its child's checkout HEAD.
+func runConflictSweep(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
+	trigger := args.Text("trigger")
+	if trigger == "" {
+		trigger = TriggerManual
+	}
+	heads := map[string]string{}
+	for _, spelled := range args.Strings("head") {
+		node, sha, ok := strings.Cut(spelled, "=")
+		if !ok || node == "" || sha == "" {
+			return nil, usage("--head is NODE=SHA, not " + spelled)
+		}
+		heads[node] = sha
+	}
+	var targets []Target
+	for _, spelled := range args.Strings("target") {
+		repository, ref, ok := strings.Cut(spelled, "@")
+		if !ok || repository == "" || ref == "" {
+			return nil, usage("--target is repository@ref, not " + spelled)
+		}
+		targets = append(targets, Target{Repository: repository, BaseRef: ref})
+	}
+	sched, closeStore, err := openScheduler(ctx, services, args)
+	if err != nil {
+		return nil, err
+	}
+	defer closeStore()
+	sched.Tips = mergeturn.TargetReader{}
+	plan, node := args.Text("plan"), args.Text("node")
+	tips, err := sched.sweepTips(ctx, plan, node, targets)
+	if err != nil {
+		return nil, hostFailure(err)
+	}
+	result, err := sched.ObserveLive(ctx, plan, args.Text("actor"), SweepInput{Repository: args.Text("repository"), Trigger: trigger, TriggerNode: node, Tips: tips, Heads: heads})
+	if err != nil {
+		return nil, hostFailure(err)
+	}
+	return append(contract.OrderedObject{{Key: "ok", Value: true}, {Key: "schema", Value: "dag-conflict-sweep/1"}, {Key: "plan_id", Value: result.PlanID}}, result.Object()...), nil
 }
 
 func runCapBasis(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {

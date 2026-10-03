@@ -14,7 +14,6 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/daemon"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // These tests drive a whole daemon tick against the production adapter and a fake App Server that
@@ -118,7 +117,7 @@ func (h *hangingHost) awaitEnd(t *testing.T) error {
 func observingDaemon(t *testing.T, host *hangingHost, n int) *daemon.Daemon {
 	t.Helper()
 	ctx := context.Background()
-	s, err := store.Open(ctx, filepath.Join(t.TempDir(), "relay.sqlite3"), "")
+	s, err := openStore(ctx, filepath.Join(t.TempDir(), "relay.sqlite3"), "")
 	if err != nil {
 		t.Fatal(err)
 	}
