@@ -24,6 +24,7 @@ func stateDir(t *testing.T) string {
 }
 
 func Test30AllWritableEntrypointsFenced(t *testing.T) {
+	t.Parallel()
 	for _, entry := range []string{"open", "options", "registration", "probe"} {
 		t.Run(entry, func(t *testing.T) {
 			path := filepath.Join(stateDir(t), "relay.sqlite3")
@@ -78,6 +79,7 @@ func Test30AllWritableEntrypointsFenced(t *testing.T) {
 	}
 }
 func Test30GateHeldUntilConnectionClosed(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(stateDir(t), "relay.sqlite3")
 	db, err := fixtureOpen(t.Context(), path, "")
 	must(t, err)
@@ -96,6 +98,7 @@ func Test30GateHeldUntilConnectionClosed(t *testing.T) {
 // runtime that finds it, with itself as owner at epoch 1, exactly like the fence
 // release's absent-store initialization for Python. A fresh install has no Python.
 func Test30AbsentStoreCreatedAsGoEpochOne(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "missing/relay.sqlite3")
 	socket := filepath.Join(t.TempDir(), "app.sock")
 	db, err := Open(t.Context(), path, socket)
@@ -133,6 +136,7 @@ func Test30AbsentStoreCreatedAsGoEpochOne(t *testing.T) {
 // Anything partially present is not "absent": admission refuses it and nothing is
 // created or repaired. A legacy (unfenced) database is never adopted by Go.
 func Test30PartialOrLegacyStoreNeverInitialized(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name  string
 		setup func(t *testing.T, path string)
@@ -183,6 +187,7 @@ func snapshotDir(t *testing.T, dir string) map[string]string {
 }
 
 func Test30SchemaRefusalNoRepair(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(stateDir(t), "relay.sqlite3")
 	db, err := fixtureOpen(t.Context(), path, "")
 	must(t, err)
@@ -203,6 +208,7 @@ func Test30SchemaRefusalNoRepair(t *testing.T) {
 }
 
 func Test30CreateAbsentCrashProcess(t *testing.T) {
+	// Serial: child-process entry point (a parent test re-executes this binary for it); it assigns the createFault seam and exits the process.
 	path, point := os.Getenv("CRW_CRASH_DB"), os.Getenv("CRW30_CREATE_POINT")
 	if path == "" || point == "" {
 		return
@@ -224,6 +230,7 @@ func Test30CreateAbsentCrashProcess(t *testing.T) {
 // linked into place, so D never exists without its six ownership keys. A crash at
 // either durable edge leaves a partial store that admission refuses (decision D0).
 func Test30CreateAbsentNeverExposesUnstampedDatabase(t *testing.T) {
+	t.Parallel()
 	dir := stateDir(t)
 	path := filepath.Join(dir, "relay.sqlite3")
 	db, err := Open(t.Context(), path, "")

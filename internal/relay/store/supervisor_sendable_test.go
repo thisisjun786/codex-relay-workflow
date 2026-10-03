@@ -103,6 +103,7 @@ func expectedIDs(probes []sendableProbe, want func(sendableProbe) bool) []string
 }
 
 func TestSupervisorSendableSQL_selects_the_rows_its_words_describe(t *testing.T) {
+	t.Parallel()
 	// Given: one row for every combination of state, hold, eligibility time and lease.
 	s := recordStore(t)
 	probes := seedSendableMatrix(t, s)
@@ -176,6 +177,7 @@ func difference(a, b []string) []string {
 }
 
 func TestSupervisorMessagesRow_predicates_agree_with_the_SQL_on_every_row(t *testing.T) {
+	t.Parallel()
 	// Given: the truth table, and the rows the SQL fragments select from it.
 	s := recordStore(t)
 	probes := seedSendableMatrix(t, s)
@@ -197,6 +199,7 @@ func TestSupervisorMessagesRow_predicates_agree_with_the_SQL_on_every_row(t *tes
 }
 
 func TestSupervisorOlderThanSQL_orders_by_staging_time_then_id(t *testing.T) {
+	t.Parallel()
 	// Given: four messages, two staged at the same instant.
 	s := recordStore(t)
 	ctx := context.Background()
@@ -213,6 +216,7 @@ func TestSupervisorOlderThanSQL_orders_by_staging_time_then_id(t *testing.T) {
 }
 
 func TestSupervisorNeverSentSQL_needs_an_unsent_state_and_no_attempt_that_may_have_gone(t *testing.T) {
+	t.Parallel()
 	// Given: messages with each kind of attempt, and one in a state that is not unsent.
 	s := recordStore(t)
 	ctx := context.Background()

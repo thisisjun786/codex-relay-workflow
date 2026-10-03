@@ -60,6 +60,7 @@ func refusedReason(answer any) string {
 // what is missing (settings_unavailable; settings_incomplete "environments"), and recording the
 // settings later makes the same recipient eligible.
 func Test25_SPR1_settings_are_established_before_any_send(t *testing.T) {
+	t.Parallel()
 	got := gateAnswers(t)
 	if refusedReason(got["unrecorded"]) != SettingsUnavailable || refusedReason(got["incomplete"]) != SettingsIncomplete {
 		t.Fatal(got["unrecorded"], got["incomplete"])
@@ -80,6 +81,7 @@ func Test25_SPR1_settings_are_established_before_any_send(t *testing.T) {
 // detail a parent reads (mistyped, a sandbox with no resume mode, an untrusted policy, an
 // unreadable policy, a bare sandbox string).
 func Test25_SPR4_a_record_refused_at_the_gate_withholds_with_its_reason(t *testing.T) {
+	t.Parallel()
 	got := gateAnswers(t)
 	for name, reason := range map[string]string{"mistyped_cwd": SettingsMistyped, "external": UnsupportedSandboxType,
 		"untrusted": UnsupportedApprovalPolicy, "malformed_sandbox": UnsupportedSandboxType, "bare_sandbox": UnsupportedSandboxType} {
@@ -92,6 +94,7 @@ func Test25_SPR4_a_record_refused_at_the_gate_withholds_with_its_reason(t *testi
 // SPR-5: the ordinary path hands the recorded settings to the adapter: resume params carry the
 // workspace-write mode, the recorded policy fields as config, and no approval policy.
 func Test25_SPR5_the_ordinary_path_hands_the_settings_to_the_adapter(t *testing.T) {
+	t.Parallel()
 	got := gateAnswers(t)
 	params := pyjson.Map(pyjson.Map(got["ordinary"])["resumeParams"])
 	if params["sandbox"] != "workspace-write" || params["approvalPolicy"] != nil {
@@ -106,6 +109,7 @@ func Test25_SPR5_the_ordinary_path_hands_the_settings_to_the_adapter(t *testing.
 // retryable pre-send withhold (and re-recording releases it); untrusted in the RESPONSE is the
 // closed channel, decided alone as unsupported_approval_policy.
 func Test25_SPR9_the_record_rule_and_the_response_rule_stay_two_facts(t *testing.T) {
+	t.Parallel()
 	got := gateAnswers(t)
 	if refusedReason(got["untrusted"]) != UnsupportedApprovalPolicy {
 		t.Fatal(got["untrusted"])
@@ -133,6 +137,7 @@ func Test25_SPR9_the_record_rule_and_the_response_rule_stay_two_facts(t *testing
 // constraint mutant is refused naming the field and the value. Python derives the field set
 // from its own source by AST (CLI-40, not ported); this is that derived set as a fixed table.
 func Test25_CLI35_every_field_a_send_transforms_or_constrains_is_covered(t *testing.T) {
+	t.Parallel()
 	transformations := []string{"sandbox", "cwd", "model", "reasoningEffort", "runtimeWorkspaceRoots", "environments"}
 	constraints := map[string][]string{"approvalPolicy": CarriedApprovalPolicies}
 	probe := func(field string, value any) (contractObject, error) {
@@ -193,6 +198,7 @@ func responseFor(row contractObject) contractObject {
 // argparse cannot parse ends before cli.main and creates nothing. The command starts from an
 // absent store; stdout, exit code and what the state directory holds are compared with the golden.
 func Test25_CLI23_a_write_forms_own_refusal_comes_after_its_store(t *testing.T) {
+	t.Parallel()
 	listing := func(state string) []string {
 		entries, err := os.ReadDir(state)
 		if os.IsNotExist(err) {

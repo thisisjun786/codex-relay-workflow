@@ -60,6 +60,7 @@ func rowText(row store.Row) string {
 }
 
 func TestProjectParentWriters_WaitForTheProjectLock(t *testing.T) {
+	// Serial: assigns ownership.LockWait, which every other running test would read, and bounds waits by the wall clock.
 	supervisor := Endpoint{"supervisor", host, ns("/supervisor"), ns("cxc-supervisor")}
 	other := Endpoint{"other-parent", host, ns("/other"), ns("cxc-other")}
 	own := Endpoint{parent, host, ns("/parent"), ns("cxc-" + parent)}
@@ -161,6 +162,7 @@ func liveParent(t *testing.T, r *Registry, project string) string {
 // another: with a project's lock held shared, a bind of the same text under the child or supervisor role,
 // and a bind of another project's parent, return at once.
 func TestProjectParentWriters_OnlyTheProjectParentWaits(t *testing.T) {
+	// Serial: assigns ownership.LockWait, which every other running test would read, and bounds waits by the wall clock.
 	r := newRegistry(t)
 	held, err := projectlock.Shared(ctx(), r.Store.Path, "K")
 	if err != nil {
@@ -194,6 +196,7 @@ func TestProjectParentWriters_OnlyTheProjectParentWaits(t *testing.T) {
 // A store with no path has no place for the lock file: the writer refuses with a host error, and does not
 // run unlocked or leave a sidecar in the working directory.
 func TestProjectParentWriters_AStoreWithoutAPathIsRefused(t *testing.T) {
+	t.Parallel()
 	r := &Registry{Store: &store.Store{}, Now: func() string { return fakeISO }}
 	_, err := r.BindScopeAs(ctx(), roleParent, "P1", Endpoint{parent, host, ns("/parent"), ns("cxc-" + parent)}, Active)
 	if err == nil {
@@ -208,6 +211,7 @@ func TestProjectParentWriters_AStoreWithoutAPathIsRefused(t *testing.T) {
 // The writer's whole answer on the built command line when it waits out the bound: the host envelope, exit
 // 3, the lock's own text; nothing changed. The reasons and exit codes of every other ending are untouched.
 func TestProjectParentWriters_LockWaitExpiredIsTheHostEnvelope(t *testing.T) {
+	// Serial: assigns ownership.LockWait, which every other running test would read, and bounds waits by the wall clock.
 	state := filepath.Join(t.TempDir(), "state")
 	run := func(argv ...string) (int, string) {
 		var stdout, stderr bytes.Buffer
@@ -246,6 +250,7 @@ func TestProjectParentWriters_LockWaitExpiredIsTheHostEnvelope(t *testing.T) {
 // Two spellings of one store are one lock: a start holds the project's lock through the store's real path,
 // and a writer that reached the same store through a link to the file waits for it.
 func TestProjectParentWriters_ALinkedSpellingOfTheStoreIsTheSameLock(t *testing.T) {
+	// Serial: assigns ownership.LockWait, which every other running test would read, and bounds waits by the wall clock.
 	r := newRegistry(t)
 	link := filepath.Join(t.TempDir(), "alias.sqlite3")
 	if err := os.Symlink(r.Store.Path, link); err != nil {

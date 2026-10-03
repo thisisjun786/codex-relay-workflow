@@ -12,6 +12,7 @@ import (
 // refusal names the first run of surrogates by code point, one character alone or a run by its
 // first and last position, in CPython's words.
 func TestEncodeUTF8IsStrEncode(t *testing.T) {
+	t.Parallel()
 	cases := []struct{ goText, python string }{
 		{"x\xffy", `os.fsdecode(b"x\xffy")`},
 		{"\xfe\xffz", `os.fsdecode(b"\xfe\xffz")`},
@@ -39,6 +40,7 @@ func TestEncodeUTF8IsStrEncode(t *testing.T) {
 // looked up and whether it arrives bare or through a driver.Valuer, so no TEXT Python's sqlite3
 // cannot decode is ever written; every other string, and bytes, bind as they always did.
 func TestAStoreRefusesToBindAStrPythonCannotEncode(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s, err := Open(ctx, filepath.Join(t.TempDir(), "relay.sqlite3"), "")
 	if err != nil {

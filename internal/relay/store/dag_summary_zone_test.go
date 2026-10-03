@@ -38,6 +38,7 @@ func summaryUpdate(plan, document string, seq int, set string) string {
 // An entry is appended pending, with the next sequence number of its stream (a plan and a document) and a plan revision that does not go
 // back; a second open entry of the stream is refused, so the older ones are superseded before a newer one is appended.
 func TestDAGSummaryOutboxEntriesAreAppendedInOrder(t *testing.T) {
+	t.Parallel()
 	db := zoneOpenedDB(t)
 	zoneRefuses(t, db, "an entry of a plan that was never created", summaryInsert("plan-1", "doc-a", 1, 1, "pending"))
 	zoneMustExec(t, db, summaryPlan, summaryInsert("plan-1", "doc-a", 5, 1, "pending"))
@@ -55,6 +56,7 @@ func TestDAGSummaryOutboxEntriesAreAppendedInOrder(t *testing.T) {
 // The legal moves of an open entry, and what the zone refuses: only confirmed and superseded are final, a claim holds a token and nothing else does,
 // identity never changes, and nothing is deleted.
 func TestDAGSummaryOutboxTransitions(t *testing.T) {
+	t.Parallel()
 	db := zoneOpenedDB(t)
 	zoneMustExec(t, db, summaryPlan, summaryInsert("plan-1", "doc-a", 1, 1, "pending"))
 	update := func(set string) string { return summaryUpdate("plan-1", "doc-a", 1, set) }
@@ -90,6 +92,7 @@ func TestDAGSummaryOutboxTransitions(t *testing.T) {
 // The newest-sibling rule is a second line behind the single open entry: with the open-entry index out of the way (a store a future build
 // alters), an entry that has a newer sibling still cannot be claimed or confirmed.
 func TestDAGSummaryOutboxOlderEntryIsNeverClaimedOrConfirmedOverANewerOne(t *testing.T) {
+	t.Parallel()
 	db := zoneOpenedDB(t)
 	zoneMustExec(t, db, summaryPlan, summaryInsert("plan-1", "doc-a", 1, 1, "pending"), "DROP INDEX dag_summary_outbox_open", summaryInsert("plan-1", "doc-a", 1, 2, "pending"))
 	zoneRefuses(t, db, "a claim of the older entry", summaryUpdate("plan-1", "doc-a", 1, "state = 'claimed', claim_token = 'tok-1'"))

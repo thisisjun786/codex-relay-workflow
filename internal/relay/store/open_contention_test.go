@@ -43,6 +43,7 @@ func lockedDatabase(t *testing.T) (string, *sql.Conn) {
 }
 
 func TestOpenWaitsForLockBeforeJournalMode(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	path, lockConn := lockedDatabase(t)
 
@@ -88,6 +89,7 @@ func TestOpenWaitsForLockBeforeJournalMode(t *testing.T) {
 }
 
 func TestOpenCancellationStopsBusyJournalModeRetry(t *testing.T) {
+	t.Parallel()
 	path, _ := lockedDatabase(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

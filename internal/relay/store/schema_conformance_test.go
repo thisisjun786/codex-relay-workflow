@@ -31,6 +31,7 @@ type deliveryRecordStore struct {
 }
 
 func TestSchemaConformance_python_properties(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	var cases []schemaCase
 	test := ""
@@ -350,6 +351,7 @@ func requireExcludedRevision(t *testing.T, s *Store, recorded deliveryRecordStor
 // The Go relationship record is byte-identical to Python's registry.contract_record over the
 // same database, so the conformance above is about the record Python would have produced.
 func TestRelationshipRecord_matches_python_contract_record(t *testing.T) {
+	t.Parallel()
 	f := newIntakeFixture(t)
 	got, err := f.store.RelationshipRecord(context.Background(), f.relationship.ID)
 	if err != nil {
@@ -360,6 +362,7 @@ func TestRelationshipRecord_matches_python_contract_record(t *testing.T) {
 }
 
 func TestSchemaFiles_python_packaged_contract(t *testing.T) {
+	t.Parallel()
 	schema := filepath.Join(repositoryRoot(t), "contract", "schema")
 	t.Run("test_the_packaged_schemas_match_the_contract", func(t *testing.T) {
 		// These digests follow the contract bundle (SOURCE.md). The Draft 7 verdicts keep their own

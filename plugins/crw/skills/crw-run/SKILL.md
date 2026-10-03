@@ -759,7 +759,8 @@ After verification, the coordinator applies [Default dev integration](../crw-pla
 unless the assignment limits delivery. Read [Merge readiness](references/merge-readiness.md)
 to check current CI and reviewer evidence using the repository's actual configuration.
 Serialize integrations that share a target, verify the landing, and update the
-coordination record. A capable child owns its commits, push, pull request and the
+coordination record. Work inside a relay merge turn never runs in the background and records
+its steps ([Working inside a merge turn](references/relay.md#working-inside-a-merge-turn)). A capable child owns its commits, push, pull request and the
 review handling on it, and reports once the current head is clean; the coordinator
 decides and performs the merge, and the child never merges. Release and deployment
 still require the user. Delivery ownership and the fallback for a task that cannot
@@ -881,6 +882,8 @@ says so: the child merges the base, names the kind of each merge ([the kinds and
 each](references/task-packet.md#what-a-handoff-discloses)) and reruns that kind's checks and no
 more, so the correction does not ask for an audit of what the base moved under. The restoration
 block carries the siblings' landings and the conflicts the parent expects.
+
+A base conflict can show after the receipt was ruled `verified` and before the node is accepted. The needs-changes ruling on that same receipt carries it: the relay replaces the verified ruling and opens the next generation, as long as nothing rests on it. The steps, the refusals and what an older relay answers are in [a base conflict after the ruling and before the acceptance](references/merge-readiness.md#a-base-conflict-after-the-ruling-and-before-the-acceptance).
 
 Refresh the task's identity, ownership, current turn, checkout, and prior
 correction receipts before sending. Reuse its agreed model, effort, workflow,

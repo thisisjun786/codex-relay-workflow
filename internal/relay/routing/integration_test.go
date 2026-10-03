@@ -53,8 +53,11 @@ var retiredLedgerScenarios = map[string]bool{
 	"test_a_binding_whose_decisions_were_refused_is_not_kept":             true,
 }
 
+// integrationReplay, like the other replay helpers of this package, runs its test in parallel: it
+// has its own store and temporary directory.
 func integrationReplay(t *testing.T, property string) {
 	t.Helper()
+	t.Parallel()
 	// Wire, Tables and TransactionReads say what the scenario compared besides the reply: the
 	// reply's wire bytes, the whole tables after the call and the reads the call made inside the
 	// decision transaction.

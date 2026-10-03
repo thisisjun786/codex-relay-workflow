@@ -421,9 +421,10 @@ transport call.
 | `awaiting_child_receipt` | a revision request was delivered; contract v1 defines no acknowledgement for that direction, so the child answers with its next completion receipt |
 | `awaiting_grant_acknowledgement` | a merge-turn grant was delivered and its turn has not recorded the acknowledgement; it is answered with `merge-turn-acknowledge`, never with an `ack` |
 | `grant_acknowledged` | the grant was acknowledged on its merge turn, in any delivery state (a parent can answer before the notice is sent) and including after that turn later landed or was returned |
+| `return_request_delivered` | a merge-turn return request (`merge-turn-request-return`) was delivered to the holder, reported as `dispatched_return_request`; it travels the grant channel and has nothing to acknowledge, so it waits for nothing and reads as current while its turn occupies the target |
 | `channel_closed` | the push channel itself is unavailable; stored, not woken |
 | `superseded` | a newer generation or revision replaced this one |
-| `superseded:<reason>` | an outstanding send a newer generation or revision replaced; its state is left alone so a lost response stays reconcilable. For a merge-turn grant, a notice its own turn no longer needs, in any delivery state: `merge_turn_regranted`, `merge_turn_closed` (closed unanswered), `merge_turn_absent` or `merge_turn_grant_unreadable` |
+| `superseded:<reason>` | an outstanding send a newer generation or revision replaced; its state is left alone so a lost response stays reconcilable. For a merge-turn grant, a notice its own turn no longer needs, in any delivery state: `merge_turn_regranted`, `merge_turn_closed` (closed unanswered), `merge_turn_absent` or `merge_turn_grant_unreadable`; a return request notice reads `merge_turn_closed` or `merge_turn_absent` in the same way and is never regranted or answered by a grant acknowledgement |
 
 Each carries the most recent failed operation, its concrete error, the exact settings
 difference where there is one, and the next retry time.

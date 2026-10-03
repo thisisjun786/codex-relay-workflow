@@ -18,6 +18,7 @@ import (
 // verified/coordinator_integrates, needs_changes then corrected, ambiguous. Every answer is
 // compared whole with the golden, which began as Python's AssignmentView.state.
 func Test25_ASG1_state_and_next_action_follow_the_head(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		scenario string
 		states   []string
@@ -49,6 +50,7 @@ func Test25_ASG1_state_and_next_action_follow_the_head(t *testing.T) {
 
 // ASG-2: a pause outranks an older verdict, and a pause after a merge mark too.
 func Test25_ASG2_a_pause_outranks_an_older_verdict(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"paused", "paused_after_mark"} {
 		t.Run(name, func(t *testing.T) {
 			if got := okOf(t, samePoint(t, name, 0))["state"]; got != StatePaused {
@@ -61,6 +63,7 @@ func Test25_ASG2_a_pause_outranks_an_older_verdict(t *testing.T) {
 // ASG-3: marking the verified head gives merged with the head's revision hash; marking an
 // unverified head is refused not_acknowledged.
 func Test25_ASG3_a_mark_on_the_verified_head_is_merged(t *testing.T) {
+	t.Parallel()
 	record := okOf(t, samePoint(t, "mark_merged", 0))
 	mark := record["mark"].(map[string]any)
 	if record["state"] != StateMerged || mark["revisionHash"] != record["head"].(map[string]any)["revisionHash"] {
@@ -73,6 +76,7 @@ func Test25_ASG3_a_mark_on_the_verified_head_is_merged(t *testing.T) {
 
 // ASG-4: a merge mark does not survive a new generation or a new revision; history keeps it.
 func Test25_ASG4_a_mark_does_not_survive_a_new_generation_or_revision(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"mark_then_new_generation", "mark_then_new_revision"} {
 		t.Run(name, func(t *testing.T) {
 			record := okOf(t, samePoint(t, name, 0))
@@ -85,6 +89,7 @@ func Test25_ASG4_a_mark_does_not_survive_a_new_generation_or_revision(t *testing
 
 // ASG-5: a mark naming a superseded revision, or no event at all, is stale_mark_context.
 func Test25_ASG5_a_mark_must_name_the_current_event(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"mark_stale", "mark_without_expected_event"} {
 		t.Run(name, func(t *testing.T) {
 			if got := refusedOf(samePoint(t, name, 0)); got != "stale_mark_context" {
@@ -97,6 +102,7 @@ func Test25_ASG5_a_mark_must_name_the_current_event(t *testing.T) {
 // ASG-6: a criteria edit after a verdict reads re_review_needed/parent_verifies with the old
 // verdict kept, blocks the mark (criteria_set_changed) and stops an existing mark being state.
 func Test25_ASG6_a_criteria_edit_after_a_verdict_needs_re_review(t *testing.T) {
+	t.Parallel()
 	answers := sameScenario(t, "criteria_edited")
 	if okOf(t, answers[0])["state"] != StateVerified {
 		t.Fatal(answers[0])
@@ -120,6 +126,7 @@ func Test25_ASG6_a_criteria_edit_after_a_verdict_needs_re_review(t *testing.T) {
 // the owner is paused), archiving releases the issue, the same pair is idempotent and
 // supersedes replaces deliberately.
 func Test25_ASG7_one_issue_one_responsible_child(t *testing.T) {
+	t.Parallel()
 	for name, refused := range map[string]bool{"duplicate_active": true, "duplicate_paused": true,
 		"duplicate_archived": false, "duplicate_same_pair": false, "duplicate_supersedes": false} {
 		t.Run(name, func(t *testing.T) {
@@ -134,6 +141,7 @@ func Test25_ASG7_one_issue_one_responsible_child(t *testing.T) {
 // ASG-9: assignment-find names the responsible child and relationship, a paused owner too, and
 // answers null with no assignments for an unknown issue.
 func Test25_ASG9_for_issue_names_the_child_to_reuse(t *testing.T) {
+	t.Parallel()
 	answers := sameScenario(t, "for_issue_owner")
 	empty := okOf(t, answers[1])
 	if empty["responsibleChild"] != nil || len(empty["assignments"].([]any)) != 0 {
@@ -152,6 +160,7 @@ func Test25_ASG9_for_issue_names_the_child_to_reuse(t *testing.T) {
 // registration (and for a paused owner), always equal to responsibleRelationship != null; the
 // store carries its id, path and identity with identified true and detail null.
 func Test25_ASG10_the_answer_names_the_store_it_came_from(t *testing.T) {
+	t.Parallel()
 	answers := sameScenario(t, "for_issue_owner")
 	for i, wantHolds := range []bool{false, false, true, false} {
 		found := okOf(t, answers[i])
@@ -173,6 +182,7 @@ func Test25_ASG10_the_answer_names_the_store_it_came_from(t *testing.T) {
 // ASG-8: two concurrent registrations for one issue, on two stores over one file, produce
 // exactly one assignment; the other is refused duplicate_assignment inside its transaction.
 func Test25_ASG8_two_concurrent_registrations_produce_one_assignment(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "relay.sqlite3")
 	var stores [2]*store.Store
 	for i := range stores {
@@ -228,6 +238,7 @@ func Test25_ASG8_two_concurrent_registrations_produce_one_assignment(t *testing.
 // test_the_recorded_socket_is_provenance_and_does_not_follow_a_later_process pins, and the
 // recorded socket still reads the first.
 func Test25_ASG10_two_stores_and_the_recorded_socket(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	read := func(s *store.Store) map[string]any {
 		found, err := NewAssignmentView(&Registry{Store: s}).ForIssue(ctx(), issue)
@@ -274,6 +285,7 @@ func projectionOf(t *testing.T, answer map[string]any) map[string]any {
 // with no settlement and tier unrecorded, then dispatched; the request id names the current
 // attempt; a generation with no correction answers null with "no such event".
 func Test25_ASG11_the_projection_keeps_its_axes_apart(t *testing.T) {
+	t.Parallel()
 	staged := projectionOf(t, sameScenario(t, "test_a_staged_event_has_no_delivery_at_all")[0])["completion"].(map[string]any)
 	if staged["event"].(map[string]any)["stage"] != "staged" || staged["delivery"] != nil {
 		t.Fatal(staged)
@@ -299,6 +311,7 @@ func Test25_ASG11_the_projection_keeps_its_axes_apart(t *testing.T) {
 
 // ASG-12: projection.verdict equals lastVerdict and projection.assignment.state equals state.
 func Test25_ASG12_the_verdict_and_state_are_referenced(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"verdict_referenced", "verified", "needs_changes_then_corrected"} {
 		for _, answer := range sameScenario(t, name) {
 			record := okOf(t, answer)
@@ -312,6 +325,7 @@ func Test25_ASG12_the_verdict_and_state_are_referenced(t *testing.T) {
 
 // ASG-13: a verified rejection reads as a rejection.
 func Test25_ASG13_a_verified_rejection_reads_as_a_rejection(t *testing.T) {
+	t.Parallel()
 	ack := projectionOf(t, sameScenario(t, "test_a_verified_rejection_does_not_read_like_a_verified_acceptance")[0])["completion"].(map[string]any)["ack"].(map[string]any)
 	if ack["accepted"] != false || ack["rejectionReason"] != "revision_mismatch" || ack["settlement"] != "verified" {
 		t.Fatal(ack)
@@ -320,6 +334,7 @@ func Test25_ASG13_a_verified_rejection_reads_as_a_rejection(t *testing.T) {
 
 // ASG-14: a historical refusal stops being the reason once a delivery exists.
 func Test25_ASG14_a_refusal_stops_being_the_reason_once_delivered(t *testing.T) {
+	t.Parallel()
 	completion := projectionOf(t, sameScenario(t, "test_a_refusal_stops_being_the_reason_once_a_delivery_exists")[0])["completion"].(map[string]any)
 	if completion["delivery"].(map[string]any)["state"] != "dispatched" || completion["undeliveredReason"] != nil {
 		t.Fatal(completion)
@@ -329,6 +344,7 @@ func Test25_ASG14_a_refusal_stops_being_the_reason_once_delivered(t *testing.T) 
 // ASG-15: one anchor's whole lifecycle is read in ONE statement, for a completion and for a
 // withheld correction; the anchored projection is compared whole with the golden.
 func Test25_ASG15_one_anchor_is_read_in_one_statement(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		scenario, projection, eventID string
 		generation                    int64
@@ -374,6 +390,7 @@ func correctionOf(t *testing.T, answer map[string]any) (map[string]any, map[stri
 
 // ASG-16: an unsent correction names why and who acts next, row by row as Python answers.
 func Test25_ASG16_an_unsent_correction_names_why_and_who_acts(t *testing.T) {
+	t.Parallel()
 	type want struct {
 		action, source, value string
 	}
@@ -402,6 +419,7 @@ func Test25_ASG16_an_unsent_correction_names_why_and_who_acts(t *testing.T) {
 // ASG-17: a pause names the relationship; after resume the reason is null until the next
 // reading, which names the lifecycle again.
 func Test25_ASG17_a_pause_names_the_relationship(t *testing.T) {
+	t.Parallel()
 	answers := sameScenario(t, "test_a_pause_names_the_relationship_and_a_resume_waits_for_the_next_reading")
 	record, paused := correctionOf(t, answers[0])
 	reason := paused["undeliveredReason"].(map[string]any)
@@ -418,6 +436,7 @@ func Test25_ASG17_a_pause_names_the_relationship(t *testing.T) {
 
 // ASG-18: a correction the child already answered is not awaiting delivery.
 func Test25_ASG18_an_answered_correction_is_the_parents_to_read(t *testing.T) {
+	t.Parallel()
 	answers := sameScenario(t, "test_a_correction_the_child_already_answered_is_not_awaiting_delivery")
 	record, correction := correctionOf(t, answers[0])
 	if correction["supersession"] == nil || record["state"] != StateNeedsChanges || record["nextExpectedAction"] != ActionCorrectionAnswered {
@@ -431,6 +450,7 @@ func Test25_ASG18_an_answered_correction_is_the_parents_to_read(t *testing.T) {
 
 // ASG-19: the reason is tied to this event's withhold transition by an identical stamp.
 func Test25_ASG19_the_reason_is_tied_to_the_withhold_by_its_stamp(t *testing.T) {
+	t.Parallel()
 	value := func(answer map[string]any) any {
 		_, correction := correctionOf(t, answer)
 		reason, _ := correction["undeliveredReason"].(map[string]any)

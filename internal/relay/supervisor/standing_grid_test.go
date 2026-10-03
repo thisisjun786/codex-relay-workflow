@@ -6,6 +6,7 @@ import (
 )
 
 func Test24_SR_9_PlacementGrid(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	states := []string{"reported", "in_progress", "unmanaged", "unmeasured", "unreported", "foreign_schema", "something"}
 	scopes := []struct {

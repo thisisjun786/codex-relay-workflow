@@ -19,6 +19,7 @@ import (
 // results through the built executable, not through an in-process emitter.
 // Sending/reading over a socket still depends on the todo-28 host adapter.
 func Test24BuiltBinaryRoundtripStoreBytes(t *testing.T) {
+	t.Parallel()
 	root := supervisorFixture(t, "TheRoundtrip.test_the_whole_record_reads_back_as_one_answer")
 	state := filepath.Join(root, "tree", "state")
 	var id, event string
@@ -56,6 +57,7 @@ func Test24BuiltBinaryRoundtripStoreBytes(t *testing.T) {
 // bytes for its program and instant. The multi-call shape must embed a command
 // that a POSIX shell can execute and that reads the same event record as a direct invocation.
 func Test24BuiltBinaryEmbeddedProgramParityAndExecution(t *testing.T) {
+	t.Parallel()
 	root := supervisorFixture(t, "TheRoundtrip.test_the_whole_record_reads_back_as_one_answer")
 	snapshot, err := os.ReadFile(filepath.Join(root, "event.sqlite3"))
 	if err != nil {

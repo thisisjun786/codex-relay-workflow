@@ -5,6 +5,7 @@ import (
 )
 
 func Test29NoticeProjectUsesLiveHierarchy(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	r, err := f.c.Resolve(f.ctx, "project:PRJ-1")
 	if err != nil || r.Sender != "parent" || r.Recipient != "supervisor" || r.ProjectKey != "PRJ-1" {
@@ -20,6 +21,7 @@ func Test29NoticeProjectUsesLiveHierarchy(t *testing.T) {
 }
 
 func Test29NoticeWithoutReservationCannotSend(t *testing.T) {
+	t.Parallel()
 	f := fixture24(t)
 	_, staged := f.staged(t)
 	id := staged["messageId"].(string)

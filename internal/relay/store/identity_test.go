@@ -8,6 +8,7 @@ import (
 )
 
 func TestIdentity_python_derivations(t *testing.T) {
+	t.Parallel()
 	const rel = "rel-0123456789abcdef"
 	const sentinel = "0000000000000000000000000000000000000000000000000000000000000000"
 	t.Run("test_relationship_id_is_deterministic_over_task_ids", func(t *testing.T) {

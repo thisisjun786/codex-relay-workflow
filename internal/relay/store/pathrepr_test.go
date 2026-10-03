@@ -9,6 +9,7 @@ import (
 // PathRepr is repr(os.fsdecode(name)) for the bytes a Go path holds, and an OSError's text names
 // its filename that way. Each expectation is CPython 3.14.4's answer for the same bytes.
 func TestPathReprIsPythonsReprOfTheDecodedFilename(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct{ name, want string }{
 		{"/tmp/plain", `'/tmp/plain'`},
 		{"/tmp/a\u00a0b", `'/tmp/a\xa0b'`},
