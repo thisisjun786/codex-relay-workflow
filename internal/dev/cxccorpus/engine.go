@@ -47,6 +47,8 @@ type Case struct {
 	Root string
 	Env  []string
 	bind []Binding
+	// waited is the stem of the file the last wait step found (nil before any wait); later steps name it as ${WAITED}.
+	waited *string
 }
 
 // Bindings are the placeholder paths of the case root itself; a runtime adds its own (the plugin
@@ -70,6 +72,9 @@ func (c *Case) Expand(text string) string {
 	pairs := make([]string, 0, 2*len(c.bind))
 	for _, b := range c.bind {
 		pairs = append(pairs, b.Placeholder, b.Path)
+	}
+	if c.waited != nil {
+		pairs = append(pairs, "${WAITED}", *c.waited)
 	}
 	return strings.NewReplacer(pairs...).Replace(text)
 }
@@ -264,9 +269,12 @@ func RunScenario(rt Runtime, o RunOptions, s Scenario) (expect Expect, err error
 			if step.Hook != "" || step.CLI != nil || step.Node != nil || step.MCP != nil || step.Write != nil {
 				return Expect{}, fmt.Errorf("%s: step %d: a wait step runs nothing else", s.ID, i)
 			}
-			if err := waitFor(c, step.Wait, o.Timeout); err != nil {
+			found, err := waitFor(c, step.Wait, o.Timeout)
+			if err != nil {
 				return Expect{}, fmt.Errorf("%s: step %d: %w", s.ID, i, err)
 			}
+			stem := strings.TrimSuffix(filepath.Base(found), filepath.Ext(found))
+			c.waited = &stem
 			results = append(results, StepResult{Action: "wait", StdoutForm: "empty"})
 			continue
 		}
@@ -311,18 +319,19 @@ func RunScenario(rt Runtime, o RunOptions, s Scenario) (expect Expect, err error
 	return Expect{Exit: exit, Steps: results, Tree: tree, Calls: calls}, nil
 }
 
-// waitFor polls for a file the case-path glob names, which a detached process of an earlier step writes after that step returned.
-func waitFor(c *Case, pattern string, limit time.Duration) error {
+// waitFor polls for a file the case-path glob names, which a detached process of an earlier step writes after that step returned, and
+// returns the first match.
+func waitFor(c *Case, pattern string, limit time.Duration) (string, error) {
 	path, err := casePath(c, pattern)
 	for deadline := time.Now().Add(limit); err == nil; time.Sleep(50 * time.Millisecond) {
 		if hits, _ := filepath.Glob(path); len(hits) > 0 {
-			return nil
+			return hits[0], nil
 		}
 		if time.Now().After(deadline) {
 			err = fmt.Errorf("no file matches %s after %s", pattern, limit)
 		}
 	}
-	return err
+	return "", err
 }
 
 // command is one step's process: the runtime says what to run, the engine expands the placeholders
