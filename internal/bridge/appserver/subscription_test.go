@@ -2,7 +2,6 @@ package appserver
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 	"time"
 
@@ -98,42 +97,5 @@ func TestCloseCancelsAndDrainsRelease(t *testing.T) {
 	}
 	if host.Count("thread/unsubscribe") != 1 {
 		t.Fatal("shutdown reconnected or restarted release")
-	}
-}
-
-func TestRetiredReaderCannotCompleteAReplacementWatch(t *testing.T) {
-	c, host := subscriptionClient(t)
-	w, err := c.WatchTurn(context.Background(), "root")
-	if err != nil {
-		t.Fatal(err)
-	}
-	w.Finish("old-turn", false)
-	c.mu.Lock()
-	old := c.conn
-	c.mu.Unlock()
-	c.retire(old)
-	// failReader is the existing deterministic retired-reader seam. It must
-	// remove old release work without affecting the replacement connection.
-	c.failReader(old, &TransportError{Reason: "synthetic disconnect"})
-	if err := c.Connect(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	next, err := c.WatchTurn(context.Background(), "root")
-	if err != nil {
-		t.Fatal(err)
-	}
-	next.Finish("new-turn", false)
-	raw, _ := json.Marshal(map[string]any{"threadId": "root", "turn": map[string]any{"id": "new-turn"}})
-	c.subscriptions.terminal(old, raw)
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	if host.WaitCount(ctx, "thread/unsubscribe", 1) == nil {
-		t.Fatal("old connection completed the new subscription watch")
-	}
-	cancel()
-	announceEnd(t, c, host, "new-turn")
-	ctx, cancel = context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	if err := host.WaitCount(ctx, "thread/unsubscribe", 1); err != nil {
-		t.Fatal(err)
 	}
 }

@@ -14,13 +14,15 @@ const releaseRetryFloor = 5 * time.Second
 const releaseRetryCeiling = 5 * time.Minute
 
 type subscriptionRoot struct {
-	gate       chan struct{}
-	refs       int // Watches plus admissions waiting for the gate.
-	connection *websocket.Conn
-	watches    []*TurnWatch
-	retainedOn *websocket.Conn
-	due        time.Time
-	delay      time.Duration
+	gate           chan struct{}
+	refs           int // Watches plus admissions waiting for the gate.
+	connection     *websocket.Conn
+	watches        []*TurnWatch
+	retainedOn     *websocket.Conn
+	due            time.Time
+	delay          time.Duration
+	releasing      bool
+	releasePending bool
 }
 
 // TurnWatch holds the root's mutation gate until Finish. Its context fences all
@@ -139,7 +141,7 @@ func (m *subscriptionManager) unreserve(thread string, r *subscriptionRoot) {
 	m.signal()
 }
 func (m *subscriptionManager) prune(thread string, r *subscriptionRoot) {
-	if r.refs == 0 && r.retainedOn == nil && m.roots[thread] == r {
+	if r.refs == 0 && r.retainedOn == nil && !r.releasing && !r.releasePending && m.roots[thread] == r {
 		delete(m.roots, thread)
 	}
 }
@@ -214,6 +216,7 @@ func (m *subscriptionManager) terminal(ws *websocket.Conn, raw json.RawMessage) 
 	if r := m.roots[n.ThreadID]; r != nil {
 		if r.retainedOn == ws {
 			r.retainedOn = nil
+			r.releasePending = true
 		}
 		known := false
 		for _, w := range r.watches {
@@ -235,6 +238,9 @@ func (m *subscriptionManager) terminal(ws *websocket.Conn, raw json.RawMessage) 
 func (m *subscriptionManager) lost(ws *websocket.Conn) {
 	m.mu.Lock()
 	for thread, r := range m.roots {
+		if r.connection == ws {
+			r.releasePending = false
+		}
 		if r.retainedOn == ws {
 			r.retainedOn = nil
 		}
@@ -268,7 +274,9 @@ func (m *subscriptionManager) next() (string, *subscriptionRoot) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for thread, r := range m.roots {
-		if m.ready(r) {
+		if !r.releasing && m.ready(r) {
+			r.releasing = true
+			r.releasePending = true
 			return thread, r
 		}
 	}
@@ -294,6 +302,12 @@ func (m *subscriptionManager) run() {
 	}
 }
 func (m *subscriptionManager) release(thread string, r *subscriptionRoot) {
+	defer func() {
+		m.mu.Lock()
+		r.releasing = false
+		m.prune(thread, r)
+		m.mu.Unlock()
+	}()
 	select {
 	case <-r.gate:
 	case <-m.ctx.Done():
@@ -336,6 +350,7 @@ func (m *subscriptionManager) release(thread string, r *subscriptionRoot) {
 		r.refs--
 	}
 	r.watches = nil
+	r.releasePending = false
 	m.prune(thread, r)
 	m.mu.Unlock()
 }

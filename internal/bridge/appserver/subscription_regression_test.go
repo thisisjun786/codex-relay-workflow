@@ -2,6 +2,7 @@ package appserver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -20,15 +21,9 @@ func noRelease(t *testing.T, host *fakehost.Server) {
 
 func TestRefusedWatchWaitsForPendingTurn(t *testing.T) {
 	c, host := subscriptionClient(t)
-	first, err := c.WatchTurn(context.Background(), "root")
-	if err != nil {
-		t.Fatal(err)
-	}
+	first := rootWatch(t, c)
 	first.Finish("pending", false)
-	refused, err := c.WatchTurn(context.Background(), "root")
-	if err != nil {
-		t.Fatal(err)
-	}
+	refused := rootWatch(t, c)
 	refused.Finish("", false)
 	noRelease(t, host)
 	announceEnd(t, c, host, "pending")
@@ -44,10 +39,7 @@ func TestRefusedWatchWaitsForPendingTurn(t *testing.T) {
 
 func TestReplacementConnectionRetiresEachWatch(t *testing.T) {
 	c, host := subscriptionClient(t)
-	first, err := c.WatchTurn(context.Background(), "root")
-	if err != nil {
-		t.Fatal(err)
-	}
+	first := rootWatch(t, c)
 	first.Finish("old", false)
 	c.mu.Lock()
 	old := c.conn
@@ -57,12 +49,19 @@ func TestReplacementConnectionRetiresEachWatch(t *testing.T) {
 	if err := c.Connect(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	next, err := c.WatchTurn(context.Background(), "root")
-	if err != nil {
-		t.Fatal(err)
+	next := rootWatch(t, c)
+	for _, method := range []string{"thread/resume", "turn/start", "thread/unsubscribe"} {
+		_, err := c.Call(first.Context(context.Background()), method, map[string]any{"threadId": "root"})
+		var lost *TransportError
+		if !errors.As(err, &lost) || host.Count(method) != 0 {
+			t.Fatalf("%s err=%v calls=%v", method, err, host.Requests())
+		}
 	}
 	c.subscriptions.lost(old)
 	next.Finish("new", false)
+	raw, _ := json.Marshal(map[string]any{"threadId": "root", "turn": map[string]any{"id": "new"}})
+	c.subscriptions.terminal(old, raw)
+	noRelease(t, host)
 	announceEnd(t, c, host, "new")
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -85,72 +84,70 @@ func TestReplacementConnectionRetiresEachWatch(t *testing.T) {
 }
 
 func TestAcknowledgedCreationSurvivesOutcomeCancellation(t *testing.T) {
-	c, host := subscriptionClient(t)
-	host.Respond("thread/start", fakehost.Reply{Result: map[string]any{"thread": map[string]any{"id": "root"}}})
-	ctx, cancel := context.WithCancel(context.Background())
-	ctx = WithOutcomeHook(ctx, func(method string) {
-		if method == "thread/start" {
-			cancel()
-		}
-	})
-	if _, err := c.Call(ctx, "thread/start", nil); !errors.Is(err, context.Canceled) {
-		t.Fatalf("cancel=%v", err)
-	}
-	refused, err := c.WatchTurn(context.Background(), "root")
-	if err != nil {
-		t.Fatal(err)
-	}
-	refused.Finish("", false)
-	noRelease(t, host)
-	announceEnd(t, c, host, "first-durable-turn")
-	ctx, cancel = context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	if err := host.WaitCount(ctx, "thread/unsubscribe", 1); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestRetiredScopeCannotSendOnReplacementSocket(t *testing.T) {
-	c, host := subscriptionClient(t)
-	w, err := c.WatchTurn(context.Background(), "root")
-	if err != nil {
-		t.Fatal(err)
-	}
-	w.Finish("old", false)
-	c.mu.Lock()
-	old := c.conn
-	c.mu.Unlock()
-	c.retire(old)
-	if err := c.Connect(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	for _, method := range []string{"thread/resume", "turn/start", "thread/unsubscribe"} {
-		_, err := c.Call(w.Context(context.Background()), method, map[string]any{"threadId": "root"})
-		var lost *TransportError
-		if !errors.As(err, &lost) || host.Count(method) != 0 {
-			t.Fatalf("%s err=%v calls=%v", method, err, host.Requests())
-		}
+	for _, late := range []bool{false, true} {
+		t.Run(map[bool]string{false: "before-hook", true: "late-ack"}[late], func(t *testing.T) {
+			c, host := subscriptionClient(t)
+			entered, release := make(chan struct{}, 1), make(chan struct{})
+			reply := fakehost.Reply{Result: map[string]any{"thread": map[string]any{"id": "root"}}}
+			if late {
+				reply.Paused = entered
+				reply.Release = release
+			}
+			host.Respond("thread/start", reply)
+			ctx, cancel := context.WithCancel(context.Background())
+			ctx = WithOutcomeHook(ctx, func(method string) {
+				if method == "thread/start" && !late {
+					cancel()
+				}
+			})
+			done := make(chan error, 1)
+			go func() { _, err := c.Call(ctx, "thread/start", nil); done <- err }()
+			if late {
+				subscriptionSignal(t, entered)
+				cancel()
+			}
+			if err := <-done; !errors.Is(err, context.Canceled) {
+				t.Fatalf("cancel=%v", err)
+			}
+			if late {
+				close(release)
+				if _, err := c.Call(context.Background(), "probe/barrier", nil); err == nil {
+					t.Fatal("unscripted probe unexpectedly succeeded")
+				}
+			}
+			refused := rootWatch(t, c)
+			refused.Finish("", false)
+			noRelease(t, host)
+			announceEnd(t, c, host, "first-durable-turn")
+			ctx, cancel = context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			if err := host.WaitCount(ctx, "thread/unsubscribe", 1); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 
 func TestUncertainTurnKeepsItsProofUntilItsOwnTerminal(t *testing.T) {
-	for _, ack := range []bool{true, false} {
-		t.Run(map[bool]string{true: "ack-cancelled", false: "reply-unavailable"}[ack], func(t *testing.T) {
+	for _, scenario := range []struct {
+		name         string
+		ack, refused bool
+	}{{"ack-cancelled", true, false}, {"reply-unavailable", false, false}, {"late-refusal", false, true}} {
+		ack := scenario.ack
+		t.Run(scenario.name, func(t *testing.T) {
 			c, host := subscriptionClient(t)
-			old, err := c.WatchTurn(context.Background(), "root")
-			if err != nil {
-				t.Fatal(err)
-			}
+			old := rootWatch(t, c)
 			old.Finish("older", false)
-			w, err := c.WatchTurn(context.Background(), "root")
-			if err != nil {
-				t.Fatal(err)
-			}
+			w := rootWatch(t, c)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			ctx = w.Context(ctx)
 			entered, release := make(chan struct{}, 1), make(chan struct{})
 			reply := fakehost.Reply{Result: map[string]any{"turn": map[string]any{"id": "uncertain"}}}
+			if scenario.refused {
+				reply.Result = nil
+				reply.Error = &fakehost.RPCError{Code: -1, Message: "refused"}
+			}
 			if ack {
 				ctx = WithOutcomeHook(ctx, func(method string) {
 					if method == "turn/start" {
@@ -176,8 +173,10 @@ func TestUncertainTurnKeepsItsProofUntilItsOwnTerminal(t *testing.T) {
 				close(release)
 			}
 			announceEnd(t, c, host, "older")
-			noRelease(t, host)
-			announceEnd(t, c, host, "uncertain")
+			if !scenario.refused {
+				noRelease(t, host)
+				announceEnd(t, c, host, "uncertain")
+			}
 			ctx, stop := context.WithTimeout(context.Background(), time.Second)
 			defer stop()
 			if err := host.WaitCount(ctx, "thread/unsubscribe", 1); err != nil {
@@ -188,32 +187,96 @@ func TestUncertainTurnKeepsItsProofUntilItsOwnTerminal(t *testing.T) {
 }
 
 func TestFailedReleaseProofSurvivesARefusedWatch(t *testing.T) {
+	for _, noWatch := range []bool{false, true} {
+		t.Run(map[bool]string{false: "new-refusal", true: "cancelled-creation-no-watch"}[noWatch], func(t *testing.T) {
+			c, host := subscriptionClient(t)
+			c.subscriptions.retryFloor = 10 * time.Millisecond // Before worker startup.
+			entered, release := make(chan struct{}, 1), make(chan struct{})
+			host.Script("thread/unsubscribe", fakehost.Reply{Error: &fakehost.RPCError{Code: -1, Message: "temporary"}, Paused: entered, Release: release})
+			if noWatch {
+				host.Respond("thread/start", fakehost.Reply{Result: map[string]any{"thread": map[string]any{"id": "root"}}})
+				ctx, cancel := context.WithCancel(context.Background())
+				_, _ = c.Call(WithOutcomeHook(ctx, func(string) { cancel() }), "thread/start", nil)
+			} else {
+				w := rootWatch(t, c)
+				w.Finish("completed", false)
+			}
+			announceEnd(t, c, host, "completed")
+			subscriptionSignal(t, entered)
+			if noWatch {
+				close(release)
+			} else {
+				refused := make(chan error, 1)
+				go func() {
+					next, err := c.WatchTurn(context.Background(), "root")
+					if err == nil {
+						next.Finish("", false)
+					}
+					refused <- err
+				}()
+				close(release)
+				if err := <-refused; err != nil {
+					t.Fatal(err)
+				}
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			if err := host.WaitCount(ctx, "thread/unsubscribe", 2); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestCancelledAdmissionCannotPruneReleaseOwnership(t *testing.T) {
 	c, host := subscriptionClient(t)
-	c.subscriptions.retryFloor = 10 * time.Millisecond // Before worker startup.
+	host.Respond("thread/start", fakehost.Reply{Result: map[string]any{"thread": map[string]any{"id": "root"}}})
+	ctx, cancel := context.WithCancel(context.Background())
+	_, _ = c.Call(WithOutcomeHook(ctx, func(string) { cancel() }), "thread/start", nil)
 	entered, release := make(chan struct{}, 1), make(chan struct{})
-	host.Script("thread/unsubscribe", fakehost.Reply{Error: &fakehost.RPCError{Code: -1, Message: "temporary"}, Paused: entered, Release: release})
+	host.Script("thread/unsubscribe", fakehost.Reply{Paused: entered, Release: release})
+	announceEnd(t, c, host, "first")
+	subscriptionSignal(t, entered)
+	c.subscriptions.mu.Lock()
+	original := c.subscriptions.roots["root"]
+	c.subscriptions.mu.Unlock()
+	ctx, cancel = context.WithCancel(context.Background())
+	cancel()
+	if w, err := c.WatchTurn(ctx, "root"); err == nil {
+		w.Finish("", false)
+		t.Fatal("cancelled admission succeeded")
+	}
+	c.subscriptions.mu.Lock()
+	current := c.subscriptions.roots["root"]
+	c.subscriptions.mu.Unlock()
+	if current != original {
+		close(release)
+		t.Fatal("cancelled admission pruned worker-owned root")
+	}
+	done := make(chan error, 1)
+	go func() {
+		w, err := c.WatchTurn(context.Background(), "root")
+		if err == nil {
+			w.Finish("next", false)
+		}
+		done <- err
+	}()
+	select {
+	case <-done:
+		close(release)
+		t.Fatal("new admission bypassed release gate")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+func rootWatch(t *testing.T, c *Client) *TurnWatch {
+	t.Helper()
 	w, err := c.WatchTurn(context.Background(), "root")
 	if err != nil {
 		t.Fatal(err)
 	}
-	w.Finish("completed", false)
-	announceEnd(t, c, host, "completed")
-	subscriptionSignal(t, entered)
-	refused := make(chan error, 1)
-	go func() {
-		next, err := c.WatchTurn(context.Background(), "root")
-		if err == nil {
-			next.Finish("", false)
-		}
-		refused <- err
-	}()
-	close(release)
-	if err := <-refused; err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	if err := host.WaitCount(ctx, "thread/unsubscribe", 2); err != nil {
-		t.Fatal(err)
-	}
+	return w
 }

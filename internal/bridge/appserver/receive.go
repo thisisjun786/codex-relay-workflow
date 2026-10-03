@@ -58,6 +58,9 @@ func (c *Client) receive(ws *websocket.Conn) {
 		}
 		c.mu.Lock()
 		waiter, ok := c.pending[key]
+		if ok && waiter.conn == ws {
+			delete(c.pending, key)
+		}
 		c.mu.Unlock()
 		if ok && waiter.conn == ws {
 			if c.subscriptions != nil {
@@ -109,8 +112,9 @@ func (c *Client) failReader(ws *websocket.Conn, failure error) {
 	if c.conn == ws {
 		c.conn = nil
 	}
-	for _, p := range c.pending {
+	for key, p := range c.pending {
 		if p.conn == ws {
+			delete(c.pending, key)
 			select {
 			case p.done <- outcome{err: failure}:
 			default:

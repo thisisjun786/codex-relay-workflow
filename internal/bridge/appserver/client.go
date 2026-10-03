@@ -129,7 +129,15 @@ func (c *Client) request(ctx context.Context, ws *websocket.Conn, method string,
 	ch := make(chan outcome, 1)
 	c.pending[key] = pending{conn: ws, done: ch, method: method, watch: watch}
 	c.mu.Unlock()
-	defer func() { c.mu.Lock(); delete(c.pending, key); c.mu.Unlock() }()
+	defer func() {
+		c.mu.Lock()
+		// A cancelled lifecycle call can still receive its ACK/refusal later.
+		// The reader removes its correlation on reply or socket loss.
+		if method != "thread/start" && method != "turn/start" {
+			delete(c.pending, key)
+		}
+		c.mu.Unlock()
+	}()
 	c.mu.Lock()
 	var injected error
 	if c.beforeWrite != nil {
@@ -137,6 +145,9 @@ func (c *Client) request(ctx context.Context, ws *websocket.Conn, method string,
 	}
 	c.mu.Unlock()
 	if injected != nil {
+		c.mu.Lock()
+		delete(c.pending, key)
+		c.mu.Unlock()
 		return nil, injected
 	}
 	if watch != nil && method == "turn/start" {
