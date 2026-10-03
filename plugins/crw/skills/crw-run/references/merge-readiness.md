@@ -322,7 +322,7 @@ task](../SKILL.md#return-corrections-to-the-existing-task)).
    [impact](#judge-a-finding-by-its-impact) always gets this answer, whatever label the review gave
    it and whatever the child concluded: it is fixed, or the candidate is reported blocked. A verdict
    that does not name a request is incomplete. Where the child asked first and ended its turn
-   `blocked_needs_input`, the answer goes back on that route and the request cites it.
+   `blocked_needs_input`, the answer goes back through `decision-reply`, then the DAG reflection when the criteria changed ([Answering a child that stopped for input](relay.md#answering-a-child-that-stopped-for-input)), and the request cites it.
 
 3. **Every commit after the review is accounted for.** With a `reviewedHead`,
    `git rev-list --first-parent <reviewedHead>..<head>` names exactly the merge commits of the
