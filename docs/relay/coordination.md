@@ -244,10 +244,10 @@ carries none. The order, with the owner's binding active (`merge-turn-acknowledg
 5. `merge-turn-ready --turn <id> --actor <holder> --head <new> --ready` (the head is the turn's own now: recorded, no new grant);
 6. `merge-turn-check`, which states the new head, then the merge and `merge-turn-land`.
 
-Steps 3 and 5 may swap. `merge-turn-check` refuses a missing one with its reason unchanged and the next step in its detail: an
+The acknowledgement (step 3) may also come after step 5; readiness is declared only once the new head's checks have finished. `merge-turn-check` refuses a missing step with its reason unchanged and the next step in its detail: an
 undeclared head is `merge_candidate_moved` (declare it with `merge-turn-ready ... --head <h> --ready`), an unanswered grant is
 `merge_turn_not_held` (acknowledge it, naming the grant), and a check that restates a head other than the one the turn holds is
-`merge_candidate_moved` (restate the one the turn holds, or declare the head you mean).
+`merge_candidate_moved` (restate the one the turn holds, or declare the head you mean with `--not-ready`).
 
 ## Progress, the holding limit and passing a silent turn
 

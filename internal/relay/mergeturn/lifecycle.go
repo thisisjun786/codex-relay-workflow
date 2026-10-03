@@ -198,6 +198,11 @@ func (s *Service) Ready(ctx context.Context, turn, actor string, ready bool, hea
 				if err = s.grant(tx, r, "candidate_restated", at); err != nil {
 					return err
 				}
+				// The grant this call just wrote is the newest, read in the same transaction so that the
+				// reset names the grant of this call and not one a concurrent call wrote after it.
+				if reset.grant, err = s.currentGrant(tx, turn, r.Tenure); err != nil {
+					return err
+				}
 			}
 		}
 		if flag != r.DeclaredReady {
@@ -277,7 +282,7 @@ func (s *Service) Ready(ctx context.Context, turn, actor string, ready bool, hea
 	}
 	answer["blockedBy"] = blocked
 	if reset != nil {
-		answer["readinessReset"] = reset.answer(turn, actor, answer)
+		answer["readinessReset"] = reset.answer(turn, actor)
 	}
 	return answer, nil
 }

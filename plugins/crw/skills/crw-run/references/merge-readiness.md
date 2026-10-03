@@ -584,7 +584,8 @@ the owner's binding active (`merge-turn-acknowledge` refuses a paused one):
 5. `merge-turn-ready --turn <id> --actor <task> --head N --ready`: recorded, no new grant.
 6. `merge-turn-check`, which states N, then the merge and `merge-turn-land`.
 
-Steps 3 and 5 may swap. The check refuses a missing one with its reason unchanged and the next step
+The acknowledgement (step 3) may also come after step 5; declare readiness only once N's jobs have finished.
+The check refuses a missing step with its reason unchanged and the next step
 in the answer: an undeclared head is `merge_candidate_moved`, an unanswered grant is
 `merge_turn_not_held`, and a check that states another head than the turn holds is
 `merge_candidate_moved` again ([the lane's rules](../../../../../docs/relay/coordination.md#a-restated-head-is-a-new-candidate)).

@@ -27,6 +27,14 @@ func resetOf(answer map[string]any) map[string]any {
 	return reset
 }
 
+// noReset fails when the answer carries a readinessReset key at all, null included.
+func noReset(t *testing.T, answer map[string]any, what string) {
+	t.Helper()
+	if value, present := answer["readinessReset"]; present {
+		t.Fatalf("%s: %v", what, value)
+	}
+}
+
 func grantOf(t *testing.T, answer map[string]any) (string, map[string]any) {
 	t.Helper()
 	grant, _ := answer["grant"].(map[string]any)
@@ -73,9 +81,10 @@ func TestRedeclaringTheHeadAfterABaseRefreshInTheDocumentedOrder(t *testing.T) {
 
 	w.must(w.m.Acknowledge(w.ctx, turn, beta.TaskID, grantID, "read the new grant and re-checked the record"))
 	ready := w.must(w.m.Ready(w.ctx, turn, beta.TaskID, true, "head-b2", ""))
-	if ready["declaredReady"] != true || resetOf(ready) != nil {
-		t.Fatalf("readiness on the head the turn now holds is recorded and needs no explanation: %v", ready)
+	if ready["declaredReady"] != true {
+		t.Fatalf("readiness on the head the turn now holds is recorded: %v", ready)
 	}
+	noReset(t, ready, "readiness on the head the turn now holds needs no explanation")
 	if id, _ := grantOf(t, ready); id != grantID {
 		t.Fatalf("declaring readiness on an unchanged head must not issue a grant, got %s after %s", id, grantID)
 	}
@@ -144,7 +153,23 @@ func TestACheckNamingAnotherHeadSaysHowToDeclareIt(t *testing.T) {
 	if reasonOf(err) != "merge_candidate_moved" {
 		t.Fatalf("a restated head other than the declared one is refused merge_candidate_moved, got %v", err)
 	}
-	mustName(t, "the head mismatch refusal", err.Error(), "head-n", "head-a", "merge-turn-ready", "--head head-a")
+	mustName(t, "the head mismatch refusal", err.Error(), "head-n", "head-a", "merge-turn-ready", "--head head-a --not-ready")
+}
+
+// A turn that is not ready and is checked with another head is told to declare that head, not to
+// mark the stored one ready: following the old advice would declare a head the caller no longer means.
+func TestAnUnreadyTurnCheckedWithAnotherHeadIsToldToDeclareThatHead(t *testing.T) {
+	w := newFx(t)
+	turn := w.held()
+	w.must(w.m.Ready(w.ctx, turn, alpha.TaskID, false, "", ""))
+	_, err := w.check(turn, "head-z", "base-0", "")
+	if reasonOf(err) != "merge_candidate_moved" {
+		t.Fatalf("a turn that is not ready is refused merge_candidate_moved, got %v", err)
+	}
+	mustName(t, "the not-ready refusal", err.Error(), "head-z", "merge-turn-ready", "--head head-z --not-ready")
+	if strings.Contains(err.Error(), "--head head-a") {
+		t.Fatalf("the stored head is not the one the caller means: %v", err)
+	}
 }
 
 // A claim behind another holder owes no grant, so its answer asks only for readiness on the new head.
@@ -185,18 +210,20 @@ func TestARestatedHeadOnAFreeTargetTakesItOnlyWhenReadinessIsDeclaredAgain(t *te
 	}
 	taken := w.must(w.m.Ready(w.ctx, waiting, beta.TaskID, true, "head-b2", ""))
 	_, grant := grantOf(t, taken)
-	if taken["state"] != Holding || taken["declaredReady"] != true || grant["grantedFrom"] != "late_ready" || resetOf(taken) != nil {
+	if taken["state"] != Holding || taken["declaredReady"] != true || grant["grantedFrom"] != "late_ready" {
 		t.Fatalf("readiness declared again on that head takes the target with a grant to answer: %v", taken)
 	}
+	noReset(t, taken, "taking the target restates no head")
 }
 
 func TestOnlyARestatedHeadIsAnsweredWithAReset(t *testing.T) {
 	w := newFx(t)
 	turn := w.held()
 	same := w.must(w.m.Ready(w.ctx, turn, alpha.TaskID, true, "", ""))
-	if resetOf(same) != nil || same["declaredReady"] != true {
-		t.Fatalf("--ready on the head the turn holds is recorded and needs no explanation: %v", same)
+	if same["declaredReady"] != true {
+		t.Fatalf("--ready on the head the turn holds is recorded: %v", same)
 	}
+	noReset(t, same, "--ready on the head the turn holds needs no explanation")
 	withdrawn := w.must(w.m.Ready(w.ctx, turn, alpha.TaskID, false, "head-n", ""))
 	reset := resetOf(withdrawn)
 	if reset == nil || reset["readyRequested"] != false || reset["grantId"] == nil {
