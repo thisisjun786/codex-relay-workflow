@@ -81,7 +81,7 @@ type golden struct {
 		Max   int
 	}
 	Extract   map[string]*string
-	Names     map[string]struct{ Files, Content []string }
+	Names     map[string]any
 	Counter   map[string]int
 	Pressure  map[string]bool
 	Receipt   map[string]bool
@@ -404,7 +404,7 @@ func TestTombstone(t *testing.T) {
 				return state.WithSessionLock(cwd, sessionID, fn)
 			}
 		}
-		var markers []marked
+		markers := []marked{}
 		marker := func(_, sessionID, agentID string) error {
 			markers = append(markers, marked{sessionID, agentID})
 			return nil
@@ -419,25 +419,24 @@ func TestTombstone(t *testing.T) {
 				returns = append(returns, HasTombstone(cwd, "s1", p))
 			}
 		}
+		fileState := func(raw []byte) map[string]any {
+			var m map[string]any
+			if json.Unmarshal(raw, &m) != nil {
+				m = map[string]any{"raw": string(raw)}
+			}
+			delete(m, "updatedAt")
+			return m
+		}
 		var gotState map[string]any
 		if raw, err := os.ReadFile(filepath.Join(sessions, "s1.json")); err == nil {
-			if json.Unmarshal(raw, &gotState) != nil {
-				gotState = map[string]any{"raw": string(raw)}
-			}
-			delete(gotState, "updatedAt")
+			gotState = fileState(raw)
 		}
 		wantState, wantMarkers := any(want.State), want.Markers
-		if raw, err := json.Marshal(want.State); err == nil { // the oracle's recorded path text is in the oracle's names
-			must(t, json.Unmarshal([]byte(strings.ReplaceAll(string(raw), ".codexclaw", ".crw")), &wantState))
-		}
 		switch {
 		case k.Changed:
-			wantState, wantMarkers = map[string]any{"raw": *k.StateRaw}, []marked{{"s1", "a1"}}
+			wantState, wantMarkers = fileState([]byte(*k.StateRaw)), []marked{{"s1", "a1"}}
 		case k.ID == "tier3_state_dir_is_file": // the oracle's marker write fails there too; the port still hands over
 			wantMarkers = []marked{{"s1", "a1"}}
-		}
-		if want.State == nil && !k.Changed {
-			wantState = nil
 		}
 		same(t, k.ID+" returns", returns, want.Returns)
 		same(t, k.ID+" state", gotState, wantState)
