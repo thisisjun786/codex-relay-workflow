@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -29,6 +30,20 @@ type diagnosticSeams struct {
 }
 
 type diagnosticSeamsKey struct{}
+
+type sidecarFreeReadsKey struct{}
+
+// WithSidecarFreeReads asks the diagnostic reads made under the returned context (ReadOnlyRows,
+// NonceLookup) to read the store without creating SQLite sidecars wherever SQLite allows (see
+// openHeldRead). It is a property of one call: nothing records it in an answer.
+func WithSidecarFreeReads(ctx context.Context) context.Context {
+	return context.WithValue(ctx, sidecarFreeReadsKey{}, true)
+}
+
+func sidecarFreeReads(ctx context.Context) bool {
+	asked, _ := ctx.Value(sidecarFreeReadsKey{}).(bool)
+	return asked
+}
 
 func seamsOf(ctx context.Context) diagnosticSeams {
 	seams, _ := ctx.Value(diagnosticSeamsKey{}).(diagnosticSeams)
@@ -127,9 +142,33 @@ type heldConn struct {
 }
 
 func openHeld(ctx context.Context, file *os.File, mode string) (*heldConn, error) {
+	return openHeldWith(ctx, file, url.Values{"mode": {mode}})
+}
+
+// openHeldRead opens the read connection of a diagnostic. With sidecarFree it takes the SQLite URI
+// parameters of store.InPlaceRead for expected, the file the descriptor names: mode=ro beside a
+// live store's -wal and -shm, immutable=1 where no WAL holds a frame (every commit is in the
+// file), so the read creates and leaves no -wal or -shm. Only the parameters are used: the
+// connection still opens through the descriptor, whose identity checks stay in force, never
+// through the path InPlaceRead resolved. Where InPlaceRead has no read (a WAL with frames and no
+// index, an unclean shutdown) or fails, the read is the plain mode=ro it has always been, which
+// may create the index it needs to read those frames: the diagnostic never goes dark where it
+// used to answer. A writer that starts between the sidecar examination and the connect can make
+// an immutable read stale, the window the Stop path's read accepts (decision 36).
+func openHeldRead(ctx context.Context, file *os.File, expected string, sidecarFree bool) (*heldConn, error) {
+	params := url.Values{"mode": {"ro"}}
+	if sidecarFree {
+		if _, inPlace, err := InPlaceRead(expected); err == nil {
+			params = inPlace
+		}
+	}
+	return openHeldWith(ctx, file, params)
+}
+
+func openHeldWith(ctx context.Context, file *os.File, params url.Values) (*heldConn, error) {
 	seams := seamsOf(ctx)
 	open := func() (*heldConn, error) {
-		db, err := boundedDB(procFD+"/"+strconv.FormatUint(uint64(file.Fd()), 10), mode, 5*time.Second)
+		db, err := boundedURI(procFD+"/"+strconv.FormatUint(uint64(file.Fd()), 10), params, 5*time.Second)
 		if err != nil {
 			return nil, err
 		}

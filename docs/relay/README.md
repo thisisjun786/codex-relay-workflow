@@ -395,8 +395,21 @@ another child from an empty ledger.
 Retry the **same request with the same paths and contents**. A fingerprint mismatch refuses
 rather than rewriting the assignment; an uncertain delivery is reconciled against the
 bridge's retained operation, never retried under a new identity, and an uncertain creation is
-reconciled by observing the App Server under the same request (below). A still-running standby returns
-`incomplete`; the caller may retry when it ends. This command does not install a retry scheduler.
+reconciled by observing the App Server under the same request (below). A running, missing or unknown
+standby returns `incomplete` / `standby_incomplete`. When the recorded standby ends `interrupted`
+or `failed`, a repeat may proceed to the business turn once the host is ready for direct input
+(idle or not loaded, unarchived, with no paused or limited goal). It does not send another standby:
+the standby forbids implementation, the business assignment is self-contained, and the original
+`standbyTurnId` remains the registration and generation anchor. A known host hold returns its reason
+without consuming the business operation; host read errors propagate. The worker policy and final
+business guard still apply. A `completed` standby follows the existing path. This command does not
+install a retry scheduler.
+The daemon identifies the original standby by the attached managed request's child, generation,
+dispatch request and turn. It excludes that inert anchor from polling and rechecks the association
+under the settlement writer lock if another pending path or stale selection reaches it. It creates
+no failure event or settlement for the standby, before admission, while business runs or afterwards;
+it does not rewrite the terminal status. Ordinary/revision anchors and actual business failures
+remain observed. This does not retract an observation a previous runtime already delivered.
 `admitted` means the business turn was dispatched, not that the child claimed it, that its hook
 fired, or that its issue passed review. Those remain separately observed facts.
 If naming failed after a verified task was created and the bridge recorded that no first turn
@@ -438,7 +451,7 @@ Running it does not wake a parent, write a queue, or publish a new report.
 
 | Observation | Recovery |
 | --- | --- |
-| `incomplete` / `standby_incomplete` | Wait for that standby to complete, then retry the same request. |
+| `incomplete` / `standby_incomplete` | Retry the same request after a known end: `completed`, or `interrupted`/`failed` when the host is ready. Missing, unknown and running turns stay held; no second standby is sent. |
 | worker policy absent or mismatched | Restore the declared serving policy, verify its reading, retry the same request. |
 | paused/archived recipient, changed settings/scope/criteria | Preserve the hold; obtain the owning user's supported transition before retrying. |
 | creation outcome unknown | Retry the same request: it observes the App Server and continues, creates again after the grace period, or stops with `creationReconciliation` saying why. Do not start a replacement request. |
@@ -568,7 +581,7 @@ Global options come BEFORE the subcommand:
 | `status` | observable delivery, acknowledgement and verification state |
 | `show` | the full record for one event: receipt, manifest, attempts, sent bytes, verdict |
 | `daemon` | run the bounded reconciliation and delivery loop |
-| `doctor` | environment and capability check; optional `--require-worker-policy` readiness gate |
+| `doctor` | environment and capability check, read-only by default (`--probe-write` measures writability by writing); optional `--require-worker-policy` readiness gate |
 
 Every command prints JSON. Exit 0 success, 2 a refusal with a machine-readable `reason`, 3 a host
 problem, 4 usage.

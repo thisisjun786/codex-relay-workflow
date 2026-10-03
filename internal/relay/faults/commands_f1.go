@@ -955,10 +955,6 @@ func f1Sweep(ctx context.Context, l *Ledger, a map[string]string) (any, error) {
 	}
 	sw := &Sweeper{Store: l.Store, MaxAttempts: 6, Now: l.Clock.ISO, HostRecordPath: hostRecord, Installation: installation}
 	sw.SupersessionReason = func(ctx context.Context, event string) (string, error) { return f1SupersessionReason(ctx, l, event) }
-	sw.Current = func(ctx context.Context, event string) (bool, error) {
-		reason, e := f1SupersessionReason(ctx, l, event)
-		return reason == "", e
-	}
 	batch, e := sw.SweepReadings(ctx, product, a["--project"], readings, after)
 	if e != nil {
 		return nil, e

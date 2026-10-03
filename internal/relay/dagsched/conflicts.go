@@ -60,15 +60,15 @@ func (s *Scheduler) ObserveConflicts(ctx context.Context, plan, actor string, in
 		return out, err
 	}
 	for _, id := range []string{left, right} {
-		n, ok := nodeOf(snap, id)
-		if !ok {
-			return out, refuse(contract.RefusalUnregisteredScope, "plan %s has no live node %s", plan, id)
+		n, err := requireNode(snap, plan, id)
+		if err != nil {
+			return out, err
 		}
 		if n.Kind != dag.NodeImplementation {
 			return out, refuse(contract.RefusalDispositionConflict, "node %s is a %s node: it has no branch to merge", id, n.Kind)
 		}
 	}
-	if err := s.requireParent(ctx, q, snap, actor); err != nil {
+	if err := requireProjectParent(ctx, q, snap.ProjectKey, actor); err != nil {
 		return out, err
 	}
 	iso, err := isolate(ctx, in.Repository)

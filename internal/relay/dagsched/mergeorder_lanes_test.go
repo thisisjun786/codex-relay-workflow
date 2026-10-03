@@ -260,13 +260,10 @@ func TestMergeOrderCarriesTheHeadsConflictWithTheTip(t *testing.T) {
 	}
 }
 
+// measureAt is measure at the tip the world holds.
 func (w *sweepWorld) measureAt(heads map[string]string) SweepResult {
 	w.k.t.Helper()
-	res, err := w.sweep(TriggerReceipt, "", "", func(in *SweepInput) { in.Heads = heads })
-	if err != nil {
-		w.k.t.Fatal(err)
-	}
-	return res
+	return w.mustSweep(func(in *SweepInput) { in.Heads = heads })
 }
 
 // heads_current says whether the measurement was made at the heads the store holds now: yes for two accepted results measured as accepted, no when a stored head differs, unknown when a head is not stored.

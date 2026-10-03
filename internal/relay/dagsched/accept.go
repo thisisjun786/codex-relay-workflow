@@ -209,13 +209,9 @@ func (s *Scheduler) accept(ctx context.Context, plan, node, actor string, in Acc
 	}
 	ruleJSON := dag.Canonical(map[string]any{"skills_digest": rule.SkillsDigest, "model": rule.Model, "effort": rule.Effort})
 	q := s.Store.Q(ctx)
-	snap, _, err := dag.SnapshotAt(ctx, q, plan, 0)
+	snap, n, err := liveNode(ctx, q, plan, node)
 	if err != nil {
 		return out, err
-	}
-	n, ok := nodeOf(snap, node)
-	if !ok {
-		return out, refuse(contract.RefusalUnregisteredScope, "plan %s has no live node %s", plan, node)
 	}
 	// the plan's hold is read before the forge is (a node the plan paused or ended is not accepted); the transaction below reads it again
 	if err := lifecycleRefusal(snap, n, "accepting its result", false); err != nil {
@@ -266,10 +262,10 @@ func (s *Scheduler) accept(ctx context.Context, plan, node, actor string, in Acc
 			return refuse(contract.RefusalUnregisteredRelationship, "node %s has no execution to accept", node)
 		}
 		if rel.Status != "active" || rel.Superseded {
-			return refuse(contract.RefusalRelationshipNotActive, "the relationship %s of %s is %s: a result is accepted while its child's relationship is active", rel.ID, node, map[bool]string{true: "superseded", false: rel.Status}[rel.Superseded])
+			return refuse(contract.RefusalRelationshipNotActive, "the relationship %s of %s is %s: a result is accepted while its child's relationship is active", rel.ID, node, relationshipState(rel))
 		}
 		if rel.ParentTaskID != actor {
-			return refuse(contract.RefusalScopeRoleMismatch, "task %s is not the parent of relationship %s, which is held by %s", actor, rel.ID, rel.ParentTaskID)
+			return notParentHeldBy(actor, rel)
 		}
 		var manifest string
 		bound, err := queryOne(txCtx, tx, "SELECT manifest_digest FROM dag_node_executions WHERE plan_id = ? AND node_id = ? AND relationship_id = ? AND execution_generation = ?", []any{plan, node, rel.ID, rel.Generation}, &manifest)
@@ -351,7 +347,7 @@ func (s *Scheduler) accept(ctx context.Context, plan, node, actor string, in Acc
 			}
 			seq := last.Int64 + 1
 			if _, err := tx.ExecContext(txCtx, "INSERT INTO dag_acceptance_revalidations (revalidation_id, acceptance_id, criteria_set_digest, event_id, verdict_turn_id, reval_seq, revalidated_by, revalidated_at) VALUES (?,?,?,?,?,?,?,?)",
-				"drv-"+shaOf([]byte(existing + "|" + itoa64(seq)))[:32], existing, head.SetDigest, head.EventID, head.VerdictTurn, seq, actor, s.now()); err != nil {
+				revalidationID(existing, seq), existing, head.SetDigest, head.EventID, head.VerdictTurn, seq, actor, s.now()); err != nil {
 				return err
 			}
 			out.Revalidated = true

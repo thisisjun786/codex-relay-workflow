@@ -4,18 +4,15 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // CRW-281: pause, resume, cancel and archive are typed changes of the revision document. This is the operator's round trip over the
 // command line, one process per command on one store: what is read back is what the log holds.
 
-func lifeChange(op, node string) doc {
-	d := doc{"op": op}
-	if node != "" {
-		d["node_id"] = node
-	}
-	return d
-}
+// lifeChange is a lifecycle change of the revision document: one node's, or (with no node) the plan's.
+var lifeChange = testsupport.LifeOp
 
 // forkJoinStateDigest and the node slice digests are what forkJoin("plan", ...) digested to before the lifecycle changes existed: a plan that
 // has none keeps its digests, so every plan already stored still verifies.

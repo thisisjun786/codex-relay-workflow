@@ -82,7 +82,7 @@ The release workflow is manual and owner-controlled.
 | Installer and skill-linker tests in temporary destinations (Go) | Idempotence and preservation of conflicting files, directories and links |
 | CI-control negative tests | Missing, malformed, failed, cancelled or skipped prerequisites cannot pass the gate; main-target PRs and invalid release sources are rejected |
 | Go lint, the Go test suite with the contract corpus, static release binaries and the isolated-home install | The Go runtime builds, passes its tests and installs and wires from this checkout |
-| Pinned secret scan of available Git history | No finding under the reviewed scanner configuration in that fetched history |
+| Pinned secret scan: all fetched history on a push to `dev`, the commits a pull request adds on a pull request | No finding under the reviewed scanner configuration in the commits scanned |
 | Owning offline contract checks, when present | Their documented parser, fixture or shape behavior |
 | Independent scenario review | Instruction consistency and consequential edge cases within its scope |
 
@@ -113,7 +113,8 @@ runners. Pin downloaded tooling and verify its checksum. CI-control edits
 require review: a PR can edit its own workflow, so a green badge is not an
 immutable trust boundary.
 
-The secret scanner reads all fetched history including merge-parent diffs.
+The secret scanner reads merge-parent diffs. A push to `dev` is scanned over all fetched history; a
+pull request over the commits it adds to its base ([scope](docs/CI.md#secret-scanning)).
 Repository ignore files and inline allow comments must not suppress findings.
 An exception requires an exact synthetic value and exact path with review;
 never baseline away an unexplained finding. Keep private receipts, session
