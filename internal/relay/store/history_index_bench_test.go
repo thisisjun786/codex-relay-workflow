@@ -113,14 +113,16 @@ func newHistoryWorld(tb testing.TB, events int) *historyWorld {
 	if err != nil {
 		tb.Fatal(err)
 	}
-	tb.Cleanup(func() { _ = s.Close() })
 	for _, statement := range historySeed(events) {
 		if _, err := s.DB.Exec(statement); err != nil {
 			tb.Fatalf("%v\n%.200s", err, statement)
 		}
 	}
 	window := float64(historyEpoch+events*historySpacing+60) - 1800
-	return &historyWorld{s: s, from: SendStamp(window), to: SendStamp(window + 3600), events: events}
+	w := &historyWorld{s: s, from: SendStamp(window), to: SendStamp(window + 3600), events: events}
+	// a benchmark may reopen the store and replace w.s: the one open at the end is the one to close
+	tb.Cleanup(func() { _ = w.s.Close() })
+	return w
 }
 
 // answer is every row the statement returns, as text, in the order it returns them.
@@ -268,9 +270,9 @@ func BenchmarkBuildHistoryIndex(b *testing.B) {
 // first, the first open of a store that predates them (they are dropped before each round, untimed), whose
 // extra time over built is the six builds; and first_with_writer, the same with a writer on another connection
 // that tries a small write throughout and reports the longest wait of the writes that overlapped the open
-// (max-writer-wait-ms). Each build is its own transaction (the script is not one), so a writer waits for the
-// build in progress and not for the six together: the wait is of the order of the longest
-// BenchmarkBuildHistoryIndex and the open is the sum.
+// (max-writer-wait-ms). Each build is its own transaction (the script is not one), so the lock is released
+// between builds, but nothing makes a waiting writer the next to take it: the wait observed is the figure to read,
+// and it can exceed the longest BenchmarkBuildHistoryIndex.
 func BenchmarkOpenBuildsHistoryIndexes(b *testing.B) {
 	for _, c := range []struct {
 		name         string
