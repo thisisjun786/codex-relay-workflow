@@ -392,12 +392,13 @@ a pull request comment is never exempted.
 - **It is not a resolve.** The fresh reading still grades the forge's own state, so an unresolved
   thread keeps `review_incomplete` in the reading and the restatement whatever is recorded. The
   coordinator resolves the thread on the forge, then records the judgement.
-- **A malformed document is refused whole.** A file that is not a JSON object, a missing or
-  non-list `lateDispositions`, a non-object entry, a missing, non-string or blank member, a
-  disposition outside the set, an evidence URL that is not http or https, a head that is not a sha,
-  or one thread twice on one head is `malformed_evidence` and no entry takes effect. A file that
-  cannot be read or is not JSON, and `--late-dispositions` without `--restate`, are usage errors
-  (exit 4). An empty value counts as no flag.
+- **A malformed document is refused whole.** In a file that is a JSON object, a missing or non-list
+  `lateDispositions`, a non-object entry, a missing, non-string or blank member, a disposition
+  outside the set, an evidence URL that is not http or https, a head that is not a sha, or one
+  thread twice on one head is `malformed_evidence` and no entry takes effect. A file that cannot be
+  read, is not JSON or is not a JSON object, and `--late-dispositions` without `--restate`, are
+  usage errors (exit 4) before anything is read from the forge or graded. An empty value counts as
+  no flag.
 - **What the payload says.** With the flag, `restatement.lateDispositions` lists the entries in file
   order, each with its five members and `effect` `applied` or `ignored`. An ignored entry carries a
   `reason`: `other_head`, else `unknown_thread` (no review thread of that id), else `not_late` (the
