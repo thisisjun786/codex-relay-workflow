@@ -30,6 +30,9 @@ type Scheduler struct {
 	ExpectedEpoch int64
 	// Checkout is the local checkout a conflict sweep measures in (conflicts, CRW-410); empty finds it from the parent_cwd of the plan's relationships.
 	Checkout string
+	// Host is the host memory bound (CRW-468, hostmemory.go): the sample the command took and the limits it judges it by. Nil means no bound, which is what library callers and the store-only
+	// readings carry; dag-ready and dag-release set it from the environment.
+	Host *HostMemoryBound
 
 	// Test seams (zero in production): between the unlocked judgement and the intent, after the slot is reserved, and between the managed start and the bind.
 	testBeforeObserveTx      func()
@@ -37,6 +40,7 @@ type Scheduler struct {
 	testBetweenJudgeAndAsk   func()
 	testBeforeReplayTx       func()
 	testBeforeAcceptTx       func()
+	testBeforeRefreshTx      func()
 	testBeforeJudgeTx        func()
 	testBeforeStart          func()
 	testBeforePrepareTx      func()

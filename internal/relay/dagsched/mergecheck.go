@@ -37,21 +37,36 @@ type mergeCheck struct {
 	Reason     string
 }
 
-// appendMergeCheck appends the observation unless it equals the latest row's (outcome, observed head, failed required checks, round, evidence digest). It runs inside the
+// atStand is the acceptance as a judgement of its pull request holds it: its head is the head it stands on, its own or, after a recorded base refresh (baserefresh.go), the one the record names. A
+// merge check records that head as head_sha and the head the pull request showed as observed_head_sha; only the checks read the copy, never an identity, a digest or a criteria rule.
+func atStand(a Acceptance, st acceptanceStand) Acceptance {
+	a.HeadSHA = st.Head
+	return a
+}
+
+// staleHeadReason says why a pull request at another head than the one the acceptance stands on is stale (E-10); the words are the same as before a base refresh existed when there is no record.
+func staleHeadReason(observed, accepted string, st acceptanceStand) string {
+	if st.RefreshID == "" {
+		return "the pull request head is " + observed + " and the accepted head is " + accepted
+	}
+	return "the pull request head is " + observed + " and the head that base refresh " + st.RefreshID + " of the accepted head " + accepted + " names is " + st.Head
+}
+
+// appendMergeCheck appends the observation unless it equals the latest row's (outcome, head the acceptance stood on, observed head, failed required checks, round, evidence digest). It runs inside the
 // caller's transaction or on its own; its reads and its insert use the connection ctx carries.
 func (s *Scheduler) appendMergeCheck(ctx context.Context, q store.Querier, m mergeCheck) (seq int64, appended bool, err error) {
 	body := EvidenceBodyOf(m.Observed)
 	digest := EvidenceDigest(body)
 	failed := failuresJSON(m.Failed)
 	var lastSeq int64
-	var outcome, observed, lastDigest, lastFailed, lastTip string
+	var outcome, observed, lastDigest, lastFailed, lastTip, lastHead string
 	var round int
-	found, err := queryOne(ctx, q, "SELECT check_seq, outcome, observed_head_sha, checks_digest, failed_required_json, round_no, base_tip_sha FROM dag_merge_checks WHERE acceptance_id = ? ORDER BY check_seq DESC LIMIT 1",
-		[]any{m.Acceptance.AcceptanceID}, &lastSeq, &outcome, &observed, &lastDigest, &lastFailed, &round, &lastTip)
+	found, err := queryOne(ctx, q, "SELECT check_seq, outcome, observed_head_sha, checks_digest, failed_required_json, round_no, base_tip_sha, head_sha FROM dag_merge_checks WHERE acceptance_id = ? ORDER BY check_seq DESC LIMIT 1",
+		[]any{m.Acceptance.AcceptanceID}, &lastSeq, &outcome, &observed, &lastDigest, &lastFailed, &round, &lastTip, &lastHead)
 	if err != nil {
 		return 0, false, err
 	}
-	if found && outcome == m.Outcome && observed == m.Observed.HeadSHA && lastDigest == digest && lastFailed == failed && round == m.Round && lastTip == m.BaseTip {
+	if found && outcome == m.Outcome && observed == m.Observed.HeadSHA && lastDigest == digest && lastFailed == failed && round == m.Round && lastTip == m.BaseTip && lastHead == m.Acceptance.HeadSHA {
 		return lastSeq, false, nil
 	}
 	seq = lastSeq + 1
@@ -72,6 +87,7 @@ type pinnedPredecessor struct {
 	Acceptance Acceptance
 	Forge      string
 	Number     int64
+	Stand      acceptanceStand // what the acceptance stands on when it is read: the head the pull request is compared with
 }
 
 // pinnedPredecessors are the predecessors of a node's code-pinned incoming edges that have an active acceptance with a forge row, in edge order. A pinned edge whose
@@ -98,17 +114,24 @@ func (s *Scheduler) pinnedPredecessors(ctx context.Context, q store.Querier, pla
 		}
 		if has {
 			seen[a.AcceptanceID] = true
-			out = append(out, pinnedPredecessor{Acceptance: a, Forge: forge, Number: number})
+			stand, err := s.standOf(ctx, q, a)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, pinnedPredecessor{Acceptance: a, Forge: forge, Number: number, Stand: stand})
 		}
 	}
 	return out, nil
 }
 
 // freshness is E-10 for the pull requests a release builds on: the relay reads each pinned predecessor's pull request itself and refuses the release when its head is
-// no longer the accepted one, after recording that observation (a stale_head row), so no release follows a push (contract E-10). It applies the fail-closed rule in its
-// release form: a reader error or a verdict of unknown is the host's failure and nothing is written, a verdict of stale is refused, a closed or merged pull request is
+// no longer the one the acceptance stands on (the accepted head, or after a recorded base refresh the head the record names), after recording that observation (a stale_head row), so no release
+// follows a push (contract E-10). It applies the fail-closed rule in its
+// release form: a reader error or a verdict of unknown is the host's failure and nothing is written (a merged pull request is read by the rule in ClassifyPullRequest: its verdict is unknown by
+// construction, and it is readable beside what merging explains), a verdict of stale is refused, a closed or merged pull request is
 // allowed (a predecessor that landed before its successor got capacity keeps its immutable accepted head) and only the head is compared. A failure to read is retryable;
-// a moved head is not.
+// a moved head is not. A record that lands while the forge is read moves what the acceptance stands on: the observation is then not written (it would be made under a head the acceptance no longer stands on)
+// and the release is refused as a moved candidate, to be repeated.
 func (s *Scheduler) freshness(ctx context.Context, plan, actor string, preds []pinnedPredecessor) error {
 	if len(preds) == 0 {
 		return nil
@@ -124,7 +147,7 @@ func (s *Scheduler) freshness(ctx context.Context, plan, actor string, preds []p
 		if err := ClassifyPullRequest(pr); err != nil {
 			return err
 		}
-		if pr.HeadSHA == p.Acceptance.HeadSHA {
+		if pr.HeadSHA == p.Stand.Head {
 			continue
 		}
 		if err := s.Store.Transaction(ctx, func(txCtx context.Context, _ *sql.Conn) error {
@@ -132,11 +155,19 @@ func (s *Scheduler) freshness(ctx context.Context, plan, actor string, preds []p
 			if err := s.fence(txCtx, s.Store.Q(txCtx), plan, actor); err != nil {
 				return err
 			}
-			_, _, err := s.appendMergeCheck(txCtx, s.Store.Q(txCtx), mergeCheck{Acceptance: p.Acceptance, Observed: pr, BaseTip: pr.BaseSHA, Round: 1, Outcome: OutcomeStaleHead,
-				Reason: "the pull request head is " + pr.HeadSHA + " and the accepted head is " + p.Acceptance.HeadSHA})
+			if now, err := s.standOf(txCtx, s.Store.Q(txCtx), p.Acceptance); err != nil {
+				return err
+			} else if now != p.Stand {
+				return refuseCandidateMoved("a base refresh of %s was recorded while its pull request %s#%d was being read, so that reading is older than the history: repeat the release so the current head is checked", p.Acceptance.NodeID, p.Forge, p.Number)
+			}
+			_, _, err := s.appendMergeCheck(txCtx, s.Store.Q(txCtx), mergeCheck{Acceptance: atStand(p.Acceptance, p.Stand), Observed: pr, BaseTip: pr.BaseSHA, Round: 1, Outcome: OutcomeStaleHead,
+				Reason: staleHeadReason(pr.HeadSHA, p.Acceptance.HeadSHA, p.Stand)})
 			return err
 		}); err != nil {
 			return err
+		}
+		if p.Stand.RefreshID != "" {
+			return refuseCandidateMoved("the pull request %s#%d is at %s and the head of %s that base refresh %s names is %s", p.Forge, p.Number, pr.HeadSHA, p.Acceptance.NodeID, p.Stand.RefreshID, p.Stand.Head)
 		}
 		return refuseCandidateMoved("the pull request %s#%d is at %s and the accepted head of %s is %s", p.Forge, p.Number, pr.HeadSHA, p.Acceptance.NodeID, p.Acceptance.HeadSHA)
 	}

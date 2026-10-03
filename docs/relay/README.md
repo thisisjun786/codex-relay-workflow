@@ -393,13 +393,26 @@ rechecked before host mutations. Replacing that file refuses recovery rather tha
 another child from an empty ledger.
 
 Retry the **same request with the same paths and contents**. A fingerprint mismatch refuses
-rather than rewriting the assignment; uncertain creation or delivery is reconciled against the
-bridge's retained operation, never retried under a new identity. A still-running standby returns
+rather than rewriting the assignment; an uncertain delivery is reconciled against the
+bridge's retained operation, never retried under a new identity, and an uncertain creation is
+reconciled by observing the App Server under the same request (below). A still-running standby returns
 `incomplete`; the caller may retry when it ends. This command does not install a retry scheduler.
 `admitted` means the business turn was dispatched, not that the child claimed it, that its hook
 fired, or that its issue passed review. Those remain separately observed facts.
 If naming failed after a verified task was created and the bridge recorded that no first turn
 was attempted, retry resumes that same task with a separately retained standby operation.
+A creation whose outcome is unknown (the bridge receipt is `outcome_unknown`, or
+`in_progress_or_unknown` when the process stopped inside it) is reconciled by the next retry of the same
+request, which observes the App Server before it answers. A thread that exists with no turn is continued
+under the same request (the standby turn under a standby operation of its own, then the title), after taking the project's lock and
+asking the scope decision again, as a creation does. When no thread
+is shown, the retry waits 2 minutes from the receipt's last update (`pending`, with `repeatAfter`) and then
+creates again under the same request with a derived bridge operation id, at most three creations in all. A thread that has a turn,
+a creation whose `turn/start` may have been sent, several threads that fit, a thread or a listing the host cannot read, a standby
+recovery the host refused, or a creation with no recorded time stop with `creation_unknown` and a `creationReconciliation` object that says why (`state`,
+`detail`, `attempt`, `attemptRequestId`, `thread`, `repeatAfter`); no replacement request is ever the answer.
+dag-scheduler.md ([A creation whose outcome is unknown](dag-scheduler.md#a-creation-whose-outcome-is-unknown))
+gives the table and what it does not establish.
 The original failed creation receipt is preserved. An unknown or attempted first turn does not
 qualify for this recovery; its effects still need reconciliation.
 
@@ -428,7 +441,8 @@ Running it does not wake a parent, write a queue, or publish a new report.
 | `incomplete` / `standby_incomplete` | Wait for that standby to complete, then retry the same request. |
 | worker policy absent or mismatched | Restore the declared serving policy, verify its reading, retry the same request. |
 | paused/archived recipient, changed settings/scope/criteria | Preserve the hold; obtain the owning user's supported transition before retrying. |
-| creation or business outcome unknown | Inspect the retained bridge operation; keep the reservation and do not create a replacement. |
+| creation outcome unknown | Retry the same request: it observes the App Server and continues, creates again after the grace period, or stops with `creationReconciliation` saying why. Do not start a replacement request. |
+| business outcome unknown | Inspect the retained bridge operation; keep the reservation and do not create a replacement. |
 | request fingerprint conflict | Recover the original input and selectors; never overwrite them to force a replay. |
 
 Before the business turn, authorization is checked again after resume. A known paused, archived,
@@ -460,6 +474,17 @@ cursor to walk. Admission writers preserve existing rowids and never delete
 rows. Historical terminal turns remain observable, but opening a new generation
 supersedes all prior outcomes, including failures; observing an old failure does
 not send it as a current-generation report or establish acceptance.
+
+### Direct parent interventions
+
+A parent can send the child a message the relay does not carry: over the thread bridge, outside `decision-reply` and outside a ruling's correction message. The relay cannot see such a message. It learns of it only when a turn is admitted for it, and an admission by the relationship's registered parent is then recorded as a **direct parent intervention**, in the transaction of the admission:
+
+    codex-session-relay admit-turn --relationship <id> --generation <n> --turn <turn that received the message> --actor <the parent's task id> [--reason <why>]
+    codex-session-relay intervention-show --relationship <id>
+
+The record is a journal row of the kind `direct_parent_intervention` (subject the relationship id) naming the relationship, the generation, the turn, the anchor turn of that generation, the actor and the reason. `intervention-show` reads them back oldest first, each as `kind`, `generation`, `turn`, `anchorTurnId`, `actor`, `reason` (null when none was given) and `recordedAt`, beside the relationship's current generation and registered parent; an unknown relationship is refused `unregistered_relationship`. The same statement again (the same generation, turn, anchor, actor and reason) is not recorded twice, and the same turn with another reason is another statement.
+
+What this does and does not say. `admit-turn` answers what it always answered and still stores its admission and its `turn_admitted` journal row, whoever the actor is; only an actor equal to the relationship's registered parent task is also recorded as intervening, so an operator's confirmation of a continuation, or the child's own claim, is an admission and no intervention. The relay does not authenticate `--actor` (as for a continuation claim): the record is the statement of whoever ran the command. And a message that is never admitted stays invisible to the relay, which is why the route a parent should use for a decision is `decision-reply`, and why this record is the fallback's trace and not a gate: nothing is refused for a message sent outside the route.
 
 ### Exact-turn reporting observation
 
@@ -513,9 +538,11 @@ Global options come BEFORE the subcommand:
 | `register --project` | the same, and the issue's whole lower level in one transaction |
 | `settings-record` / `settings-show` | record and inspect a task's authorized execution settings |
 | `generation-open` / `generation-bind` | open a generation; bind its anchor to an exact dispatch turn |
-| `admit-turn` | record an owner-confirmed continuation turn out of band |
+| `admit-turn` | record an owner-confirmed continuation turn out of band; by the relationship's registered parent it is also a [direct parent intervention](#direct-parent-interventions) |
+| `intervention-show` | the direct parent interventions recorded for a relationship, oldest first; a read |
 | `relationship-status` / `relationship-resume` | pause, cancel, archive; resume only by restating generation and scope |
 | `relationship-close-merged` | archive the live assignments that are merged with nothing owed; a dry run without `--apply` |
+| `child-cleanup` | after the merge and the integration observation, archive the finished child and its loaded sub-threads on the App Server so their MCP helpers stop; refuses unless a merged mark counts and nothing can still be sent to the child; needs `--socket`, `--dry-run` plans |
 | `linkage-supervise` | an initiative supervisor over a project parent, by execution or by reference |
 | `linkage-bind` | claim one scope for one task at one level |
 | `linkage-attach` | bind an existing assignment's issue to its project |
@@ -595,6 +622,19 @@ never from arrival order: knowing a digest shows acquaintance with a revision, n
 where the declared graph has a fork, a cycle, an unknown predecessor or a gap, the answer is
 ambiguous and completion is withheld.
 
+A receipt the relay suppressed (the turn that staged it ended failed or interrupted) is not a
+revision, and the child that emitted it cannot tell after a restart. A revision that names one
+is read as naming what that suppressed receipt itself replaced: nothing, so it has no predecessor,
+or a revision that still counts, so it replaces that one, through any number of suppressed
+receipts in a row. Emit accepts the naming and records it as stated; the head does the reading
+(`registry.ReadThrough`, used by both head readers over the one statement that reads the
+generation's reviewable receipts, suppressed ones included). The rest of the judgment is
+unchanged: a revision of another generation, a revision nobody emitted, and a suppressed receipt
+whose own predecessor nobody holds still read `unknown_predecessor`, and revisions left
+unconnected read `fork`. One revision is one event (the event id is the generation and the
+revision hash), so the same bytes emitted again are a duplicate of the suppressed receipt and
+leave nothing that counts.
+
 A `needs_changes` ruling opens a new generation and names the exact result to correct.
 That result is the new generation's only permitted predecessor outside its own revisions:
 the relay-owned request, ruling and generation must agree on the same relationship and
@@ -638,11 +678,11 @@ When a step refuses, the refusal names what to do:
 | recorded `verified`, asked `unverified` or `aborted` | `disposition_conflict` | rule `needs_changes`, or stop the assignment by changing the relationship's status |
 | recorded `needs_changes` | `disposition_conflict` | the ruling opened a generation and is not withdrawn: rule the head of that generation when the child reports there |
 | recorded `unverified` or `aborted` | `disposition_conflict` | the ruling is final for the event: open a fresh execution generation (`generation-open`, then `generation-bind`) and rule what the child reports there |
-| a plan accepted the verified event | `disposition_conflict` | read the node's stale reading: when its action is `correct`, `dag-correct --prepare` prints the instruction and the dispatch request id, the generation is opened by hand and `dag-correct` binds it; `revalidate` and `hold` have their own steps; when the accepted result is current this build records no correction route, so report it and open no generation that `dag-correct` will refuse |
+| a plan accepted the verified event | `disposition_conflict` | read the node's stale reading: when its action is `correct`, `dag-correct --prepare` prints the instruction and the dispatch request id, the generation is opened by hand and `dag-correct` binds it; `revalidate` and `hold` have their own steps; when the accepted result is current, a base that moved after the acceptance is recorded by `dag-base-refresh` (a generation opened by hand that only merges the base, ruled `verified`; the relay proves from git that its head is the accepted head plus merges of the base), and for any other current result this build records no correction route, so report it and open no generation that `dag-correct` will refuse |
 | the work is marked merged, or a turn landed it | `disposition_conflict` | a merged result is corrected by new work, not by a second ruling |
 | a merge turn is merging or of unknown effect | `disposition_conflict` | resolve the turn (`merge-turn-resolve` reads the branch), then rule again |
 | the event is not the head | `stale_generation` or `superseded_revision` | rule the head the assignment shows |
-| the head is ambiguous | `revision_ambiguous` | outside a plan, a fresh execution generation; for a plan node this build records no route, so report it |
+| the head is ambiguous | `revision_ambiguous` | outside a plan, a fresh execution generation; for a plan node this build records no route, so report it (read `revision-head` first: a re-emit that named a suppressed receipt of its own generation may read a head) |
 | the relationship is not active | `relationship_not_active` | `relationship-resume`, then rule again |
 
 Two limits are part of the contract. The same verdict again is a replay even when its findings differ, so a `needs_changes` ruling that was already given cannot be given again with other words: the verdict does not resend (see [Return corrections to the existing task](../../plugins/crw/skills/crw-run/SKILL.md#return-corrections-to-the-existing-task)). And an installed relay older than this change answers a different verdict with the recorded ruling marked `_replay` and exit 0; read the answer (a ruling that is still `verified` and marked `_replay` changed nothing) and `assignment-show`, never the exit code.
@@ -679,7 +719,7 @@ The rule is fixed by the kind. `answer` and `stop` change nothing the child's at
 
 No refusal reason is added, and a refusal writes nothing. The command line is checked first: an unknown `--decision` or a missing required option ends with the parser's own exit 2 and a message on stderr before the writer runs, an unreadable `--note @path` is a host problem (exit 3, as for `verdict --criteria`), and `malformed_receipt` is what the writer answers to a direct call or to a blank note, turn or digest. `decision-show` reads the decisions of a relationship back, oldest first, each with the state of its delivery.
 
-Limits that are part of the contract. The relay records the decision and its delivery; it does not read the child's thread, so `dispatched` says the message was accepted, not that the child acted. A decision that opened g+1 is not recorded against a DAG plan node by this build: `dag-accept` finds no execution for g+1 and refuses, and the follow-up work "DAG reflection, bridge bypass record and crw-run procedure for decision replies" owns that, together with the record of a message sent to the child outside this route. Until it lands, the crw-run skill's need-input procedure is unchanged. After an answer or a stop, the relationship still reads as blocked (`dispositions-show`) until the child reports again. `registry`'s `generation-open --reason` still accepts only its own two reasons: `decision_reply` is written by this command alone. An installed relay older than this change has no `decision-reply` and answers the command as an unknown subcommand.
+Limits that are part of the contract. The relay records the decision and its delivery; it does not read the child's thread, so `dispatched` says the message was accepted, not that the child acted. A decision that opened g+1 is recorded against a DAG plan node by `dag-correct` ([the third way to open a generation](dag-scheduler.md#three-ways-to-open-the-generation)), which refuses until the decision was dispatched into the turn the generation is bound to; until it is recorded, `dag-accept` finds no execution for g+1 and refuses `stale_generation`. A message sent to the child outside this route leaves a record only when the registered parent admits its turn ([Direct parent interventions](#direct-parent-interventions)). The crw-run skill's need-input procedure follows this route. After an answer or a stop, the relationship still reads as blocked (`dispositions-show`) until the child reports again. `registry`'s `generation-open --reason` still accepts only its own two reasons: `decision_reply` is written by this command alone. An installed relay older than this change has no `decision-reply` and answers the command as an unknown subcommand.
 
 
 ## The coordination summary

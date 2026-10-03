@@ -30,6 +30,8 @@ func init() {
 		dispatch.Command{Name: "dag-release-close", Run: runReleaseClose},
 		dispatch.Command{Name: "dag-accept", Run: runAccept},
 		dispatch.Command{Name: "dag-integration-observe", Run: runObserve},
+		dispatch.Command{Name: "dag-base-refresh", Run: runBaseRefresh},
+		dispatch.Command{Name: "dag-generation-withdraw", Run: runWithdraw},
 		dispatch.Command{Name: "dag-decision-record", Run: runDecision},
 		dispatch.Command{Name: "dag-correct", Run: runCorrect},
 		dispatch.Command{Name: "dag-merge-judge", Run: runMergeJudge},
@@ -79,6 +81,9 @@ func runReady(ctx context.Context, services dispatch.Services, args dispatch.Arg
 		return nil, err
 	}
 	defer closeStore()
+	if err := sched.useHostMemory(); err != nil {
+		return nil, err
+	}
 	if !record {
 		reading, err := sched.Read(ctx, args.Text("plan"), ReadyOptions{})
 		if err != nil {
@@ -166,8 +171,13 @@ func runRegionDeclare(ctx context.Context, services dispatch.Services, args disp
 			{Key: "key", Value: optionalText(r.Key)}, {Key: "change", Value: r.Change}, {Key: "exclusive", Value: r.Exclusive},
 			{Key: "grade", Value: r.Grade}, {Key: "rule", Value: optionalText(r.Rule)}}
 	}
-	return contract.OrderedObject{{Key: "ok", Value: true}, {Key: "plan_id", Value: declared.PlanID}, {Key: "node_id", Value: declared.NodeID},
-		{Key: "declaration_seq", Value: declared.Seq}, {Key: "replayed", Value: declared.Replayed}, {Key: "regions", Value: list}}, nil
+	answer := contract.OrderedObject{{Key: "ok", Value: true}, {Key: "plan_id", Value: declared.PlanID}, {Key: "node_id", Value: declared.NodeID},
+		{Key: "declaration_seq", Value: declared.Seq}, {Key: "replayed", Value: declared.Replayed}, {Key: "regions", Value: list}}
+	if declared.Narrowed {
+		// printed only when the node already held its regions and this declaration narrowed them (CRW-411)
+		answer = append(answer, contract.Field{Key: "narrowed", Value: true})
+	}
+	return answer, nil
 }
 
 func runRelease(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
@@ -187,6 +197,9 @@ func runRelease(ctx context.Context, services dispatch.Services, args dispatch.A
 		return nil, err
 	}
 	defer closeStore()
+	if err := sched.useHostMemory(); err != nil {
+		return nil, err
+	}
 	sched.Tips = mergeturn.TargetReader{}
 	sched.PRs = ForgePullRequestReader(ExecRunner)
 	sched.Start = ProductionStarter(services, args)
@@ -287,6 +300,51 @@ func runObserve(ctx context.Context, services dispatch.Services, args dispatch.A
 		answer = append(answer, contract.Field{Key: "conflict_sweep", Value: result.Sweep.Object()})
 	}
 	return answer, nil
+}
+
+func runBaseRefresh(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
+	sched, closeStore, err := openScheduler(ctx, services, args)
+	if err != nil {
+		return nil, err
+	}
+	defer closeStore()
+	sched.Tips = mergeturn.TargetReader{}
+	sched.PRs = ForgePullRequestReader(ExecRunner)
+	result, err := sched.RecordBaseRefresh(ctx, args.Text("plan"), args.Text("node"), args.Text("actor"), RefreshInput{Checkout: args.Text("checkout"), Resolved: args.Strings("resolved")})
+	if err != nil {
+		return nil, hostFailure(err)
+	}
+	steps := make([]any, len(result.Steps))
+	for i, st := range result.Steps {
+		resolved := make([]any, len(st.Resolved))
+		for j, r := range st.Resolved {
+			resolved[j] = contract.OrderedObject{{Key: "path", Value: r.Path}, {Key: "blob", Value: optionalText(r.Blob)}}
+		}
+		steps[i] = contract.OrderedObject{{Key: "previous", Value: st.Previous}, {Key: "base_parent", Value: st.BaseParent}, {Key: "head", Value: st.Head}, {Key: "tree", Value: st.Tree}, {Key: "resolved", Value: resolved}}
+	}
+	paths := make([]any, len(result.Resolved))
+	for i, p := range result.Resolved {
+		paths[i] = p
+	}
+	return contract.OrderedObject{{Key: "ok", Value: true}, {Key: "schema", Value: SchemaBaseRefresh}, {Key: "plan_id", Value: result.PlanID}, {Key: "node_id", Value: result.NodeID},
+		{Key: "acceptance_id", Value: result.AcceptanceID}, {Key: "refresh_id", Value: result.RefreshID}, {Key: "refresh_seq", Value: result.Seq}, {Key: "relationship_id", Value: result.RelationshipID},
+		{Key: "execution_generation", Value: result.Generation}, {Key: "event_id", Value: result.EventID}, {Key: "head_sha", Value: result.HeadSHA}, {Key: "base_repository", Value: result.BaseRepository},
+		{Key: "base_ref", Value: result.BaseRef}, {Key: "base_tip_sha", Value: result.BaseTipSHA}, {Key: "steps", Value: steps}, {Key: "resolved_paths", Value: paths}, {Key: "replayed", Value: result.Replayed}}, nil
+}
+
+func runWithdraw(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
+	sched, closeStore, err := openScheduler(ctx, services, args)
+	if err != nil {
+		return nil, err
+	}
+	defer closeStore()
+	result, err := sched.WithdrawGeneration(ctx, args.Text("plan"), args.Text("node"), args.Text("actor"), WithdrawInput{Relationship: args.Text("relationship"), Generation: args.Integer("generation"), Reason: args.Text("reason")})
+	if err != nil {
+		return nil, hostFailure(err)
+	}
+	return contract.OrderedObject{{Key: "ok", Value: true}, {Key: "schema", Value: SchemaWithdraw}, {Key: "plan_id", Value: result.PlanID}, {Key: "node_id", Value: result.NodeID},
+		{Key: "relationship_id", Value: result.RelationshipID}, {Key: "withdrawn_generation", Value: result.Generation}, {Key: "restored_generation", Value: result.RestoredGeneration},
+		{Key: "dispatch_request_id", Value: result.DispatchRequestID}, {Key: "reason", Value: result.Reason}, {Key: "replayed", Value: result.Replayed}}, nil
 }
 
 func runDecision(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {

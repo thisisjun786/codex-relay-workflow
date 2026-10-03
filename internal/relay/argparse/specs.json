@@ -72,6 +72,8 @@
   {"flag":"--turn","required":true},
   {"flag":"--actor","required":true},
   {"flag":"--reason"}]},
+{"name":"intervention-show","summary":"the direct parent interventions recorded for a relationship: turns its registered parent admitted with admit-turn, oldest first. A read: it records and sends nothing. A message sent to the child over the thread bridge and never admitted is not visible here","options":[
+  {"flag":"--relationship","required":true}]},
 {"name":"relationship-status","options":[
   {"flag":"--relationship","required":true},
   {"flag":"--status","required":true,"choices":["paused","cancelled","archived"]},
@@ -193,6 +195,10 @@
   {"flag":"--all","kind":"true","help":"every live assignment in the store, scoped to a project or not"},
   {"flag":"--actor","required":true},
   {"flag":"--apply","kind":"true","help":"close them. Without it no relationship, link, binding or journal row is changed and no store is created; relationship-resume reopens a closed one"}],"groups":[{"required":true,"options":["--project","--all"]}]},
+{"name":"child-cleanup","summary":"releases a finished child thread and the sub-threads it started from the App Server so their MCP helper processes stop (thread/archive, undone by codex unarchive). Only for a relationship whose merged mark counts for its current head, generation, revision and criteria, that nothing else uses, with nothing owed and, for a plan node, its accepted head landed. Requires --socket. Without --dry-run it archives the loaded threads of the subtree, deepest first and the child last; nothing is archived while any of them is running or the subtree cannot be established exactly","options":[
+  {"flag":"--relationship","required":true},
+  {"flag":"--actor","required":true,"help":"the relationship's parent task"},
+  {"flag":"--dry-run","kind":"true","help":"say which loaded threads would be archived and call nothing that changes the App Server; the store is opened read-only"}]},
 {"name":"emit","options":[
   {"flag":"--relationship","required":true},
   {"flag":"--generation","type":"int","required":true},
@@ -763,6 +769,7 @@
   {"flag":"--pull-request","type":"int","required":true},
   {"flag":"--restate","help":"a handoff record or an earlier snapshot to grade against a fresh reading; '-' reads it from stdin"},
   {"flag":"--restate-head","help":"the head the restated record is about, when the record itself does not name one"},
+  {"flag":"--late-dispositions","help":"with --restate: a file holding the coordinator's dispositions of review threads that arrived after the record, a JSON object {\"lateDispositions\": [{threadId, disposition (answered, backlog, resolved or refuted), evidenceUrl, head, grade}]}. A thread with an entry for the head under restatement is not a late finding; the grade is recorded as given and never read"},
   {"flag":"--page-size","type":"int"},
   {"flag":"--page-budget","type":"int","help":"how many pages one connection may take before the read is reported unfinished rather than answered"},
   {"flag":"--call-budget","type":"int"},
@@ -777,7 +784,7 @@
   {"flag":"--plan","required":true},
   {"flag":"--after","type":"int","help":"the last revision already seen; 0 reads from the first"},
   {"flag":"--limit","type":"int","help":"at most this many revisions (1 to 1000; 100 by default)"}]},
-{"name":"dag-ready","summary":"the ready set of a DAG plan, computed from the stored plan and the relay's execution records: the nodes whose every incoming edge is satisfied, ranked by hop-count critical path, descendants and age and cut by free slots and edit-region overlap, and one closed reason for every other live node. Reads only unless --record keeps the pass","options":[
+{"name":"dag-ready","summary":"the ready set of a DAG plan, computed from the stored plan and the relay's execution records: the nodes whose every incoming edge is satisfied, ranked by hop-count critical path, descendants and age and cut by free slots, edit-region overlap and the host's memory (defer:host_memory while MemAvailable, swap use or memory pressure is over its threshold), and one closed reason for every other live node. Reads only unless --record keeps the pass","options":[
   {"flag":"--plan","required":true},
   {"flag":"--record","kind":"true","help":"keep this reading as a pass (dag_passes); needs --actor"},
   {"flag":"--actor","help":"the task asking for the recorded pass"}]},
@@ -812,13 +819,13 @@
 {"name":"dag-summary-retry","summary":"reopens a failed summary entry (parked by its eighth failure): back to pending with its attempts at zero. It touches only the entry it names; a confirmed or superseded entry is final and is refused","options":[
   {"flag":"--summary","required":true},
   {"flag":"--actor","required":true}]},
-{"name":"dag-region-declare","summary":"declares the edit regions of an implementation node before it is released: repository, path, kind (tree, file, symbol), change (edit, rename, delete) and grade (independent, the default; mechanical, which names its rule: union, renumber or regenerate:<command>; local; exclusive) for 1 to 64 regions. A node with no declaration counts as overlapping everything; renames, deletes, hotspots and the shared contract paths are exclusive whatever grade is declared, at their own place (the same path and the trees that cover it) and not across the repository; only a region declared with exclusive: true holds the whole repository. An identical declaration is a replay","options":[
+{"name":"dag-region-declare","summary":"declares the edit regions of an implementation node before it is released: repository, path, kind (tree, file, symbol), change (edit, rename, delete) and grade (independent, the default; mechanical, which names its rule: union, renumber or regenerate:<command>; local; exclusive) for 1 to 64 regions. A node with no declaration counts as overlapping everything; renames, deletes, hotspots and the shared contract paths are exclusive whatever grade is declared, at their own place (the same path and the trees that cover it) and not across the repository; only a region declared with exclusive: true holds the whole repository. An identical declaration is a replay. Once the node holds its regions (its child runs, and its head is not accepted yet) a declaration may only narrow them: every new region inside a held one and held at least as strictly, which the answer marks narrowed; a widening is refused disposition_conflict naming the region","options":[
   {"flag":"--plan","required":true},
   {"flag":"--node","required":true},
   {"flag":"--actor","required":true},
   {"flag":"--regions","required":true,"help":"the regions as a JSON list, or @file"},
   {"flag":"--expect-epoch","type":"int","help":"the coordinator epoch this session holds (dag-coordinator-claim answers it); a write from another epoch is refused stale_coordinator_epoch. 0 names none, which only a plan nobody claimed takes"}]},
-{"name":"dag-release","summary":"releases a ready DAG node to a Codex child through the managed-start engine: it re-verifies every input (artifact bytes re-hashed, pinned pull request heads read from the forge), writes the intent, the input manifest and a held execution slot together, starts the child with a request id derived from the node and the manifest, and binds the child to the node. Repeating it never creates a second child","options":[
+{"name":"dag-release","summary":"releases a ready DAG node to a Codex child through the managed-start engine: it re-verifies every input (artifact bytes re-hashed, pinned pull request heads read from the forge), writes the intent, the input manifest and a held execution slot together, starts the child with a request id derived from the node and the manifest, and binds the child to the node. A new release is refused capacity_exhausted while the host is short of memory (defer:host_memory). Repeating it never creates a second child","options":[
   {"flag":"--plan","required":true},
   {"flag":"--node","required":true},
   {"flag":"--actor","required":true,"help":"the project's registered parent, who owns the slot and the child"},
@@ -849,6 +856,21 @@
   {"flag":"--actor","required":true},
   {"flag":"--target","kind":"append","help":"repository@ref to observe (repeatable); the targets of the node's outgoing edges by default. A terminal node needs it"},
   {"flag":"--expect-epoch","type":"int","help":"the coordinator epoch this session holds (dag-coordinator-claim answers it); a write from another epoch is refused stale_coordinator_epoch. 0 names none, which only a plan nobody claimed takes"}]},
+{"name":"dag-base-refresh","summary":"records that an accepted implementation node's acceptance also stands on a later generation of its relationship that only refreshed the base: the relay reads the pull request head from the forge and the base tip from the target, and proves in a local checkout that the head is the accepted head plus merges of the base branch (each merge a two-parent commit whose tree is the tree git merges from its parents; a merge git cannot do cleanly is accepted only when the commit differs from git's tree in the files git could not merge, and those files must be named with --resolved). The acceptance is not replaced; integration is then judged on the refreshed head and the merged mark of that generation. A stale node, a landed node and a head that holds anything but base merges are refused","options":[
+  {"flag":"--plan","required":true},
+  {"flag":"--node","required":true},
+  {"flag":"--actor","required":true},
+  {"flag":"--checkout","help":"an absolute path to a local clone that holds the commits of the pull request (fetch first); needed when the node lands in a forge repository, refused when its target is itself a local checkout"},
+  {"flag":"--resolved","kind":"append","help":"a file the merges resolved by hand, as the refusal names it (repeatable); the paths named must be exactly the ones the chain resolved by hand, after you read them"},
+  {"flag":"--expect-epoch","type":"int","help":"the coordinator epoch this session holds (dag-coordinator-claim answers it); a write from another epoch is refused stale_coordinator_epoch. 0 names none, which only a plan nobody claimed takes"}]},
+{"name":"dag-generation-withdraw","summary":"withdraws a generation the coordinator opened by hand (generation-open) and never bound or sent to the child, so that the node can be accepted on the result it already has: the generation row stays (a number is never reused: the next generation takes the number after the highest the relationship ever held) and the relationship stands on the generation before it again. Refused when the generation is bound to a dispatch turn, carries an event, an admitted turn or a recorded execution, or was opened by a needs_changes ruling; it is the newest generation of the node's relationship only. A repeat is a replay","options":[
+  {"flag":"--plan","required":true},
+  {"flag":"--node","required":true},
+  {"flag":"--actor","required":true},
+  {"flag":"--relationship","required":true,"help":"the relationship whose generation is withdrawn (assignment-show names it); naming it keeps a repeated call the same withdrawal"},
+  {"flag":"--generation","required":true,"type":"int","help":"the generation to withdraw: the one the relationship stands on now, 2 or more"},
+  {"flag":"--reason","required":true,"help":"why it is withdrawn (1 to 1000 characters), recorded with the withdrawal"},
+  {"flag":"--expect-epoch","type":"int","help":"the coordinator epoch this session holds (dag-coordinator-claim answers it); a write from another epoch is refused stale_coordinator_epoch. 0 names none, which only a plan nobody claimed takes"}]},
 {"name":"dag-decision-record","summary":"records a decision for a decision edge: the subject and digest the plan fixed, approved or rejected, and the authority (kind and reference; opaque, compared and never read). Only the project's registered parent records; a repeat is a replay and another decision supersedes the active one","options":[
   {"flag":"--plan","required":true},
   {"flag":"--actor","required":true},
@@ -858,7 +880,7 @@
   {"flag":"--authority-kind","required":true},
   {"flag":"--authority-ref","required":true},
   {"flag":"--expect-epoch","type":"int","help":"the coordinator epoch this session holds (dag-coordinator-claim answers it); a write from another epoch is refused stale_coordinator_epoch. 0 names none, which only a plan nobody claimed takes"}]},
-{"name":"dag-correct","summary":"takes a correction back to the same child: with --prepare it rebuilds and stores the node's input manifest and prints the instruction line the correction ruling must carry as its restoration block; after the needs_changes ruling it binds the generation the ruling opened to the manifest that block names (or the previous one)","options":[
+{"name":"dag-correct","summary":"takes a correction back to the same child: with --prepare it rebuilds and stores the node's input manifest and prints the instruction line the correction ruling must carry as its restoration block; after the needs_changes ruling it binds the generation the ruling opened to the manifest that block names (or the previous one); for a generation a decision reply opened (split_approval, scope_change) it binds it, once the decision was dispatched, to the manifest the child was dispatched with, brought up to date with the plan's criteria","options":[
   {"flag":"--plan","required":true},
   {"flag":"--node","required":true},
   {"flag":"--actor","required":true},
@@ -907,6 +929,24 @@
   {"flag":"--actor","required":true,"help":"the task that declared the limit or the registered parent of its project"},
   {"flag":"--plan","help":"the plan the recorder coordinates: for a project limit it is held to that project and fenced by its epoch; once a plan of the project is under an epoch a basis without a plan is refused"},
   {"flag":"--expect-epoch","type":"int","help":"the coordinator epoch this session holds (dag-coordinator-claim answers it); a write from another epoch is refused stale_coordinator_epoch. 0 names none, which only a plan nobody claimed takes"}]},
+{"name":"dag-release-policy-record","summary":"records the values of a plan's release policy, which the scheduler reads when it judges a release: the window of the last landings, the conflict handling time that makes a landing slow, the red or reverted landings that switch local-optimistic release off, and the run of clean landings that switches it on again. While it is off a local overlap defers like an exclusive one (dag-ready prints the state and its basis as release_policy and a recorded pass keeps it); nothing running is stopped and no release is revoked. The same values again are a replay; a plan with no policy is released as before","options":[
+  {"flag":"--plan","required":true},
+  {"flag":"--actor","required":true,"help":"the project's registered parent"},
+  {"flag":"--window","type":"int","required":true,"help":"how many of the latest landings are read (1 to 64)"},
+  {"flag":"--handling-seconds","type":"int","required":true,"help":"a landing is slow when the conflict it handled took more seconds than this (1 or more)"},
+  {"flag":"--red-merges","type":"int","required":true,"help":"red or reverted landings in the window that switch local-optimistic release off (1 to the window)"},
+  {"flag":"--clean-run","type":"int","required":true,"help":"clean landings in a row that switch it on again (1 to the window)"},
+  {"flag":"--expect-epoch","type":"int","help":"the coordinator epoch this session holds (dag-coordinator-claim answers it); a write from another epoch is refused stale_coordinator_epoch. 0 names none, which only a plan nobody claimed takes"}]},
+{"name":"dag-landing-result-record","summary":"records what the parent states about the work of an implementation node after the fact, with its evidence: dev_green, dev_red or reverted for a pull request that landed, duplicate or discarded for work that did not. The relay keeps the statement and reads no forge. A red or reverted landing counts toward the release policy and the measurements; a revert changes nothing the scheduler calls landed. The same statement again is a replay and a node may carry several kinds","options":[
+  {"flag":"--plan","required":true},
+  {"flag":"--node","required":true},
+  {"flag":"--actor","required":true,"help":"the project's registered parent"},
+  {"flag":"--kind","required":true,"help":"dev_green, dev_red, reverted, duplicate or discarded"},
+  {"flag":"--commit","help":"the commit the statement is about (7 to 64 lower-case hex digits)"},
+  {"flag":"--evidence","required":true,"help":"the run, the pull request or the reason (at most 1000 bytes)"},
+  {"flag":"--expect-epoch","type":"int","help":"the coordinator epoch this session holds (dag-coordinator-claim answers it); a write from another epoch is refused stale_coordinator_epoch. 0 names none, which only a plan nobody claimed takes"}]},
+{"name":"dag-measurements","summary":"reads the measurements of a DAG plan from the store: parallelism of the recorded passes, conflict files per pull request by grade, conflict handling time, base refresh counts, post-merge results and duplicated or discarded work. Each measure prints the samples it rests on and its values, or the reason it has none: a value with no data is absent and never zero. It writes nothing","options":[
+  {"flag":"--plan","required":true}]},
 {"name":"dag-coordinator-claim","summary":"raises the coordinator epoch of a DAG plan for a new parent session: the next number after the newest claim, recorded with the parent binding it was made under, the task and the session nonce. The actor must hold the live parent binding of the plan's project. Repeating the call with the same nonce while it is the newest claim answers the same epoch; the nonce of a session that was replaced is stale_coordinator_epoch. A session claims before its first decision and sends the epoch it was given as --expect-epoch","options":[
   {"flag":"--plan","required":true},
   {"flag":"--actor","required":true,"help":"the project's parent task"},

@@ -59,6 +59,15 @@ var zoneInventory = map[string][]string{
 	"dag_conflict_sweep_members":         {"plan_id", "sweep_seq", "member_seq", "kind", "left_node_id", "right_node_id", "left_head", "right_head", "left_head_source", "right_head_source", "status", "reason", "observation_id", "conflicts"},
 	// CRW-431 (appended statement): whether the declarer stated a whole-repository hold on a declared region.
 	"dag_node_region_holds": {"plan_id", "node_id", "declaration_seq", "repository", "path", "region_kind", "region_key", "stated"},
+	"dag_base_refreshes":    {"refresh_id", "acceptance_id", "refresh_seq", "relationship_id", "execution_generation", "event_id", "revision_hash", "head_sha", "base_repository", "base_ref", "base_tip_sha", "proof_json", "resolved_paths_json", "recorded_by_task_id", "coordinator_epoch", "recorded_at"},
+	// CRW-446 (appended statement): the withdrawal of a generation that was opened by hand and never bound or sent.
+	"dag_generation_withdrawals": {"relationship_id", "execution_generation", "plan_id", "node_id", "dispatch_request_id", "opened_reason", "restored_generation", "reason", "withdrawn_by_task_id", "coordinator_epoch", "withdrawn_at"},
+	// CRW-411 (appended statements): the release policy of a plan, the results a parent records after a landing, and the policy state a recorded pass saw.
+	"dag_release_policy":      {"plan_id", "policy_seq", "window_size", "handling_seconds", "red_merges", "clean_run", "recorded_by", "coordinator_epoch", "recorded_at"},
+	"dag_landing_results":     {"result_id", "plan_id", "node_id", "kind", "commit_sha", "evidence", "recorded_by", "coordinator_epoch", "recorded_at"},
+	"dag_pass_release_policy": {"plan_id", "pass_seq", "policy_json"},
+	// CRW-468 (appended statement): the host memory bound a recorded pass saw.
+	"dag_pass_host_memory": {"plan_id", "pass_seq", "state", "reading_limit", "host_json"},
 }
 
 // rawDB opens path without any of the store's open rules, as an operator's sqlite3 would.
@@ -74,7 +83,10 @@ func zoneRawDB(t *testing.T, path string) *sql.DB {
 }
 
 // preDAGStore is a go-owned store built from the frozen v1 fixture (no dag_ object) and seeded with
-// rows in several v1 tables, closed and checkpointed so the file alone holds it.
+// rows in several v1 tables, closed and checkpointed so the file alone holds it. It is a store of this
+// version without the zone, so it holds the history indexes (testsupport.Create adds them): these tests
+// are about the zone. The upgrade of a store that lacks the indexes is tested from
+// testsupport.CreatePreviousVersion (history_index_test.go).
 func zonePreDAGStore(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "relay.sqlite3")

@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
@@ -112,26 +113,41 @@ func writeRaw(path string, doc *object, rename func(tmp, finalPath string) error
 	return rename(f.Name(), path)
 }
 
-// open is what a write starts with: the role checked, the store's path and its parsed content.
-func open(env host.LookupEnv, role RoleName) (string, rawConfig, error) {
+// open is what a write starts with: the role checked, the store's path, the store's lock held (the caller releases it when the write
+// is done, whatever happens) and the store's parsed content.
+func open(env host.LookupEnv, role RoleName, sleep func(time.Duration)) (string, rawConfig, func(), error) {
 	if !validRole(role) {
-		return "", rawConfig{}, fmt.Errorf("unknown role \"%s\"", role)
+		return "", rawConfig{}, nil, fmt.Errorf("unknown role \"%s\"", role)
 	}
 	path, err := StorePath(env)
 	if err != nil {
-		return "", rawConfig{}, err
+		return "", rawConfig{}, nil, err
+	}
+	release, err := lockStore(path, sleep)
+	if err != nil {
+		return "", rawConfig{}, nil, err
 	}
 	raw, err := readRaw(path, true)
-	return path, raw, err
+	if err != nil {
+		release()
+		return "", rawConfig{}, nil, err
+	}
+	return path, raw, release, nil
 }
 
 // SetRole merges patch into one role and writes the store, keeping every member it does not own, then returns the effective config.
 // The patch merges into the role the file holds (normalised) or the default, and the merged role must validate.
 func SetRole(env host.LookupEnv, role RoleName, patch RolePatch) (Config, error) {
-	path, raw, err := open(env, role)
+	return setRole(env, role, patch, crwdir.Rename, time.Sleep)
+}
+
+// setRole is SetRole with the publishing rename and the lock's sleep as seams, so a test can hold a writer inside its critical section.
+func setRole(env host.LookupEnv, role RoleName, patch RolePatch, rename func(tmp, finalPath string) error, sleep func(time.Duration)) (Config, error) {
+	path, raw, release, err := open(env, role, sleep)
 	if err != nil {
 		return Config{}, err
 	}
+	defer release()
 	current, existing := DefaultRole(), object(nil)
 	if value, ok := raw.roles.raw(string(role)); ok {
 		current = reconstructRole(value)
@@ -154,7 +170,7 @@ func SetRole(env host.LookupEnv, role RoleName, patch RolePatch) (Config, error)
 		existing.set(m.key, m.value)
 	}
 	raw.roles.set(string(role), &existing)
-	if err := writeRaw(path, raw.doc, crwdir.Rename); err != nil {
+	if err := writeRaw(path, raw.doc, rename); err != nil {
 		return Config{}, err
 	}
 	return ReadConfig(env)
@@ -163,12 +179,18 @@ func SetRole(env host.LookupEnv, role RoleName, patch RolePatch) (Config, error)
 // ResetRole removes a role's override, so it inherits again, and returns the effective config; a role the store does not hold
 // writes nothing.
 func ResetRole(env host.LookupEnv, role RoleName) (Config, error) {
-	path, raw, err := open(env, role)
+	return resetRole(env, role, crwdir.Rename, time.Sleep)
+}
+
+// resetRole is ResetRole with the same seams as setRole.
+func resetRole(env host.LookupEnv, role RoleName, rename func(tmp, finalPath string) error, sleep func(time.Duration)) (Config, error) {
+	path, raw, release, err := open(env, role, sleep)
 	if err != nil {
 		return Config{}, err
 	}
+	defer release()
 	if raw.roles.remove(string(role)) {
-		if err := writeRaw(path, raw.doc, crwdir.Rename); err != nil {
+		if err := writeRaw(path, raw.doc, rename); err != nil {
 			return Config{}, err
 		}
 	}

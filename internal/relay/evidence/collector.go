@@ -687,9 +687,27 @@ func Collect(f *Forge, repository string, numberValue any) (snapshot map[string]
 }
 
 func RestateProblems(head string, record, snapshot any) []Problem {
+	problems, _ := RestateWithDispositions(head, record, snapshot, nil)
+	return problems
+}
+
+// RestateWithDispositions is RestateProblems with the coordinator's dispositions of late review
+// threads (see latedisposition.go). A review thread on the head that the record's threadsSeen does
+// not list is a late finding unless a well-formed document holds an entry for it on this head.
+// document is the decoded dispositions document, nil when none was given. With a document it also
+// returns what each entry did, in the document's order: empty when the document was rejected or the
+// record could not be graded, because nothing was judged then. Without one it returns nil.
+func RestateWithDispositions(head string, record, snapshot, document any) ([]Problem, []any) {
+	var entries []LateEntry
+	var shape []Problem
+	var results []any
+	if document != nil {
+		entries, shape = ReadLateDispositions(document)
+		results = []any{}
+	}
 	_, ok := Object(record)
 	if !ok {
-		return []Problem{{Code: Malformed, Detail: "a handoff record is an object, not " + quote.Kind(record)}}
+		return append([]Problem{{Code: Malformed, Detail: "a handoff record is an object, not " + quote.Kind(record)}}, shape...), results
 	}
 	r := mapOf(record)
 	snap := mapOf(snapshot)
@@ -711,7 +729,7 @@ func RestateProblems(head string, record, snapshot any) []Problem {
 	problems = append(problems, HandoffProblems(head, r["reviewCoverage"], checks, required, ProviderMap(providers), nil)...)
 	for _, p := range problems {
 		if p.Code == Malformed {
-			return problems
+			return append(problems, shape...), results
 		}
 	}
 	gates := mapOf(snap["gates"])
@@ -745,17 +763,35 @@ func RestateProblems(head string, record, snapshot any) []Problem {
 		}
 		problems = append(problems, Problem{Code: strOf(code), Detail: strOf(one["detail"])})
 	}
+	problems = append(problems, shape...)
 	seen := map[string]bool{}
 	for _, id := range listOf(mapOf(r["reviewCoverage"])["threadsSeen"]) {
 		seen[pyvalue.Str(id)] = true
 	}
+	disposed := map[string]bool{}
+	for _, e := range entries {
+		if e.Head == head {
+			disposed[e.ThreadID] = true
+		}
+	}
+	shown := map[string]bool{}
 	var late []string
 	for _, raw := range listOf(snap["findings"]) {
 		one := mapOf(raw)
-		if one["kind"] == "reviewThread" && !seen[pyvalue.Str(one["id"])] {
+		if one["kind"] != "reviewThread" {
+			continue
+		}
+		id := pyvalue.Str(one["id"])
+		// An entry names a thread by a string id, and a number, boolean or null id must not become
+		// one by coercion, so only a thread whose id is a string can be named or disposed of.
+		text, named := one["id"].(string)
+		if named {
+			shown[text] = seen[id]
+		}
+		if !seen[id] && !(named && disposed[text]) {
 			label := strOf(one["url"])
 			if label == "" {
-				label = pyvalue.Str(one["id"])
+				label = id
 			}
 			late = append(late, label)
 		}
@@ -764,7 +800,10 @@ func RestateProblems(head string, record, snapshot any) []Problem {
 		sort.Strings(late)
 		problems = append(problems, Problem{Code: LateFinding, Detail: fmt.Sprintf("%d review thread(s) on this head are not in the record's threadsSeen, so the record did not see them and no longer describes the candidate: %s", len(late), strings.Join(late[:min(5, len(late))], ", "))})
 	}
-	return problems
+	if document != nil {
+		results = lateResults(entries, head, shown)
+	}
+	return problems, results
 }
 func sortedTexts(v []any) []string {
 	out := make([]string, len(v))

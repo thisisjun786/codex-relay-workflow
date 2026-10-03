@@ -10,6 +10,9 @@ const (
 	LimitNoCapacity         = "no_capacity"
 	LimitEditOverlap        = "edit_overlap"
 	LimitCapacityUnmeasured = "capacity_unmeasured"
+	// LimitHostMemory is the limit of a pass whose first cut was the host memory bound (CRW-468). dag_passes.deciding_limit keeps its shipped closed set and stores no_capacity for it
+	// (storedLimit); dag_pass_host_memory.reading_limit keeps this value.
+	LimitHostMemory = "host_memory"
 )
 
 // Rank is why a ready node stands where it does: the hop count of the longest chain it starts, the live nodes below it, and the stored time
@@ -47,6 +50,8 @@ type PassSummary struct {
 	Overlaps OverlapCounts
 	// OrderConstraints is the pairs of live nodes the reading puts in a merge order (CRW-410): the later one of each refreshes its base after the earlier one lands.
 	OrderConstraints int
+	// HostMemory is what the host memory bound said of its sample (CRW-468); nil when the scheduler carries no bound, and then no key is printed.
+	HostMemory *HostMemoryVerdict
 }
 
 // Reading is the ready set of one plan at one revision, computed from stored rows only. Ready is in release order; Nodes holds every live
@@ -61,6 +66,8 @@ type Reading struct {
 	Nodes        []NodeReading
 	// PlanState is paused while the plan is paused; empty for an active plan, and then no key is printed (CRW-281).
 	PlanState string
+	// ReleasePolicy is the state of local-optimistic release under the plan's release policy (CRW-411); nil when the plan has none, and then no key is printed.
+	ReleasePolicy *OptimismState
 }
 
 func (n NodeReading) object() contract.OrderedObject {
@@ -116,14 +123,19 @@ func (r Reading) Object() contract.OrderedObject {
 	if r.PlanState != "" {
 		o = append(o, contract.Field{Key: "plan_state", Value: r.PlanState})
 	}
-	return append(o, contract.OrderedObject{
-		{Key: "pass", Value: contract.OrderedObject{
-			{Key: "free_slots", Value: r.Pass.FreeSlots}, {Key: "ceiling", Value: r.Pass.Ceiling}, {Key: "ceiling_source", Value: r.Pass.CeilingSource},
-			{Key: "held", Value: r.Pass.Held}, {Key: "ready_count", Value: r.Pass.ReadyCount}, {Key: "deciding_limit", Value: r.Pass.DecidingLimit},
-			{Key: "overlap_count", Value: r.Pass.Overlaps.Counted()}, {Key: "overlaps", Value: r.Pass.Overlaps.object()}, {Key: "order_constraints", Value: r.Pass.OrderConstraints},
-		}},
-		{Key: "ready", Value: ready}, {Key: "nodes", Value: nodes},
-	}...)
+	pass := contract.OrderedObject{
+		{Key: "free_slots", Value: r.Pass.FreeSlots}, {Key: "ceiling", Value: r.Pass.Ceiling}, {Key: "ceiling_source", Value: r.Pass.CeilingSource},
+		{Key: "held", Value: r.Pass.Held}, {Key: "ready_count", Value: r.Pass.ReadyCount}, {Key: "deciding_limit", Value: r.Pass.DecidingLimit},
+		{Key: "overlap_count", Value: r.Pass.Overlaps.Counted()}, {Key: "overlaps", Value: r.Pass.Overlaps.object()}, {Key: "order_constraints", Value: r.Pass.OrderConstraints},
+	}
+	if r.Pass.HostMemory != nil {
+		pass = append(pass, contract.Field{Key: "host_memory", Value: r.Pass.HostMemory.object()})
+	}
+	tail := contract.OrderedObject{{Key: "pass", Value: pass}}
+	if r.ReleasePolicy != nil {
+		tail = append(tail, contract.Field{Key: "release_policy", Value: r.ReleasePolicy.object()})
+	}
+	return append(append(o, tail...), contract.OrderedObject{{Key: "ready", Value: ready}, {Key: "nodes", Value: nodes}}...)
 }
 
 // SchemaReading names the document dag-ready prints.

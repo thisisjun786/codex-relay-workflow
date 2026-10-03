@@ -272,10 +272,19 @@ func (s *Scheduler) accept(ctx context.Context, plan, node, actor string, in Acc
 			return refuse(contract.RefusalScopeRoleMismatch, "task %s is not the parent of relationship %s, which is held by %s", actor, rel.ID, rel.ParentTaskID)
 		}
 		var manifest string
-		if bound, err := queryOne(txCtx, tx, "SELECT manifest_digest FROM dag_node_executions WHERE plan_id = ? AND node_id = ? AND relationship_id = ? AND execution_generation = ?", []any{plan, node, rel.ID, rel.Generation}, &manifest); err != nil {
+		bound, err := queryOne(txCtx, tx, "SELECT manifest_digest FROM dag_node_executions WHERE plan_id = ? AND node_id = ? AND relationship_id = ? AND execution_generation = ?", []any{plan, node, rel.ID, rel.Generation}, &manifest)
+		if err != nil {
 			return err
-		} else if !bound {
-			return refuse(contract.RefusalStaleGeneration, "generation %d of %s is not recorded as an execution of %s (a correction is recorded with dag-correct before its result is accepted)", rel.Generation, rel.ID, node)
+		}
+		if !bound {
+			// a generation a recorded base refresh carried the active acceptance to has no execution of its own: only the output that acceptance stands on is accepted again there, as a replay or a re-validation (below)
+			carried, err := s.refreshCarries(txCtx, tx, plan, node, rel)
+			if err != nil {
+				return err
+			}
+			if !carried {
+				return refuse(contract.RefusalStaleGeneration, "generation %d of %s is not recorded as an execution of %s (a correction is recorded with dag-correct before its result is accepted)%s", rel.Generation, rel.ID, node, s.unsentGenerationHint(txCtx, tx, rel))
+			}
 		}
 		head, err := s.verifiedHead(txCtx, tx, rel, in.Event)
 		if err != nil {
@@ -288,9 +297,25 @@ func (s *Scheduler) accept(ctx context.Context, plan, node, actor string, in Acc
 
 		// the same output accepted before: a replay, or the same acceptance re-ruled under re-registered criteria
 		var existing, state, ownDigest string
-		if exists, err := queryOne(txCtx, tx, "SELECT acceptance_id, state, criteria_set_digest FROM dag_acceptances WHERE relationship_id = ? AND execution_generation = ? AND revision_hash = ?", []any{rel.ID, rel.Generation, head.RevisionHash}, &existing, &state, &ownDigest); err != nil {
+		exists, err := queryOne(txCtx, tx, "SELECT acceptance_id, state, criteria_set_digest FROM dag_acceptances WHERE relationship_id = ? AND execution_generation = ? AND revision_hash = ?", []any{rel.ID, rel.Generation, head.RevisionHash}, &existing, &state, &ownDigest)
+		if err != nil {
 			return err
-		} else if exists {
+		}
+		if !exists {
+			// the output of the later generation a recorded base refresh carried the active acceptance to is the output that acceptance stands on: accepting it again is a replay or a re-validation of that acceptance (baserefresh.go)
+			if active, has, err := loadActiveAcceptance(txCtx, tx, plan, node); err != nil {
+				return err
+			} else if has {
+				stand, err := s.standOf(txCtx, tx, active)
+				if err != nil {
+					return err
+				}
+				if stand.RefreshID != "" && stand.Generation == rel.Generation && stand.EventID == head.EventID && stand.RevisionHash == head.RevisionHash {
+					existing, state, ownDigest, exists = active.AcceptanceID, active.State, active.CriteriaSetDigest, true
+				}
+			}
+		}
+		if exists {
 			out.AcceptanceID = existing
 			if state != "active" {
 				return refuse(contract.RefusalDispositionConflict, "this output was accepted as %s and that acceptance is %s; accept a new output instead", existing, state)
@@ -333,6 +358,9 @@ func (s *Scheduler) accept(ctx context.Context, plan, node, actor string, in Acc
 			return nil
 		}
 
+		if !bound {
+			return refuse(contract.RefusalStaleGeneration, "generation %d of %s is not recorded as an execution of %s (a correction is recorded with dag-correct before its result is accepted)%s", rel.Generation, rel.ID, node, s.unsentGenerationHint(txCtx, tx, rel))
+		}
 		// a new output: it supersedes the node's active acceptance only explicitly
 		if implementation && (pr.State != "open" || pr.IsDraft) {
 			return refuse(contract.RefusalDispositionConflict, "pull request %s#%d is %s%s: only an open, non-draft pull request is accepted", pr.Repository, pr.Number, pr.State, map[bool]string{true: " and a draft", false: ""}[pr.IsDraft])
@@ -394,6 +422,18 @@ func (s *Scheduler) accept(ctx context.Context, plan, node, actor string, in Acc
 	return out, err
 }
 
+// unsentGenerationHint names the way out when the generation the relationship stands on is an anchor nobody bound, which is what a generation opened by hand and never sent to the child looks like: the
+// parent withdraws it (withdraw.go) and accepts the generation before it. It is only a hint, so a failed read gives none.
+func (s *Scheduler) unsentGenerationHint(ctx context.Context, q store.Querier, rel relRow) string {
+	var anchor string
+	var turn sql.NullString
+	has, err := queryOne(ctx, q, "SELECT anchor_state, dispatch_turn_id FROM generations WHERE relationship_id = ? AND execution_generation = ?", []any{rel.ID, rel.Generation}, &anchor, &turn)
+	if err != nil || !has || rel.Generation < 2 || anchor != "anchor_pending" || turn.Valid {
+		return ""
+	}
+	return "; if generation " + itoa64(rel.Generation) + " was opened by hand and never sent to the child, close it with dag-generation-withdraw and accept the generation before it"
+}
+
 // acceptTarget is the repository an implementation node's accepted head is judged against: the single repository its outgoing integrated and code-pinned edges name. A node with none
 // (a terminal node) is judged against the forge repository, observed with an explicit target. Several repositories are not a single acceptance's.
 func (s *Scheduler) acceptTarget(ctx context.Context, q store.Querier, snap dag.Snapshot, node, forge string) (string, error) {
@@ -433,8 +473,13 @@ func (s *Scheduler) sameForgeReading(ctx context.Context, q store.Querier, a Acc
 	if forge != named.Repository || number != named.Number {
 		return refuse(contract.RefusalDispositionConflict, "this output was accepted on pull request %s#%d and the call names %s#%d", forge, number, named.Repository, named.Number)
 	}
-	if pr.HeadSHA != a.HeadSHA {
-		return refuseCandidateMoved("pull request %s#%d is at %s and the accepted head of %s is %s", forge, number, pr.HeadSHA, a.NodeID, a.HeadSHA)
+	// the head the acceptance stands on: its own, or the one a recorded base refresh carried it to (baserefresh.go)
+	stand, err := s.standOf(ctx, q, a)
+	if err != nil {
+		return err
+	}
+	if pr.HeadSHA != stand.Head {
+		return refuseCandidateMoved("pull request %s#%d is at %s and the accepted head of %s is %s", forge, number, pr.HeadSHA, a.NodeID, stand.Head)
 	}
 	return nil
 }

@@ -384,7 +384,11 @@ func openRaw(path string) (*sql.DB, error) {
 	return db, nil
 }
 
-func schemaDigest(ctx context.Context, db *sql.DB) (string, error) {
+// schemaDigest is the digest of the store's schema, leaving out the indexes named in without. The fixtures were
+// taken from stores of the version before CRW-301, which added the history indexes (testsupport.HistoryIndexes): the
+// rows they dump do not depend on an index, so the template, which has the indexes, is held to the digest
+// of the schema the fixtures were taken from by leaving them out.
+func schemaDigest(ctx context.Context, db *sql.DB, without map[string]bool) (string, error) {
 	rows, err := db.QueryContext(ctx, "SELECT type, name, tbl_name, coalesce(sql, '') FROM sqlite_master WHERE name NOT LIKE 'dag\\_%' ESCAPE '\\' AND tbl_name NOT LIKE 'dag\\_%' ESCAPE '\\'")
 	if err != nil {
 		return "", err
@@ -395,6 +399,9 @@ func schemaDigest(ctx context.Context, db *sql.DB) (string, error) {
 		var kind, name, table, text string
 		if err := rows.Scan(&kind, &name, &table, &text); err != nil {
 			return "", err
+		}
+		if kind == "index" && without[name] {
+			continue
 		}
 		lines = append(lines, kind+"\x00"+name+"\x00"+table+"\x00"+text)
 	}
@@ -457,7 +464,15 @@ func storeTemplate() (template, error) {
 			}
 			defer db.Close()
 			ctx := context.Background()
-			if templateData.digest, err = schemaDigest(ctx, db); err != nil {
+			indexes, err := testsupport.HistoryIndexes()
+			if err != nil {
+				return err
+			}
+			without := map[string]bool{}
+			for _, index := range indexes {
+				without[index.Name] = true
+			}
+			if templateData.digest, err = schemaDigest(ctx, db, without); err != nil {
 				return err
 			}
 			if _, err := db.ExecContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
@@ -490,7 +505,7 @@ func buildStore(t testing.TB, path string, dump *storeDump) error {
 		return err
 	}
 	if dump.Schema != tmpl.digest {
-		return fmt.Errorf("the fixture's store schema %s is not the schema Go creates (%s)", dump.Schema, tmpl.digest)
+		return fmt.Errorf("the fixture's store schema %s is not the schema Go creates, apart from the history indexes (%s)", dump.Schema, tmpl.digest)
 	}
 	scratch, err := os.MkdirTemp("", "crw-store-build-")
 	if err != nil {

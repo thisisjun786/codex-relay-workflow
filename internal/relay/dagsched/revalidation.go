@@ -46,6 +46,8 @@ func StaleActions() []string {
 const (
 	OpenedByRuling         = "ruling"
 	OpenedByGenerationOpen = "generation_open"
+	// OpenedByDecisionReply is a generation a decision reply (split_approval or scope_change) advanced: the generation's own reason, as generation-open never writes it.
+	OpenedByDecisionReply = "decision_reply"
 )
 
 // CorrectionRequestID is the dispatch request id a correction generation opened by hand carries (generation-open --dispatch-request-id): derived from the plan, the node, the manifest and the generation, so
@@ -66,11 +68,20 @@ func (s *Scheduler) describeOpening(ctx context.Context, q store.Querier, plan, 
 	if !request.Valid {
 		return nil
 	}
-	var turn sql.NullString
-	if _, err := queryOne(ctx, q, "SELECT dispatch_turn_id FROM generations WHERE relationship_id = ? AND execution_generation = ?", []any{rel.ID, rel.Generation}, &turn); err != nil {
+	var turn, reason sql.NullString
+	if _, err := queryOne(ctx, q, "SELECT dispatch_turn_id, reason FROM generations WHERE relationship_id = ? AND execution_generation = ?", []any{rel.ID, rel.Generation}, &turn, &reason); err != nil {
 		return err
 	}
 	out.OpenedBy, out.DispatchRequestID, out.DispatchTurnID = OpenedByGenerationOpen, request.String, turn.String
+	if reason.String == delivery.DecisionReply {
+		out.OpenedBy = OpenedByDecisionReply
+		// a decision that left the node as the child was dispatched bound that manifest as it was: a replay says so as well
+		var previous string
+		if _, err := queryOne(ctx, q, "SELECT manifest_digest FROM dag_node_executions WHERE plan_id = ? AND node_id = ? AND relationship_id = ? AND execution_generation < ? ORDER BY execution_generation DESC LIMIT 1", []any{plan, node, rel.ID, rel.Generation}, &previous); err != nil {
+			return err
+		}
+		out.CarriedOver = previous != "" && previous == out.ManifestDigest
+	}
 	return nil
 }
 
@@ -90,13 +101,17 @@ func (s *Scheduler) describeOpening(ctx context.Context, q store.Querier, plan, 
 // statement: the relay does not read the child's thread, so unlike the ruling route (which compares the restoration note with the instruction line) nothing here compares the dispatching message with the
 // line; the child checks the manifest file against the digest and hash the line names and answers blocked_needs_input on a mismatch.
 func (s *Scheduler) recordHandOpened(ctx context.Context, q store.Querier, plan string, snap dag.Snapshot, n dag.SnapNode, rel relRow, suppliedDigest string, out *CorrectionResult) error {
-	notRuled := fmt.Sprintf("no needs_changes ruling on generation %d of %s opened generation %d", rel.Generation-1, rel.ID, rel.Generation)
+	before, err := store.LiveGenerationBefore(ctx, q, rel.ID, rel.Generation)
+	if err != nil {
+		return err
+	}
+	notRuled := fmt.Sprintf("no needs_changes ruling on generation %d of %s opened generation %d", before, rel.ID, rel.Generation)
 	st, err := s.staleOf(ctx, q, plan, snap, n)
 	if err != nil {
 		return err
 	}
 	if st == nil {
-		return refuse(contract.RefusalDispositionConflict, "%s, and the accepted result of %s is not stale, so it is not corrected by a generation opened by hand either: a result that is not accepted yet is corrected by a ruling, and an accepted result that is current has no recorded correction route in this build", notRuled, n.NodeID)
+		return refuse(contract.RefusalDispositionConflict, "%s, and the accepted result of %s is not stale, so it is not corrected by a generation opened by hand either: a result that is not accepted yet is corrected by a ruling, and an accepted result that is current has no recorded correction route in this build. A generation that only merged the base into the branch is not a correction: when the generation was ruled verified, dag-base-refresh records it, after proving from git that its head is the accepted head plus merges of the base", notRuled, n.NodeID)
 	}
 	// the same route a stale node has without the generation: a change of the criteria alone is ruled again (a revalidation, no generation), and what rests on a stale predecessor or an input that is not
 	// there waits; only a result that must be reworked is corrected
@@ -108,9 +123,15 @@ func (s *Scheduler) recordHandOpened(ctx context.Context, q store.Querier, plan 
 	// the generation recorded now is the one right after the generation the acceptance stands on: a correction that is already open and recorded is not skipped by opening another beside it
 	if acc, has, err := loadActiveAcceptance(ctx, q, plan, n.NodeID); err != nil {
 		return err
-	} else if has && acc.ExecutionGeneration != rel.Generation-1 {
-		return refuse(contract.RefusalDispositionConflict, "%s, and the accepted result of %s stands on generation %d, so a correction of it is already open (generation %d is recorded for it): report this refusal and open no further generation, because opening one moved the relationship past the generation that correction is accepted on",
-			notRuled, n.NodeID, acc.ExecutionGeneration, rel.Generation-1)
+	} else if has {
+		stand, err := s.standOf(ctx, q, acc)
+		if err != nil {
+			return err
+		}
+		if stand.Generation != before {
+			return refuse(contract.RefusalDispositionConflict, "%s, and the accepted result of %s stands on generation %d, so a correction of it is already open (generation %d is recorded for it): report this refusal and open no further generation, because opening one moved the relationship past the generation that correction is accepted on",
+				notRuled, n.NodeID, stand.Generation, before)
+		}
 	}
 	if suppliedDigest == "" {
 		return refuse(contract.RefusalDispositionConflict, "%s: a generation opened by hand is bound to the manifest it was opened for, so name it with --manifest-digest", notRuled)
@@ -191,18 +212,23 @@ func (s *Scheduler) consumedChange(ctx context.Context, q store.Querier, plan st
 // reviewOpen is whether the relay's review of an accepted head is open, which is the one thing that lets the verdict writer take another ruling on an accepted head it ruled verified (it refuses with disposition_conflict otherwise,
 // and opens no generation): the accepted event is still the head of the current generation, it is ruled verified, and the criteria registered for the relationship are no longer the set it was ruled under.
 func (s *Scheduler) reviewOpen(ctx context.Context, q store.Querier, rel relRow, a Acceptance) (bool, error) {
-	if rel.Generation != a.ExecutionGeneration {
+	// the review of what the acceptance stands on: its own event, or the head event of the later generation a recorded base refresh carried it to (baserefresh.go)
+	stand, err := s.standOf(ctx, q, a)
+	if err != nil {
+		return false, err
+	}
+	if rel.Generation != stand.Generation {
 		return false, nil
 	}
 	head, err := delivery.HeadRevisionFrom(ctx, q, rel.ID, rel.Generation)
 	if err != nil {
 		return false, err
 	}
-	if event, _ := objString(head, "eventId"); event != a.EventID {
+	if event, _ := objString(head, "eventId"); event != stand.EventID {
 		return false, nil
 	}
 	var verdict, ruled string
-	if found, err := queryOne(ctx, q, "SELECT v.verdict, c.set_digest FROM verdicts v JOIN verdict_context c ON c.event_id = v.event_id WHERE v.event_id = ?", []any{a.EventID}, &verdict, &ruled); err != nil || !found || verdict != "verified" {
+	if found, err := queryOne(ctx, q, "SELECT v.verdict, c.set_digest FROM verdicts v JOIN verdict_context c ON c.event_id = v.event_id WHERE v.event_id = ?", []any{stand.EventID}, &verdict, &ruled); err != nil || !found || verdict != "verified" {
 		return false, err
 	}
 	var rows, distinct int
@@ -280,6 +306,15 @@ func (s *Scheduler) routeOf(ctx context.Context, q store.Querier, plan string, s
 	if err != nil {
 		return "", "", err
 	}
+	// the generation the accepted result stands on: its own, or the later one a recorded base refresh carried it to (baserefresh.go)
+	standGeneration := acc.ExecutionGeneration
+	if hasAcc {
+		stand, err := s.standOf(ctx, q, acc)
+		if err != nil {
+			return "", "", err
+		}
+		standGeneration = stand.Generation
+	}
 	above := st
 	if st.Cause != CausePredecessorStale {
 		if above, err = s.restsOnStale(ctx, q, plan, snap, n); err != nil {
@@ -306,7 +341,7 @@ func (s *Scheduler) routeOf(ctx context.Context, q store.Querier, plan string, s
 			"which the parent decides and which makes a new child", n.NodeID), nil
 	case rel.Status != "active":
 		return ActionHold, fmt.Sprintf("relationship %s of %s is %s: resume it (relationship-resume) before a ruling or a correction can reach its child", short(rel.ID), n.NodeID, rel.Status), nil
-	case !ignoreOpen && hasAcc && rel.Generation > acc.ExecutionGeneration:
+	case !ignoreOpen && hasAcc && rel.Generation > standGeneration:
 		return ActionHold, fmt.Sprintf("generation %d of relationship %s is open, a correction of %s that goes to its child: record it with dag-correct if that is not done yet, wait for its report, then accept it with dag-accept --supersedes %s",
 			rel.Generation, short(rel.ID), n.NodeID, short(acc.AcceptanceID)), nil
 	}
@@ -336,8 +371,12 @@ func (s *Scheduler) routeOf(ctx context.Context, q store.Querier, plan string, s
 			ruling = "the relay's review of the accepted head is open (the criteria registered for the relationship are not the set it was ruled under), so a needs_changes ruling opens the next generation; a generation opened by hand with the id dag-correct --prepare prints works as well"
 		}
 	}
+	next, err := store.NextGeneration(ctx, q, rel.ID)
+	if err != nil {
+		return "", "", err
+	}
 	return ActionCorrect, fmt.Sprintf("the output of %s must be reworked (%s). It goes to the same child as generation %d of relationship %s: dag-correct --prepare, then a needs_changes ruling carrying its instruction as the restoration "+
-		"finding or a generation opened by hand, then dag-correct; accept the reworked result with dag-accept --supersedes %s. %s", n.NodeID, why, rel.Generation+1, short(rel.ID), short(acc.AcceptanceID), ruling), nil
+		"finding or a generation opened by hand, then dag-correct; accept the reworked result with dag-accept --supersedes %s. %s", n.NodeID, why, next, short(rel.ID), short(acc.AcceptanceID), ruling), nil
 }
 
 // withRoute is the stale reading with its route: a copy, because the verdict the memo holds is shared by every question asked of one pass.
