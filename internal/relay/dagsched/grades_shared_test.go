@@ -35,6 +35,9 @@ func TestSharedContractOverlapIsJudgedOnTheCommonPlace(t *testing.T) {
 		{"a tree that holds the contract directories against a file beside them", tree("contract", "local"), gr("contract/README.md", "local", ""), "p,q", RuleLocalOptimistic},
 		{"a tree that holds the contract directories against an unlisted directory", tree("contract", "local"), tree("contract/notes", "local"), "p,q", RuleLocalOptimistic},
 		{"two ordinary trees, one inside the other", tree("internal/app", "local"), tree("internal/app/x", "local"), "p,q", RuleLocalOptimistic},
+		{"two testdata trees, which hold the golden directory", tree("internal/relay/store/testdata", "local"), tree("internal/relay/store/testdata", "local"), "p", RuleDefer},
+		{"a testdata tree against a fixture file under it", tree("internal/relay/store/testdata", "local"), gr("internal/relay/store/testdata/fixture.json", "local", ""), "p,q", RuleLocalOptimistic},
+		{"two package trees are not looked into (a declared limit: the tree claims what it holds)", tree("internal/relay/store", "local"), tree("internal/relay/store", "local"), "p,q", RuleLocalOptimistic},
 		{"a golden directory of a package", tree("internal/relay/store/testdata", "local"), tree("internal/relay/store/testdata/golden", "local"), "p", RuleDefer},
 	}
 	for _, c := range cases {

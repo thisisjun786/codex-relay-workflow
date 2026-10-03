@@ -67,10 +67,11 @@ func SharedSurface(p string) bool {
 	return false
 }
 
-// holdsSharedSurface is SharedSurface for a tree region: the directory is on the list, or a listed directory or file lies under it. A testdata/golden directory that may lie under it is not guessed at.
+// holdsSharedSurface is SharedSurface for a tree region: the directory is on the list, a listed directory or file lies under it, or it is a testdata directory (which holds testdata/golden). The judgement
+// reads only declarations, so a tree further above (a package directory) is not looked into: it claims everything under it, and a golden directory it may hold is not guessed at.
 func holdsSharedSurface(tree string) bool {
 	tree = path.Clean(tree)
-	if SharedSurface(tree) {
+	if SharedSurface(tree) || path.Base(tree) == "testdata" {
 		return true
 	}
 	for _, listed := range append(append([]string(nil), sharedTrees...), sharedFiles...) {

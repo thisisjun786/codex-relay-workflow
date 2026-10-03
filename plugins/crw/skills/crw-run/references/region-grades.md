@@ -27,7 +27,8 @@ the same rule; with two rules the overlap is `local`, because neither rule cover
 Two lists are applied whatever grade is declared. A rename, a delete and the hotspots (lockfiles, `.github/`, a Makefile or Dockerfile, `.sql` files, a `schema` or `migrations`
 directory) hold the whole repository. The shared contract surfaces (`contract/schema`, `contract/golden`, `contract/fixtures`, any `testdata/golden` directory and the CLI spec
 `internal/relay/argparse/specs.json`) are `exclusive` on their own place: a command of the CLI spec is the CLI spec, and an overlap whose common place is a tree that holds one of them is
-exclusive. Two trees above the CLI spec are one such overlap, while a tree and an unlisted file under it keep their own grades. Declare a tree that stops short of those paths, or list the files,
+exclusive. Two trees above the CLI spec, or two `testdata` directories, are one such overlap, while a tree and an unlisted file under it keep their own grades. The scheduler reads declarations and not
+the repository, so a tree above a package (which may hold a `testdata/golden`) is not looked into: it claims everything under it. Declare a tree that stops short of those paths, or list the files,
 where the work does not touch them.
 
 ## Declare the regions
