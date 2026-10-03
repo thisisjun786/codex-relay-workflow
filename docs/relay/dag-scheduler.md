@@ -19,7 +19,9 @@ The parent holds no goal and runs no loop. A session that starts (the first one,
 2. For each ready node, `dag-release` (a node that is already owned is `skip:already_owned` in the reading and a replay in the release: no second child).
 3. For a result that is reported and verified: `dag-accept`; for a correction: `dag-correct --prepare`, the `needs_changes` ruling carrying the line, `dag-correct`; for a decision edge: `dag-decision-record`.
 4. For an accepted pull request: `dag-merge-request`, the merge lane's own commands, `assignment-mark merged`, `dag-integration-observe`.
-5. End the turn. Nothing is resident: the scheduler is a library the relay's commands call over the relay's one store; it adds no daemon, no listener and no database of its own
+5. For the plan's Linear summary: `dag-summary-status --plan P`; when a document is owed or out of date, `dag-summary-enqueue` and the claim, write, read back and confirm of [the summary outbox](dag-outbox.md). It writes the summary table only, so it never
+   re-runs a child or re-sends a correction.
+6. End the turn. Nothing is resident: the scheduler is a library the relay's commands call over the relay's one store; it adds no daemon, no listener and no database of its own
    (`TestNoNewStoreOrDaemon`, `TestForkJoinLeavesNoStoreOfItsOwn`).
 
 The scheduler re-implements no I-17 loop or skill, and contract section 10 names no I-17 output that this issue needs.
@@ -430,7 +432,7 @@ The checks sit at the head of: `dag-plan-put`, `dag-release` (before any replay,
 
 The rows a decision leaves carry the epoch of the session that decided it (the release, the acceptance, the decision, the revision and the manifest body), so a plan's rows show who decided what. The epoch stays out of every digest except the request digest of a revision: a request id sent again under another epoch is `plan_revision_conflict`, so a restarted parent reads the log and does not resend. Rows written before the first claim keep epoch 0.
 
-**What it does not do.** A read is not fenced: a new parent reads before it claims. `dag-ready --record` and `dag-conflict-observe` record measurements and decide nothing. A write that started before the first claim lands is ordered by the store's write lock: the claim first and the unfenced write is refused at its fence, or the write first and it commits at epoch 0. A release that is cut by a claim between its intent and its bind leaves an admitted child unbound, and a new session of the same task replays it and binds it.
+**What it does not do.** A read is not fenced: a new parent reads before it claims. `dag-ready --record` and `dag-conflict-observe` record measurements and decide nothing. The summary queue's writers (`dag-summary-enqueue`, `dag-summary-claim`, `dag-summary-complete`, `dag-summary-fail` and `dag-summary-retry`) decide nothing either: a summary states the store's current progress, and the claim token, not the epoch, fences a replaced session's confirmation ([DAG summary outbox](dag-outbox.md)). A write that started before the first claim lands is ordered by the store's write lock: the claim first and the unfenced write is refused at its fence, or the write first and it commits at epoch 0. A release that is cut by a claim between its intent and its bind leaves an admitted child unbound, and a new session of the same task replays it and binds it.
 
 ## Restart and adoption
 
@@ -477,9 +479,10 @@ An unknown merge turn stays unknown until the head is observed; the merge lane a
 | `dag-coordinator-claim --plan P --actor A --session-nonce N [--project K]` | writes `dag_coordinator_claims` | the claim: epoch, task, binding, nonce, whether it replayed, the epoch and task it replaced |
 | `dag-adopt --plan P --node N --actor A [--expect-epoch E]` | writes `dag_node_executions` (kind `parent_handover`) | the successor relationship bound to the node, the child, the generation, whether it replayed |
 | `dag-restart --plan P --actor A` | reads | the newest claim, whether the actor holds it, and per owned node what to do ([Restart and adoption](#restart-and-adoption)) |
+| `dag-summary-enqueue`, `dag-summary-status`, `dag-summary-claim`, `dag-summary-reconcile`, `dag-summary-complete`, `dag-summary-fail`, `dag-summary-retry` | the project summary queue: `dag_summary_outbox` (`status` and `reconcile` read only) | the entry, the queue, the claim and the confirmation ([DAG summary outbox](dag-outbox.md)) |
 | `dag-progress --plan P` | reads only, and opens the store read-only | the progress of the plan: stage distribution, cumulative counts, denominator per revision, a reason per blocked or stale node, links ([DAG progress](dag-progress.md)) |
 
-The commands that decide take `--expect-epoch E`, the epoch the session holds: `dag-region-declare`, `dag-release`, `dag-release-close`, `dag-accept`, `dag-integration-observe`, `dag-decision-record`, `dag-correct` (both forms), `dag-merge-judge`, `dag-merge-request`, `dag-adopt`, `dag-cap-basis-record`, and, in the revision document, `dag-plan-put`. `dag-ready --record` and `dag-conflict-observe` record measurements and decide nothing, and are not fenced.
+The commands that decide take `--expect-epoch E`, the epoch the session holds: `dag-region-declare`, `dag-release`, `dag-release-close`, `dag-accept`, `dag-integration-observe`, `dag-decision-record`, `dag-correct` (both forms), `dag-merge-judge`, `dag-merge-request`, `dag-adopt`, `dag-cap-basis-record`, and, in the revision document, `dag-plan-put`. `dag-ready --record` and `dag-conflict-observe` record measurements and decide nothing, and are not fenced; neither are the summary queue's commands, which decide nothing about the plan.
 
 Refusals use the relay's existing reasons: `unregistered_scope` (a plan or node that is not there), `malformed_receipt` (a region or a request that is not valid),
 `disposition_conflict` (a node that edits no repository, or whose regions are held, or that is not ready), and the reasons of the table above. A write of an epoch that is not the plan's is `stale_coordinator_epoch` (new, decision D-02: the second reason this feature adds to the relay's contract, beside `plan_revision_conflict`). `dag-release-close` refuses with `malformed_receipt`, `unregistered_scope`, `scope_role_mismatch` and `disposition_conflict`. Commands can also refuse with `merge_target_unreadable`, `not_acknowledged`, `relationship_conflict`, `relationship_not_active`, `revision_ambiguous`, `scope_role_mismatch`, `slot_unknown` and `unregistered_relationship`. Exit codes are the relay's: 0, 2 refusal, 3 host, 4 usage.
@@ -488,7 +491,7 @@ Refusals use the relay's existing reasons: `unregistered_scope` (a plan or node 
 
 The scheduler adds tables to the DAG zone ([DAG plans](dag-plans.md#the-store)) as appended statements. `dag_passes` and `dag_node_regions` are described above; `dag_release_requests` freezes the request of a release with its intent; `dag_release_recoveries` holds the closure of an abandoned release and the successor release of a closed one (see Recovering an abandoned release);
 `dag_conflict_observations` holds the merge-tree conflict counts of parallel branches; `dag_merge_checks`, `dag_acceptance_revalidations` and `dag_acceptance_forge` hold what the relay observed of an accepted pull request, re-verification of an accepted
-output under new criteria, and the forge identity of an accepted implementation node.
+output under new criteria, and the forge identity of an accepted implementation node. `dag_summary_outbox` is the queue of the project's Linear summaries (see [DAG summary outbox](dag-outbox.md)).
 
 ## How the acceptance path is verified
 

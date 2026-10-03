@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -97,15 +96,14 @@ func (r Reservation) Arm(ctx context.Context, id, fp string, revision int64) (ou
 	})
 	return
 }
-func (r Reservation) Release(ctx context.Context, id, fp string, revision any, reason string) (out store.ManagedStartRequestsRow, err error) {
+func (r Reservation) Release(ctx context.Context, id, fp string, revision int64, reason string) (out store.ManagedStartRequestsRow, err error) {
 	for _, field := range []struct{ name, value string }{{"request_id", id}, {"request_fingerprint", fp}} {
 		if strings.TrimSpace(field.value) == "" {
 			return out, refusal("malformed_receipt", fmt.Sprintf("%s must be a non-empty string, not %q", field.name, field.value))
 		}
 	}
-	n := argparse.IntegerValue(revision)
-	if n.Sign() < 0 {
-		return out, refusal("malformed_receipt", "revision must be a non-negative integer, not "+n.String())
+	if revision < 0 {
+		return out, refusal("malformed_receipt", fmt.Sprintf("revision must be a non-negative integer, not %d", revision))
 	}
 	if strings.TrimSpace(reason) == "" {
 		return out, refusal("malformed_receipt", fmt.Sprintf("reason must be a non-empty string, not %q", reason))
@@ -121,10 +119,10 @@ func (r Reservation) Release(ctx context.Context, id, fp string, revision any, r
 		if row.RequestFingerprint != fp {
 			return refusal("relationship_conflict", "managed request fingerprint changed")
 		}
-		if row.State != "reserved" || !n.IsInt64() || row.Revision != n.Int64() {
-			return refusal("relationship_conflict", fmt.Sprintf("request %q is %q at revision %d; only a reserved row at revision %s can be released", id, row.State, row.Revision, n.String()))
+		if row.State != "reserved" || row.Revision != revision {
+			return refusal("relationship_conflict", fmt.Sprintf("request %q is %q at revision %d; only a reserved row at revision %d can be released", id, row.State, row.Revision, revision))
 		}
-		changed, e := r.Store.ReleaseManagedStart(ctx, id, n.Int64(), reason, r.now())
+		changed, e := r.Store.ReleaseManagedStart(ctx, id, revision, reason, r.now())
 		if e != nil {
 			return e
 		}

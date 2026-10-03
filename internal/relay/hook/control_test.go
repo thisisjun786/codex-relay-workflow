@@ -87,7 +87,7 @@ func Test33DeadlineReachesNestedWork(t *testing.T) {
 	if _, err := RecordObservation(ctx, root, Object{{Key: "sessionId", Value: "s"}, {Key: "turnId", Value: "t"}}, root); err != context.Canceled {
 		t.Fatal(err)
 	}
-	_, _, _, err := store.HashArtifactContext(ctx, "/never-open", []string{"/"}, false)
+	_, _, _, err := store.HashArtifact(ctx, "/never-open", []string{"/"}, false)
 	if err != context.Canceled {
 		t.Fatal(err)
 	}

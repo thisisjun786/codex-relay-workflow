@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -26,14 +26,14 @@ func cmdEmit(c *cliRun) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	generation := argparse.IntegerValue(c.opt("--generation"))
-	attempt := argparse.IntegerValue(c.opt("--attempt"))
+	generation, _ := c.opt("--generation").(int64)
+	attempt, _ := c.opt("--attempt").(int64)
 	outcome := c.s("--outcome")
 	var manifest any
 	digest := store.NoDeliverable
 	var entries []store.ManifestEntry
 	if paths := c.list("--artifact"); len(paths) > 0 {
-		if entries, err = store.BuildManifest(paths, relationship.ArtifactRoots); err != nil {
+		if entries, err = store.BuildManifest(c.ctx, paths, relationship.ArtifactRoots); err != nil {
 			return nil, err
 		}
 		if digest, err = store.ManifestRevision(entries); err != nil {
@@ -70,18 +70,19 @@ func cmdEmit(c *cliRun) (any, error) {
 	if c.socket == "" && outcome == "ready_for_review" && status != "inProgress" {
 		status, proof = "inProgress", "unverified_staged"
 	}
-	if generation.Sign() < 1 {
+	if generation < 1 {
 		return nil, dispatch.Host("generation must be a positive integer")
 	}
 	if outcome == "ready_for_review" && digest == store.NoDeliverable {
 		return nil, dispatch.Host("a reviewable receipt cannot carry the no-deliverable sentinel")
 	}
-	event, err := store.EventIDBig(rid, generation, digest, outcome, c.s("--turn-id"), attempt)
+	attemptNumber := int(attempt)
+	event, err := store.EventID(rid, int(generation), digest, outcome, c.s("--turn-id"), &attemptNumber)
 	if err != nil {
 		return nil, dispatch.Host("event identity: " + err.Error())
 	}
 	thread, turn := c.s("--turn-thread"), c.s("--turn-id")
-	payload := Obj{{Key: "eventId", Value: event}, {Key: "relationshipId", Value: rid}, {Key: "executionGeneration", Value: json.Number(generation.String())}, {Key: "attempt", Value: json.Number(attempt.String())},
+	payload := Obj{{Key: "eventId", Value: event}, {Key: "relationshipId", Value: rid}, {Key: "executionGeneration", Value: json.Number(strconv.FormatInt(generation, 10))}, {Key: "attempt", Value: json.Number(strconv.FormatInt(attempt, 10))},
 		{Key: "revisionHash", Value: digest}, {Key: "outcome", Value: outcome}, {Key: "producer", Value: "child"},
 		{Key: "turnRef", Value: Obj{{Key: "threadId", Value: thread}, {Key: "turnId", Value: turn}, {Key: "turnStatus", Value: status}}},
 		{Key: "manifest", Value: manifest}, {Key: "emittedAt", Value: c.clock.ISO()}}

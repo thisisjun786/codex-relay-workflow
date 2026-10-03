@@ -107,7 +107,7 @@ func (c *Channel) ReadBack(ctx context.Context, id, turnID, proof, assertedBy st
 	if adapter == nil {
 		verified, detail = "unverified_turn", "no host adapter in this process, so whether this turn is real was not established"
 	} else {
-		readTurn, err = adapter.ReadTurn(row.RecipientTaskID, turnID)
+		readTurn, err = adapter.ReadTurn(ctx, row.RecipientTaskID, turnID)
 		if err != nil {
 			verified, detail = "unverified_turn", "the turn could not be read: "+err.Error()
 		} else if readTurn == nil {
@@ -126,7 +126,7 @@ func (c *Channel) ReadBack(ctx context.Context, id, turnID, proof, assertedBy st
 	if adapter != nil {
 		delivered = map[string]any{"scanned": false, "reason": "no dispatched attempt, so there is no token to look for"}
 		if attempt != nil && attempt.DeliveryToken.Valid {
-			scan, e := adapter.FindToken(row.RecipientTaskID, attempt.DeliveryToken.String, 200, false)
+			scan, e := adapter.FindToken(ctx, row.RecipientTaskID, attempt.DeliveryToken.String, 200, false)
 			if e != nil {
 				delivered = map[string]any{"scanned": false, "reason": "the transcript could not be read: " + e.Error()}
 			} else {
@@ -157,7 +157,7 @@ func (c *Channel) ReadBack(ctx context.Context, id, turnID, proof, assertedBy st
 	}
 	if verified == "host_read" && delivered["turnId"] != nil && delivered["turnId"] != turnID && origin != "relay_opened" && readTurn != nil && readTurn.StartedAt != nil {
 		landed := fmt.Sprint(delivered["turnId"])
-		turn, readErr := adapter.ReadTurn(row.RecipientTaskID, landed)
+		turn, readErr := adapter.ReadTurn(ctx, row.RecipientTaskID, landed)
 		if readErr != nil || turn == nil || delivery.TurnStartedAt(turn) == nil || math.IsNaN(*delivery.TurnStartedAt(turn)) || math.IsInf(*delivery.TurnStartedAt(turn), 0) {
 			verified, detail = "unverified_turn", "the turn this message landed in, "+landed+", has no start time the host would give, so whether "+turnID+" followed it is not established"
 		} else if *delivery.TurnStartedAt(readTurn)+1.0 <= *delivery.TurnStartedAt(turn) {
@@ -166,7 +166,7 @@ func (c *Channel) ReadBack(ctx context.Context, id, turnID, proof, assertedBy st
 	}
 	if verified == "host_read" && delivered["turnId"] != nil && delivered["turnId"] != turnID && (attempt == nil || !attempt.TurnID.Valid || delivered["turnId"] != attempt.TurnID.String) {
 		landed := fmt.Sprint(delivered["turnId"])
-		turn, readErr := adapter.ReadTurn(row.RecipientTaskID, landed)
+		turn, readErr := adapter.ReadTurn(ctx, row.RecipientTaskID, landed)
 		var started time.Time
 		var parseErr error
 		if attempt == nil || !attempt.TransportStartedAt.Valid {
@@ -187,7 +187,7 @@ func (c *Channel) ReadBack(ctx context.Context, id, turnID, proof, assertedBy st
 		if holder == turnID {
 			holderTurn = readTurn
 		} else {
-			holderTurn, holderErr = adapter.ReadTurn(row.RecipientTaskID, holder)
+			holderTurn, holderErr = adapter.ReadTurn(ctx, row.RecipientTaskID, holder)
 		}
 		started, parseErr := time.Parse("2006-01-02T15:04:05.000000+00:00", attempt.TransportStartedAt.String)
 		if holderErr != nil || holderTurn == nil || delivery.TurnStartedAt(holderTurn) == nil || parseErr != nil || math.IsNaN(*delivery.TurnStartedAt(holderTurn)) || math.IsInf(*delivery.TurnStartedAt(holderTurn), 0) {

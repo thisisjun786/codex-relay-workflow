@@ -1,6 +1,7 @@
 package delivery
 
 import (
+	"context"
 	"fmt"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"slices"
@@ -55,10 +56,13 @@ func Test21_ACR14_the_operation_receipt_is_read_before_the_recipient_turns(t *te
 		_, request := h.uncertain("turn_start_fail")
 		var order []any
 		ordered := &hooked{Adapter: h.host,
-			getOperation: func(id string) (Obj, error) { order = append(order, "operation"); return h.host.GetOperation(id) },
+			getOperation: func(id string) (Obj, error) {
+				order = append(order, "operation")
+				return h.host.GetOperation(context.Background(), id)
+			},
 			findToken: func(thread, token string, limit int, messageOnly bool) (TokenScan, error) {
 				order = append(order, "scan")
-				return h.host.FindToken(thread, token, limit, messageOnly)
+				return h.host.FindToken(context.Background(), thread, token, limit, messageOnly)
 			}}
 		h.reconcile(request, ordered)
 		h.eq(order[:2])

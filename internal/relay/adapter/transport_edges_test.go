@@ -1,6 +1,7 @@
 package adapter
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 	"time"
@@ -53,7 +54,7 @@ func transportEdge(t *testing.T, kind string) {
 	settings := &delivery.TaskSettings{Data: ordered(authorized()).(delivery.Obj)}
 	result := map[string]any{}
 	send := func(id, thread string) any {
-		r, e := a.SendMessage(id, thread, "hello", settings)
+		r, e := a.SendMessage(context.Background(), id, thread, "hello", settings)
 		if e != nil {
 			return map[string]any{"error": e.Error()}
 		}
@@ -72,7 +73,7 @@ func transportEdge(t *testing.T, kind string) {
 		// Only the deliberately stalled caller has a short budget.
 		a.callerSlack = 10 * time.Second
 		result["other"] = send("req-b", "thread-b")
-		facts, e := a.ReadThread("thread-b")
+		facts, e := a.ReadThread(context.Background(), "thread-b")
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -81,7 +82,7 @@ func transportEdge(t *testing.T, kind string) {
 		go func() { a.transport.pending.Wait(); close(settled) }()
 		close(rpc.release)
 		waitEdge(t, settled)
-		receipt, e := a.GetOperation("req-a")
+		receipt, e := a.GetOperation(context.Background(), "req-a")
 		if e != nil {
 			t.Fatal(e)
 		}

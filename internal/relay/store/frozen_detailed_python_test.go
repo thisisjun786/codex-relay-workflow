@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -17,7 +18,7 @@ func Test28FrozenDetailedJSONParity(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(ref, "MANIFEST.json"), []byte(tc.manifest), 0600); err != nil {
 				t.Fatal(err)
 			}
-			result, problems, unreadable, goErr := VerifyFrozenDetailed(ref, nil)
+			result, problems, unreadable, goErr := VerifyFrozenDetailed(context.Background(), ref, nil)
 			got := map[string]any{}
 			if goErr != nil {
 				got["error"] = "KeyError"
@@ -40,7 +41,7 @@ func Test28FrozenDetailedManifestStatParity(t *testing.T) {
 	if err := os.Symlink("MANIFEST.json", filepath.Join(ref, "MANIFEST.json")); err != nil {
 		t.Fatal(err)
 	}
-	_, problems, unreadable, err := VerifyFrozenDetailed(ref, nil)
+	_, problems, unreadable, err := VerifyFrozenDetailed(context.Background(), ref, nil)
 	if err != nil || len(problems) != 1 || len(unreadable) != 0 {
 		t.Fatalf("%v %v %v", problems, unreadable, err)
 	}
