@@ -1,10 +1,14 @@
 package agy
 
 import (
+	"context"
+	"errors"
 	"os"
 	"sync"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestOnlyOneCallAtATime(t *testing.T) {
@@ -33,44 +37,35 @@ func TestOnlyOneCallAtATime(t *testing.T) {
 			t.Errorf("call %d: %v, %s/%s: %s", i, errs[i], res.Class, res.Reason, res.Detail)
 		}
 	}
-	if results[0].Waited < 200*time.Millisecond && results[1].Waited < 200*time.Millisecond {
-		t.Errorf("one call must have waited for the other: %s, %s", results[0].Waited, results[1].Waited)
-	}
 }
 
-// TestLockWaitExpires: while one call holds the lock, a second one that is not willing to wait long enough gets a defined outcome and never starts agy.
-func TestLockWaitExpires(t *testing.T) {
+// TestHeldLock: with the lock file locked by someone else (a descriptor of the test, as another process would hold it), a call waits for at most its wait limit,
+// gets a defined outcome without starting agy, can be abandoned by its caller, and runs as soon as the lock is free.
+func TestHeldLock(t *testing.T) {
+	cfg, _ := fakeCfg(t, fakeSpec{Stdout: `{"status":"SUCCESS","response":"PONG"}`})
+	fd, err := unix.Open(cfg.LockPath, unix.O_CREAT|unix.O_RDWR|unix.O_CLOEXEC, 0o600)
+	if err != nil || unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB) != nil {
+		t.Fatalf("could not hold the lock: %v", err)
+	}
 	for _, wait := range []time.Duration{150 * time.Millisecond, -1} {
-		holder, _ := fakeCfg(t, fakeSpec{Stdout: `{"status":"SUCCESS","response":"a"}`, Sleep: 1500 * time.Millisecond})
-		waiter, _ := fakeCfg(t, fakeSpec{Stdout: `{"status":"SUCCESS","response":"b"}`})
-		waiterRecord := recordPath(waiter)
-		waiter.LockPath, waiter.LockWait = holder.LockPath, wait
-		type outcome struct {
-			res Result
-			err error
+		cfg.LockWait = wait
+		res := run(t, cfg, Request{Prompt: []byte("hi")})
+		if res.Class != ClassUnavailable || res.Reason != ReasonLockWaitExpired || res.ExitCode != -1 || (wait > 0 && res.Waited < wait) {
+			t.Errorf("wait %s: %s/%s exit %d waited %s: %s", wait, res.Class, res.Reason, res.ExitCode, res.Waited, res.Detail)
 		}
-		done := make(chan outcome)
-		go func() {
-			res, err := try(holder, Request{Prompt: []byte("hi")})
-			done <- outcome{res, err}
-		}()
-		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
-			if _, err := os.Stat(recordPath(holder)); err == nil {
-				break // the holder's agy is running, so it holds the lock
-			}
-		}
-		res := run(t, waiter, Request{Prompt: []byte("hi")})
-		if res.Class != ClassUnavailable || res.Reason != ReasonLockWaitExpired || res.ExitCode != -1 {
-			t.Errorf("wait %s: %s/%s exit %d: %s", wait, res.Class, res.Reason, res.ExitCode, res.Detail)
-		}
-		if wait > 0 && res.Waited < wait {
-			t.Errorf("waited %s, want at least %s", res.Waited, wait)
-		}
-		if _, err := os.Stat(waiterRecord); err == nil {
-			t.Errorf("wait %s: the waiter's agy ran although the lock was held", wait)
-		}
-		if h := <-done; h.err != nil || h.res.Class != ClassNormal {
-			t.Errorf("the holder: %v, %s/%s", h.err, h.res.Class, h.res.Reason)
-		}
+	}
+	if _, err := os.Stat(recordPath(cfg)); err == nil {
+		t.Error("agy ran although the lock was held")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+	cfg.LockWait = time.Minute
+	if _, err := Run(ctx, cfg, Request{Prompt: []byte("hi")}); !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("a caller that gives up while waiting: %v", err)
+	}
+	_ = unix.Flock(fd, unix.LOCK_UN)
+	_ = unix.Close(fd)
+	if res := run(t, cfg, Request{Prompt: []byte("hi")}); res.Class != ClassNormal {
+		t.Errorf("after the lock was freed: %s/%s: %s", res.Class, res.Reason, res.Detail)
 	}
 }

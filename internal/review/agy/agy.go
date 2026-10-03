@@ -63,7 +63,6 @@ type Config struct {
 	TimeLimitFloor   time.Duration // the call time limit for a prompt up to 100 KiB; default 5 minutes
 	TimeLimitCeiling time.Duration // the most the limit grows to; default 20 minutes
 	MaxOutputBytes   int           // what is kept of stdout and of stderr, each; default 8 MiB
-	Env              []string      // KEY=VALUE pairs added to the scrubbed environment
 }
 
 func (c Config) withDefaults() Config {
@@ -106,7 +105,7 @@ type Result struct {
 	Reason           Reason
 	Detail           string          // what decided the class, for a person
 	StructuredOutput json.RawMessage // the envelope's structured_output as agy wrote it; only for ClassNormal with a schema
-	Model            string          // the model agy's log names as served (its label), else the one it was asked for; empty if the log names neither
+	Model            string          // the model agy's log names as served (its label); empty if the log names none, and not the requested id
 	Usage            Usage
 	ExitCode         int // -1 when agy was killed, did not start or was not started
 	Elapsed          time.Duration
@@ -143,7 +142,7 @@ func Run(ctx context.Context, cfg Config, req Request) (res Result, err error) {
 		return Result{}, dirErr
 	}
 	defer func() { err = errors.Join(err, os.RemoveAll(dir.root)) }()
-	ex := execute(ctx, limit, bin, dir.args(cfg.Model), dir.work, scrubEnv(os.Environ(), cfg.Env), req.Prompt, cfg.MaxOutputBytes)
+	ex := execute(ctx, limit, bin, dir.args(cfg.Model), dir.work, scrubEnv(os.Environ()), req.Prompt, cfg.MaxOutputBytes)
 	if ctx.Err() != nil {
 		return Result{}, ctx.Err()
 	}

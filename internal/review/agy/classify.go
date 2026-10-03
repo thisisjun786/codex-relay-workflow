@@ -40,9 +40,6 @@ func firstLine(s string) string {
 func classify(ex execution, logText string, promptBytes int, schema bool) Result {
 	lg := parseLog(logText)
 	res := Result{ExitCode: ex.exitCode, Elapsed: ex.elapsed, Limit: ex.limit, Model: lg.served}
-	if res.Model == "" {
-		res.Model = lg.requested
-	}
 	env, envErr := parseEnvelope(ex.stdout)
 	if envErr == nil {
 		res.Usage = env.Usage
@@ -55,12 +52,12 @@ func classify(ex execution, logText string, promptBytes int, schema bool) Result
 		return res.with(ClassInvalid, ReasonTimeLimit, "agy was killed after the call time limit of %s", ex.limit)
 	case ex.truncated:
 		return res.with(ClassUnavailable, ReasonCrash, "agy wrote more output than the cap keeps")
+	case ex.readErr != nil:
+		return res.with(ClassUnavailable, ReasonCrash, "reading agy's output failed: %v", ex.readErr)
+	case ex.exitCode < 0:
+		return res.with(ClassUnavailable, ReasonCrash, "agy was killed by a signal: %s", firstLine(stderr))
 	case ex.exitCode != 0:
-		what := fmt.Sprintf("exit %d", ex.exitCode)
-		if ex.exitCode < 0 {
-			what = "killed by a signal"
-		}
-		return res.failed(env, envErr, stderr, what)
+		return res.failed(env, envErr, stderr, fmt.Sprintf("exit %d", ex.exitCode))
 	case envErr != nil:
 		return res.with(ClassUnavailable, ReasonCrash, "%v", envErr)
 	case env.Status != "SUCCESS":

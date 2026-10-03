@@ -16,16 +16,20 @@ import (
 	"time"
 )
 
-// The fake agy is this test binary started again: Config.Binary points at it and CRW_FAKE_AGY carries a JSON fakeSpec (Config.Env is how a caller adds
-// variables after the scrub). The fake records what it saw in spec.Record, writes agy's log line, then answers as the spec says.
+// The fake agy is this test binary started again. Config.Binary is a small shell script that sets CRW_FAKE_SPEC to the JSON file of a fakeSpec and execs the
+// test binary, so the spec reaches the fake after the runner's scrub has run, not through it. The fake records what it saw in spec.Record, writes agy's log,
+// then answers as the spec says.
 
 type fakeSpec struct {
 	Stdout, Stderr string
 	Exit           int
-	Kill           bool          // die by SIGKILL instead of exiting
+	Kill           bool          // die by SIGKILL after answering instead of exiting
 	LogLength      int           // the promptLength to log: 0 the bytes read from stdin, -1 no line
+	NoLabel        bool          // log no served-model line
+	NoStdin        bool          // never read stdin
 	Sleep          time.Duration // before answering, after the log and the record are written
-	Child          bool          // start a child in the same process group
+	Child          bool          // start a child in the same process group that sleeps a minute
+	ChildPipes     bool          // the child also holds stdout and stderr open
 	Flood          int           // write this many bytes to stdout instead of Stdout
 	Record         string
 }
@@ -35,6 +39,7 @@ type fakeRecord struct {
 	Stdin       []byte
 	StdinIsPipe bool
 	Env         []string
+	Fds         []string // what the fake had open (Linux only)
 	Cwd         string
 	CwdEntries  []string
 	Schema      string
@@ -46,7 +51,7 @@ func TestMain(m *testing.M) {
 	switch {
 	case os.Getenv("CRW_FAKE_CHILD") != "":
 		time.Sleep(time.Minute)
-	case os.Getenv("CRW_FAKE_AGY") != "":
+	case os.Getenv("CRW_FAKE_SPEC") != "":
 		fakeAgy()
 	default:
 		os.Exit(m.Run())
@@ -62,7 +67,11 @@ func argAfter(args []string, flag string) string {
 
 func fakeAgy() {
 	var sp fakeSpec
-	if err := json.Unmarshal([]byte(os.Getenv("CRW_FAKE_AGY")), &sp); err != nil {
+	spec, err := os.ReadFile(os.Getenv("CRW_FAKE_SPEC"))
+	if err == nil {
+		err = json.Unmarshal(spec, &sp)
+	}
+	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(99)
 	}
@@ -73,10 +82,19 @@ func fakeAgy() {
 			rec.CwdEntries = append(rec.CwdEntries, e.Name())
 		}
 	}
+	if fds, err := os.ReadDir("/proc/self/fd"); err == nil {
+		for _, fd := range fds {
+			if target, err := os.Readlink("/proc/self/fd/" + fd.Name()); err == nil {
+				rec.Fds = append(rec.Fds, target)
+			}
+		}
+	}
 	if st, err := os.Stdin.Stat(); err == nil {
 		rec.StdinIsPipe = st.Mode()&os.ModeNamedPipe != 0
 	}
-	rec.Stdin, _ = io.ReadAll(os.Stdin)
+	if !sp.NoStdin {
+		rec.Stdin, _ = io.ReadAll(os.Stdin)
+	}
 	if path := argAfter(rec.Args, "--json-schema"); path != "" {
 		b, _ := os.ReadFile(path)
 		rec.Schema = string(b)
@@ -84,18 +102,24 @@ func fakeAgy() {
 	if sp.Child {
 		c := exec.Command(os.Args[0])
 		c.Env = []string{"CRW_FAKE_CHILD=1"}
+		if sp.ChildPipes {
+			c.Stdout, c.Stderr = os.Stdout, os.Stderr
+		}
 		if c.Start() == nil {
 			rec.Child = c.Process.Pid
 		}
 	}
 	if path := argAfter(rec.Args, "--log-file"); path != "" {
-		var log strings.Builder
-		log.WriteString("I1003 19:21:46.000000       1 resolver.go:85] Model resolved via default\n")
+		// The start-up lines are R0's: agy says it is not logged in on every call and then logs itself in silently.
+		log := "I1003 19:21:46.000000       1 printmode.go:150] You are not logged into Antigravity\nI1003 19:21:46.100000       1 printmode.go:160] Print mode: not authenticated, trying silent auth\n" +
+			"I1003 19:21:46.900000       1 printmode.go:170] Print mode: silent auth succeeded\n"
 		if n := loggedLength(sp.LogLength, len(rec.Stdin)); n >= 0 {
-			fmt.Fprintf(&log, "I1003 19:21:47.093603       1 printmode.go:202] Print mode: starting (promptLength=%d, model=%q, conversationID=\"\")\n", n, argAfter(rec.Args, "--model"))
+			log += fmt.Sprintf("I1003 19:21:47.093603       1 printmode.go:202] Print mode: starting (promptLength=%d, model=%q, conversationID=\"\")\n", n, argAfter(rec.Args, "--model"))
 		}
-		log.WriteString("I1003 19:21:48.546335       1 model_config_manager.go:327] Propagating selected model override to backend: label=\"Gemini 3.8 Flash (High)\"\n")
-		_ = os.WriteFile(path, []byte(log.String()), 0o600)
+		if !sp.NoLabel {
+			log += "I1003 19:21:48.546335       1 model_config_manager.go:327] Propagating selected model override to backend: label=\"Gemini 3.8 Flash (High)\"\n"
+		}
+		_ = os.WriteFile(path, []byte(log), 0o600)
 	}
 	save := func() {
 		b, _ := json.Marshal(rec)
@@ -105,16 +129,16 @@ func fakeAgy() {
 	time.Sleep(sp.Sleep)
 	rec.End = time.Now().UnixNano()
 	save()
-	if sp.Kill {
-		_ = syscall.Kill(os.Getpid(), syscall.SIGKILL)
-		select {}
-	}
 	if sp.Flood > 0 {
 		_, _ = os.Stdout.Write(bytes.Repeat([]byte("x"), sp.Flood))
 	} else {
 		_, _ = os.Stdout.WriteString(sp.Stdout)
 	}
 	_, _ = os.Stderr.WriteString(sp.Stderr)
+	if sp.Kill {
+		_ = syscall.Kill(os.Getpid(), syscall.SIGKILL)
+		select {}
+	}
 	os.Exit(sp.Exit)
 }
 
@@ -126,7 +150,10 @@ func loggedLength(logLength, read int) int {
 	return logLength
 }
 
-// fakeCfg is a Config that runs the fake as the spec says, with its lock, working root and record in a temporary directory. The returned function reads the record.
+func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+
+// fakeCfg is a Config that runs the fake as the spec says, with its lock, working root and record in a temporary directory and a one minute time limit. The
+// returned function reads the record.
 func fakeCfg(t *testing.T, sp fakeSpec) (Config, func() fakeRecord) {
 	t.Helper()
 	exe, err := os.Executable()
@@ -139,8 +166,16 @@ func fakeCfg(t *testing.T, sp fakeSpec) (Config, func() fakeRecord) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := Config{Binary: exe, LockPath: filepath.Join(dir, "agy.lock"), LockWait: 10 * time.Second, WorkRoot: filepath.Join(dir, "work"),
-		TimeLimitFloor: time.Minute, TimeLimitCeiling: time.Minute, Env: []string{"CRW_FAKE_AGY=" + string(spec)}}
+	specPath, binary := filepath.Join(dir, "spec.json"), filepath.Join(dir, "agy")
+	script := fmt.Sprintf("#!/bin/sh\nCRW_FAKE_SPEC=%s exec %s \"$@\"\n", shellQuote(specPath), shellQuote(exe))
+	if err := os.WriteFile(specPath, spec, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(binary, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := Config{Binary: binary, LockPath: filepath.Join(dir, "agy.lock"), LockWait: 10 * time.Second, WorkRoot: filepath.Join(dir, "work"),
+		TimeLimitFloor: time.Minute, TimeLimitCeiling: time.Minute}
 	return cfg, func() fakeRecord { return readRecord(t, sp.Record) }
 }
 

@@ -7,13 +7,14 @@ package agy
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os/exec"
 	"sync/atomic"
 	"time"
 )
 
-// killGrace is how long Wait lasts, after the process ended or was killed, for a descendant that still holds stdout or stderr open.
-const killGrace = 5 * time.Second
+// killGrace is how long Wait lasts, after the process ended or was killed, for a descendant that still holds stdout or stderr open. A variable so a test can shorten it.
+var killGrace = 5 * time.Second
 
 // cappedBuffer keeps the first max bytes written to it and drops the rest, reporting every write as complete so the writer is never stopped (ACR's cappedBuffer).
 type cappedBuffer struct {
@@ -38,7 +39,8 @@ type execution struct {
 	truncated      bool // stdout or stderr went over the cap
 	exitCode       int  // -1 when the process was killed by a signal or did not start
 	startErr       error
-	timedOut       bool // the time limit killed the process group
+	timedOut       bool  // the time limit killed the process group
+	readErr        error // reading stdout or stderr failed
 	limit          time.Duration
 	elapsed        time.Duration
 }
@@ -61,6 +63,9 @@ func execute(ctx context.Context, limit time.Duration, bin string, args []string
 	cmd.WaitDelay = killGrace
 	start := time.Now()
 	err := cmd.Run()
+	// The leader has been reaped, so the group id is still held by any descendant it left and by nothing else (the kernel does not reuse it while a member lives):
+	// ending the group now means a call never outlives its lock, and a descendant that kept stdout open does not survive the call.
+	_ = terminateProcessGroup(cmd)
 	ex := execution{stdout: stdout.buf.Bytes(), stderr: stderr.buf.Bytes(), truncated: stdout.over || stderr.over, exitCode: -1, limit: limit, elapsed: time.Since(start)}
 	if cmd.ProcessState == nil {
 		ex.startErr = err
@@ -68,5 +73,9 @@ func execute(ctx context.Context, limit time.Duration, bin string, args []string
 	}
 	ex.exitCode = cmd.ProcessState.ExitCode()
 	ex.timedOut = killed.Load() && ctx.Err() == nil
+	var exitErr *exec.ExitError
+	if err != nil && !errors.As(err, &exitErr) && !errors.Is(err, exec.ErrWaitDelay) {
+		ex.readErr = err
+	}
 	return ex
 }

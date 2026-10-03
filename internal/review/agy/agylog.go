@@ -9,7 +9,7 @@ import (
 
 var (
 	// startedRe is agy's "Print mode: starting (promptLength=58, model="gemini-3.8-flash-high", conversationID="")".
-	startedRe = regexp.MustCompile(`Print mode: starting \(promptLength=(\d+), model="([^"]*)"`)
+	startedRe = regexp.MustCompile(`Print mode: starting \(promptLength=(\d+)[,)]`)
 	// servedRe is the line that names the model agy sends the turn to, as agy labels it ("Gemini 3.8 Flash (High)").
 	servedRe = regexp.MustCompile(`Propagating selected model override to backend: label="([^"]*)"`)
 )
@@ -17,8 +17,7 @@ var (
 // agyLog is what the runner reads from agy's per-call log.
 type agyLog struct {
 	promptLength int    // -1 when the log has no starting line
-	requested    string // the model id agy was asked for
-	served       string // the label of the model agy used, after the starting line
+	served       string // the label of the model agy used, from the first line that names it after the starting line; empty if none does
 }
 
 func parseLog(text string) agyLog {
@@ -28,7 +27,7 @@ func parseLog(text string) agyLog {
 		if n, err := strconv.Atoi(text[m[2]:m[3]]); err == nil {
 			l.promptLength = n
 		}
-		l.requested, rest = text[m[4]:m[5]], text[m[1]:]
+		rest = text[m[1]:]
 	}
 	if m := servedRe.FindStringSubmatch(rest); m != nil {
 		l.served = m[1]
