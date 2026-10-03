@@ -46,3 +46,26 @@ func TestRuntimeBuildOldAndNewJournalRows(t *testing.T) {
 		}
 	}
 }
+
+func TestRuntimeBuildMalformedAttributionIsUnreadable(t *testing.T) {
+	for _, value := range []any{nil, true, "build", hook.Object{}, hook.Object{{Key: "build", Value: ""}, {Key: "executable", Value: nil}},
+		hook.Object{{Key: "build", Value: "build"}, {Key: "executable", Value: "relative"}},
+		hook.Object{{Key: "build", Value: "build"}, {Key: "executable", Value: nil}, {Key: "extra", Value: true}}} {
+		h := newHost(t, hook.Release)
+		if err := os.Remove(h.state + "/control.sock"); err != nil {
+			t.Fatal(err)
+		}
+		h.run(h.settings, looseStop)
+		change(t, h.rowPaths(h.journal)[0], set("runtime", value))
+		code, answer := verify(t, roots(h.journal)...)
+		expectVerdict(t, code, answer, 3, "UNREADABLE")
+	}
+	h := newHost(t, hook.Release)
+	if err := os.Remove(h.state + "/control.sock"); err != nil {
+		t.Fatal(err)
+	}
+	h.run(h.settings, looseStop)
+	change(t, h.rowPaths(h.journal)[0], set("runtime", hook.Object{{Key: "build", Value: "build"}, {Key: "executable", Value: nil}}))
+	code, answer := verify(t, roots(h.journal)...)
+	expectVerdict(t, code, answer, 0, "TRUE")
+}

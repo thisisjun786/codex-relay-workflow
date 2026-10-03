@@ -273,7 +273,11 @@ func Test33D2FaultRowPython(t *testing.T) {
 			// <SETTINGS>, are the golden, which began as Python's row for the same guard fault
 			// (defect_fault.py, its BaseException path); every remaining byte is compared.
 			aligned := withoutKeys(row, "at", "elapsedMs", "identityScanMs").Set("configuration", "<SETTINGS>")
-			golden.Check(t, "row", RecordBytes(aligned), golden.Substitute(home, "<HOME>"))
+			executable, err := os.Executable()
+			if err != nil {
+				t.Fatal(err)
+			}
+			golden.Check(t, "row", RecordBytes(aligned), golden.Substitute(home, "<HOME>"), golden.Substitute(executable, "<runtime executable>"))
 		})
 	}
 }

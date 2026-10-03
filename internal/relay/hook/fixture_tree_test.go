@@ -38,6 +38,11 @@ import (
 // comparison it stands for read the value in.
 func goldenDumps(t *testing.T, key string, value any, sorted bool, opts ...golden.Option) {
 	t.Helper()
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts = append(opts, golden.Substitute(binary(t), "<runtime executable>"), golden.Substitute(executable, "<runtime executable>"))
 	golden.Check(t, key, []byte(pyjson.Dumps(value, pyjson.Options{Indent: 2, SortKeys: sorted})+"\n"), opts...)
 }
 
