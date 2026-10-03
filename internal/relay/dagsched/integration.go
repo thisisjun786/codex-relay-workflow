@@ -60,6 +60,11 @@ func (s *Scheduler) ObserveIntegration(ctx context.Context, plan, node, actor st
 	if err := s.observableRelationship(ctx, q, acc, actor); err != nil {
 		return out, err
 	}
+	// what the acceptance stands on: its own head and revision, or, after a recorded base refresh (baserefresh.go), the head of the later generation whose merged mark counts
+	stand, err := s.standOf(ctx, q, acc)
+	if err != nil {
+		return out, err
+	}
 	known, err := s.nodeTargets(ctx, q, snap, acc)
 	if err != nil {
 		return out, err
@@ -86,7 +91,7 @@ func (s *Scheduler) ObserveIntegration(ctx context.Context, plan, node, actor st
 		if err != nil {
 			return out, err
 		}
-		anc, method, err := s.Ancestry(ctx, t.Repository, acc.HeadSHA, tip.SHA)
+		anc, method, err := s.Ancestry(ctx, t.Repository, stand.Head, tip.SHA)
 		if err != nil {
 			return out, err
 		}
@@ -118,17 +123,22 @@ func (s *Scheduler) ObserveIntegration(ctx context.Context, plan, node, actor st
 		if err := s.observableRelationship(txCtx, tx, acc, actor); err != nil {
 			return err
 		}
+		if standNow, err := s.standOf(txCtx, tx, current); err != nil {
+			return err
+		} else if standNow != stand {
+			return refuse(contract.RefusalDispositionConflict, "the head %s stands on changed while it was being observed", node)
+		}
 		for _, r := range readings {
 			var subject, tip sql.NullString
 			var lastSeq, lastAnc sql.NullInt64
 			if err := tx.QueryRowContext(txCtx, "SELECT MAX(observed_seq) FROM dag_integration_observations WHERE acceptance_id = ? AND repository = ? AND base_ref = ?", acc.AcceptanceID, r.target.Repository, r.target.BaseRef).Scan(&lastSeq); err != nil {
 				return err
 			}
-			obs := Observation{Repository: r.target.Repository, BaseRef: r.target.BaseRef, SubjectSHA: acc.HeadSHA, TipSHA: r.tip, IsAncestor: r.anc, Method: r.method}
+			obs := Observation{Repository: r.target.Repository, BaseRef: r.target.BaseRef, SubjectSHA: stand.Head, TipSHA: r.tip, IsAncestor: r.anc, Method: r.method}
 			if lastSeq.Valid {
 				_ = tx.QueryRowContext(txCtx, "SELECT subject_sha, tip_sha, is_ancestor FROM dag_integration_observations WHERE acceptance_id = ? AND repository = ? AND base_ref = ? AND observed_seq = ?",
 					acc.AcceptanceID, r.target.Repository, r.target.BaseRef, lastSeq.Int64).Scan(&subject, &tip, &lastAnc)
-				if subject.String == acc.HeadSHA && tip.String == r.tip && (lastAnc.Int64 == 1) == r.anc {
+				if subject.String == stand.Head && tip.String == r.tip && (lastAnc.Int64 == 1) == r.anc {
 					obs.Replayed, obs.Seq = true, lastSeq.Int64
 					var id string
 					if err := tx.QueryRowContext(txCtx, "SELECT observation_id FROM dag_integration_observations WHERE acceptance_id = ? AND repository = ? AND base_ref = ? AND observed_seq = ?",
@@ -146,7 +156,7 @@ func (s *Scheduler) ObserveIntegration(ctx context.Context, plan, node, actor st
 			// a merge turn that landed this head on this branch carries the observation
 			var turn sql.NullString
 			if err := tx.QueryRowContext(txCtx, "SELECT turn_id FROM merge_turns WHERE repository = ? AND base_ref = ? AND candidate_head = ? AND state = 'landed' ORDER BY turn_id LIMIT 1",
-				r.target.Repository, r.target.BaseRef, acc.HeadSHA).Scan(&turn); err != nil && err != sql.ErrNoRows {
+				r.target.Repository, r.target.BaseRef, stand.Head).Scan(&turn); err != nil && err != sql.ErrNoRows {
 				return err
 			}
 			var carrier any
@@ -163,7 +173,7 @@ func (s *Scheduler) ObserveIntegration(ctx context.Context, plan, node, actor st
 			}
 			out.Observations = append(out.Observations, obs)
 		}
-		// integrated: every REQUIRED target contains the head and the parent marked the merge
+		// integrated: every REQUIRED target contains the head the acceptance stands on and the parent marked the merge of that revision
 		required, err := s.nodeTargets(txCtx, tx, now, acc)
 		if err != nil {
 			return err
@@ -178,7 +188,7 @@ func (s *Scheduler) ObserveIntegration(ctx context.Context, plan, node, actor st
 		}
 		var one int
 		out.MarkPresent, err = queryOne(txCtx, tx, "SELECT 1 FROM assignment_marks WHERE relationship_id = ? AND mark = 'merged' AND event_id = ? AND execution_generation = ? AND revision_hash = ?",
-			[]any{acc.RelationshipID, acc.EventID, acc.ExecutionGeneration, acc.RevisionHash}, &one)
+			[]any{stand.RelationshipID, stand.EventID, stand.Generation, stand.RevisionHash}, &one)
 		if err != nil {
 			return err
 		}

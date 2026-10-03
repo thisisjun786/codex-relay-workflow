@@ -841,6 +841,13 @@
   {"flag":"--actor","required":true},
   {"flag":"--target","kind":"append","help":"repository@ref to observe (repeatable); the targets of the node's outgoing edges by default. A terminal node needs it"},
   {"flag":"--expect-epoch","type":"int","help":"the coordinator epoch this session holds (dag-coordinator-claim answers it); a write from another epoch is refused stale_coordinator_epoch. 0 names none, which only a plan nobody claimed takes"}]},
+{"name":"dag-base-refresh","summary":"records that an accepted implementation node's acceptance also stands on a later generation of its relationship that only refreshed the base: the relay reads the pull request head from the forge and the base tip from the target, and proves in a local checkout that the head is the accepted head plus merges of the base branch (each merge a two-parent commit whose tree is the tree git merges from its parents; a merge git cannot do cleanly is accepted only when the commit differs from git's tree in the files git could not merge, and those files must be named with --resolved). The acceptance is not replaced; integration is then judged on the refreshed head and the merged mark of that generation. A stale node, a landed node and a head that holds anything but base merges are refused","options":[
+  {"flag":"--plan","required":true},
+  {"flag":"--node","required":true},
+  {"flag":"--actor","required":true},
+  {"flag":"--checkout","help":"an absolute path to a local clone that holds the commits of the pull request (fetch first); needed when the node lands in a forge repository, refused when its target is itself a local checkout"},
+  {"flag":"--resolved","kind":"append","help":"a file the merges resolved by hand, as the refusal names it (repeatable); the paths named must be exactly the ones the chain resolved by hand, after you read them"},
+  {"flag":"--expect-epoch","type":"int","help":"the coordinator epoch this session holds (dag-coordinator-claim answers it); a write from another epoch is refused stale_coordinator_epoch. 0 names none, which only a plan nobody claimed takes"}]},
 {"name":"dag-decision-record","summary":"records a decision for a decision edge: the subject and digest the plan fixed, approved or rejected, and the authority (kind and reference; opaque, compared and never read). Only the project's registered parent records; a repeat is a replay and another decision supersedes the active one","options":[
   {"flag":"--plan","required":true},
   {"flag":"--actor","required":true},
