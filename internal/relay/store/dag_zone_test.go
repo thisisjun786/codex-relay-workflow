@@ -51,6 +51,8 @@ var zoneInventory = map[string][]string{
 	// CRW-409 (appended statements): the grade and rule of a declared region, and the files a conflict observation could not merge.
 	"dag_node_region_grades":         {"plan_id", "node_id", "declaration_seq", "repository", "path", "region_kind", "region_key", "grade", "rule"},
 	"dag_conflict_observation_files": {"observation_id", "repository", "path"},
+	// CRW-431 (appended statement): whether the declarer stated a whole-repository hold on a declared region.
+	"dag_node_region_holds": {"plan_id", "node_id", "declaration_seq", "repository", "path", "region_kind", "region_key", "stated"},
 }
 
 // rawDB opens path without any of the store's open rules, as an operator's sqlite3 would.
