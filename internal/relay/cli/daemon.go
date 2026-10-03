@@ -93,7 +93,7 @@ func integerOption(args dispatch.Args, name string) *int {
 	if !args.Given(name) {
 		return nil
 	}
-	i := int(args.Integer(name).Int64()) // the parser reads an int option within int64
+	i := int(args.Integer(name))
 	return &i
 }
 func serviceError(err error) error {

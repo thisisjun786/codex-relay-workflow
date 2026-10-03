@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"math/big"
 	"os"
 	"strings"
 
@@ -900,12 +899,12 @@ var sweepInstallation = ExecutableInstallation
 
 type sweepInput struct {
 	readings any
-	after    *big.Int
+	after    int64
 }
 type sweepInputKey struct{}
 
 func validateSweep(ctx context.Context, a map[string]string) (sweepInput, error) {
-	input := sweepInput{after: big.NewInt(0)}
+	input := sweepInput{}
 	if a["--readings"] != "" {
 		raw, e := f1Argument(a["--readings"], "readings")
 		if e != nil {
@@ -918,10 +917,10 @@ func validateSweep(ctx context.Context, a map[string]string) (sweepInput, error)
 		input.readings = value
 	}
 	if a["--readings-after"] != "" {
-		input.after = integerArg(ctx, "--readings-after", a["--readings-after"])
-	}
-	if input.after.Sign() < 0 {
-		return input, fmt.Errorf("fault_observation_malformed: --readings-after is a non-negative integer, not %s", input.after.String())
+		var ok bool
+		if input.after, ok = integerArg(ctx, "--readings-after", a["--readings-after"]); !ok || input.after < 0 {
+			return input, fmt.Errorf("fault_observation_malformed: --readings-after is a non-negative integer, not %s", a["--readings-after"])
+		}
 	}
 	return input, nil
 }
@@ -945,10 +944,7 @@ func f1Sweep(ctx context.Context, l *Ledger, a map[string]string) (any, error) {
 	} else if input.readings != nil {
 		return nil, fmt.Errorf("fault_observation_malformed: readings are a list of reporting-observation/1 objects")
 	}
-	if !input.after.IsInt64() {
-		return nil, fmt.Errorf("fault_observation_malformed: readings after is an integer from 0 to 1000, not %s", input.after.String())
-	}
-	after := int(input.after.Int64())
+	after := int(input.after)
 	hostRecord, err := HostRecordPath()
 	if err != nil {
 		return nil, err
