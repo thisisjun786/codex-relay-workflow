@@ -367,3 +367,10 @@ This section supersedes the seeded `port: pending` statuses for native Write/Edi
 ## Found by the PABCD phase directive and assembly port
 
 No new oracle defect was identified in the directive text and assembly of `pabcd-state/src/hook.ts:212-235,324-575` (CXC v0.2.40, commit 3c1459ac). The prefix-only resolver's unterminated-backtick matching and whole-string fail-open behavior are preserved and recorded as edge cases, not changed into a Markdown parser. The goalplan reader and active-phase selector are outside this port.
+
+## Found by the CRW-490 bg hooks port
+
+- Stop, prompt delivery and drain stamp records before handing their output to the caller, so discarded output or a broken stdout loses the notification while the job record/output files remain intact (source `plugins/codexclaw/components/bg-wake/src/hook.ts:67-70,85-87,101-103`, `cli.ts:72-77`); port: kept.
+- A read error or input over the 1Mi UTF-16-unit limit becomes an empty payload, which can still wake completions through the process cwd and `CODEX_THREAD_ID` fallback (source `plugins/codexclaw/components/bg-wake/src/cli.ts:38-47,62-68`, `hook.ts:34-41`); port: kept.
+- SessionStart adopts every undelivered terminal record not owned by this session without checking whether a previous adopting session is still alive, so a second session can take the first session's adopted completion; adoption still runs while automatic wakes are off (source `plugins/codexclaw/components/bg-wake/src/hook.ts:114-119`, `registry.ts:235-250`); port: kept.
+- Selection, delivery stamping and adoption are separate unlocked operations, so concurrent hooks can select or adopt the same completion before either stamps it; a delivery write that fails is still described by the hook and can wake again later (source `plugins/codexclaw/components/bg-wake/src/hook.ts:63-70,99-103`, `registry.ts:217-250`); port: kept.
