@@ -1,10 +1,6 @@
 ---
 name: crw-dev-code-reviewer
 description: "MUST USE for code review and review-readiness — review process, quality thresholds, antipattern detection, review verdicts, and giving/receiving feedback. Activates by change-surface for PR review, diff review, pre-merge checks, refactor audits, and high-risk changes. Triggers: 'review this', 'code review', 'PR review', 'check my diff', 'before merge', 'antipattern', '리뷰', '코드 리뷰', '머지 전에 확인'."
-metadata:
-  last-verified: "2026-07-02"
-  short-description: "Code review router: findings, severity, verdicts, and review workflow."
-  keywords: ["review", "PR", "pull request", "diff", "merge", "feedback", "approve", "code quality", "stacked PR", "stack review", "스택 PR 리뷰"]
 ---
 
 # Dev-Code-Reviewer — Code Review Guide
@@ -16,6 +12,13 @@ metadata:
 
 Systematic code review patterns for finding real issues, not bikeshedding.
 This skill activates by change-surface for review requests, pre-merge checks, or independent audit passes.
+
+## CRW ownership boundary
+
+`crw-dev-code-reviewer` reviews code changes and pull requests.
+`crw-check` checks delivery against the canonical Linear requirements and issue criteria.
+`crw-logic` finds contradictions and broken invariants across specifications and evidence.
+Use the skill that owns the requested judgment; code review does not certify Linear delivery.
 
 ## Review Posture (REVIEW-POSTURE-01)
 

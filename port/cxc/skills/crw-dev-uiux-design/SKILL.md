@@ -1,9 +1,6 @@
 ---
 name: crw-dev-uiux-design
 description: "MUST USE for UI/UX direction and design judgment — vague visual briefs, onboarding, empty/error/loading states, layout vocabulary, typography breaks, favicons, logos, and brand identity choices. Pairs with crw-dev-frontend: this skill decides the design direction, then load crw-dev-frontend to implement it. Triggers: make it look good, modern, clean, aesthetic, onboarding, empty state, error state, favicon, logo, design system, 깔끔하게, 모던하게, 감성적으로."
-metadata:
-  last-verified: "2026-07-14"
-  short-description: "Design judgment for vague briefs, UX states, typography, layout patterns, logos, and brand vocabulary."
 ---
 
 # UI/UX Design: Intent Discovery, Patterns & Product Vocabulary

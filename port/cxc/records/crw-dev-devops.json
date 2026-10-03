@@ -70,5 +70,73 @@
     "scripts/verify-lipo-command.mjs": {
       "original": "f6d3f0b6fd64dca795fd6ab2b4bfaf51be52bc4d58d1e0f8ecfe9a675e4d41a9"
     }
-  }
+  },
+  "edits": [
+    {
+      "file": "SKILL.md",
+      "reason": "Normalize frontmatter to the repository-supported name and description fields; preserve the invocation description and record the removed oracle metadata. Redirect the relative hub reference to the staged crw-dev directory.",
+      "hunks": [
+        {
+          "line": 4,
+          "old": [
+            "metadata:\n",
+            "  last-verified: \"2026-09-09\"\n",
+            "  short-description: \"Container, deploy, Kubernetes, IaC, SRE, and branch-lifecycle guidance for production delivery.\"\n"
+          ]
+        },
+        {
+          "line": 115,
+          "old": [
+            "[`crw-dev`'s canonical stack reference](../dev/references/stacked-prs.md).\n"
+          ],
+          "new": [
+            "[`crw-dev`'s canonical stack reference](../crw-dev/references/stacked-prs.md).\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "agents/openai.yaml",
+      "reason": "Add the required interface default prompt naming the staged CRW skill; preserve the oracle display text and implicit-invocation policy.",
+      "hunks": [
+        {
+          "line": 4,
+          "new": [
+            "  default_prompt: \"Use $crw-dev-devops to guide this task and verify its result.\"\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/native-desktop-acceptance.md",
+      "reason": "Resolve the QA and DevOps helper paths from their loaded skill directories so the unchanged examples work in staging and in the final plugin layout.",
+      "hunks": [
+        {
+          "line": 120,
+          "new": [
+            "Resolve each skill directory from its loaded SKILL.md before running a helper.\n",
+            "\n"
+          ]
+        },
+        {
+          "line": 135,
+          "old": [
+            "  `node plugins/crw/skills/qa/scripts/validate-evidence.mjs --bundle-digest <path.app>`.\n"
+          ],
+          "new": [
+            "  `node \"<crw-qa skill directory>/scripts/validate-evidence.mjs\" --bundle-digest <path.app>`.\n"
+          ]
+        },
+        {
+          "line": 203,
+          "old": [
+            "  `node plugins/crw/skills/dev-devops/scripts/verify-lipo-command.mjs --artifact <file> --arch <a> --arch <b> --candidate-json '<argv-json>'`.\n"
+          ],
+          "new": [
+            "  `node \"<crw-dev-devops skill directory>/scripts/verify-lipo-command.mjs\" --artifact <file> --arch <a> --arch <b> --candidate-json '<argv-json>'`.\n"
+          ]
+        }
+      ]
+    }
+  ]
 }

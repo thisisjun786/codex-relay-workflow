@@ -40,5 +40,45 @@
     "references/supply-chain-sbom.md": {
       "original": "f3794bfdc661b8ead7f0760fd123145d2ff6b139a81199221a2bb4d26dd005b1"
     }
-  }
+  },
+  "edits": [
+    {
+      "file": "SKILL.md",
+      "reason": "Normalize frontmatter to the repository-supported name and description fields; preserve the invocation description and record the removed oracle metadata.",
+      "hunks": [
+        {
+          "line": 4,
+          "old": [
+            "metadata:\n",
+            "  last-verified: \"2026-07-02\"\n",
+            "  short-description: \"Security router for auth, validation, secrets, supply chain, and hardening.\"\n",
+            "  keywords:\n",
+            "    - xss\n",
+            "    - csrf\n",
+            "    - sql injection\n",
+            "    - jwt\n",
+            "    - oauth\n",
+            "    - secrets\n",
+            "    - owasp\n",
+            "    - auth hardening\n",
+            "    - supply chain\n",
+            "    - threat model\n",
+            "  injection_condition: \"security-sensitive code, trust boundary changes, PII/payment/upload/CI integrity changes, tool-using agents, or security/threat_model task_tags\"\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "agents/openai.yaml",
+      "reason": "Add the required interface default prompt naming the staged CRW skill; preserve the oracle display text and implicit-invocation policy.",
+      "hunks": [
+        {
+          "line": 4,
+          "new": [
+            "  default_prompt: \"Use $crw-dev-security to guide this task and verify its result.\"\n"
+          ]
+        }
+      ]
+    }
+  ]
 }

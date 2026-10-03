@@ -19,5 +19,46 @@
     "references/tech-debt.md": {
       "original": "78b27a0323d43d8f4cc5e5bd73104a234e933a58c646fa09fb18e28fd1723443"
     }
-  }
+  },
+  "edits": [
+    {
+      "file": "SKILL.md",
+      "reason": "Normalize frontmatter to the repository-supported name and description fields; preserve the invocation description and record the removed oracle metadata. Separate code/PR review from Linear delivery checking and logical-consistency audits without changing the upstream review process.",
+      "hunks": [
+        {
+          "line": 4,
+          "old": [
+            "metadata:\n",
+            "  last-verified: \"2026-07-02\"\n",
+            "  short-description: \"Code review router: findings, severity, verdicts, and review workflow.\"\n",
+            "  keywords: [\"review\", \"PR\", \"pull request\", \"diff\", \"merge\", \"feedback\", \"approve\", \"code quality\", \"stacked PR\", \"stack review\", \"스택 PR 리뷰\"]\n"
+          ]
+        },
+        {
+          "line": 19,
+          "new": [
+            "\n",
+            "## CRW ownership boundary\n",
+            "\n",
+            "`crw-dev-code-reviewer` reviews code changes and pull requests.\n",
+            "`crw-check` checks delivery against the canonical Linear requirements and issue criteria.\n",
+            "`crw-logic` finds contradictions and broken invariants across specifications and evidence.\n",
+            "Use the skill that owns the requested judgment; code review does not certify Linear delivery.\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "agents/openai.yaml",
+      "reason": "Add the required interface default prompt naming the staged CRW skill; preserve the oracle display text and implicit-invocation policy.",
+      "hunks": [
+        {
+          "line": 4,
+          "new": [
+            "  default_prompt: \"Use $crw-dev-code-reviewer to guide this task and verify its result.\"\n"
+          ]
+        }
+      ]
+    }
+  ]
 }

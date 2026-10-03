@@ -1,5 +1,6 @@
 interface:
   display_name: "crw-dev-backend"
   short_description: "Framework-agnostic backend guidance for APIs, architecture, data access, and operations."
+  default_prompt: "Use $crw-dev-backend to guide this task and verify its result."
 policy:
   allow_implicit_invocation: false

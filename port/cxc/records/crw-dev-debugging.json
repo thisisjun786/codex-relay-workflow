@@ -70,5 +70,34 @@
     "references/tools/playwright.md": {
       "original": "1e5328c46a00737f91f73aa884f492d8a991c22ccae4ec710f49c8deda52bd46"
     }
-  }
+  },
+  "edits": [
+    {
+      "file": "SKILL.md",
+      "reason": "Normalize frontmatter to the repository-supported name and description fields; preserve the invocation description and record the removed oracle metadata.",
+      "hunks": [
+        {
+          "line": 4,
+          "old": [
+            "metadata:\n",
+            "  last-verified: \"2026-07-02\"\n",
+            "  short-description: \"Phases 0-4 systematic root-cause debugging method (any language).\"\n",
+            "  keywords: [debug, error, stack trace, root cause, flaky, regression, crash, bisect, \"logic analysis\", \"comprehension\", \"unknown system\", \"reverse engineering\"]\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "agents/openai.yaml",
+      "reason": "Add the required interface default prompt naming the staged CRW skill; preserve the oracle display text and implicit-invocation policy.",
+      "hunks": [
+        {
+          "line": 4,
+          "new": [
+            "  default_prompt: \"Use $crw-dev-debugging to guide this task and verify its result.\"\n"
+          ]
+        }
+      ]
+    }
+  ]
 }

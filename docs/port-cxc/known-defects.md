@@ -425,3 +425,10 @@ No new oracle defect was identified in the directive text and assembly of `pabcd
 ## CRW-334: staged skill catalog formatting
 
 - CXC:plugins/codexclaw/skills/dev/references/skill-catalog.md:2-273 retains 33 space-only lines with trailing whitespace. The staged catalog is the unedited name-substituted oracle copy; full-range git diff --check reports those lines, while the manual-edit diff is clean. This is formatting debt, not a runtime behavior change. port: kept.
+
+## CRW-335: staged development-router limitations
+
+- The architecture decision-tree line has a trailing space, and the design-trends snapshot uses two Markdown hard-break lines; the tool-staged copies keep those bytes, so the full-range whitespace check reports three lines (CXC:plugins/codexclaw/skills/dev-architecture/SKILL.md:344; CXC:plugins/codexclaw/skills/dev-uiux-design/references/design-trends.md:13-14); port: kept.
+- AI-review guidance calls the AI stage a deterministic gate, then says unavailable or failed AI review is additive and may be bypassed by human review; repository/user review authority must settle the conflicting wording (CXC:plugins/codexclaw/skills/dev-code-reviewer/references/ai-assisted-review.md:12-32); port: kept.
+- The oracle describes worktree GC/list as a future contract rather than an implemented command; staging the renamed examples does not provide that implementation (CXC:plugins/codexclaw/skills/dev-devops/references/local-gc.md:87-105); port: kept.
+- Historical oracle references name a source-only search-policy test, repository-bootstrap workflow and CodexClaw issue; name substitution preserves the references without importing those upstream artifacts or proving their CRW counterparts exist (CXC:plugins/codexclaw/skills/dev-code-reviewer/SKILL.md:380-384; CXC:plugins/codexclaw/skills/dev-devops/references/repo-bootstrap.md:23; CXC:plugins/codexclaw/skills/dev-devops/references/native-desktop-acceptance.md:188-189,267); port: kept.

@@ -1,10 +1,6 @@
 ---
 name: crw-dev-frontend
 description: "MUST USE for any frontend, web UI, or visual implementation work — building, styling, or redesigning pages/components, responsive layouts, motion, component architecture, and production-surface polish. Pairs with crw-dev-uiux-design: load it first when design direction is vague; this skill implements the chosen direction. Triggers: 'frontend', 'UI', 'component', 'CSS', 'responsive', 'animation', 'React', 'Vue', 'Svelte', 'Tailwind', 'layout', 'styling', 'redesign', 'mockup', 'anti-slop', '프론트엔드', 'UI 작업', '반응형', '디자인 수정'."
-metadata:
-  last-verified: "2026-07-14"
-  short-description: "Production-grade frontend implementation with responsive, accessible, anti-slop UI guidance."
-  keywords: [frontend, UI, component, CSS, responsive, layout, animation, design implementation]
 ---
 
 # Dev-Frontend — Domain-Correct Frontend Engineering

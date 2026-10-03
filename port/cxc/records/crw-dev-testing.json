@@ -46,5 +46,43 @@
     "scripts/with_server.py": {
       "original": "b0dcf4918935b795f4eda9821579b9902119235ff4447f687a30286e7d0925fd"
     }
-  }
+  },
+  "edits": [
+    {
+      "file": "SKILL.md",
+      "reason": "Normalize frontmatter to the repository-supported name and description fields; preserve the invocation description and record the removed oracle metadata. Redirect the relative hub reference to the staged crw-dev directory.",
+      "hunks": [
+        {
+          "line": 4,
+          "old": [
+            "metadata:\n",
+            "  last-verified: \"2026-07-02\"\n",
+            "  short-description: \"Testing and QA router: strategy, harness choice, CI gates, TDD, and coverage.\"\n",
+            "  keywords: [test, testing, TDD, coverage, regression, e2e, playwright, contract test, CI]\n"
+          ]
+        },
+        {
+          "line": 197,
+          "old": [
+            "Follow [portable browser routing](../dev/references/browser-routing.md)\n"
+          ],
+          "new": [
+            "Follow [portable browser routing](../crw-dev/references/browser-routing.md)\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "agents/openai.yaml",
+      "reason": "Add the required interface default prompt naming the staged CRW skill; preserve the oracle display text and implicit-invocation policy.",
+      "hunks": [
+        {
+          "line": 4,
+          "new": [
+            "  default_prompt: \"Use $crw-dev-testing to guide this task and verify its result.\"\n"
+          ]
+        }
+      ]
+    }
+  ]
 }

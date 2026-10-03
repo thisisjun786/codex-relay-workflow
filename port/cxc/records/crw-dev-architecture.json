@@ -22,5 +22,33 @@
     "references/coupling-taxonomy.md": {
       "original": "307cef40aab8f94f19dba69870dcf7a9119001f62544854ba5ec58f2d906f242"
     }
-  }
+  },
+  "edits": [
+    {
+      "file": "SKILL.md",
+      "reason": "Normalize frontmatter to the repository-supported name and description fields; preserve the invocation description and record the removed oracle metadata.",
+      "hunks": [
+        {
+          "line": 4,
+          "old": [
+            "metadata:\n",
+            "  last-verified: \"2026-07-02\"\n",
+            "  short-description: \"Module boundaries, circular deps, coupling taxonomy, and boundary-only defensive programming.\"\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "agents/openai.yaml",
+      "reason": "Add the required interface default prompt naming the staged CRW skill; preserve the oracle display text and implicit-invocation policy.",
+      "hunks": [
+        {
+          "line": 4,
+          "new": [
+            "  default_prompt: \"Use $crw-dev-architecture to guide this task and verify its result.\"\n"
+          ]
+        }
+      ]
+    }
+  ]
 }

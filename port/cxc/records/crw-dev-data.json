@@ -25,5 +25,33 @@
     "references/tools.md": {
       "original": "81ea4748926d416931905919870600f6584fb0aa31d95e8fabba0ea1f520adb4"
     }
-  }
+  },
+  "edits": [
+    {
+      "file": "SKILL.md",
+      "reason": "Normalize frontmatter to the repository-supported name and description fields; preserve the invocation description and record the removed oracle metadata.",
+      "hunks": [
+        {
+          "line": 4,
+          "old": [
+            "metadata:\n",
+            "  last-verified: \"2026-07-02\"\n",
+            "  short-description: \"Data pipelines, ETL/ELT design, data quality validation, SQL optimization, and analysis patterns.\"\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "agents/openai.yaml",
+      "reason": "Add the required interface default prompt naming the staged CRW skill; preserve the oracle display text and implicit-invocation policy.",
+      "hunks": [
+        {
+          "line": 4,
+          "new": [
+            "  default_prompt: \"Use $crw-dev-data to guide this task and verify its result.\"\n"
+          ]
+        }
+      ]
+    }
+  ]
 }

@@ -1,5 +1,6 @@
 interface:
   display_name: "crw-dev-code-reviewer"
   short_description: "Code review router: findings, severity, verdicts, and review workflow."
+  default_prompt: "Use $crw-dev-code-reviewer to guide this task and verify its result."
 policy:
   allow_implicit_invocation: false

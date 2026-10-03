@@ -147,5 +147,34 @@
     "scripts/shadcn-components.tar.gz": {
       "original": "1296f069e825de7933de7e8ac63672495cacce3f88f2dc45554dbcddbcbca60f"
     }
-  }
+  },
+  "edits": [
+    {
+      "file": "SKILL.md",
+      "reason": "Normalize frontmatter to the repository-supported name and description fields; preserve the invocation description and record the removed oracle metadata.",
+      "hunks": [
+        {
+          "line": 4,
+          "old": [
+            "metadata:\n",
+            "  last-verified: \"2026-07-14\"\n",
+            "  short-description: \"Production-grade frontend implementation with responsive, accessible, anti-slop UI guidance.\"\n",
+            "  keywords: [frontend, UI, component, CSS, responsive, layout, animation, design implementation]\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "agents/openai.yaml",
+      "reason": "Add the required interface default prompt naming the staged CRW skill; preserve the oracle display text and implicit-invocation policy.",
+      "hunks": [
+        {
+          "line": 4,
+          "new": [
+            "  default_prompt: \"Use $crw-dev-frontend to guide this task and verify its result.\"\n"
+          ]
+        }
+      ]
+    }
+  ]
 }

@@ -79,5 +79,33 @@
     "references/visual-hierarchy.md": {
       "original": "f607fc349b19144e09b380da4cd2ef20db485a7741124489e88f3884a25b1fdd"
     }
-  }
+  },
+  "edits": [
+    {
+      "file": "SKILL.md",
+      "reason": "Normalize frontmatter to the repository-supported name and description fields; preserve the invocation description and record the removed oracle metadata.",
+      "hunks": [
+        {
+          "line": 4,
+          "old": [
+            "metadata:\n",
+            "  last-verified: \"2026-07-14\"\n",
+            "  short-description: \"Design judgment for vague briefs, UX states, typography, layout patterns, logos, and brand vocabulary.\"\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "agents/openai.yaml",
+      "reason": "Add the required interface default prompt naming the staged CRW skill; preserve the oracle display text and implicit-invocation policy.",
+      "hunks": [
+        {
+          "line": 4,
+          "new": [
+            "  default_prompt: \"Use $crw-dev-uiux-design to guide this task and verify its result.\"\n"
+          ]
+        }
+      ]
+    }
+  ]
 }

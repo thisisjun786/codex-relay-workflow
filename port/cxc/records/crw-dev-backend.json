@@ -71,5 +71,34 @@
       "original": "89429bc487bebf09ede348ad4796a27c821178b6ba46e8907288c21604c6e78f",
       "exec": true
     }
-  }
+  },
+  "edits": [
+    {
+      "file": "SKILL.md",
+      "reason": "Normalize frontmatter to the repository-supported name and description fields; preserve the invocation description and record the removed oracle metadata.",
+      "hunks": [
+        {
+          "line": 4,
+          "old": [
+            "metadata:\n",
+            "  last-verified: \"2026-07-02\"\n",
+            "  short-description: \"Framework-agnostic backend guidance for APIs, architecture, data access, and operations.\"\n",
+            "  keywords: [\"API\", \"REST\", \"endpoint\", \"middleware\", \"database\", \"ORM\", \"cache\", \"queue\", \"error handling\"]\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "agents/openai.yaml",
+      "reason": "Add the required interface default prompt naming the staged CRW skill; preserve the oracle display text and implicit-invocation policy.",
+      "hunks": [
+        {
+          "line": 4,
+          "new": [
+            "  default_prompt: \"Use $crw-dev-backend to guide this task and verify its result.\"\n"
+          ]
+        }
+      ]
+    }
+  ]
 }

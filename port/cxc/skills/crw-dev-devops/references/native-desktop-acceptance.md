@@ -117,6 +117,8 @@ regressions" is not a finding when there was no desktop to regress.
 
 ## §6 Artifact identity (DESKTOP-ARTIFACT-01)
 
+Resolve each skill directory from its loaded SKILL.md before running a helper.
+
 When a desktop row depends on a built artifact, set `desktopArtifact: true` in
 its `verdict.json`, list its goalplan IDs in `criterionIds` (for example
 `["c-3"]`), and include exactly one `artifact-identity.json` in `artifactRefs`.
@@ -132,7 +134,7 @@ The identity file uses `version: 1` and these fields:
   Each has a unique non-empty `id` and a `kind`. An applicable `app` has a path
   to a `.app` directory containing `Contents/Info.plist` and a lowercase
   `sha256` bundle tree digest. Compute it with
-  `node plugins/crw/skills/qa/scripts/validate-evidence.mjs --bundle-digest <path.app>`.
+  `node "<crw-qa skill directory>/scripts/validate-evidence.mjs" --bundle-digest <path.app>`.
   The tree digest covers file bytes, paths, directories and symlink targets;
   bundle symlinks must resolve inside the bundle. Applicable executable and
   archive records carry file SHA-256 digests; every other applicable file
@@ -200,7 +202,7 @@ under `Contents/PlugIns` and signature (the OpenCodex case in crw issue
   entitlements. JIT runtimes under Hardened Runtime need
   `com.apple.security.cs.allow-jit`, or they may fall back or crash.
 - Use the shipped behavioral oracle:
-  `node plugins/crw/skills/dev-devops/scripts/verify-lipo-command.mjs --artifact <file> --arch <a> --arch <b> --candidate-json '<argv-json>'`.
+  `node "<crw-dev-devops skill directory>/scripts/verify-lipo-command.mjs" --artifact <file> --arch <a> --arch <b> --candidate-json '<argv-json>'`.
   It compares the reported architecture set exactly (`arm64` and `arm64e`
   differ), runs the candidate argv against the good artifact, creates a thin
   negative control and requires the candidate to fail on it. The candidate

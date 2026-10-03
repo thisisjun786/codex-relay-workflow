@@ -1,21 +1,6 @@
 ---
 name: crw-dev-security
 description: "MUST USE for security guidance covering XSS, CSRF, SQL injection, JWT, OAuth, secrets, OWASP, auth hardening, supply chain, and threat model work. Activates for security-sensitive code, trust boundaries, PII, uploads, payments, CI integrity, tool-using agents, or security/threat_model task tags."
-metadata:
-  last-verified: "2026-07-02"
-  short-description: "Security router for auth, validation, secrets, supply chain, and hardening."
-  keywords:
-    - xss
-    - csrf
-    - sql injection
-    - jwt
-    - oauth
-    - secrets
-    - owasp
-    - auth hardening
-    - supply chain
-    - threat model
-  injection_condition: "security-sensitive code, trust boundary changes, PII/payment/upload/CI integrity changes, tool-using agents, or security/threat_model task_tags"
 ---
 
 # Dev-Security — Production Security Hardening

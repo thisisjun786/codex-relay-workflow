@@ -1,5 +1,6 @@
 interface:
   display_name: "crw-dev-frontend"
   short_description: "Production-grade frontend implementation with responsive, accessible, anti-slop UI guidance."
+  default_prompt: "Use $crw-dev-frontend to guide this task and verify its result."
 policy:
   allow_implicit_invocation: true

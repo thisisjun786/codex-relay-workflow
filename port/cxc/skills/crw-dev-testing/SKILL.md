@@ -1,10 +1,6 @@
 ---
 name: crw-dev-testing
 description: "MUST USE for testing, QA, regression protection, and release verification — unit, integration, API, contract, Playwright E2E, CI, security-scan, coverage, and TDD strategy. Activates by change-surface when work adds features, fixes bugs, changes APIs, refactors behavior, or prepares a release. Triggers: 'write tests', 'regression test', 'Playwright', 'E2E', 'contract test', 'coverage', 'CI flake', 'TDD', '테스트', '회귀 테스트', '품질 게이트'."
-metadata:
-  last-verified: "2026-07-02"
-  short-description: "Testing and QA router: strategy, harness choice, CI gates, TDD, and coverage."
-  keywords: [test, testing, TDD, coverage, regression, e2e, playwright, contract test, CI]
 ---
 # Testing & QA
 Balance: ~40% Backend/API, ~40% Frontend/E2E (Playwright), ~20% Cross-cutting (CI, Security, TDD, Coverage) -- directional guidance, not a hard ratio.
@@ -194,7 +190,7 @@ python scripts/with_server.py \
 ### 4.7 Exploratory browser QA (TEST-CU-QA-01)
 
 Browser QA loads `dev-frontend` for rendered implementation context.
-Follow [portable browser routing](../dev/references/browser-routing.md)
+Follow [portable browser routing](../crw-dev/references/browser-routing.md)
 (QA-TOOL-LADDER-01). Suitable available Aside, native browsers, and agbrowse may
 drive built UI; no one optional tool is required. Inspect -> act -> re-inspect,
 exercise the promised interaction, and retain the state/result evidence.
