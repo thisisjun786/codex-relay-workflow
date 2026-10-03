@@ -17,7 +17,7 @@ import (
 // Ported from comment-lint.test.ts:12-150; expectations come from the Node oracle.
 func TestLintApplyPatch(t *testing.T) {
 	prose := "which is the reason to treat it as the test rather than as any of them" // justified: oracle prose fixture
-	cast := "const v = foo as any;" // justified: oracle code fixture
+	cast := "const v = foo as any;"                                                   // justified: oracle code fixture
 	cases := []struct {
 		name, patch string
 		ok          bool
@@ -27,7 +27,7 @@ func TestLintApplyPatch(t *testing.T) {
 		{"hash justified", "+eval(x); # JUSTIFIED:", true}, // justified: oracle fixture
 		{"clean", "+++ b/x.ts\n+const x = 1;", true},
 		{"eval", "+eval(userInput);", false}, // justified: oracle fixture
-		{"debugger", "+debugger;", false}, // justified: oracle fixture
+		{"debugger", "+debugger;", false},    // justified: oracle fixture
 		{"only added", "+++ b/x.ts\n-" + cast + "\n " + cast + "\n+const v: Foo = foo;", true},
 		{"markdown", "*** Add File: docs/report.md\n+" + prose, true},
 		{"fenced report", "*** Update File: docs/report.md\n+> " + prose + "\n+```ts\n+" + cast + "\n+```", true},
@@ -42,7 +42,7 @@ func TestLintApplyPatch(t *testing.T) {
 		{"deleted prose", "*** Delete File: gone.md\n+" + cast, true},
 		{"dev null unknown", "+++ /dev/null\n+" + cast, false},
 		{"triple plus content skipped", "*** Add File: x.ts\n+++debugger;", true}, // justified: kept oracle blind spot
-		{"string literal false positive", "+const x = \"debugger\";", false}, // justified: kept oracle false positive
+		{"string literal false positive", "+const x = \"debugger\";", false},      // justified: kept oracle false positive
 		{"word boundary", "+debuggers; evaluate(x); as anything", true},
 		{"long s not justified", "+debugger; // juſtified:", false}, // justified: JS non-Unicode case fold fixture
 	}
@@ -100,7 +100,7 @@ func lintPayload(event, tool string, input any) string {
 
 func TestHandleApplyPatchLint(t *testing.T) {
 	for _, tool := range []string{"apply_patch", "Write", "Edit"} {
-		raw := lintPayload("PreToolUse", tool, map[string]any{"command": "+++ b/x.ts\n+debugger;"}) // justified: oracle fixture
+		raw := lintPayload("PreToolUse", tool, map[string]any{"command": "+++ b/x.ts\n+debugger;"})                                                                                                                                                                   // justified: oracle fixture
 		want := "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"[crw comment-lint] `debugger` statement — remove before committing or add `// justified: <reason>` (line: debugger;)\"}}\n" // justified: exact oracle envelope
 		if got := hook.HandleApplyPatchLint("\ufeff " + raw + "\r\n"); got != want {
 			t.Fatalf("%q != %q", got, want)
@@ -108,10 +108,10 @@ func TestHandleApplyPatchLint(t *testing.T) {
 	}
 	for _, raw := range []string{
 		"{not json", "null", "[]", "1", "{}", "{} {}",
-		lintPayload("Stop", "apply_patch", map[string]any{"command": "+debugger;"}), // justified: oracle fixture
+		lintPayload("Stop", "apply_patch", map[string]any{"command": "+debugger;"}),        // justified: oracle fixture
 		lintPayload("PreToolUse", "exec_command", map[string]any{"command": "+debugger;"}), // justified: oracle fixture
-		lintPayload("PreToolUse", "Write", map[string]any{"content": "debugger;"}), // justified: kept native shape blind spot
-		lintPayload("PreToolUse", "Edit", map[string]any{"new_string": "debugger;"}), // justified: kept native shape blind spot
+		lintPayload("PreToolUse", "Write", map[string]any{"content": "debugger;"}),         // justified: kept native shape blind spot
+		lintPayload("PreToolUse", "Edit", map[string]any{"new_string": "debugger;"}),       // justified: kept native shape blind spot
 		lintPayload("PreToolUse", "apply_patch", map[string]any{"command": "+ok();"}),
 		lintPayload("PreToolUse", "apply_patch", map[string]any{"command": "*** Add File: report.md\n+debugger;"}), // justified: prose fixture
 		lintPayload("PreToolUse", "apply_patch", map[string]any{"command": 7}),
@@ -138,12 +138,12 @@ func TestLintJavaScriptTextSemantics(t *testing.T) {
 	if !hook.LintApplyPatch("+eval\u0085(x)").OK { // justified: JS excludes NEL
 		t.Fatal("NEL treated as JS whitespace")
 	}
-	got := hook.LintApplyPatch("+  debugger;\b\f inner\u2028x  ") // justified: trim/JSON fixture
+	got := hook.LintApplyPatch("+  debugger;\b\f inner\u2028x  ")             // justified: trim/JSON fixture
 	if !strings.HasSuffix(got.Reason, "(line: debugger;\b\f inner\u2028x)") { // justified: exact oracle preview
 		t.Fatal(got.Reason)
 	}
 	out := hook.HandleApplyPatchLint(lintPayload("PreToolUse", "apply_patch", map[string]any{"command": "+debugger;\b\f inner\u2028x"})) // justified: exact escapes
-	if !strings.Contains(out, `debugger;\b\f inner`+"\u2028x") || strings.Contains(out, `\u2028`) { // justified: oracle serialization
+	if !strings.Contains(out, `debugger;\b\f inner`+"\u2028x") || strings.Contains(out, `\u2028`) {                                      // justified: oracle serialization
 		t.Fatal(out)
 	}
 	preview := strings.Repeat("😀", 60)
