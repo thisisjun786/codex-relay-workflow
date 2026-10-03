@@ -34,6 +34,7 @@ type mcpRPC struct {
 	params     map[string]map[string]any
 	configured []string
 	applied    bool
+	paged      bool
 	model      string
 }
 
@@ -87,7 +88,11 @@ func (r *mcpRPC) Call(_ context.Context, method string, params map[string]any) (
 		if !(r.applied && pluginsOff["cua@openai-bundled"]) {
 			rows = append(rows, map[string]any{"name": "cua_repl", "pluginId": "cua@openai-bundled", "runtimeStatus": "connected"})
 		}
-		answer = map[string]any{"data": rows, "nextCursor": nil}
+		var next any
+		if r.paged {
+			next = "page-2"
+		}
+		answer = map[string]any{"data": rows, "nextCursor": next}
 	default:
 		return nil, fmt.Errorf("unscripted %s", method)
 	}
@@ -241,6 +246,43 @@ func TestARecordNamingNoProfileResumesAsItAlwaysDid(t *testing.T) {
 	}
 }
 
+// settings-record stores any object, so a row may hold an mcpServers key nobody resolved: it is never
+// taken for the expectation of a send that resolved no profile, and a profile's own resolution replaces it.
+func TestAStoredMCPServersKeyIsNeverTakenForTheSendsExpectation(t *testing.T) {
+	stored := ordered(map[string]any{"disabled": []any{"node_repl"}, "enabled": []any{}, "pluginsAbsent": []any{}})
+	withStored := func(free bool, profile string) *delivery.TaskSettings {
+		record := childRecord(free, profile)
+		record.Data = delivery.Obj(contract.OrderedObject(record.Data).Set("mcpServers", stored))
+		return record
+	}
+	for _, free := range []bool{false, true} {
+		t.Run(fmt.Sprintf("no profile, settings-free=%v", free), func(t *testing.T) {
+			rpc := &mcpRPC{configured: []string{"node_repl", "oracle"}, applied: true}
+			receipt := sendRecord(t, mcpAdapter(t, rpc, relayPolicy(t)), "send-stored", withStored(free, ""))
+			if receipt["status"] != "accepted" || resumeConfig(rpc)["mcp_servers"] != nil || rpc.count("config/read") != 0 || rpc.count("mcpServerStatus/list") != 0 {
+				t.Fatalf("receipt=%v config=%v calls=%v", receipt, resumeConfig(rpc), rpc.calls)
+			}
+		})
+		t.Run(fmt.Sprintf("a profile, settings-free=%v", free), func(t *testing.T) {
+			rpc := &mcpRPC{configured: []string{"node_repl", "oracle"}, applied: true}
+			receipt := sendRecord(t, mcpAdapter(t, rpc, relayPolicy(t)), "send-stored-profile", withStored(free, "ui-qa"))
+			if receipt["status"] != "accepted" || strings.Join(offServers(resumeConfig(rpc)), ",") != "oracle" {
+				t.Fatalf("receipt=%v config=%v", receipt, resumeConfig(rpc))
+			}
+		})
+	}
+}
+
+// A status list the comparison cannot read (here one with a further page) is never taken for a clean one.
+func TestAStatusListThatCannotBeReducedWithholdsTheSend(t *testing.T) {
+	rpc := &mcpRPC{configured: []string{"node_repl", "oracle"}, applied: true, paged: true}
+	receipt := sendRecord(t, mcpAdapter(t, rpc, relayPolicy(t)), "send-paged", childRecord(false, "ui-qa"))
+	rpcError, _ := receipt["rpcError"].(map[string]any)
+	if receipt["status"] != "failed" || rpcError["code"] != registry.SettingUnobservable || rpc.count("turn/start") != 0 {
+		t.Fatalf("receipt=%v", receipt)
+	}
+}
+
 // deliver and supervisor-send build their adapter without a policy of their own, as does any later
 // caller: it reads the process's, as the daemon does with the same snapshot.
 func TestAnAdapterWithoutAPolicyReadsTheEnvironmentsForBothConstructors(t *testing.T) {
@@ -281,6 +323,8 @@ func TestAnAdapterWithoutAPolicyReadsTheEnvironmentsForBothConstructors(t *testi
 }
 
 // --- managed-start over the built relay CLI and the scripted app-server
+
+const noMCPManagedPolicy = `{"roles":{"parent":{"model":"gpt-5.4","reasoningEffort":"medium"},"child":{"model":"gpt-5.4","reasoningEffort":"medium"}}}`
 
 const mcpManagedPolicy = `{"roles":{"parent":{"model":"gpt-5.4","reasoningEffort":"medium"},"child":{"model":"gpt-5.4","reasoningEffort":"medium","mcp":{"default":"minimal","profiles":{"minimal":{},"ui-qa":{"servers":["node_repl"]}}}}}}`
 
@@ -327,9 +371,10 @@ func TestManagedStartRefusesAChildThatStatesNoDeclaredProfileBeforeCreatingIt(t 
 	for name, scenario := range map[string]struct {
 		profile any
 		reason  string
-	}{"none stated": {nil, "mcp_profile_required"}, "an undeclared one": {"nope", "mcp_profile_unknown"}} {
+		policy  string
+	}{"none stated": {nil, "mcp_profile_required", mcpManagedPolicy}, "an undeclared one": {"nope", "mcp_profile_unknown", mcpManagedPolicy}, "a role that declares none": {"ui-qa", "mcp_profile_unknown", noMCPManagedPolicy}} {
 		t.Run(name, func(t *testing.T) {
-			c := newManagedCLIOn(t, mcpManagedPolicy, "gpt-5.4", "medium")
+			c := newManagedCLIOn(t, scenario.policy, "gpt-5.4", "medium")
 			mcpScript(c)
 			stdout, stderr, code := c.start(c.request(c.childProfile(scenario.profile)))
 			var refused map[string]any
@@ -371,7 +416,7 @@ func TestManagedStartCreatesAndResumesTheChildUnderTheStatedProfile(t *testing.T
 	}
 	c.withStore(func(s *store.Store) {
 		var recorded string
-		if err := s.DB.QueryRow("SELECT settings FROM authorized_settings WHERE task_id = 'managed-child'").Scan(&recorded); err != nil || !strings.Contains(recorded, `"mcpProfile":"ui-qa"`) {
+		if err := s.DB.QueryRow("SELECT settings FROM authorized_settings WHERE task_id = 'managed-child'").Scan(&recorded); err != nil || !strings.Contains(recorded, `"mcpProfile": "ui-qa"`) {
 			t.Fatalf("the child's record %q (%v) does not state its profile", recorded, err)
 		}
 	})

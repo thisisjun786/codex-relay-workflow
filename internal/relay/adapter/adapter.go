@@ -15,12 +15,12 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge"
-	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -78,7 +78,7 @@ func New(options Options) *Adapter {
 	}
 	if a.ledger != nil {
 		if options.Policy == nil {
-			options.Policy = execution.Policy{}
+			options.Policy = registry.EnvironmentRolePolicy().BridgePolicy()
 		}
 		a.bridge = bridge.New(a.rpc, a.ledger, options.Policy)
 		a.transport = newTransport(a)

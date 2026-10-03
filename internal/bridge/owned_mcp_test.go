@@ -170,6 +170,20 @@ func TestAKeptServerConfigTomlDoesNotDefineStopsTheCreationWithItsReason(t *test
 	}
 }
 
+// No override can turn on a server config.toml disables, so a profile that keeps one is refused with that
+// reason before the thread starts, instead of the status check withholding the prompt afterwards.
+func TestAKeptServerConfigTomlDisablesStopsTheCreationWithItsReason(t *testing.T) {
+	b, host := policyBridge(t, mcpChildPolicy)
+	cwd := t.TempDir()
+	mcpHost(host, cwd, mcpConfigured, true)
+	host.Respond("config/read", fakehost.Reply{Result: map[string]any{"config": map[string]any{"mcp_servers": map[string]any{"gemini_notebook": map[string]any{"enabled": true}, "node_repl": map[string]any{"enabled": false}, "oracle": map[string]any{}}}}})
+	receipt, err := b.CreateThread(context.Background(), mcpCreate(cwd, "create-disabled", "ui-qa"))
+	rpc := pyjson.Map(receipt["rpcError"])
+	if message, _ := rpc["message"].(string); err != nil || receipt["status"] != "failed" || rpc["code"] != execution.MCPServerDisabled || host.Count("thread/start") != 0 || !contains(message, "node_repl") || !contains(message, "disables") {
+		t.Fatalf("receipt=%v err=%v", receipt, err)
+	}
+}
+
 func TestACreationWithoutProfilesAsksTheHostNothingExtra(t *testing.T) {
 	for name, build := range map[string]func(t *testing.T) (*Bridge, *fakehost.Server){
 		"a role that declares none": rolesBridge,

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
@@ -304,9 +305,21 @@ func (a *Adapter) guardedSend(ctx context.Context, requestID, thread, message st
 			refuse("thread/read", contract.OrderedObject{{Key: "code", Value: "thread_busy"}, {Key: "message", Value: "Thread is active; message withheld. Wait for completion."}}, false)
 			return nil
 		}
-		params := plain(settings.ResumeParams(thread)).(map[string]any)
-		if settings.SettingsFreeResume {
+		send, expectedMCP, err := a.withMCP(ctx, settings)
+		if err = awaited(err); err != nil {
+			var refused *execution.Refusal
+			if !errors.As(err, &refused) {
+				return err
+			}
+			refuse("config/read", contract.OrderedObject{{Key: "code", Value: refused.Code}, {Key: "message", Value: refused.Detail}}, true)
+			return nil
+		}
+		params := plain(send.ResumeParams(thread)).(map[string]any)
+		if send.SettingsFreeResume {
 			params = map[string]any{"threadId": thread, "excludeTurns": true}
+			if expectedMCP != nil {
+				params["config"] = expectedMCP.Overrides()
+			}
 		}
 		resumed, err := a.callValue(ctx, "thread/resume", params)
 		if err = awaited(err); err != nil {
@@ -316,11 +329,18 @@ func (a *Adapter) guardedSend(ctx context.Context, requestID, thread, message st
 		if settings.SettingsFreeResume {
 			receipt["settingsFreeResume"] = true
 		}
+		response := resumed
+		if expectedMCP != nil {
+			receipt["mcpOverridesTransmitted"] = true
+			response, err = a.observeMCP(ctx, thread, resumed, expectedMCP, receipt)
+			if err = awaited(err); err != nil {
+				return err
+			}
+		}
 		if err = save(); err != nil {
 			return err
 		}
-		response := resumed
-		rpc, findings, notes := verifyResume(*settings, response, status)
+		rpc, findings, notes := verifyResume(*send, response, status)
 		if len(findings) > 0 {
 			receipt["settingsFindings"] = findings
 			refuse("thread/resume", rpc, false)

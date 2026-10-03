@@ -2,6 +2,8 @@ package bridge
 
 import (
 	"context"
+	"fmt"
+	"slices"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
@@ -26,9 +28,12 @@ func ResolveMCP(ctx context.Context, call HostCall, selection execution.MCPSelec
 	if err != nil {
 		return nil, nil, err
 	}
-	var configured, installed []string
-	for name := range pyjson.Map(pyjson.Map(read["config"])["mcp_servers"]) {
+	var configured, disabledByConfig, installed []string
+	for name, entry := range pyjson.Map(pyjson.Map(read["config"])["mcp_servers"]) {
 		configured = append(configured, name)
+		if pyjson.Map(entry)["enabled"] == false {
+			disabledByConfig = append(disabledByConfig, name)
+		}
 	}
 	if len(selection.Profile.DisablePlugins) > 0 {
 		answer, err := call(ctx, "plugin/installed", map[string]any{})
@@ -49,8 +54,14 @@ func ResolveMCP(ctx context.Context, call HostCall, selection execution.MCPSelec
 	if err != nil {
 		return nil, nil, err
 	}
+	for _, name := range resolved.On {
+		// No override can turn on what config.toml disables, so the thread would start without it.
+		if slices.Contains(disabledByConfig, name) {
+			return nil, nil, &execution.Refusal{Code: execution.MCPServerDisabled, Field: "mcp_profile", Requested: name, Detail: fmt.Sprintf("profile %q keeps the MCP server %q on, and this host's config.toml disables it", selection.Name, name)}
+		}
+	}
 	info := map[string]any{"name": selection.Name, "implicit": selection.Implicit, "serversOn": anyStrings(resolved.On), "serversOff": anyStrings(resolved.Off),
-		"pluginsOff": anyStrings(resolved.PluginsOff), "pluginsNotInstalled": anyStrings(resolved.PluginsAbsent)}
+		"pluginsOff": anyStrings(resolved.PluginsOff), "pluginsNotActive": anyStrings(resolved.PluginsAbsent)}
 	return &settings.MCPExpectation{Disabled: resolved.Off, Enabled: resolved.On, PluginsOff: resolved.PluginsOff}, info, nil
 }
 
