@@ -53,6 +53,15 @@ var mergeEvidenceCommand = dispatch.Command{Name: "merge-evidence", Unselected: 
 	if _, restating := args.TruthyString("restate"); lateGiven && !restating {
 		return nil, &dispatch.UsageError{Detail: "--late-dispositions grades a restated record; pass --restate too", Code: contract.ExitUsage}
 	}
+	// A file the command cannot use is refused before anything is read from the forge.
+	var lateDocument any
+	if lateGiven {
+		late, readErr := readLateDispositions(lateSource)
+		if readErr != nil {
+			return nil, readErr
+		}
+		lateDocument = late
+	}
 	forge := evidence.NewForge(forgeRunner(ctx))
 	forge.PageSize = args.Integer("page-size")
 	forge.PageBudget = args.Integer("page-budget")
@@ -87,14 +96,6 @@ var mergeEvidenceCommand = dispatch.Command{Name: "merge-evidence", Unselected: 
 		handoff := document
 		if h, ok := get(document, "handoff").(contract.OrderedObject); ok && len(h) > 0 {
 			handoff = h
-		}
-		var lateDocument any
-		if lateGiven {
-			late, readErr := readLateDispositions(lateSource)
-			if readErr != nil {
-				return nil, readErr
-			}
-			lateDocument = late
 		}
 		problems, lateResults := evidence.RestateWithDispositions(pyvalue.Str(head), handoff, snapshot, lateDocument)
 		items := make([]any, len(problems))

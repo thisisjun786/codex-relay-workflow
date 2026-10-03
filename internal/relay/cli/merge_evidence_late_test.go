@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 )
@@ -83,12 +84,25 @@ func lateDetail(t *testing.T, p map[string]any, code string) string {
 
 func lateExec(t *testing.T, s scriptedForge, args ...string) (int, string, string) {
 	t.Helper()
+	code, out, stderr, _ := lateExecCounted(t, s, args...)
+	return code, out, stderr
+}
+
+// lateExecCounted also says how many calls the command made to the forge.
+func lateExecCounted(t *testing.T, s scriptedForge, args ...string) (int, string, string, int) {
+	t.Helper()
+	calls := 0
 	old := forgeRunner
-	forgeRunner = func(context.Context) evidence.Runner { return s.run }
+	forgeRunner = func(context.Context) evidence.Runner {
+		return func(argv []string, d time.Duration) (int, string, string, error) {
+			calls++
+			return s.run(argv, d)
+		}
+	}
 	defer func() { forgeRunner = old }()
 	var out, stderr bytes.Buffer
 	code := Execute(context.Background(), append([]string{"merge-evidence", "--repository", "owner/repo", "--pull-request", "7"}, args...), &out, &stderr)
-	return code, out.String(), stderr.String()
+	return code, out.String(), stderr.String(), calls
 }
 
 // A thread that arrives on the same head after the receipt is a late finding until the coordinator
@@ -273,9 +287,9 @@ func TestLateDispositionRefusals(t *testing.T) {
 func TestLateDispositionUsage(t *testing.T) {
 	file := lateWrite(t, "dispositions.json", lateDoc(lateEntry("T1", "answered", lateHead)))
 	t.Run("the flag grades a restatement and needs one", func(t *testing.T) {
-		code, out, _ := lateExec(t, scriptedForge{late: true}, "--late-dispositions", file)
-		if code != 4 || !strings.Contains(out, "--restate") {
-			t.Fatal(code, out)
+		code, out, _, calls := lateExecCounted(t, scriptedForge{late: true}, "--late-dispositions", file)
+		if calls != 0 || code != 4 || !strings.Contains(out, "--restate") {
+			t.Fatal(code, out, calls)
 		}
 	})
 	t.Run("an empty value is not given", func(t *testing.T) {
@@ -285,8 +299,8 @@ func TestLateDispositionUsage(t *testing.T) {
 		}
 	})
 	t.Run("a file that cannot be read", func(t *testing.T) {
-		code, out, _ := lateExec(t, scriptedForge{late: true}, "--restate", lateRecord(t), "--late-dispositions", filepath.Join(t.TempDir(), "missing.json"))
-		if code != 4 || !strings.Contains(out, "could not be read") {
+		code, out, _, calls := lateExecCounted(t, scriptedForge{late: true}, "--restate", lateRecord(t), "--late-dispositions", filepath.Join(t.TempDir(), "missing.json"))
+		if calls != 0 || code != 4 || !strings.Contains(out, "could not be read") {
 			t.Fatal(code, out)
 		}
 	})
@@ -295,14 +309,14 @@ func TestLateDispositionUsage(t *testing.T) {
 		if err := os.WriteFile(path, []byte("not json"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		code, out, _ := lateExec(t, scriptedForge{late: true}, "--restate", lateRecord(t), "--late-dispositions", path)
-		if code != 4 || !strings.Contains(out, "not JSON") {
+		code, out, _, calls := lateExecCounted(t, scriptedForge{late: true}, "--restate", lateRecord(t), "--late-dispositions", path)
+		if calls != 0 || code != 4 || !strings.Contains(out, "not JSON") {
 			t.Fatal(code, out)
 		}
 	})
 	t.Run("a JSON document that is not an object", func(t *testing.T) {
-		code, out, _ := lateExec(t, scriptedForge{late: true}, "--restate", lateRecord(t), "--late-dispositions", lateWrite(t, "dispositions.json", []any{lateEntry("T1", "answered", lateHead)}))
-		if code != 4 || !strings.Contains(out, "JSON object") {
+		code, out, _, calls := lateExecCounted(t, scriptedForge{late: true}, "--restate", lateRecord(t), "--late-dispositions", lateWrite(t, "dispositions.json", []any{lateEntry("T1", "answered", lateHead)}))
+		if calls != 0 || code != 4 || !strings.Contains(out, "JSON object") {
 			t.Fatal(code, out)
 		}
 	})
