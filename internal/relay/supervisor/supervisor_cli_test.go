@@ -33,6 +33,7 @@ func supervisorCLI(t *testing.T, binary, state string, args ...string) (int, map
 	return code, payload
 }
 func Test24_SR_20_RealBinaryUsageExitFour(t *testing.T) {
+	t.Parallel()
 	binary := testsupport.CRW(t)
 	state := filepath.Join(t.TempDir(), "state")
 	reading := filepath.Join(filepath.Dir(state), "reported.json")
@@ -57,6 +58,7 @@ func Test24_SR_20_RealBinaryUsageExitFour(t *testing.T) {
 	}
 }
 func Test24_SR_19_RealBinaryOmissionConverges(t *testing.T) {
+	t.Parallel()
 	binary := testsupport.CRW(t)
 	state := filepath.Join(t.TempDir(), "state")
 	reading := filepath.Join(filepath.Dir(state), "unreported.json")
@@ -71,6 +73,7 @@ func Test24_SR_19_RealBinaryOmissionConverges(t *testing.T) {
 	}
 }
 func Test24_SR_21_DoctorActorReachability(t *testing.T) {
+	t.Parallel()
 	binary := testsupport.CRW(t)
 	state := filepath.Join(t.TempDir(), "absent-state")
 	code, payload := supervisorCLI(t, binary, state, "doctor")

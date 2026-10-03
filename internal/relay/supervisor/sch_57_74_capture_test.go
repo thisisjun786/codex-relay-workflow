@@ -128,6 +128,7 @@ func Test24_SCH_63_LiveArrivalOnly(t *testing.T) {
 }
 
 func Test24_SCH_61_LiveOwedWithoutStaging(t *testing.T) {
+	t.Parallel()
 	supervisorMirror(t, "AParentThatNeverReports.test_a_parent_that_never_stages_or_sends_still_reads_the_report_as_owed", "event", func(c *Channel, s *store.Store) []any {
 		ctx := context.Background()
 		var event string
@@ -186,6 +187,7 @@ func Test24_SCH_61_LiveOwedWithoutStaging(t *testing.T) {
 }
 
 func Test24_SCH_60_LiveOtherStore(t *testing.T) {
+	t.Parallel()
 	supervisorMirror(t, "WhatTheSeventhIndependentReviewFound.test_an_omission_read_against_another_store_is_refused", "setup", func(c *Channel, s *store.Store) []any {
 		reading := map[string]any{"schema": "reporting-observation/1", "reportingState": "unreported", "relationshipId": captureRelationID(t, c), "executionGeneration": float64(1), "reason": "missing", "selectors": map[string]any{"state": filepath.Join(c.StoreDirectory(), "another-store"), "markerRoot": "/tmp/markers", "workspace": "/tmp/work", "assignment": "a", "session": "s", "turn": "turn-1"}}
 		o := ObservationObligation(reading)
@@ -202,6 +204,7 @@ func Test24_SCH_60_LiveOtherStore(t *testing.T) {
 }
 
 func Test24_SCH_59_LiveAlteredObligation(t *testing.T) {
+	t.Parallel()
 	supervisorMirror(t, "WhatTheFifthIndependentReviewFound.test_an_obligation_its_caller_altered_is_refused", "event", func(c *Channel, s *store.Store) []any {
 		ctx := context.Background()
 		var event string

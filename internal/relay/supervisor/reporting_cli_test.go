@@ -50,6 +50,7 @@ func reportingCLIParity(t *testing.T, argv func(string) []string) (int, map[stri
 	return code, value, stderr, created
 }
 func Test24_RCL_2_SelectorRefusals(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		argv func(string) []string

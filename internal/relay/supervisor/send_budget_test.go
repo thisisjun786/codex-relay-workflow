@@ -11,6 +11,7 @@ import (
 // it went to, so the delivery side sees it; another relationship's hour to the same recipient is
 // untouched and the recipient's own gap still holds both.
 func Test259_a_supervisor_send_is_charged_to_its_relationship_and_recipient(t *testing.T) {
+	t.Parallel()
 	f, _, id, sent := delivered24(t)
 	if sent == nil {
 		t.Fatal("the report was not sent")

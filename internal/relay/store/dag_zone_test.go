@@ -145,6 +145,7 @@ func zoneTables(t *testing.T, path string) []string {
 // A store built before the zone existed opens, keeps every row it held value for value, and gains
 // every zone table (D-01: validate the frozen tables, then create the zone).
 func TestDAGZonePreDAGStoreOpensAndKeepsItsRows(t *testing.T) {
+	t.Parallel()
 	path := zonePreDAGStore(t)
 	if got := zoneTables(t, path); len(got) != 0 {
 		t.Fatalf("the fixture already holds zone tables: %v", got)
@@ -182,6 +183,7 @@ func TestDAGZonePreDAGStoreOpensAndKeepsItsRows(t *testing.T) {
 // Missing a table of the frozen v1 schema is still refused, and nothing of the zone is created
 // on the way to the refusal.
 func TestDAGZoneFrozenTableMissingIsStillRefused(t *testing.T) {
+	t.Parallel()
 	path := zonePreDAGStore(t)
 	if _, err := zoneRawDB(t, path).Exec("DROP TABLE attempt_messages"); err != nil {
 		t.Fatal(err)
@@ -197,6 +199,7 @@ func TestDAGZoneFrozenTableMissingIsStillRefused(t *testing.T) {
 
 // The open is idempotent: a second open changes nothing in the catalog.
 func TestDAGZoneOpenIsIdempotent(t *testing.T) {
+	t.Parallel()
 	path := zonePreDAGStore(t)
 	zoneOpenClose(t, path)
 	first := zoneCatalog(t, path, "")
@@ -209,6 +212,7 @@ func TestDAGZoneOpenIsIdempotent(t *testing.T) {
 // Every zone table has exactly the columns the contract names, in order, and the files hold no
 // zone table beyond them.
 func TestDAGZoneInventory(t *testing.T) {
+	t.Parallel()
 	path := zonePreDAGStore(t)
 	zoneOpenClose(t, path)
 	db := zoneRawDB(t, path)
@@ -263,6 +267,7 @@ func zoneObjects(t *testing.T, path string) map[string]string {
 
 // Writing the snapshot is a deliberate act (CRW_GOLDEN=update), reviewed in the diff.
 func TestDAGZoneShippedTextIsFrozen(t *testing.T) {
+	// Serial: with CRW_GOLDEN=update it writes the fixed path testdata/dag_zone_shipped.json.
 	path := zonePreDAGStore(t)
 	zoneOpenClose(t, path)
 	got := zoneObjects(t, path)
@@ -291,6 +296,7 @@ func TestDAGZoneShippedTextIsFrozen(t *testing.T) {
 
 // A store the build created fresh and a pre-zone store the build upgraded read the same zone text.
 func TestDAGZoneFreshEqualsUpgraded(t *testing.T) {
+	t.Parallel()
 	upgraded := zonePreDAGStore(t)
 	zoneOpenClose(t, upgraded)
 	fresh := filepath.Join(t.TempDir(), "relay.sqlite3")
@@ -309,6 +315,7 @@ func TestDAGZoneFreshEqualsUpgraded(t *testing.T) {
 // What a runtime without the zone does at open: validate the frozen tables and run the v1 script. Both
 // still succeed on a store that carries the zone, and neither touches a zone row.
 func TestDAGZoneOlderRuntimeStillOpensAStoreWithTheZone(t *testing.T) {
+	t.Parallel()
 	path := zonePreDAGStore(t)
 	zoneOpenClose(t, path)
 	db := zoneRawDB(t, path)
@@ -348,6 +355,7 @@ func TestDAGZoneOlderRuntimeStillOpensAStoreWithTheZone(t *testing.T) {
 
 // A read-only open creates nothing: a store without the zone stays without it.
 func TestDAGZoneReadOnlyOpenCreatesNothing(t *testing.T) {
+	t.Parallel()
 	path := zonePreDAGStore(t)
 	s, err := OpenReadOnlyStore(context.Background(), path)
 	if err != nil {
@@ -399,6 +407,7 @@ const zoneDigest = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 // The log cannot be rewritten or branched, whoever writes the row: UPDATE and DELETE abort, a revision
 // needs its parent, and revision n has parent n-1.
 func TestDAGZoneRevisionLogIsAppendOnly(t *testing.T) {
+	t.Parallel()
 	db := zoneOpenedDB(t)
 	rev := func(plan string, no, parent int, request string) string {
 		return fmt.Sprintf("INSERT INTO dag_plan_revisions VALUES ('%s',%d,%d,'%s','%s','[]','%s',0,'task-a','2026-10-02T00:00:00Z')", plan, no, parent, request, zoneDigest, zoneDigest)
@@ -422,6 +431,7 @@ func TestDAGZoneRevisionLogIsAppendOnly(t *testing.T) {
 
 // A node or edge row may be retired once and nothing else about it may change; it is never deleted.
 func TestDAGZoneFoldRowsAreRetireOnly(t *testing.T) {
+	t.Parallel()
 	db := zoneOpenedDB(t)
 	zoneMustExec(t, db, "INSERT INTO dag_plans VALUES ('plan-1','PRJ-A','task-a','2026-10-02T00:00:00Z')")
 	for no := 1; no <= 3; no++ {
@@ -448,6 +458,7 @@ func TestDAGZoneFoldRowsAreRetireOnly(t *testing.T) {
 
 // The contract 2.4 rejections hold at the table too, so a bug in a validator cannot store such an edge.
 func TestDAGZoneEdgeIntegrityChecks(t *testing.T) {
+	t.Parallel()
 	db := zoneOpenedDB(t)
 	zoneMustExec(t, db, "INSERT INTO dag_plans VALUES ('plan-1','PRJ-A','task-a','2026-10-02T00:00:00Z')",
 		fmt.Sprintf("INSERT INTO dag_plan_revisions VALUES ('plan-1',1,0,'r1','%s','[]','%s',0,'task-a','2026-10-02T00:00:00Z')", zoneDigest, zoneDigest))
@@ -475,6 +486,7 @@ func TestDAGZoneEdgeIntegrityChecks(t *testing.T) {
 
 // Node ids are plan-local: two plans may use the same ids, and every uniqueness stays inside its plan.
 func TestDAGZoneTwoPlansMayUseTheSameNodeIDs(t *testing.T) {
+	t.Parallel()
 	db := zoneOpenedDB(t)
 	for _, plan := range []string{"plan-1", "plan-2"} {
 		zoneMustExec(t, db,
@@ -495,6 +507,7 @@ func TestDAGZoneTwoPlansMayUseTheSameNodeIDs(t *testing.T) {
 
 // A command that declares itself read-only leaves the schema alone: the zone arrives with the first write.
 func TestDAGZoneReadOnlyCommandDoesNotCreateIt(t *testing.T) {
+	t.Parallel()
 	path := zonePreDAGStore(t)
 	before := zoneCatalog(t, path, "")
 	s, err := Open(WithReadOnlyCommand(context.Background()), path, "")
@@ -519,6 +532,7 @@ func TestDAGZoneReadOnlyCommandDoesNotCreateIt(t *testing.T) {
 var pendingWriters = map[string]string{}
 
 func TestDAGZoneEveryTableHasAQueryOrAPendingWriter(t *testing.T) {
+	t.Parallel()
 	var tables []string
 	for table := range zoneInventory {
 		tables = append(tables, table)
@@ -548,6 +562,7 @@ func TestDAGZoneEveryTableHasAQueryOrAPendingWriter(t *testing.T) {
 // revalidation histories are ordered (one row per sequence number), the closed vocabularies are CHECKs, and each dependent row needs
 // its acceptance (foreign keys are on for every connection).
 func TestDAGZoneSchedulerTablesRefuseBadRows(t *testing.T) {
+	t.Parallel()
 	db := zoneOpenedDB(t)
 	zoneMustExec(t, db, fmt.Sprintf("INSERT INTO dag_acceptances VALUES ('acc-1','plan-1','a','%s','rel-1',1,'evt','%s','%s','verified',NULL,NULL,NULL,NULL,NULL,'host','turn','{}','task-a',1,'2026-10-02T00:00:00Z',NULL,'active')", zoneDigest, zoneDigest, zoneDigest))
 	check := func(id string, seq int, outcome string, round int) string {

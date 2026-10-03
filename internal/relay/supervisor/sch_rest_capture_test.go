@@ -499,6 +499,7 @@ func Test24_SCH_71_Capture(t *testing.T) {
 }
 
 func Test24_SCH_73_OmissionCapture(t *testing.T) {
+	t.Parallel()
 	supervisorMirror(t, "TheStagedRowIsAProposal.test_an_omission_whose_turn_reported_after_staging_is_not_sent", "setup", func(c *Channel, s *store.Store) []any {
 		ctx := context.Background()
 		reading := map[string]any{"schema": "reporting-observation/1", "reportingState": "unreported", "relationshipId": captureRelationID(t, c), "reason": "the turn settled without a report", "selectors": map[string]any{"state": c.StoreDirectory(), "markerRoot": "/marker", "workspace": filepath.Join(filepath.Dir(c.StoreDirectory()), "work"), "assignment": "asg-1", "session": "01child-session", "turn": "turn-dispatch-1"}}
@@ -533,6 +534,7 @@ func Test24_SCH_73_OmissionCapture(t *testing.T) {
 }
 
 func Test24_SCH_73_DischargeCapture(t *testing.T) {
+	t.Parallel()
 	supervisorMirror(t, "TheStagedRowIsAProposal.test_an_obligation_discharged_after_staging_is_not_sent", "event", func(c *Channel, s *store.Store) []any {
 		ctx := context.Background()
 		_, id := stageSet3(t, c, s)
