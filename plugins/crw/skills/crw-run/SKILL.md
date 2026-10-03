@@ -385,9 +385,10 @@ workflow.
 
 Write the first packet in the form of the pair recorded for the issue: the
 [Launch packet](references/task-packet.md#launch-packet) for a Sonnet child and the short
-[SOL packet](references/task-packet.md#sol-packet) for a SOL child. The rule that picks the pair is
-"Child pair by issue type" in [crw-plan's integrations.md](../crw-plan/references/integrations.md), and
-both forms carry the restoration block and restate the workflow on every send.
+[SOL packet](references/task-packet.md#sol-packet) for a SOL child; an issue with no recorded pair keeps the
+Launch packet. The rule that picks the pair is "Child pair by issue type" in
+[crw-plan's integrations.md](../crw-plan/references/integrations.md), and both forms carry the restoration block and
+restate the workflow on every send.
 
 Apply [Child task titles](references/task-packet.md#child-task-titles):
 `ISSUE-ID · descriptive task title` (title text up to 20 characters, including

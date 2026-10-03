@@ -735,24 +735,30 @@ publication keeps the same parts, and its TASK, DELIVERABLE and STOP WHEN name t
 
 ```text
 TASK
-<ISSUE-ID>: <the bounded result>. Deliver exactly one pull request into <integration branch> from <branch>, ready for the
-coordinator to merge.
-Context: <project and coordinator task; where a relay holds the assignment, its state directory and the exact issue identity>.
+<ISSUE-ID>: <the bounded result>. Deliver exactly one pull request into <integration branch> of <owner/name> from <branch>, ready
+for the coordinator to merge.
+Context: <project and coordinator task; the execution mode: relay-managed with its state directory and exact issue identity, or
+  explicitly direct with the reason>.
 Codex task title (not the pull request's title): <ISSUE-ID · short Korean title>
 Workflow: <the effective workflow, restated; for CXC Loop the literal $codexclaw:cxc-loop with $codexclaw:cxc-pabcd and
   $codexclaw:cxc-dev, how LOOP-DOCS-FIRST-01 applies to this issue, and that the first turn writes the activation evidence>
-Model/effort: <the pair the creation call applied and its receipt read back>
+Model/effort: <the pair requested through the creation call; the coordinator reads the receipt back>
 Language: English for everything you write (messages, commits, pull request title, body and replies, handoff and receipt text).
 
 DELIVERABLE
 - <the pull request: non-draft, English title ISSUE-ID: <short English summary>, a non-empty body>
 - <the handoff record and the completion receipt over it, and a final return that states what `Return:` lists: task id, baseline and
-  final head, model and effort as observed, goal ids, per-criterion evidence, remaining defects>
+  final head, model and effort as observed, goal ids, per-criterion evidence, remaining defects, and the resource delta: what you
+  created, changed, retained or started, each with its owner, release condition and next action, and any process with its working
+  directory and whether it still runs>
 - <the criteria, numbered, each the thing the pull request must show>
 
 SCOPE
 - <the edit surfaces, what is out of scope, shared contracts>
-- <baseline commit, worktree, branch, evidence root, prerequisites; the project instructions and source to read first>
+- <the verified repository and the remote name and URL to push to, baseline commit, worktree, branch, evidence root, prerequisites; the
+  project instructions and source to read first>
+- <the permission profile the child was created with, the measured write capability of the checkout and its git metadata, and the
+  fallback where a write is refused>
 - <host values: a short TMPDIR with the socket limit stated, the Go build resources, relay ids, where a finding you leave unfixed is recorded>
 - <the publication scope (push the task branch and open the pull request, or none) and the delivery contract by id: OPS-5.5 and OPS-9 in operations.md>
 
@@ -761,7 +767,7 @@ VERIFY
 - <local runs on the packages the change touches; what hosted CI on the same head stands in for, and what this child does not verify>
 
 STOP WHEN
-- Done: <the pull request is open with its body, every CI job is green on its head, the one-time reviews are finished or
+- Done: <the pull request is open with its body, every required check is green on its head, the one-time reviews are finished or
   skipped, every thread is answered, the receipt is emitted>. Then publish the ready_for_review disposition and end the turn.
 - Blocked: <the size passes the cap, an input mismatch, a question only a person can answer, anything you cannot clear under
   the assignment>. Write the blocked file, emit blocked_needs_input over it and end the turn.
@@ -778,7 +784,8 @@ Each field of [First full assignment required fields](#first-full-assignment-req
 | Workflow, the Loop and non-Loop branches of `Execution:` | TASK `Workflow:` |
 | Issue scope: `Task:`, `Issue/PR mapping:`, `Outcome and scope:` | TASK, and SCOPE for the surfaces and exclusions |
 | Verification boundary: `Verification:` | VERIFY, including the rule that every named command was confirmed at the baseline |
-| Handoff and completion boundary: `Return:`, the delivery contract | DELIVERABLE and STOP WHEN Done |
+| Handoff and completion boundary: `Return:` with its resource delta, the delivery contract | DELIVERABLE and STOP WHEN Done |
+| `Determined execution mode`, `Code target`, the remote and the permission profile of `Authorized execution:` | TASK Context and SCOPE |
 | Publication scope: `Delivery:` and the publication bullet | SCOPE and invariant 4 |
 | Escalation route: the `blocked_needs_input` bullet | STOP WHEN Blocked |
 | Model and effort: `Effective model/effort:` | TASK `Model/effort:` |
@@ -834,7 +841,7 @@ host values filled in.
    no tag, no push to `dev` or `main`"), OPS-9.1 and OPS-9.3 in [Operations contract](operations.md), and the `Execution:` bullet
    on a correction that asks only for the base ([Refresh the base yourself when only the base moved](merge-readiness.md#refresh-the-base-yourself-when-only-the-base-moved)
    says why the coordinator refreshes only the candidate about to merge). The exception for a reported conflict is new here.
-5. **Reviews.** Devin and GitHub Codex each review a pull request once (Codex when it is opened, Devin when it becomes ready for
+5. **Reviews.** Where you open a pull request (with no pull request there is no review to wait for), Devin and GitHub Codex each review it once (Codex when it is opened, Devin when it becomes ready for
    review) and neither is a merge gate; you never request or re-request one. Wait for that one run of each to end before you emit: a
    notice that a review was skipped (no credits, a usage limit) means skipped, and with no signal of any kind 30 minutes after the pull
    request is open and ready you record "review unavailable (no signal)" and go on. A Devin red, a Codex P0 or P1 and any security
@@ -866,7 +873,9 @@ host values filled in.
    the anchor its detail names. Before re-emitting inside the same generation read the current revision (`revision-head` or
    `assignment-show`) and name it with `--supersedes-revision`; the first receipt of a new generation names none; every head gets a
    new handoff file. Any other refusal: stop and report the receipt UNEMITTED with the exact refusal. If the issue
-   lookup names a different owner, report that conflict and write nothing into that relationship. Before acting on an assignment,
+   lookup finds no assignment, or is refused `store_absent`, preserve the artifact and report the receipt UNEMITTED with that exact result, your
+   task id, the issue identity and the state directory, and do not guess a relationship id; if it names a different owner, report that
+   conflict and write nothing into that relationship. Before acting on an assignment,
    a correction or a resume that comes as a typed relay packet (SCOPE says when the assignment is a plain prompt that carries none), check it
    with `packet-check`, with your own `--observation` when the packet names an artifact, and act only on an accepted answer whose `act` is
    true; once you have acted, record it with `--applied`. Never message or steer the parent: the relay is the only route.
@@ -932,19 +941,20 @@ As a SOL packet:
 ```text
 TASK
 CRW-243: make the test seed's RecordRelationship refuse a bound generation that has no dispatch turn id, as the store method it
-replaced did. Deliver exactly one pull request into dev from codex/crw-243-storeseed-dispatch-turn, ready for the coordinator to merge.
-Context: the project that tracks the deferred test and documentation defects of the Go port; coordinator task <task id>; relay state
-<state directory>, issue identity CRW-243.
+replaced did. Deliver exactly one pull request into dev of thisisjun786/codex-relay-workflow from codex/crw-243-storeseed-dispatch-turn, ready for the
+coordinator to merge.
+Context: the project that tracks the deferred test and documentation defects of the Go port; coordinator task <task id>; relay-managed,
+state <state directory>, issue identity CRW-243.
 Codex task title (not the pull request's title): CRW-243 · 시드의 결속 세대 거부 복원
 Workflow: $codexclaw:cxc-loop with $codexclaw:cxc-pabcd and $codexclaw:cxc-dev, your own session binding, goal and goalplan. This is a
 single-cycle issue, so it skips the docs-only first cycle. Your first turn writes the activation evidence.
-Model/effort: <the pair the creation call applied>.
+Model/effort: <the pair requested through the creation call>.
 Language: English for everything you write.
 
 DELIVERABLE
 - One non-draft pull request into dev titled "CRW-243: <short English summary>", with a non-empty body: the behavior, evidence per
   criterion, the commands run with results, the size, what is out of scope.
-- The handoff record and the completion receipt over it (invariant 6).
+- The handoff record and the completion receipt over it (invariant 6), and a final return with the resource delta.
 - Criteria: (1) new tests show the seed refuses and accepts; the body says they fail when the refusal is removed. (2) `make test` passes
   in CI and no golden changes (`CRW_GOLDEN=update`, then `git status` is clean). (3) `gofmt`, `go vet` (default and `GOOS=darwin`), `make lint`
   and `git diff --check` pass. (4) Every CI job is green on the head and Devin has no red or security finding.
@@ -953,7 +963,8 @@ SCOPE
 - Edit `internal/testsupport/storeseed` (the refusal and its tests) and any existing test the refusal now stops: change that test to
   start from a state the product writes, never loosen the seed to fit it. Check the original method with `git show 95019bd0^:internal/relay/store/`
   and whether it guarded anything else. Out of scope: product code and `docs/port/refactor-backlog.md`.
-- Baseline <commit>; worktree <path> (already created); evidence root <path>; prerequisites none.
+- Remote <name and URL>; baseline <commit>; worktree <path> (already created); evidence root <path>; prerequisites none.
+- Permission profile <values>; write capability of the checkout and its git metadata <measured>; fallback <where a write is refused>.
 - Host values: `TMPDIR=<short path>` (a Unix socket path stays under 108 bytes on Linux and 104 on macOS, and a test adds its own
   names); Go build resources <shared cache, `GOFLAGS=-p=4`, memory scope and floor>; a finding you leave unfixed is listed in the handoff for the backlog.
 - Publication: push the task branch and open the pull request; the coordinator merges. Delivery contract: OPS-5.5 and OPS-9 in crw-run's
@@ -965,8 +976,8 @@ VERIFY
 - Hosted CI on the same head stands in for `make test`; you run the packages you changed, with `-count=1`, not the whole suite.
 
 STOP WHEN
-- Done: the pull request is open with its body, every CI job is green on its head, the one-time reviews are finished or skipped,
-  every thread is answered and the receipt is emitted. Then publish ready_for_review and end the turn.
+- Done: the pull request is open with its body, every required check is green on its head (`dev-gate`, which needs every job), the
+  one-time reviews are finished or skipped, every thread is answered and the receipt is emitted. Then publish ready_for_review and end the turn.
 - Blocked: the size passes about 1,035 lines, an input mismatch, or anything you cannot clear under this assignment. Write the
   blocked file, emit blocked_needs_input and end the turn.
 - Do not stop to ask for permission or at a partial fix. No refactor or feature the TASK did not ask for. After three failed attempts at
