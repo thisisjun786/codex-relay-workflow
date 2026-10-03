@@ -1,12 +1,8 @@
 package dagsched
 
 import (
-	"bytes"
 	"database/sql"
-	"encoding/json"
-	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -14,68 +10,38 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
-// crw runs the built binary as an operator would, one process per command: crw relay --state <state> <args>.
-func crw(t testing.TB, state string, args ...string) (string, int) {
-	t.Helper()
-	cmd := exec.Command(testsupport.CRW(t), append([]string{"relay", "--state", state}, args...)...)
-	var out, errs bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &errs
-	err := cmd.Run()
-	code := 0
-	if err != nil {
-		var exit *exec.ExitError
-		if !errors.As(err, &exit) {
-			t.Fatal(err)
-		}
-		code = exit.ExitCode()
-	}
-	return out.String(), code
-}
+// The helpers this package's tests share with dag's live in internal/testsupport; these are the names the tests use. crw runs the built
+// binary as an operator would, one process per command: crw relay --state <state> <args>.
+var (
+	crw       = testsupport.Relay
+	parseOut  = testsupport.ParseJSON
+	catalogOf = testsupport.SQLiteCatalog
+)
 
-func parseOut(t testing.TB, out string) map[string]any {
+// closedState is a store under a fresh state directory that seed fills, closed so the binary is the only user. The state builders of the CLI
+// tests (cliState, epochCLIState, summaryState, policyCLIState) differ only in what they seed.
+func closedState(t *testing.T, seed func(f *fixture)) string {
 	t.Helper()
-	var m map[string]any
-	if err := json.Unmarshal([]byte(out), &m); err != nil {
-		t.Fatalf("output is not JSON: %v\n%s", err, out)
+	state := filepath.Join(t.TempDir(), "state")
+	f := newFixtureAt(t, filepath.Join(state, "relay.sqlite3"))
+	seed(f)
+	if err := f.s.Close(); err != nil {
+		t.Fatal(err)
 	}
-	return m
+	return state
 }
 
 // cliState builds a store under a state directory with the fork/join plan and its first two nodes accepted, then closes it so the binary is the only user.
 func cliState(t *testing.T) (state string, f *fixture) {
 	t.Helper()
-	state = filepath.Join(t.TempDir(), "state")
-	f = newFixtureAt(t, filepath.Join(state, "relay.sqlite3"))
-	forkJoinPlan(f, "p1")
-	f.projectParent()
-	f.acceptNode("p1", "research", acceptOpts{})
-	if err := f.s.Close(); err != nil {
-		t.Fatal(err)
-	}
+	state = closedState(t, func(fx *fixture) {
+		t.Helper()
+		f = fx
+		forkJoinPlan(f, "p1")
+		f.projectParent()
+		f.acceptNode("p1", "research", acceptOpts{})
+	})
 	return state, f
-}
-
-func catalogOf(t testing.TB, path string) map[string]string {
-	t.Helper()
-	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	rows, err := db.Query("SELECT type || ' ' || name, COALESCE(sql, '') FROM sqlite_master")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	out := map[string]string{}
-	for rows.Next() {
-		var k, v string
-		if err := rows.Scan(&k, &v); err != nil {
-			t.Fatal(err)
-		}
-		out[k] = v
-	}
-	return out
 }
 
 func passCount(t testing.TB, state string) int {

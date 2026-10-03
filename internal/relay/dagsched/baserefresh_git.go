@@ -157,7 +157,7 @@ func openRefreshRepo(ctx context.Context, checkout string) (*refreshRepo, error)
 		return nil, err
 	}
 	if format = strings.TrimSpace(format); format != "sha1" && format != "sha256" {
-		return nil, fmt.Errorf("git answered %q to --show-object-format, which is not an object format this proof knows", refreshFirstLine(format))
+		return nil, fmt.Errorf("git answered %q to --show-object-format, which is not an object format this proof knows", firstLine(format))
 	}
 	dir, err := os.MkdirTemp("", "dag-base-refresh-")
 	if err != nil {
@@ -210,7 +210,7 @@ func (g *refreshRepo) parents(ctx context.Context, commit string) ([]string, err
 	}
 	fields := strings.Fields(out)
 	if len(fields) == 0 || fields[0] != commit {
-		return nil, fmt.Errorf("git rev-list answered %q for %s", refreshFirstLine(out), commit)
+		return nil, fmt.Errorf("git rev-list answered %q for %s", firstLine(out), commit)
 	}
 	return fields[1:], nil
 }
@@ -236,7 +236,7 @@ func (g *refreshRepo) treeOf(ctx context.Context, commit string) (string, error)
 	}
 	id := strings.TrimSpace(out)
 	if !refreshCommitPattern.MatchString(id) {
-		return "", fmt.Errorf("git answered %q for the tree of %s", refreshFirstLine(out), commit)
+		return "", fmt.Errorf("git answered %q for the tree of %s", firstLine(out), commit)
 	}
 	return id, nil
 }
@@ -250,7 +250,7 @@ func (g *refreshRepo) mergeTree(ctx context.Context, first, second string) (stri
 	}
 	records := strings.Split(out, "\x00")
 	if len(records) == 0 || !refreshCommitPattern.MatchString(records[0]) {
-		return "", nil, fmt.Errorf("git merge-tree answered %q for %s and %s, which is not a merge result", refreshFirstLine(out), first, second)
+		return "", nil, fmt.Errorf("git merge-tree answered %q for %s and %s, which is not a merge result", firstLine(out), first, second)
 	}
 	if code == 0 {
 		return records[0], nil, nil
@@ -491,14 +491,6 @@ func proveBaseRefresh(ctx context.Context, g *refreshRepo, accepted, head, baseT
 		steps[i], steps[j] = steps[j], steps[i]
 	}
 	return &refreshProof{Steps: steps}, nil, nil
-}
-
-// refreshFirstLine is the text up to the first line break or NUL.
-func refreshFirstLine(s string) string {
-	if i := strings.IndexAny(s, "\n\x00"); i >= 0 {
-		return s[:i]
-	}
-	return s
 }
 
 // markerWidth is the width of the conflict markers git writes for a path: the conflict-marker-size attribute committed in the commit the merge takes its attributes from, seven when there is none or it is

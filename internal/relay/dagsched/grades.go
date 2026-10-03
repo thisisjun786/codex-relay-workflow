@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 )
 
 // The grades of an edit region and the rules a release is judged by (CRW-409). The grade says how an overlap on a place is settled when two nodes edit it in parallel; the judgement
@@ -91,7 +92,7 @@ func validRule(rule string) bool {
 		return true
 	}
 	command, ok := strings.CutPrefix(rule, RuleRegeneratePref)
-	return ok && command != "" && command == strings.TrimSpace(command) && !hasControl(command)
+	return ok && command != "" && command == strings.TrimSpace(command) && !dag.HasControl(command)
 }
 
 // checkGrade validates a declared grade and rule: the grade is one of the four (empty is independent), a mechanical grade names a valid rule and no other grade names one.

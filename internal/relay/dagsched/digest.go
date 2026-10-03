@@ -1,8 +1,6 @@
 package dagsched
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"sort"
 
@@ -47,29 +45,14 @@ func AcceptanceDigest(a Acceptance) string {
 	if a.PRNumber > 0 {
 		m["pr_number"] = a.PRNumber
 	}
-	return digestOf(m)
-}
-
-func digestOf(v any) string {
-	h := sha256.Sum256([]byte(dag.Canonical(v)))
-	return hex.EncodeToString(h[:])
-}
-
-// CheckRow is one check of an EvidenceBody.
-type CheckRow struct {
-	Name, RunID, HeadSHA, Conclusion string
-	// Provider is part of the evidence only when the forge named one, so a body without providers digests as it always did.
-	Provider string
-	// Stamp is part of the evidence only when the forge gave one, like Provider.
-	Stamp   string
-	Attempt int64
+	return dag.Digest(m)
 }
 
 // EvidenceBody is the one serialization of what the relay observed of a pull request: the checks of the exact head, the
 // required list and the review digest. Its digest is the acceptance's evidence_digest and a merge check's checks_digest, and
 // the body itself is a merge check's evidence_json, so the digest can be recomputed from the row (B-13).
 type EvidenceBody struct {
-	Checks       []CheckRow
+	Checks       []Check
 	Required     []string
 	ReviewDigest string
 }
@@ -81,7 +64,7 @@ func EvidenceBodyOf(pr PullRequest) EvidenceBody {
 	b := EvidenceBody{Required: append([]string(nil), pr.RequiredDeclared...), ReviewDigest: pr.ReviewDigest}
 	for _, c := range pr.Checks {
 		if c.HeadSHA == pr.HeadSHA {
-			b.Checks = append(b.Checks, CheckRow{Name: c.Name, RunID: c.RunID, HeadSHA: c.HeadSHA, Conclusion: c.Conclusion, Provider: c.Provider, Stamp: c.Stamp, Attempt: c.Attempt})
+			b.Checks = append(b.Checks, c)
 		}
 	}
 	return b
@@ -89,7 +72,7 @@ func EvidenceBodyOf(pr PullRequest) EvidenceBody {
 
 // object is the canonical form: checks sorted by name, run id and attempt, required sorted.
 func (b EvidenceBody) object() map[string]any {
-	checks := append([]CheckRow(nil), b.Checks...)
+	checks := append([]Check(nil), b.Checks...)
 	sort.Slice(checks, func(i, j int) bool {
 		if checks[i].Name != checks[j].Name {
 			return checks[i].Name < checks[j].Name
@@ -123,54 +106,43 @@ func (b EvidenceBody) object() map[string]any {
 func (b EvidenceBody) JSON() string { return dag.Canonical(b.object()) }
 
 // EvidenceDigest is the sha256 of the canonical body.
-func EvidenceDigest(b EvidenceBody) string { return digestOf(b.object()) }
+func EvidenceDigest(b EvidenceBody) string { return dag.Digest(b.object()) }
 
-// RecomputeEvidenceDigest parses a stored evidence_json and digests it again, so a row whose digest or body was altered is found.
-func RecomputeEvidenceDigest(evidenceJSON string) (string, error) {
+// wireCheck is a check as a stored evidence body spells it, its fields in the order of Check so that one converts to the other.
+type wireCheck struct {
+	RunID      string `json:"run_id"`
+	Name       string `json:"name"`
+	HeadSHA    string `json:"head_sha"`
+	Conclusion string `json:"conclusion"`
+	Provider   string `json:"provider"`
+	Stamp      string `json:"stamp"`
+	Attempt    int64  `json:"attempt"`
+}
+
+// parseEvidence reads a stored evidence_json back into the body it was written from.
+func parseEvidence(evidenceJSON string) (EvidenceBody, error) {
 	var wire struct {
-		Checks []struct {
-			Name       string `json:"name"`
-			RunID      string `json:"run_id"`
-			HeadSHA    string `json:"head_sha"`
-			Conclusion string `json:"conclusion"`
-			Provider   string `json:"provider"`
-			Stamp      string `json:"stamp"`
-			Attempt    int64  `json:"attempt"`
-		} `json:"checks"`
-		Required     []string `json:"required"`
-		ReviewDigest string   `json:"review_digest"`
+		Checks       []wireCheck `json:"checks"`
+		Required     []string    `json:"required"`
+		ReviewDigest string      `json:"review_digest"`
 	}
 	if err := json.Unmarshal([]byte(evidenceJSON), &wire); err != nil {
-		return "", err
+		return EvidenceBody{}, err
 	}
 	b := EvidenceBody{Required: wire.Required, ReviewDigest: wire.ReviewDigest}
 	for _, c := range wire.Checks {
-		b.Checks = append(b.Checks, CheckRow{Name: c.Name, RunID: c.RunID, HeadSHA: c.HeadSHA, Conclusion: c.Conclusion, Provider: c.Provider, Stamp: c.Stamp, Attempt: c.Attempt})
+		b.Checks = append(b.Checks, Check(c))
 	}
-	return EvidenceDigest(b), nil
+	return b, nil
 }
 
-// parseEvidenceChecks reads the checks of a stored evidence body.
-func parseEvidenceChecks(evidenceJSON string) ([]CheckRow, error) {
-	var wire struct {
-		Checks []struct {
-			Name       string `json:"name"`
-			RunID      string `json:"run_id"`
-			HeadSHA    string `json:"head_sha"`
-			Conclusion string `json:"conclusion"`
-			Provider   string `json:"provider"`
-			Stamp      string `json:"stamp"`
-			Attempt    int64  `json:"attempt"`
-		} `json:"checks"`
+// RecomputeEvidenceDigest parses a stored evidence_json and digests it again, so a row whose digest or body was altered is found.
+func RecomputeEvidenceDigest(evidenceJSON string) (string, error) {
+	b, err := parseEvidence(evidenceJSON)
+	if err != nil {
+		return "", err
 	}
-	if err := json.Unmarshal([]byte(evidenceJSON), &wire); err != nil {
-		return nil, err
-	}
-	rows := make([]CheckRow, 0, len(wire.Checks))
-	for _, c := range wire.Checks {
-		rows = append(rows, CheckRow{Name: c.Name, RunID: c.RunID, HeadSHA: c.HeadSHA, Conclusion: c.Conclusion, Provider: c.Provider, Stamp: c.Stamp, Attempt: c.Attempt})
-	}
-	return rows, nil
+	return EvidenceDigest(b), nil
 }
 
 // ReleaseRequestID is the managed-start request id of one release: derived from the plan, the node and its manifest digest only
@@ -178,6 +150,8 @@ func parseEvidenceChecks(evidenceJSON string) ([]CheckRow, error) {
 // that release a node of the same name over the same inputs are two releases), within the engine's 128 characters. It carries no
 // attempt counter: a replay is the same request.
 func ReleaseRequestID(planID, nodeID, manifestDigest string) string {
-	h := sha256.Sum256([]byte(dag.Canonical([]any{planID, nodeID, manifestDigest})))
-	return "dag-" + hex.EncodeToString(h[:])[:40]
+	return requestID(planID, nodeID, manifestDigest)
 }
+
+// requestID is a managed-start request id: "dag-" and the first 40 hex digits of the digest of the canonical array of the parts that identify the request, within the engine's 128 characters.
+func requestID(parts ...any) string { return "dag-" + dag.Digest(parts)[:40] }

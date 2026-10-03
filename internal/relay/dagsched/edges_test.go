@@ -162,7 +162,7 @@ func TestEdgeArtifactVerified(t *testing.T) {
 // mergeCheck appends the relay's observation of the accepted pull request: its head and the evidence it was judged on.
 func (f *fixture) mergeCheck(a accepted, observedHead string, eligible bool) {
 	f.t.Helper()
-	body := EvidenceBody{Checks: []CheckRow{{Name: "test", RunID: "1", HeadSHA: observedHead, Conclusion: "success", Attempt: 1}}, Required: []string{"test"}, ReviewDigest: dig("review")}
+	body := EvidenceBody{Checks: []Check{{Name: "test", RunID: "1", HeadSHA: observedHead, Conclusion: "success", Attempt: 1}}, Required: []string{"test"}, ReviewDigest: dig("review")}
 	seq := f.count("SELECT COALESCE(MAX(check_seq), 0) + 1 FROM dag_merge_checks WHERE acceptance_id = ?", a.Acceptance.AcceptanceID)
 	f.exec("INSERT INTO dag_merge_checks (check_id, acceptance_id, check_seq, head_sha, observed_head_sha, base_tip_sha, checks_digest, evidence_json, failed_required_json, round_no, outcome, reason, recorded_at)"+
 		" VALUES (?, ?, ?, ?, ?, 'tip', ?, ?, '[]', 1, 'eligible', 'test', 't')",

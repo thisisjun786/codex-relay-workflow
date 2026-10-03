@@ -4,35 +4,11 @@ import (
 	"context"
 	"fmt"
 	"math/big"
-	"os/exec"
 	"strings"
-	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 )
-
-// ExecRunner is the forge process runner of production: it runs the argv it is given and reports the exit code and both streams. It is the one cli.forgeRunner is, copied so
-// this package does not import package cli.
-func ExecRunner(ctx context.Context) evidence.Runner {
-	return func(argv []string, timeout time.Duration) (int, string, string, error) {
-		runCtx, cancel := context.WithTimeout(ctx, timeout)
-		defer cancel()
-		cmd := exec.CommandContext(runCtx, argv[0], argv[1:]...)
-		var stdout, stderr strings.Builder
-		cmd.Stdout, cmd.Stderr = &stdout, &stderr
-		err := cmd.Run()
-		if runCtx.Err() != nil {
-			return 0, "", "", runCtx.Err()
-		}
-		if err == nil {
-			return 0, stdout.String(), stderr.String(), nil
-		}
-		if exit, ok := err.(*exec.ExitError); ok {
-			return exit.ExitCode(), stdout.String(), stderr.String(), nil
-		}
-		return 0, stdout.String(), stderr.String(), err
-	}
-}
 
 // ForgePullRequestReader reads a pull request the way merge-evidence does (evidence.Collect over the runner newRunner makes) and projects the snapshot. The collector
 // reports unreadable, truncated or moved evidence as snapshot problems with a nil error, so the caller classifies the answer by its Verdict (ClassifyPullRequest).
@@ -115,7 +91,7 @@ func projectSnapshot(snapshot map[string]any, repository string, number int64) P
 	}
 	var rows []any
 	for _, c := range pr.Checks {
-		rows = append(rows, map[string]any{"runId": c.RunID, "name": c.Name, "headSha": c.HeadSHA, "conclusion": c.Conclusion, "attempt": c.Attempt, "provider": optionalProvider(c.Provider)})
+		rows = append(rows, map[string]any{"runId": c.RunID, "name": c.Name, "headSha": c.HeadSHA, "conclusion": c.Conclusion, "attempt": c.Attempt, "provider": optionalText(c.Provider)})
 	}
 	for _, p := range evidence.ChecksProblemsWith(pr.HeadSHA, required, rows, true, pr.RequiredProviders) {
 		pr.CheckProblems = append(pr.CheckProblems, p.Code+": "+p.Detail)
@@ -131,7 +107,7 @@ func reviewDigest(findings any) (digest string) {
 			digest = ""
 		}
 	}()
-	return digestOf(findings)
+	return dag.Digest(findings)
 }
 
 // ClassifyPullRequest is the fail-closed rule every consumer of a snapshot applies (010): a verdict of unknown means the evidence was unreadable, truncated or unstable and is
@@ -190,12 +166,4 @@ func verdictBesideMerge(problems []Problem, verdict string) string {
 		return verdict
 	}
 	return evidence.VerdictOf(rest)
-}
-
-// optionalProvider is a check's provider as the collector gives it: absent is nil, not an empty text.
-func optionalProvider(p string) any {
-	if p == "" {
-		return nil
-	}
-	return p
 }
