@@ -332,25 +332,6 @@ func TestCloseRemovalDoesNotBlockOnAFifo(t *testing.T) {
 	}
 }
 
-// abandonWith is abandon for a release request the test supplies.
-func (k *releaseKit) abandonWith(plan, node string, req ReleaseRequest) (digest, request string) {
-	k.t.Helper()
-	real := k.sched.Start
-	k.sched.Start = func(context.Context, []byte) (StartAnswer, error) { return StartAnswer{}, context.DeadlineExceeded }
-	_, err := k.sched.Release(context.Background(), plan, node, "parent", req)
-	k.sched.Start = real
-	if err == nil {
-		k.t.Fatal("the start was expected to fail")
-	}
-	row, found, lerr := latestRelease(context.Background(), k.s.Q(context.Background()), plan, node)
-	if lerr != nil || !found {
-		k.t.Fatalf("no open intent after the failed start: %v %v", found, lerr)
-	}
-	n, _ := nodeOf(k.snapshot(plan), node)
-	k.managedRow(row.Request, n.IssueKey, "released", "")
-	return row.Digest, row.Request
-}
-
 // c1: the path of a copy is read from the line the relay wrote at the head of the prompt, never from the operator's instructions: a manifest that travelled inline names no copy, whatever the instructions say.
 func TestCloseNeverDeletesAFileOnlyTheInstructionsName(t *testing.T) {
 	k := newReleaseKit(t)

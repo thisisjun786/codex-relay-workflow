@@ -102,3 +102,28 @@ func NonEmpty(tables map[string][]map[string]any) map[string][]map[string]any {
 	maps.DeleteFunc(tables, func(_ string, rows []map[string]any) bool { return len(rows) == 0 })
 	return tables
 }
+
+// SQLiteCatalog is the schema of the store at path, read through a read-only connection: each object of
+// sqlite_master as "type name", mapped to the SQL that created it ("" for an object without any).
+func SQLiteCatalog(t testing.TB, path string) map[string]string {
+	t.Helper()
+	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	rows, err := db.Query("SELECT type || ' ' || name, COALESCE(sql, '') FROM sqlite_master")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			t.Fatal(err)
+		}
+		out[k] = v
+	}
+	return out
+}

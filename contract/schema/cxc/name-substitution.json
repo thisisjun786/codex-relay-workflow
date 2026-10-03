@@ -800,6 +800,11 @@
       "treatment": "renamed; folder renamed to crw-dev"
     },
     {
+      "cxc": "cxc-dev-architecture",
+      "crw": "crw-dev-architecture",
+      "treatment": "renamed; folder renamed to crw-dev-architecture"
+    },
+    {
       "cxc": "cxc-dev-backend",
       "crw": "crw-dev-backend",
       "treatment": "renamed; folder renamed to crw-dev-backend"
@@ -815,6 +820,11 @@
       "treatment": "renamed; folder renamed to crw-dev-data"
     },
     {
+      "cxc": "cxc-dev-debugging",
+      "crw": "crw-dev-debugging",
+      "treatment": "renamed; folder renamed to crw-dev-debugging"
+    },
+    {
       "cxc": "cxc-dev-devops",
       "crw": "crw-dev-devops",
       "treatment": "renamed; folder renamed to crw-dev-devops"
@@ -825,19 +835,24 @@
       "treatment": "renamed; folder renamed to crw-dev-frontend"
     },
     {
-      "cxc": "cxc-dev-pabcd",
-      "crw": "crw-dev-pabcd",
-      "treatment": "renamed; folder renamed to crw-dev-pabcd"
-    },
-    {
       "cxc": "cxc-dev-scaffolding",
       "crw": "crw-dev-scaffolding",
       "treatment": "renamed; folder renamed to crw-dev-scaffolding"
     },
     {
+      "cxc": "cxc-dev-security",
+      "crw": "crw-dev-security",
+      "treatment": "renamed; folder renamed to crw-dev-security"
+    },
+    {
       "cxc": "cxc-dev-testing",
       "crw": "crw-dev-testing",
       "treatment": "renamed; folder renamed to crw-dev-testing"
+    },
+    {
+      "cxc": "cxc-dev-uiux-design",
+      "crw": "crw-dev-uiux-design",
+      "treatment": "renamed; folder renamed to crw-dev-uiux-design"
     },
     {
       "cxc": "cxc-dev-visualizer",
