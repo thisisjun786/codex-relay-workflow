@@ -63,7 +63,8 @@ func readFlagValue(argv []string, name string) *string {
 	for i, a := range argv {
 		if a == name {
 			if i+1 < len(argv) {
-				return &argv[i+1]
+				value := argv[i+1]
+				return &value
 			}
 			return nil
 		}
@@ -164,7 +165,8 @@ func ParseOrchestrateCliArgs(argv []string, cwd string) OrchestrateCliParsed {
 		next := func() *string {
 			i++
 			if i < len(argv) {
-				return &argv[i]
+				value := argv[i]
+				return &value
 			}
 			return nil
 		}

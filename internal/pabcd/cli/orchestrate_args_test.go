@@ -247,3 +247,14 @@ func TestOrchestrateInheritedVerbText(t *testing.T) {
 		}
 	}
 }
+
+func TestOrchestrateSessionValueIsIndependentOfArgv(t *testing.T) {
+	for _, verb := range []string{"status", "unknown"} {
+		argv := []string{verb, "--session", "before"}
+		r := observed(ParseOrchestrateCliArgs(argv, "/ws"))
+		argv[2] = "after"
+		if r.Session == nil || *r.Session != "before" {
+			t.Fatalf("%s: session aliases argv", verb)
+		}
+	}
+}
