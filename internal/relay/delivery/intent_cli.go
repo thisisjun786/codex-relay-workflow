@@ -13,6 +13,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -494,7 +495,7 @@ func declUnchangedAnswer(path string) Obj {
 
 func declConflictAnswer(path string, existing Obj) Obj {
 	return Obj{{Key: "recorded", Value: false}, {Key: "state", Value: Conflict}, {Key: "reason", Value: "store_disagrees"}, {Key: "store", Value: path},
-		{Key: "detail", Value: "this store already holds a different record for it, and the first one stands, as it does in the marker: " + pyReprValue(existing)}}
+		{Key: "detail", Value: "this store already holds a different record for it, and the first one stands, as it does in the marker: " + quote.Value(existing)}}
 }
 
 func nullString(v any) sql.NullString {

@@ -14,6 +14,7 @@ import (
 )
 
 func Test28LifecycleNumericSQLiteParity(t *testing.T) {
+	t.Parallel()
 	raw := []string{"9223372036854775808", "-9223372036854775809", "1e300", "NaN", "Infinity", "-Infinity", "true", "false", "7", "1.5"}
 	values := []any{json.Number(raw[0]), json.Number(raw[1]), json.Number(raw[2]), math.NaN(), math.Inf(1), math.Inf(-1), true, false, json.Number(raw[8]), json.Number(raw[9])}
 	for i, value := range values {

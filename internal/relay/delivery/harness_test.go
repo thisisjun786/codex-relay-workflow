@@ -96,7 +96,16 @@ type fixture struct {
 	skipTables []string
 }
 
-// newFixture shares tree with a Python run when tree is non-empty; the Go store lives beside it.
+// newFixture builds the fixture in tree (a fresh temporary directory when tree is empty; the Go
+// store lives in its gostate directory).
+//
+// It sets no environment variable, changes no directory and writes nowhere but tree, so a test
+// built on it alone may call t.Parallel (t.Setenv refuses a parallel test). Where a path below
+// the process's state home (XDG_STATE_HOME) belongs in a golden, the test names it from tree, as
+// hl.sweeper does for the host record. A test that sets the environment, changes directory,
+// replaces a package-level seam, uses a fixed path (parityTree, lockCaptureTree) or depends on a
+// wall-clock budget or deadline stays serial: Go runs the top-level tests that call t.Parallel
+// only after every serial one has finished, so a serial test never overlaps a parallel one.
 func newFixture(t *testing.T, tree string) *fixture {
 	t.Helper()
 	if tree == "" {
@@ -106,7 +115,6 @@ func newFixture(t *testing.T, tree string) *fixture {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("XDG_STATE_HOME", filepath.Join(tree, "xdg-state"))
 	ctx := context.Background()
 	s, err := store.Open(ctx, filepath.Join(tree, "gostate", "relay.sqlite3"), "")
 	if err != nil {

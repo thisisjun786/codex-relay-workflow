@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -254,7 +253,7 @@ func judgeHead(revisions []revision, anchors map[string][]string) Obj {
 func Currency(ctx context.Context, s *store.Store, relationship, event Row) (Obj, error) {
 	rid := event.S("relationship_id")
 	if relationship.S("status") != "active" || truthy(relationship.Opt("superseded_by")) {
-		return Obj{{Key: "current", Value: false}, {Key: "reason", Value: RelationshipNotActive}, {Key: "evidence", Value: nil}, {Key: "headEventId", Value: nil}, {Key: "headRevisionHash", Value: nil}, {Key: "detail", Value: fmt.Sprintf("relationship %s is %s", pyvalue.StrRepr(rid), pyvalue.StrRepr(relationship.S("status")))}}, nil
+		return Obj{{Key: "current", Value: false}, {Key: "reason", Value: RelationshipNotActive}, {Key: "evidence", Value: nil}, {Key: "headEventId", Value: nil}, {Key: "headRevisionHash", Value: nil}, {Key: "detail", Value: fmt.Sprintf("relationship %q is %q", rid, relationship.S("status"))}}, nil
 	}
 	generation := relationship.I("execution_generation")
 	if event.I("execution_generation") != generation {

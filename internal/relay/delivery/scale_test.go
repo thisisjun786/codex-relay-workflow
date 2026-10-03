@@ -169,6 +169,7 @@ func (w *scaleWorld) sentOrder() []string {
 // CRW-259 c1: twenty children each produce three events within one hour, sixty deliveries to
 // one parent. Before the redesign the parent's twelve sends an hour held every later one.
 func TestScale_one_parent_receives_every_delivery_of_twenty_children(t *testing.T) {
+	t.Parallel()
 	const children, perChild = 20, 3
 	w := newScaleWorld(t, children)
 	holds := 0
@@ -193,6 +194,7 @@ func TestScale_one_parent_receives_every_delivery_of_twenty_children(t *testing.
 // CRW-259 c2: the cap stays a fence. One relationship that produces far more deliveries than any
 // real child does in a short time is limited, with or without other relationships beside it.
 func TestScale_a_runaway_relationship_is_still_limited(t *testing.T) {
+	t.Parallel()
 	const runaway = 60
 	t.Run("alone", func(t *testing.T) {
 		w := newScaleWorld(t, 1)
@@ -246,6 +248,7 @@ func TestScale_a_runaway_relationship_is_still_limited(t *testing.T) {
 // first tick on or after the end of the oldest delivery's backoff, which is at most BusyMax away; the
 // others follow one a tick, in creation order.
 func TestScale_a_busy_backlog_drains_in_creation_order(t *testing.T) {
+	t.Parallel()
 	const backlog = 10
 	w := newScaleWorld(t, backlog)
 	w.f.host.threads[scaleParent].status = "active"
@@ -282,6 +285,7 @@ func TestScale_a_busy_backlog_drains_in_creation_order(t *testing.T) {
 // A delivery goes out in the order its event was created, not the order it was queued in: a
 // delivery refused at enqueue and queued again later keeps its place.
 func TestScale_deliveries_keep_event_creation_order_not_queueing_order(t *testing.T) {
+	t.Parallel()
 	w := newScaleWorld(t, 3)
 	var events []string
 	for i := 0; i < 3; i++ {
@@ -303,6 +307,7 @@ func TestScale_deliveries_keep_event_creation_order_not_queueing_order(t *testin
 // A request to a child is a different recipient from the parent's backlog: a busy parent does not
 // hold it back, and the parent's own backlog drains once the parent is free.
 func TestScale_a_busy_parent_does_not_hold_back_a_request_to_a_child(t *testing.T) {
+	t.Parallel()
 	w := newScaleWorld(t, 4)
 	w.f.host.threads[scaleParent].status = "active"
 	var backlog []string
@@ -332,6 +337,7 @@ func TestScale_a_busy_parent_does_not_hold_back_a_request_to_a_child(t *testing.
 // and no more: the idle parent behind them is reached within ceil(recipients / share) ticks, and
 // keeps being reached.
 func TestScale_busy_recipients_do_not_keep_an_idle_one_waiting(t *testing.T) {
+	t.Parallel()
 	w := newScaleWorld(t, 6)
 	for i := 0; i < 5; i++ {
 		w.f.host.threads[w.rels[i].child].status = "active"
@@ -362,6 +368,7 @@ func TestScale_busy_recipients_do_not_keep_an_idle_one_waiting(t *testing.T) {
 // parent as a recipient) keeps its state and holds nothing: the deliveries behind it, to the same
 // recipient, go out within ceil((refused + 1) / attempts) ticks, in creation order.
 func TestScale_a_refused_delivery_does_not_hold_the_ones_behind_it(t *testing.T) {
+	t.Parallel()
 	const refused, good = 3, 4
 	w := newScaleWorld(t, refused+good)
 	var behind []string
@@ -400,6 +407,7 @@ func TestScale_a_refused_delivery_does_not_hold_the_ones_behind_it(t *testing.T)
 // A relationship that has spent its hour is not due until the window reopens: its queued rows
 // spend no attempt, and the calm sibling queued after them goes out on the first tick.
 func TestScale_a_relationship_at_its_cap_is_not_attempted_at_all(t *testing.T) {
+	t.Parallel()
 	w := newScaleWorld(t, 2)
 	w.f.spendHour(w.rels[0].rid, scaleParent, int(w.f.delivery.Policy.MaxSendsPerRelationshipPerHour), w.f.clock.Now())
 	var capped []string
@@ -429,6 +437,7 @@ func TestScale_a_relationship_at_its_cap_is_not_attempted_at_all(t *testing.T) {
 
 // A cursor value an older scheduler wrote (an index) is read as no pointer.
 func TestScale_a_legacy_scheduler_cursor_is_not_a_pointer(t *testing.T) {
+	t.Parallel()
 	w := newScaleWorld(t, 3)
 	for _, c := range [][2]string{{"deliver:" + scaleParent, "7"}, {"delivery_parents", "3"}} {
 		w.exec("INSERT INTO discovery_cursors (task_id, listing, cursor, updated_at) VALUES ('scheduler', ?, ?, ?)", c[0], c[1], w.f.clock.ISO())
@@ -476,6 +485,7 @@ func TestScale_a_large_backlog_of_a_capped_relationship_is_set_aside_in_linear_t
 
 // A negative limit lists nothing; it does not slice a list with a negative bound.
 func TestScale_a_negative_limit_lists_nothing(t *testing.T) {
+	t.Parallel()
 	w := newScaleWorld(t, 2)
 	w.emit(0)
 	w.emit(1)
@@ -493,6 +503,7 @@ func TestScale_a_negative_limit_lists_nothing(t *testing.T) {
 // An attempt that woke nobody (it failed before the send) is not a send: fourteen failed claims of one
 // relationship leave its hour untouched, and the next claim goes out.
 func TestScale_attempts_that_failed_before_the_send_do_not_spend_the_hour(t *testing.T) {
+	t.Parallel()
 	w := newScaleWorld(t, 1)
 	d := w.f.delivery
 	d.Policy.PresendBase, d.Policy.PresendMax, d.Policy.MaxAttempts = 0, 0, 100
