@@ -4,36 +4,11 @@ import (
 	"context"
 	"fmt"
 	"math/big"
-	"os/exec"
 	"strings"
-	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 )
-
-// ExecRunner is the forge process runner of production: it runs the argv it is given and reports the exit code and both streams. It is the one cli.forgeRunner is, copied so
-// this package does not import package cli.
-func ExecRunner(ctx context.Context) evidence.Runner {
-	return func(argv []string, timeout time.Duration) (int, string, string, error) {
-		runCtx, cancel := context.WithTimeout(ctx, timeout)
-		defer cancel()
-		cmd := exec.CommandContext(runCtx, argv[0], argv[1:]...)
-		var stdout, stderr strings.Builder
-		cmd.Stdout, cmd.Stderr = &stdout, &stderr
-		err := cmd.Run()
-		if runCtx.Err() != nil {
-			return 0, "", "", runCtx.Err()
-		}
-		if err == nil {
-			return 0, stdout.String(), stderr.String(), nil
-		}
-		if exit, ok := err.(*exec.ExitError); ok {
-			return exit.ExitCode(), stdout.String(), stderr.String(), nil
-		}
-		return 0, stdout.String(), stderr.String(), err
-	}
-}
 
 // ForgePullRequestReader reads a pull request the way merge-evidence does (evidence.Collect over the runner newRunner makes) and projects the snapshot. The collector
 // reports unreadable, truncated or moved evidence as snapshot problems with a nil error, so the caller classifies the answer by its Verdict (ClassifyPullRequest).

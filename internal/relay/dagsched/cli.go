@@ -12,6 +12,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -201,7 +202,7 @@ func runRelease(ctx context.Context, services dispatch.Services, args dispatch.A
 		return nil, err
 	}
 	sched.Tips = mergeturn.TargetReader{}
-	sched.PRs = ForgePullRequestReader(ExecRunner)
+	sched.PRs = ForgePullRequestReader(evidence.ExecRunner)
 	sched.Start = ProductionStarter(services, args)
 	sched.Selectors = Selectors{MarkerRoot: args.Text("marker-root"), Socket: services.SocketPath, StateSelector: services.Selection.Path}
 	result, err := sched.Release(ctx, args.Text("plan"), args.Text("node"), args.Text("actor"), request)
@@ -251,7 +252,7 @@ func runAccept(ctx context.Context, services dispatch.Services, args dispatch.Ar
 		return nil, err
 	}
 	defer closeStore()
-	sched.PRs = ForgePullRequestReader(ExecRunner)
+	sched.PRs = ForgePullRequestReader(evidence.ExecRunner)
 	sched.Tips = mergeturn.TargetReader{}
 	result, err := sched.Accept(ctx, args.Text("plan"), args.Text("node"), args.Text("actor"), input)
 	if err != nil {
@@ -309,7 +310,7 @@ func runBaseRefresh(ctx context.Context, services dispatch.Services, args dispat
 	}
 	defer closeStore()
 	sched.Tips = mergeturn.TargetReader{}
-	sched.PRs = ForgePullRequestReader(ExecRunner)
+	sched.PRs = ForgePullRequestReader(evidence.ExecRunner)
 	result, err := sched.RecordBaseRefresh(ctx, args.Text("plan"), args.Text("node"), args.Text("actor"), RefreshInput{Checkout: args.Text("checkout"), Resolved: args.Strings("resolved")})
 	if err != nil {
 		return nil, hostFailure(err)
@@ -444,7 +445,7 @@ func runMergeJudge(ctx context.Context, services dispatch.Services, args dispatc
 		return nil, err
 	}
 	defer closeStore()
-	sched.Tips, sched.Ancestry, sched.PRs = mergeturn.TargetReader{}, GitAncestry{}.Ancestry, ForgePullRequestReader(ExecRunner)
+	sched.Tips, sched.Ancestry, sched.PRs = mergeturn.TargetReader{}, GitAncestry{}.Ancestry, ForgePullRequestReader(evidence.ExecRunner)
 	result, err := sched.Judge(ctx, args.Text("plan"), args.Text("node"), args.Text("actor"), JudgeInput{PullRequest: named})
 	if err != nil {
 		return nil, hostFailure(err)
@@ -462,7 +463,7 @@ func runMergeRequest(ctx context.Context, services dispatch.Services, args dispa
 		return nil, err
 	}
 	defer closeStore()
-	sched.Tips, sched.Ancestry, sched.PRs = mergeturn.TargetReader{}, GitAncestry{}.Ancestry, ForgePullRequestReader(ExecRunner)
+	sched.Tips, sched.Ancestry, sched.PRs = mergeturn.TargetReader{}, GitAncestry{}.Ancestry, ForgePullRequestReader(evidence.ExecRunner)
 	result, turn, err := sched.RequestMergeTurn(ctx, args.Text("plan"), args.Text("node"), args.Text("actor"), MergeRequestInput{PullRequest: named, Host: args.Text("host")})
 	if err != nil {
 		return nil, hostFailure(err)
