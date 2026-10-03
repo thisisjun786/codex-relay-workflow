@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -255,18 +256,51 @@ func (g *refreshRepo) blobAt(ctx context.Context, commit, path string) (string, 
 	return "", nil
 }
 
-// markerLine is whether a line is a conflict marker of the given kind: at least seven of the character at the start, then a space or the end of the line (the width is the conflict-marker-size attribute's,
-// seven by default).
-func markerLine(line []byte, c byte) bool {
-	n := 0
-	for n < len(line) && line[n] == c {
-		n++
+// scanConflictMarkers reads a file and says whether it holds the start line and the end line of a conflict: a line that begins with seven or more of the same marker character (< or >) and then ends or
+// goes on with a space, the width being the conflict-marker-size attribute's (seven by default). It reads byte by byte through a bounded buffer, so a file or a line of any length is read to its end or to
+// the second marker, and a run of marker characters that goes on past a buffer is judged by what follows it.
+func scanConflictMarkers(r io.Reader) (started, ended bool) {
+	reader := bufio.NewReaderSize(r, 64<<10)
+	atStart, inRun := true, false
+	var c byte
+	run := 0
+	mark := func() {
+		started = started || c == '<'
+		ended = ended || c == '>'
 	}
-	return n >= 7 && (n == len(line) || line[n] == ' ')
+	for !(started && ended) {
+		b, err := reader.ReadByte()
+		if err != nil {
+			if inRun && run >= 7 {
+				mark()
+			}
+			break
+		}
+		switch {
+		case b == '\n' || b == '\r':
+			if inRun && run >= 7 {
+				mark()
+			}
+			atStart, inRun, run = b == '\n', false, 0
+		case atStart:
+			atStart = false
+			if b == '<' || b == '>' {
+				c, inRun, run = b, true, 1
+			}
+		case inRun && b == c:
+			run++
+		case inRun:
+			if run >= 7 && b == ' ' {
+				mark()
+			}
+			inRun = false
+		}
+	}
+	return started, ended
 }
 
-// hasConflictMarkers is whether a resolved file still holds the start line and the end line of a conflict, wherever they are in the file and however large it is (git's own labels differ from the working tree's,
-// so the tree comparison alone cannot tell a file that was committed with its markers from one that was edited). The blob is streamed and the read stops at the second marker.
+// hasConflictMarkers is whether a resolved file still holds a conflict's start and end line (git's own labels differ from the working tree's, so the tree comparison alone cannot tell a file that was
+// committed with its markers from one that was edited). The blob is streamed and the read stops at the second marker.
 func (g *refreshRepo) hasConflictMarkers(ctx context.Context, blob string) (bool, error) {
 	if blob == "" {
 		return false, nil
@@ -284,20 +318,7 @@ func (g *refreshRepo) hasConflictMarkers(ctx context.Context, blob string) (bool
 	if err := cmd.Start(); err != nil {
 		return false, err
 	}
-	reader := bufio.NewReaderSize(out, 64<<10)
-	var started, ended, lineStart bool
-	lineStart = true
-	for !(started && ended) {
-		segment, more, err := reader.ReadLine()
-		if err != nil {
-			break
-		}
-		if lineStart {
-			started = started || markerLine(segment, '<')
-			ended = ended || markerLine(segment, '>')
-		}
-		lineStart = !more
-	}
+	started, ended := scanConflictMarkers(out)
 	if started && ended {
 		cancel()
 		_ = cmd.Wait()
