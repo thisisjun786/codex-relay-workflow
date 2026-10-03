@@ -28,7 +28,7 @@ An entry is keyed by the decision it states, the document, the plan revision and
 | `attempts`, `last_error` | failures recorded and the last one's text |
 | `claim_token`, `claimed_by`, `claimed_at` | the claim: the token is present exactly while the entry is claimed |
 | `readback`, `confirmed_at` | the block the parent read back, and when it was confirmed |
-| `enqueued_by`, `coordinator_epoch`, `created_at`, `updated_at` | who made the entry, the coordinator epoch (0: nothing fences by epoch yet, see [DAG plans](dag-plans.md)) and the times |
+| `enqueued_by`, `coordinator_epoch`, `created_at`, `updated_at` | who made the entry, the coordinator epoch (0 on every entry: these writers are not epoch-fenced, see [What is not here](#what-is-not-here)) and the times |
 
 An entry never changes its identity, and nothing is deleted. The moves of its state:
 
@@ -166,7 +166,7 @@ connector once the container changed.
   the relay never confirms such a document, and a person removes the surplus text. Two sessions of the parent that both initialise a container are made safe by the conditional replacement of the whole document, not by the relay.
 * A failure has no backoff. The eighth parks the entry, so a parent that fails in a loop cannot burn more than eight attempts on one entry, and they can all be spent in one turn.
 * A change of the progress document's content between builds gives a different digest: one extra entry after an upgrade, never a wrong one.
-* Progress replay, stale handling, coordinator fencing and the parent's base refresh are later issues. These writers decide nothing about the plan and are not fenced by [the coordinator epoch](dag-scheduler.md#the-coordinator-epoch): a summary states the store's current progress, enqueueing it again is a replay, and the claim token fences a replaced session's confirmation or failure. A coordinator claim (`dag-coordinator-claim`) does not touch summary tokens: a restarted or replacement session claims again, at once, any entry that reads `claimed` (step 2 of the flow), and that second claim is what kills the old session's token. `coordinator_epoch` is 0 on every entry, so a later fence has the column.
+* The progress replay ([DAG progress](dag-progress.md#rebuilding-the-view)) is not used: a summary states the whole live view, so enqueue reads `Scheduler.Progress` and compares digests. Stale handling and the parent's base refresh are other issues. These writers decide nothing about the plan and are not fenced by [the coordinator epoch](dag-scheduler.md#the-coordinator-epoch): a summary states the store's current progress, enqueueing it again is a replay, and the claim token fences a replaced session's confirmation or failure. A coordinator claim (`dag-coordinator-claim`) does not touch summary tokens: a restarted or replacement session claims again, at once, any entry that reads `claimed` (step 2 of the flow), and that second claim is what kills the old session's token. `coordinator_epoch` is 0 on every entry, so a later fence has the column.
 
 ## The store
 

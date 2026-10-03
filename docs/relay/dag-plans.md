@@ -111,6 +111,7 @@ is retired and introduced again at that revision) and edges, so the plan as of a
 * A **snapshot** is the plan as of a revision (`dag-plan-show --revision N`; the head by default).
 * Replaying the events from the empty plan, or from any snapshot and the events after its cursor, restores the same plan; the replay
   checks each event follows the one before and reaches the state digest the event recorded.
+* The progress view applies the same boundary to everything it prints: its events are plan revisions plus the changes of what the view takes from the execution rows, its cursor is the state a reader holds, its snapshot is rebuilt by the same replay ([DAG progress](dag-progress.md#rebuilding-the-view)).
 
 A reader never trusts a recorded digest: `dag-plan-show` recomputes every slice digest and the state digest from the rows it read, in one
 snapshot of the store, and a plan that does not agree with itself is the host's failure (exit 3), never a partial plan. `--verify` also
