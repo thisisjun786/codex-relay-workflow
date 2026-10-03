@@ -556,11 +556,15 @@ owns what the row holds and why it lives here and not in the relay; this is the 
    else, as [Child pair by issue type](../crw-plan/references/integrations.md#child-pair-by-issue-type) says.
    Where the user chooses a pair for the issue now, write the choice onto the line first, with its reason and
    the source `user choice`.
-2. Take the tags, the bundle and the source from the line. A line in the older form states none of them:
-   classify the issue by the [tags](../crw-plan/references/integrations.md#classify-the-issue-by-its-kind-of-work),
-   take the bundle from the [Bundles rows](../crw-plan/references/integrations.md#bundles), mark the row
-   `derived at release` and leave the line as it is. The pair the line names stands (precedence): where the
-   derived bundle names the other family, the row says so and the issue is released on the line's pair.
+2. Take the tags and the bundle from the line, and quote the line, with its own source, in the row. The row's
+   source is the step that decided at release: `issue body` where the line already stated the pair and you
+   follow it, `user choice` for a choice written onto the line now, `table` for an issue you routed because it
+   had no line, `quota` reserved. A line in the older form states no tags: classify the issue by the
+   [tags](../crw-plan/references/integrations.md#classify-the-issue-by-its-kind-of-work), take the bundle from
+   the [Bundles rows](../crw-plan/references/integrations.md#bundles), mark the row `derived at release` and
+   leave the line as it is. The pair the line names stands (precedence): where the derived bundle names the
+   other family, the row says so and the issue is released on the line's pair. A tag the issue does not settle
+   is left blank in the row with the reason, and a blank tag never holds the release.
 3. For a flexible issue whose line the parent writes itself, choose the pair by the count rule under
    [Bundles](../crw-plan/references/integrations.md#bundles) and put the counts in the row. A flexible issue
    whose line already names a pair keeps it; nothing here re-chooses it from quota, which is

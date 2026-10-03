@@ -689,17 +689,19 @@ examples stand only in the last column.
 | `output` | `screen` | screens, layouts, images, design | a settings page judged by eye |
 | `output` | `data` | transformation or reconciliation of recorded data | matching two ledgers row by row |
 | `output` | `investigation` | opens no pull request: a finding, a measurement or an observed state, including an operational check | a read-only audit of a record |
-| `procedure` | `goal` | one goal that a measurable check ends | cutting a suite's wall time to a target |
-| `procedure` | `steps` | long procedural instructions the child follows in order or exactly | a migration with a fixed order of operations |
-| `procedure` | `open` | exploratory: the next step depends on what the last one showed | finding why a failure appears only under load |
+| `procedure` | `goal` | one goal and the check that ends it, both stated up front: a machine check, or a reading against stated criteria | cutting a suite's wall time to a target; rewriting a page until stated criteria hold |
+| `procedure` | `steps` | the work is to carry out a long procedure that the issue gives, where the order or the exactness of its steps is the point; writing a procedure is not this | a migration with a fixed order of operations |
+| `procedure` | `open` | exploratory: no end is stated up front and the next step depends on what the last one showed | finding why a failure appears only under load |
 | `reach` | `one`, `several` | the number of modules the work touches | a fix inside one module; a rename across a command's documentation, specs and tests |
 | `check` | `machine`, `read`, `look` | how the result is verified: a machine check (tests, a build, a measurement, a comparison), reading and judging, or looking at screens or images | a test suite; a read-through against a checklist; a look at rendered pages |
-| `history` | `fresh`, `retried` | `retried` when an earlier fix of this same problem has already failed twice or more | a flake that two fixes did not remove |
+| `history` | `fresh`, `retried` | `retried` when an earlier fix of this same problem had already failed twice or more when the issue was planned | a flake that two fixes did not remove |
 | `core` | `plain`, `security` | `security` when the core of the work is a security judgment: deletion protection, a permission or sandbox decision, secret detection | a rule that decides what a sandbox may be asked to do |
 
 Write the seven tags when the issue is written or refined, from what the issue states; where its text does
 not settle a tag, amend the issue first and do not guess. Each tag takes one value: an issue that has both
-kinds of answer is `mixed`, and every other tag takes the value of the work that ends the issue. `reach`
+kinds of answer is `mixed`, and every other tag takes the value of the work that ends the issue. Where two
+values of `procedure` fit, take the one the issue's stated end names: `goal` when a check is stated up
+front, `open` when none is, and `steps` only when following a given procedure is the work. `reach`
 and `check` are recorded although no row below reads them yet, because a later change to the table can
 cite only the features that were written down when the issue was planned.
 
@@ -743,7 +745,7 @@ with its cause and date. Under row 1 the Sonnet pair is the security rule's own 
 
 The line may carry the classification, the bundle and the source of the choice after its reason:
 
-    Child pair: Sonnet (reference exists) - rewriting a skill's procedure [class: answer=reference, output=writing, procedure=steps, reach=one, check=read, history=fresh, core=plain; bundle: Sonnet fixed; source: table]
+    Child pair: Sonnet (reference exists) - rewriting a skill's procedure [class: answer=reference, output=writing, procedure=goal, reach=one, check=read, history=fresh, core=plain; bundle: Sonnet fixed; source: table]
 
 A line in the form given under "The line" stays valid. It is a prefix of the extended form and states the
 pair, the axis and the reason without tags, bundle or source:
@@ -803,12 +805,16 @@ When SOL fails, a replacement) adds a row and overwrites none.
 **A line without tags.** The parent classifies the issue by the tags above, takes the bundle from the Bundles
 rows, and marks the row `derived at release`. Derived tags are not a selection: the pair stays the line's
 (precedence above), the line is not rewritten, and where the family of the derived bundle differs from the
-pair the row says so. For an issue with no line at all the rule under "The line" holds: the parent writes the
+pair the row says so. That difference is the one exception to the rule that a pair of the other family
+stands only with its reason on the line: a line in the older form was written before bundles existed, so its
+difference is recorded and not corrected. A tag the issue's text does not settle at release is left blank
+in the row with the reason, and where that tag decides the bundle the row reads `undetermined`; a blank tag
+never holds a dispatch, and the issue is amended when its owner next writes it. For an issue with no line at all the rule under "The line" holds: the parent writes the
 line, in the extended form, and reads it back first.
 
 ##### Review the classification and change the table
 
-**Result metrics never change the table.** Quality, speed, cost, review rounds, failed checks, quota used and
+**Result metrics never change the table.** Quality, speed, cost, review rounds, check failures during the work, quota used and
 which model did better are not inputs to a tag, a Bundles row or a shape row, and no counter, score or
 automation edits any of them. Judging a result is qualitative, and a table steered by results could tip all
 work to one model. The table is refined only by what was visible when the issue was planned, and a
@@ -818,9 +824,12 @@ classification is judged against that: a success or a failure after release neve
 issue as planned, its line, its release row, and what the delivered change and its packet show about the kind
 of work: the modules the change touched, the procedure the packet had to spell out, the form of verification
 the criteria used. Examples of a wrong tag: `procedure=goal`, but the packet needed long procedural
-instructions; `reach=one`, but the change touched several modules; `answer=reference`, but no reference
-existed; `check=machine`, but only a reading could judge the criteria. A user's choice and a move under When
-SOL fails are not classification errors. The output lists the issue, the tag that was wrong, the value that
+instructions; `reach=one`, though the issue's own criteria named several modules; `answer=reference`, though
+no reference existed or was named; `check=machine`, though only a reading could judge the criteria. A
+feature that only the work revealed, such as a module nobody could name when the issue was planned, is not a
+wrong tag: the review records it as not visible at planning, since a change to the table can still ask
+whether a new tag could have shown it. A user's choice and a move under When SOL fails are not
+classification errors. The output lists the issue, the tag that was wrong, the value that
 held and the evidence, a pull request or a packet line, and says nothing about which model did better. The
 parent runs it for its own project at close, from the release rows; the management session runs it across
 projects when a change is considered; Jun can ask for it.
