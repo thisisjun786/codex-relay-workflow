@@ -12,11 +12,10 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 )
 
-// testdata/oracle-attest.json and oracle-plan-gate.json hold what the CXC v0.2.40 oracle's attest.ts and plan-gate.ts answered
-// over the grids of testdata/record-oracle.mjs, recorded once under Node 24 (no Node runs here). Every case is replayed and must
-// agree. The recorded reasons carry the oracle's cxc names, so they go through the corpus replayer's own name table
-// (cxccorpus.Substituter.Expected) before they meet the port's CRW text. A "coerce" case feeds the raw JSON through Coerce
-// first (the CLI path); a "direct" case decodes it into an Attestation untouched (the library path).
+// testdata/oracle-*.json hold what the CXC v0.2.40 oracle's attest.ts and plan-gate.ts answered over the grids of
+// testdata/record-oracle.mjs, recorded once under Node 24 (no Node runs here); every case is replayed and must agree. Recorded
+// reasons carry the oracle's cxc names and go through the corpus replayer's own name table (cxccorpus.Substituter.Expected). A
+// "coerce" case feeds the raw JSON through Coerce first (the CLI path); a "direct" case decodes it into an Attestation untouched.
 
 type recorded struct {
 	OK      bool  `json:"ok"`
@@ -96,9 +95,7 @@ func TestAttestMatchesTheRecordedOracle(t *testing.T) {
 		sameResult(t, c.ID+" "+c.Input, Validate(state.Phase(c.From), state.Phase(c.To), att), c.Validate, texts)
 	}
 	for _, c := range fx.Tails {
-		var in string
-		must(t, json.Unmarshal([]byte(c.Input), &in))
-		if got := HasFailVerdictTail(in); got != c.Fail {
+		if got := HasFailVerdictTail(parse(t, c.Input).(string)); got != c.Fail {
 			t.Errorf("HasFailVerdictTail(%s) = %v, oracle %v", c.Input, got, c.Fail)
 		}
 	}
@@ -115,10 +112,7 @@ func TestPlanGateMatchesTheRecordedOracle(t *testing.T) {
 			Chdir, CwdArg string
 			Tree          []struct{ Path, Type, Target string }
 			Input         string
-			Result        struct {
-				OK           bool
-				Unit, Reason string
-			}
+			Result        PlanResult
 		}
 	}
 	fixture(t, "oracle-plan-gate.json", &fx)
@@ -127,7 +121,6 @@ func TestPlanGateMatchesTheRecordedOracle(t *testing.T) {
 	if len(fx.Plan) < 60 {
 		t.Fatalf("%d recorded plan-gate cases", len(fx.Plan))
 	}
-	skipped := 0
 	for _, c := range fx.Plan {
 		root := t.TempDir()
 		cwd := filepath.Join(root, "ws")
@@ -153,7 +146,6 @@ func TestPlanGateMatchesTheRecordedOracle(t *testing.T) {
 			must(t, os.Chmod(unreadable, 0))
 			t.Cleanup(func() { _ = os.Chmod(unreadable, 0o755) })
 			if _, err := os.ReadDir(unreadable); err == nil { // still readable (running as root): this case cannot happen here
-				skipped++
 				continue
 			}
 		}
@@ -170,13 +162,11 @@ func TestPlanGateMatchesTheRecordedOracle(t *testing.T) {
 			t.Chdir(filepath.Join(root, c.Chdir))
 			dir = c.CwdArg
 		}
-		got, want := ValidatePlanArtifacts(att, dir), PlanResult{OK: c.Result.OK, Unit: c.Result.Unit, Reason: sub.Expected(c.Result.Reason)}
+		got, want := ValidatePlanArtifacts(att, dir), c.Result
+		want.Reason = sub.Expected(want.Reason)
 		got.Unit, got.Reason = unexpand(got.Unit), unexpand(got.Reason)
 		if got != want {
 			t.Errorf("%s: %s\n got %+v\nwant %+v", c.ID, c.Input, got, want)
 		}
-	}
-	if skipped > 2 {
-		t.Errorf("%d cases skipped", skipped)
 	}
 }

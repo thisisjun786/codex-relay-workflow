@@ -14,13 +14,12 @@ import (
 
 // asciiLower lowercases A to Z only, as a JavaScript regular expression without the u flag compares under /i.
 func asciiLower(s string) string {
-	b := []byte(s)
-	for i, c := range b {
-		if c >= 'A' && c <= 'Z' {
-			b[i] = c + 'a' - 'A'
+	return strings.Map(func(r rune) rune {
+		if r >= 'A' && r <= 'Z' {
+			return r + 'a' - 'A'
 		}
-	}
-	return string(b)
+		return r
+	}, s)
 }
 
 // isPlaceholderDid is /^(tbd|todo|n\/?a|none|done|ok|\.+|-+)$/i of attest.ts:66.

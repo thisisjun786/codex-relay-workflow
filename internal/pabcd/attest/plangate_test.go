@@ -3,6 +3,7 @@ package attest
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -48,4 +49,17 @@ func TestPlanGateAcceptsAValidUnitAndVerifiesPlanPathsOnDisk(t *testing.T) {
 		t.Errorf("%+v", r)
 	}
 	reasonHas(t, ValidatePlanArtifacts(plan("devlog/_plan/000000_ok", "devlog/_plan/000000_ok/999_ghost.md"), cwd), "999_ghost.md does not exist")
+}
+
+// Where a relative path needs process.cwd() and the directory is deeper than getcwd answers, the oracle throws (ERANGE); the
+// port refuses at the same point (an absolute unit that is missing is refused first, as the oracle does).
+func TestAnUnreadableWorkingDirectoryRefusesWhereTheOracleThrows(t *testing.T) {
+	t.Chdir(t.TempDir())
+	for i := 0; i < 24; i++ {
+		must(t, os.Mkdir(strings.Repeat("d", 200), 0o755))
+		must(t, os.Chdir(strings.Repeat("d", 200)))
+	}
+	write(t, "unit/000_plan.md")
+	reasonHas(t, ValidatePlanArtifacts(plan("unit"), "."), "working directory")
+	reasonHas(t, ValidatePlanArtifacts(plan("/nonexistent/unit"), "."), "does not exist")
 }

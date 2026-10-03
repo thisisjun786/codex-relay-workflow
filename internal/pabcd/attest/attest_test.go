@@ -139,30 +139,23 @@ func TestCToDNeedsDidCheckOutputAndAPassingExitCode(t *testing.T) {
 	}
 }
 
-func obj(kv ...any) map[string]any {
-	m := map[string]any{}
-	for i := 0; i < len(kv); i += 2 {
-		m[kv[i].(string)] = kv[i+1]
-	}
-	return m
-}
+type obj = map[string]any
 
 func TestCoerceValidatesShape(t *testing.T) {
-	if Coerce(nil) != nil || Coerce(obj("from", 1.0, "to", "B", "did", "x")) != nil || Coerce([]any{}) != nil {
+	if Coerce(nil) != nil || Coerce(obj{"from": 1.0, "to": "B", "did": "x"}) != nil || Coerce([]any{}) != nil {
 		t.Error("accepted a bad shape")
 	}
-	if a := Coerce(obj("from", "A", "to", "B", "did", "  trimmed  ", "exitCode", 0.0)); a == nil || a.Did != "trimmed" || a.ExitCode == nil || *a.ExitCode != 0 {
+	if a := Coerce(obj{"from": "A", "to": "B", "did": "  trimmed  ", "exitCode": 0.0}); a == nil || a.Did != "trimmed" || a.ExitCode == nil || *a.ExitCode != 0 {
 		t.Errorf("%+v", a)
 	}
 }
 
 func TestCoerceCarriesTrimmedPlanUnitAndPlanPaths(t *testing.T) {
-	a := Coerce(obj("from", "P", "to", "A", "did", "x", "planUnit", "  devlog/_plan/260714_slug  ",
-		"planPaths", []any{"  devlog/_plan/260714_slug/010_x.md ", 42.0, ""}))
+	a := Coerce(obj{"from": "P", "to": "A", "did": "x", "planUnit": "  devlog/_plan/260714_slug  ", "planPaths": []any{"  devlog/_plan/260714_slug/010_x.md ", 42.0, ""}})
 	if a.PlanUnit != "devlog/_plan/260714_slug" || !slices.Equal(a.PlanPaths, []string{"devlog/_plan/260714_slug/010_x.md"}) {
 		t.Errorf("%+v", a)
 	}
-	if b := Coerce(obj("from", "P", "to", "A", "did", "x", "planUnit", 7.0, "planPaths", "not-an-array")); b.PlanUnit != "" || b.PlanPaths != nil {
+	if b := Coerce(obj{"from": "P", "to": "A", "did": "x", "planUnit": 7.0, "planPaths": "not-an-array"}); b.PlanUnit != "" || b.PlanPaths != nil {
 		t.Errorf("%+v", b)
 	}
 }
@@ -180,26 +173,26 @@ func TestValidateWorkPhaseBinding(t *testing.T) {
 	if r := ValidateWorkPhaseBinding(bad, &wp2); !r.OK || r.Reasons != nil {
 		t.Errorf("%+v", r)
 	}
-	if got := Coerce(obj("from", "B", "to", "C", "did", "x", "workPhaseId", " wp2 ")).WorkPhaseID; got != "wp2" {
+	if got := Coerce(obj{"from": "B", "to": "C", "did": "x", "workPhaseId": " wp2 "}).WorkPhaseID; got != "wp2" {
 		t.Errorf("%q", got)
 	}
 }
 
 func TestCoerceCarriesTrimmedAuditFields(t *testing.T) {
-	a := Coerce(obj("from", "A", "to", "B", "did", "x", "auditOutput", "  verdict tail  ", "auditVerdict", " NEAR-PASS ", "auditResidual", "  residuals folded  ", "auditRounds", 2.0))
+	a := Coerce(obj{"from": "A", "to": "B", "did": "x", "auditOutput": "  verdict tail  ", "auditVerdict": " NEAR-PASS ", "auditResidual": "  residuals folded  ", "auditRounds": 2.0})
 	if a.AuditOutput != "verdict tail" || a.AuditVerdict != "near-pass" || a.AuditResidual != "residuals folded" || a.AuditRounds == nil || *a.AuditRounds != 2 {
 		t.Errorf("%+v", a)
 	}
-	if b := Coerce(obj("from", "A", "to", "B", "did", "x", "auditOutput", 42.0, "auditRounds", "2")); b.AuditOutput != "" || b.AuditRounds != nil {
+	if b := Coerce(obj{"from": "A", "to": "B", "did": "x", "auditOutput": 42.0, "auditRounds": "2"}); b.AuditOutput != "" || b.AuditRounds != nil {
 		t.Errorf("%+v", b)
 	}
 }
 
 func TestCoerceCarriesATypedOverride(t *testing.T) {
-	if !Coerce(obj("from", "I", "to", "P", "did", "accept", "override", true)).Override {
+	if !Coerce(obj{"from": "I", "to": "P", "did": "accept", "override": true}).Override {
 		t.Error("override dropped")
 	}
-	if Coerce(obj("from", "I", "to", "P", "did", "x", "override", "yes")).Override || Coerce(obj("from", "I", "to", "P", "did", "x")).Override {
+	if Coerce(obj{"from": "I", "to": "P", "did": "x", "override": "yes"}).Override || Coerce(obj{"from": "I", "to": "P", "did": "x"}).Override {
 		t.Error("a non-boolean override was kept")
 	}
 }

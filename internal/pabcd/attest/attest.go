@@ -1,23 +1,20 @@
 // Package attest is the evidence gate of the PABCD phase transitions: the Go form of CXC v0.2.40 pabcd-state/src/attest.ts and
-// plan-gate.ts (both whole files, commit 3c1459ac). A forward edge (P>A, A>B, B>C, C>D) advances only when the agent attaches
-// evidence: a specific narrative, for A>B the pasted verdict of an independent reviewer and the agent's own judgment of it, for
-// C>D pasted command output with a passing exit code; P>A also needs the plan to exist as numbered files on disk. The package
-// validates and writes nothing; callers persist the flags the evidence unlocks.
+// plan-gate.ts (both whole files, commit 3c1459ac). A forward edge (P>A, A>B, B>C, C>D) advances only with evidence: a specific
+// narrative; for A>B the pasted verdict of an independent reviewer and the agent's judgment of it; for C>D pasted command output
+// with a passing exit code; and for P>A a plan that exists as numbered files. The package validates and writes nothing.
 //
-// Behaviour is ported as-is, oracle defects included (docs/port-cxc/known-defects.md). Names: validateAttest is Validate,
-// coerceAttest is Coerce, GATED_TRANSITIONS and AUDIT_VERDICTS are IsGated, GatedTransitions and IsAuditVerdict (no package
-// variable holds a set). Reasons carry CRW names where the oracle names its command (name-substitution R9, R33 and the cli
-// table): "crw pabcd plan init", "crw pabcd receipt test" and "CRW-ROLE:".
+// Behaviour is ported as-is, oracle defects included (docs/port-cxc/known-defects.md). validateAttest is Validate, coerceAttest
+// is Coerce, and the two sets are functions (IsGated, GatedTransitions, IsAuditVerdict). Reasons carry CRW names where the oracle
+// names its command (name-substitution R9, R33, cli table): "crw pabcd plan init", "crw pabcd receipt test", "CRW-ROLE:".
 //
 // Callers run, in the oracle's order: Coerce, on P>A ValidatePlanArtifacts (orchestrate-cli.ts:600), on every gated edge
-// ValidateWorkPhaseBinding with the active work phase of the bound goalplan (nil when none), then Validate (fsm.ts:120). The FSM
-// port must not live in package state, which this package imports for Phase.
+// ValidateWorkPhaseBinding with the bound goalplan's active work phase (nil when none), then Validate (fsm.ts:120). The FSM port
+// must not live in package state, which this package imports for Phase.
 //
-// JavaScript semantics are reproduced where a value reaches a decision or a message: trim (internal/pabcd/text), toLowerCase with
-// U+0130 and the final sigma, ASCII-only /i regular expressions, number-to-string. Two inputs cannot be carried: a Go string holds
-// no lone surrogate (it becomes U+FFFD), and JSON cannot spell NaN or Infinity, which only a direct Go caller can set on ExitCode
-// (Coerce drops a non-finite number, as the oracle does). Absent and empty strings are one value, as are an absent and a false
-// override: nothing in the oracle reads the difference.
+// JavaScript semantics are reproduced where a value reaches a decision or a message (trim, toLowerCase with U+0130 and the final
+// sigma, ASCII-only /i, number-to-string). Not carried: a lone surrogate (a Go string holds U+FFFD instead), and NaN or Infinity,
+// which JSON cannot spell and only a direct Go caller can put in ExitCode (Coerce drops them, as the oracle does). Absent and
+// empty strings are one value, as are an absent and a false override: nothing in the oracle reads the difference.
 package attest
 
 import (
@@ -39,29 +36,26 @@ const (
 	VerdictFail     = "fail"
 )
 
-// Attestation is the evidence attached to a phase transition. From and To are whatever strings the agent wrote; the edge is
-// checked against the requested one by Validate.
+// Attestation is the evidence attached to a phase transition; From and To are whatever the agent wrote (Validate checks them).
 type Attestation struct {
 	From state.Phase `json:"from"`
 	To   state.Phase `json:"to"`
-	// Did is the narrative of what the agent did in this phase.
-	Did string `json:"did"`
-	// AuditOutput (A>B) is the pasted tail of the independent reviewer's verdict; AuditVerdict the main agent's own judgment of
-	// the round (pass, near-pass or fail); AuditResidual (near-pass) each residual blocker and its disposition. AuditRounds is a
-	// ledger trail and never gates.
+	Did  string      `json:"did"` // what the agent did in this phase
+	// A>B: the pasted tail of the reviewer's verdict, the agent's own judgment of the round and, for near-pass, each residual
+	// blocker with its disposition. AuditRounds is a ledger trail and never gates.
 	AuditOutput   string   `json:"auditOutput,omitempty"`
 	AuditVerdict  string   `json:"auditVerdict,omitempty"`
 	AuditResidual string   `json:"auditResidual,omitempty"`
 	AuditRounds   *float64 `json:"auditRounds,omitempty"`
-	// CheckOutput (C>D) is the pasted tail of the command that was run, ExitCode its exit status; nil is not a number.
+	// C>D: the pasted tail of the command that was run and its exit status (nil is not a number).
 	CheckOutput string   `json:"checkOutput,omitempty"`
 	ExitCode    *float64 `json:"exitCode,omitempty"`
 	// Override accepts an unready interview on I>P.
 	Override bool `json:"override,omitempty"`
-	// PlanUnit and PlanPaths (P>A) name the plan unit directory and the plan documents the work phases execute from.
+	// P>A: the plan unit directory and the plan documents the work phases execute from.
 	PlanUnit  string   `json:"planUnit,omitempty"`
 	PlanPaths []string `json:"planPaths,omitempty"`
-	// WorkPhaseID is the one work phase this cycle advances; TestReceiptPath (C>D) the test receipt a bound session needs.
+	// The one work phase this cycle advances; the test receipt a bound session needs on C>D.
 	WorkPhaseID     string `json:"workPhaseId,omitempty"`
 	TestReceiptPath string `json:"testReceiptPath,omitempty"`
 }
@@ -132,16 +126,12 @@ func Coerce(v any) *Attestation {
 // finite is the value as a JavaScript number that Number.isFinite accepts, or nil. A json.Number that overflows (1e999 is
 // Infinity to JSON.parse) is not finite.
 func finite(v any) *float64 {
-	var f float64
-	switch n := v.(type) {
-	case float64:
-		f = n
-	case json.Number:
+	f, isNumber := v.(float64)
+	if n, ok := v.(json.Number); ok {
 		f, _ = strconv.ParseFloat(string(n), 64)
-	default:
-		return nil
+		isNumber = true
 	}
-	if math.IsInf(f, 0) || math.IsNaN(f) {
+	if !isNumber || math.IsInf(f, 0) || math.IsNaN(f) {
 		return nil
 	}
 	return &f
