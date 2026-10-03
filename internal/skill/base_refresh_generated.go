@@ -80,7 +80,8 @@ func (g *refreshGit) reconstructOutputs(ctx context.Context, tree, command strin
 			continue
 		}
 		mode := "100644"
-		if info.Mode().Perm()&0o111 != 0 {
+		// Git records the owner's execute bit, not group/other execute bits.
+		if info.Mode().Perm()&0o100 != 0 {
 			mode = "100755"
 		}
 		got, err := root.ReadFile(filepath.ToSlash(p))

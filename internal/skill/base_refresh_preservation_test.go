@@ -23,7 +23,7 @@ func regenRegion(path, command string) dagsched.Region {
 }
 
 func TestRelayRegenerateParentPreservation(t *testing.T) {
-	for _, kind := range []string{"owner serializer", "partly generated updater", "HEAD copy", "circular outputs", "failed command", "fully generated"} {
+	for _, kind := range []string{"owner serializer", "partly generated updater", "HEAD copy", "circular outputs", "failed command", "nonowner exec bits", "fully generated"} {
 		t.Run(kind, func(t *testing.T) {
 			f := newMechFixture(t)
 			command := "sh regen.sh"
@@ -33,6 +33,15 @@ func TestRelayRegenerateParentPreservation(t *testing.T) {
 				f.put("regen.sh", "test -f plugin.json || exit 1\n"+mechRegenScript)
 				f.r.git("add", "regen.sh")
 				f.r.git("commit", "-q", "-m", "partial updater")
+				f.r.git("checkout", "-q", "feature")
+				f.r.git("merge", "-q", "--ff-only", "dev")
+			}
+			if kind == "nonowner exec bits" {
+				command = "sh regen.sh; chmod 0645 plugin.json"
+				f.r.git("checkout", "-q", "dev")
+				f.r.git("update-index", "--chmod=+x", "plugin.json")
+				f.r.git("checkout-index", "--force", "--", "plugin.json")
+				f.r.git("commit", "-q", "-m", "executable generated base")
 				f.r.git("checkout", "-q", "feature")
 				f.r.git("merge", "-q", "--ff-only", "dev")
 			}

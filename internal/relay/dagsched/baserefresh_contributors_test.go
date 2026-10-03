@@ -76,7 +76,17 @@ func TestBaseRefreshUnknownDeltaVetoesKnownContributor(t *testing.T) {
 	contributorMerge(t, s, []Region{gr("shared.json", GradeMechanical, RuleUnion)}, true)
 	r := s.repo
 	r.commit("shared.json", "base\nunknown\ndev\n")
-	s.head = s.mergeDev("unknown refresh", "shared.json", "base\nchild\nunknown\ndev\n")
+	// Refresh the original head so both the known and unknown landing contribute
+	// to this one hop, exercising the unknown veto of an accumulated known set.
+	r.git("checkout", "-q", "-b", "single-hop", s.h1)
+	if _, err := r.tryGit("merge", "-q", "--no-ff", "-m", "unknown refresh", "dev"); err == nil {
+		t.Fatal("expected a conflict")
+	}
+	r.write("shared.json", "base\nchild\nunknown\ndev\n")
+	r.git("add", "shared.json")
+	r.git("commit", "-q", "-m", "unknown refresh")
+	s.head = r.git("rev-parse", "HEAD")
+	r.git("checkout", "-q", "dev")
 	s.forge.by["owner/repo#7"] = openPR("owner/repo", 7, s.head)
 	if _, err := s.record(); refusalReason(err) != "disposition_conflict" {
 		t.Fatalf("unknown path delta: %v", err)
