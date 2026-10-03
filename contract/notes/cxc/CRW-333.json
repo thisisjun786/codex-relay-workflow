@@ -1,0 +1,18 @@
+{
+  "issue": "CRW-333",
+  "pending": [
+    "cli__config__set_then_unset_with_manifest",
+    "cli__config__set_without_manifest_is_refused",
+    "cli__disable__features_list_unavailable_reverts_from_manifest",
+    "cli__disable__reverts_live_flags_and_key",
+    "cli__disable__round_trip_via_uninstall_alias",
+    "cli__disable__without_manifest_writes_opt_out",
+    "cli__enable__fresh_install_then_status",
+    "cli__enable__hard_flag_failure_aborts",
+    "cli__enable__soft_flag_failure_warns",
+    "hook__session-start-healing-declared-features__heal_claims_manifest_ownership",
+    "hook__session-start-healing-declared-features__heals_soft_flag_without_manifest"
+  ],
+  "identical": [],
+  "intentionally-changed": []
+}
