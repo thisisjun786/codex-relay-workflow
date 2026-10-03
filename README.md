@@ -134,7 +134,7 @@ replaces its Python-era Stop settings, once).
 | --- | --- |
 | Link the skills from a checkout | The Go toolchain `go.mod` names, and directory symlinks |
 | Install the runtime | A release archive for Linux (amd64 or arm64); darwin/arm64 is built but unvalidated |
-| Run repository checks | The Go toolchain, and Python 3.10+ for `crw-dev ci validate`'s syntax check of the port checkers (developer tools that todo 48 removes) |
+| Run repository checks | The Go toolchain `go.mod` names |
 | Plan and verify Linear work | Codex with local skill support and a connected Linear workspace you can access |
 | Use the shared workflow | Separately installed CXC and Paperthin skills referenced by the [integration guide](plugins/crw/skills/crw-plan/references/integrations.md) |
 | Delegate independent tasks | A host exposing task creation and coordination tools, or an installed bridge |
@@ -209,9 +209,8 @@ git diff --check
 
 The runtime itself is checked with `make lint test` ([CI operation](docs/CI.md) lists the
 parts CI splits that into). The Python packages the runtime was ported from left the
-repository in todo 44 and the CI checks' Python twins in refactor R3; the port checkers under
-`scripts/port` are the developer tools left until todo 48 removes them
-(`scripts/dev/ALLOWED_PYTHON.txt`).
+repository in todo 44, the CI checks' Python twins in refactor R3 and the port checkers in
+todo 48; the repository tracks no Python, and `crw-dev ci validate` refuses a `.py` file.
 
 When the bundled Codex skill validator is available:
 
