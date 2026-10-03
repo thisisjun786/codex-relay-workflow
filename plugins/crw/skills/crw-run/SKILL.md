@@ -869,6 +869,8 @@ each](references/task-packet.md#what-a-handoff-discloses)) and reruns that kind'
 more, so the correction does not ask for an audit of what the base moved under. The restoration
 block carries the siblings' landings and the conflicts the parent expects.
 
+A base conflict can show after the receipt was ruled `verified` and before the node is accepted. The needs-changes ruling on that same receipt carries it: the relay replaces the verified ruling and opens the next generation, as long as nothing rests on it. The steps, the refusals and what an older relay answers are in [a base conflict after the ruling and before the acceptance](references/merge-readiness.md#a-base-conflict-after-the-ruling-and-before-the-acceptance).
+
 Refresh the task's identity, ownership, current turn, checkout, and prior
 correction receipts before sending. Reuse its agreed model, effort, workflow,
 permissions, and delivery scope. Of those the workflow is the one only the message can
