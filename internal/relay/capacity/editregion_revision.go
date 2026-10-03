@@ -22,7 +22,7 @@ func (e *EditRegions) checkRestater(ctx context.Context, repository, actor strin
 		return err
 	}
 	for _, r := range rows {
-		parents, err := owners(ctx, e.Store, scopeProject, text(r, "project"), roleParent)
+		parents, err := owners(ctx, e.Store, scopeProject, r.Text("project"), roleParent)
 		if err != nil {
 			return err
 		}
@@ -57,7 +57,7 @@ func (e *EditRegions) unrelatedStart(ctx context.Context, repository, revision s
 	successors := successorMap(marks)
 	var bases []string
 	for _, r := range baseRows {
-		bases = append(bases, text(r, "base_revision"))
+		bases = append(bases, r.Text("base_revision"))
 	}
 	if len(bases) == 0 && len(successors) == 0 {
 		return nil, nil
@@ -121,7 +121,7 @@ func (e *EditRegions) RestateRevision(ctx context.Context, repository, from, to,
 		if existing, err = e.one(ctx, "SELECT * FROM edit_revision_marks  WHERE repository = ? AND from_revision = ?", repository, from); err != nil {
 			return err
 		}
-		if existing != nil && text(existing, "to_revision") != to {
+		if existing != nil && existing.Text("to_revision") != to {
 			chain, err := e.chainFrom(ctx, repository, from)
 			if err != nil {
 				return err
@@ -129,11 +129,11 @@ func (e *EditRegions) RestateRevision(ctx context.Context, repository, from, to,
 			if !slices.Contains(chain, to) {
 				end := chain[len(chain)-1]
 				decided = &refusal{contract.RefusalAgreementRevisionStale, pyvalue.StrRepr(from) + " was already restated to " +
-					pyvalue.StrRepr(text(existing, "to_revision")) + " by " + pyvalue.StrRepr(text(existing, "actor")) +
+					pyvalue.StrRepr(existing.Text("to_revision")) + " by " + pyvalue.StrRepr(existing.Text("actor")) +
 					"; one revision has one successor and a second would leave two chains nobody can order. A later move is recorded from" +
 					" the end of the recorded chain, which is " + pyvalue.StrRepr(end) + ": " + commandLine("region-restate-revision", "--repository",
 					repository, "--from-revision", end, "--to-revision", to, "--actor", actor),
-					domainEditRegion, repository, text(existing, "to_revision"), to}
+					domainEditRegion, repository, existing.Text("to_revision"), to}
 				return recordIn(ctx, e.Store, decided, now)
 			}
 		} else if existing == nil {
@@ -167,7 +167,7 @@ func (e *EditRegions) RestateRevision(ctx context.Context, repository, from, to,
 			return err
 		}
 		for _, r := range rows {
-			moved = append(moved, text(r, "agreement_id"))
+			moved = append(moved, r.Text("agreement_id"))
 		}
 		if err := e.Store.ReopenEditAgreements(ctx, repository, from, stateReopened, now); err != nil {
 			return err
@@ -205,30 +205,30 @@ func (e *EditRegions) Reaffirm(ctx context.Context, identifier, actor, revision 
 		if r == nil {
 			return refuse(contract.RefusalUnregisteredScope, "no agreement "+strconv.Quote(identifier))
 		}
-		repository := text(r, "repository")
+		repository := r.Text("repository")
 		_, acting, err := e.actingSide(ctx, r, actor, repository)
 		if err != nil {
 			return err
 		}
 		decided = acting
-		if state := text(r, "state"); decided == nil && !slices.Contains(liveStates, state) {
+		if state := r.Text("state"); decided == nil && !slices.Contains(liveStates, state) {
 			decided = &refusal{contract.RefusalAgreementNotOpen, "agreement " + pyvalue.StrRepr(identifier) + " is " + state +
 				"; a closed agreement is not carried forward, it is proposed again", domainEditRegion, repository, state, actor}
 		}
-		if decided == nil && revision == text(r, "base_revision") {
-			decided = unmovedRefusal(identifier, text(r, "base_revision"), repository, actor)
+		if decided == nil && revision == r.Text("base_revision") {
+			decided = unmovedRefusal(identifier, r.Text("base_revision"), repository, actor)
 		}
 		if decided == nil {
-			chain, err := e.chainFrom(ctx, repository, text(r, "base_revision"))
+			chain, err := e.chainFrom(ctx, repository, r.Text("base_revision"))
 			if err != nil {
 				return err
 			}
-			terminal := text(r, "base_revision")
+			terminal := r.Text("base_revision")
 			if len(chain) > 0 {
 				terminal = chain[len(chain)-1]
 			}
 			if revision != terminal {
-				decided = &refusal{contract.RefusalAgreementRevisionStale, "this agreement stands on " + pyvalue.StrRepr(text(r, "base_revision")) +
+				decided = &refusal{contract.RefusalAgreementRevisionStale, "this agreement stands on " + pyvalue.StrRepr(r.Text("base_revision")) +
 					", whose recorded chain reaches " + pyvalue.StrRepr(terminal) + ", not " + pyvalue.StrRepr(revision) +
 					". Restate the revision first, or name the one the chain reaches", domainEditRegion, repository, terminal, revision}
 			}
@@ -236,18 +236,18 @@ func (e *EditRegions) Reaffirm(ctx context.Context, identifier, actor, revision 
 		if decided != nil {
 			return recordIn(ctx, e.Store, decided, now)
 		}
-		successorID, err := RegionID(repository, revision, text(r, "path"), text(r, "region_kind"), text(r, "region_key"))
+		successorID, err := RegionID(repository, revision, r.Text("path"), r.Text("region_kind"), r.Text("region_key"))
 		if err != nil {
 			return err
 		}
-		successor := regionPlace{id: successorID, repository: repository, baseRevision: revision, path: text(r, "path"),
-			kind: text(r, "region_kind"), key: text(r, "region_key"), class: text(r, "region_class")}
-		low, high := sortedPair(text(r, "left_project"), text(r, "right_project"))
+		successor := regionPlace{id: successorID, repository: repository, baseRevision: revision, path: r.Text("path"),
+			kind: r.Text("region_kind"), key: r.Text("region_key"), class: r.Text("region_class")}
+		low, high := sortedPair(r.Text("left_project"), r.Text("right_project"))
 		if decided, err = e.overlapRefusal(ctx, successor, low, high, actor); err != nil {
 			return err
 		}
 		if decided == nil {
-			if decided, err = e.peerRefusal(ctx, low, high, text(r, "peer_link_id"), actor, repository); err != nil {
+			if decided, err = e.peerRefusal(ctx, low, high, r.Text("peer_link_id"), actor, repository); err != nil {
 				return err
 			}
 		}
@@ -260,7 +260,7 @@ func (e *EditRegions) Reaffirm(ctx context.Context, identifier, actor, revision 
 				return err
 			}
 			if standing != nil {
-				decided = standingRefusal(text(standing, "agreement_id"), identifier, revision, repository, actor)
+				decided = standingRefusal(standing.Text("agreement_id"), identifier, revision, repository, actor)
 			}
 		}
 		if decided != nil {
@@ -278,11 +278,11 @@ func (e *EditRegions) Reaffirm(ctx context.Context, identifier, actor, revision 
 	if e.beforeCarry != nil {
 		e.beforeCarry()
 	}
-	return e.Propose(ctx, Proposal{Repository: text(carried, "repository"), BaseRevision: revision, Path: text(carried, "path"),
-		RegionKind: text(carried, "region_kind"), RegionKey: text(carried, "region_key"), RegionClass: text(carried, "region_class"),
-		RegenerateFrom: nullText(carried, "regenerate_from"), LeftProject: text(carried, "left_project"),
-		RightProject: text(carried, "right_project"), PeerLinkID: text(carried, "peer_link_id"), ProposerTaskID: actor,
-		ConstraintText: text(carried, "constraint_text"), IssueKey: nullText(carried, "issue_key"), NextOwner: nullText(carried, "next_owner"),
+	return e.Propose(ctx, Proposal{Repository: carried.Text("repository"), BaseRevision: revision, Path: carried.Text("path"),
+		RegionKind: carried.Text("region_kind"), RegionKey: carried.Text("region_key"), RegionClass: carried.Text("region_class"),
+		RegenerateFrom: nullText(carried, "regenerate_from"), LeftProject: carried.Text("left_project"),
+		RightProject: carried.Text("right_project"), PeerLinkID: carried.Text("peer_link_id"), ProposerTaskID: actor,
+		ConstraintText: carried.Text("constraint_text"), IssueKey: nullText(carried, "issue_key"), NextOwner: nullText(carried, "next_owner"),
 		Supersedes: valid(identifier), Carry: &Carry{Predecessor: identifier, Restated: condition}})
 }
 
@@ -313,7 +313,7 @@ func (e *EditRegions) Followup(ctx context.Context, in Followup) (contract.Order
 		return nil, err
 	}
 	if pair != nil {
-		owned, err := e.realOwnedSide(ctx, text(pair, "left_project"), text(pair, "right_project"), in.RecordedBy)
+		owned, err := e.realOwnedSide(ctx, pair.Text("left_project"), pair.Text("right_project"), in.RecordedBy)
 		if err != nil {
 			return nil, err
 		}
@@ -366,11 +366,11 @@ func (e *EditRegions) followupContext(ctx context.Context, identifier, actor str
 	if item == nil {
 		return nil, nil, "", nil, refuse(contract.RefusalUnregisteredScope, "no follow-up "+strconv.Quote(identifier))
 	}
-	agreement, err := e.one(ctx, "SELECT * FROM edit_agreements WHERE agreement_id = ?", text(item, "agreement_id"))
+	agreement, err := e.one(ctx, "SELECT * FROM edit_agreements WHERE agreement_id = ?", item.Text("agreement_id"))
 	if err != nil {
 		return nil, nil, "", nil, err
 	}
-	side, decided, err := e.actingSide(ctx, agreement, actor, text(agreement, "repository"))
+	side, decided, err := e.actingSide(ctx, agreement, actor, agreement.Text("repository"))
 	return item, agreement, side, decided, err
 }
 
@@ -384,10 +384,10 @@ func (e *EditRegions) AcceptFollowup(ctx context.Context, identifier, actor, pro
 			return err
 		}
 		decided = acting
-		repository, state, assignee := text(agreement, "repository"), text(item, "state"), text(item, "assignee_task_id")
-		if decided == nil && project != text(agreement, side) {
-			decided = &refusal{contract.RefusalScopeRoleMismatch, "task " + pyvalue.StrRepr(actor) + " owns " + pyvalue.StrRepr(text(agreement, side)) +
-				", so its acceptance is recorded under that project, not " + pyvalue.StrRepr(project), domainEditRegion, repository, text(agreement, side), project}
+		repository, state, assignee := agreement.Text("repository"), item.Text("state"), item.Text("assignee_task_id")
+		if decided == nil && project != agreement.Text(side) {
+			decided = &refusal{contract.RefusalScopeRoleMismatch, "task " + pyvalue.StrRepr(actor) + " owns " + pyvalue.StrRepr(agreement.Text(side)) +
+				", so its acceptance is recorded under that project, not " + pyvalue.StrRepr(project), domainEditRegion, repository, agreement.Text(side), project}
 		}
 		if decided == nil && (state == followupDone || state == followupDropped) {
 			decided = &refusal{contract.RefusalAgreementNotOpen, "follow-up " + pyvalue.StrRepr(identifier) + " is " + state +
@@ -427,7 +427,7 @@ func (e *EditRegions) SettleFollowup(ctx context.Context, identifier, actor, dis
 			return err
 		}
 		decided = acting
-		repository, state, assignee := text(agreement, "repository"), text(item, "state"), text(item, "assignee_task_id")
+		repository, state, assignee := agreement.Text("repository"), item.Text("state"), item.Text("assignee_task_id")
 		if decided == nil && (state == followupDone || state == followupDropped) && state != disposition {
 			decided = &refusal{contract.RefusalAgreementNotOpen, "follow-up " + pyvalue.StrRepr(identifier) + " was already settled as " +
 				state + "; that decision stands", domainEditRegion, repository, state, disposition}

@@ -7,6 +7,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 func capabilityReport(t *testing.T) (map[string]any, *fakehost.Server) {
@@ -21,7 +22,7 @@ func capabilityReport(t *testing.T) (map[string]any, *fakehost.Server) {
 
 func Test_test_capabilities_keep_bridge_exposure_and_host_support_apart(t *testing.T) {
 	report, host := capabilityReport(t)
-	exposure, support := object(report["exposure"]), object(report["hostSupport"])
+	exposure, support := pyjson.Map(report["exposure"]), pyjson.Map(report["hostSupport"])
 	if exposure["steerActiveTurn"] != true || exposure["goalPause"] != true || exposure["turnInterrupt"] != false || exposure["goalObjectiveWrite"] != false || support["state"] != "unknown_host_version" || support["observedServer"] != "fake Codex/0.153.4" {
 		t.Fatalf("report=%v calls=%v", report, host.Requests())
 	}
@@ -34,7 +35,7 @@ func Test_test_capabilities_keep_bridge_exposure_and_host_support_apart(t *testi
 
 func Test_test_capabilities_reports_only_flags_about_this_bridge(t *testing.T) {
 	report, _ := capabilityReport(t)
-	flags := object(report["capabilities"])
+	flags := pyjson.Map(report["capabilities"])
 	for name, expected := range map[string]bool{"createThread": true, "sendMessage": true, "listReadWait": true, "goalRead": true, "bridgeManagedWorktrees": true, "projectImport": false, "clientSideToolsAndApprovals": false} {
 		if flags[name] != expected {
 			t.Fatalf("%s=%v", name, flags[name])
@@ -48,7 +49,7 @@ func Test_test_capabilities_reports_only_flags_about_this_bridge(t *testing.T) {
 func Test_test_capabilities_stops_answering_what_it_never_asked(t *testing.T) {
 	report, _ := capabilityReport(t)
 	for _, key := range []string{"desktopManagedWorktrees", "desktopProjectRegistry", "goalSet"} {
-		if _, present := object(report["capabilities"])[key]; present {
+		if _, present := pyjson.Map(report["capabilities"])[key]; present {
 			t.Fatalf("unexpected %s", key)
 		}
 	}
@@ -56,7 +57,7 @@ func Test_test_capabilities_stops_answering_what_it_never_asked(t *testing.T) {
 
 func Test_test_an_unasked_question_carries_a_sentence_and_never_a_value(t *testing.T) {
 	report, _ := capabilityReport(t)
-	questions := object(report["hostNotProbed"])
+	questions := pyjson.Map(report["hostNotProbed"])
 	if len(questions) != 2 || report["hostNotProbedNote"] == nil {
 		t.Fatalf("report=%v", report)
 	}
@@ -70,13 +71,13 @@ func Test_test_an_unasked_question_carries_a_sentence_and_never_a_value(t *testi
 
 func Test_test_a_consumer_can_tell_measured_from_assumed_using_only_the_response(t *testing.T) {
 	report, _ := capabilityReport(t)
-	questions := object(report["hostNotProbed"])
-	if len(object(report["capabilities"])) == 0 || len(questions) == 0 {
+	questions := pyjson.Map(report["hostNotProbed"])
+	if len(pyjson.Map(report["capabilities"])) == 0 || len(questions) == 0 {
 		t.Fatalf("report=%v", report)
 	}
 	for _, block := range []string{"capabilities", "exposure", "hostSupport"} {
 		for question := range questions {
-			if _, present := object(report[block])[question]; present {
+			if _, present := pyjson.Map(report[block])[question]; present {
 				t.Fatalf("answered %s in %s", question, block)
 			}
 		}
@@ -97,7 +98,7 @@ func Test_test_capabilities_asks_the_connected_host_nothing(t *testing.T) {
 
 func Test_test_two_host_facing_answers_disagree_on_one_connection(t *testing.T) {
 	report, _ := capabilityReport(t)
-	if object(report["desktopVisibility"])["observedOn"] != "codex-cli 0.153.4" || object(report["desktopVisibility"])["sameVersionConnected"] != true || object(report["hostSupport"])["state"] != "unknown_host_version" || object(object(report["approvals"])["preservationObserved"])["sameVersionConnected"] != false {
+	if pyjson.Map(report["desktopVisibility"])["observedOn"] != "codex-cli 0.153.4" || pyjson.Map(report["desktopVisibility"])["sameVersionConnected"] != true || pyjson.Map(report["hostSupport"])["state"] != "unknown_host_version" || pyjson.Map(pyjson.Map(report["approvals"])["preservationObserved"])["sameVersionConnected"] != false {
 		t.Fatalf("report=%v", report)
 	}
 }
@@ -112,10 +113,10 @@ func Test_test_a_tested_host_never_comes_to_cover_an_unanswered_question(t *test
 	t.Cleanup(func() { _ = client.Close() })
 	b := New(client, nil, executionPolicy())
 	report, err := b.GetCapabilities(context.Background())
-	if err != nil || object(report["hostSupport"])["state"] != "tested" || len(object(report["hostNotProbed"])) != 2 || object(object(report["approvals"])["preservationObserved"])["sameVersionConnected"] != true || object(report["desktopVisibility"])["sameVersionConnected"] != false {
+	if err != nil || pyjson.Map(report["hostSupport"])["state"] != "tested" || len(pyjson.Map(report["hostNotProbed"])) != 2 || pyjson.Map(pyjson.Map(report["approvals"])["preservationObserved"])["sameVersionConnected"] != true || pyjson.Map(report["desktopVisibility"])["sameVersionConnected"] != false {
 		t.Fatalf("report=%v err=%v", report, err)
 	}
-	for _, question := range object(report["hostNotProbed"]) {
+	for _, question := range pyjson.Map(report["hostNotProbed"]) {
 		if _, ok := question.(string); !ok {
 			t.Fatalf("unanswered question=%v", question)
 		}

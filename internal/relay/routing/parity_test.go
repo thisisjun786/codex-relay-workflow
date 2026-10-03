@@ -75,7 +75,7 @@ func pythonReplay(t *testing.T, property string) {
 		var got string
 		if !t.Run(name, func(t *testing.T) {
 			args := list(restoreNumbers(r.Arguments[0]))
-			kwargs := object(restoreNumbers(r.Arguments[1]))
+			kwargs := pyjson.Map(restoreNumbers(r.Arguments[1]))
 			value, err := replayCall(t, r.Operation, args, kwargs)
 			if err != nil {
 				var refusal *Refusal
@@ -98,7 +98,7 @@ func replayCall(t *testing.T, name string, args []any, kwargs Object) (any, erro
 	case "read_binding":
 		var registry Object
 		if len(args) > 1 {
-			registry = object(args[1])
+			registry = pyjson.Map(args[1])
 		}
 		return ReadBinding(args[0], registry)
 	case "read_incident":
@@ -106,54 +106,54 @@ func replayCall(t *testing.T, name string, args []any, kwargs Object) (any, erro
 	case "read_policy":
 		return ReadPolicy(args[0])
 	case "coverage":
-		return Coverage(object(args[0])), nil
+		return Coverage(pyjson.Map(args[0])), nil
 	case "canonical":
 		return Canonical(args[0])
 	case "resolve_product":
 		registries := map[string]Object{}
-		for k, v := range object(args[0]) {
-			registries[k] = object(v)
+		for k, v := range pyjson.Map(args[0]) {
+			registries[k] = pyjson.Map(v)
 		}
-		product, reason := ResolveProduct(registries, object(args[1]))
+		product, reason := ResolveProduct(registries, pyjson.Map(args[1]))
 		return []any{product, reason}, nil
 	case "workspace_for":
 		var registry Object
 		if len(args) > 1 {
-			registry = object(args[1])
+			registry = pyjson.Map(args[1])
 		}
-		return WorkspaceFor(object(args[0]), registry)
+		return WorkspaceFor(pyjson.Map(args[0]), registry)
 	case "defect_signature":
 		attached := kwargs["attached"]
 		if len(args) > 1 {
 			attached = args[1]
 		}
-		return DefectSignature(object(args[0]), attached), nil
+		return DefectSignature(pyjson.Map(args[0]), attached), nil
 	case "pending_signature":
-		return PendingSignature(object(args[0])), nil
+		return PendingSignature(pyjson.Map(args[0])), nil
 	case "decide":
 		bindings := []Object{}
 		for _, v := range list(args[2]) {
-			bindings = append(bindings, object(v))
+			bindings = append(bindings, pyjson.Map(v))
 		}
 		run := kwargs["run_issue"]
 		if len(args) > 3 {
 			run = args[3]
 		}
-		return Decide(object(args[0]), object(args[1]), bindings, run), nil
+		return Decide(pyjson.Map(args[0]), pyjson.Map(args[1]), bindings, run), nil
 	case "issue_labels":
-		return IssueLabels(object(args[0])), nil
+		return IssueLabels(pyjson.Map(args[0])), nil
 	case "detail_text":
-		return DetailText(object(args[0])), nil
+		return DetailText(pyjson.Map(args[0])), nil
 	case "read_reading":
 		return ReadReading(args[0])
 	case "evaluate":
-		return EvaluateCompletion(object(args[0]), object(args[1])), nil
+		return EvaluateCompletion(pyjson.Map(args[0]), pyjson.Map(args[1])), nil
 	case "_obligations":
-		return Obligations(object(args[0]), object(args[1]), args[2], list(kwargs["labels"])), nil
+		return Obligations(pyjson.Map(args[0]), pyjson.Map(args[1]), args[2], list(kwargs["labels"])), nil
 	case "read_classification":
 		return ReadClassification(args[0])
 	case "attention":
-		return Attention(object(args[0])), nil
+		return Attention(pyjson.Map(args[0])), nil
 	case "_validate":
 		return ValidateProjectPayload(args[0]), nil
 	case "_confirm":
@@ -172,8 +172,8 @@ func replayCall(t *testing.T, name string, args []any, kwargs Object) (any, erro
 		var answer []string
 		err = s.Compose(ctx, func(ctx context.Context, _ *sql.Conn) error {
 			for _, table := range []string{"product_registry", "product_bindings", "routing_policy", "incident_routes", "route_incidents"} {
-				for _, raw := range list(object(args[0])[table]) {
-					row := object(raw)
+				for _, raw := range list(pyjson.Map(args[0])[table]) {
+					row := pyjson.Map(raw)
 					columns := sortedKeys(row)
 					values := make([]any, len(columns))
 					slots := make([]string, len(columns))
@@ -186,7 +186,7 @@ func replayCall(t *testing.T, name string, args []any, kwargs Object) (any, erro
 				}
 			}
 			var err error
-			answer, err = ProjectEligibility(ctx, s, object(args[1]))
+			answer, err = ProjectEligibility(ctx, s, pyjson.Map(args[1]))
 			return err
 		})
 		return answer, err

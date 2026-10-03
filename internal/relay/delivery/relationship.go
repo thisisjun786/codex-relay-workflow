@@ -84,7 +84,7 @@ func RequireActive(ctx context.Context, s *store.Store, id string) (Relationship
 // ProjectKey is registry.project_key: grouping, never authorization.
 func ProjectKey(r Relationship) string {
 	if cwd, ok := r.Parent.Cwd.(string); ok && cwd != "" {
-		return pyNormpath(cwd)
+		return store.Normpath(cwd)
 	}
 	return "host:" + r.Parent.HostID
 }

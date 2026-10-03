@@ -318,6 +318,8 @@ Execution:
   CXC `LOOP-DOCS-FIRST-01` applies to your own issue as CXC states it: a single-cycle issue
   skips the docs-only first cycle, and a child that plans two or more work-phases opens with
   one, with CXC's roadmap debt for scope found later.
+  A correction generation, a base-refresh generation and a separated publication step are not
+  the first work-phase of new work, so they do not open `LOOP-DOCS-FIRST-01`'s docs-only cycle.
   On a correction or a resume, read whether that goal and goalplan exist before making
   either. Usually they do, and the work is to continue them: opening a second goal for
   the same assignment is a duplicate rather than a resume, and the coordinator reads it
@@ -1069,7 +1071,11 @@ says, so read the level first and the fields second:
   On context loss the task re-reads the owning skill from those pointers; it does not
   reload every skill it once had, and an unrelated reference is not part of recovery.
 - The effective workflow, restated. A transport carries model and effort as settings
-  and has no field for the workflow, so a send that omits it has silently dropped it.
+  and has no field for the workflow, so a send that omits it has silently dropped it. Where that
+  workflow is CXC Loop, the restatement carries the rule that a correction generation, a
+  base-refresh generation and a separated publication step are not the first work-phase of new
+  work, so they do not open `LOOP-DOCS-FIRST-01`'s docs-only cycle; CXC's own rule, which a task
+  that lost its first assignment is left with, counts work-phases and not what a phase does.
 - The language the task writes in, restated: English for an issue child under
   [Default independent execution](../../crw-plan/references/integrations.md#default-independent-execution),
   or the explicit override its assignment carried. Like the workflow it has no transport field,

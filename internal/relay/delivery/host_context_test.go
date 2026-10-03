@@ -4,6 +4,8 @@ import (
 	"context"
 	"slices"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 // probeKey marks a context as the one the test handed to the delivery code.
@@ -98,7 +100,7 @@ func TestDeliveryPassesItsContextToEveryHostCall(t *testing.T) {
 		h.parentHistory()
 		event := h.queuedEvent(regOpts{})
 		h.host.script = []string{"in_progress"}
-		request := str(h.attemptOn(event, probe, nil), "requestId")
+		request := pyjson.Text(h.attemptOn(event, probe, nil).Get("requestId"))
 		h.host.startTurn(parent, "", "completed", "..."+request+"...")
 		h.reconcile(request, probe)
 		h.tickWith(h.policy, probe, h.checks)
@@ -109,7 +111,7 @@ func TestDeliveryPassesItsContextToEveryHostCall(t *testing.T) {
 		h.parentHistory()
 		event := h.queuedEvent(regOpts{})
 		h.host.script = []string{"in_progress"}
-		request := str(h.attemptOn(event, probe, nil), "requestId")
+		request := pyjson.Text(h.attemptOn(event, probe, nil).Get("requestId"))
 		h.clock.Advance(120)
 		h.host.startTurn(parent, "", "completed", "another prompt")
 		h.tickWith(h.policy, probe, h.checks)

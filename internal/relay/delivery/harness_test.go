@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
@@ -254,9 +255,9 @@ func (f *fixture) executionPayload(rid string, generation int64, outcome string,
 }
 
 func (f *fixture) accept(payload Obj, options store.AcceptOptions) (store.StoredReceipt, error) {
-	turn, _ := get(payload, "turnRef")
+	turn, _ := payload.Lookup("turnRef")
 	t := turn.(Obj)
-	return f.intake.AcceptChildReceiptWith(f.ctx, []byte(dumps(payload)), store.TurnReference{ThreadID: str(t, "threadId"), TurnID: str(t, "turnId"), Status: str(t, "turnStatus")}, options)
+	return f.intake.AcceptChildReceiptWith(f.ctx, []byte(dumps(payload)), store.TurnReference{ThreadID: pyjson.Text(t.Get("threadId")), TurnID: pyjson.Text(t.Get("turnId")), Status: pyjson.Text(t.Get("turnStatus"))}, options)
 }
 
 // readyEvent is DeliveryTestCase.ready_event.
@@ -265,7 +266,7 @@ func (f *fixture) readyEvent(o regOpts) string {
 	payload := f.readyPayload(rid, 1, []string{f.artifact("out.txt", "the deliverable")}, 1, assigned("completed"))
 	_, err := f.accept(payload, store.AcceptOptions{})
 	mustDo(f.t, err)
-	return str(payload, "eventId")
+	return pyjson.Text(payload.Get("eventId"))
 }
 
 // queuedEvent is DeliveryTestCase.queued_event.

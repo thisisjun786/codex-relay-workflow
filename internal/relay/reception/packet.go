@@ -29,32 +29,16 @@ func O(pairs ...any) Obj {
 }
 func Get(v any, k string) any {
 	o, _ := evidence.Object(v)
-	for _, f := range o {
-		if f.Key == k {
-			return f.Value
-		}
-	}
-	return nil
+	return o.Get(k)
 }
 func Has(v any, k string) bool {
 	o, _ := evidence.Object(v)
-	for _, f := range o {
-		if f.Key == k {
-			return true
-		}
-	}
-	return false
+	_, ok := o.Lookup(k)
+	return ok
 }
 func Set(o *Obj, k string, v any) {
-	for i := range *o {
-		if (*o)[i].Key == k {
-			(*o)[i].Value = v
-			return
-		}
-	}
-	*o = append(*o, contract.Field{Key: k, Value: v})
+	*o = o.Set(k, v)
 }
-func str(v any) string { s, _ := v.(string); return s }
 func truth(v any) bool {
 	if v == nil {
 		return false
@@ -93,9 +77,9 @@ func present(v any) bool {
 func shown(v any) string {
 	if absent(v) {
 		if d := Get(v, "detail"); truth(d) {
-			return "<" + str(Get(v, "absent")) + ": " + str(d) + ">"
+			return "<" + pyjson.Text(Get(v, "absent")) + ": " + pyjson.Text(d) + ">"
 		}
-		return "<" + str(Get(v, "absent")) + ">"
+		return "<" + pyjson.Text(Get(v, "absent")) + ">"
 	}
 	if v == nil {
 		return ""
@@ -121,7 +105,7 @@ var required = map[string][]string{
 }
 
 func known(v any, allowed []string, what string) error {
-	if slices.Contains(allowed, str(v)) && str(v) != "" {
+	if slices.Contains(allowed, pyjson.Text(v)) && pyjson.Text(v) != "" {
 		return nil
 	}
 	sorted := slices.Clone(allowed)
@@ -132,8 +116,8 @@ func KindOf(direction, purpose any) (string, error) {
 	if e := known(direction, []string{"child_to_parent", "parent_to_child", "supervisor_to_parent", "parent_to_supervisor"}, "direction"); e != nil {
 		return "", e
 	}
-	p := purposes[str(direction)]
-	kind, ok := p[str(purpose)]
+	p := purposes[pyjson.Text(direction)]
+	kind, ok := p[pyjson.Text(purpose)]
 	if !ok {
 		names := []string{}
 		for k := range p {
@@ -180,10 +164,10 @@ func Stage(state string, source any, detail string) Obj {
 func checkEnvelope(region any) error {
 	for _, k := range []string{"direction", "kind", "purpose"} {
 		if _, ok := Get(region, k).(string); !ok {
-			return malformed("the %s is a name, not a %s", k, pyvalue.TypeName(Get(region, k)))
+			return malformed("the %s is a name, not %s", k, quote.Kind(Get(region, k)))
 		}
 	}
-	kind := str(Get(region, "kind"))
+	kind := pyjson.Text(Get(region, "kind"))
 	if e := known(kind, []string{"request", "notification", "decision", "status_response"}, "kind"); e != nil {
 		return e
 	}
@@ -191,27 +175,27 @@ func checkEnvelope(region any) error {
 	keys = append(keys, map[string][]string{"request": {"subject", "answerOwedBy"}, "decision": {"subject", "answerOwedBy", "decision"}, "notification": {"subject"}, "status_response": {"correlationId"}}[kind]...)
 	for _, k := range keys {
 		v := Get(region, k)
-		if v == nil || absent(v) || pyvalue.TypeName(v) == "str" && strings.TrimSpace(str(v)) == "" {
+		if v == nil || absent(v) || pyvalue.TypeName(v) == "str" && strings.TrimSpace(pyjson.Text(v)) == "" {
 			return malformed("a %s envelope cannot omit %s: %s", kind, k, shown(v))
 		}
 	}
 	for _, k := range []string{"sender", "recipient"} {
 		v := Get(region, k)
 		if _, ok := evidence.Object(v); !ok {
-			return malformed("the %s is an endpoint object with a task id, not a %s", k, pyvalue.TypeName(v))
+			return malformed("the %s is an endpoint object with a task id, not %s", k, quote.Kind(v))
 		}
 		task := Get(v, "taskId")
-		if !absent(task) && (pyvalue.TypeName(task) != "str" || strings.TrimSpace(str(task)) == "") {
+		if !absent(task) && (pyvalue.TypeName(task) != "str" || strings.TrimSpace(pyjson.Text(task)) == "") {
 			return malformed("the %s is neither a task id nor a stated absence", k)
 		}
 	}
 	reach := Get(region, "reach")
 	if reach != nil {
 		if _, ok := evidence.Object(reach); !ok {
-			return malformed("the reach is a ladder of named stages, not a %s", pyvalue.TypeName(reach))
+			return malformed("the reach is a ladder of named stages, not %s", quote.Kind(reach))
 		}
 	}
-	direction := str(Get(region, "direction"))
+	direction := pyjson.Text(Get(region, "direction"))
 	if e := known(direction, []string{"child_to_parent", "parent_to_child", "supervisor_to_parent", "parent_to_supervisor"}, "direction"); e != nil {
 		return e
 	}
@@ -237,11 +221,11 @@ func checkEnvelope(region any) error {
 }
 func Check(one any) error {
 	if _, ok := evidence.Object(one); !ok {
-		return malformed("a packet is an object with an envelope and its typed data, not a %s", pyvalue.TypeName(one))
+		return malformed("a packet is an object with an envelope and its typed data, not %s", quote.Kind(one))
 	}
 	region := Get(one, "envelope")
 	if _, ok := evidence.Object(region); !ok {
-		return malformed("a packet carries a relay-envelope/1 region under envelope, not a %s", pyvalue.TypeName(region))
+		return malformed("a packet carries a relay-envelope/1 region under envelope, not %s", quote.Kind(region))
 	}
 	if Get(one, "version") != "relay-packet/1" {
 		return malformed("this reader is relay-packet/1 and the packet says %s; a version nobody mapped is diagnosed rather than read under these rules", quote.Value(Get(one, "version")))
@@ -252,7 +236,7 @@ func Check(one any) error {
 	if Get(region, "version") != "relay-envelope/1" {
 		return malformed("this reader is relay-envelope/1 and the region says %s; the identification region is read under the version that wrote it or not at all", quote.Value(Get(region, "version")))
 	}
-	direction, purpose := str(Get(region, "direction")), str(Get(region, "purpose"))
+	direction, purpose := pyjson.Text(Get(region, "direction")), pyjson.Text(Get(region, "purpose"))
 	kind, e := KindOf(direction, purpose)
 	if e != nil {
 		return e
@@ -265,7 +249,7 @@ func Check(one any) error {
 			return malformed("the %s claims the role %s, but on %s it is the %s; a direction fixes both roles and a caller supplies neither", k, quote.Value(Get(Get(region, k), "role")), direction, roles[direction][i])
 		}
 	}
-	id, e := MessageID(direction, str(Get(region, "relationId")), purpose, str(Get(region, "subject")))
+	id, e := MessageID(direction, pyjson.Text(Get(region, "relationId")), purpose, pyjson.Text(Get(region, "subject")))
 	if e != nil {
 		return e
 	}
@@ -277,12 +261,12 @@ func Check(one any) error {
 		if v == nil || absent(v) {
 			continue
 		}
-		want := "str"
+		want, named := "str", "a string"
 		if k == "relationRevision" {
-			want = "int"
+			want, named = "int", "a whole number"
 		}
 		if pyvalue.TypeName(v) != want {
-			return malformed("the region's %s is %s or a stated absence, not a %s", k, want, pyvalue.TypeName(v))
+			return malformed("the region's %s is %s or a stated absence, not %s", k, named, quote.Kind(v))
 		}
 	}
 	req, e := RequiredFor(direction, purpose)
@@ -298,26 +282,26 @@ func Check(one any) error {
 			return malformed("a %s packet cannot omit %s: %s. It is one of %s, which this occasion is read against", purpose, k, shown(v), strings.Join(req, ", "))
 		}
 	}
-	for _, field := range []struct{ k, want string }{{"issue", "str"}, {"generation", "int"}, {"criteriaDigest", "str"}, {"callback", "dict"}, {"body", "str"}} {
+	for _, field := range []struct{ k, want, named string }{{"issue", "str", "a string"}, {"generation", "int", "a whole number"}, {"criteriaDigest", "str", "a string"}, {"callback", "dict", "an object"}, {"body", "str", "a string"}} {
 		v := Get(one, field.k)
 		if v != nil && pyvalue.TypeName(v) != field.want {
-			return malformed("%s is %s, not a %s; a value of the wrong shape compares equal to an equally wrong record value and comes back agreed", field.k, field.want, pyvalue.TypeName(v))
+			return malformed("%s is %s, not %s; a value of the wrong shape compares equal to an equally wrong record value and comes back agreed", field.k, field.named, quote.Kind(v))
 		}
 	}
 	if v := Get(one, "evidence"); v != nil {
 		items, ok := evidence.List(v)
 		if !ok {
-			return malformed("evidence is a list of pointers, not a %s", pyvalue.TypeName(v))
+			return malformed("evidence is a list of pointers, not %s", quote.Kind(v))
 		}
 		for _, item := range items {
-			if pyvalue.TypeName(item) != "str" || strings.TrimSpace(str(item)) == "" {
+			if pyvalue.TypeName(item) != "str" || strings.TrimSpace(pyjson.Text(item)) == "" {
 				return malformed("each evidence entry is a pointer somebody can follow, not %s", quote.Value(item))
 			}
 		}
 	}
 	if p := Get(one, "policy"); p != nil {
 		if _, ok := evidence.Object(p); !ok {
-			return malformed("a policy is an object of named settings, not a %s", pyvalue.TypeName(p))
+			return malformed("a policy is an object of named settings, not %s", quote.Kind(p))
 		}
 		missing := []string{}
 		for _, k := range []string{"model", "effort", "workflow", "mode"} {
@@ -343,7 +327,7 @@ func Check(one any) error {
 		if e := checkMode(Get(p, "mode")); e != nil {
 			return e
 		}
-		words := strings.FieldsFunc(strings.ToLower(str(Get(p, "workflow"))), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
+		words := strings.FieldsFunc(strings.ToLower(pyjson.Text(Get(p, "workflow"))), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
 		for i := 0; i+1 < len(words); i++ {
 			if words[i] == "cxc" && words[i+1] == "loop" && Get(p, "mode") != "loop" {
 				return malformed("the workflow names CXC Loop and the policy says %s; the Loop arms a goalplan, so its mode is loop", quote.Value(Get(p, "mode")))
@@ -388,7 +372,7 @@ func Check(one any) error {
 	}
 	if triple := Get(one, "activation"); triple != nil {
 		if _, ok := evidence.Object(triple); !ok {
-			return malformed("an activation reading is an object of three named facts, not a %s", pyvalue.TypeName(triple))
+			return malformed("an activation reading is an object of three named facts, not %s", quote.Kind(triple))
 		}
 		for _, k := range activationFacts {
 			if !Has(triple, k) {
@@ -396,17 +380,17 @@ func Check(one any) error {
 			}
 			fact := Get(triple, k)
 			if _, ok := evidence.Object(fact); !ok {
-				return malformed("the %s activation fact is an object with a state, not a %s", k, pyvalue.TypeName(fact))
+				return malformed("the %s activation fact is an object with a state, not %s", k, quote.Kind(fact))
 			}
-			if _, e := ActivationFact(Get(fact, "state"), Get(fact, "source"), str(Get(fact, "detail"))); e != nil {
+			if _, e := ActivationFact(Get(fact, "state"), Get(fact, "source"), pyjson.Text(Get(fact, "detail"))); e != nil {
 				return e
 			}
 		}
 		mode := Get(triple, "mode")
-		if !slices.Contains(modes, str(mode)) {
+		if !slices.Contains(modes, pyjson.Text(mode)) {
 			return malformed("an activation reading states the mode it was read under, one of coordination, loop, non_loop, not %s; not_applicable means something only under a mode that arms nothing", quote.Value(mode))
 		}
-		if _, e := ActivationClass(triple, str(mode), nil); e != nil {
+		if _, e := ActivationClass(triple, pyjson.Text(mode), nil); e != nil {
 			return e
 		}
 		if p := Get(one, "policy"); present(p) && Get(p, "mode") != mode {
@@ -416,7 +400,7 @@ func Check(one any) error {
 	return nil
 }
 func checkArtifact(a any) error {
-	kind := str(Get(a, "kind"))
+	kind := pyjson.Text(Get(a, "kind"))
 	if !slices.Contains([]string{"pull_request", "locator"}, kind) {
 		return malformed("an artifact is a pull request or a locator; a third shape cannot reach a reader as either")
 	}
@@ -438,7 +422,7 @@ func checkArtifact(a any) error {
 	if kind == "pull_request" {
 		n, ok := evidence.PyInt(Get(a, "number"))
 		if !ok || n < 1 {
-			return malformed("a pull request number is a positive integer, not a %s", pyvalue.TypeName(Get(a, "number")))
+			return malformed("a pull request number is a positive integer, not %s", quote.Kind(Get(a, "number")))
 		}
 	}
 	wrong := []string{}
@@ -450,7 +434,7 @@ func checkArtifact(a any) error {
 		}
 		if pyvalue.TypeName(v) != "str" {
 			wrong = append(wrong, k)
-			types = append(types, pyvalue.TypeName(v))
+			types = append(types, quote.Kind(v))
 		}
 	}
 	if len(wrong) > 0 {

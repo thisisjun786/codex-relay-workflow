@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -47,15 +48,15 @@ func renderVerdictSummary(r Relationship, event Row, verdict string, findings []
 		}
 		lines = append(lines, line)
 	}
-	if next, _ := get(record, "nextExecutionGeneration"); truthy(next) {
+	if next, _ := record.Lookup("nextExecutionGeneration"); truthy(next) {
 		lines = append(lines, fmt.Sprintf("a revision request was queued to the same child under generation %s", pyStr(next)))
 	}
 	if len(findings) > 0 {
 		lines = append(lines, "findings:")
 		for _, f := range findings {
 			o := f.(Obj)
-			line := "  " + str(o, "id") + ": " + str(o, "verdict")
-			if note := str(o, "note"); note != "" {
+			line := "  " + pyjson.Text(o.Get("id")) + ": " + pyjson.Text(o.Get("verdict"))
+			if note := pyjson.Text(o.Get("note")); note != "" {
 				line += " — " + note
 			}
 			lines = append(lines, line)

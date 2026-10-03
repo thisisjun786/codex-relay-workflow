@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
@@ -173,7 +174,7 @@ func newCharRun(t *testing.T) *charRun {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fake := &managedFake{operations: map[string]map[string]any{}, settings: obj(obj(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, standby: "completed"}
+	fake := &managedFake{operations: map[string]map[string]any{}, settings: pyjson.Map(pyjson.Map(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, standby: "completed"}
 	tr := &tracer{managedFake: fake}
 	x := &charRun{t: t, ctx: ctx, dir: dir, store: s, raw: raw, req: req, fake: fake, tr: tr}
 	x.start = &Start{Store: s, Adapter: tr, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(ctx context.Context, _ map[string]any) (string, error) {
@@ -602,7 +603,7 @@ func TestRunCharacterization_FinalGuardRefusesByTheHostsAnswer(t *testing.T) {
 func TestRunCharacterization_IntentConflictRefusesBeforeAnyHostEffect(t *testing.T) {
 	x := newCharRun(t)
 	id := x.identity()
-	_, err := delivery.DeclareIntent(context.Background(), id.MarkerRoot, delivery.IntentDeclaration{Workspace: id.Workspace, DispatchRequestID: id.DispatchRequestID, IssueKey: id.IssueKey, DeclaredAt: "2026-09-26T00:00:00.000000+00:00", CriteriaSource: "issue:other", BaselineRevision: x.req["baselineRevision"], AuthorizedSettings: deliveryValue(obj(obj(x.req["child"])["settings"])), DBPath: x.store.Path})
+	_, err := delivery.DeclareIntent(context.Background(), id.MarkerRoot, delivery.IntentDeclaration{Workspace: id.Workspace, DispatchRequestID: id.DispatchRequestID, IssueKey: id.IssueKey, DeclaredAt: "2026-09-26T00:00:00.000000+00:00", CriteriaSource: "issue:other", BaselineRevision: x.req["baselineRevision"], AuthorizedSettings: deliveryValue(pyjson.Map(pyjson.Map(x.req["child"])["settings"])), DBPath: x.store.Path})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -827,7 +828,7 @@ func TestRunCharacterization_GuardKeepsTheParentRegisteredWithTheChild(t *testin
 	x.start.Readiness = func(ctx context.Context, req map[string]any) (string, error) {
 		if tagOf(ctx) == "guard" {
 			changed := map[string]any{}
-			for key, value := range obj(req["parent"]) {
+			for key, value := range pyjson.Map(req["parent"]) {
 				changed[key] = value
 			}
 			changed["taskId"] = "other-parent"

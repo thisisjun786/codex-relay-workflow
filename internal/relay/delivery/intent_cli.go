@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -157,7 +158,7 @@ func cmdIntentShow(c *cliRun) (any, error) {
 			return nil, err
 		}
 		facts, unreadable = ReadAssignment(c.ctx, directory)
-		if _, has := get(facts, "intent"); len(unreadable) == 0 && !has {
+		if _, has := facts.Lookup("intent"); len(unreadable) == 0 && !has {
 			return Obj{{Key: "markerRoot", Value: root}, {Key: "workspace", Value: workspace}, {Key: "managed", Value: false}, {Key: "assignmentId", Value: filepath.Base(directory)},
 				{Key: "assignmentDir", Value: directory}, {Key: "unreadable", Value: []any{}}, {Key: "detail", Value: "no intent is published for this assignment"}}, nil
 		}
@@ -353,7 +354,7 @@ func cmdIntentDisposition(c *cliRun) (any, error) {
 		}
 	case bodyErr != nil:
 		return nil, bodyErr
-	case txErr != nil && str(record, "state") == declRecorded:
+	case txErr != nil && pyjson.Text(record.Get("state")) == declRecorded:
 		// Held.settled: a commit that failed undoes the record.
 		record = declFailure("store_write_failed", store.StoredSQLiteError(txErr), fieldOf(record, "store"))
 	}
@@ -370,7 +371,7 @@ func malformedDisposition(record any) string {
 		return "disposition"
 	}
 	for _, field := range []string{"sessionId", "turnId", "outcome"} {
-		if v, present := get(o, field); present {
+		if v, present := o.Lookup(field); present {
 			if _, isString := v.(string); !isString {
 				return "disposition." + field
 			}
@@ -383,7 +384,7 @@ func malformedDisposition(record any) string {
 // failed record fails the command with the whole answer.
 func withStoreRecord(published, record Obj) (any, error) {
 	payload := append(slices.Clone(published), F{Key: "storeRecord", Value: record})
-	if str(record, "state") == declFailed {
+	if pyjson.Text(record.Get("state")) == declFailed {
 		return nil, &dispatch.PayloadExit{Payload: append(payload, F{Key: "detail", Value: "the marker fact was published and the relay store record was not: " + pyStr(fieldOf(record, "detail"))}), Code: contract.ExitRefused}
 	}
 	return payload, nil
@@ -420,28 +421,6 @@ func declFailure(reason, detail string, dbPath any) Obj {
 		{Key: "detail", Value: detail + ". The marker fact stands; running the same command again retries this record and changes nothing else"}}
 }
 
-// pathlibString is str(Path(value)): repeated and trailing separators and "." parts dropped,
-// ".." kept.
-func pathlibString(value string) string {
-	if value == "" {
-		return "."
-	}
-	parts := []string{}
-	for _, part := range strings.Split(value, "/") {
-		if part != "" && part != "." {
-			parts = append(parts, part)
-		}
-	}
-	joined := strings.Join(parts, "/")
-	if strings.HasPrefix(value, "/") {
-		return "/" + joined
-	}
-	if joined == "" {
-		return "."
-	}
-	return joined
-}
-
 // expandedStore is the store an intent names with its ~ expanded; an unknown ~user is a host
 // error out of the command.
 func expandedStore(dbPath any) (string, error) {
@@ -452,7 +431,7 @@ func expandedStore(dbPath any) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return pathlibString(expanded), nil
+	return store.PathlibSpelling(expanded), nil
 }
 
 // intentStoreFence is the ownership check the fence makes on the store an intent names before

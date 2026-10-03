@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -21,7 +22,7 @@ func (rc *Reconciler) settleConfirmed(ctx context.Context, attempt, delivery Row
 	if !attempt.N("record") {
 		record = loadsObj(attempt.S("record"))
 	}
-	turnID, _ := get(record, "turnId")
+	turnID, _ := record.Lookup("turnId")
 	if !truthy(turnID) {
 		turnID = delivery.Opt("dispatch_turn_id")
 	}
@@ -35,16 +36,16 @@ func (rc *Reconciler) settleConfirmed(ctx context.Context, attempt, delivery Row
 // only (revision), otherwise the undecided name.
 func (rc *Reconciler) afterReading(ctx context.Context, out Obj, attempt, delivery Row, reading Reading, observation any) (Obj, error) {
 	switch {
-	case str(reading, "finding") == HostLostTurn && delivery.S("kind") == Completion:
+	case pyjson.Text(reading.Get("finding")) == HostLostTurn && delivery.S("kind") == Completion:
 		loss, err := SettleLoss(ctx, rc.Store, rc.Clock, attempt.S("request_id"), reading, observation)
 		if err != nil {
 			return nil, err
 		}
 		for _, f := range loss {
-			out = set(out, f.Key, f.Value)
+			out = out.Set(f.Key, f.Value)
 		}
-	case str(reading, "finding") == HostLostTurn:
-		out = set(out, "redelivery", ReportOnly)
+	case pyjson.Text(reading.Get("finding")) == HostLostTurn:
+		out = out.Set("redelivery", ReportOnly)
 	case delivery.S("kind") == Completion:
 		if _, err := RecordUndecided(ctx, rc.Store, attempt.S("request_id"), reading); err != nil {
 			return nil, err
@@ -71,19 +72,19 @@ func (rc *Reconciler) CheckDispatchedTurn(ctx context.Context, requestID string,
 	if !attempt.N("record") {
 		record = loadsObj(attempt.S("record"))
 	}
-	turnID, _ := get(record, "turnId")
+	turnID, _ := record.Lookup("turnId")
 	if !truthy(turnID) {
 		turnID = delivery.Opt("dispatch_turn_id")
 	}
 	reading := ReadRecipientTurn(ctx, adapter, rc.Clock, attempt, delivery, turnID)
 	out := Obj{{Key: "eventId", Value: attempt.S("event_id")}, {Key: "requestId", Value: requestID}, {Key: "state", Value: attempt.Opt("state")}, {Key: "recipientTurn", Value: reading}}
-	if str(reading, "finding") == HostLostTurn {
+	if pyjson.Text(reading.Get("finding")) == HostLostTurn {
 		loss, err := SettleLoss(ctx, rc.Store, rc.Clock, requestID, reading, nil)
 		if err != nil {
 			return nil, err
 		}
 		for _, f := range loss {
-			out = set(out, f.Key, f.Value)
+			out = out.Set(f.Key, f.Value)
 		}
 		return out, nil
 	}
@@ -141,7 +142,7 @@ func (rc *Reconciler) ConfirmDelivery(ctx context.Context, eventID string, adapt
 	if !scan.Found {
 		return out, nil
 	}
-	observation := str(reconciled, "operationObservation")
+	observation := pyjson.Text(reconciled.Get("operationObservation"))
 	if observation == "" {
 		observation = attempt.S("operation_observation")
 	}
@@ -319,9 +320,9 @@ func (tc *TurnChecks) Pass(ctx context.Context, adapter Adapter, now float64, re
 			report.Notes = append(report.Notes, fmt.Sprintf("recipient turn check failed for %s: %s", id, err))
 			continue
 		}
-		v, _ := get(outcome, "recipientTurn")
+		v, _ := outcome.Lookup("recipientTurn")
 		reading := v.(Obj)
-		if u, _ := get(reading, "undecided"); truthy(u) {
+		if u, _ := reading.Lookup("undecided"); truthy(u) {
 			if !contains(tc.undecided, id) {
 				tc.undecided = append(tc.undecided, id)
 			}
@@ -330,19 +331,19 @@ func (tc *TurnChecks) Pass(ctx context.Context, adapter Adapter, now float64, re
 			tc.undecided = remove(tc.undecided, id)
 			delete(tc.nextRead, id)
 		}
-		status, _ := get(reading, "status")
-		detail := str(reading, "detail")
-		if str(reading, "finding") == Present && contains(terminalTurn, pyStrOrEmpty(status)) {
+		status, _ := reading.Lookup("status")
+		detail := pyjson.Text(reading.Get("detail"))
+		if pyjson.Text(reading.Get("finding")) == Present && contains(terminalTurn, pyStrOrEmpty(status)) {
 			if !contains(tc.settled, id) {
 				tc.settled = append(tc.settled, id)
 			}
-		} else if str(reading, "finding") == Unknown && strings.HasPrefix(detail, "unreadable") {
+		} else if pyjson.Text(reading.Get("finding")) == Unknown && strings.HasPrefix(detail, "unreadable") {
 			report.Notes = append(report.Notes, fmt.Sprintf("recipient turn unreadable for %s: %s", id, detail))
 		}
-		if r := str(outcome, "redelivery"); r == Requeued || r == HeldRedelivery {
+		if r := pyjson.Text(outcome.Get("redelivery")); r == Requeued || r == HeldRedelivery {
 			report.TurnsLost++
 		}
-		if n, ok := get(outcome, "undecidedChanged"); ok {
+		if n, ok := outcome.Lookup("undecidedChanged"); ok {
 			report.TurnsUndecided += int(n.(int64))
 		}
 	}
@@ -373,8 +374,8 @@ func ConfirmKeptAcks(ctx context.Context, a *Ack, rc *Reconciler, adapter Adapte
 			notes = append(notes, fmt.Sprintf("kept acknowledgement %s not confirmed: %s", r[0], err))
 			continue
 		}
-		problem := str(outcome, "error")
-		if read := str(outcome, "turnRead"); problem == "" && strings.HasPrefix(read, "unreadable") {
+		problem := pyjson.Text(outcome.Get("error"))
+		if read := pyjson.Text(outcome.Get("turnRead")); problem == "" && strings.HasPrefix(read, "unreadable") {
 			problem = read
 		}
 		if problem != "" {

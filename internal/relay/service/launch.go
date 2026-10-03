@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"math"
 	"os"
 	"os/exec"
@@ -94,11 +95,11 @@ func (s *Service) logTail() string {
 	return strings.Join(lines, "")
 }
 func (s *Service) Start(ctx context.Context, o Options) (Object, error) {
-	if gate := s.AuthorityCheck(o.AllowIsolated); !truth(get(gate, "ok")) {
+	if gate := s.AuthorityCheck(o.AllowIsolated); !truth(gate.Get("ok")) {
 		return gate, nil
 	}
 	intent := s.Intent()
-	if !truth(get(intent, "enabled")) {
+	if !truth(intent.Get("enabled")) {
 		return obj("ok", false, "reason", "service_disabled", "intent", intent, "detail", "start never enables a service; enable it explicitly first"), nil
 	}
 	policy := s.LaunchEnvironment
@@ -114,7 +115,7 @@ func (s *Service) Start(ctx context.Context, o Options) (Object, error) {
 	conflicts := []any{}
 	for _, one := range s.Conflicts() {
 		r := one.(Object)
-		if truth(get(r, "live")) {
+		if truth(r.Get("live")) {
 			conflicts = append(conflicts, r)
 		}
 	}
@@ -150,8 +151,8 @@ func (s *Service) Start(ctx context.Context, o Options) (Object, error) {
 		return nil, err
 	}
 	cmd.Env = s.environment()
-	if p := text(get(policy, "path")); p != "" {
-		cmd.Env = environmentSet(cmd.Env, text(get(policy, "variable")), p)
+	if p := pyjson.Text(policy.Get("path")); p != "" {
+		cmd.Env = environmentSet(cmd.Env, pyjson.Text(policy.Get("variable")), p)
 	}
 	cmd.Env = environmentSet(cmd.Env, SettledEnv, launch)
 	// Startup answers at supervisor readiness, before the worker publishes its
@@ -192,11 +193,11 @@ func (s *Service) Start(ctx context.Context, o Options) (Object, error) {
 	}
 	for {
 		r := s.Record()
-		if truth(get(r, "pid")) && truth(get(r, "readyAt")) && get(r, "launchId") == launch && s.LockIsHeld() {
+		if truth(r.Get("pid")) && truth(r.Get("readyAt")) && r.Get("launchId") == launch && s.LockIsHeld() {
 			if s.StoreID == "" {
-				s.StoreID = text(get(r, "storeId"))
+				s.StoreID = pyjson.Text(r.Get("storeId"))
 			}
-			return finish(obj("ok", true, "reason", nil, "pid", get(r, "pid"), "scopeAuthority", s.Scope.Authority, "scopeRoot", s.Scope.Root, "status", s.Status(ctx))), nil
+			return finish(obj("ok", true, "reason", nil, "pid", r.Get("pid"), "scopeAuthority", s.Scope.Authority, "scopeRoot", s.Scope.Root, "status", s.Status(ctx))), nil
 		}
 		select {
 		case code := <-done:
@@ -214,7 +215,7 @@ func (s *Service) Start(ctx context.Context, o Options) (Object, error) {
 }
 func (s *Service) Restart(ctx context.Context, o Options) (Object, error) {
 	intent := s.Intent()
-	if !truth(get(intent, "enabled")) {
+	if !truth(intent.Get("enabled")) {
 		return obj("ok", false, "reason", "service_disabled", "intent", intent, "detail", "restart never enables a service the owner turned off"), nil
 	}
 	policy := s.ResolveLaunchPolicy()
@@ -225,15 +226,15 @@ func (s *Service) Restart(ctx context.Context, o Options) (Object, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !truth(get(stopped, "ok")) && get(stopped, "reason") != "not_running" {
-		return obj("ok", false, "reason", get(stopped, "reason"), "stop", stopped), nil
+	if !truth(stopped.Get("ok")) && stopped.Get("reason") != "not_running" {
+		return obj("ok", false, "reason", stopped.Get("reason"), "stop", stopped), nil
 	}
-	if !truth(get(s.Intent(), "enabled")) {
+	if !truth(s.Intent().Get("enabled")) {
 		return obj("ok", false, "reason", "service_disabled", "stop", stopped, "intent", s.Intent(), "detail", "intent changed to disabled while the service was stopping"), nil
 	}
 	s.LaunchEnvironment = policy
 	started, err := s.Start(ctx, o)
-	return obj("ok", get(started, "ok"), "reason", get(started, "reason"), "stop", stopped, "start", started), err
+	return obj("ok", started.Get("ok"), "reason", started.Get("reason"), "stop", stopped, "start", started), err
 }
 func RestartDelay(failures int) float64 {
 	if failures <= 1 {

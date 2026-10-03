@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
 )
 
@@ -92,14 +93,14 @@ func phase(row Row, attempts []Row, ack, failure Row, grant string, superseded R
 	if latest != nil && latest.S("record") != "" {
 		record = loadsObj(latest.S("record"))
 	}
-	failed, _ := get(record, "failedOperation")
+	failed, _ := record.Lookup("failedOperation")
 	failedText, _ := failed.(string)
 	switch {
 	case state == HeldUncertain:
 		if hold != "" {
 			return "held:" + hold
 		}
-		if t, _ := get(record, "turnId"); truthy(t) {
+		if t, _ := record.Lookup("turnId"); truthy(t) {
 			return "turn_accepted"
 		}
 		return "outcome_unknown"
@@ -122,7 +123,7 @@ func phase(row Row, attempts []Row, ack, failure Row, grant string, superseded R
 		return "in_flight"
 	case state == Queued && row.S("dispatch_evidence") == HostLostTurn:
 		return "redelivering:" + HostLostTurn
-	case state == Queued && str(pacing, "reason") == HourlyCap:
+	case state == Queued && pyjson.Text(pacing.Get("reason")) == HourlyCap:
 		return "awaiting_send:" + HourlyCap
 	case state == Queued:
 		return "awaiting_send"
@@ -163,7 +164,7 @@ func (d *Service) SnapshotItem(ctx context.Context, eventID string) (Obj, error)
 		if pacing, err = d.pacing(ctx, row.S("relationship_id"), row.S("recipient_task_id"), d.Clock.Now()); err != nil {
 			return nil, err
 		}
-		if reopens, _ := get(pacing, "reopensAt"); pacing != nil && reopens != nil && !row.N("next_eligible_at") && row.F("next_eligible_at") > reopens.(float64) {
+		if reopens, _ := pacing.Lookup("reopensAt"); pacing != nil && reopens != nil && !row.N("next_eligible_at") && row.F("next_eligible_at") > reopens.(float64) {
 			pacing = nil
 		}
 	}

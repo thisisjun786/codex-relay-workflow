@@ -178,7 +178,8 @@ a case whose owner has moved or been reworded before relying on it.
 | S24e | The handoff compares the changed paths with the declared edit regions (the parent re-checks with `git diff --name-only origin/dev...<head>`, and by hunk where a region covers part of a file) and carries a sibling impact, and a correction's restoration block carries the siblings' landings and the conflicts the parent expects as relay facts, so a task restored after compaction does not assume a base that is not there | [What a handoff discloses](task-packet.md#what-a-handoff-discloses) (`changedPaths`, `siblingImpact`), the verdict checks and the [Restoration block](task-packet.md#restoration-block) | Handoff | added 2026-10-03; same basis, see below |
 | S25 | Where a packet's `Delivery:` covers publication, the child pushes its task branch and opens the pull request without stopping for a push approval, because the packet carries the approval CXC `DEV-GIT-PUSH-01` requires, and it never merges, force-pushes, tags or pushes to `dev` or `main`; a packet that excludes publication carries none and the child pushes nothing | [Default dev integration](../../crw-plan/references/integrations.md#default-dev-integration), the publication bullet of the [Launch packet](task-packet.md#launch-packet) and [First full assignment required fields](task-packet.md#first-full-assignment-required-fields) | Approval context | added 2026-10-03; the rule text was read and the identifier search returned no match, a child at the push step was not observed, see below |
 | S25b | A child that needs something only a person can give does not call `request_user_input`, which CXC denies while a goal is active: it writes the question out, records `blocked_needs_input` on its turn and, where a relay holds the assignment, emits that outcome; where none does it returns the CXC status the case takes with the question | The same three places and [OPS-6.2](operations.md#ops-62-record-shape) | Recovery | added 2026-10-03; the hook denial was read in the CXC source, no child's use of the route was observed, see below |
-| S25c | `LOOP-DOCS-FIRST-01` applies to a CRW child as CXC states it, to the child's own issue: a single-cycle issue skips the docs-only first cycle, and a child that plans two or more work-phases opens with one, with CXC's roadmap debt for scope found later | [Default independent execution](../../crw-plan/references/integrations.md#default-independent-execution) and the Loop bullet of the [Launch packet](task-packet.md#launch-packet) | Default settings | added 2026-10-03; read against recorded goalplans, the correction-generation and publication-phase cases are left open, see below |
+| S25c | `LOOP-DOCS-FIRST-01` applies to a CRW child as CXC states it, to the child's own issue: a single-cycle issue skips the docs-only first cycle, and a child that plans two or more work-phases opens with one, with CXC's roadmap debt for scope found later | [Default independent execution](../../crw-plan/references/integrations.md#default-independent-execution) and the Loop bullet of the [Launch packet](task-packet.md#launch-packet) | Default settings | added 2026-10-03; read against recorded goalplans, the correction-generation and publication-phase cases it left open are decided by S25d, see below |
+| S25d | A correction generation, a base-refresh generation and a separated publication step are not the first work-phase of new work, so they do not open `LOOP-DOCS-FIRST-01`'s docs-only cycle, and the CXC rule text is unchanged | [Default independent execution](../../crw-plan/references/integrations.md#default-independent-execution), the Loop bullet of the [Launch packet](task-packet.md#launch-packet) and the workflow bullet of the [Restoration block](task-packet.md#restoration-block) | Default settings | added 2026-10-03; decides the cases S25c left open, from S25c's goalplan record, and no child reading the line was observed, see below |
 
 S14 and S17 are the pair that is easiest to confuse. S14 removed the readiness turn; S17
 added a capability check the coordinator performs before creating the task. A check that
@@ -339,13 +340,32 @@ not linked). Since 2026-10-01 they hold 33 plans with work-phases: 24 with one, 
 are a generation-2 correction, one is an implementation followed by a publication phase) and 5 with
 three or more, four of which record a docs-only roadmap phase first; an independent recount
 reproduced these figures and found three explicit generation-2 correction phases. A single-cycle
-issue opens no docs-only cycle in this record. Two cases are left open because CXC counts
+issue opens no docs-only cycle in this record. Two cases were left open because CXC counts
 work-phases and not what a phase does: a correction or base-refresh generation, and a publication
 phase split off from the implementation. CXC says multi-cycle scope discovered later pays the
 roadmap debt in the next P, and none of the three recorded generation-2 corrections and the one
 recorded implementation-then-publication plan opened a docs-only phase. That is recorded practice,
-not permission. This change does not decide these cases. The CXC text stands, and whether CRW should
-state that a correction or a publication phase opens none is returned for a decision.
+not permission. S25c did not decide these cases; S25d does. The CXC text stands.
+
+S25d: read on 2026-10-03 against this checkout at dev aae21a98 and the CXC plugin
+0.2.40+codex.20260929183231, and decided on that date within the scope Jun delegated, from the
+record S25c holds and not from a new reading of goalplans. For a multi-cycle loop,
+`LOOP-DOCS-FIRST-01` (cxc-loop, "Docs-first multi-cycle entry") makes the first work-phase of new
+work a docs-only roadmap cycle, and a single-cycle task skips it. A correction generation (the same
+deliverable of the same issue), a base-refresh generation (a merge of the base and the resolution of
+its conflicts) and a separated publication step (the push and the pull request) all come after the
+first work-phase of the issue's work, so the reasoning for the decision is that a docs-only cycle
+there would only add round trips; S25c measured whether such cycles opened and not what they cost.
+It counted three generation-2 corrections and one implementation followed by a publication phase,
+and none opened a docs-only phase; it reports no separately identified base-refresh observation.
+That is practice, which is why the line is written and not relied on. It stands in the Loop bullet
+of the Launch packet, in the workflow bullet of the Restoration block and in the Default independent
+execution paragraph, which the packet points to. It does not waive `LOOP-DOCS-FIRST-01` when a loop
+is entered, or the roadmap debt for new scope found later: it says only that these three later steps
+are not the first work-phase of new work. The CXC rule text is not changed and still counts
+work-phases, so the line is how CRW reads that rule for its own children. Not observed: a child
+reading the line at a correction, a base refresh or a publication step; that waits for the next
+real-use run, and a test that matches the wording would show only that the text is present.
 
 ## Negative cases
 

@@ -5,18 +5,11 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
-func field(object contract.OrderedObject, key string) any {
-	for _, item := range object {
-		if item.Key == key {
-			return item.Value
-		}
-	}
-	return nil
-}
 func objectMap(object contract.OrderedObject) map[string]any {
 	m := map[string]any{}
 	for _, item := range object {
@@ -32,24 +25,11 @@ func currentSettingsHold(ctx context.Context, s *store.Store, event string) (con
 	if row == nil {
 		return registry.SettingsHoldReading(nil), nil
 	}
-	return registry.SettingsHoldReading(&registry.HoldColumns{State: text(row, "sh_state"), HoldReason: text(row, "sh_hold_reason"), SettledSent: text(row, "sh_settled_sent"), SettledReconciled: text(row, "sh_settled_reconciled"), Presend: text(row, "sh_presend"), Request: text(row, "sh_request"), SettingsAt: text(row, "sh_settings_at"), LifecycleAt: text(row, "sh_lifecycle_at"), InactiveAt: text(row, "sh_inactive_at")}), nil
+	return registry.SettingsHoldReading(&registry.HoldColumns{State: row.Text("sh_state"), HoldReason: row.Text("sh_hold_reason"), SettledSent: row.Text("sh_settled_sent"), SettledReconciled: row.Text("sh_settled_reconciled"), Presend: row.Text("sh_presend"), Request: row.Text("sh_request"), SettingsAt: row.Text("sh_settings_at"), LifecycleAt: row.Text("sh_lifecycle_at"), InactiveAt: row.Text("sh_inactive_at")}), nil
 }
 func quoteCommand(parts []string) string {
 	for i, p := range parts {
-		if p == "" {
-			parts[i] = "''"
-			continue
-		}
-		safe := true
-		for _, r := range p {
-			if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("@%+=:,./-_", r)) {
-				safe = false
-				break
-			}
-		}
-		if !safe {
-			parts[i] = "'" + strings.ReplaceAll(p, "'", `'"'"'`) + "'"
-		}
+		parts[i] = quote.Shell(p)
 	}
 	return strings.Join(parts, " ")
 }
@@ -61,12 +41,12 @@ func (sw *Sweeper) settingsEvidence(ctx context.Context, event, recipient, reque
 		if err != nil {
 			return nil, "", err
 		}
-		if found, ok := field(reading, "hold").(contract.OrderedObject); ok {
+		if found, ok := reading.Get("hold").(contract.OrderedObject); ok {
 			candidate := objectMap(found)
 			source, _ := candidate["source"].(string)
 			if request == "" || source == "undetermined" || source == "attempt" && candidate["requestId"] == request {
 				hold = candidate
-				kind, _ = field(reading, "kind").(string)
+				kind, _ = reading.Get("kind").(string)
 			}
 		}
 	}
@@ -80,7 +60,7 @@ func (sw *Sweeper) settingsEvidence(ctx context.Context, event, recipient, reque
 			return nil, "", err
 		}
 		command := []string{"--state", directory, "show", "--event", event}
-		if field(chosen, "command") != registry.ShowEvent && recipient != "" {
+		if chosen.Get("command") != registry.ShowEvent && recipient != "" {
 			command = []string{"--state", directory, "settings-show", "--task", recipient}
 		}
 		program := registry.RelayProgram()
@@ -92,7 +72,7 @@ func (sw *Sweeper) settingsEvidence(ctx context.Context, event, recipient, reque
 		if recoveredReason == "" {
 			recoveredReason = "undetermined"
 		}
-		recovery := map[string]any{"actor": field(chosen, "actor"), "reason": recoveredReason, "command": rendered, "then": field(chosen, "then"), "laterDeliveries": field(chosen, "laterDeliveries"), "refusalDetail": hold["detail"]}
+		recovery := map[string]any{"actor": chosen.Get("actor"), "reason": recoveredReason, "command": rendered, "then": chosen.Get("then"), "laterDeliveries": chosen.Get("laterDeliveries"), "refusalDetail": hold["detail"]}
 		if reason == "" {
 			reason = "undetermined"
 		}

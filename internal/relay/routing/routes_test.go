@@ -64,41 +64,41 @@ func routeReplay(t *testing.T, property string) {
 						keep, _ = evidence.PyInt(v)
 					}
 				}
-				err = r.StoreIncident(ctx, text(args[0]), object(args[1]), bound, kw["replace"] == true)
+				err = r.StoreIncident(ctx, pyjson.Text(args[0]), pyjson.Map(args[1]), bound, kw["replace"] == true)
 			case "get":
-				answer, err = r.Get(ctx, text(args[0]))
+				answer, err = r.Get(ctx, pyjson.Text(args[0]))
 			case "incidents":
-				answer, err = r.Incidents(ctx, text(args[0]))
+				answer, err = r.Incidents(ctx, pyjson.Text(args[0]))
 			case "listing":
 				limit := absent(kw["limit"], 20)
 				var stages, dispositions []string
 				for _, v := range list(kw["stages"]) {
-					stages = append(stages, text(v))
+					stages = append(stages, pyjson.Text(v))
 				}
 				for _, v := range list(kw["dispositions"]) {
-					dispositions = append(dispositions, text(v))
+					dispositions = append(dispositions, pyjson.Text(v))
 				}
 				answer, err = r.Listing(ctx, kw["product"], stages, dispositions, limit, kw["after"])
 			case "outstanding_proposals":
 				answer, err = r.OutstandingProposals(ctx, args[0])
 			case "unreached_proposal":
-				answer, err = r.UnreachedProposal(ctx, text(args[0]), args[1], list(args[2]))
+				answer, err = r.UnreachedProposal(ctx, pyjson.Text(args[0]), args[1], list(args[2]))
 			case "unreached_count":
 				answer, err = r.UnreachedCount(ctx, list(args[0]))
 			case "checked":
-				err = s.CheckIncidentRoute(ctx, text(args[0]))
+				err = s.CheckIncidentRoute(ctx, pyjson.Text(args[0]))
 			case "settle":
-				err = s.SettleIncidentRoute(ctx, text(args[0]), "observed", text(args[1]), record.Stamp)
+				err = s.SettleIncidentRoute(ctx, pyjson.Text(args[0]), "observed", pyjson.Text(args[1]), record.Stamp)
 			case "_replayed":
 				closed := []string{}
 				for _, v := range list(args[0]) {
-					closed = append(closed, text(v))
+					closed = append(closed, pyjson.Text(v))
 				}
-				answer, err = r.Replayed(ctx, closed, text(args[1]))
+				answer, err = r.Replayed(ctx, closed, pyjson.Text(args[1]))
 			case "reconcile":
 				answer, err = New(s, &integrationClock{stamp: record.Stamp}).reconcile(ctx, kw["product"], absent(kw["limit"], 50), kw["after"])
 			case "sql":
-				_, err = s.Q(ctx).ExecContext(ctx, text(args[0]), list(args[1])...)
+				_, err = s.Q(ctx).ExecContext(ctx, pyjson.Text(args[0]), list(args[1])...)
 			case "tables":
 				answer = storeTables(t, s)
 			default:

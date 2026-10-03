@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
@@ -199,7 +200,7 @@ func (h *fakeHost) RecipientFingerprint(_ context.Context, thread string) (strin
 }
 
 func (h *fakeHost) SendMessage(_ context.Context, requestID, thread, message string, settings *TaskSettings) (Obj, error) {
-	if cached, ok := h.ledger[requestID]; ok && str(cached, "status") != Unfinished {
+	if cached, ok := h.ledger[requestID]; ok && pyjson.Text(cached.Get("status")) != Unfinished {
 		return append(append(Obj(nil), cached...), F{Key: "replayed", Value: true}), nil
 	}
 	outcome := "accepted"
@@ -218,40 +219,40 @@ func (h *fakeHost) SendMessage(_ context.Context, requestID, thread, message str
 	case "process_death":
 		return nil, &HostError{Kind: "ProcessDied", Message: "the relay process was killed mid-send"}
 	case "busy":
-		receipt = set(receipt, "status", FailedStatus)
-		receipt = set(receipt, "error", "thread/read: Thread is active; message withheld. Wait for completion.")
-		receipt = set(receipt, "rpcError", rpc("thread_busy", "Thread is active"))
+		receipt = receipt.Set("status", FailedStatus)
+		receipt = receipt.Set("error", "thread/read: Thread is active; message withheld. Wait for completion.")
+		receipt = receipt.Set("rpcError", rpc("thread_busy", "Thread is active"))
 	case "read_fail":
-		receipt = set(receipt, "status", FailedStatus)
-		receipt = set(receipt, "error", "thread/read: transport refused")
-		receipt = set(receipt, "rpcError", rpc("internal", "transport refused"))
+		receipt = receipt.Set("status", FailedStatus)
+		receipt = receipt.Set("error", "thread/read: transport refused")
+		receipt = receipt.Set("rpcError", rpc("internal", "transport refused"))
 	case "approval_policy":
-		receipt = set(receipt, "status", FailedStatus)
-		receipt = set(receipt, "resumed", resumed)
-		receipt = set(receipt, "error", "thread/resume: Interactive approvals unsupported; message withheld.")
-		receipt = set(receipt, "rpcError", rpc("unsupported_approval_policy", "unsupported"))
+		receipt = receipt.Set("status", FailedStatus)
+		receipt = receipt.Set("resumed", resumed)
+		receipt = receipt.Set("error", "thread/resume: Interactive approvals unsupported; message withheld.")
+		receipt = receipt.Set("rpcError", rpc("unsupported_approval_policy", "unsupported"))
 	case "turn_start_fail":
-		receipt = set(receipt, "status", FailedStatus)
-		receipt = set(receipt, "resumed", resumed)
-		receipt = set(receipt, "error", "turn/start: refused")
-		receipt = set(receipt, "rpcError", rpc("internal", "refused"))
+		receipt = receipt.Set("status", FailedStatus)
+		receipt = receipt.Set("resumed", resumed)
+		receipt = receipt.Set("error", "turn/start: refused")
+		receipt = receipt.Set("rpcError", rpc("internal", "refused"))
 	case "transport_unknown":
-		receipt = set(receipt, "status", OutcomeUnknown)
-		receipt = set(receipt, "error", "TransportError: turn/start: response unavailable; do not resend")
+		receipt = receipt.Set("status", OutcomeUnknown)
+		receipt = receipt.Set("error", "TransportError: turn/start: response unavailable; do not resend")
 	case "steer_existing":
 		var existing any
 		if n := len(t.turns); n > 0 {
 			existing = t.turns[n-1].TurnID
 		}
-		receipt = set(receipt, "status", Accepted)
-		receipt = set(receipt, "resumed", resumed)
-		receipt = set(receipt, "turnId", existing)
+		receipt = receipt.Set("status", Accepted)
+		receipt = receipt.Set("resumed", resumed)
+		receipt = receipt.Set("turnId", existing)
 		t.items = append(t.items, [3]string{pyvalue.Str(existing), message, "userMessage"})
 	default:
 		turn := h.startTurn(thread, "", "inProgress", message)
-		receipt = set(receipt, "status", Accepted)
-		receipt = set(receipt, "resumed", resumed)
-		receipt = set(receipt, "turnId", turn.TurnID)
+		receipt = receipt.Set("status", Accepted)
+		receipt = receipt.Set("resumed", resumed)
+		receipt = receipt.Set("turnId", turn.TurnID)
 	}
 	h.ledger[requestID] = receipt
 	return append(Obj(nil), receipt...), nil

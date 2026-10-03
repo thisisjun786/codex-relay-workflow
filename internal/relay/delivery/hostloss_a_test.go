@@ -3,6 +3,7 @@ package delivery
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"strings"
 	"testing"
 )
@@ -63,7 +64,7 @@ func Test21_HLT01_a_lost_accepted_turn_is_redelivered_once_under_the_next_attemp
 			h.eq(h.journalled(HostLostTurn))
 			reading := sub(h.reconcile(first, h.host), "recipientTurn")
 			h.eq(field(reading, "finding"))
-			h.eq(strings.Contains(str(reading, "detail"), "interrupted"))
+			h.eq(strings.Contains(pyjson.Text(reading.Get("detail")), "interrupted"))
 		})
 	})
 }
@@ -83,7 +84,7 @@ func Test21_HLT02_a_second_loss_holds_the_obligation_under_its_name(t *testing.T
 		h.clock.Advance(120)
 		h.tick()
 		second := h.attemptsFor(event)[1]
-		h.hostLoses(str(loadsObj(second.S("record")), "turnId"), true)
+		h.hostLoses(pyjson.Text(loadsObj(second.S("record")).Get("turnId")), true)
 		for i := 0; i < 4; i++ {
 			h.clock.Advance(120)
 			h.tick()
@@ -101,9 +102,9 @@ func Test21_HLT03_a_token_confirmed_completion_is_checked_like_an_accepted_one(t
 			h.parentHistory()
 			event := h.queuedEvent(regOpts{})
 			h.host.script = []string{"in_progress"}
-			request := str(h.attemptOn(event, h.host, nil), "requestId")
+			request := pyjson.Text(h.attemptOn(event, h.host, nil).Get("requestId"))
 			turn := h.host.startTurn(parent, "", "completed", "..."+request+"...")
-			h.eq(str(h.reconcile(request, h.host), "evidence"))
+			h.eq(pyjson.Text(h.reconcile(request, h.host).Get("evidence")))
 			h.eq(h.row(event).S("state"))
 			h.eq(h.attemptStates(event))
 			h.hostLoses(turn.TurnID, true)
@@ -204,12 +205,12 @@ func Test21_HLT07_the_turn_check_budget_reaches_every_delivery_and_reads_finishe
 				payload := h.readyPayload(rid, 1, []string{h.artifact(fmt.Sprintf("out-%d.txt", i), fmt.Sprintf("deliverable %d", i))}, 1, assigned("completed"))
 				_, err := h.accept(payload, storeAcceptNone)
 				mustDo(t, err)
-				_, err = h.delivery.Enqueue(h.ctx, str(payload, "eventId"), "", "")
+				_, err = h.delivery.Enqueue(h.ctx, pyjson.Text(payload.Get("eventId")), "", "")
 				mustDo(t, err)
-				record := h.attemptOn(str(payload, "eventId"), h.host, nil)
-				h.eq(str(record, "deliveryState"))
+				record := h.attemptOn(pyjson.Text(payload.Get("eventId")), h.host, nil)
+				h.eq(pyjson.Text(record.Get("deliveryState")))
 				h.eq(field(record, "attemptNo"))
-				turns = append(turns, str(record, "turnId"))
+				turns = append(turns, pyjson.Text(record.Get("turnId")))
 				h.clock.Advance(10)
 			}
 			for _, turn := range turns[:2] {
@@ -249,9 +250,9 @@ func Test21_HLT07_the_turn_check_budget_reaches_every_delivery_and_reads_finishe
 				payload := h.readyPayload(rid, 1, []string{h.artifact(fmt.Sprintf("out-%d.txt", i), fmt.Sprintf("deliverable %d", i))}, 1, assigned("completed"))
 				_, err := h.accept(payload, storeAcceptNone)
 				mustDo(t, err)
-				_, err = h.delivery.Enqueue(h.ctx, str(payload, "eventId"), "", "")
+				_, err = h.delivery.Enqueue(h.ctx, pyjson.Text(payload.Get("eventId")), "", "")
 				mustDo(t, err)
-				turns = append(turns, str(h.attemptOn(str(payload, "eventId"), h.host, nil), "turnId"))
+				turns = append(turns, pyjson.Text(h.attemptOn(pyjson.Text(payload.Get("eventId")), h.host, nil).Get("turnId")))
 				h.clock.Advance(10)
 			}
 			for _, turn := range turns {

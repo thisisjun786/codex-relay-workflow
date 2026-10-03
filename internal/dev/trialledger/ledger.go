@@ -27,7 +27,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 const (
@@ -174,14 +174,14 @@ func loadStart(value string) (object, string, error) {
 	if !ok {
 		return nil, "", refuse("the start record is not a JSON object", "path", shownStart)
 	}
-	if get(record, "source") != "live-trial-start" {
-		return nil, "", refuse("this file does not stamp itself as a live trial start record", "path", shownStart, "source", get(record, "source"))
+	if record.Get("source") != "live-trial-start" {
+		return nil, "", refuse("this file does not stamp itself as a live trial start record", "path", shownStart, "source", record.Get("source"))
 	}
-	version := get(record, "recordVersion")
+	version := record.Get("recordVersion")
 	if !slices.ContainsFunc(ledgerRecordVersions, func(v any) bool { return pyvalue.ItemEqual(version, v) }) {
 		return nil, "", refuse("unsupported record version", "path", shownStart, "recordVersion", version, "supported", ledgerRecordVersions)
 	}
-	root, err := absolute(get(record, "trialRoot"), "trialRoot")
+	root, err := absolute(record.Get("trialRoot"), "trialRoot")
 	if err != nil {
 		return nil, "", err
 	}
@@ -213,8 +213,6 @@ func loadStart(value string) (object, string, error) {
 	return record, ledger, nil
 }
 
-func get(o object, key string) any { return evidence.Get(o, key) }
-
 // field is the value at a path of object keys, or missing.
 func field(value any, path ...string) (any, bool) {
 	for _, key := range path {
@@ -222,7 +220,7 @@ func field(value any, path ...string) (any, bool) {
 		if !ok {
 			return nil, false
 		}
-		if value, ok = evidence.Lookup(o, key); !ok {
+		if value, ok = o.Lookup(key); !ok {
 			return nil, false
 		}
 	}
@@ -241,7 +239,7 @@ func absolute(value any, what string) (string, error) {
 	if strings.IndexByte(s, 0) >= 0 {
 		return "", refuse(what+" holds a NUL byte, which no path can carry", "value", shown)
 	}
-	return pathlibForm(s), nil
+	return store.PathlibSpelling(s), nil
 }
 
 // entry is one ledger line with its time and line number.
@@ -251,7 +249,7 @@ type entry struct {
 	line int
 }
 
-func (e entry) get(key string) any { return get(e.body, key) }
+func (e entry) get(key string) any { return e.body.Get(key) }
 
 // moment is one timestamp, or a refusal naming what could not be read as one.
 func moment(value any, what string) (time.Time, error) {
@@ -297,26 +295,26 @@ func report(record object, path string) (object, error) {
 			return nil, refuse("a ledger line is not JSON", "line", number, "detail", err.Error())
 		}
 		body, isObject := value.(object)
-		if !isObject || !member(get(body, "kind"), ledgerKinds) {
+		if !isObject || !member(body.Get("kind"), ledgerKinds) {
 			var kind any
 			if isObject {
-				kind = get(body, "kind")
+				kind = body.Get("kind")
 			}
 			return nil, refuse("a ledger line carries no known kind", "line", number, "kind", kind)
 		}
-		if segmentName, has := evidence.Lookup(body, "segment"); has {
+		if segmentName, has := body.Lookup("segment"); has {
 			if _, text := segmentName.(string); !text {
 				return nil, refuse("a ledger line's segment has to be written as text", "line", number, "found", pyjson.Dumps(segmentName, pyjson.Options{}))
 			}
 		}
-		at, err := moment(get(body, "at"), "a ledger line's at")
+		at, err := moment(body.Get("at"), "a ledger line's at")
 		if err != nil {
 			return nil, err
 		}
 		if at.After(clock()) {
 			// The ledger is appended as things happen, so a line dated after the moment it is
 			// graded did not happen.
-			return nil, refuse("a ledger line is dated after the time it is being graded", "line", number, "at", get(body, "at"), "now", stampNow())
+			return nil, refuse("a ledger line is dated after the time it is being graded", "line", number, "at", body.Get("at"), "now", stampNow())
 		}
 		entries = append(entries, entry{body, at, number})
 	}
@@ -456,8 +454,8 @@ func report(record object, path string) (object, error) {
 		// The operator's own words travel into the report as words, never as structure a
 		// judgment walk could read a verdict from.
 		for _, name := range []string{"at", "actor", "target", "action"} {
-			if _, text := get(item, name).(string); !text {
-				return nil, refuse("a ledger line's "+name+" has to be written as text", "line", e.line, "found", pyjson.Dumps(get(item, name), pyjson.Options{}))
+			if _, text := item.Get(name).(string); !text {
+				return nil, refuse("a ledger line's "+name+" has to be written as text", "line", e.line, "found", pyjson.Dumps(item.Get(name), pyjson.Options{}))
 			}
 		}
 		if computed == window {
@@ -485,7 +483,7 @@ func report(record object, path string) (object, error) {
 			key      string
 			declared any
 		}{{"opensAt", opens[0].get("at")}, {"closesAt", closes[0].get("at")}} {
-			given := get(times, bound.key)
+			given := times.Get(bound.key)
 			if given == nil {
 				continue
 			}

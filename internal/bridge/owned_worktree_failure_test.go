@@ -11,6 +11,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 func Test_test_a_prompt_whose_frame_never_went_out_is_not_left_unknown(t *testing.T) {
@@ -20,7 +21,7 @@ func Test_test_a_prompt_whose_frame_never_went_out_is_not_left_unknown(t *testin
 	worktreeHost(host, input.Destination)
 	b.RPC.(*appserver.Client).FailBeforeWrite("turn/start")
 	receipt, err := b.CreateWorktreeThread(context.Background(), input)
-	if err != nil || receipt["status"] != "outcome_unknown" || object(receipt["initialPrompt"])["state"] != "not_sent" || host.Count("turn/start") != 0 {
+	if err != nil || receipt["status"] != "outcome_unknown" || pyjson.Map(receipt["initialPrompt"])["state"] != "not_sent" || host.Count("turn/start") != 0 {
 		t.Fatalf("receipt=%v err=%v", receipt, err)
 	}
 	effects := receipt["attemptedEffects"].([]string)
@@ -36,7 +37,7 @@ func Test_test_a_prompt_the_host_refused_is_recorded_as_refused(t *testing.T) {
 	worktreeHost(host, input.Destination)
 	host.Respond("turn/start", fakehost.Reply{Error: &fakehost.RPCError{Code: -32602, Message: "turn rejected"}})
 	receipt, err := b.CreateWorktreeThread(context.Background(), input)
-	if err != nil || receipt["status"] != "failed" || object(receipt["initialPrompt"])["state"] != "rejected" || receipt["recoveryRequired"] != true || host.Count("turn/start") != 1 {
+	if err != nil || receipt["status"] != "failed" || pyjson.Map(receipt["initialPrompt"])["state"] != "rejected" || receipt["recoveryRequired"] != true || host.Count("turn/start") != 1 {
 		t.Fatalf("receipt=%v err=%v", receipt, err)
 	}
 	effects := receipt["attemptedEffects"].([]string)
@@ -116,7 +117,7 @@ func Test_test_a_known_validation_failure_keeps_its_request_id(t *testing.T) {
 		t.Fatal(err)
 	}
 	first, err := b.CreateWorktreeThread(context.Background(), input)
-	if err != nil || first["status"] != "failed" || len(first["attemptedEffects"].([]string)) != 0 || !strings.Contains(text(first["error"]), "must be absent") {
+	if err != nil || first["status"] != "failed" || len(first["attemptedEffects"].([]string)) != 0 || !strings.Contains(pyjson.Text(first["error"]), "must be absent") {
 		t.Fatalf("first=%v err=%v", first, err)
 	}
 	replay, err := b.CreateWorktreeThread(context.Background(), input)

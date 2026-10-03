@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -88,12 +89,12 @@ func manifestPaths(event Row) []string {
 		return nil
 	}
 	receipt := loadsObj(event.S("receipt"))
-	entries, _ := get(receipt, "manifest")
+	entries, _ := receipt.Lookup("manifest")
 	list, _ := entries.([]any)
 	var paths []string
 	for _, e := range list {
 		if o, ok := e.(Obj); ok {
-			if p, ok := func() (string, bool) { v, _ := get(o, "path"); s, ok := v.(string); return s, ok }(); ok {
+			if p, ok := func() (string, bool) { v, _ := o.Lookup("path"); s, ok := v.(string); return s, ok }(); ok {
 				paths = append(paths, p)
 			}
 		}
@@ -116,11 +117,11 @@ func (d *Service) ResolveRecipient(ctx context.Context, r Relationship, kind str
 	if err != nil {
 		return "", nil, err
 	}
-	if readable, _ := get(reading, "readable"); readable != true {
+	if readable, _ := reading.Lookup("readable"); readable != true {
 		return "", nil, refuse(RelationUnreadable, "the linkage could not be read for relationship %s, so who owns its scope is unknown; the relationship row is not used as a fallback because an unreadable store has said nothing about the owner", pyvalue.StrRepr(rid))
 	}
-	contention, _ := get(reading, "contention")
-	if state, _ := get(reading, "state"); state == "ambiguous" {
+	contention, _ := reading.Lookup("contention")
+	if state, _ := reading.Lookup("state"); state == "ambiguous" {
 		return "", nil, refuse(DuplicateScopeOwner, "the linkage reports more than one candidate for relationship %s; this reader will not choose between them: %s", pyvalue.StrRepr(rid), pyReprValue(contention))
 	}
 	var live []any
@@ -128,7 +129,7 @@ func (d *Service) ResolveRecipient(ctx context.Context, r Relationship, kind str
 	drifting := false
 	for _, item := range items {
 		o, _ := item.(Obj)
-		if c, _ := get(o, "contention"); truthy(c) {
+		if c, _ := o.Lookup("contention"); truthy(c) {
 			live = append(live, item)
 			if c == "owner_drift" {
 				drifting = true
@@ -152,29 +153,29 @@ func (d *Service) ResolveRecipient(ctx context.Context, r Relationship, kind str
 		return "", nil, refuse(NotClaimable, "%s is not a delivery direction, so it has no resolvable recipient", pyvalue.StrRepr(kind))
 	}
 	var level Obj
-	levels, _ := get(reading, "levels")
+	levels, _ := reading.Lookup("levels")
 	list, _ := levels.([]any)
 	for _, lv := range list {
 		o, _ := lv.(Obj)
-		if k, _ := get(o, "scopeKind"); k == wanted {
+		if k, _ := o.Lookup("scopeKind"); k == wanted {
 			level = o
 			break
 		}
 	}
-	owner, _ := get(level, "owner")
+	owner, _ := level.Lookup("owner")
 	if level == nil || owner == nil {
-		gaps, _ := get(reading, "gaps")
+		gaps, _ := reading.Lookup("gaps")
 		return "", nil, refuse(UnregisteredScope, "the linkage records no live %s owner for relationship %s; gaps %s. Nothing found is reported as nothing found, never as a delivery that may proceed", wanted, pyvalue.StrRepr(rid), pyReprValue(gaps))
 	}
 	current := ""
 	var revision any
 	if o, ok := owner.(Obj); ok {
-		current = str(o, "taskId")
-		revision, _ = get(o, "revision")
+		current = pyjson.Text(o.Get("taskId"))
+		revision, _ = o.Lookup("revision")
 	} else {
 		current = pyStr(owner)
 	}
-	scopeKey, _ := get(level, "scopeKey")
+	scopeKey, _ := level.Lookup("scopeKey")
 	if current != frozen {
 		return "", nil, refuse(RelationOwnerDrift, "relationship %s names %s but the linkage says %s %s is owned by %s. A report that arrived after the relationship changed is held rather than credited to either task; re-register the assignment under the current owner and deliver that", pyvalue.StrRepr(rid), pyvalue.StrRepr(frozen), wanted, pyReprValue(scopeKey), pyvalue.StrRepr(current))
 	}
@@ -228,7 +229,7 @@ func (d *Service) Enqueue(ctx context.Context, eventID, kind, recipient string) 
 	if err != nil {
 		return nil, err
 	}
-	if verified, _ := get(resolution, "verified"); verified == true {
+	if verified, _ := resolution.Lookup("verified"); verified == true {
 		if err := d.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
 			return journal(ctx, d.Store, "delivery_recipient_resolved", eventID, resolution, d.Clock.ISO())
 		}); err != nil {
@@ -511,7 +512,7 @@ func (d *Service) pacing(ctx context.Context, relationship, recipient string, no
 // SendRefusal is send_refusal: why relationship may not wake recipient at now, or "".
 func (d *Service) SendRefusal(ctx context.Context, relationship, recipient string, now float64) (string, error) {
 	p, err := d.pacing(ctx, relationship, recipient, now)
-	return str(p, "reason"), err
+	return pyjson.Text(p.Get("reason")), err
 }
 
 // ReserveSend is reserve_send, inside the caller's claim transaction. It reads the relationship's
@@ -540,11 +541,11 @@ func (d *Service) pacedUntil(ctx context.Context, relationship, recipient string
 	if err != nil {
 		return 0, err
 	}
-	if str(p, "reason") == HourlyCap {
-		reopens, _ := get(p, "reopensAt")
+	if pyjson.Text(p.Get("reason")) == HourlyCap {
+		reopens, _ := p.Lookup("reopensAt")
 		at, ok := reopens.(float64)
 		if !ok {
-			ws, _ := get(p, "windowStart")
+			ws, _ := p.Lookup("windowStart")
 			at = ws.(float64) + RateWindowSeconds
 		}
 		return math.Min(at, now+60), nil
@@ -582,7 +583,7 @@ func (d *Service) SupersessionReason(ctx context.Context, eventID string) (strin
 	if err != nil {
 		return "", err
 	}
-	headID, _ := get(head, "eventId")
+	headID, _ := head.Lookup("eventId")
 	if headID == nil || headID == eventID {
 		return "", nil
 	}
@@ -801,13 +802,13 @@ func (d *Service) claim(ctx context.Context, eventID string, now float64, owner,
 // journalRestorationAttempted records what the frozen bytes carried of a declared block
 // (restoration.project_cap over the legacy renderer's cap).
 func (d *Service) journalRestorationAttempted(ctx context.Context, eventID string, record Obj, attemptNo int64) error {
-	findingsValue, _ := get(record, "criteria")
+	findingsValue, _ := record.Lookup("criteria")
 	findings, _ := findingsValue.([]any)
 	index := -1
 	var block Obj
 	for i, f := range findings {
 		o, _ := f.(Obj)
-		if v, _ := get(o, "restoration"); truthy(v) {
+		if v, _ := o.Lookup("restoration"); truthy(v) {
 			index, block = i, o
 			break
 		}
@@ -820,7 +821,7 @@ func (d *Service) journalRestorationAttempted(ctx context.Context, eventID strin
 	if index >= manifestLines {
 		outcome, detail = "truncated", fmt.Sprintf("%s, past the %d this renderer shows", where, manifestLines)
 	}
-	id, _ := get(block, "id")
+	id, _ := block.Lookup("id")
 	return journal(ctx, d.Store, "restoration_attempted", eventID, Obj{{Key: "outcome", Value: outcome}, {Key: "basis", Value: "relay-message/legacy"}, {Key: "criterion", Value: id}, {Key: "detail", Value: detail}, {Key: "attempt", Value: attemptNo}}, d.Clock.ISO())
 }
 
@@ -945,7 +946,7 @@ func (d *Service) Attempt(ctx context.Context, eventID string, adapter Adapter, 
 		receipt = Obj{{Key: "requestId", Value: c.requestID}, {Key: "status", Value: OutcomeUnknown}, {Key: "error", Value: errorLabel(sendErr)}}
 	}
 	facts := Classify(receipt)
-	findings, _ := get(receipt, "settingsFindings")
+	findings, _ := receipt.Lookup("settingsFindings")
 	if facts.FailedOperation != nil || slices.Contains([]string{WithheldPreSend, InboxOnly, HeldUncertain}, facts.DeliveryState) {
 		operation := "transport"
 		if op, ok := facts.FailedOperation.(string); ok {
@@ -971,7 +972,7 @@ func (d *Service) Attempt(ctx context.Context, eventID string, adapter Adapter, 
 	if err != nil {
 		return nil, err
 	}
-	notes, _ := get(receipt, "settingsNotes")
+	notes, _ := receipt.Lookup("settingsNotes")
 	elsewhere, err := d.settle(ctx, eventID, c.requestID, record, facts, previously, at, settingsRefusalOf(facts, findings), notes)
 	if err != nil {
 		return nil, err
@@ -1002,14 +1003,14 @@ func renderFindings(findings any) any {
 		if !ok {
 			continue
 		}
-		field, present := get(o, "field")
+		field, present := o.Lookup("field")
 		if !present {
-			if field, present = get(o, "code"); !present {
+			if field, present = o.Lookup("code"); !present {
 				field = "?"
 			}
 		}
-		expected, _ := get(o, "expected")
-		returned, _ := get(o, "returned")
+		expected, _ := o.Lookup("expected")
+		returned, _ := o.Lookup("returned")
 		parts = append(parts, fmt.Sprintf("%s: expected %s, host %s", pyStr(field), pyReprValue(expected), pyReprValue(returned)))
 	}
 	if len(parts) == 0 {
@@ -1029,7 +1030,7 @@ func settingsRefusalOf(facts Facts, findings any) any {
 	var field any
 	if list, _ := findings.([]any); len(list) > 0 {
 		if o, ok := list[0].(Obj); ok {
-			if f, ok := get(o, "field"); ok {
+			if f, ok := o.Lookup("field"); ok {
 				if s, ok := f.(string); ok {
 					field = s
 				}
@@ -1195,7 +1196,7 @@ func (d *Service) settle(ctx context.Context, eventID, requestID string, record 
 		return nil, err
 	}
 	state := facts.DeliveryState
-	attemptNo, _ := get(record, "attemptNo")
+	attemptNo, _ := record.Lookup("attemptNo")
 	n := attemptNo.(int64)
 	var hold, when any
 	switch state {
@@ -1214,7 +1215,7 @@ func (d *Service) settle(ctx context.Context, eventID, requestID string, record 
 	}
 	var stored Row
 	err := d.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
-		settled, err := execSQL(ctx, d.Store, "UPDATE attempts SET internal_state = 'settled', state = ?, record = ?, observed_at = ? WHERE request_id = ? AND internal_state = 'in_flight'", state, dumps(record), str(record, "observedAt"), requestID)
+		settled, err := execSQL(ctx, d.Store, "UPDATE attempts SET internal_state = 'settled', state = ?, record = ?, observed_at = ? WHERE request_id = ? AND internal_state = 'in_flight'", state, dumps(record), pyjson.Text(record.Get("observedAt")), requestID)
 		if err != nil {
 			return err
 		}
@@ -1233,7 +1234,7 @@ func (d *Service) settle(ctx context.Context, eventID, requestID string, record 
 		if _, err := execSQL(ctx, d.Store, "UPDATE deliveries SET state = ?, next_eligible_at = ?, hold_reason = ?, dispatch_evidence = ?, dispatch_turn_id = ?, lease_owner = NULL, lease_until = NULL, updated_at = ? WHERE event_id = ?", state, when, hold, evidence, facts.TurnID, d.Clock.ISO(), eventID); err != nil {
 			return err
 		}
-		safe, _ := get(record, "retrySafe")
+		safe, _ := record.Lookup("retrySafe")
 		if err := journal(ctx, d.Store, "delivery_attempted", eventID, Obj{{Key: "requestId", Value: requestID}, {Key: "state", Value: state}, {Key: "retrySafe", Value: safe}, {Key: "turnPreviouslyObserved", Value: previously}, {Key: "hold", Value: hold}, {Key: "settingsRefusal", Value: settingsRefusal}}, d.Clock.ISO()); err != nil {
 			return err
 		}

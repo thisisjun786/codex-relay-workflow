@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
@@ -160,11 +161,11 @@ func (r *startRun) reserve(ctx context.Context) (contract.OrderedObject, error) 
 // declareIntent publishes the intent that exists before the child does; the same dispatch with other
 // terms is refused.
 func (r *startRun) declareIntent(ctx context.Context) (contract.OrderedObject, error) {
-	declared, err := delivery.DeclareIntent(ctx, r.identity.MarkerRoot, delivery.IntentDeclaration{Workspace: r.identity.Workspace, DispatchRequestID: r.identity.DispatchRequestID, IssueKey: r.identity.IssueKey, DeclaredAt: r.m.now(), CriteriaSource: r.req["criteriaSource"], BaselineRevision: r.req["baselineRevision"], AuthorizedSettings: deliveryValue(obj(obj(r.req["child"])["settings"])), DBPath: r.m.Store.Path})
+	declared, err := delivery.DeclareIntent(ctx, r.identity.MarkerRoot, delivery.IntentDeclaration{Workspace: r.identity.Workspace, DispatchRequestID: r.identity.DispatchRequestID, IssueKey: r.identity.IssueKey, DeclaredAt: r.m.now(), CriteriaSource: r.req["criteriaSource"], BaselineRevision: r.req["baselineRevision"], AuthorizedSettings: deliveryValue(pyjson.Map(pyjson.Map(r.req["child"])["settings"])), DBPath: r.m.Store.Path})
 	if err != nil {
 		return nil, err
 	}
-	if field(declared, "outcome") == delivery.Conflict {
+	if declared.Get("outcome") == delivery.Conflict {
 		return r.answer(ctx, "refused", "intent", "intent_conflict")
 	}
 	return nil, nil
@@ -213,7 +214,7 @@ func (r *startRun) createChild(ctx context.Context) (contract.OrderedObject, err
 // retryStandby is the retry of a creation that failed after its thread started: the standby turn is sent
 // to the thread the failure left, and the receipt says what came of it.
 func (r *startRun) retryStandby(ctx context.Context) (contract.OrderedObject, error) {
-	if str(r.receipt["status"]) != "failed" {
+	if pyjson.Text(r.receipt["status"]) != "failed" {
 		return nil, nil
 	}
 	receipt, err := r.m.recoverStandby(ctx, r.identity, r.req, r.ledger, r.physical, r.receipt)
@@ -228,7 +229,7 @@ func (r *startRun) retryStandby(ctx context.Context) (contract.OrderedObject, er
 // thread, if one was left, is retained for the retry.
 func (r *startRun) incompleteCreation(ctx context.Context) (contract.OrderedObject, error) {
 	receipt := r.receipt
-	if str(receipt["status"]) == "accepted" {
+	if pyjson.Text(receipt["status"]) == "accepted" {
 		return nil, nil
 	}
 	outcome := "unknown"
@@ -264,13 +265,13 @@ func (r *startRun) incompleteCreation(ctx context.Context) (contract.OrderedObje
 // verifyCreation takes the child's identity from the accepted receipt, checks that the host created it
 // with the settings asked for, and records the receipt on the reservation.
 func (r *startRun) verifyCreation(ctx context.Context) (contract.OrderedObject, error) {
-	task, standby := str(r.receipt["threadId"]), str(r.receipt["turnId"])
+	task, standby := pyjson.Text(r.receipt["threadId"]), pyjson.Text(r.receipt["turnId"])
 	if !delivery.ValidSegment(task) || !delivery.ValidSegment(standby) {
 		return r.answer(ctx, "incomplete", "creation", "creation_identity_unobserved")
 	}
 	r.task, r.standby = task, standby
-	r.childSettings = obj(obj(r.req["child"])["settings"])
-	if !creationMatches(r.childSettings, obj(r.receipt["creation"])) {
+	r.childSettings = pyjson.Map(pyjson.Map(r.req["child"])["settings"])
+	if !creationMatches(r.childSettings, pyjson.Map(r.receipt["creation"])) {
 		return r.answer(ctx, "refused", "creation", "creation_settings_unverified")
 	}
 	var err error
@@ -284,7 +285,7 @@ func (r *startRun) bindMarker(ctx context.Context) (contract.OrderedObject, erro
 	if err != nil {
 		return nil, err
 	}
-	if field(bound, "outcome") == delivery.Conflict {
+	if bound.Get("outcome") == delivery.Conflict {
 		return r.answer(ctx, "refused", "binding", "marker_identity_conflict")
 	}
 	return nil, nil
@@ -293,10 +294,10 @@ func (r *startRun) bindMarker(ctx context.Context) (contract.OrderedObject, erro
 // register registers the child under the parent. The project's lock is let go right after Register, before
 // its error is looked at, so it is never held past the registration however that ended.
 func (r *startRun) register(ctx context.Context) (contract.OrderedObject, error) {
-	r.parent = obj(r.req["parent"])
+	r.parent = pyjson.Map(r.req["parent"])
 	r.recipients = recipientsWith(r.req, r.task)
 	r.reg = &registry.Registry{Store: r.m.Store, Now: r.m.now}
-	record, err := r.reg.Register(ctx, registry.Registration{Parent: registry.Endpoint{TaskID: str(r.parent["taskId"]), HostID: str(r.parent["hostId"]), Cwd: nullableSQL(str(obj(r.parent["settings"])["cwd"]))}, Child: registry.Endpoint{TaskID: r.task, HostID: str(obj(r.req["child"])["hostId"]), Cwd: nullableSQL(r.identity.Workspace), CXCSession: nullableSQL(r.task)}, IssueKey: r.identity.IssueKey, ArtifactRoots: stringsOf(r.req["artifactRoots"]), AllowedRecipients: r.recipients, ScopeRef: nullableSQL(str(r.req["scopeRef"])), DispatchRequestID: r.identity.DispatchRequestID, DispatchTurnID: nullableSQL(r.standby), ProjectKey: str(r.req["projectKey"]), ManagedRequestID: r.identity.RequestID})
+	record, err := r.reg.Register(ctx, registry.Registration{Parent: registry.Endpoint{TaskID: pyjson.Text(r.parent["taskId"]), HostID: pyjson.Text(r.parent["hostId"]), Cwd: nullableSQL(pyjson.Text(pyjson.Map(r.parent["settings"])["cwd"]))}, Child: registry.Endpoint{TaskID: r.task, HostID: pyjson.Text(pyjson.Map(r.req["child"])["hostId"]), Cwd: nullableSQL(r.identity.Workspace), CXCSession: nullableSQL(r.task)}, IssueKey: r.identity.IssueKey, ArtifactRoots: stringsOf(r.req["artifactRoots"]), AllowedRecipients: r.recipients, ScopeRef: nullableSQL(pyjson.Text(r.req["scopeRef"])), DispatchRequestID: r.identity.DispatchRequestID, DispatchTurnID: nullableSQL(r.standby), ProjectKey: pyjson.Text(r.req["projectKey"]), ManagedRequestID: r.identity.RequestID})
 	r.projectLock()
 	if err != nil {
 		return nil, err
@@ -318,7 +319,7 @@ func (r *startRun) authorizeSettings(ctx context.Context) (contract.OrderedObjec
 	for _, entry := range []struct {
 		task, role string
 		settings   map[string]any
-	}{{str(r.parent["taskId"]), "parent", obj(r.parent["settings"])}, {r.task, "child", r.childSettings}} {
+	}{{pyjson.Text(r.parent["taskId"]), "parent", pyjson.Map(r.parent["settings"])}, {r.task, "child", r.childSettings}} {
 		if _, err := EnsureSettings(ctx, r.m.Store, entry.task, settingsWithRole(entry.settings, entry.role), "managed_start", r.m.now()); err != nil {
 			return nil, err
 		}
@@ -421,8 +422,8 @@ func (r *startRun) checkBusiness(ctx context.Context) (contract.OrderedObject, e
 		}
 		return r.answer(ctx, "incomplete", "business", "business_"+status)
 	}
-	r.turn = str(r.sent["turnId"])
-	if !delivery.ValidSegment(r.turn) || str(r.sent["threadId"]) != r.task {
+	r.turn = pyjson.Text(r.sent["turnId"])
+	if !delivery.ValidSegment(r.turn) || pyjson.Text(r.sent["threadId"]) != r.task {
 		return r.answer(ctx, "incomplete", "business", "business_identity_unobserved")
 	}
 	return nil, nil
@@ -442,7 +443,7 @@ func (r *startRun) confirmRegistration(ctx context.Context) (contract.OrderedObj
 
 // admit records the business turn as admitted for the child and answers with it.
 func (r *startRun) admit(ctx context.Context) (contract.OrderedObject, error) {
-	if err := r.reg.AdmitExplicitly(ctx, r.record.ID, r.row.ExecutionGeneration.Int64, r.turn, str(r.parent["taskId"]), "managed business dispatch confirmed by its retained bridge receipt"); err != nil {
+	if err := r.reg.AdmitExplicitly(ctx, r.record.ID, r.row.ExecutionGeneration.Int64, r.turn, pyjson.Text(r.parent["taskId"]), "managed business dispatch confirmed by its retained bridge receipt"); err != nil {
 		return nil, err
 	}
 	admitted := r.result()
@@ -454,7 +455,7 @@ func (r *startRun) admit(ctx context.Context) (contract.OrderedObject, error) {
 func criteriaEntries(req map[string]any) []any {
 	entries := make([]any, 0)
 	for _, item := range req["criteria"].([]any) {
-		v := obj(item)
+		v := pyjson.Map(item)
 		entries = append(entries, delivery.Obj{{Key: "id", Value: v["id"]}, {Key: "title", Value: v["title"]}, {Key: "required", Value: v["required"]}})
 	}
 	return entries

@@ -73,7 +73,7 @@ func Test33TranscriptBounds(t *testing.T) {
 	stop := Object{{Key: "session_id", Value: "s"}, {Key: "turn_id", Value: "t"}, {Key: "stop_hook_active", Value: false}, {Key: "last_assistant_message", Value: "done"}, {Key: "transcript_path", Value: path}}
 	writeTest(t, path, []byte("unfinished"))
 	_, identity := EventIdentity(context.Background(), stop)
-	if get(identity, "reason") != "transcript_tail_incomplete" {
+	if identity.Get("reason") != "transcript_tail_incomplete" {
 		t.Fatal(identity)
 	}
 	f, err := os.Create(path)
@@ -90,16 +90,16 @@ func Test33TranscriptBounds(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, identity = EventIdentity(context.Background(), stop)
-	if get(identity, "reason") != "scan_bound_exceeded" {
+	if identity.Get("reason") != "scan_bound_exceeded" {
 		t.Fatal(identity)
 	}
-	if get(identity, "scannedBytes") != 64<<20 {
+	if identity.Get("scannedBytes") != 64<<20 {
 		t.Fatal(identity)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	_, identity = EventIdentity(ctx, stop)
-	if get(identity, "reason") != "scan_timed_out" {
+	if identity.Get("reason") != "scan_timed_out" {
 		t.Fatal(identity)
 	}
 }

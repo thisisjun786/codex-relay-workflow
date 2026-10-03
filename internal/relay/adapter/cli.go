@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
@@ -150,7 +151,7 @@ func hostCommand(ctx context.Context, command, state, socket string, args map[st
 	rc := delivery.NewReconciler(d)
 	switch command {
 	case "deliver":
-		if id := text(args["--event"]); id != "" {
+		if id := pyjson.Text(args["--event"]); id != "" {
 			record, e := d.Attempt(ctx, id, a, nil, "")
 			if e != nil {
 				return nil, e
@@ -189,7 +190,7 @@ func hostCommand(ctx context.Context, command, state, socket string, args map[st
 		}
 		return contract.OrderedObject{{Key: "attempts", Value: attempts}}, nil
 	case "reconcile":
-		out, e := rc.ReconcileAttempt(ctx, text(args["--request-id"]), a, nil)
+		out, e := rc.ReconcileAttempt(ctx, pyjson.Text(args["--request-id"]), a, nil)
 		if e != nil {
 			if strings.HasPrefix(e.Error(), "KeyError: ") {
 				return nil, &dispatch.PayloadExit{Code: contract.ExitHost, Payload: contract.OrderedObject{{Key: "error", Value: "host"}, {Key: "detail", Value: e.Error()}}}
@@ -211,7 +212,7 @@ func hostCommand(ctx context.Context, command, state, socket string, args map[st
 		}
 		return append(out, contract.Field{Key: "anchorsBound", Value: bound}), nil
 	case "ack":
-		return delivery.AckCommand(ctx, ack, rc, a, text(args["--event"]), text(args["--ack-turn"]), text(args["--ack-proof"]), args["--reject"])
+		return delivery.AckCommand(ctx, ack, rc, a, pyjson.Text(args["--event"]), pyjson.Text(args["--ack-turn"]), pyjson.Text(args["--ack-proof"]), args["--reject"])
 	case "verify-acks":
 		limit, e := hostLimit(args["--limit"])
 		if e != nil {

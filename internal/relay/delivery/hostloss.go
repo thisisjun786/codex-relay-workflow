@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -65,11 +66,11 @@ func ReadRecipientTurn(ctx context.Context, adapter Adapter, clock Clock, attemp
 	thread := delivery.S("recipient_thread_id")
 	turn, _ := turnID.(string)
 	if turn == "" {
-		return set(set(r, "detail", "the attempt names no turn"), "undecided", NoTurn)
+		return r.Set("detail", "the attempt names no turn").Set("undecided", NoTurn)
 	}
 	sentAt, ok := epoch(attempt.S("sent_at"))
 	if !ok {
-		return set(set(r, "detail", "the attempt has no send time, so absence cannot be bounded"), "undecided", NoSendTime)
+		return r.Set("detail", "the attempt has no send time, so absence cannot be bounded").Set("undecided", NoSendTime)
 	}
 	allow := allowance()
 	presence, err := adapter.FindDispatchedTurn(ctx, thread, turn, sentAt)
@@ -77,65 +78,65 @@ func ReadRecipientTurn(ctx context.Context, adapter Adapter, clock Clock, attemp
 	var empty *ListingEmpty
 	switch {
 	case errors.As(err, &bounded):
-		return set(set(r, "detail", "undecided: "+bounded.Message), "undecided", ListingBoundedW)
+		return r.Set("detail", "undecided: "+bounded.Message).Set("undecided", ListingBoundedW)
 	case errors.As(err, &empty):
 		if clock.Now() < sentAt+allow {
-			return set(r, "detail", fmt.Sprintf("the recipient lists no turns yet, and the send is less than %.0f s old: %s", allow, empty.Message))
+			return r.Set("detail", fmt.Sprintf("the recipient lists no turns yet, and the send is less than %.0f s old: %s", allow, empty.Message))
 		}
-		return set(set(r, "detail", "undecided: "+empty.Message), "undecided", ListingEmptyW)
+		return r.Set("detail", "undecided: "+empty.Message).Set("undecided", ListingEmptyW)
 	case err != nil:
-		return set(r, "detail", "unreadable: "+errorLabel(err))
+		return r.Set("detail", "unreadable: "+errorLabel(err))
 	}
 	listed := presence.Finding == TurnPresent
 	where := "does not list this turn"
 	if listed {
 		status := TurnStatus(presence.Turn)
 		if !slices.Contains(terminalTurn, status) {
-			return set(set(set(r, "finding", Present), "status", status), "detail", fmt.Sprintf("the recipient lists this turn (%s)", status))
+			return r.Set("finding", Present).Set("status", status).Set("detail", fmt.Sprintf("the recipient lists this turn (%s)", status))
 		}
 		own, err := adapter.FindTokenInTurn(ctx, thread, attempt.S("request_id"), turn, InTurnItemsMax)
 		if err != nil {
-			return set(r, "detail", fmt.Sprintf("unreadable: the recipient lists this turn (%s), but its items could not be read for this attempt's message: %s", status, errorLabel(err)))
+			return r.Set("detail", fmt.Sprintf("unreadable: the recipient lists this turn (%s), but its items could not be read for this attempt's message: %s", status, errorLabel(err)))
 		}
 		if own.Found {
-			return set(set(set(r, "finding", Present), "status", status), "detail", fmt.Sprintf("the recipient lists this turn (%s) with this attempt's message in it", status))
+			return r.Set("finding", Present).Set("status", status).Set("detail", fmt.Sprintf("the recipient lists this turn (%s) with this attempt's message in it", status))
 		}
 		where = fmt.Sprintf("lists this turn %s without this attempt's message among its first %d items", status, own.Scanned)
 	}
 	if clock.Now() < sentAt+allow {
 		if listed {
-			return set(r, "detail", fmt.Sprintf("the recipient %s, but the send is less than %.0f s old, too recent to call the turn lost", where, allow))
+			return r.Set("detail", fmt.Sprintf("the recipient %s, but the send is less than %.0f s old, too recent to call the turn lost", where, allow))
 		}
-		return set(r, "detail", fmt.Sprintf("the recipient does not list this turn yet (%s), but the send is less than %.0f s old, too recent to call the turn lost", presence.Stop, allow))
+		return r.Set("detail", fmt.Sprintf("the recipient does not list this turn yet (%s), but the send is less than %.0f s old, too recent to call the turn lost", presence.Stop, allow))
 	}
 	scan, err := adapter.FindTokenSince(ctx, thread, attempt.S("request_id"), presence.Older, tokenScanLimit)
 	if err != nil {
-		return set(r, "detail", fmt.Sprintf("the recipient %s, and its items could not be read for this attempt's token: %s", where, errorLabel(err)))
+		return r.Set("detail", fmt.Sprintf("the recipient %s, and its items could not be read for this attempt's token: %s", where, errorLabel(err)))
 	}
 	if scan.Found {
 		if listed {
-			return set(set(r, "finding", Present), "detail", fmt.Sprintf("the recipient %s, but this attempt's message is in its items (turn %s)", where, pyStr(scan.TurnID)))
+			return r.Set("finding", Present).Set("detail", fmt.Sprintf("the recipient %s, but this attempt's message is in its items (turn %s)", where, pyStr(scan.TurnID)))
 		}
-		return set(set(set(r, "finding", Present), "detail", fmt.Sprintf("the recipient does not list this turn, but this attempt's token is in its items (turn %s)", pyStr(scan.TurnID))), "undecided", TokenWithoutTurn)
+		return r.Set("finding", Present).Set("detail", fmt.Sprintf("the recipient does not list this turn, but this attempt's token is in its items (turn %s)", pyStr(scan.TurnID))).Set("undecided", TokenWithoutTurn)
 	}
 	if scan.OtherKind != nil {
-		return set(set(r, "detail", fmt.Sprintf("undecided: the recipient %s, and this attempt's token is in its items only in an item of type %s (turn %s), which is neither the delivered message nor agent output; not sent again", where, pyStr(scan.OtherKind), pyStr(scan.OtherTurn))), "undecided", TokenInOtherItem)
+		return r.Set("detail", fmt.Sprintf("undecided: the recipient %s, and this attempt's token is in its items only in an item of type %s (turn %s), which is neither the delivered message nor agent output; not sent again", where, pyStr(scan.OtherKind), pyStr(scan.OtherTurn))).Set("undecided", TokenInOtherItem)
 	}
 	if !scan.Exhausted {
-		return set(set(r, "detail", fmt.Sprintf("undecided: the recipient %s, and %d items did not reach history older than the send, so the token's absence is not shown", where, scan.Scanned)), "undecided", TokenScanBounded)
+		return r.Set("detail", fmt.Sprintf("undecided: the recipient %s, and %d items did not reach history older than the send, so the token's absence is not shown", where, scan.Scanned)).Set("undecided", TokenScanBounded)
 	}
 	if listed {
-		return set(set(r, "finding", HostLostTurn), "detail", fmt.Sprintf("the recipient %s, and this attempt's token is not among the %d items since the send (%d listed turns begun since it): the host lost the turn's content", where, scan.Scanned, len(presence.Seen)))
+		return r.Set("finding", HostLostTurn).Set("detail", fmt.Sprintf("the recipient %s, and this attempt's token is not among the %d items since the send (%d listed turns begun since it): the host lost the turn's content", where, scan.Scanned, len(presence.Seen)))
 	}
-	return set(set(r, "finding", HostLostTurn), "detail", fmt.Sprintf("the recipient's turn list has no such turn (%s after %d turns) and this attempt's token is not among the %d items since the send (%d listed turns begun since it)", presence.Stop, presence.Scanned, scan.Scanned, len(presence.Seen)))
+	return r.Set("finding", HostLostTurn).Set("detail", fmt.Sprintf("the recipient's turn list has no such turn (%s after %d turns) and this attempt's token is not among the %d items since the send (%d listed turns begun since it)", presence.Stop, presence.Scanned, scan.Scanned, len(presence.Seen)))
 }
 
 // RecordUndecided is hostloss.record_undecided; returns the rows changed.
 func RecordUndecided(ctx context.Context, s *store.Store, requestID string, reading Reading) (int64, error) {
 	var wanted any
-	if u, _ := get(reading, "undecided"); truthy(u) {
+	if u, _ := reading.Lookup("undecided"); truthy(u) {
 		wanted = undecidedMark + pyStr(u)
-	} else if str(reading, "finding") != Present {
+	} else if pyjson.Text(reading.Get("finding")) != Present {
 		return 0, nil
 	}
 	var changed int64
@@ -191,12 +192,12 @@ func SettleLoss(ctx context.Context, s *store.Store, clock Clock, requestID stri
 		if evidence == "" {
 			evidence = "receipt_turn_id"
 		}
-		record = set(record, "reconciliation", Obj{{Key: "operationReceiptChecked", Value: observation != nil}, {Key: "recipientTurnsChecked", Value: true}, {Key: "affirmativeEvidence", Value: evidence}, {Key: "checkedAt", Value: now}})
+		record = record.Set("reconciliation", Obj{{Key: "operationReceiptChecked", Value: observation != nil}, {Key: "recipientTurnsChecked", Value: true}, {Key: "affirmativeEvidence", Value: evidence}, {Key: "checkedAt", Value: now}})
 		if err := AssertAttemptInvariants(record); err != nil {
 			return err
 		}
 		marked, err := execSQL(ctx, s, "UPDATE attempts SET state = ?, record = ?, operation_observation = COALESCE(?, operation_observation), recipient_scan = ?, affirmative_evidence = ?, reconciled_at = ? WHERE request_id = ? AND internal_state = 'settled' AND state IN (?, ?)",
-			HostLostTurn, dumps(record), observation, str(reading, "detail"), evidence, now, requestID, Dispatched, HeldUncertain)
+			HostLostTurn, dumps(record), observation, pyjson.Text(reading.Get("detail")), evidence, now, requestID, Dispatched, HeldUncertain)
 		if err != nil {
 			return err
 		}
@@ -207,8 +208,8 @@ func SettleLoss(ctx context.Context, s *store.Store, clock Clock, requestID stri
 		if hold != nil {
 			redelivery = HeldRedelivery
 		}
-		turnID, _ := get(reading, "turnId")
-		return journal(ctx, s, HostLostTurn, attempt.S("event_id"), Obj{{Key: "requestId", Value: requestID}, {Key: "turnId", Value: turnID}, {Key: "redelivery", Value: redelivery}, {Key: "detail", Value: str(reading, "detail")}}, now)
+		turnID, _ := reading.Lookup("turnId")
+		return journal(ctx, s, HostLostTurn, attempt.S("event_id"), Obj{{Key: "requestId", Value: requestID}, {Key: "turnId", Value: turnID}, {Key: "redelivery", Value: redelivery}, {Key: "detail", Value: pyjson.Text(reading.Get("detail"))}}, now)
 	})
 	if errors.Is(err, errRaced) {
 		return Obj{{Key: "redelivery", Value: NotMoved}, {Key: "redeliveryDetail", Value: "the attempt changed while the loss was being recorded"}}, nil
@@ -246,11 +247,11 @@ func ReadUnknownSend(ctx context.Context, adapter Adapter, clock Clock, attempt,
 	request := attempt.S("request_id")
 	sentAt, ok := epoch(attempt.S("sent_at"))
 	if !ok {
-		return set(set(r, "detail", "the attempt has no send time, so absence cannot be bounded"), "undecided", NoSendTime)
+		return r.Set("detail", "the attempt has no send time, so absence cannot be bounded").Set("undecided", NoSendTime)
 	}
 	allow := allowance()
-	pending := func(detail string) Reading { return set(set(r, "detail", detail), "pending", true) }
-	undecided := func(detail, why string) Reading { return set(set(r, "detail", detail), "undecided", why) }
+	pending := func(detail string) Reading { return r.Set("detail", detail).Set("pending", true) }
+	undecided := func(detail, why string) Reading { return r.Set("detail", detail).Set("undecided", why) }
 	if clock.Now() < sentAt+allow {
 		return pending(fmt.Sprintf("the send is less than %.0f s old, too recent to call it lost; read again", allow))
 	}
@@ -283,7 +284,7 @@ func ReadUnknownSend(ctx context.Context, adapter Adapter, clock Clock, attempt,
 		return pending("unreadable: the recipient's items could not be read for this attempt's token: " + errorLabel(err))
 	}
 	if scan.Found {
-		return set(set(set(r, "finding", Present), "turnId", scan.TurnID), "detail", fmt.Sprintf("this attempt's message is in the recipient's items since the send (turn %s, %d items read)", pyStr(scan.TurnID), scan.Scanned))
+		return r.Set("finding", Present).Set("turnId", scan.TurnID).Set("detail", fmt.Sprintf("this attempt's message is in the recipient's items since the send (turn %s, %d items read)", pyStr(scan.TurnID), scan.Scanned))
 	}
 	type owned struct {
 		turn TurnInfo
@@ -296,7 +297,7 @@ func ReadUnknownSend(ctx context.Context, adapter Adapter, clock Clock, attempt,
 			return pending(fmt.Sprintf("unreadable: the items of turn %s, one the send could have been folded into, could not be read: %s", turn.TurnID, errorLabel(err)))
 		}
 		if own.Found {
-			return set(set(set(r, "finding", Present), "turnId", turn.TurnID), "detail", fmt.Sprintf("this attempt's message is in turn %s, begun by the send, which the send was folded into", turn.TurnID))
+			return r.Set("finding", Present).Set("turnId", turn.TurnID).Set("detail", fmt.Sprintf("this attempt's message is in turn %s, begun by the send, which the send was folded into", turn.TurnID))
 		}
 		owns = append(owns, owned{turn, own})
 	}
@@ -332,5 +333,5 @@ func ReadUnknownSend(ctx context.Context, adapter Adapter, clock Clock, attempt,
 		}
 		foldedText = " nor in " + strings.Join(ids, ", ") + ", the turns begun by it"
 	}
-	return set(set(r, "finding", UnknownSendLost), "detail", fmt.Sprintf("the recipient keeps no trace of this send: its turn list (%s after %d turns) shows %d turns begun since it, none running, and this attempt's token is not among the %d items since it%s; held for the parent, never sent again", presence.Stop, presence.Scanned, len(presence.Seen), scan.Scanned, foldedText))
+	return r.Set("finding", UnknownSendLost).Set("detail", fmt.Sprintf("the recipient keeps no trace of this send: its turn list (%s after %d turns) shows %d turns begun since it, none running, and this attempt's token is not among the %d items since it%s; held for the parent, never sent again", presence.Stop, presence.Scanned, len(presence.Seen), scan.Scanned, foldedText))
 }

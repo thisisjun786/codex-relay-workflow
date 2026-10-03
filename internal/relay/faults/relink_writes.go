@@ -7,7 +7,7 @@ import (
 
 // Relink's writes stay on the same transaction as its bounded selections.
 func dRelinkSummary(ctx context.Context, l *Ledger, f row, trigger, publication string) (string, error) {
-	rows, e := l.Store.All(ctx, "SELECT * FROM fault_occurrences WHERE fault_id=? ORDER BY rowid DESC LIMIT ?", text(f, "fault_id"), renderedOccur)
+	rows, e := l.Store.All(ctx, "SELECT * FROM fault_occurrences WHERE fault_id=? ORDER BY rowid DESC LIMIT ?", f.Text("fault_id"), renderedOccur)
 	if e != nil {
 		return "", e
 	}
@@ -19,16 +19,16 @@ func dCancelRelinks(ctx context.Context, l *Ledger, id, reason, stamp string) er
 		return e
 	}
 	for _, r := range rows {
-		publication := text(r, "publication_id")
+		publication := r.Text("publication_id")
 		attempts := integer(r, "attempts")
-		if text(r, "state") == "claimed" {
+		if r.Text("state") == "claimed" {
 			attempt, e := l.one(ctx, "SELECT attempt_id FROM fault_publication_attempts WHERE publication_id=? ORDER BY attempt_id DESC LIMIT 1", publication)
 			if e != nil {
 				return e
 			}
 			if attempt != nil {
 				ref := fmt.Sprintf("%s:%d", publication, integer(attempt, "attempt_id"))
-				if _, e = l.exec(ctx, "DELETE FROM fault_budget_uses WHERE product=? AND kind=? AND ref=?", text(r, "product"), text(r, "kind"), ref); e != nil {
+				if _, e = l.exec(ctx, "DELETE FROM fault_budget_uses WHERE product=? AND kind=? AND ref=?", r.Text("product"), r.Text("kind"), ref); e != nil {
 					return e
 				}
 				if _, e = l.exec(ctx, "UPDATE fault_publication_attempts SET outcome='cancelled',ended=1,ended_at=? WHERE attempt_id=?", stamp, integer(attempt, "attempt_id")); e != nil {
@@ -86,7 +86,7 @@ func dRelinkOne(ctx context.Context, l *Ledger, id, project, stamp string) error
 			return e
 		}
 	}
-	if text(link, "observed_project_ref") == project {
+	if link.Text("observed_project_ref") == project {
 		moving, e := l.one(ctx, "SELECT 1 FROM fault_publications p LEFT JOIN fault_publication_payloads pp ON pp.publication_id=p.publication_id WHERE p.fault_id=? AND p.kind='update_record' AND p.state IN ('issued','uncertain') AND (CASE WHEN json_valid(pp.payload) THEN json_extract(pp.payload,'$.op') END)='set_project' AND (CASE WHEN json_valid(pp.payload) THEN json_extract(pp.payload,'$.value') END) IS NOT ? LIMIT 1", id, project)
 		if e != nil {
 			return e
@@ -103,7 +103,7 @@ func dRelinkOne(ctx context.Context, l *Ledger, id, project, stamp string) error
 	}
 	revision := integer(link, "revision")
 	trigger := fmt.Sprintf("update:set_project:%s:r%d", project, revision)
-	if text(link, "project_ref") == project && text(link, "state") == "unlinked" {
+	if link.Text("project_ref") == project && link.Text("state") == "unlinked" {
 		live, e := l.one(ctx, "SELECT 1 FROM fault_publications WHERE fault_id=? AND kind='update_record' AND state NOT IN ('cancelled','confirmed') AND trigger_key=?", id, trigger)
 		if e != nil {
 			return e
@@ -142,7 +142,7 @@ func dRelinkOne(ctx context.Context, l *Ledger, id, project, stamp string) error
 	}
 	if existing == nil {
 		_, e = l.exec(ctx, "INSERT INTO fault_publications(publication_id,fault_id,kind,trigger_key,cycle,tracker_ref,external_ref,summary,identity_digest,state,attempts,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,'pending',0,?,?)", publication, id, "update_record", trigger, integer(f, "cycle"), team, f.Get("external_ref"), summary, digest, stamp, stamp)
-	} else if text(existing, "state") == "cancelled" {
+	} else if existing.Text("state") == "cancelled" {
 		_, e = l.exec(ctx, "UPDATE fault_publications SET state='pending',cycle=?,tracker_ref=?,external_ref=?,summary=?,identity_digest=?,attempts=0,next_attempt_at=NULL,claim_token=NULL,lease_owner=NULL,lease_until=NULL,issued_at=NULL,last_error=NULL,updated_at=? WHERE publication_id=?", integer(f, "cycle"), team, f.Get("external_ref"), summary, digest, stamp, publication)
 	}
 	if e != nil {

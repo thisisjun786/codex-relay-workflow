@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
@@ -166,8 +167,8 @@ func (h *hl) dispatched() (string, string, string) {
 	h.parentHistory()
 	event := h.queuedEvent(regOpts{})
 	record := h.attemptOn(event, h.host, nil)
-	h.eq(str(record, "deliveryState"))
-	return event, str(record, "requestId"), str(record, "turnId")
+	h.eq(pyjson.Text(record.Get("deliveryState")))
+	return event, pyjson.Text(record.Get("requestId")), pyjson.Text(record.Get("turnId"))
 }
 
 // completions is HostLossCase.completions: count delivered completions to one parent.
@@ -180,11 +181,11 @@ func (h *hl) completions(count int) [][3]string {
 		payload := h.readyPayload(rid, 1, []string{h.artifact(fmt.Sprintf("out-%d.txt", i), fmt.Sprintf("deliverable %d", i))}, 1, assigned("completed"))
 		_, err := h.accept(payload, storeAcceptNone)
 		mustDo(h.t, err)
-		_, err = h.delivery.Enqueue(h.ctx, str(payload, "eventId"), "", "")
+		_, err = h.delivery.Enqueue(h.ctx, pyjson.Text(payload.Get("eventId")), "", "")
 		mustDo(h.t, err)
-		record := h.attemptOn(str(payload, "eventId"), h.host, nil)
-		h.eq(str(record, "deliveryState"))
-		delivered = append(delivered, [3]string{str(payload, "eventId"), str(record, "requestId"), str(record, "turnId")})
+		record := h.attemptOn(pyjson.Text(payload.Get("eventId")), h.host, nil)
+		h.eq(pyjson.Text(record.Get("deliveryState")))
+		delivered = append(delivered, [3]string{pyjson.Text(payload.Get("eventId")), pyjson.Text(record.Get("requestId")), pyjson.Text(record.Get("turnId"))})
 		h.clock.Advance(10)
 	}
 	slices.SortFunc(delivered, func(a, b [3]string) int { return strings.Compare(a[0]+a[1]+a[2], b[0]+b[1]+b[2]) })
@@ -208,10 +209,10 @@ func (h *hl) tokenConfirmed() (string, string, string) {
 	h.parentHistory()
 	event := h.queuedEvent(regOpts{})
 	h.host.script = []string{"in_progress"}
-	request := str(h.attemptOn(event, h.host, nil), "requestId")
+	request := pyjson.Text(h.attemptOn(event, h.host, nil).Get("requestId"))
 	turn := h.host.startTurn(parent, "", "completed", "..."+request+"...")
 	confirmed := h.reconcile(request, h.host)
-	h.eq(str(confirmed, "evidence"))
+	h.eq(pyjson.Text(confirmed.Get("evidence")))
 	h.eq(h.row(event).S("state"))
 	return event, request, turn.TurnID
 }
@@ -289,7 +290,7 @@ func (h *hl) uncertainDelivery(message bool) (string, string, string) {
 	h.parentHistory()
 	event := h.queuedEvent(regOpts{})
 	h.host.script = []string{"in_progress"}
-	request := str(h.attemptOn(event, h.host, nil), "requestId")
+	request := pyjson.Text(h.attemptOn(event, h.host, nil).Get("requestId"))
 	h.eq(h.row(event).S("state"))
 	h.clock.Advance(2)
 	text := "another prompt"
@@ -309,7 +310,7 @@ func (h *hl) foldedDelivery(message bool, earlier, later int) (string, string) {
 	}
 	h.clock.Advance(120)
 	h.host.script = []string{"in_progress"}
-	request := str(h.attemptOn(event, h.host, nil), "requestId")
+	request := pyjson.Text(h.attemptOn(event, h.host, nil).Get("requestId"))
 	h.eq(h.row(event).S("state"))
 	if message {
 		h.item(parent, "folded", "[codex-session-relay] verification request\nrequestId: "+request, "")
@@ -351,8 +352,8 @@ func (h *hl) statusOf(event string) Obj {
 
 func (h *hl) statusPair(event string) []any {
 	item := h.statusOf(event)
-	p, _ := get(item, "phase")
-	r, _ := get(item, "reported")
+	p, _ := item.Lookup("phase")
+	r, _ := item.Lookup("reported")
 	return []any{p, r}
 }
 
@@ -369,12 +370,12 @@ func (h *hl) exec(query string, args ...any) {
 }
 
 func field(o Obj, key string) any {
-	v, _ := get(o, key)
+	v, _ := o.Lookup(key)
 	return v
 }
 
 func sub(o Obj, key string) Obj {
-	v, _ := get(o, key)
+	v, _ := o.Lookup(key)
 	s, _ := v.(Obj)
 	return s
 }
@@ -423,7 +424,7 @@ func (h *hl) tickWith(policy tickPolicy, adapter Adapter, checks *TurnChecks) ti
 	results, err := h.ack.VerifyPendingAcks(h.ctx, adapter, 8, &now)
 	mustDo(h.t, err)
 	for _, one := range results {
-		if str(one.(Obj), "outcome") == "verified" {
+		if pyjson.Text(one.(Obj).Get("outcome")) == "verified" {
 			r.acksVerified++
 		}
 	}
@@ -449,7 +450,7 @@ func (h *hl) tick() tickReport { return h.tickWith(h.policy, h.adapter, h.checks
 // reach, read over the same projection statement (Anchored): correction_next_action, then
 // completion_next_action, then NEXT_ACTION. The assignment view itself is todo 25's
 // (registry.CompletionNextAction on crw-154); this reads what delivery owns.
-func (h *hl) nextAction() string { return str(h.assignment(), "nextExpectedAction") }
+func (h *hl) nextAction() string { return pyjson.Text(h.assignment().Get("nextExpectedAction")) }
 
 func (h *hl) assignment() Obj {
 	h.t.Helper()
@@ -457,7 +458,7 @@ func (h *hl) assignment() Obj {
 	mustDo(h.t, err)
 	head, err := HeadRevision(h.ctx, h.store, h.rid, r.Generation)
 	mustDo(h.t, err)
-	headID, _ := get(head, "eventId")
+	headID, _ := head.Lookup("eventId")
 	var verdict Row
 	if headID != nil {
 		verdict = h.one("SELECT verdict FROM verdicts WHERE event_id = ?", headID)
@@ -526,7 +527,7 @@ func (h *hl) anchoredWithoutSettings(event any, generation int64) Obj {
 
 func neverReopens(delivery Obj) bool {
 	p := sub(delivery, "pacing")
-	return p != nil && str(p, "reason") == HourlyCap && field(p, "reopensAt") == nil
+	return p != nil && pyjson.Text(p.Get("reason")) == HourlyCap && field(p, "reopensAt") == nil
 }
 
 func correctionNextAction(state string, projection Obj) string {
@@ -535,14 +536,14 @@ func correctionNextAction(state string, projection Obj) string {
 	if state != "needs_changes" || delivery == nil {
 		return ""
 	}
-	dstate := str(delivery, "state")
+	dstate := pyjson.Text(delivery.Get("state"))
 	if field(correction, "supersession") != nil || dstate == Superseded {
 		return correctionAnswered
 	}
 	if dstate == Dispatched || dstate == Acknowledged {
 		return ""
 	}
-	if dstate == InboxOnly || str(sub(correction, "undeliveredReason"), "source") == "deliveries.hold_reason" {
+	if dstate == InboxOnly || pyjson.Text(sub(correction, "undeliveredReason").Get("source")) == "deliveries.hold_reason" {
 		return correctionHeld
 	}
 	if dstate == Sending || dstate == HeldUncertain {
@@ -575,7 +576,7 @@ func completionNextAction(state string, projection Obj) string {
 		}
 		return ""
 	}
-	if hold := str(delivery, "holdReason"); hold != "" && hold != PushChannelClosed {
+	if hold := pyjson.Text(delivery.Get("holdReason")); hold != "" && hold != PushChannelClosed {
 		switch hold {
 		case HostLostTurn:
 			return "parent_recovers_host_lost_turn"
@@ -589,7 +590,7 @@ func completionNextAction(state string, projection Obj) string {
 		}
 		return ""
 	}
-	switch str(delivery, "state") {
+	switch pyjson.Text(delivery.Get("state")) {
 	case HeldUncertain, Sending:
 		return reconcileAction
 	case Dispatched, InboxOnly:

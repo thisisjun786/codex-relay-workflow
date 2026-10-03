@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -38,7 +39,7 @@ func TestDEL02_a_staged_event_cannot_be_queued(t *testing.T) {
 	payload := f.readyPayload(rid, 1, []string{f.artifact("out.txt", "still working")}, 1, assigned("inProgress"))
 	_, err := f.accept(payload, store.AcceptOptions{})
 	mustDo(t, err)
-	_, err = f.delivery.Enqueue(f.ctx, str(payload, "eventId"), "", "")
+	_, err = f.delivery.Enqueue(f.ctx, pyjson.Text(payload.Get("eventId")), "", "")
 	requireReason(t, err, NotClaimable)
 	expected.same("refused", refusalOf(err))
 	expected.tables(f)
@@ -101,7 +102,7 @@ func TestDEL03_a_recipient_outside_the_authorized_scope_is_refused_before_any_tr
 		event := f.queuedEvent(regOpts{})
 		record := f.mustAttempt(event, nil)
 		expected.same("record", record)
-		if str(record, "deliveryState") != Dispatched || f.row(event).S("recipient_task_id") != parent {
+		if pyjson.Text(record.Get("deliveryState")) != Dispatched || f.row(event).S("recipient_task_id") != parent {
 			t.Fatalf("record %v", record)
 		}
 	})
@@ -168,10 +169,10 @@ func TestDEL06_a_transport_busy_refusal_produces_a_real_deferred_attempt(t *test
 	f.host.script = []string{"busy"}
 	record := f.mustAttempt(event, nil)
 	expected.same("record", record)
-	if str(record, "deliveryState") != DeferredBusy || str(record, "sendAttempted") != "no" || str(record, "failedOperation") != "thread/read" {
+	if pyjson.Text(record.Get("deliveryState")) != DeferredBusy || pyjson.Text(record.Get("sendAttempted")) != "no" || pyjson.Text(record.Get("failedOperation")) != "thread/read" {
 		t.Fatalf("record %v", record)
 	}
-	if v, _ := get(record, "retrySafe"); v != true {
+	if v, _ := record.Lookup("retrySafe"); v != true {
 		t.Fatal("retrySafe")
 	}
 	expected.tables(f)
@@ -185,7 +186,7 @@ func TestDEL07_an_idle_recipient_gets_a_real_turn_and_a_steer_is_recorded(t *tes
 		event := f.queuedEvent(regOpts{})
 		record := f.mustAttempt(event, nil)
 		expected.same("record", record)
-		if str(record, "deliveryState") != Dispatched || str(record, "turnId") == "" || f.row(event).S("state") != Dispatched {
+		if pyjson.Text(record.Get("deliveryState")) != Dispatched || pyjson.Text(record.Get("turnId")) == "" || f.row(event).S("state") != Dispatched {
 			t.Fatalf("record %v", record)
 		}
 		expected.tables(f)
@@ -199,10 +200,10 @@ func TestDEL07_an_idle_recipient_gets_a_real_turn_and_a_steer_is_recorded(t *tes
 		f.host.script = []string{"steer_existing"}
 		record := f.mustAttempt(event, nil)
 		expected.same("record", record)
-		if str(record, "turnId") != "already-running" || str(record, "_turnOrigin") != "steered_observed_turn" {
+		if pyjson.Text(record.Get("turnId")) != "already-running" || pyjson.Text(record.Get("_turnOrigin")) != "steered_observed_turn" {
 			t.Fatalf("record %v", record)
 		}
-		if v, _ := get(record, "_turnPreviouslyObserved"); v != true {
+		if v, _ := record.Lookup("_turnPreviouslyObserved"); v != true {
 			t.Fatal("_turnPreviouslyObserved")
 		}
 		expected.tables(f)
@@ -219,11 +220,11 @@ func TestDEL08_dispatched_is_not_delivered(t *testing.T) {
 	mustDo(t, err)
 	got := Obj{}
 	for _, k := range []string{"state", "reported", "acknowledged", "phase"} {
-		v, _ := get(item, k)
+		v, _ := item.Lookup(k)
 		got = append(got, F{Key: k, Value: v})
 	}
 	expected.same("snapshot", got)
-	if str(item, "reported") != "dispatched_awaiting_ack" {
+	if pyjson.Text(item.Get("reported")) != "dispatched_awaiting_ack" {
 		t.Fatalf("snapshot %v", item)
 	}
 }
@@ -234,7 +235,7 @@ func TestDEL09_request_id_is_distinct_from_the_event_id(t *testing.T) {
 	f := newFixture(t, tree)
 	event := f.queuedEvent(regOpts{})
 	record := f.mustAttempt(event, nil)
-	request := str(record, "requestId")
+	request := pyjson.Text(record.Get("requestId"))
 	expected.same("record.requestId", request)
 	if request == event || !strings.HasPrefix(request, "del-") || !strings.Contains(request, event[:12]) {
 		t.Fatalf("request id %q", request)
@@ -252,14 +253,14 @@ func TestDEL10_an_unsupported_approval_policy_is_stored_not_woken_and_held(t *te
 			f.host.script = []string{"approval_policy"}
 			record := f.mustAttempt(event, nil)
 			expected.same("record", record)
-			if str(record, "deliveryState") != InboxOnly || str(record, "recipientApprovalPolicy") != policy {
+			if pyjson.Text(record.Get("deliveryState")) != InboxOnly || pyjson.Text(record.Get("recipientApprovalPolicy")) != policy {
 				t.Fatalf("record %v", record)
 			}
 			item, err := f.delivery.SnapshotItem(f.ctx, event)
 			mustDo(t, err)
 			got := Obj{}
 			for _, k := range []string{"state", "reported", "holdReason", "phase"} {
-				v, _ := get(item, k)
+				v, _ := item.Lookup(k)
 				got = append(got, F{Key: k, Value: v})
 			}
 			expected.same("snapshot", got)

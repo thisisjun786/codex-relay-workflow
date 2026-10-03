@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -49,8 +50,6 @@ func (m *Start) ready(ctx context.Context, req map[string]any) (string, error) {
 	}
 	return m.Readiness(ctx, req)
 }
-func obj(value any) map[string]any { result, _ := value.(map[string]any); return result }
-func str(value any) string         { result, _ := value.(string); return result }
 func stringsOf(values any) []string {
 	out := []string{}
 	for _, v := range values.([]any) {
@@ -117,7 +116,7 @@ func (m *Start) Run(ctx context.Context, raw []byte) (contract.OrderedObject, er
 // every way out of the caller.
 func (m *Start) create(ctx context.Context, id Identity, req, ledger map[string]any) (map[string]any, string, func(), error) {
 	release := func() {}
-	if project := str(req["projectKey"]); project != "" {
+	if project := pyjson.Text(req["projectKey"]); project != "" {
 		held, err := LockProject(ctx, m.Store.Path, project)
 		if err != nil {
 			return nil, "", release, err
@@ -147,11 +146,11 @@ func (m *Start) create(ctx context.Context, id Identity, req, ledger map[string]
 	if err := m.requestRefusal(ctx, req); err != nil {
 		return nil, "", release, err
 	}
-	child := obj(req["child"])
-	settings := obj(child["settings"])
-	sandbox := obj(settings["sandbox"])
-	kind := map[string]string{"workspaceWrite": "workspace-write", "readOnly": "read-only", "dangerFullAccess": "danger-full-access"}[str(sandbox["type"])]
-	receipt, err := m.Adapter.CreateThread(ctx, CreateThreadRequest{RequestID: id.CreateRequestID, CWD: str(settings["cwd"]), Prompt: bootstrap, Title: str(child["title"]), Sandbox: kind, Model: str(settings["model"]), ReasoningEffort: str(settings["reasoningEffort"]), RuntimeWorkspaceRoots: stringsOf(settings["runtimeWorkspaceRoots"]), ExpectedSandboxPolicy: sandbox, Role: "child"})
+	child := pyjson.Map(req["child"])
+	settings := pyjson.Map(child["settings"])
+	sandbox := pyjson.Map(settings["sandbox"])
+	kind := map[string]string{"workspaceWrite": "workspace-write", "readOnly": "read-only", "dangerFullAccess": "danger-full-access"}[pyjson.Text(sandbox["type"])]
+	receipt, err := m.Adapter.CreateThread(ctx, CreateThreadRequest{RequestID: id.CreateRequestID, CWD: pyjson.Text(settings["cwd"]), Prompt: bootstrap, Title: pyjson.Text(child["title"]), Sandbox: kind, Model: pyjson.Text(settings["model"]), ReasoningEffort: pyjson.Text(settings["reasoningEffort"]), RuntimeWorkspaceRoots: stringsOf(settings["runtimeWorkspaceRoots"]), ExpectedSandboxPolicy: sandbox, Role: "child"})
 	return receipt, "", release, err
 }
 
@@ -164,8 +163,8 @@ func (m *Start) requestRefusal(ctx context.Context, req map[string]any) error {
 	if err := separatorRefusal(req); err != nil {
 		return err
 	}
-	parent := obj(req["parent"])
-	return SettingsConflict(ctx, m.Store, str(parent["taskId"]), settingsWithRole(obj(parent["settings"]), "parent"))
+	parent := pyjson.Map(req["parent"])
+	return SettingsConflict(ctx, m.Store, pyjson.Text(parent["taskId"]), settingsWithRole(pyjson.Map(parent["settings"]), "parent"))
 }
 
 // scopeRefusal is the project-scope decision Register makes once the child exists, asked while it does
@@ -174,7 +173,7 @@ func (m *Start) requestRefusal(ctx context.Context, req map[string]any) error {
 // nothing to decide.
 func (m *Start) scopeRefusal(ctx context.Context, id Identity, req map[string]any) error {
 	reg := &registry.Registry{Store: m.Store, Now: m.now}
-	return reg.PrecheckScope(ctx, str(obj(req["parent"])["taskId"]), id.IssueKey, str(req["projectKey"]))
+	return reg.PrecheckScope(ctx, pyjson.Text(pyjson.Map(req["parent"])["taskId"]), id.IssueKey, pyjson.Text(req["projectKey"]))
 }
 
 func deliveryValue(v any) any {
@@ -200,14 +199,6 @@ func deliveryValue(v any) any {
 		return v
 	}
 }
-func field(o delivery.Obj, key string) any {
-	for _, f := range o {
-		if f.Key == key {
-			return f.Value
-		}
-	}
-	return nil
-}
 func creationMatches(expected, created map[string]any) bool {
 	if created == nil {
 		return false
@@ -217,7 +208,7 @@ func creationMatches(expected, created map[string]any) bool {
 	return len(settings.Mismatches(observed, true, true, false)) == 0
 }
 func (m *Start) recoverStandby(ctx context.Context, id Identity, req map[string]any, ledger map[string]any, physical store.Location, receipt map[string]any) (map[string]any, error) {
-	task := str(receipt["threadId"])
+	task := pyjson.Text(receipt["threadId"])
 	effects, ok := receipt["attemptedEffects"].([]any)
 	attemptedStart, attemptedTurn := false, false
 	for _, effect := range effects {
@@ -228,8 +219,8 @@ func (m *Start) recoverStandby(ctx context.Context, id Identity, req map[string]
 			attemptedTurn = true
 		}
 	}
-	settings := obj(obj(req["child"])["settings"])
-	if !delivery.ValidSegment(task) || receipt["turnId"] != nil || !ok || !attemptedStart || attemptedTurn || !creationMatches(settings, obj(receipt["creation"])) {
+	settings := pyjson.Map(pyjson.Map(req["child"])["settings"])
+	if !delivery.ValidSegment(task) || receipt["turnId"] != nil || !ok || !attemptedStart || attemptedTurn || !creationMatches(settings, pyjson.Map(receipt["creation"])) {
 		return receipt, nil
 	}
 	digest := sha256.Sum256([]byte(id.RequestID))
@@ -326,7 +317,7 @@ func (m *Start) registeredProblem(ctx context.Context, id Identity, row store.Ma
 	if record.Status != "active" {
 		return "relationship_not_active", nil
 	}
-	if record.Parent.TaskID != str(obj(req["parent"])["taskId"]) || record.Parent.HostID != str(obj(req["parent"])["hostId"]) || record.Child.TaskID != row.ChildTaskID.String || record.Child.HostID != str(obj(req["child"])["hostId"]) || !jsonSame(record.Roots, stringsOf(req["artifactRoots"])) || record.ScopeRef.String != str(req["scopeRef"]) || !jsonSame(record.Recipients, recipients) {
+	if record.Parent.TaskID != pyjson.Text(pyjson.Map(req["parent"])["taskId"]) || record.Parent.HostID != pyjson.Text(pyjson.Map(req["parent"])["hostId"]) || record.Child.TaskID != row.ChildTaskID.String || record.Child.HostID != pyjson.Text(pyjson.Map(req["child"])["hostId"]) || !jsonSame(record.Roots, stringsOf(req["artifactRoots"])) || record.ScopeRef.String != pyjson.Text(req["scopeRef"]) || !jsonSame(record.Recipients, recipients) {
 		return "managed_scope_changed", nil
 	}
 	if record.Generation != row.ExecutionGeneration.Int64 {
@@ -353,7 +344,7 @@ func (m *Start) registeredProblem(ctx context.Context, id Identity, row store.Ma
 	if err != nil {
 		return "", err
 	}
-	if registered == nil || mode != delivery.Managed || field(registered, "setDigest") != delivery.SetDigest(normal) || field(registered, "sourceRef") != req["criteriaSource"] {
+	if registered == nil || mode != delivery.Managed || registered.Get("setDigest") != delivery.SetDigest(normal) || registered.Get("sourceRef") != req["criteriaSource"] {
 		return "managed_criteria_changed", nil
 	}
 	var storedCriteria []struct {
@@ -392,14 +383,14 @@ func (m *Start) registeredProblem(ctx context.Context, id Identity, row store.Ma
 				found = true
 			}
 		}
-		if !found || item.Source != str(req["criteriaSource"]) || item.Digest != delivery.SetDigest(normal) {
+		if !found || item.Source != pyjson.Text(req["criteriaSource"]) || item.Digest != delivery.SetDigest(normal) {
 			return "managed_criteria_changed", nil
 		}
 	}
 	for _, role := range []string{"parent", "child"} {
 		task := row.ChildTaskID.String
 		if role == "parent" {
-			task = str(obj(req["parent"])["taskId"])
+			task = pyjson.Text(pyjson.Map(req["parent"])["taskId"])
 		}
 		var stored string
 		e := m.Store.Querier(ctx).QueryRowContext(ctx, "SELECT settings FROM authorized_settings WHERE task_id=?", task).Scan(&stored)
@@ -413,7 +404,7 @@ func (m *Start) registeredProblem(ctx context.Context, id Identity, row store.Ma
 		if e := json.Unmarshal([]byte(stored), &current); e != nil {
 			return "", e
 		}
-		if !jsonSame(current, settingsWithRole(obj(obj(req[role])["settings"]), role)) {
+		if !jsonSame(current, settingsWithRole(pyjson.Map(pyjson.Map(req[role])["settings"]), role)) {
 			return "managed_settings_changed", nil
 		}
 	}
@@ -425,9 +416,9 @@ func (m *Start) registeredProblem(ctx context.Context, id Identity, row store.Ma
 	if len(unreadable) > 0 || delivery.Malformed(marker) != "" {
 		return "managed_marker_unreadable", nil
 	}
-	bound, _ := field(marker, "bound").(delivery.Obj)
-	relationship, _ := field(marker, "relationship").(delivery.Obj)
-	if field(bound, "taskId") != row.ChildTaskID.String || field(bound, "sessionId") != row.ChildTaskID.String || field(relationship, "relationshipId") != row.RelationshipID.String {
+	bound, _ := marker.Get("bound").(delivery.Obj)
+	relationship, _ := marker.Get("relationship").(delivery.Obj)
+	if bound.Get("taskId") != row.ChildTaskID.String || bound.Get("sessionId") != row.ChildTaskID.String || relationship.Get("relationshipId") != row.RelationshipID.String {
 		return "managed_marker_changed", nil
 	}
 	return "", nil
@@ -438,7 +429,7 @@ func (m *Start) packet(id Identity, row store.ManagedStartRequestsRow, req map[s
 	// The row's standby turn is the anchor of the row's generation: the send is refused unless
 	// generations.dispatch_turn_id of row.ExecutionGeneration is this very turn (the guard in Run), and
 	// registration records generation 1, so the text managed-start sends today is generation 1's.
-	return routingText(string(encoded), row.ExecutionGeneration.Int64, row.StandbyTurnID.String, str(req["prompt"]))
+	return routingText(string(encoded), row.ExecutionGeneration.Int64, row.StandbyTurnID.String, pyjson.Text(req["prompt"]))
 }
 
 // routingText is the message that carries a child its routing record and its assignment. Its bytes are

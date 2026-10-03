@@ -20,8 +20,8 @@ func (t TaskSettings) ApprovalDivergence(response any) any {
 	if !ok {
 		return nil
 	}
-	observed, _ := get(r, "approvalPolicy")
-	recorded, _ := get(t.Data, "approvalPolicy")
+	observed, _ := r.Lookup("approvalPolicy")
+	recorded, _ := t.Data.Lookup("approvalPolicy")
 	p, isText := observed.(string)
 	if observed == recorded || !isText || !slices.Contains(registry.CarriedApprovalPolicies, p) {
 		return nil

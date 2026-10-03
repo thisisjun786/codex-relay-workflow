@@ -9,6 +9,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 func settingsSend(t *testing.T) (*Bridge, *fakehost.Server, SendMessage) {
@@ -42,11 +43,11 @@ func annotationEqual(a, b any) bool {
 func Test_test_a_clean_resume_starts_its_turn_with_no_overrides(t *testing.T) {
 	b, host, input := carriedSend(t)
 	receipt, err := b.SendMessageToThread(context.Background(), input)
-	if err != nil || receipt["status"] != "accepted" || object(receipt["settings"])["verification"] != "observed_at_resume" {
+	if err != nil || receipt["status"] != "accepted" || pyjson.Map(receipt["settings"])["verification"] != "observed_at_resume" {
 		t.Fatalf("receipt=%v err=%v", receipt, err)
 	}
 	params := hostParams(t, host, "turn/start")
-	if len(params) != 2 || params["threadId"] != input.ThreadID || object(params["input"].([]any)[0])["text"] != "hello" {
+	if len(params) != 2 || params["threadId"] != input.ThreadID || pyjson.Map(params["input"].([]any)[0])["text"] != "hello" {
 		t.Fatalf("params=%v", params)
 	}
 }
@@ -102,7 +103,7 @@ func Test_test_a_replay_answers_from_the_ledger_without_touching_the_host(t *tes
 	if err != nil || first["status"] != "accepted" {
 		t.Fatalf("first=%v err=%v", first, err)
 	}
-	if object(first["settingsAfterDispatch"])["concurrentChange"] != false {
+	if pyjson.Map(first["settingsAfterDispatch"])["concurrentChange"] != false {
 		t.Fatalf("annotation=%v", first)
 	}
 	before := len(host.Requests())

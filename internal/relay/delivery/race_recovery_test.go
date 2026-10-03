@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -144,7 +145,7 @@ func Test21_ADR03_an_unverified_acknowledgement_is_still_upgradable(t *testing.T
 		mustDo(t, err)
 		outcomes := []any{}
 		for _, r := range results {
-			outcomes = append(outcomes, str(r.(Obj), "outcome"))
+			outcomes = append(outcomes, pyjson.Text(r.(Obj).Get("outcome")))
 		}
 		h.eq(outcomes)
 	})
@@ -173,13 +174,13 @@ func Test21_RCN01_a_restart_sweep_never_resends_or_retries(t *testing.T) {
 func Test21_RCN02_reading_a_transcript_settles_nothing(t *testing.T) {
 	mirror(t, rcn, "RecoveryRefusesToInvent.test_reading_a_transcript_settles_nothing", func(h *hl) {
 		h.register(regOpts{recipients: []string{parent, child}})
-		before := str(h.assignment(), "state")
+		before := pyjson.Text(h.assignment().Get("state"))
 		events := h.count("SELECT COUNT(*) AS c FROM events")
 		_, err := h.host.ReadThread(context.Background(), child)
 		mustDo(t, err)
 		_, err = h.host.ListTurnIDs(context.Background(), child, 20)
 		mustDo(t, err)
-		after := str(h.assignment(), "state")
+		after := pyjson.Text(h.assignment().Get("state"))
 		if after != before {
 			t.Fatalf("reading the transcript moved the assignment from %s to %s", before, after)
 		}

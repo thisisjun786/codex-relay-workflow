@@ -13,6 +13,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 func Test_test_lost_responses_replay_after_restart_without_duplicate_artifacts(t *testing.T) {
@@ -46,7 +47,7 @@ func Test_test_lost_responses_replay_after_restart_without_duplicate_artifacts(t
 			}
 			host.Script(stage, fakehost.Reply{Result: initial, Close: &fakehost.CloseFrame{Code: 1001, Reason: "lost"}})
 			first, err := b.CreateWorktreeThread(context.Background(), input)
-			if err != nil || first["status"] != "outcome_unknown" || first["recoveryRequired"] != true || object(first["worktree"])["initialRevision"] != input.Revision || (stage == "turn/start" && object(first["initialPrompt"])["state"] != "outcome_unknown") || (stage != "turn/start" && object(first["initialPrompt"])["state"] != "not_sent") {
+			if err != nil || first["status"] != "outcome_unknown" || first["recoveryRequired"] != true || pyjson.Map(first["worktree"])["initialRevision"] != input.Revision || (stage == "turn/start" && pyjson.Map(first["initialPrompt"])["state"] != "outcome_unknown") || (stage != "turn/start" && pyjson.Map(first["initialPrompt"])["state"] != "not_sent") {
 				t.Fatalf("first=%v err=%v", first, err)
 			}
 			before := host.Requests()

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 func Test_test_first_full_request_can_use_opus_and_xhigh(t *testing.T) {
@@ -20,7 +21,7 @@ func Test_test_first_full_request_can_use_opus_and_xhigh(t *testing.T) {
 	host.Respond("thread/start", start)
 	host.Respond("turn/start", fakehost.Reply{Result: map[string]any{"turn": map[string]any{"id": "turn-1"}}})
 	receipt, err := b.CreateThread(context.Background(), input)
-	if err != nil || receipt["status"] != "accepted" || receipt["turnId"] != "turn-1" || object(object(receipt["settings"])["actual"])["reasoningEffort"] != "xhigh" || object(hostParams(t, host, "turn/start")["input"].([]any)[0])["text"] != input.Prompt {
+	if err != nil || receipt["status"] != "accepted" || receipt["turnId"] != "turn-1" || pyjson.Map(pyjson.Map(receipt["settings"])["actual"])["reasoningEffort"] != "xhigh" || pyjson.Map(hostParams(t, host, "turn/start")["input"].([]any)[0])["text"] != input.Prompt {
 		t.Fatalf("receipt=%v err=%v", receipt, err)
 	}
 }
@@ -112,11 +113,11 @@ func Test_test_an_accepted_delivery_is_not_reported_as_completed_work(t *testing
 	b, host, input := settingsSend(t)
 	host.Respond("thread/turns/list", fakehost.Reply{Result: map[string]any{"data": []any{map[string]any{"id": "turn-2", "status": "inProgress"}}}})
 	receipt, err := b.SendMessageToThread(context.Background(), input)
-	if err != nil || receipt["status"] != "accepted" || receipt["delivery"] != "turn_started" || strings.Contains(strings.Split(text(receipt["deliveryMeaning"]), ".")[0], "completed") || !strings.Contains(text(receipt["deliveryMeaning"]), "does not say the peer read it") {
+	if err != nil || receipt["status"] != "accepted" || receipt["delivery"] != "turn_started" || strings.Contains(strings.Split(pyjson.Text(receipt["deliveryMeaning"]), ".")[0], "completed") || !strings.Contains(pyjson.Text(receipt["deliveryMeaning"]), "does not say the peer read it") {
 		t.Fatalf("receipt=%v err=%v", receipt, err)
 	}
-	observed, err := b.WaitThread(context.Background(), input.ThreadID, text(receipt["turnId"]), 0)
-	if err != nil || object(observed["turn"])["status"] != "inProgress" || observed["timedOut"] != true {
+	observed, err := b.WaitThread(context.Background(), input.ThreadID, pyjson.Text(receipt["turnId"]), 0)
+	if err != nil || pyjson.Map(observed["turn"])["status"] != "inProgress" || observed["timedOut"] != true {
 		t.Fatalf("wait=%v err=%v", observed, err)
 	}
 }

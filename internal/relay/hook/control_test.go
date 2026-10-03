@@ -34,7 +34,7 @@ func Test33ControlHandler(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if get(result, "decision") != "release" || get(result, "state") != "unmanaged" {
+	if result.Get("decision") != "release" || result.Get("state") != "unmanaged" {
 		t.Fatal(result)
 	}
 	select {
