@@ -765,6 +765,7 @@
   {"flag":"--pull-request","type":"int","required":true},
   {"flag":"--restate","help":"a handoff record or an earlier snapshot to grade against a fresh reading; '-' reads it from stdin"},
   {"flag":"--restate-head","help":"the head the restated record is about, when the record itself does not name one"},
+  {"flag":"--late-dispositions","help":"with --restate: a file holding the coordinator's dispositions of review threads that arrived after the record, a JSON object {\"lateDispositions\": [{threadId, disposition (answered, backlog, resolved or refuted), evidenceUrl, head, grade}]}. A thread with an entry for the head under restatement is not a late finding; the grade is recorded as given and never read"},
   {"flag":"--page-size","type":"int"},
   {"flag":"--page-budget","type":"int","help":"how many pages one connection may take before the read is reported unfinished rather than answered"},
   {"flag":"--call-budget","type":"int"},
