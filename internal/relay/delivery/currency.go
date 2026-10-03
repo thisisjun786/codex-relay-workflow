@@ -41,7 +41,12 @@ func ambiguous(evidence string, nodes []string, detail string) Obj {
 // requestedPredecessors is currency._requested_predecessors: only the result whose ruling opened
 // this correction is an external root.
 func requestedPredecessors(ctx context.Context, q store.Querier, rid string, generation int64) (map[string][]string, error) {
-	rows, err := allFrom(ctx, q, "SELECT p.event_id, p.revision_hash, v.verdict_turn_id, r.event_id AS request_id, g.dispatch_request_id FROM generations g JOIN verdicts v ON v.next_generation = g.execution_generation JOIN events p ON p.event_id = v.event_id AND p.relationship_id = g.relationship_id JOIN events r ON r.relationship_id = g.relationship_id AND r.execution_generation = g.execution_generation WHERE g.relationship_id = ? AND g.execution_generation = ? AND g.reason = 'needs_changes_revision' AND v.verdict = 'needs_changes' AND p.execution_generation = g.execution_generation - 1 AND p.outcome = ? AND p.stage = 'final' AND p.suppressed_reason IS NULL AND r.outcome = 'revision_request' AND r.producer = 'relay' AND r.stage = 'final' AND r.suppressed_reason IS NULL", rid, generation, "ready_for_review")
+	// the generation a ruling's correction follows: the one before it, or the nearest one that was not withdrawn (CRW-446)
+	before, err := store.LiveGenerationBefore(ctx, q, rid, generation)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := allFrom(ctx, q, "SELECT p.event_id, p.revision_hash, v.verdict_turn_id, r.event_id AS request_id, g.dispatch_request_id FROM generations g JOIN verdicts v ON v.next_generation = g.execution_generation JOIN events p ON p.event_id = v.event_id AND p.relationship_id = g.relationship_id JOIN events r ON r.relationship_id = g.relationship_id AND r.execution_generation = g.execution_generation WHERE g.relationship_id = ? AND g.execution_generation = ? AND g.reason = 'needs_changes_revision' AND v.verdict = 'needs_changes' AND p.execution_generation = ? AND p.outcome = ? AND p.stage = 'final' AND p.suppressed_reason IS NULL AND r.outcome = 'revision_request' AND r.producer = 'relay' AND r.stage = 'final' AND r.suppressed_reason IS NULL", rid, generation, before, "ready_for_review")
 	if err != nil {
 		return nil, err
 	}

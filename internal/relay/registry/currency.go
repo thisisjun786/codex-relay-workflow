@@ -56,6 +56,11 @@ func colString(row store.Row, name string) string {
 
 // requestedPredecessors is currency._requested_predecessors.
 func requestedPredecessors(ctx context.Context, s *store.Store, rid string, generation int64) (map[string][]string, error) {
+	// the generation a ruling's correction follows: the one before it, or the nearest one that was not withdrawn (CRW-446)
+	before, err := store.LiveGenerationBefore(ctx, s.Querier(ctx), rid, generation)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.All(ctx, "SELECT p.event_id, p.revision_hash, v.verdict_turn_id, r.event_id AS request_id,"+
 		" g.dispatch_request_id"+
 		" FROM generations g"+
@@ -65,10 +70,10 @@ func requestedPredecessors(ctx context.Context, s *store.Store, rid string, gene
 		" AND r.execution_generation = g.execution_generation"+
 		" WHERE g.relationship_id = ? AND g.execution_generation = ?"+
 		" AND g.reason = 'needs_changes_revision' AND v.verdict = 'needs_changes'"+
-		" AND p.execution_generation = g.execution_generation - 1"+
+		" AND p.execution_generation = ?"+
 		" AND p.outcome = ? AND p.stage = 'final' AND p.suppressed_reason IS NULL"+
 		" AND r.outcome = 'revision_request' AND r.producer = 'relay'"+
-		" AND r.stage = 'final' AND r.suppressed_reason IS NULL", rid, generation, reviewable)
+		" AND r.stage = 'final' AND r.suppressed_reason IS NULL", rid, generation, before, reviewable)
 	if err != nil {
 		return nil, err
 	}
