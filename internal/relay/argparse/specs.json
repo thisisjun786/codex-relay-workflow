@@ -195,6 +195,10 @@
   {"flag":"--all","kind":"true","help":"every live assignment in the store, scoped to a project or not"},
   {"flag":"--actor","required":true},
   {"flag":"--apply","kind":"true","help":"close them. Without it no relationship, link, binding or journal row is changed and no store is created; relationship-resume reopens a closed one"}],"groups":[{"required":true,"options":["--project","--all"]}]},
+{"name":"child-cleanup","summary":"releases a finished child thread and the sub-threads it started from the App Server so their MCP helper processes stop (thread/archive, undone by codex unarchive). Only for a relationship whose merged mark counts for its current head, generation, revision and criteria, that nothing else uses, with nothing owed and, for a plan node, its accepted head landed. Requires --socket. Without --dry-run it archives the loaded threads of the subtree, deepest first and the child last; nothing is archived while any of them is running or the subtree cannot be established exactly","options":[
+  {"flag":"--relationship","required":true},
+  {"flag":"--actor","required":true,"help":"the relationship's parent task"},
+  {"flag":"--dry-run","kind":"true","help":"say which loaded threads would be archived and call nothing that changes the App Server; the store is opened read-only"}]},
 {"name":"emit","options":[
   {"flag":"--relationship","required":true},
   {"flag":"--generation","type":"int","required":true},
