@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
@@ -164,6 +165,18 @@ func TestDetectManagedWorktree(t *testing.T) {
 		}
 		if ctx := buildSessionStartContext(got, r.checkout); !strings.Contains(ctx, "unconfirmed") || strings.Contains(ctx, "git switch") {
 			t.Fatalf("context for an unconfirmed checkout: %q", ctx)
+		}
+	})
+	t.Run("a cwd of 65,000 missing levels is answered at once, with the same checkout (oracle defect, fixed)", func(t *testing.T) {
+		done := make(chan WorktreeIdentity, 1)
+		go func() { done <- detectManagedWorktree(r.checkout+strings.Repeat("/m", 65000), r.env()) }()
+		select {
+		case got := <-done:
+			if plain(got) != want || got.cwd != "" {
+				t.Fatalf("got %+v, want %+v", got, want)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("the walk over the ancestors is quadratic in the length of the path")
 		}
 	})
 	t.Run("a .git at the slot root makes the slot the checkout", func(t *testing.T) {

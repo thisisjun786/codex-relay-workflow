@@ -112,10 +112,22 @@ func firstSegment(rel string) string {
 	return rel
 }
 
+// maxPathLen is the longest path the system accepts (Linux PATH_MAX); a longer one names nothing.
+const maxPathLen = 4096
+
 // findCheckoutRoot is the nearest ancestor of cwd (itself included) that holds a .git entry, looking no higher than
-// slotRoot; empty when there is none.
+// slotRoot; empty when there is none. Oracle defect, fixed with the same answers: it joins and cleans the path at every
+// level, which is quadratic, so a cwd of tens of thousands of missing levels (65 KB of input) held the oracle for 15 s.
+// No stat of a path over maxPathLen can succeed, so the ancestors that long are skipped.
 func findCheckoutRoot(cwd, slotRoot string) string {
-	for cur := cwd; ; {
+	cur := cwd
+	if len(slotRoot) > maxPathLen {
+		return ""
+	}
+	if len(cur) > maxPathLen {
+		cur = cur[:max(1, strings.LastIndexByte(cur[:maxPathLen+1], '/'))]
+	}
+	for {
 		if _, err := os.Stat(filepath.Join(cur, ".git")); err == nil {
 			return cur
 		}
