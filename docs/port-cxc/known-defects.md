@@ -189,6 +189,11 @@ Behavior of CXC v0.2.40 that looks unintended and that the recorded corpus ([con
 - `gitProbeEnv` removes four git routing variables where `source-identity.ts` removes six, so an inherited `GIT_OBJECT_DIRECTORY` naming a directory that does not exist (git then takes the repository for none) makes every session-source probe fail with "Cannot resolve source Git worktree identity." while the source identity of the same tree still resolves (source `session-source.ts:41-45` against `source-identity.ts:61-66`; port scenario `env_object_dir_breaks_probes`); port: kept.
 - `gitIdentity` and `canonical` read git's output and resolved paths as UTF-8 text, so a worktree whose path holds bytes that are not UTF-8 becomes a path that does not exist and can never be bound or resolved, and a target that names such a worktree is bound to another worktree whose name holds U+FFFD in its place, if there is one (source `session-source.ts:24-38`; port scenario `bind_path_with_invalid_utf8`); port: kept.
 
+## Found by the human transition application port
+
+- A chat `orchestrate p` from I with `override: true` is accepted with no `did`: it opens the soft gate and appends the audit row without evidence, where the CLI's agent override refuses an empty or placeholder `did` (source `plugins/codexclaw/components/pabcd-state/src/orchestrate-apply.ts:141-161` against `plugins/codexclaw/components/pabcd-state/src/orchestrate-cli.ts:637-639`); port: kept.
+- `unlockedFlag` has a C>D arm that `applyHumanTransition` can never reach: the human D returns at its own branch before the flag is asked for, so the arm is dead code (source `plugins/codexclaw/components/pabcd-state/src/orchestrate-apply.ts:34-38` against `:103-120` and `:127`); port: kept.
+
 ## Found by the objective metrics port
 
 - `parseMetricLine` and `recordObjectiveMetric` both normalise the metric name and the normalisation is not idempotent (it strips dots after `sanitizeKey` has stripped dashes), so `METRIC .-a=1` parses as `-a` and is recorded as `a`, and `.-.` becomes `-` and then `missing` (source `plugins/codexclaw/components/pabcd-state/src/metrics.ts:66`, `:119` and `:177`; port scenarios `parse_lines` and `ingest_names_are_normalised_twice` in `internal/pabcd/metric/testdata/scenarios-metrics.json`); port: kept.
