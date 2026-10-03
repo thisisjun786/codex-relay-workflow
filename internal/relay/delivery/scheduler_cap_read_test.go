@@ -51,6 +51,7 @@ func ids(rows []Row) []string {
 }
 
 func TestCapRead_EligibleRows_returns_the_oldest_limit_rows(t *testing.T) {
+	t.Parallel()
 	w := newScaleWorld(t, 2)
 	var events []string
 	for k := 0; k < 5; k++ {
@@ -74,6 +75,7 @@ func TestCapRead_EligibleRows_returns_the_oldest_limit_rows(t *testing.T) {
 // of each row, a key no row holds any more, something that is not a key) and every limit, the rows are
 // the first of what the scheduler used to take from the whole list.
 func TestCapRead_dueRows_keeps_the_order_after_a_marker_for_every_marker_and_limit(t *testing.T) {
+	t.Parallel()
 	world, byRecipient := newBacklogWorld(t, 7)
 	d := world.f.delivery
 	now := world.f.clock.Now()
@@ -103,6 +105,7 @@ func TestCapRead_dueRows_keeps_the_order_after_a_marker_for_every_marker_and_lim
 }
 
 func TestCapRead_dueRecipients_rotates_after_the_recipient_last_attempted(t *testing.T) {
+	t.Parallel()
 	world, _ := newBacklogWorld(t, 2)
 	d := world.f.delivery
 	now := world.f.clock.Now()
@@ -133,6 +136,7 @@ func TestCapRead_dueRecipients_rotates_after_the_recipient_last_attempted(t *tes
 // A tick reads the rows its turn can attempt and no more, however many are due: the cap is attempts
 // * (attempts + 1) / 2 rows, and attempts is the smaller of the parent's share and the tick's budget.
 func TestCapRead_a_tick_reads_no_more_than_its_turn_can_attempt(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name          string
 		budget, share int
@@ -163,6 +167,7 @@ func TestCapRead_a_tick_reads_no_more_than_its_turn_can_attempt(t *testing.T) {
 // Only as many parents as the tick has attempts are opened: the first round gives each parent one
 // attempt, so the parents after them cannot be reached in the tick.
 func TestCapRead_a_tick_reads_only_as_many_parents_as_it_has_attempts(t *testing.T) {
+	t.Parallel()
 	r := newRotation(t)
 	r.sc.MaxSendsTick = 2
 	for _, name := range []string{"a", "b", "c", "d", "e"} {
@@ -181,6 +186,7 @@ func TestCapRead_a_tick_reads_only_as_many_parents_as_it_has_attempts(t *testing
 }
 
 func TestCapRead_a_tick_with_no_attempts_reads_nothing_and_the_rotation_still_moves(t *testing.T) {
+	t.Parallel()
 	r := newRotation(t)
 	r.sc.MaxSendsTick = -1
 	for _, name := range []string{"a", "b", "c"} {
@@ -213,6 +219,7 @@ func TestCapRead_a_tick_with_no_attempts_reads_nothing_and_the_rotation_still_mo
 // A cursor an older scheduler wrote (an index) starts the first tick somewhere and is then replaced by
 // the id of the parent that started it.
 func TestCapRead_a_legacy_parent_cursor_is_replaced_by_a_parent_id(t *testing.T) {
+	t.Parallel()
 	r := newRotation(t)
 	for _, name := range []string{"a", "b", "c"} {
 		r.join(name, 3)
@@ -233,6 +240,7 @@ func TestCapRead_a_legacy_parent_cursor_is_replaced_by_a_parent_id(t *testing.T)
 
 // A marker that is not a key (an index an older scheduler wrote) is no marker.
 func TestCapRead_a_refusal_marker_that_is_not_a_key_is_no_marker(t *testing.T) {
+	t.Parallel()
 	w, byRecipient := newBacklogWorld(t, 5)
 	recipient := w.rels[0].child
 	w.exec("INSERT INTO discovery_cursors (task_id, listing, cursor, updated_at) VALUES ('scheduler', ?, ?, ?)", markerKey(scaleParent, recipient), "7", w.f.clock.ISO())
@@ -260,6 +268,7 @@ func TestCapRead_a_recipient_without_rows_has_no_queue(t *testing.T) {
 // relationship is paused, the deliver command sends a row): the next parent is served, and the
 // tick after it serves the one after that, not the same parent twice.
 func TestCapRead_a_first_parent_whose_rows_vanish_costs_no_one_a_second_turn(t *testing.T) {
+	t.Parallel()
 	r := newRotation(t)
 	for _, name := range []string{"a", "b", "c"} {
 		r.join(name, 6)

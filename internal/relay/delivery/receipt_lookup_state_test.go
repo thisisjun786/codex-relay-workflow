@@ -19,6 +19,7 @@ func registered(value string) string {
 // compares it, Python's != on the decoded value, and the dispatch and the identities gate the rest
 // of the lookup in the guard's order. Each case states the whole answer.
 func TestStoredReceiptLookupAnswersEachStateOfTheRelationship(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := stageReceipt(t)
 	other := func(q *ReceiptQuery) { q.Dispatch = "another-dispatch" }
@@ -201,6 +202,7 @@ func TestStoredReceiptLookupReadsThroughTheCallersTransaction(t *testing.T) {
 // receipt, an answer no single state of the store gives: the receipt was at the head before the
 // commit and there is no reviewable revision after it.
 func TestStoredReceiptLookupReadsUnderOneSnapshot(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := stageReceipt(t)
 	// suppress commits, through a connection of its own, what the daemon commits.
@@ -257,6 +259,7 @@ func TestStoredReceiptLookupReadsUnderOneSnapshot(t *testing.T) {
 // transaction behind: the snapshot is rolled back whatever became of the context, so the store's
 // one connection goes back to the pool clean and the next transaction begins.
 func TestStoredReceiptLookupLeavesNoTransactionWhenItsContextEnds(t *testing.T) {
+	t.Parallel()
 	s := stageReceipt(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	answer, readable, err := lookupStoredReceipt(ctx, s.f.store, s.query(), cancel)
@@ -281,6 +284,7 @@ func TestStoredReceiptLookupLeavesNoTransactionWhenItsContextEnds(t *testing.T) 
 // deliverable nobody could compare, is only not readable, which the omission leaves as
 // receipt_unreadable.
 func TestStoredReceiptLookupReturnsWhatTheDriverCannotBind(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := stageReceipt(t)
 	q := s.query()

@@ -37,6 +37,7 @@ func copyCLISeed(t *testing.T, state, work string) {
 }
 
 func TestCLI_seed_copies_are_independent(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	for i := 0; i < 2; i++ {
 		root := t.TempDir()
