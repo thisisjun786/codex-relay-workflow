@@ -190,14 +190,22 @@ func (r *reading) noteExcluded(one row, reason string) {
 		detail := body.Get("detail").(string) // rowShape already requires a string here.
 		kind := "detail_unrecognized"
 		switch {
-		case detail == "the Stop payload could not be read from stdin":
+		case detail == hook.StdinUnreadableDetail:
 			kind = "read_failed_cause_unrecorded"
-		case strings.HasPrefix(detail, "the Stop payload is not UTF-8: "):
-			kind = "invalid_utf8"
+		case strings.HasPrefix(detail, hook.StdinNotUTF8Prefix):
+			kind = hook.StdinInvalidUTF8
 		}
-		evidence["stdinRead"] = map[string]any{
-			"case": kind, "detail": detail, "elapsedMs": body.Get("elapsedMs"),
+		reading := map[string]any{"case": kind, "detail": detail, "elapsedMs": body.Get("elapsedMs")}
+		// A row that recorded its cause (CRW-504) names the case from it and reports what it
+		// recorded; rowShape has vouched for the object. Without the key the reading is the
+		// historical three keys above.
+		if recorded, ok := body.Get("stdinRead").(object); ok {
+			reading["case"] = recorded.Get("cause")
+			for _, name := range []string{"error", "bytesRead", "waitStartedMs", "waitEndedMs"} {
+				reading[name] = recorded.Get(name)
+			}
 		}
+		evidence["stdinRead"] = reading
 	}
 	r.excludedInvocations = append(r.excludedInvocations, map[string]any{
 		"row": shown(one.where), "at": body.Get("at"),

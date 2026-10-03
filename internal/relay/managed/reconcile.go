@@ -31,6 +31,7 @@ const (
 	loadedPages         = 20
 	loadedPage          = 500
 	maxThreadReads      = 64
+	idSlack             = time.Minute // slack around the UUIDv7 creation window
 )
 
 // The states creationReconciliation reports.
@@ -217,6 +218,9 @@ func (r *startRun) decide(ctx context.Context) (decision, error) {
 	if standby != nil {
 		// The standby send was decided before: it only names the thread, and what to do about it is recoverStandby's rule for its status.
 		thread := pyjson.Text(standby["threadId"])
+		if abandonable(standby) && !creationMayHaveTurn(r.receipt) {
+			return r.abandon(base, thread, "the host refused to resume it"), nil
+		}
 		if delivery.ValidSegment(thread) {
 			base.state, base.thread, base.detail = reconAdopted, thread, "the standby send for this thread was made before"
 			return decision{action: "continue", thread: thread, rec: base}, nil
@@ -226,6 +230,46 @@ func (r *startRun) decide(ctx context.Context) (decision, error) {
 		return r.observe(ctx, base, thread)
 	}
 	return r.scan(ctx, base)
+}
+
+// A failed read/resume, before any turn or verified resume, can leave an orphan.
+// Connection establishment, settings findings and uncertain sends do not license replacement.
+func abandonable(receipt map[string]any) bool {
+	if receipt["status"] != "failed" || receipt["turnId"] != nil {
+		return false
+	}
+	if _, resumed := receipt["resumed"]; resumed || pyjson.Map(receipt["rpcError"])["code"] == "connection_unavailable" {
+		return false
+	}
+	err := pyjson.Text(receipt["error"])
+	if strings.Contains(err, "thread not found") && (strings.HasPrefix(err, "thread/read:") || strings.HasPrefix(err, "thread/resume:")) {
+		return true
+	}
+	return receipt["statusBeforeResume"] == "notLoaded" && strings.HasPrefix(err, "thread/resume:")
+}
+
+func (r *startRun) abandon(base reconciliation, thread, why string) decision {
+	base.thread = thread
+	return r.recreate(base, fmt.Sprintf("thread %s abandoned: %s", thread, why))
+}
+
+func creationMayHaveTurn(receipt map[string]any) bool {
+	effects, recorded := receipt["attemptedEffects"].([]any)
+	for _, effect := range effects {
+		if effect == "turn/start" {
+			return true
+		}
+	}
+	return receipt["turnId"] != nil || !recorded && receipt["title"] != nil
+}
+
+func unreadable(err error) bool {
+	for _, text := range []string{"thread not found", "missing source rollout", "no rollout found"} {
+		if strings.Contains(err.Error(), text) {
+			return true
+		}
+	}
+	return false
 }
 
 // recreate creates the next attempt, unless the creations are spent.
@@ -238,7 +282,9 @@ func (r *startRun) recreate(base reconciliation, why string) decision {
 }
 
 // A thread has no turn when the host says it never got its first message (turns/list refuses it before the first user message).
-func noTurnAnswer(err error) bool { return strings.Contains(err.Error(), "not materialized") }
+func noTurnAnswer(err error) bool {
+	return strings.Contains(err.Error(), "not materialized") || strings.Contains(err.Error(), "missing source rollout") || strings.Contains(err.Error(), "no rollout found")
+}
 
 // observe reads a thread the creation named or the scan found: whether it has a turn decides, and the receipt decides whether the standby
 // turn/start may have been sent. Neither is concluded from the other.
@@ -247,6 +293,12 @@ func (r *startRun) observe(ctx context.Context, base reconciliation, thread stri
 	if err != nil {
 		if ctx.Err() != nil {
 			return decision{}, ctx.Err()
+		}
+		if unreadable(err) {
+			if creationMayHaveTurn(r.receipt) {
+				return base.stopped(reconTurnUnknown, "the creation may have sent turn/start; an unreadable thread is not replaced (I-473)"), nil
+			}
+			return r.abandon(base, thread, "the host cannot read it ("+err.Error()+")"), nil
 		}
 		return base.stopped(reconUnobserved, "reading thread %s: %s", thread, err), nil
 	}
@@ -259,6 +311,8 @@ func (r *startRun) observe(ctx context.Context, base reconciliation, thread stri
 		hasTurn = hasTurn || len(rows) > 0
 	case ctx.Err() != nil:
 		return decision{}, ctx.Err()
+	case strings.Contains(err.Error(), "thread not found") && !hasTurn && !creationMayHaveTurn(r.receipt):
+		return r.abandon(base, thread, "the host no longer knows it"), nil
 	case !noTurnAnswer(err):
 		return base.stopped(reconUnobserved, "listing the turns of thread %s: %s", thread, err), nil
 	}
@@ -280,6 +334,35 @@ func (r *startRun) observe(ctx context.Context, base reconciliation, thread stri
 	return decision{action: "continue", thread: thread, rec: base}, nil
 }
 
+func uuidV7Millis(id string) (int64, bool) {
+	digits := strings.ReplaceAll(id, "-", "")
+	if len(digits) != 32 || digits[12] != '7' {
+		return 0, false
+	}
+	bytes, err := hex.DecodeString(digits)
+	if err != nil || bytes[8]&0xc0 != 0x80 {
+		return 0, false
+	}
+	ms, err := strconv.ParseInt(digits[:12], 16, 64)
+	return ms, err == nil
+}
+
+func (r *startRun) earlierThreads(ctx context.Context) (map[string]bool, error) {
+	known := map[string]bool{}
+	for n := 0; n < r.attempt; n++ {
+		for _, id := range []string{attemptID(r.identity.RequestID, r.identity.CreateRequestID, n), recoveryID(r.identity.RequestID, n)} {
+			receipt, err := r.m.Adapter.GetOperation(ctx, id)
+			if err != nil {
+				return nil, err
+			}
+			if thread := pyjson.Text(receipt["threadId"]); thread != "" {
+				known[thread] = true
+			}
+		}
+	}
+	return known, nil
+}
+
 // epoch reads a time the ledger or the host wrote as seconds.
 func epoch(v any) (float64, bool) {
 	switch x := v.(type) {
@@ -297,7 +380,7 @@ func epoch(v any) (float64, bool) {
 }
 
 // scan looks for the thread a creation left when its receipt names none: the loaded threads that fit the creation. None is absence only
-// once the listing was read to its end and the grace period has passed. Every loaded thread is read, up to maxThreadReads.
+// once the listing was read to its end and the grace period has passed. UUIDv7 IDs outside the window and earlier attempts are not read.
 func (r *startRun) scan(ctx context.Context, base reconciliation) (decision, error) {
 	started, hasStart := epoch(r.receipt["startedAt"])
 	updated, hasUpdate := epoch(r.receipt["updatedAt"])
@@ -313,6 +396,10 @@ func (r *startRun) scan(ctx context.Context, base reconciliation) (decision, err
 	now, err := time.Parse(time.RFC3339Nano, r.m.now())
 	if err != nil {
 		return base.stopped(reconUnobserved, "the engine's clock %q does not read as a time", r.m.now()), nil
+	}
+	known, err := r.earlierThreads(ctx)
+	if err != nil {
+		return decision{}, err
 	}
 	child := pyjson.Map(r.req["child"])
 	settings := pyjson.Map(child["settings"])
@@ -337,7 +424,10 @@ func (r *startRun) scan(ctx context.Context, base reconciliation) (decision, err
 		ids, _ := listing["data"].([]any)
 		for _, item := range ids {
 			id := pyjson.Text(item)
-			if id == "" {
+			if id == "" || known[id] {
+				continue
+			}
+			if ms, ok := uuidV7Millis(id); ok && (ms < int64(started*1000)-idSlack.Milliseconds() || ms > int64((ended+r.m.grace().Seconds())*1000)+idSlack.Milliseconds()) {
 				continue
 			}
 			if reads++; reads > maxThreadReads {
@@ -347,6 +437,9 @@ func (r *startRun) scan(ctx context.Context, base reconciliation) (decision, err
 			if err != nil {
 				if ctx.Err() != nil {
 					return decision{}, ctx.Err()
+				}
+				if unreadable(err) {
+					continue
 				}
 				return base.stopped(reconUnobserved, "reading thread %s: %s", id, err), nil
 			}

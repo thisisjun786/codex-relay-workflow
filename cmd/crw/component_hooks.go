@@ -5,6 +5,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/affordance"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/job"
 )
 
@@ -27,10 +28,19 @@ func componentHooks() []componentHook {
 			return job.RunHook(c.ctx, event, in, c.stdout, os.LookupEnv, cwd, time.Now)
 		}
 	}
+	aff := func(event string) func(invocation, io.Reader) int {
+		return func(c invocation, in io.Reader) int {
+			cwd, _ := os.Getwd()
+			return affordance.RunHook(c.ctx, event, in, c.stdout, os.LookupEnv, cwd)
+		}
+	}
 	return []componentHook{
 		{"stop-waking-on-background-completion", "stop", bg("stop")},
 		{"user-prompt-submit-delivering-background-completions", "user-prompt-submit", bg("user-prompt-submit")},
 		{"session-start-adopting-background-completions", "session-start", bg("session-start")},
+		{"session-start-announcing-map-affordance", "session-start", aff("session-start")},
+		{"post-compact-injecting-bg-terminal-affordance.post-compact", "post-compact", aff("post-compact")},
+		{"post-compact-injecting-bg-terminal-affordance.user-prompt-submit", "user-prompt-submit", aff("user-prompt-submit")},
 	}
 }
 

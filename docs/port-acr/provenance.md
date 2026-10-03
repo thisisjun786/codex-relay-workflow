@@ -88,3 +88,37 @@ git -C <ACR> show a3e438e2bd1f0824c1eab88db738aa3c82c69e99:LICENSE | cmp - <repo
 ```
 
 Compared on 2026-10-04 by reading these files: the retained ref/environment checks and sentinel have the upstream origin above; the rest is intentionally different behavior, verified with temporary Git repositories. NOTICE and the imported LICENSE are unchanged.
+
+### internal/review/pipeline
+
+Five Go files carry the pinned Apache-2.0 adaptation header. pipeline.go, parse.go,
+doc.go and all tests were written for CRW. No upstream Go implementation is copied
+verbatim; the retained workflow concepts and instructions are listed below.
+
+| Go file | Upstream | Kept | Changed |
+| --- | --- | --- | --- |
+| reviewers.go | internal/runner/runner.go | Independent reviewer identities and collecting each reviewer's results. | Fixed perspectives, tested size thresholds and documentation-only selection; serial chunk calls replace fan-out, retries and streaming. |
+| assemble.go | internal/runner/runner.go, internal/runner/report.go | Reviewer accounting, timeout-before-auth classification, explicit failed-reviewer warnings and report support. | Any valid chunk counts as a returned reviewer; structured call records replace terminal output. Invalid/unavailable outcomes never become an empty successful review; cleanup errors retain valid output but make the artifact partial. |
+| prompts.go | internal/agent/prompts.go, internal/summarizer/summarizer.go, internal/fpfilter/prompt.go | Concrete bug focus, clustering distinct problems, conservative verification and structured output instructions. | No guidance or prior feedback; fixed lenses precede JSON-encoded bundle/findings/head data, with no repository tools. Needs-context replaces guesses. Schemas and strict acceptance are new. |
+| group.go | internal/summarizer/summarizer.go | Grouping overlapping problems and counting unique reviewer IDs. | The model returns only a complete partition of existing indexes. Go preserves source text, computes support, checks same file/context and rejects unsafe destructive merges. Failure keeps raw unverified evidence. |
+| verify.go | internal/fpfilter/filter.go, internal/fpfilter/prompt.go | A failed or missing evaluation preserves the finding; conservative evidence judgement. | Actual immutable head code and bundle chunk are supplied. Confirmed/rejected/uncertain and needs-context replace numeric FP scores and agreement bonuses; deterministic Rules decide final drops. Reviewer severity is retained. |
+
+Reproducible read-only comparisons with the pinned `<ACR>` and this `<repo>`:
+
+```sh
+git -C <ACR> rev-parse HEAD # a3e438e2bd1f0824c1eab88db738aa3c82c69e99
+git -C <ACR> show a3e438e2bd1f0824c1eab88db738aa3c82c69e99:internal/runner/runner.go
+git -C <ACR> show a3e438e2bd1f0824c1eab88db738aa3c82c69e99:internal/runner/report.go
+git -C <ACR> show a3e438e2bd1f0824c1eab88db738aa3c82c69e99:internal/summarizer/summarizer.go
+git -C <ACR> show a3e438e2bd1f0824c1eab88db738aa3c82c69e99:internal/fpfilter/filter.go
+git -C <ACR> show a3e438e2bd1f0824c1eab88db738aa3c82c69e99:internal/fpfilter/prompt.go
+git -C <ACR> show a3e438e2bd1f0824c1eab88db738aa3c82c69e99:internal/agent/prompts.go
+git -C <repo> show HEAD:internal/review/pipeline/group.go
+git -C <repo> show HEAD:internal/review/pipeline/verify.go
+git -C <ACR> show a3e438e2bd1f0824c1eab88db738aa3c82c69e99:LICENSE | cmp - <repo>/docs/port-acr/LICENSE
+```
+
+Compared on 2026-10-04 by reading the pinned sources and the adapted files.
+The comparison identifies retained concepts, not behavioral equivalence. CRW's
+fake-runner tests verify serial execution, failure states, support, head-code
+verification and schema-v1 assembly. NOTICE and LICENSE remain unchanged.
