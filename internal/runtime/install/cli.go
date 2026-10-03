@@ -14,6 +14,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/scope"
@@ -27,7 +28,7 @@ const DefaultIssue = "CRW-158"
 const backupHelp = "the directory the whole relay state directory is copied to (copy only, byte for byte, recorded) before a swap that brings the additive DAG zone to a store that predates it; the acknowledgement that route needs"
 
 // Commands are `crw install`'s subcommands.
-var Commands = []string{"install", "update", "rollback", "remove", "status", "register-mcp", "hook"}
+var Commands = []string{"install", "update", "rollback", "remove", "status", "register-mcp", "hook", "register-service"}
 
 func usage(w io.Writer) {
 	fmt.Fprintln(w, "usage: crw install {"+strings.Join(Commands, ",")+"} ...")
@@ -84,9 +85,10 @@ func Main(ctx context.Context, args []string, env scope.Env, stdout, stderr io.W
 	socket := flags.String("socket", "", "the App Server socket the runtime is exercised and gated against")
 	state := flags.String("state", "", "the relay state directory the gate reads")
 	var from, sums, release, releaseURL, owner, name, bridgeCommand, relayCommand, markerRoot, dbPath, journalRoot, mode, isolation *string
+	var unitName, unitDir, scopeDir *string
 	var bridgeArgs repeated
 	var policy, backup given
-	var dryRun *bool
+	var dryRun, removeUnit *bool
 	var guardTimeout, timeout *int64
 	switch command {
 	case "install", "update":
@@ -116,6 +118,12 @@ func Main(ctx context.Context, args []string, env scope.Env, stdout, stderr io.W
 		guardTimeout = flags.Int64("guard-timeout", DefaultGuardTimeout, "the adapter's own budget for one guard call, in seconds")
 		timeout = flags.Int64("timeout", RegisteredTimeout, "the registered hook timeout, in seconds")
 		dryRun = flags.Bool("dry-run", false, "report what would be written and write nothing")
+	case "register-service":
+		unitName = flags.String("unit-name", doctor.ServiceUnit, "the user unit's name")
+		unitDir = flags.String("unit-dir", "", "the directory the unit file is written in (default ${XDG_CONFIG_HOME:-~/.config}/systemd/user)")
+		scopeDir = flags.String("scope-dir", "", "an isolated relay scope directory the unit starts the relay in, for a temporary target")
+		removeUnit = flags.Bool("remove", false, "disable and delete the unit this command wrote (it never stops the relay)")
+		dryRun = flags.Bool("dry-run", false, "report what would change and change nothing")
 	case "help", "-h", "--help":
 		usage(stdout)
 		return OK
@@ -164,7 +172,8 @@ func Main(ctx context.Context, args []string, env scope.Env, stdout, stderr io.W
 		flag  string
 		value *string
 	}{{"--codex-home", codexHome}, {"--record", recordPath}, {"--socket", socket}, {"--state", state}, {"--bridge-command", bridgeCommand},
-		{"--relay-command", relayCommand}, {"--marker-root", markerRoot}, {"--db-path", dbPath}, {"--journal-root", journalRoot}} {
+		{"--relay-command", relayCommand}, {"--marker-root", markerRoot}, {"--db-path", dbPath}, {"--journal-root", journalRoot},
+		{"--unit-name", unitName}, {"--unit-dir", unitDir}, {"--scope-dir", scopeDir}} {
 		if one.value != nil {
 			paths = append(paths, namedValue{one.flag, *one.value})
 		}
@@ -218,6 +227,8 @@ func Main(ctx context.Context, args []string, env scope.Env, stdout, stderr io.W
 	case "hook":
 		result, code = Hook(ctx, o, HookOptions{Owner: *owner, Relay: *relayCommand, MarkerRoot: *markerRoot, Database: *dbPath, Socket: *socket,
 			JournalRoot: *journalRoot, Mode: *mode, Isolation: *isolation, GuardTimeout: *guardTimeout, Timeout: *timeout, DryRun: *dryRun})
+	case "register-service":
+		result, code = RegisterService(ctx, o, ServiceOptions{UnitName: *unitName, UnitDir: *unitDir, ScopeDir: *scopeDir, Remove: *removeUnit, DryRun: *dryRun})
 	}
 	if err := contract.Emit(stdout, result); err != nil {
 		fmt.Fprintln(stderr, "crw install "+command+": "+err.Error())
