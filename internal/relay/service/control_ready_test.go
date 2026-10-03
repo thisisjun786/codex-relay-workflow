@@ -14,14 +14,15 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// awaitControlAccepting waits for the control socket at path to accept a connection, which is when
-// its owner is listening. ListenControl binds the real path first and listens after, so the socket
-// file exists, and a dial is refused with ECONNREFUSED, for a moment before the owner can be reached:
-// a wait for the file alone races that gap. ENOENT (not bound yet) and ECONNREFUSED (bound, not
-// listening yet) are tried again every 10 ms until within has passed and then returned; any other
-// error is returned at once. The connection that got through is closed without a request, which is a
-// peer that goes away before its request line: the handler discards what that costs (control.go),
-// so it never reaches what Close returns and cannot change the daemon's result.
+// awaitControlAccepting waits until a dial of the control socket at path succeeds, which the kernel
+// allows once its owner is listening (the owner's accept comes later). ListenControl binds the real
+// path first and listens after, so the socket file exists, and a dial is refused with ECONNREFUSED,
+// for a moment before the owner can be reached: a wait for the file alone races that gap. ENOENT
+// (not bound yet) and ECONNREFUSED (bound, not listening yet) are tried again every 10 ms until
+// within has passed and then returned; any other error is returned at once. The connection that got
+// through is closed without a request, which is a peer that goes away before its request line: the
+// handler discards what that costs (control.go), so it never reaches what Close returns and cannot
+// change the daemon's result.
 func awaitControlAccepting(path string, within time.Duration) error {
 	for deadline := time.Now().Add(within); ; time.Sleep(10 * time.Millisecond) {
 		conn, err := net.Dial("unix", path)
@@ -58,7 +59,7 @@ func TestAwaitControlAcceptingWaitsOutTheGapBetweenBindAndListen(t *testing.T) {
 	}
 	// Not bound yet: the daemon has started and has not reached its bind, so the path is absent.
 	started = time.Now()
-	if err = awaitControlAccepting(path, 100*time.Millisecond); err == nil || time.Since(started) < 100*time.Millisecond {
+	if err = awaitControlAccepting(path, 100*time.Millisecond); !errors.Is(err, unix.ENOENT) || time.Since(started) < 100*time.Millisecond {
 		t.Fatalf("a path nothing has bound ended after %v with %v, want ENOENT at its deadline", time.Since(started), err)
 	}
 	fd, err := unix.Socket(unix.AF_UNIX, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
@@ -85,20 +86,15 @@ func TestAwaitControlAcceptingWaitsOutTheGapBetweenBindAndListen(t *testing.T) {
 	if err = awaitControlAccepting(path, 100*time.Millisecond); !errors.Is(err, unix.ECONNREFUSED) || time.Since(started) < 100*time.Millisecond {
 		t.Fatalf("the wait ended after %v with %v while the socket was only bound, want ECONNREFUSED at its deadline", time.Since(started), err)
 	}
-	// The owner starts listening while a wait is running.
-	result := make(chan error, 1)
-	go func() { result <- awaitControlAccepting(path, 10*time.Second) }()
-	time.Sleep(30 * time.Millisecond)
-	if err = unix.Listen(fd, 4); err != nil {
-		t.Fatal(err)
+	// The owner starts listening while a wait is running: the wait runs here and the listen comes 30 ms in.
+	listened := make(chan error, 1)
+	time.AfterFunc(30*time.Millisecond, func() { listened <- unix.Listen(fd, 4) })
+	err = awaitControlAccepting(path, 10*time.Second)
+	if listenErr := <-listened; listenErr != nil {
+		t.Fatal(listenErr)
 	}
-	select {
-	case err = <-result:
-		if err != nil {
-			t.Fatalf("the wait did not see the listener: %v", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("the wait never returned after the socket began listening")
+	if err != nil {
+		t.Fatalf("the wait did not see the listener: %v", err)
 	}
 	// What the wait connected with was closed without a request: the owner accepts it and reads end of file.
 	listener, err := net.FileListener(file)
