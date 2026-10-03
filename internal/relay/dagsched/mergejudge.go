@@ -64,13 +64,14 @@ func mergeable(ctx context.Context, q store.Querier, acc Acceptance, actor strin
 //
 //  0. an evicted head is evicted for good: nothing later can bring that head back, a new head needs a new acceptance;
 //  1. stale_criteria: the plan's or the relationship's criteria are no longer the ones the acceptance stands on;
-//  2. stale_head: the pull request is at another head than the accepted one (E-10);
+//  2. stale_head: the pull request is at another head than the one the acceptance stands on: the accepted head, or after a recorded base refresh (baserefresh.go) the head the record names (E-10);
 //  3. predecessor_not_landed: an incoming integrated edge or code-pinned edge (a stacked pull request) whose predecessor has not landed;
 //  4. stale_base: the base branch tip is not contained in the head, so the checks did not run on a tree that contains it. The dev ruleset is strict (D-11), so a head that contains the tip is
 //     the tree the base would become; the pull request's own base field says nothing about what the checks ran against and is stored for information only;
 //  5. the required checks of the exact head (requiredChecks): pending, eligible, retry_same_sha on the first failure, evicted on a second, different failure.
 //
-// A pull request whose evidence cannot be read completely, or whose list of required checks is unknown, is not judged and writes nothing: ignorance is not "none required".
+// A pull request whose evidence cannot be read completely, or whose list of required checks is unknown, is not judged and writes nothing: ignorance is not "none required". What the acceptance stands on is
+// read before the forge and again in the transaction that writes: a record that lands in between makes the reading older than the history, and nothing is written (merge_candidate_moved).
 func (s *Scheduler) Judge(ctx context.Context, plan, node, actor string, in JudgeInput) (JudgeResult, error) {
 	out := JudgeResult{PlanID: plan, NodeID: node}
 	q := s.Store.Q(ctx)
@@ -96,6 +97,13 @@ func (s *Scheduler) Judge(ctx context.Context, plan, node, actor string, in Judg
 	if err := mergeable(ctx, q, acc, actor); err != nil {
 		return out, err
 	}
+	// the head the pull request is judged against is the one the acceptance stands on, and the judgement is of that head
+	stand, err := s.standOf(ctx, q, acc)
+	if err != nil {
+		return out, err
+	}
+	judged := atStand(acc, stand)
+	out.HeadSHA = stand.Head
 	var forge string
 	var number int64
 	if has, err := queryOne(ctx, q, "SELECT forge_repository, pr_number FROM dag_acceptance_forge WHERE acceptance_id = ?", []any{acc.AcceptanceID}, &forge, &number); err != nil {
@@ -132,9 +140,9 @@ func (s *Scheduler) Judge(ctx context.Context, plan, node, actor string, in Judg
 		return out, err
 	}
 	out.ObservedHeadSHA, out.BaseTipSHA, out.BaseRef = pr.HeadSHA, tip.SHA, pr.BaseRef
-	// whether the tip is in the head is asked only about the accepted head; for another head the judgement is stale_head before it matters
+	// whether the tip is in the head is asked only about the head the acceptance stands on; for another head the judgement is stale_head before it matters
 	var tipInHead *bool
-	if pr.HeadSHA == acc.HeadSHA {
+	if pr.HeadSHA == stand.Head {
 		contained, _, err := s.Ancestry(ctx, acc.Repository, tip.SHA, pr.HeadSHA)
 		if err != nil {
 			return out, err
@@ -167,6 +175,11 @@ func (s *Scheduler) Judge(ctx context.Context, plan, node, actor string, in Judg
 		if err := mergeable(txCtx, tx, acc, actor); err != nil {
 			return err
 		}
+		if now, err := s.standOf(txCtx, tx, still); err != nil {
+			return err
+		} else if now != stand {
+			return refuseCandidateMoved("a base refresh of %s was recorded while its pull request was being judged, so that reading is older than the history: read the pull request again", node)
+		}
 		if err := s.refuseStale(txCtx, tx, plan, current, cn); err != nil {
 			return err
 		}
@@ -179,7 +192,9 @@ func (s *Scheduler) Judge(ctx context.Context, plan, node, actor string, in Judg
 		if err != nil {
 			return err
 		}
-		if history.evicted != nil {
+		// a head the acceptance no longer stands on (a record moved it on) is stale_head whatever became of it: the eviction stays in the history and is never lifted, and what is written now is the
+		// observation of the head the pull request shows against the head the acceptance stands on
+		if history.evicted != nil && !(stand.RefreshID != "" && pr.HeadSHA != stand.Head) {
 			// the eviction of this head of this pull request is final, whichever acceptance recorded it: a new acceptance of the same head does not bring back the retry the head used up.
 			// The acceptance in force carries the eviction too (the reading blocks it from its own history); an acceptance that already has it is only restated.
 			e := history.evicted
@@ -193,7 +208,7 @@ func (s *Scheduler) Judge(ctx context.Context, plan, node, actor string, in Judg
 				out.CheckSeq = ownSeq
 				return nil
 			}
-			seq, _, err := s.appendMergeCheck(txCtx, tx, mergeCheck{Acceptance: acc, Observed: pr, BaseTip: tip.SHA, ChecksBase: pr.BaseSHA, Failed: e.failed, Round: maxRounds, Outcome: OutcomeEvicted, Reason: e.reason})
+			seq, _, err := s.appendMergeCheck(txCtx, tx, mergeCheck{Acceptance: judged, Observed: pr, BaseTip: tip.SHA, ChecksBase: pr.BaseSHA, Failed: e.failed, Round: maxRounds, Outcome: OutcomeEvicted, Reason: e.reason})
 			out.CheckSeq, out.Replayed = seq, false
 			return err
 		}
@@ -204,12 +219,12 @@ func (s *Scheduler) Judge(ctx context.Context, plan, node, actor string, in Judg
 		if err != nil {
 			return err
 		}
-		m := mergeCheck{Acceptance: acc, Observed: pr, BaseTip: tip.SHA, ChecksBase: pr.BaseSHA, Round: min(1+history.retries, maxRounds)}
+		m := mergeCheck{Acceptance: judged, Observed: pr, BaseTip: tip.SHA, ChecksBase: pr.BaseSHA, Round: min(1+history.retries, maxRounds)}
 		switch {
 		case !fresh:
 			m.Outcome, m.Reason = OutcomeStaleCriteria, "the criteria of the plan or of the relationship are no longer the ones the acceptance stands on"
-		case pr.HeadSHA != acc.HeadSHA:
-			m.Outcome, m.Reason = OutcomeStaleHead, "the pull request head is "+pr.HeadSHA+" and the accepted head is "+acc.HeadSHA
+		case pr.HeadSHA != stand.Head:
+			m.Outcome, m.Reason = OutcomeStaleHead, staleHeadReason(pr.HeadSHA, acc.HeadSHA, stand)
 		default:
 			landed, why, err := s.predecessorsLanded(txCtx, tx, plan, current, node)
 			if err != nil {
@@ -222,6 +237,9 @@ func (s *Scheduler) Judge(ctx context.Context, plan, node, actor string, in Judg
 				m.Outcome, m.Reason = OutcomeStaleBase, "the base branch is at "+tip.SHA+" and the head does not contain it: the checks did not run on the tree that would land"
 			default:
 				s.judgeChecks(&m, history)
+			}
+			if stand.RefreshID != "" {
+				m.Reason += "; the head is the one base refresh " + stand.RefreshID + " names"
 			}
 		}
 		seq, appended, err := s.appendMergeCheck(txCtx, tx, m)
@@ -285,7 +303,8 @@ type MergeRequestInput struct {
 	Host        string
 }
 
-// RequestMergeTurn asks the existing merge lane for a turn for an accepted pull request, after a judgement made now (never a remembered one) says it is eligible. A pull request that is not
+// RequestMergeTurn asks the existing merge lane for a turn for an accepted pull request, after a judgement made now (never a remembered one) says it is eligible. The head of the turn is the head the
+// acceptance stands on (a recorded base refresh moves it to the refreshed head, which is also the head the lane's own check wants: the one the relationship's newest report names). A pull request that is not
 // eligible gets no merge turn, and the judgement stays in the node's history: its refusal is the relay's own reason for it (stale_head merge_candidate_moved, stale_base
 // merge_currency_stale, stale_criteria criteria_set_changed, everything else disposition_conflict naming the outcome). The turn itself, its FIFO order (requested_at, then turn id; decision
 // D-16), the check against the base tip and the landing proof are the merge lane's and are not changed here. The parent's order is accept, judge, request, merge-turn-check, merge-turn-land,
@@ -346,6 +365,10 @@ func (s *Scheduler) RequestMergeTurn(ctx context.Context, plan, node, actor stri
 		} else if !fresh {
 			return refuse(contract.RefusalCriteriaSetChanged, "the criteria of %s changed while its merge turn was requested", node)
 		}
+		stand, err := s.standOf(txCtx, tx, acc)
+		if err != nil {
+			return err
+		}
 		if landed, why, err := s.predecessorsLanded(txCtx, tx, plan, current, node); err != nil {
 			return err
 		} else if !landed {
@@ -359,7 +382,7 @@ func (s *Scheduler) RequestMergeTurn(ctx context.Context, plan, node, actor stri
 		if found, err := queryOne(txCtx, tx, "SELECT outcome, observed_head_sha, head_sha, checks_digest, evidence_json FROM dag_merge_checks WHERE acceptance_id = ? ORDER BY check_seq DESC LIMIT 1",
 			[]any{acc.AcceptanceID}, &latest, &observed, &accepted, &digest, &evidence); err != nil {
 			return err
-		} else if !found || latest != OutcomeEligible || observed != acc.HeadSHA || accepted != acc.HeadSHA {
+		} else if !found || latest != OutcomeEligible || observed != stand.Head || accepted != stand.Head {
 			return refuse(contract.RefusalDispositionConflict, "the latest judgement of %s is %s at %s, not an eligible one of the accepted head, so no merge turn is requested", node, latest, observed)
 		}
 		if recomputed, err := RecomputeEvidenceDigest(evidence); err != nil || recomputed != digest {
@@ -373,7 +396,7 @@ func (s *Scheduler) RequestMergeTurn(ctx context.Context, plan, node, actor stri
 			return strconv.FormatInt(n, 10) + "|" + latest.String
 		}
 		before := conflicts()
-		t, err := service.Request(txCtx, acc.Repository, res.BaseRef, current.ProjectKey, actor, in.Host, acc.HeadSHA, true,
+		t, err := service.Request(txCtx, acc.Repository, res.BaseRef, current.ProjectKey, actor, in.Host, stand.Head, true,
 			mergeturn.ClaimOptions{PR: sql.NullInt64{Int64: acc.PRNumber, Valid: true}, Relationship: sql.NullString{String: acc.RelationshipID, Valid: true}})
 		if err != nil {
 			// a refusal the lane recorded as a conflict (another project's claim, an owner that is paused) is an answer and its row is kept; a refusal with no row is the lane's own integrity
@@ -385,7 +408,7 @@ func (s *Scheduler) RequestMergeTurn(ctx context.Context, plan, node, actor stri
 			return err
 		}
 		// a holder has one live claim per target: asking again while the earlier turn is open answers that turn, which is not this node's
-		if head, _ := t["candidateHead"].(string); head != acc.HeadSHA || fmt.Sprint(t["relationshipId"]) != acc.RelationshipID || fmt.Sprint(t["prNumber"]) != strconv.FormatInt(acc.PRNumber, 10) || t["projectKey"] != current.ProjectKey {
+		if head, _ := t["candidateHead"].(string); head != stand.Head || fmt.Sprint(t["relationshipId"]) != acc.RelationshipID || fmt.Sprint(t["prNumber"]) != strconv.FormatInt(acc.PRNumber, 10) || t["projectKey"] != current.ProjectKey {
 			refused = refuse(contract.RefusalDispositionConflict, "task %s already has the live merge turn %v on this target (head %s, relationship %v, pull request %v): land or return it before the pull request of %s asks for its own", actor, t["turnId"], head, t["relationshipId"], t["prNumber"], node)
 			return nil
 		}
