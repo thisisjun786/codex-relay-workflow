@@ -7,9 +7,11 @@ import (
 )
 
 func Test28_CursorValuesMatchTheGolden(t *testing.T) {
+	t.Parallel()
 	shareGoldens(t)
 	for i, cursor := range []any{7, true, 0, false, nil, "", []any{}, map[string]any{}, []any{7}, map[string]any{"next": 7}, "next", json.Number("1e-999"), json.Number("7.5")} {
 		t.Run(fmt.Sprint(i), func(t *testing.T) {
+			t.Parallel()
 			first := page(item("first", "i", "noise"))
 			first["nextCursor"] = cursor
 			capture(t, scenario{page: 1, answers: []map[string]any{first, page(item("second", "j", "needle"))}, actions: [][]any{{"find", "01child-task", "needle", 2}}})

@@ -11,6 +11,7 @@ import (
 )
 
 func Test27_MST_5_SelectorSpellingAndInputFingerprint(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	dir := t.TempDir()
 	s, err := store.Open(ctx, filepath.Join(dir, "relay.sqlite3"), "")
@@ -75,6 +76,7 @@ func Test27_MST_5_SelectorSpellingAndInputFingerprint(t *testing.T) {
 // which keeps a root of two leading slashes: a store opened as //<dir>/relay.sqlite3 is
 // fingerprinted exactly as one given the selector //<dir>, never as /<dir>.
 func TestTheDefaultStateSelectorIsTheStoresPathlibParent(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	dir := t.TempDir()
 	s, err := store.Open(ctx, "/"+filepath.Join(dir, "relay.sqlite3"), "")

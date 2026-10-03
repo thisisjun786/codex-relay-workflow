@@ -70,6 +70,7 @@ func answer(err error) (reason, detail string) {
 }
 
 func TestPrecreate_RefusalsComeBeforeTheHostIsAsked(t *testing.T) {
+	t.Parallel()
 	const separator = " must not contain '|', which is the field separator"
 	const conflict = "'parent' already has execution settings that differ from this record; ensure_only does not overwrite them"
 	differentModel := func(settings map[string]any) { settings["model"] = "gpt-other" }
@@ -139,6 +140,7 @@ func TestPrecreate_RefusalsComeBeforeTheHostIsAsked(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			x := newScopeRun(t)
 			if c.bound {
 				x.bind("parent")
@@ -169,6 +171,7 @@ func TestPrecreate_RefusalsComeBeforeTheHostIsAsked(t *testing.T) {
 // A request refused for its parent settings is armed and keeps its request id: once the recorded settings
 // are the request's, the same request creates its one child.
 func TestPrecreate_SettingsRefusalRetryCreatesTheChildOnce(t *testing.T) {
+	t.Parallel()
 	x := newScopeRun(t)
 	x.bind("parent")
 	x.recordParentSettings(func(settings map[string]any) { settings["model"] = "gpt-other" })
@@ -189,7 +192,9 @@ func TestPrecreate_SettingsRefusalRetryCreatesTheChildOnce(t *testing.T) {
 // registration never looked, and the request is still admitted. So is a request whose parent settings are
 // the recorded ones.
 func TestPrecreate_AdmitsWhatRegistrationAdmits(t *testing.T) {
+	t.Parallel()
 	t.Run("host separator without a project", func(t *testing.T) {
+		t.Parallel()
 		x := newScopeRun(t)
 		x.rewrite(func(r map[string]any) {
 			withoutProject(r)
@@ -202,6 +207,7 @@ func TestPrecreate_AdmitsWhatRegistrationAdmits(t *testing.T) {
 		}
 	})
 	t.Run("parent settings equal to the recorded ones", func(t *testing.T) {
+		t.Parallel()
 		x := newScopeRun(t)
 		x.bind("parent")
 		x.recordParentSettings(func(map[string]any) {})
@@ -230,6 +236,7 @@ func (h *ledgerHook) RequireLedger(ctx context.Context, expected map[string]any)
 // gap before the effect. The scope ask is the last thing before CreateThread, so it sees the removal and
 // nothing is created. The request stays armed and a retry with its own id creates the one child.
 func TestPrecreate_BindingRemovedJustBeforeTheEffectCreatesNothing(t *testing.T) {
+	t.Parallel()
 	x := newScopeRun(t)
 	x.bind("parent")
 	host := &ledgerHook{callRecord: x.host}
@@ -534,6 +541,7 @@ func (x *scopeRun) startFor(host *spanHost, id, issue, parent, project string) (
 // A start inside the span holds off a writer of the binding: the writer finds the lock taken, and gets it
 // once the creation is done.
 func TestPrecreate_StartInsideTheSpanHoldsOffAWriter(t *testing.T) {
+	t.Parallel()
 	x := newScopeRun(t)
 	bindProject(t, x, scopeProject, "parent")
 	host := newSpanHost(x.host.managedFake)
@@ -563,6 +571,7 @@ func TestPrecreate_StartInsideTheSpanHoldsOffAWriter(t *testing.T) {
 // The lock is shared among starts, and per project: neither another issue of the same project nor a start
 // of another project is held up by a start parked inside its CreateThread.
 func TestPrecreate_StartsAreNotSerialised(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name, project, parent string
 	}{
@@ -570,6 +579,7 @@ func TestPrecreate_StartsAreNotSerialised(t *testing.T) {
 		{"another project", "P-B", "parent-B"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			x := newScopeRun(t)
 			bindProject(t, x, scopeProject, "parent")
 			if c.project != scopeProject {
@@ -612,6 +622,7 @@ func recv[T any](t *testing.T, ch <-chan T, what string) T {
 
 // A writer that holds the lock of one project holds up the starts of that project and of no other.
 func TestPrecreate_AWriterOfOneProjectDoesNotHoldUpAnother(t *testing.T) {
+	t.Parallel()
 	x := newScopeRun(t)
 	bindProject(t, x, scopeProject, "parent")
 	bindProject(t, x, "P-B", "parent-B")
@@ -638,7 +649,9 @@ func TestPrecreate_AWriterOfOneProjectDoesNotHoldUpAnother(t *testing.T) {
 // A request that already has its creation answer, or is registered, takes no lock: a retry is never held up
 // by a writer, and answers as it did.
 func TestPrecreate_ReplaysTakeNoLock(t *testing.T) {
+	t.Parallel()
 	t.Run("attached request", func(t *testing.T) {
+		t.Parallel()
 		x := newScopeRun(t)
 		x.bind("parent")
 		x.run()
@@ -653,6 +666,7 @@ func TestPrecreate_ReplaysTakeNoLock(t *testing.T) {
 		}
 	})
 	t.Run("request armed with a creation answer", func(t *testing.T) {
+		t.Parallel()
 		x := newScopeRun(t)
 		x.bind("parent")
 		x.host.creationEnvironmentChanged = true
@@ -675,6 +689,7 @@ func TestPrecreate_ReplaysTakeNoLock(t *testing.T) {
 // creation answer, a vanished binding still beats a failing ledger check, and a failing ledger check still
 // beats the new refusals, which come last, directly before the effect.
 func TestPrecreate_ChecksThatRanBeforeCreationKeepTheirPrecedence(t *testing.T) {
+	t.Parallel()
 	// armed returns a run whose request is armed with nothing created, and whose ledger check fails on the
 	// creation path from now on.
 	armed := func(t *testing.T) *scopeRun {
@@ -707,6 +722,7 @@ func TestPrecreate_ChecksThatRanBeforeCreationKeepTheirPrecedence(t *testing.T) 
 		return x
 	}
 	t.Run("vanished binding beats a failing ledger check", func(t *testing.T) {
+		t.Parallel()
 		x := armed(t)
 		_, err := x.start.Run(x.ctx, x.raw)
 		reasonIs(t, err, "unregistered_scope")
@@ -715,6 +731,7 @@ func TestPrecreate_ChecksThatRanBeforeCreationKeepTheirPrecedence(t *testing.T) 
 		}
 	})
 	t.Run("failing ledger check beats differing settings", func(t *testing.T) {
+		t.Parallel()
 		x := armed(t)
 		x.bind("parent")
 		x.recordParentSettings(func(settings map[string]any) { settings["model"] = "gpt-other" })

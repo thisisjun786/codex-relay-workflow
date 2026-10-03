@@ -13,6 +13,7 @@ func (r fingerprintRPC) Call(context.Context, string, map[string]any) (json.RawM
 }
 
 func Test28RecipientFingerprintTurnIDParity(t *testing.T) {
+	t.Parallel()
 	pages := [][]any{
 		{map[string]any{"turnId": json.Number("7"), "item": map[string]any{"id": "item", "text": "body"}}},
 		{map[string]any{"turnId": json.Number("1.5"), "item": map[string]any{"id": "item", "text": "body"}}},

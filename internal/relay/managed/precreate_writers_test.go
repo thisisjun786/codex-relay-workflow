@@ -86,6 +86,7 @@ func parkedStart(t *testing.T, x *scopeRun, host *spanHost, id, issue, parent, p
 // The control for the race below: with no start in the span the same handover moves the binding, so a
 // handover that does not move it in the race was held back, not refused for some other reason.
 func TestPrecreate_HandoverMovesTheBindingWhenNoStartIsInTheSpan(t *testing.T) {
+	t.Parallel()
 	x := newScopeRun(t)
 	bindProject(t, x, scopeProject, "parent")
 	if err := x.handover(scopeProject, "parent", "other-parent"); err != nil {
@@ -221,6 +222,7 @@ func TestPrecreate_OtherProjectsNeitherWaitNorAreWaitedFor(t *testing.T) {
 
 // The lock is let go on every way a start can end, so a writer never waits for one that is over.
 func TestPrecreate_TheProjectLockIsFreeAfterEveryEnding(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name  string
 		setup func(*scopeRun)
@@ -260,6 +262,7 @@ func TestPrecreate_TheProjectLockIsFreeAfterEveryEnding(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			x := newScopeRun(t)
 			c.setup(x)
 			result, err := x.start.Run(x.ctx, x.raw)
