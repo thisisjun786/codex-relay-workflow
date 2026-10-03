@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
@@ -69,7 +70,7 @@ func Test_round3_argument_refusals_read_as_their_goldens(t *testing.T) {
 			change(&input)
 			receipt, err := b.CreateWorktreeThread(context.Background(), input)
 			if err == nil {
-				return &Invalid{"no refusal: " + text(receipt["status"]) + " " + text(receipt["error"])}
+				return &Invalid{"no refusal: " + pyjson.Text(receipt["status"]) + " " + pyjson.Text(receipt["error"])}
 			}
 			return err
 		}

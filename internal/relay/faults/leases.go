@@ -15,13 +15,13 @@ func (l *Ledger) expireLeases(ctx context.Context) error {
 			return err
 		}
 		for _, r := range rows {
-			if text(r, "state") == "claimed" {
+			if r.Text("state") == "claimed" {
 				if err = f1Release(ctx, l, r, stamp, "lease_lapsed", nil, ""); err != nil {
 					return err
 				}
 				continue
 			}
-			id := text(r, "publication_id")
+			id := r.Text("publication_id")
 			if _, err = l.exec(ctx, "UPDATE fault_publications SET state='uncertain',claim_token=NULL,lease_owner=NULL,lease_until=NULL,updated_at=?,last_error=COALESCE(last_error,'the lease expired after the write was issued') WHERE publication_id=?", stamp, id); err != nil {
 				return err
 			}

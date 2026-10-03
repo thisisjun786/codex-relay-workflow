@@ -94,10 +94,10 @@ func (s *Service) Supervise(ctx context.Context, o Options, onStart func() error
 			waitChild = inputs.Wait
 		}
 	}
-	if gate := s.AuthorityCheck(o.AllowIsolated); !truth(get(gate, "ok")) {
-		return nil, &Refused{text(get(gate, "reason")), text(get(gate, "detail"))}
+	if gate := s.AuthorityCheck(o.AllowIsolated); !truth(gate.Get("ok")) {
+		return nil, &Refused{pyjson.Text(gate.Get("reason")), pyjson.Text(gate.Get("detail"))}
 	}
-	if !truth(get(s.Intent(), "enabled")) {
+	if !truth(s.Intent().Get("enabled")) {
 		return nil, &Refused{"service_disabled", "this service is not enabled; supervising it would ignore the owner's intent"}
 	}
 	if err = os.Remove(s.path("stop.request")); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -112,7 +112,7 @@ func (s *Service) Supervise(ctx context.Context, o Options, onStart func() error
 		return nil, err
 	}
 	defer func() { err = errors.Join(err, lock.Close()) }()
-	if !truth(get(s.Intent(), "enabled")) {
+	if !truth(s.Intent().Get("enabled")) {
 		return nil, &Refused{"service_disabled", "this service was disabled while this supervisor was starting"}
 	}
 	// service.py supervise: the scope is claimed with the identity read at start; the store
@@ -122,8 +122,8 @@ func (s *Service) Supervise(ctx context.Context, o Options, onStart func() error
 		if e != nil {
 			return nil, e
 		}
-		if !truth(get(claim, "ok")) {
-			return nil, &Refused{text(get(claim, "reason")), pyjson.Dumps(get(claim, "held_by"), pyjson.Options{})}
+		if !truth(claim.Get("ok")) {
+			return nil, &Refused{pyjson.Text(claim.Get("reason")), pyjson.Dumps(claim.Get("held_by"), pyjson.Options{})}
 		}
 	}
 	if err = s.WriteRecord(s.NewRecord(os.Getpid(), token)); err != nil {
@@ -170,7 +170,7 @@ func (s *Service) Supervise(ctx context.Context, o Options, onStart func() error
 		if o.MaxSegments != nil && len(segments) >= *o.MaxSegments {
 			break
 		}
-		if expired() || s.StopRequested() || s.Draining() || !truth(get(s.Intent(), "enabled")) {
+		if expired() || s.StopRequested() || s.Draining() || !truth(s.Intent().Get("enabled")) {
 			break
 		}
 		if err = ctx.Err(); err != nil {
@@ -228,7 +228,7 @@ func (s *Service) Supervise(ctx context.Context, o Options, onStart func() error
 		if err = s.note("consecutiveFailures", failures, "degraded", degraded); err != nil {
 			return nil, err
 		}
-		if s.StopRequested() || s.Draining() || !truth(get(s.Intent(), "enabled")) || (o.MaxSegments != nil && len(segments) >= *o.MaxSegments) || expired() {
+		if s.StopRequested() || s.Draining() || !truth(s.Intent().Get("enabled")) || (o.MaxSegments != nil && len(segments) >= *o.MaxSegments) || expired() {
 			break
 		}
 		delay := RestartDelay(failures)

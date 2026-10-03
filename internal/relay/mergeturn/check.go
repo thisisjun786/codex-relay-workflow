@@ -31,7 +31,7 @@ func checksDigest(required []string, checks []any) string {
 		o, _ := evidence.Object(entry)
 		fields := make([]string, 0, 5)
 		for _, name := range []string{"runId", "name", "headSha", "conclusion", "attempt"} {
-			v, present := evidence.Lookup(o, name)
+			v, present := o.Lookup(name)
 			if !present {
 				fields = append(fields, "")
 				continue
@@ -206,7 +206,7 @@ func (s *Service) relationshipRefusal(ctx context.Context, row store.MergeTurnsR
 		return nil, nil, err
 	}
 	if o, ok := attachment.(contract.OrderedObject); ok {
-		if project := field(o, "projectKey"); project != nil && project != row.ProjectKey {
+		if project := o.Get("projectKey"); project != nil && project != row.ProjectKey {
 			return nil, &registry.CoordinationRefusal{Reason: contract.RefusalForeignScope, Detail: "relationship " + pyvalue.StrRepr(rid) + " belongs to project " + pyvalue.Repr(project) + ", not " + pyvalue.StrRepr(row.ProjectKey), Domain: registry.DomainMergeTarget, Subject: row.TargetKey, Challenger: actor}, nil
 		}
 	}

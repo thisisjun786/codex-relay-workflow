@@ -106,7 +106,7 @@ func Test37_FaultSweepCLIRecordsTheRunningBinarysInstallEntry(t *testing.T) {
 	var installations []map[string]any
 	for _, row := range rows {
 		var items []map[string]any
-		if err := json.Unmarshal([]byte(text(row, "evidence")), &items); err != nil {
+		if err := json.Unmarshal([]byte(row.Text("evidence")), &items); err != nil {
 			t.Fatal(err)
 		}
 		for _, item := range items {

@@ -43,7 +43,7 @@ func TestDRelinkRepointsBoundedWrites(t *testing.T) {
 			if e != nil {
 				t.Fatalf("%s repoint: %v %v", dir, r, e)
 			}
-			ref = text(r, "tracker_ref")
+			ref = r.Text("tracker_ref")
 			return nil
 		})
 		return ref

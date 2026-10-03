@@ -161,7 +161,7 @@ func replay(t *testing.T, input []action) {
 			reply, err = outbox.Claim(ctx, id, astr(act, "owner", "main"), anum(act, "now", 1700000000))
 			result = reply
 			if err == nil {
-				tokens = append(tokens, text(get(reply, "claimToken")))
+				tokens = append(tokens, text(reply.Get("claimToken")))
 			}
 		case "retry":
 			result, err = outbox.Retry(ctx, id)
@@ -204,7 +204,7 @@ func replay(t *testing.T, input []action) {
 			}
 			realID := fixture["SYNC_ID"]
 			fields := ParseDocument(fixture["CONFIRMED_BLOCK"]).Blocks[realID].Fields
-			_, err = s.Q(ctx).ExecContext(ctx, "UPDATE sync_outbox SET sync_id=?,issue_key=?,relationship_id=?,event_id=?,execution_generation=?,revision_hash=?,verdict=?,identity_digest=?,summary=? WHERE sync_id=?", realID, get(fields, "issueKey"), get(fields, "relationshipId"), get(fields, "eventId"), get(fields, "executionGeneration"), get(fields, "revisionHash"), get(fields, "disposition"), get(fields, "identityDigest"), fixture["RAW_SUMMARY"], id)
+			_, err = s.Q(ctx).ExecContext(ctx, "UPDATE sync_outbox SET sync_id=?,issue_key=?,relationship_id=?,event_id=?,execution_generation=?,revision_hash=?,verdict=?,identity_digest=?,summary=? WHERE sync_id=?", realID, fields.Get("issueKey"), fields.Get("relationshipId"), fields.Get("eventId"), fields.Get("executionGeneration"), fields.Get("revisionHash"), fields.Get("disposition"), fields.Get("identityDigest"), fixture["RAW_SUMMARY"], id)
 			if err != nil {
 				t.Fatal(err)
 			}

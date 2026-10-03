@@ -66,7 +66,7 @@ func Test33ReviewD3Keys(t *testing.T) {
 func Test33ReviewD4Complaints(t *testing.T) {
 	base := Object{{Key: "configVersion", Value: int64(1)}, {Key: "relayExecutable", Value: "/relay"}, {Key: "markerRoot", Value: "/markers"}, {Key: "mode", Value: "observe"}, {Key: "owner", Value: "plugin"}, {Key: "adapterInterpreter", Value: "/python"}, {Key: "adapterEntryPoint", Value: "/entry"}}
 	for _, budget := range []any{int64(7), 7.0001, int64(8), int64(9), true, math.NaN(), math.Inf(1), math.Inf(-1), json.Number("999999999999999999999999")} {
-		cfg := set(append(Object{}, base...), "timeoutSeconds", budget)
+		cfg := append(Object{}, base...).Set("timeoutSeconds", budget)
 		// The complaints are the golden, which began as completion.complaints's.
 		golden.CheckJSON(t, pyjson.Dumps(cfg, pyjson.Options{}), Complaints(cfg))
 	}

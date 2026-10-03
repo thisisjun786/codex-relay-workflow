@@ -29,7 +29,7 @@ func reportValue(row map[string]any, key string) string {
 	}
 	return reportString(row[key])
 }
-func reportField(record Obj, key string) any { v, _ := get(record, key); return v }
+func reportField(record Obj, key string) any { v, _ := record.Lookup(key); return v }
 func reportRows(ctx context.Context, s *store.Store, event string) (map[string]any, error) {
 	row, err := s.One(ctx, "SELECT * FROM work_reports WHERE event_id = ? ORDER BY submission_no DESC LIMIT 1", event)
 	if err != nil || row == nil {

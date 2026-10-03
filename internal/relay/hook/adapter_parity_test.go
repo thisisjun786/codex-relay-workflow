@@ -45,7 +45,7 @@ func Test33AdapterBinaryPython(t *testing.T) {
 		if c.name == "timeout" {
 			// Decision 24: native cancellation has no process group. Diagnostic prose is
 			// intentionally different; all machine-consumed outcome fields agree.
-			rows, _ := evidence.List(get(got, "rows"))
+			rows, _ := evidence.List(got.Get("rows"))
 			rows[0] = withoutKeys(object(rows[0]), "detail")
 		}
 		goldenDumps(t, scenario, got, true)
@@ -92,17 +92,17 @@ func nativeAdapterRun(t *testing.T, name string, response Object, base string) O
 	if err != nil {
 		t.Fatal(err)
 	}
-	stops, _ := evidence.List(get(fixture, "stops"))
+	stops, _ := evidence.List(fixture.Get("stops"))
 	stop := object(stops[0])
-	lines, _ := evidence.List(get(fixture, "transcriptLines"))
+	lines, _ := evidence.List(fixture.Get("transcriptLines"))
 	var transcript strings.Builder
-	for _, line := range lines[:int(get(stop, "linesAtStop").(int64))] {
-		transcript.WriteString(strings.ReplaceAll(text(line), "<CODEX_HOME>", spelled) + "\n")
+	for _, line := range lines[:int(stop.Get("linesAtStop").(int64))] {
+		transcript.WriteString(strings.ReplaceAll(pyjson.Text(line), "<CODEX_HOME>", spelled) + "\n")
 	}
 	writeTest(t, filepath.Join(home, "transcript.jsonl"), []byte(transcript.String()))
-	payload := append(Object{}, object(get(stop, "payload"))...)
-	payload = set(payload, "transcript_path", within("transcript.jsonl"))
-	payload = set(payload, "cwd", spelled)
+	payload := append(Object{}, object(stop.Get("payload"))...)
+	payload = payload.Set("transcript_path", within("transcript.jsonl"))
+	payload = payload.Set("cwd", spelled)
 	input := pyjson.Dumps(payload, pyjson.Options{})
 	if name == "malformed" {
 		input = "not json"
@@ -193,7 +193,7 @@ func nativeAdapterRun(t *testing.T, name string, response Object, base string) O
 		rows = append(rows, read(path))
 	}
 	slices.SortStableFunc(rows, func(a, b any) int {
-		return strings.Compare(pythonStr(get(a.(Object), "acceptance")), pythonStr(get(b.(Object), "acceptance")))
+		return strings.Compare(pythonStr(a.(Object).Get("acceptance")), pythonStr(b.(Object).Get("acceptance")))
 	})
 	files := Object{}
 	for _, root := range []string{filepath.Join(home, "journal", "accepted"), filepath.Join(home, "crw-completion-hook", "stop-events")} {
@@ -248,10 +248,10 @@ func serveAdapterOwner(listener net.Listener, invocations int, timeout bool, pay
 			if err != nil {
 				return err
 			}
-			if get(request, "method") != "guard-evaluate" {
-				return fmt.Errorf("method %v", get(request, "method"))
+			if request.Get("method") != "guard-evaluate" {
+				return fmt.Errorf("method %v", request.Get("method"))
 			}
-			stop := get(object(get(request, "params")), "stopInput")
+			stop := object(request.Get("params")).Get("stopInput")
 			if pyjson.Dumps(stop, pyjson.Options{SortKeys: true}) != pyjson.Dumps(payload, pyjson.Options{SortKeys: true}) {
 				return fmt.Errorf("stopInput %s", pyjson.Dumps(stop, pyjson.Options{SortKeys: true}))
 			}

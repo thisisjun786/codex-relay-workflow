@@ -14,12 +14,12 @@ func Test33SettingsPython(t *testing.T) {
 	inputs := []any{nil, []any{}, base}
 	for _, key := range []string{"configVersion", "relayExecutable", "markerRoot", "dbPath", "socketPath", "mode", "owner", "adapterInterpreter", "adapterEntryPoint", "timeoutSeconds", "journalRoot", "journalPolicy"} {
 		for _, v := range values {
-			inputs = append(inputs, set(append(Object{}, base...), key, v))
+			inputs = append(inputs, append(Object{}, base...).Set(key, v))
 		}
 	}
 	for _, budget := range []any{int64(5), int64(9), int64(86401), true} {
-		o := set(append(Object{}, base...), "owner", "plugin")
-		o = set(o, "timeoutSeconds", budget)
+		o := append(Object{}, base...).Set("owner", "plugin")
+		o = o.Set("timeoutSeconds", budget)
 		inputs = append(inputs, o)
 	}
 	// Each input's complaints are the golden, which began as completion.complaints's. Python

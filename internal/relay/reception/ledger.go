@@ -82,7 +82,7 @@ func entryProblem(ledger Obj) string {
 		_, object := evidence.Object(entry)
 		_, applied := Get(entry, "applied").(bool)
 		_, told := Get(entry, "toldToAct").(bool)
-		if !object || pyvalue.TypeName(Get(entry, "contentDigest")) != "str" || !present(Get(entry, "contentDigest")) || !slices.Contains([]string{"accepted", "refused", "unavailable"}, str(Get(entry, "disposition"))) || !applied || !told {
+		if !object || pyvalue.TypeName(Get(entry, "contentDigest")) != "str" || !present(Get(entry, "contentDigest")) || !slices.Contains([]string{"accepted", "refused", "unavailable"}, pyjson.Text(Get(entry, "disposition"))) || !applied || !told {
 			return "answered entry " + quote.Value(f.Key) + " is not a content digest, a disposition, whether a check said act and whether it was applied"
 		}
 		if Get(entry, "applied") == true && (Get(entry, "toldToAct") != true || Get(entry, "disposition") != "accepted") {
@@ -92,7 +92,7 @@ func entryProblem(ledger Obj) string {
 	assignments, _ := evidence.Object(Get(ledger, "assignments"))
 	for _, f := range assignments {
 		entry := f.Value
-		ok := slices.Contains(modes, str(Get(entry, "mode")))
+		ok := slices.Contains(modes, pyjson.Text(Get(entry, "mode")))
 		for _, k := range []string{"workflow", "messageId", "dispatchRequestId"} {
 			if pyvalue.TypeName(Get(entry, k)) != "str" || !present(Get(entry, k)) {
 				ok = false
@@ -106,7 +106,7 @@ func entryProblem(ledger Obj) string {
 }
 func RecordAnswer(ledger *Obj, packet, answer any) bool {
 	changed := false
-	identifier := str(Get(answer, "messageId"))
+	identifier := pyjson.Text(Get(answer, "messageId"))
 	state := Get(Get(answer, "repeat"), "state")
 	accepted, told := Get(answer, "disposition") == "accepted", Get(answer, "act") == true
 	answered, _ := evidence.Object(Get(*ledger, "answered"))
@@ -127,7 +127,7 @@ func RecordAnswer(ledger *Obj, packet, answer any) bool {
 	}
 	Set(ledger, "answered", answered)
 	region, record := Get(packet, "envelope"), Get(answer, "record")
-	rid, dispatch := str(Get(record, "relationId")), Get(record, "tenureDispatchRequestId")
+	rid, dispatch := pyjson.Text(Get(record, "relationId")), Get(record, "tenureDispatchRequestId")
 	assignments, _ := evidence.Object(Get(*ledger, "assignments"))
 	recorded := Get(assignments, rid)
 	if accepted && (state == "first" || state == "replay") && Get(region, "direction") == "parent_to_child" && Get(region, "purpose") == "assignment" && rid != "" && truth(dispatch) && (recorded == nil || !equal(Get(recorded, "dispatchRequestId"), dispatch)) {
@@ -144,7 +144,7 @@ func RecordApplied(ledger *Obj, packet any) (Obj, error) {
 	}
 	answered, _ := evidence.Object(Get(*ledger, "answered"))
 	repeat := Repeat(packet, answered)
-	id := str(Get(repeat, "messageId"))
+	id := pyjson.Text(Get(repeat, "messageId"))
 	switch Get(repeat, "state") {
 	case "first":
 		return nil, ledgerError("message %s was never checked against this ledger, so there is no accepted answer to record as applied; run the check first", id)
@@ -203,10 +203,10 @@ func SaveLedger(path string, ledger Obj) (err error) {
 func Observation(document any) (Obj, error) {
 	o, ok := evidence.Object(document)
 	if !ok {
-		return nil, malformed("an observation is an object naming its source, not a %s", pyvalue.TypeName(document))
+		return nil, malformed("an observation is an object naming its source, not %s", quote.Kind(document))
 	}
 	source := Get(o, "source")
-	if pyvalue.TypeName(source) != "str" || strings.TrimSpace(str(source)) == "" {
+	if pyvalue.TypeName(source) != "str" || strings.TrimSpace(pyjson.Text(source)) == "" {
 		return nil, malformed("an observation names its source; a head with nowhere it was read is a value copied from somewhere, which is what this reading refuses to take")
 	}
 	unknown := []string{}
@@ -224,15 +224,15 @@ func Observation(document any) (Obj, error) {
 		if v == nil {
 			continue
 		}
-		wanted := "str"
+		wanted := "a string"
 		valid := pyvalue.TypeName(v) == "str" && present(v)
 		if k == "prNumber" {
-			wanted = "int"
+			wanted = "a positive whole number"
 			n, ok := evidence.PyInt(v)
 			valid = ok && n > 0
 		}
 		if !valid {
-			return nil, malformed("%s in an observation is a %s, not %s", k, wanted, quote.Value(v))
+			return nil, malformed("%s in an observation is %s, not %s", k, wanted, quote.Value(v))
 		}
 	}
 	if v := Get(o, "observedAt"); v != nil && pyvalue.TypeName(v) != "str" {

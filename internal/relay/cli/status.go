@@ -13,6 +13,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -571,7 +572,7 @@ func relayProgram() []string {
 func shellCommand(argv ...string) string {
 	quoted := make([]string, len(argv))
 	for i, one := range argv {
-		quoted[i] = shellQuote(one)
+		quoted[i] = quote.Shell(one)
 	}
 	return strings.Join(quoted, " ")
 }

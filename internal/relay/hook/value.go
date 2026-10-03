@@ -12,18 +12,7 @@ import (
 type Object = contract.OrderedObject
 type Field = contract.Field
 
-func get(o Object, key string) any { return evidence.Get(o, key) }
-func object(v any) Object          { o, _ := evidence.Object(v); return o }
-func text(v any) string            { s, _ := v.(string); return s }
-func set(o Object, key string, v any) Object {
-	for i := range o {
-		if o[i].Key == key {
-			o[i].Value = v
-			return o
-		}
-	}
-	return append(o, Field{Key: key, Value: v})
-}
+func object(v any) Object { o, _ := evidence.Object(v); return o }
 func nullable(s string) any {
 	if s == "" {
 		return nil

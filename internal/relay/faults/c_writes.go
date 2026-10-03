@@ -19,7 +19,7 @@ func cRetryCancel(ctx context.Context, l *Ledger, name string, a map[string]stri
 	if r == nil {
 		return nil, fmt.Errorf("fault_unknown: no publication '%s'", id)
 	}
-	state := text(r, "state")
+	state := r.Text("state")
 	if name == "fault-retry" {
 		if state != "failed" {
 			suffix := ""
@@ -28,11 +28,11 @@ func cRetryCancel(ctx context.Context, l *Ledger, name string, a map[string]stri
 			}
 			return nil, fmt.Errorf("fault_not_claimable: retry offers a failed publication again; this one is %s%s", state, suffix)
 		}
-		f, e := cFault(ctx, l, text(r, "fault_id"))
+		f, e := cFault(ctx, l, r.Text("fault_id"))
 		if e != nil {
 			return nil, e
 		}
-		if text(r, "kind") == openRecord && f.Get("external_ref") != nil {
+		if r.Text("kind") == openRecord && f.Get("external_ref") != nil {
 			return nil, fmt.Errorf("fault_state_conflict: this fault already owns an issue; its create is not retried")
 		}
 		_, e = l.exec(ctx, "UPDATE fault_publications SET state='pending',attempts=0,next_attempt_at=NULL,updated_at=? WHERE publication_id=?", l.Clock.ISO(), id)
@@ -52,11 +52,11 @@ func cRetryCancel(ctx context.Context, l *Ledger, name string, a map[string]stri
 				return e
 			}
 			if attempt != nil {
-				f, e := cFault(ctx, l, text(r, "fault_id"))
+				f, e := cFault(ctx, l, r.Text("fault_id"))
 				if e != nil {
 					return e
 				}
-				_, e = l.exec(ctx, "DELETE FROM fault_budget_uses WHERE product=? AND kind=? AND ref=?", text(f, "product"), text(r, "kind"), fmt.Sprintf("%s:%d", id, integer(attempt, "attempt_id")))
+				_, e = l.exec(ctx, "DELETE FROM fault_budget_uses WHERE product=? AND kind=? AND ref=?", f.Text("product"), r.Text("kind"), fmt.Sprintf("%s:%d", id, integer(attempt, "attempt_id")))
 				if e != nil {
 					return e
 				}
@@ -79,7 +79,7 @@ func cStage(ctx context.Context, l *Ledger, a map[string]string) (any, error) {
 	stage, ref := a["--stage"], a["--ref"]
 	allowed := map[string]bool{"accepted": true, "assigned": true, "merged": true, "installed": true}
 	if !allowed[stage] {
-		return nil, fmt.Errorf("fault_observation_malformed: stage '%s' is not one of ('accepted', 'assigned', 'merged', 'installed')", stage)
+		return nil, fmt.Errorf("fault_observation_malformed: stage %s is not one of accepted, assigned, merged, installed", quote.Value(stage))
 	}
 	if strings.TrimSpace(ref) == "" {
 		return nil, fmt.Errorf("fault_observation_malformed: a stage names what it refers to")
@@ -88,7 +88,7 @@ func cStage(ctx context.Context, l *Ledger, a map[string]string) (any, error) {
 	if e != nil {
 		return nil, e
 	}
-	state := text(f, "state")
+	state := f.Text("state")
 	if state == Resolved || state == Withdrawn {
 		return nil, fmt.Errorf("fault_state_conflict: this fault is %s", state)
 	}
@@ -96,7 +96,7 @@ func cStage(ctx context.Context, l *Ledger, a map[string]string) (any, error) {
 		return nil, fmt.Errorf("fault_state_conflict: %s is recorded against an issue the fault owns, and it owns none yet", stage)
 	}
 	if stage == "merged" || stage == "installed" {
-		r, e := l.one(ctx, "SELECT 1 FROM fault_timeline WHERE fault_id=? AND cycle=? AND kind='fix'", text(f, "fault_id"), integer(f, "cycle"))
+		r, e := l.one(ctx, "SELECT 1 FROM fault_timeline WHERE fault_id=? AND cycle=? AND kind='fix'", f.Text("fault_id"), integer(f, "cycle"))
 		if e != nil {
 			return nil, e
 		}
@@ -104,20 +104,20 @@ func cStage(ctx context.Context, l *Ledger, a map[string]string) (any, error) {
 			return nil, fmt.Errorf("fault_state_conflict: %s follows a fix, and none is recorded this cycle", stage)
 		}
 	}
-	id := pyvalue.SHA256Hex(fmt.Sprintf("%s|%d|%s|%s", text(f, "fault_id"), integer(f, "cycle"), stage, ref))[:idWidth]
+	id := pyvalue.SHA256Hex(fmt.Sprintf("%s|%d|%s|%s", f.Text("fault_id"), integer(f, "cycle"), stage, ref))[:idWidth]
 	recorded := false
 	e = l.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
-		n, e := l.exec(ctx, "INSERT OR IGNORE INTO fault_remediations(remediation_id,fault_id,cycle,kind,ref,method,outcome,detail,recorded_at) VALUES(?,?,?,?,?,NULL,NULL,?,?)", id, text(f, "fault_id"), integer(f, "cycle"), stage, ref, a["--detail"], l.Clock.ISO())
+		n, e := l.exec(ctx, "INSERT OR IGNORE INTO fault_remediations(remediation_id,fault_id,cycle,kind,ref,method,outcome,detail,recorded_at) VALUES(?,?,?,?,?,NULL,NULL,?,?)", id, f.Text("fault_id"), integer(f, "cycle"), stage, ref, a["--detail"], l.Clock.ISO())
 		if e != nil {
 			return e
 		}
 		recorded = n == 1
 		if recorded {
-			_, e = l.exec(ctx, "INSERT INTO fault_timeline(fault_id,cycle,kind,ref_id,detail,recorded_at,recorded_ts) VALUES(?,?,?,?,?,?,?)", text(f, "fault_id"), integer(f, "cycle"), stage, id, ref, l.Clock.ISO(), l.Clock.Now())
+			_, e = l.exec(ctx, "INSERT INTO fault_timeline(fault_id,cycle,kind,ref_id,detail,recorded_at,recorded_ts) VALUES(?,?,?,?,?,?,?)", f.Text("fault_id"), integer(f, "cycle"), stage, id, ref, l.Clock.ISO(), l.Clock.Now())
 		}
 		return e
 	})
-	return map[string]any{"faultId": text(f, "fault_id"), "stage": stage, "ref": ref, "recorded": recorded, "remediationId": id}, e
+	return map[string]any{"faultId": f.Text("fault_id"), "stage": stage, "ref": ref, "recorded": recorded, "remediationId": id}, e
 }
 func cQueue(ctx context.Context, l *Ledger, a map[string]string) (any, error) {
 	kind := a["--kind"]
@@ -141,13 +141,13 @@ func cQueue(ctx context.Context, l *Ledger, a map[string]string) (any, error) {
 	if e != nil {
 		return nil, e
 	}
-	id := text(f, "fault_id")
+	id := f.Text("fault_id")
 	publication := publicationID(id, kind, trigger)
 	prior, e := l.one(ctx, "SELECT state FROM fault_publications WHERE publication_id=?", publication)
 	if e != nil {
 		return nil, e
 	}
-	if prior != nil && text(prior, "state") != "cancelled" {
+	if prior != nil && prior.Text("state") != "cancelled" {
 		return map[string]any{"publicationId": publication, "kind": kind, "trigger": trigger, "queued": false, "awaitingTarget": false, "awaitingRecord": f.Get("external_ref") == nil, "reason": "this reason was already queued"}, nil
 	}
 	e = l.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {

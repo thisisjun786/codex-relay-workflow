@@ -85,7 +85,7 @@ func forgeItems(v any) []any { return Items(v) }
 // Item is Python's object[key], distinct from .get for missing/wrong shapes.
 func Item(v any, key string) any {
 	if o, ok := Object(v); ok {
-		if value, present := Lookup(o, key); present {
+		if value, present := o.Lookup(key); present {
 			return value
 		}
 		panic(&PythonError{"KeyError", pyvalue.Repr(key)})

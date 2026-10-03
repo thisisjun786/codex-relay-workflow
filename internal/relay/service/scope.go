@@ -10,6 +10,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 	"golang.org/x/sys/unix"
@@ -89,7 +90,7 @@ func (s *ScopeRegistry) claim(socket string, recordOf func() Object, prepare fun
 		return nil, err
 	}
 	existing := s.Read(socket)
-	if truth(get(existing, "storeId")) && truth(get(record, "storeId")) && !equal(get(existing, "storeId"), get(record, "storeId")) && !truth(get(record, "takeover")) {
+	if truth(existing.Get("storeId")) && truth(record.Get("storeId")) && !equal(existing.Get("storeId"), record.Get("storeId")) && !truth(record.Get("takeover")) {
 		return obj("ok", false, "reason", "scope_registered_to_other_store", "held_by", existing, "scopeKey", s.Key(socket)), nil
 	}
 	f, err := lockIfFree(s.path(socket, ".lock"))
@@ -104,7 +105,7 @@ func (s *ScopeRegistry) claim(socket string, recordOf func() Object, prepare fun
 			return nil, errors.Join(err, f.Close())
 		}
 		record = recordOf()
-		if truth(get(existing, "storeId")) && truth(get(record, "storeId")) && !equal(get(existing, "storeId"), get(record, "storeId")) && !truth(get(record, "takeover")) {
+		if truth(existing.Get("storeId")) && truth(record.Get("storeId")) && !equal(existing.Get("storeId"), record.Get("storeId")) && !truth(record.Get("takeover")) {
 			return obj("ok", false, "reason", "scope_registered_to_other_store", "held_by", existing, "scopeKey", s.Key(socket)), f.Close()
 		}
 	}
@@ -136,13 +137,13 @@ func (s *ScopeRegistry) Conflicts(socket, storeID, state string) []any {
 			continue
 		}
 		r := read(lexicalJoin(s.Root, entry.Name()))
-		if text(get(r, "scopeKey")) != s.Key(socket) {
+		if pyjson.Text(r.Get("scopeKey")) != s.Key(socket) {
 			continue
 		}
-		if storeID != "" && text(get(r, "storeId")) == storeID && text(get(r, "stateDir")) == state {
+		if storeID != "" && pyjson.Text(r.Get("storeId")) == storeID && pyjson.Text(r.Get("stateDir")) == state {
 			continue
 		}
-		out = append(out, obj("stateDir", get(r, "stateDir"), "storeId", get(r, "storeId"), "installationId", get(r, "installationId"), "pid", get(r, "pid"), "live", live(r), "reason", "same_scope_different_store"))
+		out = append(out, obj("stateDir", r.Get("stateDir"), "storeId", r.Get("storeId"), "installationId", r.Get("installationId"), "pid", r.Get("pid"), "live", live(r), "reason", "same_scope_different_store"))
 	}
 	return out
 }
@@ -157,26 +158,26 @@ func ServedStore(socket string) Object {
 		return nil
 	}
 	r := scope.Read(socket)
-	if text(get(r, "stateDir")) == "" {
+	if pyjson.Text(r.Get("stateDir")) == "" {
 		return nil
 	}
-	return obj("stateDirectory", get(r, "stateDir"), "socketPath", get(r, "socketPath"), "storeId", get(r, "storeId"),
+	return obj("stateDirectory", r.Get("stateDir"), "socketPath", r.Get("socketPath"), "storeId", r.Get("storeId"),
 		"live", live(r), "scopeRecord", scope.path(socket, ".json"))
 }
 
 func live(r Object) bool {
-	pid := num(get(r, "pid"))
+	pid := num(r.Get("pid"))
 	if pid == 0 {
 		return false
 	}
-	if b := get(r, "bootId"); b != nil && !equal(b, BootID()) {
+	if b := r.Get("bootId"); b != nil && !equal(b, BootID()) {
 		return false
 	}
 	if state := ProcessState(pid); state == "" || state == "Z" {
 		return false
 	}
 	ticks := StartTicks(pid)
-	return ticks != nil && (get(r, "startTicks") == nil || equal(ticks, get(r, "startTicks")))
+	return ticks != nil && (r.Get("startTicks") == nil || equal(ticks, r.Get("startTicks")))
 }
 
 // Only flock contention is ownership evidence; an operational error stays an error.

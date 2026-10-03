@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 var pageView = map[string]any{"summary": "summary", "summary_narrowed": "summary", "not_loaded": "notLoaded", "not_observed": nil}
@@ -66,7 +67,7 @@ func (b *Bridge) turnsPage(ctx context.Context, threadID string, limit int, curs
 	return nil, "not_observed", attempts
 }
 func (b *Bridge) readItems(ctx context.Context, threadID string, turn map[string]any, position int) {
-	if position >= DetailTurns || text(turn["id"]) == "" {
+	if position >= DetailTurns || pyjson.Text(turn["id"]) == "" {
 		turn["itemsDetail"] = nil
 		turn["itemsDetailStatus"] = "not_requested"
 		return
@@ -166,7 +167,7 @@ func (b *Bridge) ReadThread(ctx context.Context, threadID string, limit int, cur
 	}
 	observed := 0
 	for i, item := range turns {
-		turn := object(item)
+		turn := pyjson.Map(item)
 		if turn == nil {
 			continue
 		}

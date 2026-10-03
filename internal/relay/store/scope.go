@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"path"
 	"strings"
 	"syscall"
 
@@ -25,25 +24,16 @@ func NormalizeDeclaredPath(declared string) (string, error) {
 		return "", refuse(ReasonScopeEscape, "path must be absolute: %s", pyvalue.StrRepr(declared))
 	case strings.Contains(declared, "~"):
 		return "", refuse(ReasonScopeEscape, "path must not contain '~': %s", pyvalue.StrRepr(declared))
-	case declared != pythonNormpath(declared):
-		return "", refuse(ReasonScopeEscape, "path must already be normalized; %s normalizes to %s", pyvalue.StrRepr(declared), pyvalue.StrRepr(pythonNormpath(declared)))
+	case declared != Normpath(declared):
+		return "", refuse(ReasonScopeEscape, "path must already be normalized; %s normalizes to %s", pyvalue.StrRepr(declared), pyvalue.StrRepr(Normpath(declared)))
 	}
 	return declared, nil
 }
 
-// pythonNormpath is posixpath.normpath, which keeps a leading "//" that path.Clean drops.
-func pythonNormpath(p string) string {
-	cleaned := path.Clean(p)
-	if strings.HasPrefix(p, "//") && !strings.HasPrefix(p, "///") {
-		return "/" + cleaned
-	}
-	return cleaned
-}
-
 // isWithin is containment by path component, so /a/b does not contain /a/bc.
 func isWithin(root, candidate string) bool {
-	root = pythonNormpath(root)
-	candidate = pythonNormpath(candidate)
+	root = Normpath(root)
+	candidate = Normpath(candidate)
 	if root == "/" {
 		return strings.HasPrefix(candidate, "/")
 	}
@@ -125,6 +115,7 @@ func HashArtifactContext(ctx context.Context, declared string, roots []string, a
 			defer releaseLease(fd)
 		}
 	}
+	countArtifactRead(ctx)
 	first, size, err := hashDescriptorContext(ctx, fd)
 	if err != nil {
 		return "", 0, ArtifactBinding{}, err

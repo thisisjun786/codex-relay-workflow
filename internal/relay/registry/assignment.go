@@ -14,7 +14,9 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -157,7 +159,7 @@ func pacingHolding(pacing contract.OrderedObject, nextEligible any) any {
 	if pacing == nil {
 		return nil
 	}
-	reopens, _ := getField(pacing, "reopensAt")
+	reopens, _ := pacing.Lookup("reopensAt")
 	r, rok := toFloat(reopens)
 	n, nok := toFloat(nextEligible)
 	if reopens == nil || nextEligible == nil || !rok || !nok || n <= r {
@@ -268,7 +270,7 @@ func (v *AssignmentView) State(ctx context.Context, rid string) (contract.Ordere
 	}
 	var reviewed any
 	if verdict != nil {
-		reviewed, _ = getField(verdict, "setDigest")
+		reviewed, _ = verdict.Lookup("setDigest")
 	}
 	projection, err := v.projection(ctx, rid, generation, head, verdict, state)
 	if err != nil {
@@ -416,7 +418,7 @@ func (v *AssignmentView) Anchored(ctx context.Context, eventID any, generation i
 	if row == nil {
 		return append(record, contract.Field{Key: "detail", Value: "the store holds no such event"}), nil
 	}
-	record = setField(record, "event", contract.OrderedObject{{Key: "stage", Value: row.Get("stage")}})
+	record = record.Set("event", contract.OrderedObject{{Key: "stage", Value: row.Get("stage")}})
 	state := colString(row, "delivery_state")
 	if row.Get("delivered") != nil {
 		var turnCheck any
@@ -432,11 +434,11 @@ func (v *AssignmentView) Anchored(ctx context.Context, eventID any, generation i
 		}
 		reading := SettingsHoldReading(holdColumnsOf(row))
 		var settingsHold any
-		if hold, _ := getField(reading, "hold"); hold != nil {
-			kind, _ := getField(reading, "kind")
-			settingsHold = setField(copyObject(hold.(contract.OrderedObject)), "kind", kind)
+		if hold, _ := reading.Lookup("hold"); hold != nil {
+			kind, _ := reading.Lookup("kind")
+			settingsHold = copyObject(hold.(contract.OrderedObject)).Set("kind", kind)
 		}
-		record = setField(record, "delivery", contract.OrderedObject{
+		record = record.Set("delivery", contract.OrderedObject{
 			{Key: "state", Value: row.Get("delivery_state")},
 			{Key: "requestId", Value: row.Get("request_id")},
 			{Key: "attemptNo", Value: row.Get("attempt_no")},
@@ -448,6 +450,7 @@ func (v *AssignmentView) Anchored(ctx context.Context, eventID any, generation i
 			{Key: "pacing", Value: pacing},
 			{Key: "settingsHold", Value: settingsHold},
 		})
+
 	}
 	acked := row.Get("acked") != nil
 	ifAcked := func(value any) any {
@@ -460,22 +463,25 @@ func (v *AssignmentView) Anchored(ctx context.Context, eventID any, generation i
 	if tier == nil {
 		tier = "unrecorded"
 	}
-	record = setField(record, "ack", contract.OrderedObject{
+	record = record.Set("ack", contract.OrderedObject{
 		{Key: "accepted", Value: ifAcked(pyvalue.Truthy(row.Get("ack_accepted")))},
 		{Key: "rejectionReason", Value: ifAcked(row.Get("ack_rejection"))},
 		{Key: "settlement", Value: ifAcked(row.Get("ack_verified"))},
 		{Key: "lastReason", Value: ifAcked(row.Get("ack_last_reason"))},
 		{Key: "evidenceTier", Value: tier},
 	})
-	record = setField(record, "undeliveredReason", objectOrNil(undeliveredReason(reasonRow{
+
+	record = record.Set("undeliveredReason", objectOrNil(undeliveredReason(reasonRow{
 		delivered: row.Get("delivered") != nil, state: state, hold: colString(row, "hold_reason"),
 		relationshipStatus: row.Get("relationship_status"), supersededBy: row.Get("superseded_by"),
 		lifecycleWithhold: row.Get("lifecycle_withhold"), lifecycleAt: row.Get("lifecycle_recorded_at"),
 		lifecycleRetry: row.Get("lifecycle_next_retry_at"), refusal: row.Get("refusal_reason"),
 	})))
+
 	if row.Get("supersession_reason") != nil {
-		record = setField(record, "supersession", contract.OrderedObject{{Key: "reason", Value: row.Get("supersession_reason")},
+		record = record.Set("supersession", contract.OrderedObject{{Key: "reason", Value: row.Get("supersession_reason")},
 			{Key: "applied", Value: pyvalue.Truthy(row.Get("supersession_applied"))}})
+
 	}
 	return record, nil
 }
@@ -532,14 +538,14 @@ func (v *AssignmentView) resolve(ctx context.Context, x Relationship, head Head,
 	}
 	verdictWord := ""
 	if verdict != nil {
-		w, _ := getField(verdict, "verdict")
+		w, _ := verdict.Lookup("verdict")
 		verdictWord, _ = w.(string)
 	}
 	if verdictWord == StateVerified && !criteriaCurrent {
 		return StateRereview, nil
 	}
 	if hasMark {
-		m, _ := getField(marks[markAt], "mark")
+		m, _ := marks[markAt].Lookup("mark")
 		return m.(string), nil
 	}
 	if verdictWord == StateVerified {
@@ -589,7 +595,7 @@ func (v *AssignmentView) verdictFor(ctx context.Context, event string) (contract
 		return nil, fmt.Errorf("the recorded verdict of event %s is not JSON: %w", event, err)
 	}
 	record, _ := decoded.(contract.OrderedObject)
-	generation, _ := getField(record, "executionGeneration")
+	generation, _ := record.Lookup("executionGeneration")
 	context_, err := v.one(ctx, "SELECT set_digest, coverage FROM verdict_context WHERE event_id = ?", event)
 	if err != nil {
 		return nil, err
@@ -628,7 +634,7 @@ func criteriaCurrent(verdict contract.OrderedObject, digest any) bool {
 	if verdict == nil {
 		return true
 	}
-	reviewed, _ := getField(verdict, "setDigest")
+	reviewed, _ := verdict.Lookup("setDigest")
 	return reviewed == digest
 }
 
@@ -651,13 +657,13 @@ func currentMark(marks []contract.OrderedObject, head Head, generation int64, ve
 	if head.EventID == "" || verdict == nil {
 		return -1
 	}
-	if w, _ := getField(verdict, "verdict"); w != StateVerified {
+	if w, _ := verdict.Lookup("verdict"); w != StateVerified {
 		return -1
 	}
 	for i, m := range marks {
-		event, _ := getField(m, "eventId")
-		gen, _ := getField(m, "executionGeneration")
-		hash, _ := getField(m, "revisionHash")
+		event, _ := m.Lookup("eventId")
+		gen, _ := m.Lookup("executionGeneration")
+		hash, _ := m.Lookup("revisionHash")
 		if event == head.EventID && gen == generation && hash == head.RevisionHash {
 			return i
 		}
@@ -679,16 +685,16 @@ func (v *AssignmentView) ForIssue(ctx context.Context, issueKey string) (contrac
 			return nil, err
 		}
 		assignments = append(assignments, state)
-		status, _ := getField(state, "relationshipStatus")
-		word, _ := getField(state, "state")
+		status, _ := state.Lookup("relationshipStatus")
+		word, _ := state.Lookup("state")
 		if (status == "active" || status == "paused") && word != StateClosed {
 			owning = append(owning, state)
 		}
 	}
 	var child, relationship any
 	if len(owning) > 0 {
-		child, _ = getField(owning[0], "childTaskId")
-		relationship, _ = getField(owning[0], "relationshipId")
+		child, _ = owning[0].Lookup("childTaskId")
+		relationship, _ = owning[0].Lookup("relationshipId")
 	}
 	record := contract.OrderedObject{{Key: "issueKey", Value: issueKey}, {Key: "assignments", Value: assignments},
 		{Key: "responsibleChild", Value: child}, {Key: "responsibleRelationship", Value: relationship}}
@@ -706,7 +712,7 @@ func (v *AssignmentView) projectContext(ctx context.Context, owning []contract.O
 	if len(owning) == 0 {
 		return blank
 	}
-	rid, _ := getField(owning[0], "relationshipId")
+	rid, _ := owning[0].Lookup("relationshipId")
 	scoped, err := v.one(ctx, "SELECT project_key FROM relationship_scope WHERE relationship_id = ?", rid)
 	if err != nil {
 		return contract.OrderedObject{{Key: "projectKey", Value: nil}, {Key: "projectParentTaskId", Value: nil}, {Key: "scopeState", Value: "unreadable"}}
@@ -722,7 +728,7 @@ func (v *AssignmentView) projectContext(ctx context.Context, owning []contract.O
 	if err != nil {
 		return contract.OrderedObject{{Key: "projectKey", Value: nil}, {Key: "projectParentTaskId", Value: nil}, {Key: "scopeState", Value: "unreadable"}}
 	}
-	parentTask, _ := getField(owning[0], "parentTaskId")
+	parentTask, _ := owning[0].Lookup("parentTaskId")
 	if len(held) > 1 {
 		candidates := make([]string, len(held))
 		for i, h := range held {
@@ -828,7 +834,7 @@ func (v *AssignmentView) Mark(ctx context.Context, rid, mark, evidence, actor, e
 		if err != nil {
 			return err
 		}
-		if word, _ := getField(verdict, "verdict"); verdict == nil || word != StateVerified {
+		if word, _ := verdict.Lookup("verdict"); verdict == nil || word != StateVerified {
 			return refuse(contract.RefusalNotAcknowledged, "the current revision of generation %d is not verified, so it cannot be marked merged", generation)
 		}
 		_, digest, err := v.criteria(ctx, rid)
@@ -882,24 +888,11 @@ func RelayProgram() []string {
 	return []string{executable, "relay"}
 }
 
-// shellQuote is shlex.quote.
-func shellQuote(value string) string {
-	if value == "" {
-		return "''"
-	}
-	for _, r := range value {
-		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("@%+=:,./-_", r)) {
-			return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
-		}
-	}
-	return value
-}
-
 func (v *AssignmentView) command(argv ...string) string {
 	all := append(v.program(), argv...)
 	quoted := make([]string, len(all))
 	for i, one := range all {
-		quoted[i] = shellQuote(one)
+		quoted[i] = quote.Shell(one)
 	}
 	return strings.Join(quoted, " ")
 }
@@ -910,7 +903,7 @@ func (v *AssignmentView) settingsRecoveryRecord(hold map[string]any, event any, 
 	code, _ := hold["reason"].(string)
 	source, _ := hold["source"].(string)
 	chosen := SettingsHoldRecovery(kind, code, source, revision)
-	chosenCommand, _ := getField(chosen, "command")
+	chosenCommand, _ := chosen.Lookup("command")
 	eventText, _ := event.(string)
 	command := v.command("--state", directory, "show", "--event", eventText)
 	if chosenCommand != ShowEvent && recipient != "" {
@@ -920,9 +913,9 @@ func (v *AssignmentView) settingsRecoveryRecord(hold map[string]any, event any, 
 	if code != "" {
 		reason = code
 	}
-	actor, _ := getField(chosen, "actor")
-	then, _ := getField(chosen, "then")
-	later, _ := getField(chosen, "laterDeliveries")
+	actor, _ := chosen.Lookup("actor")
+	then, _ := chosen.Lookup("then")
+	later, _ := chosen.Lookup("laterDeliveries")
 	return contract.OrderedObject{{Key: "actor", Value: actor}, {Key: "reason", Value: reason}, {Key: "command", Value: command},
 		{Key: "then", Value: then}, {Key: "laterDeliveries", Value: later}, {Key: "refusalDetail", Value: hold["detail"]}}
 }
@@ -932,17 +925,17 @@ func (v *AssignmentView) parentRecovery(action string, projection map[string]any
 	var anchored map[string]any
 	switch {
 	case action == ActionCorrectionHeld:
-		anchored = obj(projection["correction"])
+		anchored = pyjson.Map(projection["correction"])
 	case contains(parentRecoveryAll, action):
-		anchored = obj(projection["completion"])
+		anchored = pyjson.Map(projection["completion"])
 	default:
 		return nil
 	}
-	delivery := obj(anchored["delivery"])
+	delivery := pyjson.Map(anchored["delivery"])
 	if action == ActionParentRecoversSettings {
 		return v.settingsHoldRecoveryFor(action, projection, directory, "", "completion")
 	}
-	held := obj(delivery["settingsHold"])
+	held := pyjson.Map(delivery["settingsHold"])
 	if action == ActionCorrectionHeld && (held["kind"] == "capped" || held["kind"] == "channel_closed") {
 		return v.settingsRecoveryRecord(held, anchored["eventId"], "", directory, true)
 	}
@@ -957,9 +950,9 @@ func (v *AssignmentView) parentRecovery(action string, projection map[string]any
 
 // settingsHoldRecoveryFor is assignment.settings_hold_recovery_for; nil is None.
 func (v *AssignmentView) settingsHoldRecoveryFor(action string, projection map[string]any, directory, recipient, anchor string) contract.OrderedObject {
-	anchored := obj(projection[anchor])
-	delivery := obj(anchored["delivery"])
-	hold := obj(delivery["settingsHold"])
+	anchored := pyjson.Map(projection[anchor])
+	delivery := pyjson.Map(anchored["delivery"])
+	hold := pyjson.Map(delivery["settingsHold"])
 	if len(hold) == 0 {
 		return nil
 	}
@@ -969,7 +962,7 @@ func (v *AssignmentView) settingsHoldRecoveryFor(action string, projection map[s
 	reason, _ := hold["reason"].(string)
 	daemonClears := false
 	if contains(daemons, action) && hold["kind"] == "withheld" && (source == "attempt" || source == "pre_send") {
-		actor, _ := getField(SettingsHoldRecovery("withheld", reason, source, false), "actor")
+		actor, _ := SettingsHoldRecovery("withheld", reason, source, false).Lookup("actor")
 		daemonClears = actor == "daemon"
 	}
 	if !contains(actions, action) && !daemonClears && source != "undetermined" {

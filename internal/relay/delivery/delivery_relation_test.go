@@ -2,6 +2,7 @@ package delivery
 
 import (
 	"context"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"os"
 	"testing"
 )
@@ -32,12 +33,12 @@ func relationFixture() Relationship {
 }
 
 func resolveCase(t *testing.T, f *fixture, cases Obj, name string) map[string]any {
-	c, _ := get(cases, name)
-	answer, _ := get(c.(Obj), "answer")
+	c, _ := cases.Lookup(name)
+	answer, _ := c.(Obj).Lookup("answer")
 	reader := &stubReader{answer: answer.(Obj)}
 	service := NewService(f.store, f.clock)
 	service.Linkage = reader
-	who, how, err := service.ResolveRecipient(f.ctx, relationFixture(), str(c.(Obj), "kind"))
+	who, how, err := service.ResolveRecipient(f.ctx, relationFixture(), pyjson.Text(c.(Obj).Get("kind")))
 	var got map[string]any
 	if err != nil {
 		got = refusalOf(err)

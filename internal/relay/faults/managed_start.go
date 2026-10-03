@@ -22,7 +22,7 @@ func managedAnswerFacts(issue, status string, answer row) (detail, actual, impac
 		actual = "the host created a child whose reported settings did not match the request, so the relay refused to attach it"
 		return detail + ": " + actual, actual, fmt.Sprintf("a child the host created for %s is not attached to any assignment, and no managed child is working on it", issue)
 	}
-	child, _ := loadsMap(text(answer, "detail"))["retainedChildTaskId"].(string)
+	child, _ := loadsMap(answer.Text("detail"))["retainedChildTaskId"].(string)
 	if status == "unknown" {
 		if child != "" {
 			actual = fmt.Sprintf("the managed start recorded the host's answer as unknown, naming child %s; whether that child was created is not established, and the relay retained it and did not attach it", child)
@@ -47,16 +47,16 @@ func (sw *Sweeper) managedStillPresent(ctx context.Context, signature map[string
 		return false, err
 	}
 	for _, r := range rows {
-		status := text(r, "receipt_status")
+		status := r.Text("receipt_status")
 		if status == "" {
-			answer, err := sw.Store.One(ctx, managedCreationQuery, text(r, "request_id"))
+			answer, err := sw.Store.One(ctx, managedCreationQuery, r.Text("request_id"))
 			if err != nil {
 				return false, err
 			}
 			if answer == nil {
 				continue
 			}
-			reason, _ := loadsMap(text(answer, "detail"))["reason"].(string)
+			reason, _ := loadsMap(answer.Text("detail"))["reason"].(string)
 			status = strings.TrimPrefix(reason, "creation_")
 			if status == reason {
 				continue
@@ -83,36 +83,36 @@ func (sw *Sweeper) ManagedStartFaults(ctx context.Context, product string, curso
 	}
 	var observations []Observation
 	for _, r := range rows {
-		status := text(r, "receipt_status")
+		status := r.Text("receipt_status")
 		var answer row
 		if status == "" {
-			answer, err = sw.Store.One(ctx, managedCreationQuery, text(r, "request_id"))
+			answer, err = sw.Store.One(ctx, managedCreationQuery, r.Text("request_id"))
 			if err != nil {
 				return nil, nil, err
 			}
 			if answer == nil {
 				continue
 			}
-			detail := loadsMap(text(answer, "detail"))
+			detail := loadsMap(answer.Text("detail"))
 			reason, _ := detail["reason"].(string)
 			if !strings.HasPrefix(reason, "creation_") || len(reason) <= len("creation_") {
 				continue
 			}
 			status = strings.TrimPrefix(reason, "creation_")
 		}
-		ev := []any{evidence("row", "managed_start_requests:"+text(r, "request_id"), map[string]any{"receiptStatus": r.Get("receipt_status"), "requestRevision": r.Get("revision"), "workspace": r.Get("workspace"), "updatedAt": r.Get("updated_at")})}
+		ev := []any{evidence("row", "managed_start_requests:"+r.Text("request_id"), map[string]any{"receiptStatus": r.Get("receipt_status"), "requestRevision": r.Get("revision"), "workspace": r.Get("workspace"), "updatedAt": r.Get("updated_at")})}
 		if answer != nil {
-			detail := loadsMap(text(answer, "detail"))
+			detail := loadsMap(answer.Text("detail"))
 			ev = append(ev, evidence("row", fmt.Sprintf("journal:%d", integer(answer, "seq")), map[string]any{"kind": "managed_start_observed", "state": detail["state"], "stage": "creation", "reason": detail["reason"], "retainedChildTaskId": detail["retainedChildTaskId"], "standbyRecovery": detail["standbyRecovery"]}))
 		}
-		issue := text(r, "issue_key")
+		issue := r.Text("issue_key")
 		detail, actual, impact := managedAnswerFacts(issue, status, answer)
 		limits := []any{"the registry keeps only the latest receipt of an armed request"}
 		if answer != nil {
 			limits = []any{"read from the newest creation answer the managed start journaled; a start that stopped after arming without journaling one is not seen until the same request is retried"}
 		}
 		ev = append(ev, sw.facts("the host publishes a child for "+issue+" and the relay attaches it", actual, impact, limits, nil))
-		observations = append(observations, Observation{Product: product, FaultClass: "managed_start_failed", Severity: Broken, Signature: map[string]any{"issueKey": issue, "receiptStatus": status}, OccurrenceKey: "managed:" + text(r, "request_id") + ":" + status, Scope: map[string]any{"issueKey": issue}, Detail: detail, Evidence: ev})
+		observations = append(observations, Observation{Product: product, FaultClass: "managed_start_failed", Severity: Broken, Signature: map[string]any{"issueKey": issue, "receiptStatus": status}, OccurrenceKey: "managed:" + r.Text("request_id") + ":" + status, Scope: map[string]any{"issueKey": issue}, Detail: detail, Evidence: ev})
 	}
 	p := pageOf(observations, rows, "request_id", after, until)
 	return observations, p.cursor, nil

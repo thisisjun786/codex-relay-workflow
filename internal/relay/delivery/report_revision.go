@@ -39,7 +39,7 @@ func composeWorkRevisionMeasured(row Row, receipt Obj, request string, report ma
 			item := extras[id]
 			items = append(items, Obj{{Key: "id", Value: id}, {Key: "verdict", Value: item["verdict"]}})
 		}
-		source = set(append(Obj(nil), receipt...), "criteria", items)
+		source = append(Obj(nil), receipt...).Set("criteria", items)
 	}
 	heading := violatedHeading(source)
 	if len(findings) == 0 && len(orderedExtras) > 0 {

@@ -75,8 +75,8 @@ func NormaliseCriteria(entries []any) ([]Criterion, error) {
 		if !ok {
 			return nil, refuse(CriteriaUnregistered, "each criterion is an object with an id and a title")
 		}
-		idv, _ := get(o, "id")
-		titlev, _ := get(o, "title")
+		idv, _ := o.Lookup("id")
+		titlev, _ := o.Lookup("title")
 		id := strings.TrimSpace(pyStrOrEmpty(idv))
 		title := strings.TrimSpace(pyStrOrEmpty(titlev))
 		if id == "" || title == "" {
@@ -87,7 +87,7 @@ func NormaliseCriteria(entries []any) ([]Criterion, error) {
 		}
 		seen[id] = true
 		required := true
-		if r, present := get(o, "required"); present {
+		if r, present := o.Lookup("required"); present {
 			required = truthy(r)
 		}
 		out = append(out, Criterion{id, title, required})
@@ -118,24 +118,24 @@ func NormaliseFindings(sources ...[]any) ([]any, error) {
 			if !ok {
 				return nil, refuse(DispositionConflict, "each finding is an object")
 			}
-			idv, _ := get(o, "id")
+			idv, _ := o.Lookup("id")
 			id := strings.TrimSpace(pyStrOrEmpty(idv))
 			if id == "" {
 				return nil, refuse(DispositionConflict, "each finding names a criterion id")
 			}
 			disposition := "verified"
-			if v, _ := get(o, "verdict"); truthy(v) {
+			if v, _ := o.Lookup("verdict"); truthy(v) {
 				disposition = pyStr(v)
 				if _, isText := v.(string); !isText || !slices.Contains(dispositions, disposition) {
 					return nil, refuse(DispositionConflict, "%s is not one of \"verified\", \"needs_changes\" or \"unverified\"; the contract's criteria enum is frozen and a finding outside it cannot be recorded", quote.Value(v))
 				}
 			}
 			entry := Obj{{Key: "id", Value: id}, {Key: "verdict", Value: disposition}}
-			notev, _ := get(o, "note")
+			notev, _ := o.Lookup("note")
 			if note := strings.TrimSpace(pyStrOrEmpty(notev)); note != "" {
 				entry = append(entry, F{Key: "note", Value: note})
 			}
-			if flag, present := get(o, "restoration"); present && flag != nil {
+			if flag, present := o.Lookup("restoration"); present && flag != nil {
 				b, isBool := flag.(bool)
 				if !isBool {
 					return nil, refuse(DispositionConflict, "a finding declares its restoration block with true or false, not %s", pyvalue.TypeName(flag))
@@ -148,23 +148,23 @@ func NormaliseFindings(sources ...[]any) ([]any, error) {
 			if declared[id] {
 				entry = append(entry, F{Key: "restoration", Value: true})
 			}
-			merged = slices.DeleteFunc(merged, func(e Obj) bool { return str(e, "id") == id })
+			merged = slices.DeleteFunc(merged, func(e Obj) bool { return pyjson.Text(e.Get("id")) == id })
 			merged = append(merged, entry)
 		}
 	}
 	var carriers []string
 	for _, e := range merged {
-		if v, _ := get(e, "restoration"); v == true {
-			carriers = append(carriers, str(e, "id"))
+		if v, _ := e.Lookup("restoration"); v == true {
+			carriers = append(carriers, pyjson.Text(e.Get("id")))
 		}
 	}
 	if len(carriers) > 1 {
 		return nil, refuse(DispositionConflict, "%s each declare the restoration block. One correction carries one block, and two candidates is a block nobody can locate", quote.Value(carriers))
 	}
 	for _, e := range merged {
-		if v, _ := get(e, "restoration"); v == true {
-			if _, hasNote := get(e, "note"); !hasNote {
-				return nil, refuse(DispositionConflict, "%s declares the restoration block and carries no note. The block is the note; a declaration without one names a carrier with nothing in it", strconv.Quote(str(e, "id")))
+		if v, _ := e.Lookup("restoration"); v == true {
+			if _, hasNote := e.Lookup("note"); !hasNote {
+				return nil, refuse(DispositionConflict, "%s declares the restoration block and carries no note. The block is the note; a declaration without one names a carrier with nothing in it", strconv.Quote(pyjson.Text(e.Get("id"))))
 			}
 		}
 	}
@@ -316,7 +316,7 @@ func (c *Criteria) BindReview(ctx context.Context, rid, eventID string) error {
 	}
 	var digest any
 	if current != nil {
-		digest = str(current, "setDigest")
+		digest = pyjson.Text(current.Get("setDigest"))
 	}
 	_, err = execSQL(ctx, c.Store, "INSERT OR IGNORE INTO claim_context (event_id, set_digest, bound_at) VALUES (?,?,?)", eventID, digest, c.Clock.ISO())
 	return err
@@ -350,7 +350,7 @@ func (c *Criteria) Coverage(ctx context.Context, rid, eventID, verdict string, f
 		}
 		return Obj{{Key: "coverage", Value: LegacyUnregistered}, {Key: "setDigest", Value: nil}, {Key: "boundDigest", Value: nil}, {Key: "findings", Value: findings}}, nil
 	}
-	digest := str(registered, "setDigest")
+	digest := pyjson.Text(registered.Get("setDigest"))
 	bound, err := c.BoundDigest(ctx, eventID)
 	if err != nil {
 		return nil, err
@@ -364,29 +364,29 @@ func (c *Criteria) Coverage(ctx context.Context, rid, eventID, verdict string, f
 	if expected != nil && expected != digest {
 		return nil, refuse(CriteriaSetChanged, "expected criteria set %s, but the current set is %s", pyStr(expected), digest)
 	}
-	list, _ := get(registered, "criteria")
+	list, _ := registered.Lookup("criteria")
 	known, required := map[string]bool{}, []string{}
 	for _, x := range list.([]any) {
 		o := x.(Obj)
-		known[str(o, "id")] = true
-		if v, _ := get(o, "required"); v == true {
-			required = append(required, str(o, "id"))
+		known[pyjson.Text(o.Get("id"))] = true
+		if v, _ := o.Lookup("required"); v == true {
+			required = append(required, pyjson.Text(o.Get("id")))
 		}
 	}
 	byID := map[string]Obj{}
 	for _, f := range findings {
 		o := f.(Obj)
-		if !known[str(o, "id")] {
-			return nil, refuse(UnknownCriterion, "%s is not in this assignment's canonical criteria", strconv.Quote(str(o, "id")))
+		if !known[pyjson.Text(o.Get("id"))] {
+			return nil, refuse(UnknownCriterion, "%s is not in this assignment's canonical criteria", strconv.Quote(pyjson.Text(o.Get("id"))))
 		}
-		byID[str(o, "id")] = o
+		byID[pyjson.Text(o.Get("id"))] = o
 	}
-	hasNote := func(o Obj) bool { v, _ := get(o, "note"); return truthy(v) }
+	hasNote := func(o Obj) bool { v, _ := o.Lookup("note"); return truthy(v) }
 	switch verdict {
 	case "verified":
 		var missing []string
 		for _, id := range required {
-			if o, ok := byID[id]; !ok || str(o, "verdict") != "verified" {
+			if o, ok := byID[id]; !ok || pyjson.Text(o.Get("verdict")) != "verified" {
 				missing = append(missing, id)
 			}
 		}
@@ -397,7 +397,7 @@ func (c *Criteria) Coverage(ctx context.Context, rid, eventID, verdict string, f
 	case "needs_changes":
 		ok := false
 		for _, o := range byID {
-			if str(o, "verdict") == "needs_changes" && hasNote(o) {
+			if pyjson.Text(o.Get("verdict")) == "needs_changes" && hasNote(o) {
 				ok = true
 			}
 		}
@@ -407,7 +407,7 @@ func (c *Criteria) Coverage(ctx context.Context, rid, eventID, verdict string, f
 	case "unverified":
 		ok := false
 		for _, o := range byID {
-			if str(o, "verdict") == "unverified" && hasNote(o) {
+			if pyjson.Text(o.Get("verdict")) == "unverified" && hasNote(o) {
 				ok = true
 			}
 		}

@@ -4,7 +4,9 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 )
@@ -25,7 +27,7 @@ func (c *comparison) compare(kind, field string, found, expected any, reason str
 		return
 	}
 	if pyvalue.TypeName(found) != pyvalue.TypeName(expected) {
-		c.gap(field, expected, found, "the record holds a "+pyvalue.TypeName(expected)+" for "+field+" and the packet a "+pyvalue.TypeName(found)+"; values of different shapes are not a reading of each other, so this could not be checked")
+		c.gap(field, expected, found, "the record holds "+quote.Kind(expected)+" for "+field+" and the packet "+quote.Kind(found)+"; values of different shapes are not a reading of each other, so this could not be checked")
 		return
 	}
 	if !equal(found, expected) {
@@ -46,12 +48,12 @@ func Reception(one, record any) (Obj, error) {
 		return nil, e
 	}
 	if _, ok := evidence.Object(record); !ok {
-		return nil, malformed("the receiver's own reading is an object of named values, not a %s", pyvalue.TypeName(record))
+		return nil, malformed("the receiver's own reading is an object of named values, not %s", quote.Kind(record))
 	}
 	region := Get(one, "envelope")
 	c := comparison{problems: []any{}, gaps: []any{}}
 	first := firstAssignment(region)
-	direction, purpose := str(Get(region, "direction")), str(Get(region, "purpose"))
+	direction, purpose := pyjson.Text(Get(region, "direction")), pyjson.Text(Get(region, "purpose"))
 	parentChild := direction == "parent_to_child" || direction == "child_to_parent"
 	req, _ := RequiredFor(direction, purpose)
 	if first {
@@ -158,7 +160,7 @@ func Reception(one, record any) (Obj, error) {
 			pairs, _ := evidence.List(Get(record, "refusedPolicies"))
 			for _, p := range pairs {
 				if Get(p, "model") == Get(policy, "model") && Get(p, "effort") == Get(policy, "effort") {
-					reason := str(Get(p, "reason"))
+					reason := pyjson.Text(Get(p, "reason"))
 					if reason == "" {
 						reason = "this pair is recorded refused for this role, which is a settings answer rather than a provider failure and is not worked around with a second child"
 					}
@@ -234,7 +236,7 @@ func (c *comparison) callback(stated, record any) {
 	pairs, _ := evidence.List(Get(record, "refusedCallbackPolicies"))
 	for _, p := range pairs {
 		if Get(p, "model") == Get(stated, "model") && Get(p, "effort") == Get(stated, "effort") {
-			reason := str(Get(p, "reason"))
+			reason := pyjson.Text(Get(p, "reason"))
 			if reason == "" {
 				reason = "the current role policy has moved the answered task's role off this pair, even though its own record still holds it"
 			}
@@ -253,7 +255,7 @@ func sandboxReading(v any) (string, Obj) {
 		return name, nil
 	}
 	p := registry.NormalisePolicy(v)
-	return str(Get(p, "type")), p
+	return pyjson.Text(Get(p, "type")), p
 }
 func (c *comparison) policy(stated, record any) {
 	if !present(stated) {

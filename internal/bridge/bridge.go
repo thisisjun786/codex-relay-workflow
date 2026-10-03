@@ -17,6 +17,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/worktrees"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 type RPC interface {
@@ -85,8 +86,6 @@ func (b *Bridge) call(ctx context.Context, method string, params map[string]any)
 	}
 	return result, nil
 }
-func object(value any) map[string]any { result, _ := value.(map[string]any); return result }
-func text(value any) string           { result, _ := value.(string); return result }
 func copyMap(source map[string]any) map[string]any {
 	result := make(map[string]any, len(source))
 	for k, v := range source {
@@ -94,7 +93,9 @@ func copyMap(source map[string]any) map[string]any {
 	}
 	return result
 }
-func id(response map[string]any, entity string) string { return text(object(response[entity])["id"]) }
+func id(response map[string]any, entity string) string {
+	return pyjson.Text(pyjson.Map(response[entity])["id"])
+}
 
 // errorText is an error as a receipt names it: the bare type name of the innermost non-wrapper
 // error, then the error's text, so receipts start with e.g. "ResponseTooLarge:".
@@ -231,7 +232,7 @@ func (b *Bridge) mutate(ctx context.Context, op mutation) (ledger.Receipt, error
 		}
 		return settled, nil
 	}
-	settled["settingsAfterDispatch"] = settings.Annotation(object(contract["actual"]), object(state["thread"]))
+	settled["settingsAfterDispatch"] = settings.Annotation(pyjson.Map(contract["actual"]), pyjson.Map(state["thread"]))
 	return b.Ledger.Save(context.WithoutCancel(ctx), settled)
 }
 func (b *Bridge) dispatch(ctx context.Context, method string, params map[string]any, effects *[]string) (map[string]any, error) {

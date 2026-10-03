@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -97,21 +98,14 @@ func directiveRecord(row store.Row) contract.OrderedObject {
 	}
 }
 
-// field is record[key] as a string ("" for None).
-func field(record contract.OrderedObject, key string) string {
-	v, _ := getField(record, key)
-	s, _ := v.(string)
-	return s
-}
-
 func sub(record contract.OrderedObject, key string) contract.OrderedObject {
-	v, _ := getField(record, key)
+	v, _ := record.Lookup(key)
 	o, _ := v.(contract.OrderedObject)
 	return o
 }
 
 func revisionOf(record contract.OrderedObject) int64 {
-	v, _ := getField(record, "revision")
+	v, _ := record.Lookup("revision")
 	n, _ := v.(int64)
 	return n
 }
@@ -176,7 +170,7 @@ func (r *Registry) soleOwner(ctx context.Context, kind, key string, contention *
 	if len(held) > 1 {
 		candidates := make([]string, len(held))
 		for i, h := range held {
-			candidates[i] = field(h, "taskId")
+			candidates[i] = pyjson.Text(h.Get("taskId"))
 		}
 		slices.Sort(candidates)
 		*contention = append(*contention, contract.OrderedObject{{Key: "contention", Value: "competing_owners"},
@@ -235,24 +229,24 @@ func (r *Registry) ContestedDirectives(ctx context.Context, kind, key string) ([
 	}
 	var open []contract.OrderedObject
 	for _, d := range all {
-		if v, _ := getField(d, "disposition"); v == nil {
+		if v, _ := d.Lookup("disposition"); v == nil {
 			open = append(open, d)
 		}
 	}
 	contesting := map[string]bool{}
 	for i, first := range open {
 		for _, second := range open[i+1:] {
-			a, _ := getField(first, "reference")
-			b, _ := getField(second, "reference")
-			if directiveContest(field(first, "digest"), a, field(second, "digest"), b) != "" {
-				contesting[field(first, "directiveId")] = true
-				contesting[field(second, "directiveId")] = true
+			a, _ := first.Lookup("reference")
+			b, _ := second.Lookup("reference")
+			if directiveContest(pyjson.Text(first.Get("digest")), a, pyjson.Text(second.Get("digest")), b) != "" {
+				contesting[pyjson.Text(first.Get("directiveId"))] = true
+				contesting[pyjson.Text(second.Get("directiveId"))] = true
 			}
 		}
 	}
 	out := []contract.OrderedObject{}
 	for _, d := range open {
-		if contesting[field(d, "directiveId")] {
+		if contesting[pyjson.Text(d.Get("directiveId"))] {
 			out = append(out, d)
 		}
 	}
@@ -737,7 +731,7 @@ func (r *Registry) Outstanding(ctx context.Context, project string, task sql.Nul
 		if err != nil {
 			return nil, err
 		}
-		if !slices.Contains(finishedStates, field(state, "state")) {
+		if !slices.Contains(finishedStates, pyjson.Text(state.Get("state"))) {
 			out = append(out, colString(row, "rid"))
 		}
 	}
@@ -883,7 +877,7 @@ func (r *Registry) Handover(ctx context.Context, role, key, expect string, endpo
 			}
 		}
 		q := l.q(ctx)
-		currentID := field(current, "bindingId")
+		currentID := pyjson.Text(current.Get("bindingId"))
 		next := revisionOf(current) + 1
 		if _, err := q.ExecContext(ctx, "UPDATE scope_bindings SET status = ?, superseded_by = ?, updated_at = ?  WHERE binding_id = ?",
 			statusArchived, newID, now, currentID); err != nil {

@@ -37,7 +37,7 @@ func Test33ControlRejectionBeforeDispatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(row) != 2 || get(row, "protocol") != int64(1) || get(row, "requestRejected") != true {
+	if len(row) != 2 || row.Get("protocol") != int64(1) || row.Get("requestRejected") != true {
 		t.Fatal(row)
 	}
 	if err = <-done; err != nil {
@@ -78,7 +78,7 @@ func Test33RejectionIsNotRefusalOrEOF(t *testing.T) {
 				}
 			} else if err != nil {
 				t.Fatal(err)
-			} else if tc.name == "refused" && get(result, "error") != "refused" {
+			} else if tc.name == "refused" && result.Get("error") != "refused" {
 				t.Fatal(pyjson.Dumps(result, pyjson.Options{}))
 			}
 			if err = <-done; err != nil {
