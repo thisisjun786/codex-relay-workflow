@@ -158,7 +158,19 @@ func (x *profileRun) storedProfile(task string) (any, bool) {
 // The stored text spells the object as every other nested value of a record is spelled, its keys
 // sorted, so two requests that differ only in the order of the profile's keys record the same bytes.
 func TestPermissionProfileObjectIsRecordedAsRequested(t *testing.T) {
+	t.Parallel()
 	base := requestFixture(t)
+	first := newProfileRun(t, base, profileTrusted)
+	first.run(profileRequest(t, base, profileTrusted))
+	second := newProfileRun(t, base, profileFlipped)
+	second.run(profileRequest(t, base, profileFlipped))
+	t.Cleanup(func() {
+		for _, task := range []string{"parent", "child-new"} {
+			if first.stored(task) != second.stored(task) || !strings.Contains(first.stored(task), profileRecord) {
+				t.Errorf("%s's record depends on the key order of the profile:\n%s\n%s", task, first.stored(task), second.stored(task))
+			}
+		}
+	})
 	for _, requested := range []string{
 		profileTrusted,
 		profileFlipped,
@@ -167,6 +179,7 @@ func TestPermissionProfileObjectIsRecordedAsRequested(t *testing.T) {
 		`{"id": "trusted", "extends": null, "label": "r\u00e9sum\u00e9 \"q\"", "readOnly": true, "unset": null}`,
 	} {
 		t.Run(requested, func(t *testing.T) {
+			t.Parallel()
 			x := newProfileRun(t, base, requested)
 			got := x.run(profileRequest(t, base, requested))
 			if got["state"] != "admitted" || x.host.created != 1 || x.host.sent != 1 {
@@ -179,15 +192,6 @@ func TestPermissionProfileObjectIsRecordedAsRequested(t *testing.T) {
 				}
 			}
 		})
-	}
-	first := newProfileRun(t, base, profileTrusted)
-	first.run(profileRequest(t, base, profileTrusted))
-	second := newProfileRun(t, base, profileFlipped)
-	second.run(profileRequest(t, base, profileFlipped))
-	for _, task := range []string{"parent", "child-new"} {
-		if first.stored(task) != second.stored(task) || !strings.Contains(first.stored(task), profileRecord) {
-			t.Fatalf("%s's record depends on the key order of the profile:\n%s\n%s", task, first.stored(task), second.stored(task))
-		}
 	}
 }
 
@@ -204,6 +208,7 @@ func findingCodes(found []contract.OrderedObject) []string {
 // unverifiable_permission_profile, and one the answer leaves out is unobservable. An id alone does not
 // match a record that holds extends: null, because an absent extends and a null one are different objects.
 func TestPermissionProfileResumeIsCheckedAgainstTheRecordedObject(t *testing.T) {
+	t.Parallel()
 	base := requestFixture(t)
 	x := newProfileRun(t, base, profileTrusted)
 	if got := x.run(profileRequest(t, base, profileTrusted)); got["state"] != "admitted" {
@@ -261,6 +266,7 @@ func TestPermissionProfileResumeIsCheckedAgainstTheRecordedObject(t *testing.T) 
 // float64 and a host's report keeps its own spelling, so one profile would be two values to the
 // comparison. The string form and an absent or null field are accepted as they were.
 func TestPermissionProfileShapeIsChecked(t *testing.T) {
+	t.Parallel()
 	base := requestFixture(t)
 	many := []string{`"id": "p"`}
 	for i := range 16 {
@@ -339,6 +345,7 @@ func TestPermissionProfileShapeIsChecked(t *testing.T) {
 // The profile is part of the request: a request that differs only in the order of its keys is the same
 // request and replays, and one naming another profile under the same request id is refused.
 func TestPermissionProfileIsPartOfTheRequestFingerprint(t *testing.T) {
+	t.Parallel()
 	base := requestFixture(t)
 	x := newProfileRun(t, base, profileTrusted)
 	if got := x.run(profileRequest(t, base, profileTrusted)); got["state"] != "admitted" {
@@ -369,6 +376,7 @@ func TestPermissionProfileIsPartOfTheRequestFingerprint(t *testing.T) {
 // settings equal to the request's. A request naming no profile therefore still ends with a record
 // naming none, and a creation that reports a custom profile for it is refused with no record at all.
 func TestPermissionProfileCreationResponseIsVerifiedNotCopied(t *testing.T) {
+	t.Parallel()
 	base := requestFixture(t)
 	cases := []struct {
 		name, requested, reported string
@@ -387,6 +395,7 @@ func TestPermissionProfileCreationResponseIsVerifiedNotCopied(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			x := newProfileRun(t, base, c.reported)
 			got := x.run(profileRequest(t, base, c.requested))
 			if x.host.created != 1 {
@@ -425,8 +434,10 @@ func orNull(text string) string {
 // the host reported still matches what the request named; a creation reporting another profile
 // is left incomplete with no recovery message sent, and a replay does not create again.
 func TestPermissionProfilePartialCreationIsRecoveredOnlyWhenItMatches(t *testing.T) {
+	t.Parallel()
 	base := requestFixture(t)
 	t.Run("matching", func(t *testing.T) {
+		t.Parallel()
 		x := newProfileRun(t, base, profileTrusted)
 		x.host.partial = true
 		for range 2 {
@@ -443,6 +454,7 @@ func TestPermissionProfilePartialCreationIsRecoveredOnlyWhenItMatches(t *testing
 		}
 	})
 	t.Run("mismatching", func(t *testing.T) {
+		t.Parallel()
 		x := newProfileRun(t, base, `{"id": "other", "extends": null}`)
 		x.host.partial = true
 		for range 2 {

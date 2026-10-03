@@ -10,6 +10,7 @@ import (
 )
 
 func Test27_MRS_5_EnsureSettingsKeepsEqualAndRefusesDrift(t *testing.T) {
+	t.Parallel()
 	r, _ := fixtureReservation(t)
 	ctx := context.Background()
 	first := map[string]any{"cwd": "/parent", "model": "claude"}

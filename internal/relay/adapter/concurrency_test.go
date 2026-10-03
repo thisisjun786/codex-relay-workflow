@@ -103,12 +103,14 @@ func concurrencyCase(t *testing.T, kind string) {
 	expectJSON(t, "concurrency", result)
 }
 func Test28_BAD_12_BusyRecipients(t *testing.T) {
+	t.Parallel()
 	s := sendScenario(resume(), []any{"send", "req-active", "thread-1", "hello"})
 	s.answers[0] = map[string]any{"thread": map[string]any{"status": map[string]any{"type": "active"}}}
 	capture(t, s)
 	concurrencyCase(t, "busy")
 }
 func Test28_BAD_13_IndependentRecipientsAndShutdown(t *testing.T) {
+	t.Parallel()
 	concurrencyCase(t, "independent")
 	concurrencyCase(t, "shutdown")
 }
