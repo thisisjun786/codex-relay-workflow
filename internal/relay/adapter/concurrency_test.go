@@ -49,7 +49,7 @@ func concurrencyCase(t *testing.T, kind string) {
 	settings := &delivery.TaskSettings{Data: ordered(authorized()).(delivery.Obj)}
 	done := make(chan any, 1)
 	go func() {
-		r, err := a.SendMessage("req-a", "thread-a", "hello", settings)
+		r, err := a.SendMessage(context.Background(), "req-a", "thread-a", "hello", settings)
 		if err != nil {
 			done <- map[string]any{"error": err.Error()}
 		} else {
@@ -65,24 +65,24 @@ func concurrencyCase(t *testing.T, kind string) {
 	}
 	result := map[string]any{}
 	if kind == "replay" {
-		r, err := a.SendMessage("req-a", "thread-a", "hello", settings)
+		r, err := a.SendMessage(context.Background(), "req-a", "thread-a", "hello", settings)
 		if err != nil {
 			t.Fatal(err)
 		}
 		result["replayed"] = plain(r)
-		_, err = a.SendMessage("req-a", "thread-a", "DIFFERENT", settings)
+		_, err = a.SendMessage(context.Background(), "req-a", "thread-a", "DIFFERENT", settings)
 		if err == nil {
 			t.Fatal("conflicting replay accepted")
 		}
 		result["conflict"] = err.Error()
 	} else if kind == "busy" {
-		r, err := a.SendMessage("req-busy", "thread-a", "second", settings)
+		r, err := a.SendMessage(context.Background(), "req-busy", "thread-a", "second", settings)
 		if err != nil {
 			t.Fatal(err)
 		}
 		result["busy"] = plain(r)
 	} else {
-		r, err := a.SendMessage("req-b", "thread-b", "hello", settings)
+		r, err := a.SendMessage(context.Background(), "req-b", "thread-b", "hello", settings)
 		if err != nil {
 			t.Fatal(err)
 		}

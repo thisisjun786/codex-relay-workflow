@@ -2,22 +2,21 @@ package faults
 
 import (
 	"context"
-	"math/big"
+	"strconv"
 	"strings"
-
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 type numberArgsKey struct{}
 
-// Numeric CLI actions arrive converted; non-CLI internal calls still use their
-// existing string argument interface.
-func integerArg(ctx context.Context, name, raw string) *big.Int {
+// integerArg is an int option's value as a handler reads it, and whether there is one. A command
+// line's numbers arrive converted in the context (int64, as the parser read them); the ledger's own
+// callers hand a limit or a cursor over as text, which is read as Go reads a decimal integer.
+func integerArg(ctx context.Context, name, raw string) (int64, bool) {
 	if numbers, ok := ctx.Value(numberArgsKey{}).(map[string]any); ok {
-		if n, ok := numbers[strings.TrimPrefix(name, "--")].(*big.Int); ok {
-			return n
+		if n, ok := numbers[strings.TrimPrefix(name, "--")].(int64); ok {
+			return n, true
 		}
 	}
-	n, _ := pyvalue.ParseInt(raw)
-	return n
+	n, err := strconv.ParseInt(raw, 10, 64)
+	return n, err == nil
 }

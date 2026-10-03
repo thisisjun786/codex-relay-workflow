@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -218,19 +217,12 @@ func execute(ctx context.Context, name string, services dispatch.Services, line 
 	case "fault-prune":
 		keep := 20
 		if raw := args["--keep"]; raw != "" {
-			n := integerArg(ctx, "--keep", raw)
-			if n.Sign() < 1 {
+			n, _ := integerArg(ctx, "--keep", raw)
+			if n < 1 {
 				err = fmt.Errorf("fault_observation_malformed: keep at least one")
 				break
 			}
-			if !n.IsInt64() {
-				if _, err = cFault(ctx, l, args["--fault"]); err != nil {
-					break
-				}
-				_, err = argparse.SQLiteInteger(n)
-				break
-			}
-			keep = int(n.Int64())
+			keep = int(n)
 		}
 		var removed int64
 		removed, err = l.Prune(ctx, args["--fault"], keep)

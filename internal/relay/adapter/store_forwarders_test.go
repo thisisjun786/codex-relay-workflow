@@ -1,15 +1,19 @@
 package adapter
 
-import "github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+import (
+	"context"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+)
 
 // The adapter tests name the store's manifest, scope and frozen-copy functions by the adapter's
 // earlier forwarders; the product calls the store directly (decision 52).
 
 func VerifyFrozenDetailed(reference string, entries []Entry) (string, []string, []string, error) {
-	return store.VerifyFrozenDetailed(reference, entries)
+	return store.VerifyFrozenDetailed(context.Background(), reference, entries)
 }
 func VerifyFrozen(reference string, entries []Entry) (string, []string, error) {
-	digest, problems, _, err := store.VerifyFrozenDetailed(reference, entries)
+	digest, problems, _, err := store.VerifyFrozenDetailed(context.Background(), reference, entries)
 	return digest, problems, err
 }
 
@@ -23,7 +27,7 @@ func BuildManifest(paths, roots []string, lease bool) ([]Entry, map[string]PathB
 	entries := []Entry{}
 	bindings := map[string]PathBinding{}
 	for _, path := range paths {
-		digest, size, binding, err := store.HashArtifact(path, roots, lease)
+		digest, size, binding, err := store.HashArtifact(context.Background(), path, roots, lease)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -33,10 +37,10 @@ func BuildManifest(paths, roots []string, lease bool) ([]Entry, map[string]PathB
 	return entries, bindings, nil
 }
 func VerifyAgainstDiskDetailed(entries []Entry, roots []string, lease bool) ([]string, map[string]PathBinding, []string) {
-	return store.VerifyAgainstDiskDetailed(entries, roots, lease)
+	return store.VerifyAgainstDiskDetailed(context.Background(), entries, roots, lease)
 }
 func VerifyAgainstDisk(entries []Entry, roots []string, lease bool) ([]string, map[string]PathBinding) {
-	problems, bindings, _ := store.VerifyAgainstDiskDetailed(entries, roots, lease)
+	problems, bindings, _ := store.VerifyAgainstDiskDetailed(context.Background(), entries, roots, lease)
 	return problems, bindings
 }
 func Freeze(entries []Entry, destination string) (string, error) {
@@ -65,5 +69,5 @@ func HashAuthorized(handle *AuthorizedFile, between func() error) (string, int64
 	return store.HashAuthorized(handle, between)
 }
 func HashPath(path string, roots []string, lease bool) (string, int64, PathBinding, error) {
-	return store.HashArtifact(path, roots, lease)
+	return store.HashArtifact(context.Background(), path, roots, lease)
 }
