@@ -610,4 +610,32 @@ BEGIN SELECT RAISE(ABORT, 'dag_summary_outbox entries are never deleted'); END`,
     PRIMARY KEY (plan_id, node_id, declaration_seq, repository, path, region_kind, region_key),
     FOREIGN KEY (plan_id, node_id, declaration_seq, repository, path, region_kind, region_key) REFERENCES dag_node_regions (plan_id, node_id, declaration_seq, repository, path, region_kind, region_key)
 )`,
+	// CRW-430: a base refresh of an accepted node. The acceptance stays as it is (its id is the digest of its head, generation, event and revision, and every node that consumed it names that id), and this
+	// record says the same acceptance also stands on a LATER generation of its relationship whose head the relay proved to differ from the accepted head only by merges of the base branch (proof_json: the
+	// chain of merge commits, each with the tree git merges from its parents, and the files a hand resolved conflict touched). Integration is judged on the newest valid record's head and generation; the table is
+	// append-only, and the row digest in refresh_id lets a reader ignore a row that was written by hand.
+	`CREATE TABLE IF NOT EXISTS dag_base_refreshes (
+    refresh_id           TEXT PRIMARY KEY CHECK (refresh_id <> ''),
+    acceptance_id        TEXT NOT NULL REFERENCES dag_acceptances (acceptance_id),
+    refresh_seq          INTEGER NOT NULL CHECK (refresh_seq >= 1),
+    relationship_id      TEXT NOT NULL CHECK (relationship_id <> ''),
+    execution_generation INTEGER NOT NULL CHECK (execution_generation >= 1),
+    event_id             TEXT NOT NULL CHECK (event_id <> ''),
+    revision_hash        TEXT NOT NULL CHECK (revision_hash <> ''),
+    head_sha             TEXT NOT NULL CHECK (head_sha <> ''),
+    base_repository      TEXT NOT NULL CHECK (base_repository <> ''),
+    base_ref             TEXT NOT NULL CHECK (base_ref <> ''),
+    base_tip_sha         TEXT NOT NULL CHECK (base_tip_sha <> ''),
+    proof_json           TEXT NOT NULL CHECK (proof_json <> ''),
+    resolved_paths_json  TEXT NOT NULL,
+    recorded_by_task_id  TEXT NOT NULL,
+    coordinator_epoch    INTEGER NOT NULL CHECK (coordinator_epoch >= 0),
+    recorded_at          TEXT NOT NULL,
+    UNIQUE (acceptance_id, refresh_seq),
+    UNIQUE (acceptance_id, event_id, head_sha)
+)`,
+	`CREATE TRIGGER IF NOT EXISTS dag_base_refreshes_no_update BEFORE UPDATE ON dag_base_refreshes
+BEGIN SELECT RAISE(ABORT, 'dag_base_refreshes rows are append-only: never updated'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_base_refreshes_no_delete BEFORE DELETE ON dag_base_refreshes
+BEGIN SELECT RAISE(ABORT, 'dag_base_refreshes rows are append-only: never deleted'); END`,
 }
