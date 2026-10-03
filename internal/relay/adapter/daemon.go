@@ -46,7 +46,7 @@ func daemonFactory(ctx context.Context, services dispatch.Services, s *store.Sto
 	if err != nil {
 		return nil, errors.Join(err, a.Close())
 	}
-	d.Sweeper = &faults.Sweeper{Store: s, MaxAttempts: d.Delivery.Policy.MaxAttempts, Selection: services.Selection, Now: clock.ISO, SupersessionReason: d.Delivery.SupersessionReason,
+	d.Sweeper = &faults.Sweeper{Store: s, MaxAttempts: d.Delivery.Policy.MaxAttempts, Selection: services.Selection, ManagedObserver: supervisor.OmissionObserver{}, Now: clock.ISO, SupersessionReason: d.Delivery.SupersessionReason,
 		Installation: installation, HostRecordPath: hostRecord}
 	return d, nil
 }

@@ -30,6 +30,7 @@ func usable(data string) map[string]any {
 }
 
 func TestORD01_an_on_request_record_is_usable_and_untrusted_granular_or_missing_are_refused(t *testing.T) {
+	t.Parallel()
 	runORD(t, t.TempDir(), "record", func(f *fixture, out map[string]any) {
 		out["onRequest"] = usable(rawSettings("/parent", "on-request"))
 		var refused []any

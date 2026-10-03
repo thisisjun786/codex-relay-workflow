@@ -594,4 +594,86 @@ BEGIN SELECT RAISE(ABORT, 'dag_summary_outbox entries are never deleted'); END`,
     PRIMARY KEY (plan_id, sweep_seq, member_seq),
     FOREIGN KEY (plan_id, sweep_seq) REFERENCES dag_conflict_sweeps (plan_id, sweep_seq)
 )`,
+
+	// CRW-431: whether the declarer stated that a declared edit region holds the whole repository. A side table of dag_node_regions like dag_node_region_grades, appended because a shipped statement is never
+	// edited: dag_node_regions.exclusive is set for a rename, a delete and a hotspot as well as for the declarer's word, so it cannot say which. Every region of a declaration made since this table has a row, stated
+	// 1 when the declarer said it and 0 when not; a declaration made before has none, which is how the scheduler tells the two apart (dagsched.loadDeclarations).
+	`CREATE TABLE IF NOT EXISTS dag_node_region_holds (
+    plan_id         TEXT NOT NULL,
+    node_id         TEXT NOT NULL,
+    declaration_seq INTEGER NOT NULL CHECK (declaration_seq >= 1),
+    repository      TEXT NOT NULL,
+    path            TEXT NOT NULL,
+    region_kind     TEXT NOT NULL,
+    region_key      TEXT NOT NULL DEFAULT '',
+    stated          INTEGER NOT NULL CHECK (stated IN (0,1)),
+    PRIMARY KEY (plan_id, node_id, declaration_seq, repository, path, region_kind, region_key),
+    FOREIGN KEY (plan_id, node_id, declaration_seq, repository, path, region_kind, region_key) REFERENCES dag_node_regions (plan_id, node_id, declaration_seq, repository, path, region_kind, region_key)
+)`,
+	// CRW-430: a base refresh of an accepted node. The acceptance stays as it is (its id is the digest of its head, generation, event and revision, and every node that consumed it names that id), and this
+	// record says the same acceptance also stands on a LATER generation of its relationship whose head the relay proved to differ from the accepted head only by merges of the base branch (proof_json: the
+	// chain of merge commits, each with the tree git merges from its parents, and the files a hand resolved conflict touched). Integration is judged on the newest valid record's head and generation; the table is
+	// append-only, and the row digest in refresh_id lets a reader ignore a row that was written by hand.
+	`CREATE TABLE IF NOT EXISTS dag_base_refreshes (
+    refresh_id           TEXT PRIMARY KEY CHECK (refresh_id <> ''),
+    acceptance_id        TEXT NOT NULL REFERENCES dag_acceptances (acceptance_id),
+    refresh_seq          INTEGER NOT NULL CHECK (refresh_seq >= 1),
+    relationship_id      TEXT NOT NULL CHECK (relationship_id <> ''),
+    execution_generation INTEGER NOT NULL CHECK (execution_generation >= 1),
+    event_id             TEXT NOT NULL CHECK (event_id <> ''),
+    revision_hash        TEXT NOT NULL CHECK (revision_hash <> ''),
+    head_sha             TEXT NOT NULL CHECK (head_sha <> ''),
+    base_repository      TEXT NOT NULL CHECK (base_repository <> ''),
+    base_ref             TEXT NOT NULL CHECK (base_ref <> ''),
+    base_tip_sha         TEXT NOT NULL CHECK (base_tip_sha <> ''),
+    proof_json           TEXT NOT NULL CHECK (proof_json <> ''),
+    resolved_paths_json  TEXT NOT NULL,
+    recorded_by_task_id  TEXT NOT NULL,
+    coordinator_epoch    INTEGER NOT NULL CHECK (coordinator_epoch >= 0),
+    recorded_at          TEXT NOT NULL,
+    UNIQUE (acceptance_id, refresh_seq),
+    UNIQUE (acceptance_id, event_id, head_sha)
+)`,
+	`CREATE TRIGGER IF NOT EXISTS dag_base_refreshes_no_update BEFORE UPDATE ON dag_base_refreshes
+BEGIN SELECT RAISE(ABORT, 'dag_base_refreshes rows are append-only: never updated'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_base_refreshes_no_delete BEFORE DELETE ON dag_base_refreshes
+BEGIN SELECT RAISE(ABORT, 'dag_base_refreshes rows are append-only: never deleted'); END`,
+
+	// CRW-411: the release policy of a plan, the results the parent records for landed and discarded work, and the policy a recorded pass kept. All three are side tables, appended because a shipped statement is never
+	// edited. dag_release_policy is the ledger of the values the scheduler reads when it decides whether local-optimistic release stays on (the last window_size landings, a landing is slow above handling_seconds, red_merges
+	// red or reverted landings in the window switch it off, clean_run clean landings in a row switch it on again); the latest policy_seq of a plan is in force and a plan with no row has no policy. dag_landing_results
+	// holds what the parent states about a node's pull request after the fact (dev_green, dev_red, reverted) or about the work itself (duplicate, discarded); the id is a digest of what is stated, so the same statement
+	// again is one row. dag_pass_release_policy is the policy state a recorded pass saw, written only for a plan that has a policy.
+	`CREATE TABLE IF NOT EXISTS dag_release_policy (
+    plan_id          TEXT NOT NULL REFERENCES dag_plans (plan_id),
+    policy_seq       INTEGER NOT NULL CHECK (policy_seq >= 1),
+    window_size      INTEGER NOT NULL CHECK (window_size BETWEEN 1 AND 64),
+    handling_seconds INTEGER NOT NULL CHECK (handling_seconds >= 1),
+    red_merges       INTEGER NOT NULL CHECK (red_merges >= 1),
+    clean_run        INTEGER NOT NULL CHECK (clean_run >= 1),
+    recorded_by      TEXT NOT NULL CHECK (recorded_by <> ''),
+    coordinator_epoch INTEGER NOT NULL DEFAULT 0 CHECK (coordinator_epoch >= 0),
+    recorded_at      TEXT NOT NULL,
+    CHECK (red_merges <= window_size AND clean_run <= window_size),
+    PRIMARY KEY (plan_id, policy_seq)
+)`,
+	`CREATE TABLE IF NOT EXISTS dag_landing_results (
+    result_id   TEXT PRIMARY KEY,
+    plan_id     TEXT NOT NULL REFERENCES dag_plans (plan_id),
+    node_id     TEXT NOT NULL CHECK (node_id <> ''),
+    kind        TEXT NOT NULL CHECK (kind IN ('dev_green','dev_red','reverted','duplicate','discarded')),
+    commit_sha  TEXT NOT NULL DEFAULT '',
+    evidence    TEXT NOT NULL CHECK (evidence <> ''),
+    recorded_by TEXT NOT NULL CHECK (recorded_by <> ''),
+    coordinator_epoch INTEGER NOT NULL DEFAULT 0 CHECK (coordinator_epoch >= 0),
+    recorded_at TEXT NOT NULL
+)`,
+	`CREATE INDEX IF NOT EXISTS dag_landing_results_node ON dag_landing_results (plan_id, node_id)`,
+	`CREATE TABLE IF NOT EXISTS dag_pass_release_policy (
+    plan_id     TEXT NOT NULL,
+    pass_seq    INTEGER NOT NULL,
+    policy_json TEXT NOT NULL,
+    PRIMARY KEY (plan_id, pass_seq),
+    FOREIGN KEY (plan_id, pass_seq) REFERENCES dag_passes (plan_id, pass_seq)
+)`,
 }
