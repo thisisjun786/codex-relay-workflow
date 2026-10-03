@@ -210,6 +210,15 @@ func TestTailGuardRejectsReplacementInode(t *testing.T) {
 	if !endsMidLine(root, f, filepath.Join(StateDir, RenderObsFile)) {
 		t.Fatal("replacement inode hid the unterminated writer tail")
 	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command("mkfifo", path).Run(); err != nil {
+		t.Fatal(err)
+	}
+	if !endsMidLine(root, f, filepath.Join(StateDir, RenderObsFile)) {
+		t.Fatal("replacement FIFO hid the unterminated writer tail")
+	}
 }
 
 func TestNativeAppStructuredFields(t *testing.T) {

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
@@ -139,7 +140,7 @@ func endsMidLine(root *os.Root, f *os.File, path string) bool {
 	if !info.Mode().IsRegular() || info.Size() == 0 {
 		return false
 	}
-	r, err := root.Open(path)
+	r, err := root.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return true
 	}
