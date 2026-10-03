@@ -1214,8 +1214,10 @@ with no per-finding trail, is not that evidence.
 
 An optional review that is unavailable or stalled is recorded as unavailable, with sufficient
 independent review obtained instead under the repository's policy, and the work continues. Waiting
-indefinitely for an optional reviewer is not diligence. A reviewer disabled by the
-[reviewer policy](merge-readiness.md#disabled-reviewer-policy) is not requested or awaited;
+indefinitely for an optional reviewer is not diligence; the one run each of Devin and Codex makes on a
+pull request is the exception, awaited to its end before the receipt
+([Devin and Codex reviews are references, not merge gates](merge-readiness.md#devin-and-codex-reviews-are-references-not-merge-gates)). Apart from that run, a reviewer
+the [reviewer policy](merge-readiness.md#disabled-reviewer-policy) rules out is not requested or awaited;
 its existing findings still require evidence-backed disposition.
 
 A missing mandatory review or a required check that has not passed is BLOCKED, and blocked is

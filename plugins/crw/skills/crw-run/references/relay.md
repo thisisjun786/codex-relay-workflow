@@ -989,7 +989,9 @@ Read the handoff the report carries rather than collecting its contents again. T
 already paginated the review and enumerated the check runs, and the values are the ones the merge
 turn expects to be restated. What this side adds is currency: re-read the head and the base
 immediately before merging and compare the counts to the record. A disagreement is a fail-closed
-return to the same child, through the needs-changes verdict below, not a repair made here.
+return to the same child, through the needs-changes verdict below, not a repair made here. A late
+review thread on the record's head that the parent has itself dispositioned
+([how](merge-readiness.md#a-late-thread-the-parent-dispositions-itself)) is not a disagreement.
 
 The proof is over the parent's OWN acknowledging turn, which the delivered message cannot carry:
 the child does not know which turn will acknowledge, and quoting the delivered fields back cannot
