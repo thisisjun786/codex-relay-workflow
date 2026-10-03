@@ -1,13 +1,16 @@
 // Package role is the helper role configuration store: the per-role settings (mode, model, reasoning effort, prompt override and a
 // first fallback) of the four helper roles, in one JSON file at CRW_HOME/subagents.json. It is the Go form of CXC v0.2.40
-// subagent-config/src/store.ts lines 1-303 under the CRW names of contract/schema/cxc/name-substitution.json; spawn resolution, the
-// settings API, the CLI and the catalog are later issues, and nothing here registers a hook, tool or command.
+// subagent-config/src/store.ts (the store, lines 1-303, then the spawn resolution and the project trust token) and settings-api.ts
+// under the CRW names of contract/schema/cxc/name-substitution.json; the CLI, the catalog, the MCP tools and the hooks are later
+// issues, and nothing here registers a hook, tool or command.
 //
 // The store is the global layer only (decision 7), so the oracle's project layer is not ported (I1): STATE_DIR, storePath,
 // scopedPath, the trust warning and writeConfig (its only target was the project file, and nothing called it). Other differences:
 // I2 ParseScope takes an optional scope that defaults to "global" and accepts nothing else. I3 The legacy
-// <CODEX_HOME>/codexclaw/subagents.json is not read. I5 A patch holds typed values, so the oracle's "promptOverride must be a string
-// or null" and "fallback must be an object or null" are the caller's decode errors. I6 Members this package does not own are carried
+// <CODEX_HOME>/codexclaw/subagents.json is not read. I5 A patch holds typed values; a request member of the wrong JSON type is kept
+// raw and refused by Validate in the oracle's order with the oracle's message ("promptOverride must be a string or null", "fallback must
+// be an object or null", and String() of the value in the mode and effort messages, which throws for an object that has a toString
+// member), and the settings API reads its members by exact name, as JavaScript does. I6 Members this package does not own are carried
 // as the file wrote them (a number keeps its form, an escape its spelling, integer-like keys are not moved first; U+2028 and U+2029
 // print literally, as JSON.stringify prints them), and a stored role value that is not an object is replaced. I7 The text of a JSON
 // syntax or IO error is Go's, not V8's or libuv's. I8 A lone surrogate in a role's string reads as U+FFFD, and so does each byte of an
@@ -16,6 +19,15 @@
 // each in JavaScript) stay two. I9 A
 // store nested past 10,000 levels is refused by encoding/json: it reads as malformed and a write is refused with the file untouched;
 // the oracle's JSON.stringify also refuses a write when an unknown member is nested a few thousand levels, which the port makes.
+// I10 SetRole and ResetRole hold an exclusive lock file beside the store (lockStore), where the oracle publishes with no lock and two
+// concurrent writers lose an update (a data-loss defect, fixed): a writer that meets the lock waits on the schedule of the session state
+// lock and is then refused; a lock left by a dead process refuses writes until it is removed by hand (no stale-lock breaker); the
+// first write creates the store's directory before it takes the lock, so a refused first write, or a ResetRole of a missing store, can
+// leave an empty 0700 directory. I11 ResolveSpawnConfig of a role the oracle does not know is the refusal "unknown role" (the oracle
+// throws a V8 TypeError from an unguarded lookup), and it takes no working directory and has no trust warning: the project layer is
+// gone. I12 IsTrackedProjectConfig and ProjectConfigTrustToken keep their commands and token over <cwd>/.crw/subagents.json, which
+// nothing reads any more; git output that is not valid UTF-8 gives no token, and a git that exits while a child keeps its output open
+// is waited for one second.
 package role
 
 import (

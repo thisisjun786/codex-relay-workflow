@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -27,7 +28,7 @@ func waitFor(t *testing.T, ch <-chan struct{}, what string) {
 // The oracle publishes with no lock: two writers that read the same store both publish a replacement of it, and the second rename
 // discards the first writer's update. A is held between its read and its rename; B, which changes another role, must meet A's lock.
 func TestLockedWritersLoseNoUpdate(t *testing.T) { // criterion c9
-	env, _ := home(t)
+	env, dir := home(t)
 	must(SetRole(env, Executor, RolePatch{Effort: Some(EffortLow)}))
 	inRename, releaseA, bMet, aDone := make(chan struct{}), make(chan struct{}), make(chan struct{}), make(chan struct{})
 	release := sync.OnceFunc(func() { close(releaseA) })
@@ -43,6 +44,10 @@ func TestLockedWritersLoseNoUpdate(t *testing.T) { // criterion c9
 		errs <- err
 	}()
 	waitFor(t, inRename, "writer A at its rename")
+	lock := filepath.Join(dir, StoreFile+".lock") // while A holds it: 0600, holding A's pid
+	if info, err := os.Stat(lock); err != nil || info.Mode().Perm() != 0o600 || readText(t, lock) != strconv.Itoa(os.Getpid()) {
+		t.Fatalf("lock %v, %v", info, err)
+	}
 	go func() {
 		met := sync.OnceFunc(func() { close(bMet) })
 		_, err := resetRole(env, Executor, crwdir.Rename, func(time.Duration) { met(); <-aDone })

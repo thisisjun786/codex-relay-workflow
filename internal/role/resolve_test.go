@@ -166,6 +166,15 @@ func TestProjectConfigTrustTokenOutsideARepositoryBindsTheDirectory(t *testing.T
 	}
 }
 
+func TestProjectConfigTrustTokenRefusesGitOutputThatIsNotUTF8(t *testing.T) {
+	plainGit(t)
+	root := repo(t, "{}", true)
+	stubGit(t, "printf '/tmp/\\377'")
+	if got, ok := ProjectConfigTrustToken(root); ok || got != "" {
+		t.Fatalf("token %q for a root that is not text", got)
+	}
+}
+
 func TestGitThatHangsIsGivenUpOn(t *testing.T) {
 	plainGit(t)
 	root := repo(t, "{}", true)
