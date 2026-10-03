@@ -147,6 +147,8 @@ func TestChatScanOracle(t *testing.T) {
 			var got any
 			var callErr error
 			switch c.Fn {
+			case "consts":
+				got = []int{DefaultDays, DefaultLimit, MaxLimit}
 			case "plan":
 				got = ChatMatchPlan(c.Query, c.Any, c.Synonyms)
 				if !reflect.DeepEqual(got, chatMatchPlan(c.Query, c.Any, c.Synonyms)) {

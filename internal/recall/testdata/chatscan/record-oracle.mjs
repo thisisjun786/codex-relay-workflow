@@ -51,6 +51,9 @@ run("chronology",{days:0,limit:1},"base",{[edgeName]:message("a","chronology fir
 run("units",{days:0},"base",{[edgeName]:message("\u{10000}","units astral")+message("\ue000","units bmp")});
 run("CI",{days:0},"base",{[edgeName]:message("","CI").replace('"CI"','"\\u0043I"')});
 run("bomb",{days:0},"base",{[edgeName]:message("","bomb")+message("",{toString:null})});
+const dense=Array.from({length:250},(_,i)=>message("",`dense ${i}`)).join("");
+for (const [opts,kind] of [[{days:0},"base"],[{days:0,limit:1000},"base"],[{days:0,limit:0},"base"],[{days:0},"nan-limit"]]) run("dense",opts,kind,{[edgeName]:dense});
+cases.push({fn:"consts",out:[c.DEFAULT_DAYS,c.DEFAULT_LIMIT,c.MAX_LIMIT]});
 for (const query of queries) for (const any of [false,true]) for (const synonyms of [false,true]) cases.push({fn:"plan",query,any,synonyms,out:c.chatMatchPlan(query,any,synonyms)});
 const entries=[{ts:"a",role:"user",text:"one"},{ts:"b",role:"assistant",text:"two"}];
 for (const [index,n] of [[0,.5],[1,1.5],[1,.5],[1,100]]) { const row={fn:"context",entries,index,n}; try {row.out=c.contextWindow(entries,index,n);} catch(e) {row.error=e.message;} cases.push(row); }
