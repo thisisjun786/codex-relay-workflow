@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -310,13 +311,12 @@ func TestBgHookRegistryWriteFailureDoesNotFailClosed(t *testing.T) {
 	}
 }
 
-type heldHookInput struct{ started, release, finished chan struct{} }
+type heldHookInput struct{ started, release chan struct{} }
 
-func (r heldHookInput) Read([]byte) (int, error) {
+func (r heldHookInput) Read(p []byte) (int, error) {
 	close(r.started)
 	<-r.release
-	close(r.finished)
-	return 0, io.EOF
+	return copy(p, `{"session_id":"S1"}`), io.EOF
 }
 
 func TestBgRunHookObservationAndCancellation(t *testing.T) {
@@ -348,7 +348,7 @@ func TestBgRunHookObservationAndCancellation(t *testing.T) {
 	}
 	hookDone(t, ws, "late", "S1")
 	ctx, cancel := context.WithCancel(context.Background())
-	in := heldHookInput{make(chan struct{}), make(chan struct{}), make(chan struct{})}
+	in := heldHookInput{make(chan struct{}), make(chan struct{})}
 	answer := make(chan int, 1)
 	go func() { answer <- RunHook(ctx, "stop", in, io.Discard, lookup, ws, noon) }()
 	<-in.started
@@ -357,8 +357,53 @@ func TestBgRunHookObservationAndCancellation(t *testing.T) {
 		t.Fatalf("interrupt %d", code)
 	}
 	close(in.release)
-	<-in.finished
-	if r, _ := ReadRecord(ws, "late"); r.DeliveredAt != nil {
-		t.Fatal("late delivery")
+	// Direct worker invocation supplies a completion barrier after processing,
+	// unlike the reader's EOF, which precedes the mutation guard.
+	var out strings.Builder
+	lateHome := workspace(t)
+	lateLookup := func(k string) (string, bool) {
+		if k == "CODEX_HOME" {
+			return lateHome, true
+		}
+		return lookup(k)
+	}
+	workerCtx, workerCancel := context.WithCancel(context.Background())
+	defer workerCancel()
+	delayed := heldHookInput{make(chan struct{}), make(chan struct{})}
+	finished := make(chan int, 1)
+	go func() { finished <- runHook(workerCtx, "stop", delayed, &out, lateLookup, ws, noon) }()
+	<-delayed.started
+	workerCancel()
+	close(delayed.release)
+	if <-finished != 130 {
+		t.Fatal("late worker did not stop")
+	}
+	if r, _ := ReadRecord(ws, "late"); r.DeliveredAt != nil || out.Len() != 0 {
+		t.Fatal("late delivery or output")
+	}
+	entries, _ := os.ReadDir(lateHome)
+	if len(entries) != 0 {
+		t.Fatal("late observation")
+	}
+}
+
+func TestBgRunHookClosedStdoutPipe(t *testing.T) {
+	if ws := os.Getenv("CRW_BG_HOOK_PIPE_TEST"); ws != "" {
+		lookup := func(k string) (string, bool) { return "S1", k == "CODEX_THREAD_ID" }
+		os.Exit(RunHook(context.Background(), "stop", strings.NewReader("{}"), os.Stdout, lookup, ws, noon))
+	}
+	ws := workspace(t)
+	hookDone(t, ws, "pipe", "S1")
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Close()
+	defer w.Close()
+	c := exec.Command(os.Args[0], "-test.run=^TestBgRunHookClosedStdoutPipe$")
+	c.Env = append(os.Environ(), "CRW_BG_HOOK_PIPE_TEST="+ws)
+	c.Stdout = w
+	if err := c.Run(); err != nil {
+		t.Fatalf("closed fd1 must exit 0: %v", err)
 	}
 }

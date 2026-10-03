@@ -204,7 +204,7 @@ func runHook(ctx context.Context, event string, in io.Reader, stdout io.Writer, 
 		out = HandleSessionStart(p, cwd, getenv, clock)
 	}
 	if out != "" {
-		_, _ = io.WriteString(stdout, out+"\n")
+		writeHookOutput(stdout, out+"\n")
 	}
 	return 0
 }
