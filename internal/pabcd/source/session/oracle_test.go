@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -17,7 +18,7 @@ import (
 // (CXC v0.2.40 under Node 24); no Node runs here. Each scenario builds a world of repositories and worktrees with shell
 // scripts, runs its steps against the session functions and compares every answer with the recorded one. A step's text
 // is read with the CRW names: ".codexclaw" is ".crw", and the gate's commands are the CRW commands of the CLI table.
-// An operating-system error is compared by its class (ENOENT), as Node and Go word it differently. A tree hash covers the path
+// An operating-system error is compared by its class (ENOENT, ELOOP), as Node and Go word it differently. A tree hash covers the path
 // names of its entries, so a capture that includes the state directory ("noHash") is compared without the hash value.
 
 type scenarioFile struct {
@@ -79,6 +80,8 @@ func answer(value any, err error) map[string]any {
 		return map[string]any{"err": string(refused)}
 	case errors.Is(err, fs.ErrNotExist):
 		return map[string]any{"errno": "ENOENT"}
+	case errors.Is(err, syscall.ELOOP):
+		return map[string]any{"errno": "ELOOP"}
 	}
 	return map[string]any{"err": "unexpected: " + err.Error()}
 }

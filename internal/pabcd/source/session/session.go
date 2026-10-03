@@ -7,9 +7,6 @@
 // It is a subpackage of source because state imports source, and Resolve reads the session state. Git runs as a child
 // process with the routing variables removed. Errors the oracle throws as messages are returned with that text; an
 // operating-system failure the oracle lets through is returned as Go reports it, in Go's words.
-//
-// Not literal: canonical follows the 255 symbolic links Go's EvalSymlinks allows where realpath(3) stops at 40 (ELOOP), so a
-// chain of 41 to 255 links resolves here and fails in the oracle.
 package session
 
 import (
@@ -56,7 +53,8 @@ type worktree struct{ root, commonDir, gitDir string }
 
 // canonical is the absolute path with every symlink resolved (realpathSync.native), or an error when it does not exist. The
 // input is not cleaned first: ".." applies to the path the symlinks before it lead to, and a missing component fails. The
-// result is text as Node reads it: bytes that are not UTF-8 become U+FFFD, so the path of such a directory names nothing.
+// result is text as Node reads it: bytes that are not UTF-8 become U+FFFD, so the path of such a directory is another path or
+// none.
 func canonical(path string) (string, error) {
 	if path == "" {
 		return "", &fs.PathError{Op: "realpath", Path: path, Err: fs.ErrNotExist}
@@ -67,6 +65,10 @@ func canonical(path string) (string, error) {
 			return "", err
 		}
 		path = wd + string(filepath.Separator) + path
+	}
+	// EvalSymlinks follows 255 links where realpath(3) shares the kernel's limit (40 on Linux, then ELOOP): stat fails first.
+	if _, err := os.Stat(path); err != nil {
+		return "", err
 	}
 	resolved, err := filepath.EvalSymlinks(path)
 	return source.DecodeUTF8([]byte(resolved)), err

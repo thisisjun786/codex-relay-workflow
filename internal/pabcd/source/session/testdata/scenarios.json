@@ -147,6 +147,12 @@
    {"do":"capture","cwd":"main","session":"s1","options":{"excludeCodexclawArtifacts":false},"noHash":true},
    {"do":"capture","cwd":"main","session":"s1","options":{"excludeCodexclawArtifacts":true}}
   ]},
+  {"id": "bind_target_through_41_symlinks", "setup": "ln -s wt link0; i=1; while [ $i -le 40 ]; do ln -s link$((i-1)) link$i; i=$((i+1)); done", "steps": [
+   {"do":"bind","cwd":"main","session":"s1","rawTarget":"$R/link2"},
+   {"do":"resolve","cwd":"main","session":"s1"},
+   {"do":"bind","cwd":"main","session":"s2","rawTarget":"$R/link40"},
+   {"do":"resolve","cwd":"main","session":"s2"}
+  ]},
   {"id": "resolve_moved_or_removed_worktree", "steps": [
    {"do":"bind","cwd":"main","session":"s1","target":"wt"},
    {"do":"sh","script":"mv wt wt-moved"},
