@@ -53,6 +53,28 @@ const (
 	ArbitrationFailed   = "arbitration_failed"
 )
 
+// The causes a stdin_unreadable row names under stdinRead (CRW-504). A clean end of input is not
+// one: it reaches JSON parsing and is stdin_not_json. There is no byte cap to run into.
+const (
+	// StdinInputLate: the input allocation (decision 24) ran out while the hook waited for the host.
+	StdinInputLate = "input_late"
+	// StdinWorkEnded: the invocation's own work context ended while the hook waited.
+	StdinWorkEnded = "work_ended"
+	// StdinReadError: the stdin descriptor, or the reader standing in for it, failed.
+	StdinReadError = "read_error"
+	// StdinInvalidUTF8: every byte arrived and they are not UTF-8.
+	StdinInvalidUTF8 = "invalid_utf8"
+)
+
+var StdinReadCauses = []string{StdinInputLate, StdinWorkEnded, StdinReadError, StdinInvalidUTF8}
+
+// The two details a stdin_unreadable row says. Rows from before stdinRead carry only these, which
+// the judge still reads; a row that has stdinRead says the one its cause names.
+const (
+	StdinUnreadableDetail = "the Stop payload could not be read from stdin"
+	StdinNotUTF8Prefix    = "the Stop payload is not UTF-8: "
+)
+
 // BeforeTheGuard are the outcomes recorded before any guard is asked.
 var BeforeTheGuard = []string{"stdin_unreadable", "stdin_not_json", "stdin_not_object", "config_absent", "config_unreadable", "config_unreachable", "config_malformed"}
 
@@ -116,7 +138,7 @@ var PathUntriedReasons = []string{IdentityFieldsIncomplete, TranscriptPathMissin
 // row that did not fault ends with SettledFields, and a fault adds FaultFields instead.
 var (
 	RowFields           = []string{"recordVersion", "event", "at", "adapterOutcome", "processEnding", "stdoutReading", "guardState", "guardDecision", "guardMode", "assignmentId", "guardRecordedAs", "held", "eventKey", "eventIdentity", "identityScanMs", "acceptance", "acceptedAs", "guardInvoked", "configuration", "elapsedMs"}
-	OptionalRowFields   = []string{"runtime"} // absent in rows written before runtime attribution
+	OptionalRowFields   = []string{"runtime", "stdinRead"} // runtime is absent in rows written before attribution; stdinRead only a stdin_unreadable row has, and only since CRW-504
 	PayloadFields       = []string{"sessionId", "turnId", "stopHookActive"}
 	GuardCallFields     = []string{"exitCode", "signal", "errno", "guardElapsedMs", "guardStderr"}
 	AnswerFields        = []string{"observation", "counters"}
