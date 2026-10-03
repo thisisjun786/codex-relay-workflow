@@ -211,8 +211,17 @@ func (s *Scheduler) accepted(ctx context.Context, q store.Querier, plan string, 
 			out.Disp, out.Reason, out.Detail = DispBlocked, BlockedEvicted, "a required check failed again on the same head after its retry; the node left the merge lane"
 			return out, nil
 		}
+		// a merge turn is for a head the acceptance stands on or stood on before a recorded base refresh moved it
+		heads, err := s.stoodOn(ctx, q, acc)
+		if err != nil {
+			return nodeState{}, err
+		}
+		args := make([]any, len(heads))
+		for i, h := range heads {
+			args[i] = h
+		}
 		var one int
-		unknown, err := queryOne(ctx, q, "SELECT 1 FROM merge_turns WHERE candidate_head = ? AND state = 'unknown' LIMIT 1", []any{acc.HeadSHA}, &one)
+		unknown, err := queryOne(ctx, q, "SELECT 1 FROM merge_turns WHERE candidate_head IN ("+strings.TrimSuffix(strings.Repeat("?,", len(heads)), ",")+") AND state = 'unknown' LIMIT 1", args, &one)
 		if err != nil {
 			return nodeState{}, err
 		}
