@@ -215,4 +215,12 @@ func TestIdlessResolveClearsNothing(t *testing.T) {
 	if got := tombstones(cwd, "s1"); len(got) != 2 {
 		t.Errorf("tombstones left: %v", got)
 	}
+	// The refusal comes before the lock, which would create the sessions directory and a lock file in a workspace that has none.
+	empty, locked := t.TempDir(), false
+	if resolveTombstone(empty, "s1", agent("", "t1"), func(_, _ string, fn func() error) error { locked = true; return fn() }) || locked {
+		t.Errorf("an identity-less resolve took the lock (%v) or succeeded", locked)
+	}
+	if entries, _ := os.ReadDir(empty); len(entries) != 0 {
+		t.Errorf("an identity-less resolve left %v in an empty workspace", entries)
+	}
 }
