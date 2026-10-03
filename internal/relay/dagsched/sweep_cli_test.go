@@ -3,9 +3,6 @@ package dagsched
 import (
 	"path/filepath"
 	"testing"
-
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
 )
 
 // The sweep through the binary, as the parent runs it (CRW-410): JSON on stdout, exit 0 for an answer and 2 for a refusal with its reason, the tip read through the relay's own tip reader.
@@ -13,18 +10,7 @@ import (
 // newIntegrationKitAt is newIntegrationKit over a store at a path the binary can open.
 func newIntegrationKitAt(t *testing.T, dbPath string) *integrationKit {
 	t.Helper()
-	f := newFixtureAt(t, dbPath)
-	root := t.TempDir()
-	settings := map[string]any{"sandbox": map[string]any{"type": "workspaceWrite"}, "approvalPolicy": "never", "cwd": root, "runtimeWorkspaceRoots": []any{root}, "model": "gpt-5", "reasoningEffort": "medium", "environments": []any{}}
-	rk := &releaseKit{fixture: f, host: newScriptedHost(t, settings), tips: &tips{sha: head1}, forge: &prs{by: map[string]PullRequest{}}, root: root, marker: t.TempDir(), state: t.TempDir()}
-	f.projectParent()
-	rk.wire(f.sched)
-	k := &integrationKit{releaseKit: rk, repo: newGitRepo(t)}
-	k.sched.Tips = mergeturn.TargetReader{}
-	k.sched.Ancestry = GitAncestry{}.Ancestry
-	k.putPlan("g", 0, "g-r1", addRelNode("I", dag.NodeImplementation), addRelNode("K", dag.NodeNonPR), addRelNode("D", dag.NodeImplementation),
-		addEdge("ik", "I", "K", dag.EdgeIntegrated, doc{"target_repository": k.repo.path}))
-	return k
+	return newIntegrationKitOn(t, newReleaseKitOn(t, newFixtureAt(t, dbPath)))
 }
 
 // cliWorld is a sweep world over a store the binary opens: D accepted at its head, E running in a linked worktree of the repository whose HEAD is its head, I landed on dev; the parent works in the repository.

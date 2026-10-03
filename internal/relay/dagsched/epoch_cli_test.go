@@ -3,7 +3,6 @@ package dagsched
 import (
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -14,15 +13,12 @@ import (
 
 func epochCLIState(t *testing.T) string {
 	t.Helper()
-	state := filepath.Join(t.TempDir(), "state")
-	f := newFixtureAt(t, filepath.Join(state, "relay.sqlite3"))
-	releasePlan(f, "rp")
-	f.projectParent()
-	f.declareLimit("project", "P-TEST", "runs", 10)
-	if err := f.s.Close(); err != nil {
-		t.Fatal(err)
-	}
-	return state
+	return closedState(t, func(f *fixture) {
+		t.Helper()
+		releasePlan(f, "rp")
+		f.projectParent()
+		f.declareLimit("project", "P-TEST", "runs", 10)
+	})
 }
 
 func reasonOf(t *testing.T, out string) string {
