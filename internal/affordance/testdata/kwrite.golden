@@ -1,0 +1,1 @@
+[crw] When writing Korean prose for the user (docs, answers, announcements), keep it human: no translationese (~에 대해/~를 통해/~함으로써), no AI idioms (시사하는 바가 크다/결론적으로/기대된다 endings), no 첫째/둘째 enumeration, one consistent register throughout. For explicit 윤문/polish requests or long-form Korean output, load the $crw-kwrite skill for the full revision protocol.

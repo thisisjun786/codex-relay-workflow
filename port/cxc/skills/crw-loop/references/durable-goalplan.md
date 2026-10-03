@@ -1,0 +1,128 @@
+# Durable goalplan
+
+Read when creating, registering, amending, or inspecting a goalplan.
+Mode selection and external permission scope remain in ../SKILL.md.
+
+## HOTL Goal-Setting Rule
+
+When entering HOTL mode, the main agent MUST create a host goal with
+`create_goal` before relying on Stop-continuation. The objective should be
+detailed, concrete, and approach the host limit of 4000 characters.
+
+The objective must include:
+
+- The concrete outcome to achieve.
+- The file change scope and explicit out-of-scope boundaries.
+- Acceptance criteria, including what counts as `DONE`, `NOOP`, `BLOCKED`,
+  `UNSAFE`, `NEEDS_HUMAN`, or `BUDGET_EXHAUSTED`.
+- Verification commands or evidence artifacts expected before each completion claim.
+- The expected terminal outcome and the first work-phase to run.
+
+A vague or short objective under 500 characters is a discipline violation for
+HOTL mode. After `create_goal`, run `crw pabcd loop init --objective "<same text>"
+--session <id>` to create the durable local plan bound to the session.
+
+After `loop init`, REGISTER the plan: fill `workPhases[]` (with tasks) and
+`criteria[]` in the goalplan file before the first work-phase. An init-only
+empty plan now FAILS `crw pabcd loop validate` (E8), and `update_goal
+{status:"complete"}` is hook-denied while the bound goalplan fails that gate
+(GOAL-COMPLETE-GATE-01) — an unregistered plan cannot certify completion.
+
+## Durable Goalplan
+
+Use a durable goalplan when a CRW loop needs more than a chat-local
+checklist: goals, work phases, success criteria, checkpoints, evidence,
+Interview OPEN ASSUMPTIONS, steering decisions, and quality gates.
+
+### Contract
+
+- Represent goals, work phases, success criteria, checkpoints, and evidence.
+- Carry Interview OPEN ASSUMPTIONS (`proposed` and `open` entries, with source,
+  confidence, consequence if wrong and status) into Plan/Audit instead of dropping
+  them. Confirmed requirements and rejected assumptions travel in their own plan
+  sections with their answer reference (INTERVIEW-ASSUME-01 in crw-interview).
+- Record steering decisions with rationale and evidence.
+- Reject steering that weakens completion criteria or verification.
+- Require a quality gate before final completion.
+
+### Shipped schema
+
+This is the on-disk shape under `.crw/goalplans/<slug>/goalplan.json`
+(+ `ledger.jsonl`). Fill these fields; do not invent parallel ones:
+
+- `objective`, `slug`, `createdAt`, `updatedAt`.
+- `workPhases[]` — each `{ id, title, status: pending|in_progress|done, dependsOn?, tasks[], criteriaIds[] }`.
+  `workPhase.dependsOn` names prerequisite work phases. Optional `workPhase.awaitsDecision?: string[]` names decisions that must be answered before this phase can run. `activeWorkPhaseId` marks the current one.
+  `workPhases[]` is APPEND-friendly mid-loop: when a new independent unit is discovered
+  (LOOP-UNIT-CHAIN-01), add its work-phase (+ criteria) as a P-phase amendment instead of
+  treating the plan as frozen at init or ending the goal.
+  `tasks[]` are `{ id, title, status: pending|done, dependsOn?, outcome? }`.
+  Task ids and task dependency references are phase-local: `task.dependsOn` names existing task ids in
+  the same work phase, never a task in another phase. A done task carries a non-empty `outcome`; a pending
+  task has no outcome.
+- Optional `decisions[]` — each `{ id, question, recommendation?, options?, status: open|decided, answer?, askedAt, decidedAt? }`. When `options` is present it is a non-empty list of distinct entries and `recommendation` must be one of them; the answer stays free text because the host always offers a free-form reply. Open decisions have no answer or decidedAt; decided decisions require both. Decision ids are short lowercase ids. Absent and empty arrays remain distinct on disk, as do absent and empty `awaitsDecision` arrays. Old plans acquire neither field on read/write. Only linked pending or in-progress phases wait; an unrelated open decision does not pause the goal.
+- `criteria[]` — each `{ id, scenario, surface, presented?, expectedEvidence, capturedEvidence, status: open|met }`.
+  `scenario` is the `--criterion` text and `surface` is one of `logic` (default),
+  `web`, `tui` or `desktop`, set by `add-criterion --surface` on a session-bound plan
+  (`init` refuses `--surface`). `presented: "native"` is legal only with
+  `surface: "desktop"` and activates the soft native observation advisory.
+  `web`, `tui` and `desktop` make the QA receipt
+  mandatory through validation on schemaVersion 2+ plans with a final gate and through
+  the final-gate spawn guard on any plan with a recorded finalGate; otherwise the value
+  is a classification. Builds older than 0.2.37 drop `desktop` on read and erase it on
+  their next write; builds older than 0.2.38 do the same to `presented`. `id` is auto-assigned and `status` is derived. `expectedEvidence` has no
+  CLI flag on `add-criterion` — it stays `""` unless set via a steering batch op or a
+  hand edit — so do not plan on passing it. `capturedEvidence` is written by
+  `meet-criterion --evidence`. A criterion only reaches `met` when `capturedEvidence`
+  is non-empty (fresh proof, not memory).
+- `host` — `GoalplanHostLink { armed, armedAt, source: freeze|none }`. `armed` is provenance,
+  intended to read true only after a freeze-boundary arm (the MAIN session created a host goal).
+  No shipped CLI flips it automatically and crw never writes the goal DB itself; treat it
+  as the slot that records that boundary, not an auto-managed flag.
+
+### CLI surface
+
+- `crw pabcd loop init --objective <text> [--session <id>] [--criterion <text>]... [--schema-version <n>] [--cwd <path>]` —
+  creates the local artifact and binds it to the session when a session id is
+  supplied; it never writes the host goal DB. Repeat `--criterion` once per
+  criterion to register them at init.
+- `crw pabcd loop show (--slug <slug> | --objective <text> | --session <id>) [--cwd <path>]` — renders the current plan summary.
+- `crw pabcd loop validate (--slug <slug> | --objective <text> | --session <id>) [--cwd <path>]` — runs the E8 quality gate; it FAILS
+  unless the plan is complete and every `met` criterion carries `capturedEvidence`.
+- `crw pabcd loop steer --session <id> --batch-json <path-or-json> [--cwd <path>]`
+- `crw pabcd loop add-criterion --session <id> --criterion <text> [--surface logic|web|tui|desktop] [--presented native] [--cwd <path>]` —
+  registers a criterion whose scenario is the `--criterion` text. There is no `--id`:
+  ids are assigned as `c-1`, `c-2`, ... (max existing `c-N` + 1, in registration
+  order). A duplicate scenario text is rejected. `--presented native` requires `--surface desktop`.
+- `crw pabcd loop add-work-phase --session <id> --id <id> --title <text> [--depends-on <id>]... [--cwd <path>]`
+- `crw pabcd loop ready (--slug <slug> | --objective <text> | --session <id>) [--json] [--cwd <path>]`
+- `crw pabcd loop add-task --session <id> --work-phase <id> --id <id> --title <text> [--depends-on <task-id>]... [--cwd <path>]`
+- `crw pabcd loop complete-task --session <id> --work-phase <id> --id <id> --outcome <text> [--cwd <path>]`
+- `crw pabcd loop ask --session <id> --id <id> --question <text> [--recommendation <text>] [--option <text>]... [--work-phase <id>]... [--cwd <path>]` — record a question after sending it through the host. It never sends a message. Name each dependent phase.
+- `crw pabcd loop decide --session <id> --id <id> --answer <text> [--cwd <path>]` — record the user reply. This changes only the decision record; phase status and blockedReason stay as they were.
+- `crw pabcd loop meet-criterion --session <id> --id <id> --evidence <text> [--cwd <path>]` — `--id` takes
+  a generated `c-N` id; read it from `crw pabcd loop show` or the goalplan file.
+
+The parser rejects unknown flags, stray positionals, missing values, and flags belonging to another verb before dispatch. Every value flag also accepts `--flag=value`, which is the way to pass a value that starts with `--`.
+
+`ready --json` includes `openDecisions` and `awaitingDecisions` when the plan has a decisions field; `show` displays each open question and its waiting phases. At IDLE, Stop releases when every remaining phase and unmet criterion waits on an open user decision; the goal remains active and completion is still gated.
+
+Repeat `--depends-on` once per prerequisite; comma-separated values are one id. Existing dependencies are
+not edited after creation. `complete-task` and `meet-criterion` require non-empty proof text.
+
+Ledger events are `created`, `workphase_started`, `workphase_done`, `task_done`, `criterion_met`,
+`dependency_registered`, and `host_armed`. `dependency_registered` records only accepted definitions.
+
+### Goal state
+
+The host owns goal state in `goals_1.sqlite`; crw reads it read-only to decide
+HITL vs HOTL. A goalplan records work phases, criteria, evidence, and assumptions; it
+is not another goal database.
+
+## HOTL resource bounds
+
+Goal-mode loops are unattended. The P-phase loop-spec for each HOTL work-phase must
+state the tool/credential scope, write scope, token/cost budget, and wall-clock bound.
+For C4 surfaces, an unstated unattended scope is an ESCALATE-class omission: stop and
+ask before starting or continuing the loop. Hitting a resource bound is
+`BUDGET_EXHAUSTED`, not `DONE`.
