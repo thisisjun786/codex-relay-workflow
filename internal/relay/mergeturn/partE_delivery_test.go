@@ -31,20 +31,23 @@ type wakeHost struct {
 func newWakeHost(clock *delivery.FakeClock) *wakeHost {
 	return &wakeHost{clock: clock, turns: map[string][]delivery.TurnInfo{}, items: map[string][]string{}, operations: map[string]delivery.Obj{}}
 }
-func (*wakeHost) ReadThread(string) (delivery.ThreadFacts, error) {
+func (*wakeHost) ReadThread(context.Context, string) (delivery.ThreadFacts, error) {
 	yes := true
 	return delivery.ThreadFacts{RuntimeStatus: "idle", CanAcceptInput: &yes}, nil
 }
-func (*wakeHost) IsArchived(string, any) (*bool, error) { no := false; return &no, nil }
-func (*wakeHost) ReadGoalStatus(string) (any, error)    { return nil, nil }
-func (h *wakeHost) ListTurnIDs(thread string, _ int) ([]any, error) {
+func (*wakeHost) IsArchived(context.Context, string, any) (*bool, error) {
+	no := false
+	return &no, nil
+}
+func (*wakeHost) ReadGoalStatus(context.Context, string) (any, error) { return nil, nil }
+func (h *wakeHost) ListTurnIDs(_ context.Context, thread string, _ int) ([]any, error) {
 	ids := []any{}
 	for _, v := range h.turns[thread] {
 		ids = append(ids, v.TurnID)
 	}
 	return ids, nil
 }
-func (h *wakeHost) ReadTurn(thread, turn string) (*delivery.TurnInfo, error) {
+func (h *wakeHost) ReadTurn(_ context.Context, thread, turn string) (*delivery.TurnInfo, error) {
 	for _, v := range h.turns[thread] {
 		if v.TurnID == turn {
 			return &v, nil
@@ -52,7 +55,7 @@ func (h *wakeHost) ReadTurn(thread, turn string) (*delivery.TurnInfo, error) {
 	}
 	return nil, nil
 }
-func (h *wakeHost) SendMessage(requestID, thread, message string, _ *delivery.TaskSettings) (delivery.Obj, error) {
+func (h *wakeHost) SendMessage(_ context.Context, requestID, thread, message string, _ *delivery.TaskSettings) (delivery.Obj, error) {
 	h.sends++
 	id := fmt.Sprintf("turn-%s-%d", thread, h.sends)
 	now := h.clock.Now()
@@ -62,8 +65,10 @@ func (h *wakeHost) SendMessage(requestID, thread, message string, _ *delivery.Ta
 	h.operations[requestID] = out
 	return out, nil
 }
-func (h *wakeHost) GetOperation(id string) (delivery.Obj, error) { return h.operations[id], nil }
-func (h *wakeHost) FindToken(thread, token string, _ int, _ bool) (delivery.TokenScan, error) {
+func (h *wakeHost) GetOperation(_ context.Context, id string) (delivery.Obj, error) {
+	return h.operations[id], nil
+}
+func (h *wakeHost) FindToken(_ context.Context, thread, token string, _ int, _ bool) (delivery.TokenScan, error) {
 	for _, item := range h.items[thread] {
 		if strings.Contains(item, token) {
 			return delivery.TokenScan{Found: true}, nil
@@ -71,7 +76,7 @@ func (h *wakeHost) FindToken(thread, token string, _ int, _ bool) (delivery.Toke
 	}
 	return delivery.TokenScan{Exhausted: true}, nil
 }
-func (h *wakeHost) FindDispatchedTurn(thread, turn string, _ float64) (delivery.TurnPresence, error) {
+func (h *wakeHost) FindDispatchedTurn(_ context.Context, thread, turn string, _ float64) (delivery.TurnPresence, error) {
 	for _, v := range h.turns[thread] {
 		if v.TurnID == turn {
 			return delivery.TurnPresence{Finding: delivery.TurnPresent, Turn: &v}, nil
@@ -79,13 +84,15 @@ func (h *wakeHost) FindDispatchedTurn(thread, turn string, _ float64) (delivery.
 	}
 	return delivery.TurnPresence{Finding: delivery.TurnAbsent}, nil
 }
-func (h *wakeHost) FindTokenSince(thread, token string, _ []string, _ int) (delivery.TokenScan, error) {
-	return h.FindToken(thread, token, 0, true)
+func (h *wakeHost) FindTokenSince(_ context.Context, thread, token string, _ []string, _ int) (delivery.TokenScan, error) {
+	return h.FindToken(context.Background(), thread, token, 0, true)
 }
-func (h *wakeHost) FindTokenInTurn(thread, token, turn string, _ int) (delivery.TokenScan, error) {
-	return h.FindToken(thread, token, 0, true)
+func (h *wakeHost) FindTokenInTurn(_ context.Context, thread, token, turn string, _ int) (delivery.TokenScan, error) {
+	return h.FindToken(context.Background(), thread, token, 0, true)
 }
-func (*wakeHost) RecipientFingerprint(string) (string, error) { return strings.Repeat("0", 64), nil }
+func (*wakeHost) RecipientFingerprint(context.Context, string) (string, error) {
+	return strings.Repeat("0", 64), nil
+}
 
 type wakeParity struct {
 	t     *testing.T

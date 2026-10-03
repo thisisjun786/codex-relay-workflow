@@ -52,7 +52,7 @@ func observeTurn(ctx context.Context, state, socket, thread, turn string) (statu
 		return "", err
 	}
 	defer func() { err = errors.Join(err, a.Close()) }()
-	observed, err := a.ReadTurn(thread, turn)
+	observed, err := a.ReadTurn(ctx, thread, turn)
 	if err != nil {
 		return "", unconfirmedTurn(turn, err)
 	}

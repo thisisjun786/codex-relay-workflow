@@ -97,7 +97,7 @@ type receiptPayload struct {
 
 func (f *intakeFixture) readyPayload(relationship Relationship, paths []string, attempt int, turn TurnReference) receiptPayload {
 	f.t.Helper()
-	entries, err := BuildManifest(paths, []string{f.root})
+	entries, err := BuildManifest(context.Background(), paths, []string{f.root})
 	if err != nil {
 		f.t.Fatal(err)
 	}

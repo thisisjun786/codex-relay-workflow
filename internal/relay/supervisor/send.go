@@ -343,7 +343,7 @@ func (c *Channel) attempt(ctx context.Context, id string, adapter SendAdapter, n
 	if c.clockISO != nil {
 		at = c.clockISO()
 	}
-	lifecycle := delivery.Observe(adapter, r.Recipient, nil, true)
+	lifecycle := delivery.Observe(ctx, adapter, r.Recipient, nil, true)
 	lifecycleNow := now
 	if c.clockISO != nil {
 		if stamp, parseErr := time.Parse("2006-01-02T15:04:05.000000+00:00", at); parseErr == nil {
@@ -528,7 +528,7 @@ func (c *Channel) attempt(ctx context.Context, id string, adapter SendAdapter, n
 	if !transportStarted {
 		return nil, nil
 	}
-	receipt, sendErr := adapter.SendMessage(requestID, r.Recipient, message, settings)
+	receipt, sendErr := adapter.SendMessage(ctx, requestID, r.Recipient, message, settings)
 	facts := delivery.Classify(receipt)
 	if sendErr != nil {
 		facts = delivery.Classify(delivery.Obj{{Key: "requestId", Value: requestID}, {Key: "status", Value: delivery.OutcomeUnknown}, {Key: "error", Value: fmt.Sprintf("%T: %v", sendErr, sendErr)}})

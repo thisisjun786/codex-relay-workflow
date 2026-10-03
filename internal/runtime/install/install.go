@@ -233,7 +233,7 @@ func insideARuntime(dest, pointerPath string) string {
 // creates and claims it - deciding, creating and claiming under one .crw-lock, because between
 // an exclusive mkdir and its claim an empty claimless directory reads as adoptable.
 func (r *run) take(rec Object) (Object, int, string) {
-	lock, err := record.LockContext(r.ctx, r.environment, 0)
+	lock, err := record.Lock(r.ctx, r.environment, 0)
 	if err != nil {
 		detail := "another run is deciding what to do with this directory: " + err.Error()
 		if r.ctx.Err() != nil {
@@ -305,7 +305,7 @@ func (r *run) installed(standing []contract.Field) (Object, int, string) {
 		result, code := refusedResult(r.command, detail, note, append(append([]contract.Field{}, standing...), extra...)...)
 		return result, code, ""
 	}
-	exclusive, err := record.PromoteContext(r.ctx, r.o.RecordPath, 0)
+	exclusive, err := record.Promote(r.ctx, r.o.RecordPath, 0)
 	if err != nil {
 		return refuse("another run holds the promotion lock, so whether the host selects this runtime was not read on a record nobody is changing: "+err.Error(), "nothing was built and nothing was written.")
 	}
@@ -388,7 +388,7 @@ func (r *run) reclaim(standing []contract.Field) (Object, int, bool) {
 		result, code := refusedResult(r.command, detail, note, append(append([]contract.Field{}, standing...), extra...)...)
 		return result, code, false
 	}
-	exclusive, err := record.PromoteContext(r.ctx, r.o.RecordPath, 0)
+	exclusive, err := record.Promote(r.ctx, r.o.RecordPath, 0)
 	if err != nil {
 		if r.ctx.Err() != nil {
 			return keep(interrupted(err), "nothing was removed, built or written.")
@@ -501,13 +501,13 @@ func (r *run) build() (Object, int) {
 		installs = append(installs, field(c.Name, entry))
 		delta.Installs = append(delta.Installs, record.Named{Component: c.Name, Entry: entry})
 	}
-	if written, err := record.UpdateContext(r.ctx, r.o.RecordPath, definition.Version, delta); err != nil || !written.Usable() {
+	if written, err := record.Update(r.ctx, r.o.RecordPath, definition.Version, delta); err != nil || !written.Usable() {
 		return r.failed("record the install entries", failure{reading: &written, err: err})
 	}
 	r.step("record the install entries", true)
 	measurement, points := r.measure(installs, digest)
 	if len(points) > 0 {
-		if appended, err := record.UpdateContext(r.ctx, r.o.RecordPath, definition.Version, record.Delta{Points: points}); err != nil || !appended.Usable() {
+		if appended, err := record.Update(r.ctx, r.o.RecordPath, definition.Version, record.Delta{Points: points}); err != nil || !appended.Usable() {
 			return r.failed("record the measured point", failure{reading: &appended, err: err})
 		}
 	}
@@ -664,7 +664,7 @@ func pointerObject(path string) Object {
 // before the pointer moves, and the pointer is read back rather than trusted.
 func (r *run) promote(installs, measurement Object) (Object, int) {
 	r.promoting = true
-	exclusive, err := record.PromoteContext(r.ctx, r.o.RecordPath, 0)
+	exclusive, err := record.Promote(r.ctx, r.o.RecordPath, 0)
 	if err != nil {
 		r.step("take the promotion lock", false, field("detail", err.Error()))
 		return r.failed("take the promotion lock", failure{err: r.ctx.Err()})
@@ -777,7 +777,7 @@ func (r *run) promote(installs, measurement Object) (Object, int) {
 // resume finishes a promotion a previous run committed and did not live to complete: the record
 // selects this runtime and its claim never settled. Nothing is rebuilt or removed.
 func (r *run) resume() (Object, int) {
-	exclusive, err := record.PromoteContext(r.ctx, r.o.RecordPath, 0)
+	exclusive, err := record.Promote(r.ctx, r.o.RecordPath, 0)
 	if err != nil {
 		detail := "another run holds the promotion lock: " + err.Error()
 		if r.ctx.Err() != nil {
@@ -864,7 +864,7 @@ func (r *run) resume() (Object, int) {
 // selection and moving the pointer - are variables only so that tests can make them fail and
 // prove that everything before them is put back.
 var (
-	commitSelection = record.UpdateContext
+	commitSelection = record.Update
 	placePointer    = pointer.Place
 )
 
@@ -1032,7 +1032,8 @@ func restorePointer(o Options, path string, before pointer.Answer, environment s
 		if wanted != nil {
 			delta = record.Delta{RestorePointer: &record.Restore{Wrote: path, Found: wanted}}
 		}
-		if _, err := record.Update(o.RecordPath, definition.Version, delta); err != nil {
+		// The restore after a failed swap finishes whatever the context says: a cancelled install must still undo itself.
+		if _, err := record.Update(context.Background(), o.RecordPath, definition.Version, delta); err != nil {
 			verified = false
 			ownership = "unreadable"
 			detail += ", but writing the ownership record failed: " + err.Error()
@@ -1073,7 +1074,8 @@ func restoreSelection(o Options, previous Object, wrote []contract.Field, outgoi
 	if len(movedOn) == 0 {
 		delta.Outgoing = &record.Outgoing{Value: outgoingBefore}
 	}
-	written, err := record.Update(o.RecordPath, definition.Version, delta)
+	// Part of the same restore: it finishes whatever the context says.
+	written, err := record.Update(context.Background(), o.RecordPath, definition.Version, delta)
 	if err != nil || !written.Usable() {
 		return Object{field("selection", nil), field("restored", []any{}), field("detail", "the selection could not be put back")}
 	}
@@ -1111,7 +1113,8 @@ func settleClaim(o Options, environment, issue string) Object {
 	var state, selects, names, protected any
 	var snapshotDetail any
 	finishable := false
-	if exclusive, lockErr := record.Promote(o.RecordPath, SettleSnapshotTimeout); lockErr != nil {
+	// The snapshot after a settled claim is bounded by SettleSnapshotTimeout, and runs whatever the context says.
+	if exclusive, lockErr := record.Promote(context.Background(), o.RecordPath, SettleSnapshotTimeout); lockErr != nil {
 		snapshotDetail = "a consistent snapshot of what this host selects could not be taken: " + lockErr.Error()
 	} else {
 		current := record.Load(o.RecordPath, definition.Version)

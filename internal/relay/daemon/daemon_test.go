@@ -122,7 +122,7 @@ type observationHost struct {
 }
 
 func (h *observationHost) Close() error { return nil }
-func (h *observationHost) ReadTurn(thread, turn string) (*delivery.TurnInfo, error) {
+func (h *observationHost) ReadTurn(_ context.Context, thread, turn string) (*delivery.TurnInfo, error) {
 	h.reads = append(h.reads, turn)
 	if h.onRead != nil {
 		h.onRead()

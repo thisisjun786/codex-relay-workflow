@@ -603,7 +603,7 @@ func TestRunCharacterization_FinalGuardRefusesByTheHostsAnswer(t *testing.T) {
 func TestRunCharacterization_IntentConflictRefusesBeforeAnyHostEffect(t *testing.T) {
 	x := newCharRun(t)
 	id := x.identity()
-	_, err := delivery.DeclareIntent(id.MarkerRoot, delivery.IntentDeclaration{Workspace: id.Workspace, DispatchRequestID: id.DispatchRequestID, IssueKey: id.IssueKey, DeclaredAt: "2026-09-26T00:00:00.000000+00:00", CriteriaSource: "issue:other", BaselineRevision: x.req["baselineRevision"], AuthorizedSettings: deliveryValue(pyjson.Map(pyjson.Map(x.req["child"])["settings"])), DBPath: x.store.Path})
+	_, err := delivery.DeclareIntent(context.Background(), id.MarkerRoot, delivery.IntentDeclaration{Workspace: id.Workspace, DispatchRequestID: id.DispatchRequestID, IssueKey: id.IssueKey, DeclaredAt: "2026-09-26T00:00:00.000000+00:00", CriteriaSource: "issue:other", BaselineRevision: x.req["baselineRevision"], AuthorizedSettings: deliveryValue(pyjson.Map(pyjson.Map(x.req["child"])["settings"])), DBPath: x.store.Path})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -637,7 +637,7 @@ func TestRunCharacterization_MarkerBoundToAnotherTaskIsRefusedAtBinding(t *testi
 	x := newCharRun(t)
 	id := x.identity()
 	x.fake.onCreate = func() {
-		if _, err := delivery.BindIdentity(id.MarkerRoot, id.Workspace, delivery.AssignmentID(id.DispatchRequestID), "intruder", "intruder", "2026-09-26T00:00:00.000000+00:00"); err != nil {
+		if _, err := delivery.BindIdentity(context.Background(), id.MarkerRoot, id.Workspace, delivery.AssignmentID(id.DispatchRequestID), "intruder", "intruder", "2026-09-26T00:00:00.000000+00:00"); err != nil {
 			t.Error(err)
 		}
 	}

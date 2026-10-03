@@ -84,7 +84,7 @@ func TestDeliverableStateHonorsTheContext(t *testing.T) {
 	if err := os.WriteFile(artifact, []byte("the delivered bytes"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	entries, err := BuildManifest([]string{artifact}, []string{work})
+	entries, err := BuildManifest(context.Background(), []string{artifact}, []string{work})
 	if err != nil {
 		t.Fatal(err)
 	}

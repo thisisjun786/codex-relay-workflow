@@ -601,13 +601,8 @@ func fieldOfAny(o Obj, key string) any { v, _ := o.Lookup(key); return v }
 // SelectAssignment is select_assignment: which assignment under this workspace a session's turn
 // is about. A claim naming THIS assignment is consulted before recency. It returns ("", nil,
 // ["workspace"]) when the workspace could not be listed and ("", nil, []) when nothing is
-// selectable.
-func SelectAssignment(root, workspace string, sessionID any) (string, Obj, []string, error) {
-	return SelectAssignmentContext(context.Background(), root, workspace, sessionID)
-}
-
-// SelectAssignmentContext uses the same selection rules with a caller-owned deadline.
-func SelectAssignmentContext(ctx context.Context, root, workspace string, sessionID any) (string, Obj, []string, error) {
+// selectable. A deadline on ctx is the caller's.
+func SelectAssignment(ctx context.Context, root, workspace string, sessionID any) (string, Obj, []string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", nil, nil, err
 	}
@@ -623,7 +618,7 @@ func SelectAssignmentContext(ctx context.Context, root, workspace string, sessio
 		if err := ctx.Err(); err != nil {
 			return "", nil, nil, err
 		}
-		facts, problems := ReadAssignmentContext(ctx, directory)
+		facts, problems := ReadAssignment(ctx, directory)
 		_, hasIntent := facts.Lookup("intent")
 		unreadableIntent := false
 		for _, p := range problems {
@@ -743,12 +738,16 @@ func pyEqual(a, b any) bool {
 }
 
 // publishOrCompare is _publish_or_compare: whether losing was a replay or a contradiction.
-func publishOrCompare(target string, payload Obj, fields []string, root string, since []string) (string, error) {
-	outcome, err := Publish(target, payload, root)
+func publishOrCompare(ctx context.Context, target string, payload Obj, fields []string, root string, since []string) (string, error) {
+	outcome, err := Publish(ctx, target, payload, root)
 	if err != nil || outcome == Published {
 		return outcome, err
 	}
-	value, status := readFact(target)
+	value, status := readFact(ctx, target)
+	if err := ctx.Err(); err != nil {
+		// A read a stop ended says nothing about the fact that is there.
+		return "", err
+	}
 	existing, isRecord := value.(Obj)
 	if status != factPresent || !isRecord {
 		return Conflict, nil
@@ -786,13 +785,13 @@ func nextIndex(directory, kind string) (int, bool) {
 }
 
 // publishNumbered is _publish_numbered: the next numbered fact, re-listing on every loss.
-func publishNumbered(directory, kind string, payload Obj, root string) (string, error) {
+func publishNumbered(ctx context.Context, directory, kind string, payload Obj, root string) (string, error) {
 	for range 64 {
 		index, readable := nextIndex(directory, kind)
 		if !readable {
 			return "", registrationError(RelationshipConflict, "the "+kind+" directory cannot be read, so no slot can be allocated in it")
 		}
-		outcome, err := Publish(filepath.Join(directory, kind, strconv.Itoa(index)+".json"), payload, root)
+		outcome, err := Publish(ctx, filepath.Join(directory, kind, strconv.Itoa(index)+".json"), payload, root)
 		if err != nil {
 			return "", err
 		}
@@ -811,7 +810,7 @@ type IntentDeclaration struct {
 
 // DeclareIntent is declare_intent: the fact that exists BEFORE the task does. The dispatch
 // request id is stored only as its sha256.
-func DeclareIntent(root string, d IntentDeclaration) (Obj, error) {
+func DeclareIntent(ctx context.Context, root string, d IntentDeclaration) (Obj, error) {
 	if !Named(d.DispatchRequestID) {
 		return nil, registrationError(UnboundGeneration, "an intent needs an exact dispatch request id")
 	}
@@ -832,7 +831,7 @@ func DeclareIntent(root string, d IntentDeclaration) (Obj, error) {
 	if truthy(d.DBPath) {
 		payload = append(payload, F{Key: "dbPath", Value: pyStr(d.DBPath)})
 	}
-	outcome, err := publishOrCompare(filepath.Join(directory, "intent.json"), payload, intentFields, root, nil)
+	outcome, err := publishOrCompare(ctx, filepath.Join(directory, "intent.json"), payload, intentFields, root, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -840,7 +839,7 @@ func DeclareIntent(root string, d IntentDeclaration) (Obj, error) {
 }
 
 // RecordAttempt is record_attempt: what the creation call returned (accepted, unknown, failed).
-func RecordAttempt(root, workspace string, assignment any, outcome, at string, taskID any) (Obj, error) {
+func RecordAttempt(ctx context.Context, root, workspace string, assignment any, outcome, at string, taskID any) (Obj, error) {
 	valid := false
 	for _, o := range AttemptOutcomes {
 		valid = valid || o == outcome
@@ -856,7 +855,7 @@ func RecordAttempt(root, workspace string, assignment any, outcome, at string, t
 	if taskID != nil {
 		payload = append(payload, F{Key: "taskId", Value: taskID})
 	}
-	factID, err := publishNumbered(directory, "attempts", payload, root)
+	factID, err := publishNumbered(ctx, directory, "attempts", payload, root)
 	if err != nil {
 		return nil, err
 	}
@@ -865,7 +864,7 @@ func RecordAttempt(root, workspace string, assignment any, outcome, at string, t
 
 // BindIdentity is bind: the intent bound to the real native task id, atomic and idempotent.
 // A losing different identity is RECORDED as a conflict, never swallowed.
-func BindIdentity(root, workspace string, assignment any, sessionID, taskID any, at string) (Obj, error) {
+func BindIdentity(ctx context.Context, root, workspace string, assignment any, sessionID, taskID any, at string) (Obj, error) {
 	if !Named(sessionID) || !Named(taskID) {
 		return nil, registrationError(UnboundGeneration, "a bind needs an exact session id and task id; a record naming nothing binds nothing")
 	}
@@ -873,14 +872,18 @@ func BindIdentity(root, workspace string, assignment any, sessionID, taskID any,
 	if err != nil {
 		return nil, err
 	}
-	outcome, err := Publish(filepath.Join(directory, "bound.json"), Obj{{Key: "sessionId", Value: sessionID}, {Key: "taskId", Value: taskID}, {Key: "at", Value: at}}, root)
+	outcome, err := Publish(ctx, filepath.Join(directory, "bound.json"), Obj{{Key: "sessionId", Value: sessionID}, {Key: "taskId", Value: taskID}, {Key: "at", Value: at}}, root)
 	if err != nil {
 		return nil, err
 	}
 	if outcome == Published {
 		return Obj{{Key: "assignmentId", Value: assignment}, {Key: "outcome", Value: Bound}, {Key: "sessionId", Value: sessionID}, {Key: "taskId", Value: taskID}}, nil
 	}
-	marker, unreadable := ReadAssignment(directory)
+	marker, unreadable := ReadAssignment(ctx, directory)
+	if err := ctx.Err(); err != nil {
+		// The marker a stop left unread is not a bind that cannot be read.
+		return nil, err
+	}
 	winnerValue, _ := marker.Lookup("bound")
 	winner, ok := winnerValue.(Obj)
 	if !ok {
@@ -893,7 +896,7 @@ func BindIdentity(root, workspace string, assignment any, sessionID, taskID any,
 	if SameIdentity(fieldOf(winner, "sessionId"), sessionID) && SameIdentity(fieldOf(winner, "taskId"), taskID) {
 		return Obj{{Key: "assignmentId", Value: assignment}, {Key: "outcome", Value: Unchanged}, {Key: "sessionId", Value: sessionID}, {Key: "taskId", Value: taskID}}, nil
 	}
-	factID, err := publishNumbered(directory, "conflicts", Obj{{Key: "attemptedSessionId", Value: sessionID}, {Key: "attemptedTaskId", Value: taskID}, {Key: "loserProcess", Value: strconv.Itoa(os.Getpid())}, {Key: "at", Value: at}}, root)
+	factID, err := publishNumbered(ctx, directory, "conflicts", Obj{{Key: "attemptedSessionId", Value: sessionID}, {Key: "attemptedTaskId", Value: taskID}, {Key: "loserProcess", Value: strconv.Itoa(os.Getpid())}, {Key: "at", Value: at}}, root)
 	if err != nil {
 		return nil, err
 	}
@@ -955,7 +958,7 @@ func RegisterRelationship(ctx context.Context, root, workspace string, assignmen
 		case DispatchAbsent:
 			return registrationError(RelationshipConflict, "the relay has no generation of relationship "+relationshipID+" opened under this assignment's dispatch request id, so it is not this assignment's relationship")
 		}
-		outcome, err := publishOrCompare(filepath.Join(directory, "relationship.json"), Obj{{Key: "relationshipId", Value: relationshipID}, {Key: "executionGeneration", Value: generation}, {Key: "at", Value: at}}, []string{"relationshipId"}, root, []string{"executionGeneration"})
+		outcome, err := publishOrCompare(ctx, filepath.Join(directory, "relationship.json"), Obj{{Key: "relationshipId", Value: relationshipID}, {Key: "executionGeneration", Value: generation}, {Key: "at", Value: at}}, []string{"relationshipId"}, root, []string{"executionGeneration"})
 		if err != nil {
 			return err
 		}
@@ -966,7 +969,7 @@ func RegisterRelationship(ctx context.Context, root, workspace string, assignmen
 }
 
 // PublishResolution is publish_resolution: adjudicate named evidence; resolutions accumulate.
-func PublishResolution(root, workspace string, assignment, chosenTaskID, chosenSessionID, reason any, at string, adjudicated []Obj) (Obj, error) {
+func PublishResolution(ctx context.Context, root, workspace string, assignment, chosenTaskID, chosenSessionID, reason any, at string, adjudicated []Obj) (Obj, error) {
 	directory, err := assignmentDirectory(root, workspace, assignment)
 	if err != nil {
 		return nil, err
@@ -975,7 +978,7 @@ func PublishResolution(root, workspace string, assignment, chosenTaskID, chosenS
 	for i, entry := range adjudicated {
 		entries[i] = Obj{{Key: "factId", Value: fieldOf(entry, "factId")}, {Key: "digest", Value: fieldOf(entry, "digest")}}
 	}
-	factID, err := publishNumbered(directory, "resolutions", Obj{{Key: "chosenTaskId", Value: chosenTaskID}, {Key: "chosenSessionId", Value: chosenSessionID}, {Key: "reason", Value: reason}, {Key: "at", Value: at}, {Key: "adjudicated", Value: entries}}, root)
+	factID, err := publishNumbered(ctx, directory, "resolutions", Obj{{Key: "chosenTaskId", Value: chosenTaskID}, {Key: "chosenSessionId", Value: chosenSessionID}, {Key: "reason", Value: reason}, {Key: "at", Value: at}, {Key: "adjudicated", Value: entries}}, root)
 	if err != nil {
 		return nil, err
 	}
@@ -984,7 +987,7 @@ func PublishResolution(root, workspace string, assignment, chosenTaskID, chosenS
 
 // PublishClaim is publish_claim: the child's own assertion that it is this assignment's session,
 // refused where the dispatch it names does not hash to the assignment.
-func PublishClaim(root, workspace string, assignment, sessionID any, dispatchRequestID string, firstTurnID any, at string) (Obj, error) {
+func PublishClaim(ctx context.Context, root, workspace string, assignment, sessionID any, dispatchRequestID string, firstTurnID any, at string) (Obj, error) {
 	session, err := checkedIdentity(sessionID, "session id")
 	if err != nil {
 		return nil, err
@@ -998,7 +1001,7 @@ func PublishClaim(root, workspace string, assignment, sessionID any, dispatchReq
 	if err != nil {
 		return nil, err
 	}
-	outcome, err := publishOrCompare(filepath.Join(directory, "claims", session, claimFile), Obj{{Key: "dispatchRequestId", Value: dispatchRequestID}, {Key: "sessionId", Value: session}, {Key: "firstTurnId", Value: firstTurnID}, {Key: "at", Value: at}}, []string{"dispatchRequestId", "sessionId"}, root, nil)
+	outcome, err := publishOrCompare(ctx, filepath.Join(directory, "claims", session, claimFile), Obj{{Key: "dispatchRequestId", Value: dispatchRequestID}, {Key: "sessionId", Value: session}, {Key: "firstTurnId", Value: firstTurnID}, {Key: "at", Value: at}}, []string{"dispatchRequestId", "sessionId"}, root, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1007,7 +1010,7 @@ func PublishClaim(root, workspace string, assignment, sessionID any, dispatchReq
 
 // PublishDisposition is publish_disposition: what this turn declared, at the path its Stop
 // identity derives, from the exhaustive vocabulary only.
-func PublishDisposition(root, workspace string, assignment, sessionID, turnID any, outcome, at string) (Obj, error) {
+func PublishDisposition(ctx context.Context, root, workspace string, assignment, sessionID, turnID any, outcome, at string) (Obj, error) {
 	session, err := checkedIdentity(sessionID, "session id")
 	if err != nil {
 		return nil, err
@@ -1027,7 +1030,7 @@ func PublishDisposition(root, workspace string, assignment, sessionID, turnID an
 	if err != nil {
 		return nil, err
 	}
-	published, err := publishOrCompare(filepath.Join(directory, "dispositions", session, turn+".json"), Obj{{Key: "sessionId", Value: session}, {Key: "turnId", Value: turn}, {Key: "outcome", Value: outcome}, {Key: "at", Value: at}}, []string{"sessionId", "turnId", "outcome"}, root, nil)
+	published, err := publishOrCompare(ctx, filepath.Join(directory, "dispositions", session, turn+".json"), Obj{{Key: "sessionId", Value: session}, {Key: "turnId", Value: turn}, {Key: "outcome", Value: outcome}, {Key: "at", Value: at}}, []string{"sessionId", "turnId", "outcome"}, root, nil)
 	if err != nil {
 		return nil, err
 	}

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"errors"
 	"os"
 	"syscall"
@@ -85,7 +86,8 @@ func (h *AuthorizedFile) Rebaseline() error {
 	return err
 }
 func HashAuthorized(h *AuthorizedFile, between func() error) (string, int64, error) {
-	first, size, err := hashDescriptor(int(h.File.Fd()))
+	// An authorized read is bracketed by its caller's own checks and finishes whatever the context says.
+	first, size, err := hashDescriptor(context.Background(), int(h.File.Fd()))
 	if err != nil {
 		return "", 0, err
 	}
@@ -94,7 +96,7 @@ func HashAuthorized(h *AuthorizedFile, between func() error) (string, int64, err
 			return "", 0, err
 		}
 	}
-	second, again, err := hashDescriptor(int(h.File.Fd()))
+	second, again, err := hashDescriptor(context.Background(), int(h.File.Fd()))
 	if err != nil {
 		return "", 0, err
 	}

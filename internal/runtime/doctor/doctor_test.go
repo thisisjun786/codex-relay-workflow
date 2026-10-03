@@ -305,7 +305,7 @@ func goHost(t *testing.T, point bool) (*host, string, string) {
 				{Key: "installDigest", Value: digest}, {Key: "codexCli", Value: "codex-cli 0.154.0"}, {Key: "host", Value: hostname}, {Key: "appServer", Value: appServer}}})
 		}
 	}
-	if _, err := record.Update(h.record, 1, delta); err != nil {
+	if _, err := record.Update(context.Background(), h.record, 1, delta); err != nil {
 		t.Fatal(err)
 	}
 	h.documents(t, h.stopSettings(t, nil), h.bridgeRecord(nil))
@@ -583,7 +583,7 @@ func TestDoctorOnAGoBinaryHost(t *testing.T) {
 	if got := at(report, "components", "codex-session-relay", "class"); got != "conflict" || at(report, "runtime", "agrees") != false {
 		t.Errorf("a pointer moved off the recorded selection: %v", got)
 	}
-	if _, err := record.Update(h.record, 1, record.Delta{Select: []contract.Field{{Key: "codex-session-relay", Value: filepath.Join(other, "bin")}, {Key: "codex-thread-bridge", Value: filepath.Join(other, "bin")}}}); err != nil {
+	if _, err := record.Update(context.Background(), h.record, 1, record.Delta{Select: []contract.Field{{Key: "codex-session-relay", Value: filepath.Join(other, "bin")}, {Key: "codex-thread-bridge", Value: filepath.Join(other, "bin")}}}); err != nil {
 		t.Fatal(err)
 	}
 	if got := at(h.diagnose(t), "components", "codex-session-relay", "class"); got != "foreign" {
@@ -601,7 +601,7 @@ func TestDoctorReportsAHeldPromotionLockAndPromotionRefuses(t *testing.T) {
 		t.Fatalf("a held promotion lock: %s", golden.Canon(record.Get(report, "promotionLock")))
 	}
 	var busy *record.Busy
-	if _, err := record.Promote(h.record, 100*time.Millisecond); !errors.As(err, &busy) {
+	if _, err := record.Promote(context.Background(), h.record, 100*time.Millisecond); !errors.As(err, &busy) {
 		t.Fatalf("a promotion ran while another held the lock: %v", err)
 	}
 	release()
@@ -834,7 +834,7 @@ func TestDoctorComparesTheAppServerDimension(t *testing.T) {
 		delta.Points = append(delta.Points, record.Named{Component: c, Entry: record.Object{{Key: "exercised", Value: true}, {Key: "install", Value: filepath.Join(dir, "bin")},
 			{Key: "installDigest", Value: digest}, {Key: "codexCli", Value: "codex-cli 0.154.0"}, {Key: "host", Value: hostname}, {Key: "appServer", Value: "app-1"}}})
 	}
-	if _, err := record.Update(h.record, 1, delta); err != nil {
+	if _, err := record.Update(context.Background(), h.record, 1, delta); err != nil {
 		t.Fatal(err)
 	}
 	var asked string

@@ -23,20 +23,20 @@ type bHost struct {
 	now    *float64
 }
 
-func (h *bHost) ReadThread(string) (delivery.ThreadFacts, error) {
+func (h *bHost) ReadThread(context.Context, string) (delivery.ThreadFacts, error) {
 	yes := true
 	return delivery.ThreadFacts{RuntimeStatus: h.status, CanAcceptInput: &yes}, nil
 }
-func (h *bHost) IsArchived(string, any) (*bool, error)  { f := false; return &f, nil }
-func (h *bHost) ReadGoalStatus(string) (any, error)     { return nil, nil }
-func (h *bHost) ListTurnIDs(string, int) ([]any, error) { return nil, nil }
-func (h *bHost) ReadTurn(thread, id string) (*delivery.TurnInfo, error) {
+func (h *bHost) IsArchived(context.Context, string, any) (*bool, error)  { f := false; return &f, nil }
+func (h *bHost) ReadGoalStatus(context.Context, string) (any, error)     { return nil, nil }
+func (h *bHost) ListTurnIDs(context.Context, string, int) ([]any, error) { return nil, nil }
+func (h *bHost) ReadTurn(_ context.Context, thread, id string) (*delivery.TurnInfo, error) {
 	if at, ok := h.turns[thread+"|"+id]; ok {
 		return &delivery.TurnInfo{TurnID: id, Status: "completed", StartedAt: &at}, nil
 	}
 	return nil, nil
 }
-func (h *bHost) SendMessage(id, thread, message string, _ *delivery.TaskSettings) (delivery.Obj, error) {
+func (h *bHost) SendMessage(_ context.Context, id, thread, message string, _ *delivery.TaskSettings) (delivery.Obj, error) {
 	outcome := "accepted"
 	if len(h.script) > 0 {
 		outcome, h.script = h.script[0], h.script[1:]
@@ -55,8 +55,8 @@ func (h *bHost) SendMessage(id, thread, message string, _ *delivery.TaskSettings
 	h.items = append(h.items, [3]string{thread, turn, message})
 	return delivery.Obj{{Key: "requestId", Value: id}, {Key: "status", Value: "accepted"}, {Key: "turnId", Value: turn}}, nil
 }
-func (h *bHost) GetOperation(string) (delivery.Obj, error) { return nil, nil }
-func (h *bHost) FindToken(thread, token string, _ int, _ bool) (delivery.TokenScan, error) {
+func (h *bHost) GetOperation(context.Context, string) (delivery.Obj, error) { return nil, nil }
+func (h *bHost) FindToken(_ context.Context, thread, token string, _ int, _ bool) (delivery.TokenScan, error) {
 	n := 0
 	for i := len(h.items) - 1; i >= 0; i-- {
 		if h.items[i][0] != thread {
@@ -69,16 +69,16 @@ func (h *bHost) FindToken(thread, token string, _ int, _ bool) (delivery.TokenSc
 	}
 	return delivery.TokenScan{Found: false, Exhausted: true, Scanned: n}, nil
 }
-func (h *bHost) FindDispatchedTurn(string, string, float64) (delivery.TurnPresence, error) {
+func (h *bHost) FindDispatchedTurn(context.Context, string, string, float64) (delivery.TurnPresence, error) {
 	return delivery.TurnPresence{}, nil
 }
-func (h *bHost) FindTokenSince(string, string, []string, int) (delivery.TokenScan, error) {
+func (h *bHost) FindTokenSince(context.Context, string, string, []string, int) (delivery.TokenScan, error) {
 	return delivery.TokenScan{}, nil
 }
-func (h *bHost) FindTokenInTurn(string, string, string, int) (delivery.TokenScan, error) {
+func (h *bHost) FindTokenInTurn(context.Context, string, string, string, int) (delivery.TokenScan, error) {
 	return delivery.TokenScan{}, nil
 }
-func (h *bHost) RecipientFingerprint(string) (string, error) { return "", nil }
+func (h *bHost) RecipientFingerprint(context.Context, string) (string, error) { return "", nil }
 
 func sweepAnswer(t *testing.T, value any, err error) any {
 	t.Helper()
@@ -420,9 +420,9 @@ type ownerObservingHost struct {
 	owner string
 }
 
-func (h *ownerObservingHost) SendMessage(id, thread, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
+func (h *ownerObservingHost) SendMessage(_ context.Context, id, thread, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
 	_ = h.store.DB.QueryRow("SELECT lease_owner FROM supervisor_messages WHERE state='sending'").Scan(&h.owner)
-	return h.bHost.SendMessage(id, thread, message, settings)
+	return h.bHost.SendMessage(context.Background(), id, thread, message, settings)
 }
 func TestSweep24b_AutoAndManualLeaseOwners(t *testing.T) {
 	for _, tc := range []struct {

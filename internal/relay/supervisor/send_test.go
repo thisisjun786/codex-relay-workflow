@@ -23,16 +23,16 @@ type sendHost struct {
 	outcome        string
 }
 
-func (h *sendHost) ReadThread(string) (delivery.ThreadFacts, error) {
+func (h *sendHost) ReadThread(context.Context, string) (delivery.ThreadFacts, error) {
 	yes := true
 	return delivery.ThreadFacts{RuntimeStatus: h.status, CanAcceptInput: &yes}, nil
 }
-func (h *sendHost) IsArchived(string, any) (*bool, error) { return &h.archived, nil }
-func (h *sendHost) ReadGoalStatus(string) (any, error)    { return "", nil }
-func (h *sendHost) ListTurnIDs(string, int) ([]any, error) {
+func (h *sendHost) IsArchived(context.Context, string, any) (*bool, error) { return &h.archived, nil }
+func (h *sendHost) ReadGoalStatus(context.Context, string) (any, error)    { return "", nil }
+func (h *sendHost) ListTurnIDs(context.Context, string, int) ([]any, error) {
 	return []any{"turn-supervisor-1"}, nil
 }
-func (h *sendHost) ReadTurn(_ string, id string) (*delivery.TurnInfo, error) {
+func (h *sendHost) ReadTurn(_ context.Context, _ string, id string) (*delivery.TurnInfo, error) {
 	return h.knownTurn(id, "turn-supervisor-1", 1_700_000_001)
 }
 
@@ -50,7 +50,7 @@ func (h *sendHost) knownTurn(id, known string, start float64) (*delivery.TurnInf
 	}
 	return &delivery.TurnInfo{TurnID: id, StartedAt: &start}, nil
 }
-func (h *sendHost) SendMessage(id, thread, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
+func (h *sendHost) SendMessage(_ context.Context, id, thread, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
 	if h.beforeSend != nil {
 		h.beforeSend()
 	}
@@ -72,8 +72,8 @@ func (h *sendHost) accept(id, turn, message string, settings *delivery.TaskSetti
 	h.items[turn] = message
 	return delivery.Obj{{Key: "status", Value: "accepted"}, {Key: "requestId", Value: id}, {Key: "turnId", Value: turn}}
 }
-func (h *sendHost) GetOperation(string) (delivery.Obj, error) { return nil, nil }
-func (h *sendHost) FindToken(_ string, token string, _ int, _ bool) (delivery.TokenScan, error) {
+func (h *sendHost) GetOperation(context.Context, string) (delivery.Obj, error) { return nil, nil }
+func (h *sendHost) FindToken(_ context.Context, _ string, token string, _ int, _ bool) (delivery.TokenScan, error) {
 	if h.failTranscript {
 		return delivery.TokenScan{}, errors.New("transcript unavailable")
 	}
@@ -84,16 +84,16 @@ func (h *sendHost) FindToken(_ string, token string, _ int, _ bool) (delivery.To
 	}
 	return delivery.TokenScan{Found: false, Exhausted: true, Scanned: len(h.items)}, nil
 }
-func (h *sendHost) FindDispatchedTurn(string, string, float64) (delivery.TurnPresence, error) {
+func (h *sendHost) FindDispatchedTurn(context.Context, string, string, float64) (delivery.TurnPresence, error) {
 	return delivery.TurnPresence{}, nil
 }
-func (h *sendHost) FindTokenSince(string, string, []string, int) (delivery.TokenScan, error) {
+func (h *sendHost) FindTokenSince(context.Context, string, string, []string, int) (delivery.TokenScan, error) {
 	return delivery.TokenScan{}, nil
 }
-func (h *sendHost) FindTokenInTurn(string, string, string, int) (delivery.TokenScan, error) {
+func (h *sendHost) FindTokenInTurn(context.Context, string, string, string, int) (delivery.TokenScan, error) {
 	return delivery.TokenScan{}, nil
 }
-func (h *sendHost) RecipientFingerprint(string) (string, error) { return "", nil }
+func (h *sendHost) RecipientFingerprint(context.Context, string) (string, error) { return "", nil }
 
 func Test24_SCH_6_FrozenSendAndSettings(t *testing.T) {
 	f := fixture24(t)
