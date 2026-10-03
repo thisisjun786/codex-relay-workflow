@@ -493,6 +493,19 @@ times, outcome and error; `attempts(publication, *, limit)` returns them.
   (bootstrap) turn. The call is the one `reporting-show` makes - the selection, marker root,
   workspace, hashed assignment, child session and turn - and writes nothing. An observer error is
   a `managed_reading_failed` gap.
+  In the daemon's `supervisor.OmissionObserver`, an absent child claim alone does not make a
+  managed turn unmeasured. An intact intent, child binding and relationship marker must match a
+  unique attached start, the selected store, workspace, dispatch hash and current generation;
+  the exact business turn must be admitted and independently settled. With no claim or
+  disposition, that admission supplies the evidence for the existing omission classifier even
+  when no Stop ran. The reading is `unreported / terminal_without_report`; the sweep immediately
+  records `report_omitted` as broken and queues its existing blocking notification for the live
+  hierarchy. It creates no claim, Stop witness or report. Standby, unadmitted and mismatched
+  identities retain the original unmeasured answer. A receipt, later admission, terminal
+  conflict or daemon execution report is still judged by the same classifier; changed registry,
+  marker or disposition evidence during the read cannot establish an omission. Claimed readings
+  keep their existing behavior and grace rules. This fallback is specific to the daemon observer;
+  store-only reporting projections still require a recorded declaration capability.
 - Every source is read in rotations bounded by its upper key at rotation start, and every
   rotation reaches the end. Asking whether a derived fault's source still produces it judges at
   most `PRESENT_CHECKS` deliveries against the send path's live rule per call; each overtaken

@@ -3,11 +3,16 @@
 package stopevents
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 func refusedInvocation(t *testing.T, h *host, reason string) string {
@@ -176,6 +181,102 @@ func TestExcludedInvocationsDoNotExemptMalformedStdin(t *testing.T) {
 	expectVerdict(t, code, answer, 3, "UNREADABLE")
 	report := exclusionReports(t, answer, 1)[0].(map[string]any)
 	if report["reason"] != "no_event:stdin_not_json" || report["preventsTrue"] != true || report["evidence"].(map[string]any)["eventIdentity"] != nil {
+		t.Fatal(report)
+	}
+}
+
+func TestExcludedInvocationsExplainStdinReadFailures(t *testing.T) {
+	for _, closed := range []bool{false, true} {
+		name := "host_leaves_input_open"
+		if closed {
+			name = "descriptor_read_fails"
+		}
+		t.Run(name, func(t *testing.T) {
+			h := newHost(t, hook.Release)
+			t.Setenv("CODEX_HOME", h.codex)
+			reader, writer, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer reader.Close()
+			defer writer.Close()
+			if closed {
+				if err := reader.Close(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			var out bytes.Buffer
+			if code := hook.Run(ctx, nil, reader, &out, time.Now()); code != 0 || out.Len() != 0 {
+				t.Fatalf("hook exit=%d stdout=%q", code, out.String())
+			}
+			rows := h.rowPaths(h.journal)
+			if len(rows) != 1 {
+				t.Fatalf("rows = %v", rows)
+			}
+			for _, elapsed := range []int{0, 100, 900} {
+				change(t, rows[0], set("elapsedMs", elapsed))
+				code, answer := verify(t, roots(h.journal)...)
+				expectVerdict(t, code, answer, 3, "UNREADABLE")
+				report := exclusionReports(t, answer, 1)[0].(map[string]any)
+				evidence := report["evidence"].(map[string]any)
+				reading, ok := evidence["stdinRead"].(map[string]any)
+				if !ok || reading["case"] != "read_failed_cause_unrecorded" || reading["detail"] != "the Stop payload could not be read from stdin" || reading["elapsedMs"] != float64(elapsed) {
+					t.Fatalf("stdinRead = %v", evidence["stdinRead"])
+				}
+				if report["reason"] != "no_event:stdin_unreadable" || report["preventsTrue"] != true || report["sessionId"] != nil || report["turnId"] != nil || evidence["guardInvoked"] != false || answer["unjudgedInvocations"].(map[string]any)["no_event:stdin_unreadable"] != 1.0 {
+					t.Fatal(report, answer)
+				}
+			}
+		})
+	}
+}
+
+func TestExcludedInvocationsStdinDiagnosticContract(t *testing.T) {
+	diagnostics := map[string]any{}
+	for _, tc := range []struct{ name, detail, want string }{
+		{"invalid_utf8", "", "invalid_utf8"},
+		{"read_failure", "the Stop payload could not be read from stdin", "read_failed_cause_unrecorded"},
+		{"unknown_detail", "a different input read failure", "detail_unrecognized"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHost(t, hook.Release)
+			h.run(h.settings, []byte{0xff})
+			path := h.rowPaths(h.journal)[0]
+			if tc.detail != "" {
+				change(t, path, set("detail", tc.detail))
+			}
+			change(t, path, set("elapsedMs", 100))
+			code, answer := verify(t, roots(h.journal)...)
+			expectVerdict(t, code, answer, 3, "UNREADABLE")
+			evidence := exclusionReports(t, answer, 1)[0].(map[string]any)["evidence"].(map[string]any)
+			reading, ok := evidence["stdinRead"].(map[string]any)
+			if !ok || len(reading) != 3 || reading["case"] != tc.want || reading["detail"] != valueAt(t, path, "detail") || reading["elapsedMs"] != 100.0 {
+				t.Fatalf("stdinRead = %v", evidence["stdinRead"])
+			}
+			if tc.name == "invalid_utf8" && !strings.HasPrefix(reading["detail"].(string), "the Stop payload is not UTF-8: ") {
+				t.Fatal(reading)
+			}
+			diagnostics[tc.name] = reading
+			change(t, path, set("detail", nil))
+			code, answer = verify(t, roots(h.journal)...)
+			expectVerdict(t, code, answer, 3, "UNREADABLE")
+			if len(listed(answer, "rowsUnreadable")) != 1 || answer["excludedInvocations"] != nil {
+				t.Fatal(answer)
+			}
+		})
+	}
+	golden.CheckJSON(t, "stdinRead", diagnostics)
+}
+
+func TestExcludedInvocationsEmptyEOFHasNoStdinReadDiagnostic(t *testing.T) {
+	h := newHost(t, hook.Release)
+	h.run(h.settings, nil)
+	code, answer := verify(t, roots(h.journal)...)
+	expectVerdict(t, code, answer, 3, "UNREADABLE")
+	report := exclusionReports(t, answer, 1)[0].(map[string]any)
+	if report["reason"] != "no_event:stdin_not_json" || report["evidence"].(map[string]any)["stdinRead"] != nil {
 		t.Fatal(report)
 	}
 }

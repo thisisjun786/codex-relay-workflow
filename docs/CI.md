@@ -11,7 +11,7 @@ Installing and operating the runtime is [runtime installation](runtime-install.m
 | `crw-dev ci validate` | `validate`: skill metadata, local Markdown links, and that Python sits only in skill assets: a `.py` file or a python-shebang script, tracked or untracked and not ignored, fails it unless it is below `<skill>/scripts/` or `<skill>/examples/` of `plugins/crw/skills` or `port/cxc/skills` (`TestTrackedPythonStaysInSkillAssets` holds the tracked files for `make test`); CI installs no Python and runs no skill script (`TestWorkflow_installs_no_python`) |
 | `crw-dev ci plugin` | `validate`: plugin package shape, payload hygiene and the recorded version digest ([below](#plugin-package)) |
 | `crw-dev ci contracts` | `validate`: the offline contract checks built into `crw-dev`: the hook replay, the operations shape check (`crw-dev ci operations`), the component definition, the start-policy self-test and the parent-title replay |
-| `bash scripts/ci/secrets.sh` | `secrets`: checksum-pinned Gitleaks scan of all fetched history |
+| `bash scripts/ci/secrets.sh` | `secrets`: checksum-pinned Gitleaks scan: the commits a pull request adds to its base on a pull request, all fetched history on any other event ([scope](#secret-scanning)) |
 | `make lint` | `go-product` leg `lint`: vet (also of the `dev` and `integration` tagged packages), staticcheck and gofmt |
 | `make test-part TEST_PART=<n>` | `go-product` legs `test-<n>` and `test-rest`: the Go tests and the contract corpus; together the parts are `make test` |
 | `CGO_ENABLED=0 make dist` per target | `go-product` leg `dist`: static `crw` for linux/amd64, linux/arm64 and darwin/arm64, uploaded with `SHA256SUMS` |
@@ -161,6 +161,18 @@ scans the Git database from a temporary directory with an explicit configuration
 ignore file; inline allow comments and repository ignore files do not suppress findings. Fetch
 complete history: a shallow checkout cannot establish full-history coverage, and network,
 download or checksum failures fail the scan. No broad allowlist is supplied.
+
+What is scanned follows the event. On a `pull_request` run the workflow passes the event's base tip
+as `PR_BASE_SHA`, and the script scans the range from it to the checked-out merge candidate, still
+with merge-parent diffs (`-m`): the commits the pull request adds to its base. A finding that sits
+only on another branch does not fail the pull request; it still fails the runs that scan every ref.
+A pull request run whose `PR_BASE_SHA` is missing, is not a full hex SHA or is not in the checkout is
+refused before the scanner is downloaded, so a wiring fault cannot change the scope unnoticed. Every
+other event (a push to `dev`, a manual dispatch, a run outside Actions) scans every fetched ref
+(`--all -m`), so what reaches `dev` is checked in full and a finding on any branch fails those runs.
+A pull request run reads no other branch, so a branch without a pull request is checked only by the
+runs that scan every ref (a push to `dev`, a manual dispatch); a scheduled scan of every remote
+branch is recorded in the [refactor backlog](port/refactor-backlog.md).
 
 Secret scanning is not proof that every private fact or credential was detected. Review fixtures
 and publication history separately. A PR can change the scanner and workflow, so review those
