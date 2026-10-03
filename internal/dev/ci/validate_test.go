@@ -26,7 +26,7 @@ func validate(t *testing.T, r *fixtureRepo) result {
 	return goCheck(t, r.root, nil, "validate")
 }
 
-const validated = "Validated 1 skills, local link paths and Python syntax.\n"
+const validated = "Validated 1 skills, local link paths and no Python files.\n"
 
 func Test47_VAL_1_SkillFrontmatterAndInterface(t *testing.T) {
 	r := validateRepo(t)
@@ -54,12 +54,6 @@ func Test47_VAL_1_SkillFrontmatterAndInterface(t *testing.T) {
 	os.Remove(filepath.Join(r.root, "plugins/crw/skills/example/agents/openai.yaml"))
 	if got := validate(t, r); got.code != 1 || !strings.Contains(got.stderr, "agents/openai.yaml: no such file or directory") {
 		t.Errorf("no openai.yaml: %+v", got)
-	}
-	// Python syntax is still checked while Python sources exist.
-	r.write("scripts/broken.py", "def (:\n")
-	got := validate(t, r)
-	if got.code != 1 || !strings.Contains(got.stderr, "scripts/broken.py: ") {
-		t.Errorf("syntax: %+v", got)
 	}
 }
 
@@ -100,4 +94,27 @@ func Test47_VAL_1_SkillNamePattern(t *testing.T) {
 		}
 		expectEqual(t, row.name, validate(t, r), want)
 	}
+}
+
+// No Python enters the repository (todo 48): a .py file, tracked or not, and a script a python
+// shebang runs are refused, with no exemption anywhere. A shell script, a symbolic link (judged as
+// what it is, never followed) and a file that names python outside a first-line shebang are not
+// named. The bodies parse as Python, so only the rule can refuse them.
+func Test47_VAL_3_PythonFilesAreRefused(t *testing.T) {
+	r := validateRepo(t)
+	r.write("scripts/fake-gh", "#!/usr/bin/env python3\nprint()\n")
+	r.write("scripts/sh-tool", "#!/bin/sh\nexec python3 \"$@\"\n") // names python, but its shebang is a shell's
+	r.write("scripts/notes", "python3 appears in this line, which is no shebang\n#!/usr/bin/env python3\n")
+	if err := os.Symlink("fake-gh", filepath.Join(r.root, "scripts", "link")); err != nil {
+		t.Fatal(err)
+	}
+	r.write("scripts/tool.py", "print()\n")
+	r.write("plugins/crw/skills/example/scripts/fixtures/case/input.py", "print()\n")
+	r.commit()
+	r.write("scripts/new.py", "print()\n") // untracked: refused before it is added
+	const tail = "; the repository tracks no Python\n"
+	expectEqual(t, "refused", validate(t, r), result{1, "", "plugins/crw/skills/example/scripts/fixtures/case/input.py: a Python file" + tail +
+		"scripts/fake-gh: a script with a python shebang" + tail +
+		"scripts/new.py: a Python file" + tail +
+		"scripts/tool.py: a Python file" + tail})
 }

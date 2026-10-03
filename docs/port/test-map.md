@@ -6,21 +6,24 @@ carried to Go and where the property it protects will live. Measured on `dev` at
 (`.omo/drafts/crw-go-port.md` L21-L26); the one file the draft did not list,
 `test_approval_routing.py`, is class B.
 
-`scripts/port/check_test_map.py` keeps this table honest: it fails when a `test_*.py` file is
-missing, duplicated or stale, when a class is not A/B/C, when a `tests` cell differs from
-`grep -c 'def test_'`, when a destination kind is unknown, when a C row does not name its
-coupling, or when a stated total below disagrees with the rows or the files.
+Todo 48 removed `scripts/port/check_test_map.py`, which kept this table honest: it compared the rows
+with the `test_*.py` files, required a class A, B or C, each `tests` cell to equal `grep -c 'def test_'`,
+a known destination kind, a coupling per C row and totals that agree with the rows. This document is
+now a record of the port, measured at the revision named below: no check compares it with the tree (the
+local-link check of `crw-dev ci validate` still reads it), and a later rename of a Go package or test does
+not update its `go-test:` pointers.
 
-Todo 44 deletes these test files with the Python implementation, so the check reads them at the
-revision the map is kept at, the last `dev` revision that held every one of them (the rows were
-kept current with the files after the first measurement at `4b4cb463`):
+Todo 44 deleted these test files with the Python implementation. The map is measured at the revision
+below, the last `dev` revision that held every one of them (the rows were kept current with the files
+after the first measurement at `4b4cb463`):
 
 Map revision: `659ec41c70f3f0039d5837f4fd36fae238733dab`
 
-`--final`, todo 44's acceptance, also requires that every destination names where its property
-lives now: each `corpus:` a domain under `contract/fixtures`, which `internal/contracttest` replays
-(every fixture runs: a kind without a runner fails, and nothing is skipped), and each `go-test:` a directory of this
-checkout. The Go tests' expected outputs are goldens under each package's `testdata/golden`,
+Todo 44's acceptance required that every destination name where its property lived then: each
+`corpus:` a domain under `contract/fixtures`, which `internal/contracttest` replays (every fixture runs:
+a kind without a runner fails, and nothing is skipped; `TestCorpusKeepsItsDomains` holds that the
+corpus keeps its domains), and each `go-test:` a directory of the checkout at that change. The Go
+tests' expected outputs are goldens under each package's `testdata/golden`,
 regenerated from Go with `CRW_GOLDEN=update`; each began as the Python answer the test was
 compared with ([the phase-A reports](oracles/g1.md) describe how those were recorded until
 refactor wave R2), and what Python produced for a test to start from is a frozen fixture under

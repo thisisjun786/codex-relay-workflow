@@ -45,7 +45,7 @@ Declare before the release, with the grade of each region:
      {"repository": "owner/name", "path": "internal/relay/dagsched/ready.go", "kind": "symbol", "key": "Ready", "grade": "local"}]
 
 The parent's check runs a `regenerate` command at the root of a fresh checkout of the head, so declare one that works there (the example builds `crw-dev` from the tree, which needs nothing installed), and declare `union` only for a list that both sides add lines to. A region without a grade is `independent`, which is how every earlier declaration reads. A declaration is made before the release; once a node is released its regions are held until its
-head lands and a different declaration is refused. A node with no declaration is unknown, and an unknown node overlaps every other.
+head lands, and a node that holds them may declare again only to narrow them ([Keep optimism honest](#keep-optimism-honest)). A node with no declaration is unknown, and an unknown node overlaps every other.
 
 ## Read the judgement
 
@@ -58,6 +58,18 @@ are left out of it). `dag-ready --record` keeps the same in the pass.
 The observations are evidence and not a second gate: the rule follows the grades. A place that keeps conflicting in the basis is a reason to regrade it at the next declaration,
 and a pair released as `local-optimistic` is the pair to watch when the first of them lands. Once the running branches are measured, `dag-ready` also gives the nodes of a conflicting pair a `merge_order` object
 ([Read the merge order](#read-the-merge-order)).
+
+## Keep optimism honest
+
+Optimism is a bet that the later child can settle an overlap cheaply. Three things let the relay take the bet back or show what it cost. They are recorded values and recorded statements, and the policy is advice to the release judgement: it stops no child, revokes no release and changes no merge gate.
+
+**Narrow what a running node holds.** A coarse declaration made before the release keeps its whole place until the head lands. When a child reports that it touches less, declare again with `dag-region-declare`. While the node runs, a declaration is accepted when every new region lies inside a held one and is held at least as strictly: a file for a tree, a symbol for a file, a stricter grade, or a dropped region. The answer says `narrowed`, and the next `dag-ready` frees the rest for other nodes. A widening, a lower grade, or another rule on a mechanical region is refused `disposition_conflict`, which names the region. Once the node's head is accepted its declaration stays, because it describes the pull request. Narrow only to what the child really edits: a conflict outside the declared place is drift.
+
+**Record a release policy for the plan.** Once, at the start of the run: `dag-release-policy-record --plan <plan> --actor <you> --window K --handling-seconds S --red-merges R --clean-run C`. The window is the last K landings. A landing is slow when its conflict took more than S seconds to settle, counted from the first conflict sweep after its acceptance to its landing. One slow landing, or R red or reverted landings in the window, switch local-optimistic release off; C clean landings in a row switch it on again. The values are yours to choose, and the coordination record names them with the reason: this build has no measured basis for one, and a C of 2 or more keeps the switch from alternating with every landing. While it is off, `dag-ready` defers a candidate whose worst overlap is local as `defer:edit_overlap`, with `held_by_policy` in its `release` object, and prints `release_policy` with the state, the reason and the switches; a node released before the switch stays released. A recorded pass keeps the same.
+
+**Record what the merge did.** The relay reads no forge for it. After each landing, once the dev run of the merge commit is read, state the result: `dag-landing-result-record --plan <plan> --node <node> --actor <you> --kind dev_green|dev_red|reverted --evidence <the run or the pull request> [--commit <sha>]`, and `duplicate` or `discarded`, with the evidence, for work that was dropped because another did the same. A red nobody records never trips the policy, and a conflict that was never swept has no handling time ([Measure at every landing and every receipt](#measure-at-every-landing-and-every-receipt)).
+
+**Read the measurements.** `dag-measurements --plan <plan>` gives the numbers for the coordination record and for the comparison of runs: the parallelism of the recorded passes (keep `dag-ready --record` for every pass), conflicts per pull request by grade, conflict handling time, base refresh counts, post-merge results, and duplicated or discarded work. A measure with no data is `absent` with its reason and is not zero. Hunks and base refresh round trips are always absent, because the store does not record them.
 
 ## At merge time
 
@@ -117,4 +129,5 @@ the two nodes become one, one node is redefined, or the later work is dropped as
 ### Record what happened
 
 For every merge, write down in the coordination record the grade the overlap was released under, the observation the order rested on (the `observation_id` of its `merge_order` row), the number of conflicting files and hunks the refresh met, and how long it took to settle.
+State the result of the dev run with `dag-landing-result-record` ([Keep optimism honest](#keep-optimism-honest)) and read the totals with `dag-measurements`.
 Those numbers are what a later change of the grades is calibrated on.

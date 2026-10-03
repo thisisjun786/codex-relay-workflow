@@ -68,6 +68,11 @@ func (s *Scheduler) Ready(ctx context.Context, q store.Querier, plan string, opt
 	if err != nil {
 		return Reading{}, err
 	}
+	// the release policy of the plan (CRW-411, optimism.go): nil when none is recorded, and then nothing below differs from a plan without one
+	policy, err := s.releasePolicy(ctx, q, plan, snap)
+	if err != nil {
+		return Reading{}, err
+	}
 
 	readings := make(map[string]*NodeReading, len(nodes))
 	var holders []holder
@@ -189,6 +194,7 @@ func (s *Scheduler) Ready(ctx context.Context, q store.Querier, plan string, opt
 			if err != nil {
 				return Reading{}, err
 			}
+			judged.applyPolicy(policy)
 			reading.Release = &judged
 			pass.Overlaps.add(judged.Overlaps)
 			if judged.Rule == RuleDefer {
@@ -230,7 +236,7 @@ func (s *Scheduler) Ready(ctx context.Context, q store.Querier, plan string, opt
 	}
 	pass.OrderConstraints = constrained
 
-	out := Reading{PlanID: plan, PlanRevision: snap.Revision, StateDigest: snap.StateDigest, Pass: pass, Ready: ready, PlanState: snap.PlanState}
+	out := Reading{PlanID: plan, PlanRevision: snap.Revision, StateDigest: snap.StateDigest, Pass: pass, Ready: ready, PlanState: snap.PlanState, ReleasePolicy: policy}
 	for _, n := range nodes {
 		out.Nodes = append(out.Nodes, *readings[n.NodeID])
 	}
@@ -360,6 +366,10 @@ func inputDigest(r Reading, c Capacity, hashes []string) string {
 	if r.Pass.OrderConstraints > 0 {
 		// absent when there is none, so a reading of a plan without a constraint digests as it did
 		digest["order_constraints"] = r.Pass.OrderConstraints
+	}
+	if r.ReleasePolicy != nil {
+		// absent when the plan has no policy, for the same reason: the state depends on landings and settings that nothing else in the digest carries
+		digest["release_policy"] = r.ReleasePolicy.canonical()
 	}
 	return digestOf(digest)
 }
