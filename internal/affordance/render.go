@@ -28,7 +28,8 @@ func invocation(env host.LookupEnv) string {
 // ResolveCRWCommands rewrites command code spans only, honoring the invocation seam
 // at render time. Skill names, chat commands and noun phrases remain untouched.
 func ResolveCRWCommands(s string, env host.LookupEnv) string {
-	re := regexp.MustCompile("\x60crw ([^\\s\x60]+)")
+	// JavaScript \s also contains these Unicode spaces; RE2's \s is ASCII only.
+	re := regexp.MustCompile("\x60crw ([^\\s\\x{000b}\\x{00a0}\\x{1680}\\x{2000}-\\x{200a}\\x{2028}\\x{2029}\\x{202f}\\x{205f}\\x{3000}\\x{feff}\x60]+)")
 	return re.ReplaceAllStringFunc(s, func(match string) string {
 		verb := strings.TrimPrefix(match, "\x60crw ")
 		switch verb {

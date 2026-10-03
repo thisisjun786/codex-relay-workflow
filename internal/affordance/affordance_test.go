@@ -146,6 +146,21 @@ func TestDirectoryCapIsBreadthFirstAndIncludesRoot(t *testing.T) {
 	}
 }
 
+func TestCountingUsesOracleDirectoryOrderAtCap(t *testing.T) {
+	ws := t.TempDir()
+	for i := 0; i < MaxDirsVisited-1; i++ {
+		if err := os.Mkdir(filepath.Join(ws, fmt.Sprintf("z%04d", i)), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Created last, sorted first by Node readdirSync and os.ReadDir. Native
+	// insertion order would hit the directory cap before seeing this source.
+	put(t, filepath.Join(ws, "a-first", "source.go"), "x")
+	if got := CountSourceFiles(ws); got != 1 {
+		t.Fatalf("directory ordering: %d", got)
+	}
+}
+
 func TestSessionStartThresholdFallbackAndPointers(t *testing.T) {
 	small, big := t.TempDir(), t.TempDir()
 	seed(t, small, 39)
@@ -217,6 +232,12 @@ func TestInvocationIsResolvedAtRenderTime(t *testing.T) {
 	for _, s := range []string{"load $crw:crw-loop", "send !crw start", "parent owns crw orchestration", "`crw-loop`"} {
 		if ResolveCRWCommands(s, env("chosen", "")) != s {
 			t.Fatal("non-command rewritten")
+		}
+	}
+	for _, space := range []string{"\v", "\u00a0", "\u1680", "\u2000", "\u2028", "\u2029", "\u202f", "\u205f", "\u3000", "\ufeff"} {
+		s := "`crw " + space + "map src`"
+		if ResolveCRWCommands(s, env("chosen", "")) != s {
+			t.Fatal("JavaScript whitespace was consumed")
 		}
 	}
 }

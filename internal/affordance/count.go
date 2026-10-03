@@ -37,16 +37,11 @@ func skipDir(s string) bool {
 }
 
 // CountSourceFiles is the bounded breadth-first walk, including the root in the
-// directory cap. ReadDir on an open directory keeps readdir's native ordering.
+// directory cap. ReadDir sorts names as Node's readdirSync/scandir does.
 func CountSourceFiles(root string) int {
 	count, queue := 0, []string{root}
 	for visited := 0; visited < len(queue) && visited < MaxDirsVisited && count < CountCap; visited++ {
-		dir, err := os.Open(queue[visited])
-		if err != nil {
-			continue
-		}
-		entries, err := dir.ReadDir(-1)
-		dir.Close()
+		entries, err := os.ReadDir(queue[visited])
 		if err != nil {
 			continue
 		}
