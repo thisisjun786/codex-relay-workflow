@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -641,4 +642,60 @@ func TestValidateOwnershipSchemaAnswersAsThePerTableValidationDoes(t *testing.T)
 			}
 		})
 	}
+}
+
+// The additive DAG zone sits beside the v1 tables and is outside what the schema digest covers, so
+// a store that holds the zone's newest objects (the generation-withdrawal table and its two
+// append-only triggers) validates from the shipped digest with no column read, exactly as the same
+// store before the zone existed: opening a store gains the zone, and the cache neither refuses it nor
+// reads it again.
+func TestValidateOwnershipSchemaIsUnmovedByTheDAGZone(t *testing.T) {
+	ctx := context.Background()
+	required, err := requiredSchema()
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := zonePreDAGStore(t)
+	db := zoneRawDB(t, path)
+	check := func(stage string) {
+		t.Helper()
+		counted := &countingQueryer{db: db}
+		if err := ValidateOwnershipSchema(ctx, counted); err != nil {
+			t.Fatalf("%s: %v", stage, err)
+		}
+		if n := counted.columnReads(); n != 0 {
+			t.Fatalf("%s: a store with the shipped v1 schema took %d column reads", stage, n)
+		}
+		digest, plain, err := catalogDigest(ctx, db, required)
+		if err != nil || !plain || digest != shippedSchemaDigest {
+			t.Fatalf("%s: the schema digest is %q (plain %v, %v), not the shipped one", stage, digest, plain, err)
+		}
+	}
+	check("before the zone")
+	if got := zoneTables(t, path); len(got) != 0 {
+		t.Fatalf("the fixture already holds zone tables: %v", got)
+	}
+
+	zoneOpenClose(t, path)
+	objects := map[string]string{}
+	rows, err := db.Query("SELECT type || ' ' || name, tbl_name FROM sqlite_master WHERE name LIKE 'dag\\_generation\\_withdrawals%' ESCAPE '\\'")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var object, table string
+		if err = rows.Scan(&object, &table); err != nil {
+			t.Fatal(err)
+		}
+		objects[object] = table
+	}
+	if err = errors.Join(rows.Err(), rows.Close()); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"table dag_generation_withdrawals", "trigger dag_generation_withdrawals_no_update", "trigger dag_generation_withdrawals_no_delete"} {
+		if _, ok := objects[want]; !ok {
+			t.Fatalf("the open did not install %s; the zone holds %v", want, objects)
+		}
+	}
+	check("after the zone")
 }
