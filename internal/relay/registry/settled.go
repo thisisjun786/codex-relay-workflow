@@ -108,10 +108,20 @@ func (r *Registry) owedOf(ctx context.Context, rid string, mark contract.Ordered
 	// generation of the execution row, so a node's older executions (a correction leaves one row per generation) do not
 	// hold it open once the current head is accepted: every row of the node asks the same question.
 	event, generation, revision := pyjson.Text(mark.Get("eventId")), markNumber(mark, "executionGeneration"), pyjson.Text(mark.Get("revisionHash"))
-	query, args := "SELECT e.node_id AS node FROM dag_node_executions e WHERE e.relationship_id = ?"+
-		" AND NOT EXISTS (SELECT 1 FROM dag_acceptances a WHERE a.plan_id = e.plan_id AND a.node_id = e.node_id AND a.state = 'active'"+
-		"   AND a.relationship_id = ? AND a.execution_generation = ? AND a.event_id = ? AND a.revision_hash = ?%s) LIMIT 1",
-		[]any{rid, rid, generation, event, revision}
+	// the acceptance may also stand on the marked head through a base refresh recorded for it (dag_base_refreshes, which arrived after the first zone): its newest record names the later generation the merged mark sits on
+	match, args := "a.relationship_id = ? AND a.execution_generation = ? AND a.event_id = ? AND a.revision_hash = ?", []any{rid, rid, generation, event, revision}
+	refreshes, err := r.Store.One(ctx, "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'dag_base_refreshes'")
+	if err != nil {
+		return "", err
+	}
+	if refreshes != nil {
+		match += " OR EXISTS (SELECT 1 FROM dag_base_refreshes f WHERE f.acceptance_id = a.acceptance_id AND f.relationship_id = ? AND f.execution_generation = ? AND f.event_id = ? AND f.revision_hash = ?" +
+			" AND f.refresh_seq = (SELECT MAX(x.refresh_seq) FROM dag_base_refreshes x WHERE x.acceptance_id = a.acceptance_id))"
+		args = append(args, rid, generation, event, revision)
+	}
+	query := "SELECT e.node_id AS node FROM dag_node_executions e WHERE e.relationship_id = ?" +
+		" AND NOT EXISTS (SELECT 1 FROM dag_acceptances a WHERE a.plan_id = e.plan_id AND a.node_id = e.node_id AND a.state = 'active'" +
+		"   AND (" + match + ")%s) LIMIT 1"
 	if criteria != nil {
 		// the acceptance's effective criteria: its newest revalidation, else the digest it was accepted with.
 		query = strings.Replace(query, "%s", " AND COALESCE((SELECT v.criteria_set_digest FROM dag_acceptance_revalidations v"+

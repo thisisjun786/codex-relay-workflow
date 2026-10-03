@@ -28,8 +28,8 @@ func crw263Reading(facts delivery.OmissionFacts, relationship string) map[string
 // receipt of the turn itself, reads owed false, and the supervisor's readers already skip such a
 // reading; the sweep filed it as report_omitted all the same. The classifier decides what is owed,
 // so the readings below come from it with the fact set, not from a store holding a receipt. A
-// genuine omission, and a reading that carries no owed field (what the managed observer produces),
-// are filed as they always were.
+// genuine omission, and a reading that carries no owed field (one handed in from outside), are filed
+// as they always were.
 func TestCRW263SweepFilesAnUnreportedTurnOnlyWhenItIsOwed(t *testing.T) {
 	for _, c := range []struct {
 		name       string

@@ -57,7 +57,7 @@ func TestCRW263ManagedObserverAnswersReportedForADaemonObservation(t *testing.T)
 					t.Fatalf("the stored event is not the daemon's final observation of the turn: %v", rows)
 				}
 			}
-			reading, err := ManagedOmittedObserver{}.Observe(ctx, ManagedReadingRequest{Selection: store.StateSelection{Path: gd}, Root: root, Workspace: work, Assignment: assignment, Session: "child", Turn: "turn-9", Now: clock.ISO()})
+			reading, err := realObserver(t).Observe(ctx, ManagedReadingRequest{Selection: store.StateSelection{Path: gd}, Root: root, Workspace: work, Assignment: assignment, Session: "child", Turn: "turn-9", Now: clock.ISO()})
 			if err != nil {
 				t.Fatal(err)
 			}
