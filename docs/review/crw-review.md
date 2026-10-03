@@ -29,14 +29,14 @@ stdout is one JSON object. `outcome` is `reviewed`, `already_reviewed` or `daily
 | Status | Meaning |
 | --- | --- |
 | 0 | a review ran (an `unavailable` or `partial` artifact is a result), or the patch was already reviewed |
-| 1 | an error: no changes between base and head, a Git or ledger failure, an artifact that could not be written |
+| 1 | an error: no changes between base and head, a Git or ledger failure, a file already at `<out>/<head>.json` that is no review of this patch, an artifact that could not be written |
 | 2 | a usage error (the usage line and the reason go to stderr) |
 | 3 | the run rules stopped it: `daily_cap_reached` (on stdout), or `busy` (on stderr only, nothing recorded) |
-| 130 | interrupted |
+| 130 | interrupted by SIGINT, SIGTERM or SIGHUP (agy's process group is killed first, so no agy call outlives the locks) |
 
 ## Files
 
-`<out>/<head>.json` is the artifact, validated before it is written. `<out>/<head>.json.sha256` holds `<hex>  <head>.json` and a newline, so `sha256sum -c <head>.json.sha256` run in `<out>` checks the artifact. Both are written through a temporary file in `<out>` and renamed, so a reader sees a whole file or none; a symlink at the final path is followed, so `<out>` belongs to the operator. The ledger records the review as finished before the two files are written, so a failure while writing them (exit 1, naming the file) still counts as the review: the patch is not reviewed again.
+`<out>/<head>.json` is the artifact, validated before it is written. `<out>/<head>.json.sha256` holds `<hex>  <head>.json` and a newline, so `sha256sum -c <head>.json.sha256` run in `<out>` checks the artifact. Both are written through a temporary file in `<out>` and renamed, so a reader sees a whole file or none; a symlink at the final path is followed, so `<out>` belongs to the operator. The file name is the head's while the ledger key is the patch's, so the same head reviewed against another base would land on the same name: the command refuses (exit 1, before any agy call) when `<out>/<head>.json` already exists and the ledger holds no review of this patch; use another `--out`. The ledger records the review as finished before the two files are written, so a failure while writing them (exit 1, naming the file) still counts as the review: the patch is not reviewed again.
 
 ## Ledger and configuration
 
@@ -56,7 +56,7 @@ Every setting comes from one place, `Config` in [config.go](../../internal/revie
 
 ## Not covered
 
-The artifact's `agyVersion` is `unknown`: reading it would start an agy process outside the runner's host-wide lock. Posting the result, the receipt field and the parent's reading of the artifact belong to the wiring around this command.
+The artifact's `agyVersion` is `unknown`: reading it would start an agy process outside the runner's host-wide lock. A `SIGKILL` of `crw` cannot be caught: agy, which holds no lock descriptor, may then run on until its time limit while the locks are free; closing that gap belongs to the runner. Posting the result, the receipt field and the parent's reading of the artifact belong to the wiring around this command.
 
 ## Tests
 
