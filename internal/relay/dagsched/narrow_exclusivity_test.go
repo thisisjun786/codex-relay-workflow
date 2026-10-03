@@ -365,7 +365,8 @@ func TestALegacyRenameHoldsUntilItIsDeclaredAgain(t *testing.T) {
 	}
 }
 
-// A node that already runs keeps the regions it holds: what a re-sent declaration is depends on what the stored row says.
+// A node that already runs keeps the regions it holds unless a declaration narrows them (CRW-411): what a re-sent declaration is depends on what the stored row says. A legacy rename reads as a hold of the
+// whole repository, so the same rename re-sent without the hold gives that hold up, which is a narrowing and is accepted; a legacy delete re-sent with the hold stated claims more than the node holds, and is refused.
 func TestAHoldingNodeAnswersAResentLegacyDeclarationByWhatTheRowSays(t *testing.T) {
 	for _, c := range []struct {
 		name        string
@@ -376,7 +377,7 @@ func TestAHoldingNodeAnswersAResentLegacyDeclarationByWhatTheRowSays(t *testing.
 	}{
 		{"a legacy delete re-sent as it was declared", nxFile("internal/old/legacy.go", "delete"), nxFile("internal/old/legacy.go", "delete"), true, false},
 		{"a legacy delete re-sent with the hold stated", nxFile("internal/old/legacy.go", "delete"), nxStated(nxFile("internal/old/legacy.go", "delete")), false, true},
-		{"a legacy rename re-sent without the hold", nxFile("internal/old/legacy.go", "rename"), nxFile("internal/old/legacy.go", "rename"), false, true},
+		{"a legacy rename re-sent without the hold", nxFile("internal/old/legacy.go", "rename"), nxFile("internal/old/legacy.go", "rename"), false, false},
 		{"a legacy rename re-sent with the hold stated", nxFile("internal/old/legacy.go", "rename"), nxStated(nxFile("internal/old/legacy.go", "rename")), true, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {

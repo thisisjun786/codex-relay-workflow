@@ -231,11 +231,16 @@ Execution:
 - Open that pull request non-draft, or transition an existing draft to Ready for review
   as soon as the implementation is reviewable, then request the review the repository
   requires and this assignment authorizes, and confirm it actually started. An optional
-  reviewer that cannot start or stalls is recorded as a gap and does not hold you;
+  reviewer that cannot start or stalls is recorded as a gap and does not hold you, except that you
+  wait for the one run each of Devin and Codex makes on the open pull request to end, or to be skipped,
+  before you emit ([Devin and Codex reviews are references, not merge gates](merge-readiness.md#devin-and-codex-reviews-are-references-not-merge-gates));
   a required gate does. Findings, pending CI and your own revision pushes do not send
   it back to draft; fix on the open pull request and refresh only the review evidence
   invalidated by the change. Apply the [disabled reviewer policy](merge-readiness.md#disabled-reviewer-policy)
-  before requesting or waiting for a review. Ready is review entry, not merge permission. See
+  before requesting or waiting for a review. Ready is review entry, not merge permission. A criterion or gate line in the packet that
+  reads "Devin has no red or security finding" means that if a Devin review exists, its red and security
+  findings are resolved, and that no new Devin review is awaited
+  ([what the record says](merge-readiness.md#what-the-record-says)). See
   [Publish for review when the work is reviewable](../../crw-plan/references/integrations.md#publish-for-review-when-the-work-is-reviewable).
 - Finishing the review is part of finishing the work. Read every applicable review to the
   end of its pagination on the CURRENT head, judge each finding against the code, fix what
@@ -1050,7 +1055,7 @@ The kinds of base refresh, and what reruns for each, which is all that a refresh
 
 | Kind | The entry shows | What reruns, and nothing more |
 |---|---|---|
-| `clean` | the merge's expected and actual trees: the tree of `git merge-tree --write-tree <previous> <merged>` and the tree of the merge commit, which are equal | the gates: the repository's local checks for the paths now in the branch and a digest re-record where the merge touched the plugin, then every required job, the `Devin Review` status and the threads on the final head, which [OPS-9.4](operations.md#ops-94-a-new-head-invalidates-the-review-it-outran) reads again on any new head. No review of the change and no audit of the plan |
+| `clean` | the merge's expected and actual trees: the tree of `git merge-tree --write-tree <previous> <merged>` and the tree of the merge commit, which are equal | the gates: the repository's local checks for the paths now in the branch and a digest re-record where the merge touched the plugin, then every required job and the threads on the final head, which [OPS-9.4](operations.md#ops-94-a-new-head-invalidates-the-review-it-outran) reads again on any new head. No review of the change and no audit of the plan |
 | `mechanical` | each resolved hunk with the rule the assignment names for that overlap (its wording or identifier), its path and lines, and the check that reproduces it with its output (for a union or a regeneration, `crw skill base-refresh mechanical` run on the merge) | the gates, and the deterministic checks that read those hunks: that check, the repository's validators and link check, the digest re-record, `git diff --check`. No model review |
 | `manual` | each hand-resolved hunk with its path and lines, and the independent check of those hunks | the gates, and an independent check of the hand-resolved hunks only, run by the child's own independent reviewer on those hunks and what they merge. The rest of the diff is not reviewed again |
 
