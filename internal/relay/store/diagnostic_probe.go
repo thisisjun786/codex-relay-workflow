@@ -20,7 +20,20 @@ type ProbeAccess struct {
 	DBExists          bool
 	DBReadable        bool
 	DBWritable        bool
-	Detail            string
+	// Measured is whether the write probe ran: DirectoryWritable and DBWritable are then what a
+	// write attempt answered. Without it they are judged, never tried (ProbeOptions).
+	Measured bool
+	Detail   string
+}
+
+// ProbeOptions chooses how a probe finds out what this process may write.
+type ProbeOptions struct {
+	// Write measures writability by writing: a temporary file is created and removed in the state
+	// directory, and the write gate is taken shared for a write transaction that is begun and
+	// rolled back on a read-write connection. Without it the probe only reads: writability is
+	// judged from permissions, the ownership stamp and the gate's own metadata, no file is created
+	// and the write gate is never opened.
+	Write bool
 }
 
 type ProbeResult struct {
@@ -29,9 +42,15 @@ type ProbeResult struct {
 	Selection StateSelection
 }
 
-// Probe is store.probe: it describes the selected state WITHOUT constructing a Store, and
-// every step owns its error and becomes a note in Access.Detail instead of failing the call.
-func Probe(ctx context.Context, selection StateSelection) (result ProbeResult) {
+// Probe is ProbeWith without the write probe: a read of the selected state.
+func Probe(ctx context.Context, selection StateSelection) ProbeResult {
+	return ProbeWith(ctx, selection, ProbeOptions{})
+}
+
+// ProbeWith is store.probe: it describes the selected state WITHOUT constructing a Store, and
+// every step owns its error and becomes a note in Access.Detail instead of failing the call. Its
+// reads create no SQLite sidecar wherever SQLite allows (openHeldRead).
+func ProbeWith(ctx context.Context, selection StateSelection, opts ProbeOptions) (result ProbeResult) {
 	result = ProbeResult{Selection: selection, Store: Location{DBPath: selection.DBPath()}}
 	var notes []string
 	defer func() { result.Access.Detail = strings.Join(notes, "; ") }()
@@ -61,13 +80,22 @@ func Probe(ctx context.Context, selection StateSelection) (result ProbeResult) {
 		return result
 	}
 	if result.Access.DirectoryExists {
-		// Writability is measured by writing: a privileged runner ignores mode bits.
-		if temp, err := os.CreateTemp(selection.Path, ".probe-"); err == nil {
+		if opts.Write {
+			result.Access.Measured = true
+			// Writability is measured by writing: a privileged runner ignores mode bits.
+			if temp, err := os.CreateTemp(selection.Path, ".probe-"); err == nil {
+				result.Access.DirectoryWritable = true
+				_ = temp.Close()
+				_ = os.Remove(temp.Name())
+			} else {
+				notes = append(notes, "directory write failed: "+err.Error())
+			}
+		} else if err := syscall.Access(selection.Path, 0x2|0x1); err == nil {
+			// Judged by access(2): it sees mode bits, a privileged runner's capabilities and a
+			// read-only file system, not a sandbox that denies writes by another mechanism.
 			result.Access.DirectoryWritable = true
-			_ = temp.Close()
-			_ = os.Remove(temp.Name())
 		} else {
-			notes = append(notes, "directory write failed: "+err.Error())
+			notes = append(notes, "directory write judged unavailable: "+err.Error())
 		}
 	}
 	if !result.Access.DBExists {
@@ -91,7 +119,7 @@ func Probe(ctx context.Context, selection StateSelection) (result ProbeResult) {
 	} else {
 		notes = append(notes, "the log location of the held database could not be measured")
 	}
-	probeRead(ctx, file, expected, &result, &notes)
+	stamp, reached := probeRead(ctx, file, expected, !opts.Write, &result, &notes)
 	// The closing question for the read, and the gate for the write probe.
 	if moved := relocation(file, expected); moved != "" {
 		notes = append(notes, "the database moved while it was being read: "+moved)
@@ -99,7 +127,11 @@ func Probe(ctx context.Context, selection StateSelection) (result ProbeResult) {
 		result.Store = Location{DBPath: result.Store.DBPath, RealPath: result.Store.RealPath}
 		return result
 	}
-	probeWrite(ctx, file, expected, unstamped, &result, &notes)
+	if opts.Write {
+		probeWrite(ctx, file, expected, unstamped, &result, &notes)
+	} else if reached {
+		judgeWrite(expected, unstamped, stamp, &result, &notes)
+	}
 	return result
 }
 
@@ -204,20 +236,24 @@ func probeForeign(ctx context.Context, dbPath string, result *ProbeResult, notes
 	*notes = append(*notes, "database read failed: "+err.Error())
 }
 
-func probeRead(ctx context.Context, file *os.File, expected string, result *ProbeResult, notes *[]string) {
+// probeRead reads the store's identity on a read connection. With judgeStamp it also reads the
+// durable ownership stamp there (one SELECT, nothing written) and answers it as stampOn would on
+// the write probe's connection; judged is whether that reading was reached, which a connection
+// that failed to open or to name the right file, or an identity SELECT that failed, never reaches.
+func probeRead(ctx context.Context, file *os.File, expected string, judgeStamp bool, result *ProbeResult, notes *[]string) (stamp error, judged bool) {
 	if moved := relocation(file, expected); moved != "" {
 		*notes = append(*notes, "database read failed: "+moved)
-		return
+		return nil, false
 	}
-	conn, err := openHeld(ctx, file, "ro")
+	conn, err := openHeldRead(ctx, file, expected, true)
 	if err != nil {
 		*notes = append(*notes, "database read failed: "+err.Error())
-		return
+		return nil, false
 	}
 	defer conn.close()
 	if elsewhere := conn.elsewhere(ctx, file, expected); elsewhere != "" {
 		*notes = append(*notes, "database read failed: "+elsewhere)
-		return
+		return nil, false
 	}
 	result.Access.DBReadable = true
 	for _, field := range []struct {
@@ -228,9 +264,72 @@ func probeRead(ctx context.Context, file *os.File, expected string, result *Prob
 		err := conn.scanRow(ctx, "SELECT value FROM schema_meta WHERE key=?", []any{field.key}, field.dest)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			*notes = append(*notes, "database read failed: "+err.Error())
-			return
+			return nil, false
 		}
 	}
+	if !judgeStamp {
+		return nil, false
+	}
+	_, stamp = stampOn(ctx, conn.conn)
+	return stamp, true
+}
+
+// gateUsable is what ownership.Lock demands of write-gate.lock, judged from the file's own
+// metadata so the gate is never opened: a regular file (the lock is opened with O_NOFOLLOW) owned
+// by this user that either grants no group or other access or sits in an owner-only directory
+// (lockFileSafe, decision D3), and that this process may read and write. A gate that is absent
+// answers the Lstat error, which writeGateRefusal words as the plain unstamped store or the gate's
+// own.
+func gateUsable(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	owned := func(info os.FileInfo) bool {
+		st, ok := info.Sys().(*syscall.Stat_t)
+		return ok && int(st.Uid) == os.Geteuid()
+	}
+	if !info.Mode().IsRegular() || !owned(info) {
+		return fmt.Errorf("unsafe lock file %s: not a regular file owned by this user", path)
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		dir, err := os.Stat(ownership.LexicalDir(path))
+		if err != nil || !dir.IsDir() || !owned(dir) || dir.Mode().Perm()&0o022 != 0 {
+			return fmt.Errorf("unsafe lock file %s: grants group or other access and its directory is not owned by this user or is group/world writable", path)
+		}
+	}
+	return syscall.Access(path, 0x4|0x2)
+}
+
+// judgeWrite is what the default probe says in place of the write probe: whether this runtime
+// would be admitted to write the store, from what a read can see, with nothing written and no
+// lock taken. The write gate must be one ownership.Lock would take (gateUsable; its failure is
+// worded as the gate's own, or as the plain unstamped store when it is absent), the durable stamp
+// read on the read connection must name this runtime, and the database file and its directory
+// must permit writing. It does not see a gate
+// another process holds, or a sandbox that denies writes without changing permissions: only the
+// write probe measures those.
+func judgeWrite(expected string, unstamped bool, stamp error, result *ProbeResult, notes *[]string) {
+	unavailable := func(why string) { *notes = append(*notes, "database write judged unavailable: "+why) }
+	if err := gateUsable(filepath.Join(filepath.Dir(expected), "write-gate.lock")); err != nil {
+		unavailable(writeGateRefusal(err, unstamped).Error())
+		return
+	}
+	if stamp != nil {
+		unavailable(stamp.Error())
+		return
+	}
+	if err := syscall.Access(expected, 0x2); err != nil {
+		unavailable("the database file: " + err.Error())
+		return
+	}
+	// The directory a writer needs is the database's own, which a link resolves elsewhere than
+	// the selected one: SQLite builds the log and the index beside the file it resolved.
+	if err := syscall.Access(filepath.Dir(expected), 0x2|0x1); err != nil {
+		unavailable("the database's directory: " + err.Error())
+		return
+	}
+	result.Access.DBWritable = true
 }
 
 func probeWrite(ctx context.Context, file *os.File, expected string, unstamped bool, result *ProbeResult, notes *[]string) {

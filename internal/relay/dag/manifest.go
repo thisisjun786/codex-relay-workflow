@@ -218,7 +218,7 @@ func ManifestDigest(body map[string]any) string {
 		}
 		included["volatile"] = kept
 	}
-	return sum(included)
+	return Digest(included)
 }
 
 // PutManifest stores a manifest body (it must read strictly, and a manifest_digest it carries must be the

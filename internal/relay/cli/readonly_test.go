@@ -112,12 +112,13 @@ func comparable(command, stdout string) (string, error) {
 		return masked, nil
 	}
 	// Ownership and access are each runtime's own diagnosis, not domain data
-	// (test_fence_readonly.py), and runtime names the answering implementation.
+	// (test_fence_readonly.py), and runtime names the answering implementation and writeProbe
+	// how this run obtained its writability readings.
 	var report map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(masked), &report); err != nil {
 		return "", fmt.Errorf("doctor: %w\n%s", err, masked)
 	}
-	for _, key := range []string{"ownership", "access", "actorReachability", "accessReceipt", "runtime"} {
+	for _, key := range []string{"ownership", "access", "actorReachability", "accessReceipt", "writeProbe", "runtime"} {
 		delete(report, key)
 	}
 	encoded, err := json.Marshal(report)

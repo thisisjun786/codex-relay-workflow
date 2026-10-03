@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"slices"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
@@ -17,27 +16,8 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 )
 
-var forgeRunner = func(ctx context.Context) evidence.Runner {
-	return func(argv []string, timeout time.Duration) (int, string, string, error) {
-		runCtx, cancel := context.WithTimeout(ctx, timeout)
-		defer cancel()
-		cmd := exec.CommandContext(runCtx, argv[0], argv[1:]...)
-		var stdout, stderr strings.Builder
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-		err := cmd.Run()
-		if runCtx.Err() != nil {
-			return 0, "", "", runCtx.Err()
-		}
-		if err == nil {
-			return 0, stdout.String(), stderr.String(), nil
-		}
-		if exit, ok := err.(*exec.ExitError); ok {
-			return exit.ExitCode(), stdout.String(), stderr.String(), nil
-		}
-		return 0, stdout.String(), stderr.String(), err
-	}
-}
+// forgeRunner is the process runner merge-evidence reads the forge through; tests replace it.
+var forgeRunner = evidence.ExecRunner
 
 var mergeEvidenceCommand = dispatch.Command{Name: "merge-evidence", Unselected: true, Exempt: true, ReadOnly: true, Defaults: map[string]any{"page-size": int64(100), "page-budget": int64(50), "call-budget": int64(300), "timeout": int64(60)}, Run: func(ctx context.Context, _ dispatch.Services, args dispatch.Args) (any, error) {
 	repository, _ := args.String("repository")
