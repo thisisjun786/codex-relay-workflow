@@ -493,3 +493,25 @@ No new oracle defect was identified in the directive text and assembly of `pabcd
 - `fetchedAt` is declared a string but cache validation coerces truthy numbers through `Date.parse`, which also normalizes February days 30/31 and `24:00` (source `live-catalog.ts:15,65`; `TestLiveCatalogValidation/numeric-date` and `TestLiveCatalogOracleDates`); port: kept.
 
 The pinned oracle already publishes through an exclusive 0600 temporary file and rename (`live-catalog.ts:71-79`). This port preserves that invariant: the forced-rename failure case retains the previous bytes and removes its own temporary file. No new truncation defect or intentionally-changed fix is claimed.
+
+## Found by the CRW-487 recall rollout port
+
+- Listing checks only the `.jsonl` suffix, so directories and links can be listed as rollout files; reading a listed directory then throws, and day/archive enumeration errors escape the whole listing while `safeDirs` swallows its own errors (source `recall/src/rollout.ts:159-160,169-174,190-197,235-250`; recorded listing oracle and `TestRolloutHeadReadAndFailures`); port: kept.
+- Symlinked year/month/day directories are skipped by `isDirectory`, although the sessions root is followed (source `recall/src/rollout.ts:152-156,192-194`; recorded listing oracle); port: kept.
+- Directory dates and archive filename dates are compared without calendar validation, so invalid dates sort and prune lexically; positive days outside the Date range produces `NaN-NaN-NaN` and prunes every file (source `recall/src/rollout.ts:135-137,148,156-157,173`; recorded listing oracle and `TestRolloutLocalMidnightAndInvalidDays`); port: kept.
+- A metadata first line beyond 1 MiB is truncated for parsing and falls back to all-null main metadata, even when the complete JSON would identify a subagent (source `recall/src/rollout.ts:203-228,238-247`; recorded metadata oracle); port: kept.
+- A present `source.subagent` key classifies a session as subagent even when its value is null or false (source `recall/src/rollout.ts:215`; recorded metadata oracle); port: kept.
+- A function call with empty name and arguments emits an empty tool-log entry, although empty messages and outputs are skipped (source `recall/src/rollout.ts:310,318-325`; recorded parser oracle); port: kept.
+- A text/name/arguments object with its own non-callable `toString` makes String coercion throw outside the JSON catch, aborting the entire parse rather than returning earlier entries (source `recall/src/rollout.ts:272,295-299,307,319`; recorded parser oracle and `TestRolloutKeptParserDefects`); port: kept.
+- The literal response-item prefilter skips valid JSON with an escaped type such as `response_\u0069tem`, and the whole-file prefilter can miss a decoded message whose text is JSON-escaped, such as `\u0043I` for `CI` (source `recall/src/rollout.ts:262-265,293`; recorded parser/prefilter oracle and `TestRolloutKeptParserDefects`); port: kept.
+- Platform differences inherited from the Go JSON boundary: a lone UTF-16 surrogate escape becomes U+FFFD and a line nested beyond 10,000 levels is skipped, where Node preserves the surrogate and parses the deep line (source `recall/src/rollout.ts:296,307`; Node 24 probes and `TestRolloutJSONPlatformBoundaries`); port: kept as platform differences, outside the well-formed-string and bounded-JSON parity domain.
+- Platform difference: coercing a value of 8,000 nested arrays exhausts the pinned Node/V8 call stack and aborts the whole parse, even after earlier entries, while Go can stringify that valid JSON and return both entries; the precise V8 stack budget depends on the engine/call context and is not emulated with an arbitrary depth cap (source `recall/src/rollout.ts:307,319` and JavaScript Array string coercion; Node 24 recorded `RangeError` cases in `testdata/rollout/platform-limits.json`, classified intentionally-changed with reason, and `TestRolloutCoercionStackPlatformDifference`); port: kept as an engine stack-limit difference, outside the parity domain.
+
+## CRW-336: remaining staged skill assets
+
+- The upstream RepoMapper assets contain 158 trailing-whitespace lines and two extra final blank lines across 11 files (`skills/repo-map/scripts/importance.py:44-52`, `repomap.py:21-232`, `repomap_class.py:45-615`, `scm.py:47-58`, `utils.py:23-29` and the vendored query files). The tool-staged copies retain them: full-range `git diff --check` reports 160 findings, while the recorded manual edits are clean; port: kept.
+- The visualizer's optional upstream freshness helper still selects its source with `CXC_VISUALIZE_ROOT` (`skills/dev-visualizer/upstream/sync-check.sh:7`); the settled name table does not rename that upstream-maintenance override, so the staged use-time helper retains it; port: kept.
+
+## CRW-358 — goalplan definition integrity
+
+- Repeated unknown `criteriaIds` produce repeated identical reasons, so a caller that displays only the first four reasons can hide later diagnoses (pabcd-state/src/goalplan.ts:1574-1578 at v0.2.40); port: kept.

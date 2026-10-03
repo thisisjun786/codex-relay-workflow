@@ -21,7 +21,9 @@ const BridgeVersion = "0.2.0"
 
 // New constructs a reconnecting client; Dial also performs the initial handshake.
 func New(socketPath string, bounds PhaseBounds) *Client {
-	return &Client{socket: socketPath, bounds: bounds, maxFrame: MaxFrameBytes, pending: make(map[string]pending), notifications: make(chan Notification, 64), connectGate: make(chan struct{}, 1)}
+	c := &Client{socket: socketPath, bounds: bounds, maxFrame: MaxFrameBytes, pending: make(map[string]pending), notifications: make(chan Notification, 64), connectGate: make(chan struct{}, 1)}
+	c.subscriptions = newSubscriptions(c)
+	return c
 }
 func Dial(ctx context.Context, socketPath string) (*Client, error) {
 	c := New(socketPath, DefaultBounds)
@@ -82,6 +84,12 @@ func (c *Client) connect(ctx context.Context) error {
 func (c *Client) Connect(ctx context.Context) error { return c.connect(ctx) }
 
 func (c *Client) Call(ctx context.Context, method string, params map[string]any) (json.RawMessage, error) {
+	if w, ok := ctx.Value(watchContextKey{}).(*TurnWatch); ok {
+		if w.manager.client != c {
+			return nil, &TransportError{Reason: "subscription watch belongs to another client"}
+		}
+		return c.request(ctx, w.connection, method, params)
+	}
 	establish, cancel := context.WithTimeout(ctx, c.bounds.Establish)
 	defer cancel()
 	if err := c.connect(establish); err != nil {
@@ -101,13 +109,35 @@ func (c *Client) Call(ctx context.Context, method string, params map[string]any)
 }
 func (c *Client) request(ctx context.Context, ws *websocket.Conn, method string, params map[string]any) (json.RawMessage, error) {
 	c.mu.Lock()
+	watch, _ := ctx.Value(watchContextKey{}).(*TurnWatch)
+	if ws == nil || c.conn != ws {
+		c.mu.Unlock()
+		return nil, &TransportError{Reason: "subscription connection ended; request withheld"}
+	}
+	if watch != nil {
+		c.subscriptions.mu.Lock()
+		retired := watch.retired
+		c.subscriptions.mu.Unlock()
+		if retired {
+			c.mu.Unlock()
+			return nil, &TransportError{Reason: "subscription watch retired; request withheld"}
+		}
+	}
 	c.counter++
 	id := c.counter
 	key := fmt.Sprint(id)
 	ch := make(chan outcome, 1)
-	c.pending[key] = pending{ws, ch, method}
+	c.pending[key] = pending{conn: ws, done: ch, method: method, watch: watch}
 	c.mu.Unlock()
-	defer func() { c.mu.Lock(); delete(c.pending, key); c.mu.Unlock() }()
+	defer func() {
+		c.mu.Lock()
+		// A cancelled lifecycle call can still receive its ACK/refusal later.
+		// The reader removes its correlation on reply or socket loss.
+		if method != "thread/start" && method != "turn/start" {
+			delete(c.pending, key)
+		}
+		c.mu.Unlock()
+	}()
 	c.mu.Lock()
 	var injected error
 	if c.beforeWrite != nil {
@@ -115,7 +145,15 @@ func (c *Client) request(ctx context.Context, ws *websocket.Conn, method string,
 	}
 	c.mu.Unlock()
 	if injected != nil {
+		c.mu.Lock()
+		delete(c.pending, key)
+		c.mu.Unlock()
 		return nil, injected
+	}
+	if watch != nil && method == "turn/start" {
+		c.subscriptions.mu.Lock()
+		watch.transmitted = true
+		c.subscriptions.mu.Unlock()
 	}
 	if hook, ok := ctx.Value(sendHookKey{}).(func(string)); ok {
 		hook(method)
@@ -186,6 +224,9 @@ func (c *Client) retire(ws *websocket.Conn) {
 	_ = ws.CloseNow()
 }
 func (c *Client) Close() error {
+	if c.subscriptions != nil {
+		c.subscriptions.close()
+	}
 	c.mu.Lock()
 	ws := c.conn
 	c.conn = nil
