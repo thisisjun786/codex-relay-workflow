@@ -142,27 +142,37 @@ becomes ready for review and Codex when it is opened, and the merge waits for ne
 for that one run of each to end before it emits its receipt. A review thread that reaches the head after the receipt is found outside
 the record's `threadsSeen` when the parent restates it, the handoff no longer describes the candidate, and
 the candidate goes back for a round trip
-([Recheck, integrate, and record](#recheck-integrate-and-record)).
+([Recheck, integrate, and record](#recheck-integrate-and-record)). The relay's restatement catches a late
+review thread only: a late finding that lives in a reviewer's summary comment is not caught, so the parent
+also reads each reviewer's summary comment again right before it merges.
 
 ### The three gates
 
 A pull request merges when all three hold on one and the same head:
 
-1. every CI job succeeds on that head ([Check CI for this candidate](#check-ci-for-this-candidate)),
-   all of them on the head the merge names and not on a mix of heads;
-2. the coordinator verified the candidate by its usual procedure: it read the diff and the code and
-   reran the tests the criteria rest on;
+1. every required CI job succeeds on that head, as
+   [Check CI for this candidate](#check-ci-for-this-candidate) reads required (a skipped or neutral result
+   counts only where the repository's gate semantics make it legitimate); here `dev-gate` needs every other
+   job, so that is every job of the CI workflow, all of them on the head the merge names and not on a mix of
+   heads;
+2. the coordinator verified the candidate by its usual procedure: it read the diff and the code and ran the
+   tests the criteria rest on, or took the child's result for them where that result still applies at this
+   head under the reuse rule (same revision, criteria and environment);
 3. the local gates pass: the checks the repository names for the change, run through the repository's
    permitted local validation route.
 
-Gate 2 is the coordinator's own verification, not a restatement of the child's handoff. It is the
-exception to the rule that the coordinator reads a child's result that still applies instead of producing
-it again ([Observe and verify](../SKILL.md#observe-and-verify)). That rule and
-[OPS-9.3](operations.md#ops-93-the-parent-merges-and-does-not-release) keep governing what the coordinator
-re-derives from the child's handoff: thread coverage, check runs and review dispositions, which it does not
-paginate or triage again.
+Gate 2 is the coordinator's own verification, not a restatement of the child's handoff. Reading the diff
+and the code is always its own; for the tests, the reuse rules of
+[Observe and verify](../SKILL.md#observe-and-verify) and
+[OPS-9.3](operations.md#ops-93-the-parent-merges-and-does-not-release) say when a result that still applies
+is taken instead of produced again, and they keep governing what the coordinator re-derives from the child's
+handoff: thread coverage, check runs and review dispositions, which it does not paginate or triage again.
 
-Nothing else is a gate. The merge waits for no Devin or Codex status or review. Neither inheriting an
+Nothing else is a gate, and neither reviewer is one. A required review source or a mandatory formal approval
+that the target repository's own rules declare still applies as
+[Inspect review content and coverage](#inspect-review-content-and-coverage) has it; in this repository
+`POLICY.md` requires no particular bot and a human approval count of zero. The merge waits for no Devin or
+Codex status or review. Neither inheriting an
 earlier Devin review by patch-id nor writing a substitute review comment is required, and a review against
 a security checklist is not a gate, although a coordinator who finds a security problem while reading the
 diff grades it like any finding ([impact](#judge-a-finding-by-its-impact)). The repository's own merge
@@ -176,17 +186,18 @@ Pull requests that change activation wiring, manifest declarations, the installe
 | | Devin Review | Codex review |
 | --- | --- | --- |
 | Runs | once, when the pull request becomes ready | once, when the pull request is opened: a code review and a security review |
-| In progress | the `Devin Review` status description is `Analyzing your changes` (state pending): wait, with no time limit | the bot's eyes reaction is on the pull request, or a row of its summary comment is not `Completed` |
-| Finished | the description is `Completed analysis in <time>` | the eyes reaction is gone, and either the bot's thumbs-up reaction is on the pull request or every row of its summary comment says `Completed` |
-| Skipped, not waited for | the description is `Full review skipped: trial expired and no credits remaining` (state `success`) | the bot's notice that it skipped for limits, for the review it names |
+| In progress | the `Devin Review` status description is `Analyzing your changes` (state pending): wait, with no time limit | the bot's eyes reaction is on the pull request, or any row of its summary comment is not `Completed` (observed: `🔄 Running since <time>`) |
+| Finished | the description is `Completed analysis in <time>` | the eyes reaction is gone and every row of its summary comment says `Completed`; a row that is not `Completed` outranks a thumbs-up |
+| Skipped, not waited for | the description is `Full review skipped: trial expired and no credits remaining` (state `success`) | the bot's issue comment that it skipped for limits, for the review it names (observed: `You have reached your Codex usage limits for security reviews. Please try again later.`, which ended the security review only) |
 | Findings | a review and inline threads by `devin-ai-integration` | a review by `chatgpt-codex-connector[bot]` whose inline comments start with a `P0` to `P3` badge |
 
 The Codex summary comment is the bot's issue comment whose first line is
 `<!-- codex-pull-request-review-summary -->`, with a table of one row per review (Code Review, Security Review)
-and a hidden security-review record. A security row that says `Completed` while the code review row is
-missing or not Completed, and there is no thumbs-up, is still running: on pull request 368 the security row
-finished about half a minute before the code review did. A skip ends only the review it names; the other is
-still awaited.
+and a hidden security-review record. A security row that says `Completed` while the eyes reaction is still
+on the pull request or the code review row is not Completed is still running: on pull request 368 the
+security row finished about half a minute before the code review did. The bot adds a thumbs-up when every
+review finished with no findings and posts a review with `P0` to `P3` comments when there are findings. A
+skip ends only the review it names; the other is still awaited.
 
 Read the Devin status by its description and never by its state: a state of `success` also marks a head
 Devin skipped, and `Completed analysis in 4s` stays a completion when the state is `failure`. A completion within
@@ -199,8 +210,10 @@ and the child goes on. A reviewer that has shown a signal is waited for to its e
 A description or row status that is not in the table is such a signal: record it exactly as read and keep
 waiting. The skill does not guess its meaning; a child that cannot tell whether the run is still going asks
 through the usual `blocked_needs_input` route, as for any question only a person can answer. When only one
-reviewer is silent, the handoff records it as `no signal by <time>` and names the case, because the rule
-above is stated for both being silent and does not say whether the child waits longer for the one.
+reviewer is silent while the other has run, the child applies the same 30 minutes to the silent one, records
+it as `no signal by <time>`, goes on, and says in the handoff that it applied the rule to one reviewer. The
+coordinator stated the rule for both reviewers silent, so this extension is the child's assumption until the
+coordinator decides it, and a later finding from the silent reviewer is a late finding like any other.
 
 A later head has no review of its own, and that is normal, a refresh of the base included. No review is
 requested again and no later run is awaited.
@@ -217,6 +230,11 @@ Read the grade as the reviewer wrote it, whoever the reviewer is.
 - Devin yellow and Codex P2 and P3 get a reply and are resolved, or are listed for the backlog in the
   handoff. A minor separable residue follows
   [the parent's acceptance](#conditional-acceptance-and-what-recording-one-costs).
+
+`merge-evidence` refuses the latest submitted `CHANGES_REQUESTED` review of any author, a bot included, until that
+author approves or dismisses it. Devin and Codex post their reviews as `COMMENTED` (every one read so far was,
+see the basis of S27 to S27f), so this is not reached today. A bot review that does arrive in that state is
+reported to the coordinator and is not read as a gate.
 
 ### What the record says
 
