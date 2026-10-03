@@ -214,3 +214,14 @@ func TestRecallSQLiteBindingsAndTypes(t *testing.T) {
 		t.Fatal(r)
 	}
 }
+
+func TestRecallSQLiteMinimumIntegerOracleOverflow(t *testing.T) {
+	d := recallDB(t, ":memory:")
+	s := recallStmt(t, d, "SELECT ? AS x")
+	if got := recallRow(t, s, big.NewInt(-1<<63))["x"]; got != float64(-1<<63) {
+		t.Fatal(got)
+	}
+	if _, err := s.Get(big.NewInt(-1<<63 + 1)); err == nil {
+		t.Fatal("neighboring unsafe integer must still fail")
+	}
+}

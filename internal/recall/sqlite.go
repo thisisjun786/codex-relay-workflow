@@ -233,7 +233,8 @@ func (s *Stmt) row() (map[string]any, error) {
 		switch sqlite.Xsqlite3_column_type(s.db.tls, s.handle, i) {
 		case sqlite.SQLITE_INTEGER:
 			n := sqlite.Xsqlite3_column_int64(s.db.tls, s.handle, i)
-			if n > 9007199254740991 || n < -9007199254740991 {
+			// Node's absolute-value check overflows for int64's minimum; parity keeps it.
+			if n != -1<<63 && (n > 9007199254740991 || n < -9007199254740991) {
 				return nil, fmt.Errorf("Value is too large to be represented as a JavaScript number: %d", n)
 			}
 			value = float64(n)
