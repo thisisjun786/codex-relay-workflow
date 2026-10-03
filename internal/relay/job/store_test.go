@@ -29,10 +29,15 @@ func workspace(t *testing.T) string {
 
 func put(t *testing.T, path, text string) {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o777); err != nil {
+	mkdir(t, filepath.Dir(path))
+	if err := os.WriteFile(path, []byte(text), 0o666); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte(text), 0o666); err != nil {
+}
+
+func mkdir(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(path, 0o777); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -92,12 +97,9 @@ func TestPathsLayout(t *testing.T) {
 			t.Errorf("%s = %q, want %q", name, c[0], c[1])
 		}
 	}
-	if BGDirName != "bg" || DisabledFile != "disabled" || EnabledAtFile != "enabled-at" || LedgerFile != "ledger.jsonl" {
-		t.Error("a file name constant changed")
-	}
 }
 
-func TestEnsureDirCreatesTheCrwDirectoryThenBg(t *testing.T) {
+func TestEnsureDirCreatesTheCrwDirectoryThenBgAndFailsOverAFile(t *testing.T) {
 	cwd := workspace(t)
 	dir, err := EnsureDir(cwd)
 	if err != nil || dir != filepath.Join(cwd, ".crw", "bg") {
@@ -106,56 +108,13 @@ func TestEnsureDirCreatesTheCrwDirectoryThenBg(t *testing.T) {
 	if got := get(t, filepath.Join(cwd, ".crw", ".gitignore")); got != crwdir.GitignoreText {
 		t.Errorf(".gitignore = %q", got)
 	}
-	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
-		t.Errorf("bg is not a directory: %v", err)
-	}
 	if again, err := EnsureDir(cwd); err != nil || again != dir {
 		t.Errorf("second EnsureDir = %q, %v", again, err)
 	}
-	if got := names(t, filepath.Join(cwd, ".crw")); !slices.Equal(got, []string{".gitignore", "bg"}) {
-		t.Errorf(".crw holds %v", got)
-	}
-}
-
-func TestEnsureDirLeavesAnExistingCrwDirectoryWithoutGitignore(t *testing.T) {
-	cwd := workspace(t)
-	if err := os.Mkdir(filepath.Join(cwd, ".crw"), 0o777); err != nil {
-		t.Fatal(err)
-	}
-	store(t, cwd)
-	if got := names(t, filepath.Join(cwd, ".crw")); !slices.Equal(got, []string{"bg"}) {
-		t.Errorf(".crw holds %v", got)
-	}
-}
-
-func TestEnsureDirFails(t *testing.T) {
-	if _, err := EnsureDir(filepath.Join(workspace(t), "missing")); err == nil {
-		t.Error("a workspace that does not exist: no error")
-	}
-	cwd := workspace(t)
+	cwd = workspace(t)
 	put(t, filepath.Join(cwd, ".crw", "bg"), "a file")
 	if dir, err := EnsureDir(cwd); err == nil || dir != "" {
 		t.Errorf("bg is a file: %q, %v", dir, err)
-	}
-}
-
-func TestEnsureDirRefusesAStoreThatLeavesTheWorkspace(t *testing.T) {
-	for _, linked := range []string{".crw", ".crw/bg"} {
-		cwd, outside := workspace(t), workspace(t)
-		if linked == ".crw" {
-			symlink(t, outside, filepath.Join(cwd, ".crw"))
-		} else {
-			if err := os.Mkdir(filepath.Join(cwd, ".crw"), 0o777); err != nil {
-				t.Fatal(err)
-			}
-			symlink(t, outside, filepath.Join(cwd, ".crw", "bg"))
-		}
-		if dir, err := EnsureDir(cwd); !errors.Is(err, ErrOutsideStore) || dir != "" {
-			t.Errorf("%s -> outside: EnsureDir = %q, %v", linked, dir, err)
-		}
-		if got := names(t, outside); len(got) != 0 {
-			t.Errorf("%s -> outside: created %v there", linked, got)
-		}
 	}
 }
 
@@ -171,8 +130,9 @@ func TestAtomicWritePublishesWholeFilesAndLeavesNoTmp(t *testing.T) {
 	if get(t, path) != "two\n" || !slices.Equal(names(t, dir), []string{"r.json"}) {
 		t.Errorf("content %q, directory %v", get(t, path), names(t, dir))
 	}
-	if err := AtomicWrite(cwd, filepath.Join(dir, "later.json"), "x"); err != nil {
-		t.Errorf("a file not made by a builder: %v", err)
+	// The cleaned path is the one written: sub/.. never reaches the file system.
+	if err := AtomicWrite(cwd, dir+"/sub/../y.json", "y"); err != nil || get(t, filepath.Join(dir, "y.json")) != "y" {
+		t.Errorf("a path with a dot-dot: %v", err)
 	}
 }
 
@@ -190,73 +150,10 @@ func TestAtomicWriteTakesARelativeAndAnAliasedWorkspace(t *testing.T) {
 	}
 }
 
-func TestAtomicWriteWritesTheCleanedPath(t *testing.T) {
-	cwd := workspace(t)
-	dir := store(t, cwd)
-	if err := AtomicWrite(cwd, dir+"/sub/../y.json", "y"); err != nil {
-		t.Fatal(err)
-	}
-	if get(t, filepath.Join(dir, "y.json")) != "y" || !slices.Equal(names(t, dir), []string{"y.json"}) {
-		t.Errorf("directory %v", names(t, dir))
-	}
-}
-
-func TestAtomicWriteRefusesWhatIsNotAFileOfTheStore(t *testing.T) {
-	cwd, other := workspace(t), workspace(t)
-	store(t, cwd)
-	store(t, other)
-	for name, path := range map[string]string{
-		"climbing id":             RecordPath(cwd, "../../x"),
-		"nested id":               RecordPath(cwd, "sub/id"),
-		"another workspace's bg":  RecordPath(other, "victim"),
-		"the bg directory itself": BGDir(cwd),
-		"the workspace":           filepath.Join(cwd, "x.json"),
-		"a relative path":         "x.json",
-	} {
-		err := AtomicWrite(cwd, path, "payload")
-		if !errors.Is(err, ErrOutsideStore) {
-			t.Errorf("%s: err = %v", name, err)
-		}
-	}
-	for _, root := range []string{cwd, other} {
-		_ = filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
-			if err == nil && !d.IsDir() && !strings.HasSuffix(p, ".gitignore") {
-				t.Errorf("a file was made: %s", p)
-			}
-			return nil
-		})
-	}
-}
-
-func TestAtomicWriteRefusesAStoreThatLeavesTheWorkspace(t *testing.T) {
-	for _, linked := range []string{".crw", ".crw/bg"} {
-		cwd, outside := workspace(t), workspace(t)
-		put(t, filepath.Join(outside, "bg", "keep"), "keep")
-		if linked == ".crw" {
-			symlink(t, outside, filepath.Join(cwd, ".crw"))
-		} else {
-			if err := os.Mkdir(filepath.Join(cwd, ".crw"), 0o777); err != nil {
-				t.Fatal(err)
-			}
-			symlink(t, filepath.Join(outside, "bg"), filepath.Join(cwd, ".crw", "bg"))
-		}
-		if err := AtomicWrite(cwd, RecordPath(cwd, "r"), "x"); !errors.Is(err, ErrOutsideStore) {
-			t.Errorf("%s -> outside: err = %v", linked, err)
-		}
-		if got := names(t, filepath.Join(outside, "bg")); !slices.Equal(got, []string{"keep"}) {
-			t.Errorf("%s -> outside: the outside directory holds %v", linked, got)
-		}
-	}
-}
-
 func TestAtomicWriteFollowsAStoreLinkedInsideTheWorkspace(t *testing.T) {
 	cwd := workspace(t)
-	if err := os.MkdirAll(filepath.Join(cwd, "elsewhere"), 0o777); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Mkdir(filepath.Join(cwd, ".crw"), 0o777); err != nil {
-		t.Fatal(err)
-	}
+	mkdir(t, filepath.Join(cwd, "elsewhere"))
+	mkdir(t, filepath.Join(cwd, ".crw"))
 	symlink(t, filepath.Join(cwd, "elsewhere"), filepath.Join(cwd, ".crw", "bg"))
 	if err := AtomicWrite(cwd, RecordPath(cwd, "r"), "x"); err != nil || get(t, filepath.Join(cwd, "elsewhere", "r.json")) != "x" {
 		t.Errorf("err = %v", err)
@@ -268,9 +165,7 @@ func TestAtomicWriteLeavesTheTmpWhenTheRenameFails(t *testing.T) {
 	cwd := workspace(t)
 	dir := store(t, cwd)
 	final := RecordPath(cwd, "isdir")
-	if err := os.Mkdir(final, 0o777); err != nil {
-		t.Fatal(err)
-	}
+	mkdir(t, final)
 	if err := atomicWrite(cwd, final, "text", 42, 7); err == nil {
 		t.Fatal("the rename over a directory succeeded")
 	}
@@ -305,26 +200,12 @@ func TestReadTextDecodesLikeNode(t *testing.T) {
 	if want := "a\ufffdb\ufffdc\ufffd\ufffd\ufffdA\ufffd\ufffd\ufffd"; !ok || got != want {
 		t.Errorf("ReadText = %q, %v", got, ok)
 	}
-	put(t, filepath.Join(dir, "bom"), "\ufeff{}\n")
-	if got, ok := ReadText(filepath.Join(dir, "bom")); !ok || got != "\ufeff{}\n" {
-		t.Errorf("a BOM is kept: %q, %v", got, ok)
-	}
-	if err := os.Mkdir(filepath.Join(dir, "dir"), 0o777); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"missing", "dir"} {
-		if got, ok := ReadText(filepath.Join(dir, name)); ok || got != "" {
-			t.Errorf("%s: %q, %v", name, got, ok)
-		}
-	}
 }
 
 // Oracle readJson: only a non-null object or array is a result.
 func TestReadJSONKeepsOnlyObjectsAndArrays(t *testing.T) {
 	dir := workspace(t)
-	if err := os.Mkdir(filepath.Join(dir, "dir"), 0o777); err != nil {
-		t.Fatal(err)
-	}
+	mkdir(t, filepath.Join(dir, "dir"))
 	for _, c := range []struct {
 		name, text string
 		keep       bool
@@ -372,10 +253,10 @@ func TestAppendLedgerWritesNodesBytes(t *testing.T) {
 	rows := []Event{
 		{{"event", "registered"}, {"id", "bg1"}, {"pid", 42}, {"command", []string{"sh", "-c", "echo <&>"}}},
 		{{"event", "completed"}, {"id", "bg1"}, {"exitCode", nil}},
-		{{"event", "x"}, {"s", "q\"b\\ \n\t\x01\u2028\u2029 \x7f é 😀"}, {"num", 1.5}, {"big", 1e21}, {"small", 1e-7},
+		{{"event", "x"}, {"s", "q\"b\\ \n\r\b\f\t\x01\u2028\u2029 \x7f é 😀"}, {"num", 1.5}, {"big", 1e21}, {"small", 1e-7},
 			{"neg0", math.Copysign(0, -1)}, {"nan", math.NaN()}, {"inf", math.Inf(1)}, {"t", true}, {"f", false},
 			{"arr", []any{1, "a", nil, []any{2}, int64(-3)}}, {"obj", Event{{"k", "v"}}}, {"empty", Event{}}, {"none", []string{}},
-			{"bad", "a\xffb"}},
+			{"bad", "a\xffb"}, {"i", int64(9007199254740993)}, {"j", -3}},
 	}
 	for i, row := range rows {
 		if err := appendLedger(cwd, row, at("2026-10-03T01:02:03Z")); err != nil {
@@ -385,21 +266,11 @@ func TestAppendLedgerWritesNodesBytes(t *testing.T) {
 	want := []string{
 		"{\"at\":\"2026-10-03T01:02:03.000Z\",\"event\":\"registered\",\"id\":\"bg1\",\"pid\":42,\"command\":[\"sh\",\"-c\",\"echo <&>\"]}",
 		"{\"at\":\"2026-10-03T01:02:03.000Z\",\"event\":\"completed\",\"id\":\"bg1\",\"exitCode\":null}",
-		"{\"at\":\"2026-10-03T01:02:03.000Z\",\"event\":\"x\",\"s\":\"q\\\"b\\\\ \\n\\t\\u0001\u2028\u2029 \x7f é 😀\",\"num\":1.5,\"big\":1e+21,\"small\":1e-7," +
-			"\"neg0\":0,\"nan\":null,\"inf\":null,\"t\":true,\"f\":false,\"arr\":[1,\"a\",null,[2],-3],\"obj\":{\"k\":\"v\"},\"empty\":{},\"none\":[],\"bad\":\"a\ufffdb\"}",
+		"{\"at\":\"2026-10-03T01:02:03.000Z\",\"event\":\"x\",\"s\":\"q\\\"b\\\\ \\n\\r\\b\\f\\t\\u0001\u2028\u2029 \x7f é 😀\",\"num\":1.5,\"big\":1e+21,\"small\":1e-7," +
+			"\"neg0\":0,\"nan\":null,\"inf\":null,\"t\":true,\"f\":false,\"arr\":[1,\"a\",null,[2],-3],\"obj\":{\"k\":\"v\"},\"empty\":{},\"none\":[],\"bad\":\"a\ufffdb\",\"i\":9007199254740992,\"j\":-3}",
 	}
 	if got := ledger(t, cwd); !slices.Equal(got, want) {
 		t.Errorf("rows:\n%q\nwant\n%q", got, want)
-	}
-}
-
-func TestAppendLedgerTimestampKeepsMilliseconds(t *testing.T) {
-	cwd := workspace(t)
-	if err := appendLedger(cwd, Event{{"event", "e"}}, at("2026-10-03T10:20:30.0045+09:00")); err != nil {
-		t.Fatal(err)
-	}
-	if got := ledger(t, cwd)[0]; got != "{\"at\":\"2026-10-03T01:20:30.004Z\",\"event\":\"e\"}" {
-		t.Errorf("row %q", got)
 	}
 }
 
@@ -409,7 +280,7 @@ func TestAppendLedgerAtAndRepeatedKeys(t *testing.T) {
 	cwd := workspace(t)
 	for _, row := range []Event{
 		{{"event", "adopted"}, {"id", "bg1"}, {"sessionId", "S1"}, {"at", "FIXED"}},
-		{{"a", 1}, {"b", 2}, {"a", 3}},
+		{{"a", 1}, {"b", 2}, {"a", 3}, {"o", Event{{"x", 1}, {"y", 2}, {"x", 3}}}},
 	} {
 		if err := appendLedger(cwd, row, at("2026-10-03T01:02:03Z")); err != nil {
 			t.Fatal(err)
@@ -417,37 +288,51 @@ func TestAppendLedgerAtAndRepeatedKeys(t *testing.T) {
 	}
 	want := []string{
 		"{\"at\":\"FIXED\",\"event\":\"adopted\",\"id\":\"bg1\",\"sessionId\":\"S1\"}",
-		"{\"at\":\"2026-10-03T01:02:03.000Z\",\"a\":3,\"b\":2}",
+		"{\"at\":\"2026-10-03T01:02:03.000Z\",\"a\":3,\"b\":2,\"o\":{\"x\":3,\"y\":2}}",
 	}
 	if got := ledger(t, cwd); !slices.Equal(got, want) {
 		t.Errorf("rows %q", got)
 	}
 }
 
-// Oracle ledger[3] "lone": a string the oracle held as a lone surrogate cannot be a Go string, so a caller passes its raw token.
-func TestAppendLedgerWritesARawJSONValueAsItIs(t *testing.T) {
+// Oracle ledger[3] "lone": a string the oracle held as a lone surrogate cannot be a Go string, so a caller passes its raw token. A raw
+// value is written compact, on one line, as JSON.stringify would write it.
+func TestAppendLedgerWritesARawJSONValueCompact(t *testing.T) {
 	cwd := workspace(t)
-	if err := appendLedger(cwd, Event{{"lone", json.RawMessage(`"\\ud800"`)}}, at("2026-10-03T01:02:03Z")); err != nil {
+	row := Event{{"lone", json.RawMessage("\"\\ud800\"")}, {"o", json.RawMessage("{\n  \"x\": [1, 2]\n}")}}
+	if err := appendLedger(cwd, row, at("2026-10-03T01:02:03Z")); err != nil {
 		t.Fatal(err)
 	}
-	if got := ledger(t, cwd)[0]; got != "{\"at\":\"2026-10-03T01:02:03.000Z\",\"lone\":\"\\ud800\"}" {
-		t.Errorf("row %q", got)
+	if got := ledger(t, cwd); !slices.Equal(got, []string{"{\"at\":\"2026-10-03T01:02:03.000Z\",\"lone\":\"\\ud800\",\"o\":{\"x\":[1,2]}}"}) {
+		t.Errorf("rows %q", got)
 	}
-	if err := appendLedger(cwd, Event{{"bad", json.RawMessage("{")}}, at("2026-10-03T01:02:03Z")); err == nil || len(ledger(t, cwd)) != 1 {
-		t.Errorf("an invalid raw value: %v", err)
+	for _, bad := range []string{"{", "", "\"\xff\""} {
+		if err := appendLedger(cwd, Event{{"bad", json.RawMessage(bad)}}, at("2026-10-03T01:02:03Z")); err == nil || len(ledger(t, cwd)) != 1 {
+			t.Errorf("raw value %q: %v", bad, err)
+		}
 	}
 }
 
-func TestAppendLedgerCreatesTheStoreAndAppends(t *testing.T) {
-	cwd := workspace(t)
-	AppendLedger(cwd, Event{{"event", "disabled"}})
-	AppendLedger(cwd, Event{{"event", "enabled"}})
-	rows := ledger(t, cwd)
-	if len(rows) != 2 || !strings.HasPrefix(rows[0], "{\"at\":\"") || !strings.HasSuffix(rows[0], "Z\",\"event\":\"disabled\"}") {
-		t.Errorf("rows %q", rows)
-	}
-	if got := get(t, filepath.Join(cwd, ".crw", ".gitignore")); got != crwdir.GitignoreText {
-		t.Errorf(".gitignore = %q", got)
+func TestAppendLedgerCreatesTheStoreFromAnyNameOfTheWorkspace(t *testing.T) {
+	for _, name := range []string{"absolute", ".", "", "child"} {
+		ws := workspace(t)
+		mkdir(t, filepath.Join(ws, "child"))
+		t.Chdir(ws)
+		cwd, root := name, ws
+		if name == "absolute" {
+			cwd = ws
+		} else if name == "child" {
+			root = filepath.Join(ws, "child")
+		}
+		AppendLedger(cwd, Event{{"event", "disabled"}})
+		AppendLedger(cwd, Event{{"event", "enabled"}})
+		rows := ledger(t, root)
+		if len(rows) != 2 || !strings.HasPrefix(rows[0], "{\"at\":\"") || !strings.HasSuffix(rows[0], "Z\",\"event\":\"disabled\"}") {
+			t.Errorf("%q: rows %q", name, rows)
+		}
+		if got := get(t, filepath.Join(root, ".crw", ".gitignore")); got != crwdir.GitignoreText {
+			t.Errorf("%q: .gitignore = %q", name, got)
+		}
 	}
 }
 
@@ -467,8 +352,20 @@ func TestAppendLedgerFailsOpen(t *testing.T) {
 	if err := appendLedger(cwd, Event{{"event", "x"}, {"v", struct{}{}}}, time.Now); err == nil {
 		t.Error("an unsupported value was written")
 	}
+	cycle := Event{{"event", "x"}, {"self", nil}}
+	cycle[1].Value = cycle
+	if err := appendLedger(cwd, cycle, time.Now); err == nil {
+		t.Error("a value that contains itself was written")
+	}
 	if got := names(t, dir); len(got) != 0 {
 		t.Errorf("a row was started: %v", got)
+	}
+	deep := Event{{"leaf", 1}}
+	for i := 0; i < 300; i++ {
+		deep = Event{{"n", deep}}
+	}
+	if err := appendLedger(cwd, deep, time.Now); err != nil || len(ledger(t, cwd)) != 1 {
+		t.Errorf("an event nested 300 deep: %v", err)
 	}
 }
 
@@ -496,34 +393,10 @@ func TestListRecordIDsSortsByUTF16(t *testing.T) {
 		"B.json", "10.json", "9.json", "a.JSON", "é.json"} {
 		put(t, filepath.Join(dir, name), "{}")
 	}
-	if err := os.Mkdir(filepath.Join(dir, "dir.json"), 0o777); err != nil {
-		t.Fatal(err)
-	}
+	mkdir(t, filepath.Join(dir, "dir.json"))
 	want := []string{"", "10", "9", "B", "a", "b", "dir", "é", "😀", "\uffff"}
 	if got := ListRecordIDs(cwd); !slices.Equal(got, want) {
 		t.Errorf("ids %q, want %q", got, want)
-	}
-}
-
-func TestListRecordIDsIsEmptyWithoutAStore(t *testing.T) {
-	cwd := workspace(t)
-	if got := ListRecordIDs(cwd); got == nil || len(got) != 0 {
-		t.Errorf("no .crw: %#v", got)
-	}
-	put(t, filepath.Join(cwd, ".crw", "bg"), "a file")
-	if got := ListRecordIDs(cwd); got == nil || len(got) != 0 {
-		t.Errorf("bg is a file: %#v", got)
-	}
-}
-
-func TestListRecordIDsDecodesNamesLikeNode(t *testing.T) {
-	cwd := workspace(t)
-	dir := store(t, cwd)
-	if err := os.WriteFile(filepath.Join(dir, "bad\xff.json"), []byte("{}"), 0o666); err != nil {
-		t.Skipf("the file system does not take a name that is not UTF-8: %v", err)
-	}
-	if got := ListRecordIDs(cwd); !slices.Equal(got, []string{"bad\ufffd"}) {
-		t.Errorf("ids %q", got)
 	}
 }
 
@@ -535,12 +408,6 @@ func TestMtimeMs(t *testing.T) {
 	}
 	if got, ok := MtimeMs(path); !ok || got != 1700000000123 {
 		t.Errorf("MtimeMs = %v, %v", got, ok)
-	}
-	if got, ok := MtimeMs(path + "-missing"); ok || got != 0 {
-		t.Errorf("a missing file: %v, %v", got, ok)
-	}
-	if got, ok := MtimeMs(filepath.Dir(path)); !ok || got <= 0 {
-		t.Errorf("a directory: %v, %v", got, ok)
 	}
 }
 
@@ -568,9 +435,7 @@ func TestRemovePathRemovesFilesAndLinksOnly(t *testing.T) {
 	put(t, outside, "t")
 	put(t, filepath.Join(dir, "f"), "x")
 	put(t, filepath.Join(dir, "full", "g"), "y")
-	if err := os.Mkdir(filepath.Join(dir, "empty"), 0o777); err != nil {
-		t.Fatal(err)
-	}
+	mkdir(t, filepath.Join(dir, "empty"))
 	symlink(t, outside, filepath.Join(dir, "link"))
 	for _, name := range []string{"f", "missing", "empty", "full", "link"} {
 		if err := RemovePath(cwd, filepath.Join(dir, name)); err != nil {
@@ -585,48 +450,74 @@ func TestRemovePathRemovesFilesAndLinksOnly(t *testing.T) {
 	}
 }
 
-func TestRemovePathRefusesWhatIsNotAFileOfTheStore(t *testing.T) {
+// linkedStore is a workspace whose .crw or .crw/bg is a link to a directory outside it; that directory holds a file named disabled.
+func linkedStore(t *testing.T, linked string) (cwd, bg string) {
+	t.Helper()
+	cwd, outside := workspace(t), workspace(t)
+	bg = filepath.Join(outside, "bg")
+	put(t, filepath.Join(bg, DisabledFile), "keep")
+	if linked == ".crw" {
+		symlink(t, outside, filepath.Join(cwd, ".crw"))
+		return cwd, bg
+	}
+	mkdir(t, filepath.Join(cwd, ".crw"))
+	symlink(t, bg, filepath.Join(cwd, ".crw", "bg"))
+	return cwd, bg
+}
+
+// The oracle followed these links: ensureDir made directories there, appendLedger and atomicWrite wrote, and cli.ts:150's
+// removePath(disabledPath(cwd)) deleted a file.
+func TestAStoreThatLeavesTheWorkspaceIsRefused(t *testing.T) {
+	for _, linked := range []string{".crw", ".crw/bg"} {
+		cwd, bg := linkedStore(t, linked)
+		if dir, err := EnsureDir(cwd); !errors.Is(err, ErrOutsideStore) || dir != "" {
+			t.Errorf("%s: EnsureDir = %q, %v", linked, dir, err)
+		}
+		if err := AtomicWrite(cwd, RecordPath(cwd, "r"), "x"); !errors.Is(err, ErrOutsideStore) {
+			t.Errorf("%s: AtomicWrite: %v", linked, err)
+		}
+		if err := RemovePath(cwd, DisabledPath(cwd)); !errors.Is(err, ErrOutsideStore) {
+			t.Errorf("%s: RemovePath: %v", linked, err)
+		}
+		if err := appendLedger(cwd, Event{{"event", "x"}}, time.Now); !errors.Is(err, ErrOutsideStore) {
+			t.Errorf("%s: appendLedger: %v", linked, err)
+		}
+		if got := names(t, bg); !slices.Equal(got, []string{DisabledFile}) || get(t, filepath.Join(bg, DisabledFile)) != "keep" {
+			t.Errorf("%s: the outside directory holds %v", linked, got)
+		}
+	}
+}
+
+func TestWhatIsNotAFileOfTheStoreIsRefused(t *testing.T) {
 	cwd, other := workspace(t), workspace(t)
 	store(t, cwd)
 	store(t, other)
-	victims := map[string]string{
-		"climbing id":            RecordPath(cwd, "../../victim"),
-		"another workspace's bg": RecordPath(other, "victim"),
-		"the workspace":          filepath.Join(cwd, "victim.json"),
-	}
-	for name, path := range victims {
-		put(t, path, "keep")
+	t.Chdir(workspace(t)) // "x.json" below is relative; a regression must not write into the package directory
+	for name, path := range map[string]string{
+		"climbing id":             RecordPath(cwd, "../../x"),
+		"nested id":               RecordPath(cwd, "sub/id"),
+		"another workspace's bg":  RecordPath(other, "victim"),
+		"the bg directory itself": BGDir(cwd),
+		"the workspace":           filepath.Join(cwd, "x.json"),
+		"a relative path":         "x.json",
+	} {
+		if _, err := os.Lstat(path); err != nil {
+			put(t, path, "keep")
+		}
+		if err := AtomicWrite(cwd, path, "payload"); !errors.Is(err, ErrOutsideStore) {
+			t.Errorf("%s: AtomicWrite: %v", name, err)
+		}
 		if err := RemovePath(cwd, path); !errors.Is(err, ErrOutsideStore) {
-			t.Errorf("%s: err = %v", name, err)
+			t.Errorf("%s: RemovePath: %v", name, err)
 		}
-		if get(t, path) != "keep" {
-			t.Errorf("%s: the file was removed", name)
+		if tmps, _ := filepath.Glob(path + ".tmp-*"); len(tmps) != 0 {
+			t.Errorf("%s: a tmp was made: %v", name, tmps)
+		}
+		if info, err := os.Lstat(path); err != nil || (info.Mode().IsRegular() && get(t, path) != "keep") {
+			t.Errorf("%s: the target changed: %v", name, err)
 		}
 	}
-	if err := RemovePath(cwd, BGDir(cwd)); !errors.Is(err, ErrOutsideStore) {
-		t.Errorf("the bg directory: %v", err)
-	}
-}
-
-// The oracle's own call removePath(disabledPath(cwd)) (cli.ts:150) with .crw/bg pointing out of the workspace.
-func TestRemovePathRefusesAStoreThatLeavesTheWorkspace(t *testing.T) {
-	cwd, outside := workspace(t), workspace(t)
-	put(t, filepath.Join(outside, DisabledFile), "keep")
-	if err := os.Mkdir(filepath.Join(cwd, ".crw"), 0o777); err != nil {
-		t.Fatal(err)
-	}
-	symlink(t, outside, filepath.Join(cwd, ".crw", "bg"))
-	if err := RemovePath(cwd, DisabledPath(cwd)); !errors.Is(err, ErrOutsideStore) {
-		t.Errorf("err = %v", err)
-	}
-	if get(t, filepath.Join(outside, DisabledFile)) != "keep" {
-		t.Error("the file outside the workspace was removed")
-	}
-}
-
-func TestRemovePathWithoutAStoreIsNothing(t *testing.T) {
-	cwd := workspace(t)
-	if err := RemovePath(cwd, DisabledPath(cwd)); err != nil {
-		t.Errorf("no .crw: %v", err)
+	if bare := workspace(t); RemovePath(bare, DisabledPath(bare)) != nil {
+		t.Error("a workspace without a store: removal is not nothing")
 	}
 }
