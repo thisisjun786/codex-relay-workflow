@@ -175,7 +175,7 @@ func TestExcludedInvocationsDoNotExemptMalformedStdin(t *testing.T) {
 	code, answer := verify(t, roots(h.journal)...)
 	expectVerdict(t, code, answer, 3, "UNREADABLE")
 	report := exclusionReports(t, answer, 1)[0].(map[string]any)
-	if report["reason"] != "no_event:stdin_unreadable" || report["preventsTrue"] != true || report["evidence"].(map[string]any)["eventIdentity"] != nil {
+	if report["reason"] != "no_event:stdin_not_json" || report["preventsTrue"] != true || report["evidence"].(map[string]any)["eventIdentity"] != nil {
 		t.Fatal(report)
 	}
 }

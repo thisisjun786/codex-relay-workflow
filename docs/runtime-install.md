@@ -1149,6 +1149,17 @@ registrations write to, and `--codex-home` adds a host whose ledger no claim nam
 invocations it cannot judge, whose identity was not established or that had no owner, are counted by
 reason and never read as answered.
 
+When the window contains readable version-2 rows with no event key, the optional
+`excludedInvocations` list names each row, timestamp, session and turn, and its
+`unestablished:<reason>` or `no_event:<outcome>` reason. `evidence` holds the recorded
+acceptance, event key, accepted path, adapter outcome, guard invocation/decision,
+hold and event identity. `excludedFrom: per_event_acceptance_count` means only that
+the row cannot join an event's acceptance count; it does not remove uncertainty
+from the window. `preventsTrue` is true except for the existing native pre-scan
+unreachable exemption. An unestablished guard call still makes the verdict
+`UNREADABLE`, even if it wrote no claim. Keyed unclaimable or failed claims remain
+in `unjudgedInvocations`; malformed rows remain in `rowsUnreadable`.
+
 ### Limits
 
 The guarantee holds among the registrations of one Codex home, which is every registration one host
