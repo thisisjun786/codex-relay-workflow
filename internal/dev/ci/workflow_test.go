@@ -155,6 +155,18 @@ func TestWorkflow_each_check_runs_once(t *testing.T) {
 	}
 }
 
+// CI installs no Python: the checks are Go only, so no job needs an interpreter set up.
+func TestWorkflow_installs_no_python(t *testing.T) {
+	jobs, _ := workflowJobs(t)
+	for name, body := range jobs {
+		for _, word := range []string{"setup-python", "python-version"} {
+			if strings.Contains(body, word) {
+				t.Errorf("%s job still names %q", name, word)
+			}
+		}
+	}
+}
+
 // matrixValues reads a one-line `key: [a, b]` matrix entry from a job body.
 func matrixValues(t *testing.T, body, key string) []string {
 	t.Helper()

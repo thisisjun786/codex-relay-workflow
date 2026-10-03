@@ -55,8 +55,8 @@ recordings differ; `ci contracts` runs `cxc lint` over it. See
 The Python packages the runtime was ported from left the repository in todo 44; what stays of
 them is the bridge's licence and provenance under `packages/codex-thread-bridge` and the relay's
 documents under `docs/relay`. The CI checks are Go only (`crw-dev ci`); their Python twins left in
-refactor R3. The Python files left are the port checkers listed in
-`scripts/dev/ALLOWED_PYTHON.txt` until todo 48 removes them.
+refactor R3. The port checkers, the last Python files, left in todo 48, so the repository tracks
+no Python: `crw-dev ci validate` refuses a `.py` file or a python-shebang script.
 
 Installer tests use temporary destinations; do not point test runs at your real
 Codex skill directory. The bundled Codex skill validator, when installed, is an
