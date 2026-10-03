@@ -318,9 +318,7 @@ func catalogDate(s string) (int64, bool) {
 			s = date.Format("2006-01-02") + s[10:]
 			if len(s) >= 16 && s[10] == 'T' && s[11:16] == "24:00" {
 				tail := s[16:]
-				if strings.HasPrefix(tail, ":00") {
-					tail = tail[3:]
-				}
+				tail = strings.TrimPrefix(tail, ":00")
 				if strings.HasPrefix(tail, ".") {
 					tail = tail[1:]
 					for len(tail) > 0 && tail[0] == '0' {
