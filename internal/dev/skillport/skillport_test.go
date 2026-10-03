@@ -166,6 +166,8 @@ func TestCheckNamesUnrecordedDifferences(t *testing.T) {
 			func(t *testing.T, f fixture) { must(t, os.Chmod(f.path("scripts/run.sh"), 0o644)) }},
 		{"symlink", "not a regular file",
 			func(t *testing.T, f fixture) { must(t, os.Symlink("SKILL.md", f.path("link.md"))) }},
+		{"record of another folder", "crw-kwrite.json: record name",
+			func(t *testing.T, f fixture) { f.rewrite(t, func(s *Skill) { s.From = "other" }) }},
 		{"tampered record", "crw-kwrite/SKILL.md: differs from the substituted original",
 			func(t *testing.T, f fixture) {
 				f.rewrite(t, func(s *Skill) { s.Files["SKILL.md"] = FileEntry{Original: "00"} })
@@ -194,6 +196,15 @@ func TestMissingAndUnrecordedSkills(t *testing.T) {
 	expectProblem(t, "record gone", g.problems(nil), "port/cxc/skills/crw-kwrite: staged skill has no record")
 	put(t, filepath.Join(g.root, StagingRoot, "crw-other/SKILL.md"), "x\n", 0o644)
 	expectProblem(t, "unrecorded directory", g.problems(nil), "port/cxc/skills/crw-other: staged skill has no record")
+}
+
+func TestRecordsShareAnOrigin(t *testing.T) {
+	f := newFixture(t)
+	f.stage(t)
+	put(t, filepath.Join(f.src.Dir, "plugins/codexclaw/skills/second/SKILL.md"), "---\nname: cxc-second\ndescription: \"Second\"\n---\n", 0o644)
+	_, err := Stage(f.root, sourceOf(t, f.src.Dir), []string{"second"})
+	must(t, err)
+	expectProblem(t, "two origins", f.problems(nil), "origin differs from the other records")
 }
 
 func TestSourceModeAndPinning(t *testing.T) {
@@ -253,7 +264,7 @@ func TestStageNeverOverwritesAndRollsBack(t *testing.T) {
 	f := newFixture(t)
 	f.stage(t)
 	put(t, f.path("SKILL.md"), "hand work\n", 0o644)
-	if _, err := Stage(f.root, f.src, []string{"kwrite"}); err == nil || !strings.Contains(err.Error(), "exists") {
+	if _, err := Stage(f.root, f.src, []string{"kwrite"}); err == nil || !strings.Contains(err.Error(), "stage never overwrites") {
 		t.Errorf("Stage over a staged skill: %v", err)
 	}
 	if got := slurp(t, f.path("SKILL.md")); got != "hand work\n" {
