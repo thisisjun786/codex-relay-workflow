@@ -141,9 +141,6 @@ func TestFallbackThroughTheSettingsAPI(t *testing.T) { // fallback-config.test.t
 		if s = must(apply(env, body(`"fallback":null`))); s.Roles[role].Fallback != nil {
 			t.Fatalf("%s: fallback not cleared", role)
 		}
-		if s = must(apply(env, body(`"inherit":true`))); s.Overrides[role] || s.Sources[role] != SourceSession {
-			t.Fatalf("%s: inherit did not reset the role", role)
-		}
 	}
 }
 

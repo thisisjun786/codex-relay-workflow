@@ -9,10 +9,9 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 )
 
-// The shared browser and MCP settings contract of CXC v0.2.40 subagent-config/src/settings-api.ts, over the global store. The oracle's
-// calls take a working directory for its project layer, which decision 7 removed (I1), and a scope that defaults to "project": here an
-// absent scope is global and every other value is refused. A scope or a body is raw JSON, so a value of the wrong type is refused with
-// the oracle's message, member by member in the oracle's order.
+// The settings contract of CXC v0.2.40 subagent-config/src/settings-api.ts over the global store. The oracle's calls take a working
+// directory for its project layer (removed by decision 7, I1) and a scope that defaults to "project": here an absent scope is global
+// and every other value is refused. A scope or a body is raw JSON, so a value of the wrong type is refused with the oracle's message.
 
 // Response is settingsResponse's answer: 200 with the settings, or 400 with an ErrorBody. Encode it with Stringify.
 type Response struct {

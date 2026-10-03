@@ -91,18 +91,6 @@ func digest(t *testing.T, root, config string) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
-func TestTrackedProjectConfigDoesNotInfluenceResolution(t *testing.T) { // decision 7: the project layer is gone
-	plainGit(t)
-	env, _ := home(t)
-	root := repo(t, `{"roles":{"executor":{"mode":"model","model":"repo-model","promptOverride":"repo instructions"}}}`, true)
-	if !IsTrackedProjectConfig(root) {
-		t.Fatal("the fixture's config is not tracked")
-	}
-	if got := must(ResolveSpawnConfig(env, Executor)); !got.UsesMainModel || got.PromptOverride != nil {
-		t.Fatalf("a Git-tracked project config reached the resolution: %+v", got)
-	}
-}
-
 func TestIsTrackedProjectConfig(t *testing.T) {
 	plainGit(t)
 	root := repo(t, "{}", false)

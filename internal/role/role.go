@@ -24,10 +24,9 @@
 // lock and is then refused; a lock left by a dead process refuses writes until it is removed by hand (no stale-lock breaker); the
 // first write creates the store's directory before it takes the lock, so a refused first write, or a ResetRole of a missing store, can
 // leave an empty 0700 directory. I11 ResolveSpawnConfig of a role the oracle does not know is the refusal "unknown role" (the oracle
-// throws a V8 TypeError from an unguarded lookup), and it takes no working directory and has no trust warning: the project layer is
-// gone. I12 IsTrackedProjectConfig and ProjectConfigTrustToken keep their commands and token over <cwd>/.crw/subagents.json, which
-// nothing reads any more; git output that is not valid UTF-8 gives no token, and a git that exits while a child keeps its output open
-// is waited for one second.
+// throws a V8 TypeError from an unguarded lookup); it takes no working directory and has no trust warning (no project layer). I12
+// IsTrackedProjectConfig and ProjectConfigTrustToken keep their commands and token over <cwd>/.crw/subagents.json, which nothing reads
+// any more; git output that is not valid UTF-8 gives no token.
 package role
 
 import (

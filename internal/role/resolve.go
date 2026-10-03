@@ -45,15 +45,13 @@ func ResolveSpawnConfig(env host.LookupEnv, role RoleName) (SpawnResolution, err
 }
 
 // The two helpers below are what the oracle used to ignore a Git-tracked project config until it was reviewed. Nothing reads a project
-// config any more (decision 7) and nothing on this base calls them; they keep the oracle's names, git commands and token. They run git
-// with an argument list and no shell, in the process environment as the oracle does: a routing variable such as GIT_DIR is inherited, so
-// the answer is about the repository it names (known-defects). Neither is a control by itself.
+// config any more (decision 7) and nothing calls them yet; they keep the oracle's git commands and token. git runs with an argument list
+// and no shell, in the process environment as the oracle's does: a routing variable such as GIT_DIR is inherited (known-defects).
 const gitTimeout = 1500 * time.Millisecond
 
 func projectConfigPath(cwd string) string { return filepath.Join(cwd, crwdir.DirName, StoreFile) }
 
-// git runs git -C cwd with a timeout; a child that keeps the output open after git exits is waited for one second more. A nil out
-// connects no pipe.
+// git runs git -C cwd with a timeout; a child that keeps the output open after git exits is waited for one second more.
 func git(cwd string, args ...string) (stdout []byte, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
