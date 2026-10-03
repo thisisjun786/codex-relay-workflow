@@ -820,7 +820,7 @@ Structural checks run offline, from a checkout, and are part of CI:
 
 ```sh
 go run -tags dev ./cmd/crw-dev ci plugin     # package shape, hygiene, release digest
-go run -tags dev ./cmd/crw-dev ci validate   # skill metadata, local links, no Python files
+go run -tags dev ./cmd/crw-dev ci validate   # skill metadata, local links, no Python outside skill assets
 go test ./internal/runtime/install/...       # the wiring through the pointer, among the installer's tests
 ```
 

@@ -3,7 +3,6 @@
 package ci
 
 import (
-	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -317,15 +316,16 @@ func Test47_ContractsPairsAndAbsentComponents(t *testing.T) {
 			t.Errorf("%s alone: %+v", contract, got)
 		}
 	}
-	// The checkout's contracts and their data, without one Python script: every check runs and
-	// passes, which is what the checkout is once the Python implementation leaves (todo 44).
+	// The checkout's contracts and their data, without one Python script (a skill's asset scripts
+	// may sit among the copied inputs and are left out): every check runs and passes, which is what
+	// the checkout is once the Python implementation leaves (todo 44).
 	root := newRepo(t).root
 	for _, rel := range contractInputs {
 		copyTree(t, root, rel)
 	}
 	if err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err == nil && !d.IsDir() && strings.HasSuffix(path, ".py") {
-			return errors.New("a Python file was copied: " + path)
+			return os.Remove(path)
 		}
 		return err
 	}); err != nil {
