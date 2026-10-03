@@ -650,53 +650,53 @@ type hooked struct {
 	findInTurn     func(thread, token, turnID string, limit int) (TokenScan, error)
 }
 
-func (w *hooked) FindDispatchedTurn(thread, turn string, sentAt float64) (TurnPresence, error) {
+func (w *hooked) FindDispatchedTurn(_ context.Context, thread, turn string, sentAt float64) (TurnPresence, error) {
 	if w.findDispatched != nil {
 		return w.findDispatched(thread, turn, sentAt)
 	}
-	return w.Adapter.FindDispatchedTurn(thread, turn, sentAt)
+	return w.Adapter.FindDispatchedTurn(context.Background(), thread, turn, sentAt)
 }
 
-func (w *hooked) FindToken(thread, token string, limit int, messageOnly bool) (TokenScan, error) {
+func (w *hooked) FindToken(_ context.Context, thread, token string, limit int, messageOnly bool) (TokenScan, error) {
 	if w.findToken != nil {
 		return w.findToken(thread, token, limit, messageOnly)
 	}
-	return w.Adapter.FindToken(thread, token, limit, messageOnly)
+	return w.Adapter.FindToken(context.Background(), thread, token, limit, messageOnly)
 }
 
-func (w *hooked) ReadTurn(thread, turn string) (*TurnInfo, error) {
+func (w *hooked) ReadTurn(_ context.Context, thread, turn string) (*TurnInfo, error) {
 	if w.readTurn != nil {
 		return w.readTurn(thread, turn)
 	}
-	return w.Adapter.ReadTurn(thread, turn)
+	return w.Adapter.ReadTurn(context.Background(), thread, turn)
 }
 
-func (w *hooked) SendMessage(requestID, thread, message string, settings *TaskSettings) (Obj, error) {
+func (w *hooked) SendMessage(_ context.Context, requestID, thread, message string, settings *TaskSettings) (Obj, error) {
 	if w.send != nil {
 		return w.send(requestID, thread, message, settings)
 	}
-	return w.Adapter.SendMessage(requestID, thread, message, settings)
+	return w.Adapter.SendMessage(context.Background(), requestID, thread, message, settings)
 }
 
-func (w *hooked) GetOperation(requestID string) (Obj, error) {
+func (w *hooked) GetOperation(_ context.Context, requestID string) (Obj, error) {
 	if w.getOperation != nil {
 		return w.getOperation(requestID)
 	}
-	return w.Adapter.GetOperation(requestID)
+	return w.Adapter.GetOperation(context.Background(), requestID)
 }
 
-func (w *hooked) FindTokenInTurn(thread, token, turnID string, limit int) (TokenScan, error) {
+func (w *hooked) FindTokenInTurn(_ context.Context, thread, token, turnID string, limit int) (TokenScan, error) {
 	if w.findInTurn != nil {
 		return w.findInTurn(thread, token, turnID, limit)
 	}
-	return w.Adapter.FindTokenInTurn(thread, token, turnID, limit)
+	return w.Adapter.FindTokenInTurn(context.Background(), thread, token, turnID, limit)
 }
 
 // countingLookups is CountingLookups: every recipient-turn lookup, by turn id.
 func countingLookups(inner Adapter, lookups *[]string) *hooked {
 	return &hooked{Adapter: inner, findDispatched: func(thread, turn string, sentAt float64) (TurnPresence, error) {
 		*lookups = append(*lookups, turn)
-		return inner.FindDispatchedTurn(thread, turn, sentAt)
+		return inner.FindDispatchedTurn(context.Background(), thread, turn, sentAt)
 	}}
 }
 
@@ -705,15 +705,15 @@ func countingReads(inner Adapter, reads *[]any) *hooked {
 	return &hooked{Adapter: inner,
 		getOperation: func(id string) (Obj, error) {
 			*reads = append(*reads, []any{"get_operation", id})
-			return inner.GetOperation(id)
+			return inner.GetOperation(context.Background(), id)
 		},
 		findToken: func(thread, token string, limit int, messageOnly bool) (TokenScan, error) {
 			*reads = append(*reads, []any{"find_token", token})
-			return inner.FindToken(thread, token, limit, messageOnly)
+			return inner.FindToken(context.Background(), thread, token, limit, messageOnly)
 		},
 		findInTurn: func(thread, token, turnID string, limit int) (TokenScan, error) {
 			*reads = append(*reads, []any{"find_token_in_turn", turnID})
-			return inner.FindTokenInTurn(thread, token, turnID, limit)
+			return inner.FindTokenInTurn(context.Background(), thread, token, turnID, limit)
 		}}
 }
 
@@ -725,7 +725,7 @@ func actsDuringTheTurnRead(inner Adapter, action func()) *hooked {
 			action = nil
 			a()
 		}
-		return inner.ReadTurn(thread, turn)
+		return inner.ReadTurn(context.Background(), thread, turn)
 	}}
 }
 

@@ -898,7 +898,7 @@ func (d *Service) Attempt(ctx context.Context, eventID string, adapter Adapter, 
 	if row.S("kind") == Completion || row.S("kind") == MergeTurnGrant {
 		cwd = relationship.Parent.Cwd
 	}
-	observation := Observe(adapter, thread, cwd, d.RequireLifecycleEvidence)
+	observation := Observe(ctx, adapter, thread, cwd, d.RequireLifecycleEvidence)
 	if err := RecordLifecycle(ctx, d.Store, d.Clock, observation); err != nil {
 		return nil, err
 	}
@@ -915,7 +915,7 @@ func (d *Service) Attempt(ctx context.Context, eventID string, adapter Adapter, 
 	if err != nil {
 		return nil, err
 	}
-	known, err := adapter.ListTurnIDs(thread, 25)
+	known, err := adapter.ListTurnIDs(ctx, thread, 25)
 	if err != nil {
 		return nil, err
 	}
@@ -940,7 +940,7 @@ func (d *Service) Attempt(ctx context.Context, eventID string, adapter Adapter, 
 	case err != nil:
 		return nil, err
 	}
-	receipt, sendErr := adapter.SendMessage(c.requestID, thread, c.message, settings)
+	receipt, sendErr := adapter.SendMessage(ctx, c.requestID, thread, c.message, settings)
 	if sendErr != nil {
 		receipt = Obj{{Key: "requestId", Value: c.requestID}, {Key: "status", Value: OutcomeUnknown}, {Key: "error", Value: errorLabel(sendErr)}}
 	}

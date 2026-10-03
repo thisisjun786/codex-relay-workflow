@@ -231,7 +231,7 @@ func assigned(status string) turnRef { return turnRef{child, dispatchTurn, statu
 
 // readyPayload is support.ready_payload, in Python's key order.
 func (f *fixture) readyPayload(rid string, generation int64, paths []string, attempt int, turn turnRef) Obj {
-	entries, err := store.BuildManifest(paths, []string{f.root})
+	entries, err := store.BuildManifest(context.Background(), paths, []string{f.root})
 	mustDo(f.t, err)
 	revision, err := store.ManifestRevision(entries)
 	mustDo(f.t, err)
@@ -449,21 +449,21 @@ type counted struct {
 	calls []string
 }
 
-func (c *counted) ReadThread(t string) (ThreadFacts, error) {
+func (c *counted) ReadThread(_ context.Context, t string) (ThreadFacts, error) {
 	c.calls = append(c.calls, "read_thread")
-	return c.fakeHost.ReadThread(t)
+	return c.fakeHost.ReadThread(context.Background(), t)
 }
-func (c *counted) IsArchived(t string, cwd any) (*bool, error) {
+func (c *counted) IsArchived(_ context.Context, t string, cwd any) (*bool, error) {
 	c.calls = append(c.calls, "is_archived")
-	return c.fakeHost.IsArchived(t, cwd)
+	return c.fakeHost.IsArchived(context.Background(), t, cwd)
 }
-func (c *counted) ReadGoalStatus(t string) (any, error) {
+func (c *counted) ReadGoalStatus(_ context.Context, t string) (any, error) {
 	c.calls = append(c.calls, "read_goal_status")
-	return c.fakeHost.ReadGoalStatus(t)
+	return c.fakeHost.ReadGoalStatus(context.Background(), t)
 }
-func (c *counted) ListTurnIDs(t string, limit int) ([]any, error) {
+func (c *counted) ListTurnIDs(_ context.Context, t string, limit int) ([]any, error) {
 	c.calls = append(c.calls, "list_turn_ids")
-	return c.fakeHost.ListTurnIDs(t, limit)
+	return c.fakeHost.ListTurnIDs(context.Background(), t, limit)
 }
 
 // correctionAfterNeedsChanges is support.correction_after_needs_changes.

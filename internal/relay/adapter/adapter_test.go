@@ -118,7 +118,7 @@ func capture(t *testing.T, s scenario) {
 		case "begin":
 			_, _, actionErr = a.ledger.Begin(context.Background(), action[1].(string), "send_message_to_thread", map[string]any{"threadId": action[2], "message": action[3]}, nil)
 		case "no-settings":
-			_, actionErr = a.SendMessage(action[1].(string), action[2].(string), action[3].(string), nil)
+			_, actionErr = a.SendMessage(context.Background(), action[1].(string), action[2].(string), action[3].(string), nil)
 		case "create":
 			in := bridge.CreateThread{RequestID: action[1].(string), CWD: root, Title: action[2].(string), Model: action[3].(string), Effort: "medium", Sandbox: "read-only", Role: action[4].(string)}
 			r, e := a.Create(context.Background(), in)
@@ -132,25 +132,25 @@ func capture(t *testing.T, s scenario) {
 				receiptBytes = append(receiptBytes, dumps(o, false))
 			}
 		case "find":
-			scan, e := a.FindToken(action[1].(string), action[2].(string), action[3].(int), false)
+			scan, e := a.FindToken(context.Background(), action[1].(string), action[2].(string), action[3].(int), false)
 			actionErr = e
 			result = map[string]any{"found": scan.Found, "turn_id": scan.TurnID, "exhausted": scan.Exhausted, "scanned": scan.Scanned, "other_turn": scan.OtherTurn, "other_kind": scan.OtherKind}
 		case "archive":
-			result, actionErr = a.IsArchived(action[1].(string), action[2])
+			result, actionErr = a.IsArchived(context.Background(), action[1].(string), action[2])
 		case "turn":
-			turn, e := a.ReadTurn(action[1].(string), action[2].(string))
+			turn, e := a.ReadTurn(context.Background(), action[1].(string), action[2].(string))
 			actionErr = e
 			if turn != nil {
 				result = map[string]any{"turn_id": turn.TurnID, "status": turn.Status, "started_at": turn.StartedAt}
 			}
 		case "turn-ids":
-			result, actionErr = a.ListTurnIDs(action[1].(string), 20)
+			result, actionErr = a.ListTurnIDs(context.Background(), action[1].(string), 20)
 		case "thread":
-			facts, e := a.ReadThread(action[1].(string))
+			facts, e := a.ReadThread(context.Background(), action[1].(string))
 			actionErr = e
 			result = map[string]any{"runtime_status": facts.RuntimeStatus, "can_accept_input": facts.CanAcceptInput}
 		case "lifecycle-observe":
-			observation := delivery.Observe(a, action[1].(string), nil, true)
+			observation := delivery.Observe(context.Background(), a, action[1].(string), nil, true)
 			e := delivery.RecordLifecycle(context.Background(), db, options.Clock, observation)
 			actionErr = e
 			if e == nil {
@@ -163,7 +163,7 @@ func capture(t *testing.T, s scenario) {
 				result = map[string]any{"observation": map[string]any{"task_id": observation.TaskID, "runtime_status": observation.RuntimeStatus, "archived": observation.Archived, "goal_status": observation.GoalStatus, "can_accept_input": observation.CanAcceptInput, "deliverable": observation.Deliverable, "withhold_reason": observation.WithholdReason, "detail": observation.Detail}, "row": map[string]any{"task_id": task, "runtime_status": runtime, "archived": archived, "goal_status": goal, "can_accept_input": accepts, "deliverable": deliverable, "withhold_reason": reason, "detail": detail, "observed_at": observed}}
 			}
 		case "lifecycle-record":
-			facts, e := a.ReadThread(action[1].(string))
+			facts, e := a.ReadThread(context.Background(), action[1].(string))
 			if e != nil {
 				actionErr = e
 				break
@@ -179,16 +179,16 @@ func capture(t *testing.T, s scenario) {
 			}
 			result = map[string]any{"runtime_status": runtime, "can_accept_input": accepts}
 		case "goal":
-			result, actionErr = a.ReadGoalStatus(action[1].(string))
+			result, actionErr = a.ReadGoalStatus(context.Background(), action[1].(string))
 		case "operation":
-			op, e := a.GetOperation(action[1].(string))
+			op, e := a.GetOperation(context.Background(), action[1].(string))
 			actionErr = e
 			if op != nil {
 				result = plain(op)
 				receiptBytes = append(receiptBytes, dumps(op, false))
 			}
 		case "fingerprint":
-			result, actionErr = a.RecipientFingerprint(action[1].(string))
+			result, actionErr = a.RecipientFingerprint(context.Background(), action[1].(string))
 		case "send", "guard":
 			var guard Guard
 			if action[0] == "guard" {

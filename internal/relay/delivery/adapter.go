@@ -1,6 +1,7 @@
 package delivery
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"math"
@@ -114,19 +115,21 @@ type TokenScan struct {
 }
 
 // Adapter is hostadapter.HostAdapter: reads, and the one supported send. Nothing here can change
-// a task's model, effort, sandbox, approval policy, goal or archive state.
+// a task's model, effort, sandbox, approval policy, goal or archive state. Every method takes the
+// context of the work that asks, and the host call it makes ends with that context: a daemon
+// that stops, or a pass whose time budget ran out, does not leave a call to the host in flight.
 type Adapter interface {
-	ReadThread(thread string) (ThreadFacts, error)
-	IsArchived(thread string, cwd any) (*bool, error)
-	ReadGoalStatus(thread string) (any, error)
-	ListTurnIDs(thread string, limit int) ([]any, error)
-	ReadTurn(thread, turn string) (*TurnInfo, error)
-	SendMessage(requestID, thread, message string, settings *TaskSettings) (Obj, error)
-	GetOperation(requestID string) (Obj, error)
-	FindToken(thread, token string, limit int, messageOnly bool) (TokenScan, error)
-	FindDispatchedTurn(thread, turnID string, sentAt float64) (TurnPresence, error)
-	FindTokenSince(thread, token string, older []string, limit int) (TokenScan, error)
-	FindTokenInTurn(thread, token, turnID string, limit int) (TokenScan, error)
+	ReadThread(ctx context.Context, thread string) (ThreadFacts, error)
+	IsArchived(ctx context.Context, thread string, cwd any) (*bool, error)
+	ReadGoalStatus(ctx context.Context, thread string) (any, error)
+	ListTurnIDs(ctx context.Context, thread string, limit int) ([]any, error)
+	ReadTurn(ctx context.Context, thread, turn string) (*TurnInfo, error)
+	SendMessage(ctx context.Context, requestID, thread, message string, settings *TaskSettings) (Obj, error)
+	GetOperation(ctx context.Context, requestID string) (Obj, error)
+	FindToken(ctx context.Context, thread, token string, limit int, messageOnly bool) (TokenScan, error)
+	FindDispatchedTurn(ctx context.Context, thread, turnID string, sentAt float64) (TurnPresence, error)
+	FindTokenSince(ctx context.Context, thread, token string, older []string, limit int) (TokenScan, error)
+	FindTokenInTurn(ctx context.Context, thread, token, turnID string, limit int) (TokenScan, error)
 	// RecipientFingerprint digests the newest items' content, so an append shows up.
-	RecipientFingerprint(thread string) (string, error)
+	RecipientFingerprint(ctx context.Context, thread string) (string, error)
 }

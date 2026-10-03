@@ -1,6 +1,7 @@
 package delivery
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -14,8 +15,8 @@ type interleavedHost struct {
 	fired  bool
 }
 
-func (h *interleavedHost) ListTurnIDs(thread string, limit int) ([]any, error) {
-	ids, err := h.Adapter.ListTurnIDs(thread, limit)
+func (h *interleavedHost) ListTurnIDs(ctx context.Context, thread string, limit int) ([]any, error) {
+	ids, err := h.Adapter.ListTurnIDs(ctx, thread, limit)
 	if !h.fired {
 		h.fired = true
 		h.before()

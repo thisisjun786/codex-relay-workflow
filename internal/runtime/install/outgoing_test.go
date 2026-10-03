@@ -51,7 +51,7 @@ func TestOutgoingIsWrittenOnlyByAPromotion(t *testing.T) {
 			{Key: "digest", Value: strings.Repeat("0", 64)}, {Key: "present", Value: true}, {Key: "selected", Value: record.Get(selected, c)},
 		}}}...)
 	}
-	if _, err := record.Update(h.record, 1, record.Delta{Outgoing: &record.Outgoing{Value: stage}}); err != nil {
+	if _, err := record.Update(context.Background(), h.record, 1, record.Delta{Outgoing: &record.Outgoing{Value: stage}}); err != nil {
 		t.Fatal(err)
 	}
 	before := readFile(t, h.record)
@@ -85,7 +85,7 @@ func TestAnUnsettledCandidatesInstallEntriesAreNeverActedOn(t *testing.T) {
 	for _, c := range []string{"codex-session-relay", "codex-thread-bridge"} {
 		back = append(back, record.Object{{Key: c, Value: filepath.Join(old, "bin")}}...)
 	}
-	if _, err := record.Update(h.record, 1, record.Delta{Select: back}); err != nil {
+	if _, err := record.Update(context.Background(), h.record, 1, record.Delta{Select: back}); err != nil {
 		t.Fatal(err)
 	}
 	if err := pointer.Place(pointer.Path(h.dest), old); err != nil {

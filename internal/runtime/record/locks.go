@@ -46,11 +46,6 @@ type Locked struct {
 	handle *os.File
 }
 
-// Lock takes target's .crw-lock, waiting up to timeout (LockTimeout when zero).
-func Lock(target string, timeout time.Duration) (*Locked, error) {
-	return LockContext(context.Background(), target, timeout)
-}
-
 // wait sleeps one polling interval, or answers the context's error once it is done: a
 // cancelled caller stops waiting for a lock at once, and never takes it afterwards.
 func wait(ctx context.Context) error {
@@ -64,8 +59,9 @@ func wait(ctx context.Context) error {
 	}
 }
 
-// LockContext is Lock that stops waiting, taking nothing, once ctx is done.
-func LockContext(ctx context.Context, target string, timeout time.Duration) (*Locked, error) {
+// Lock takes target's .crw-lock, waiting up to timeout (LockTimeout when zero). It stops waiting,
+// taking nothing, once ctx is done.
+func Lock(ctx context.Context, target string, timeout time.Duration) (*Locked, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -131,13 +127,8 @@ type Exclusive struct {
 }
 
 // Promote takes the promotion lock beside recordPath, waiting up to timeout (PromotionTimeout
-// when zero).
-func Promote(recordPath string, timeout time.Duration) (*Exclusive, error) {
-	return PromoteContext(context.Background(), recordPath, timeout)
-}
-
-// PromoteContext is Promote that stops waiting, taking nothing, once ctx is done.
-func PromoteContext(ctx context.Context, recordPath string, timeout time.Duration) (*Exclusive, error) {
+// when zero). It stops waiting, taking nothing, once ctx is done.
+func Promote(ctx context.Context, recordPath string, timeout time.Duration) (*Exclusive, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

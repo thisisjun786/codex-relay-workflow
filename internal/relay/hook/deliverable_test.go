@@ -215,7 +215,7 @@ func TestDeliverableStateAnswersAsTheGuard(t *testing.T) {
 			}
 			artifact := filepath.Join(work, "deliver.txt")
 			write(t, artifact, "the delivered bytes")
-			entries, err := store.BuildManifest([]string{artifact}, []string{work})
+			entries, err := store.BuildManifest(context.Background(), []string{artifact}, []string{work})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -281,7 +281,7 @@ func TestDeliverableStateAcceptsValuesACallerBuilt(t *testing.T) {
 	if err := os.WriteFile(artifact, []byte("the delivered bytes"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	entries, err := store.BuildManifest([]string{artifact}, []string{work})
+	entries, err := store.BuildManifest(context.Background(), []string{artifact}, []string{work})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -326,7 +326,7 @@ func TestDeliverableStateAcceptsMapManifestRecords(t *testing.T) {
 		if err := os.WriteFile(artifact, []byte("the delivered bytes"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		entries, err := store.BuildManifest([]string{artifact}, []string{work})
+		entries, err := store.BuildManifest(context.Background(), []string{artifact}, []string{work})
 		if err != nil {
 			t.Fatal(err)
 		}

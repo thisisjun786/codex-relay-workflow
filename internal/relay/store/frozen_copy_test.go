@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,7 +19,7 @@ func frozenSource(t *testing.T, text string) (string, []ManifestEntry) {
 	if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	entries, err := BuildManifest([]string{path}, []string{root})
+	entries, err := BuildManifest(context.Background(), []string{path}, []string{root})
 	if err != nil {
 		t.Fatal(err)
 	}

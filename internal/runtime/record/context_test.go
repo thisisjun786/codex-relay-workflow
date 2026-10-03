@@ -24,7 +24,7 @@ func TestLockWaitsEndWithTheContext(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
 	defer cancel()
 	start := time.Now()
-	if lock, err := record.LockContext(ctx, target, 30*time.Second); !errors.Is(err, context.DeadlineExceeded) || lock != nil {
+	if lock, err := record.Lock(ctx, target, 30*time.Second); !errors.Is(err, context.DeadlineExceeded) || lock != nil {
 		t.Fatalf("the .crw-lock wait: %v", err)
 	}
 	if took := time.Since(start); took > 5*time.Second {
@@ -42,7 +42,7 @@ func TestLockWaitsEndWithTheContext(t *testing.T) {
 	ctx, cancel = context.WithTimeout(context.Background(), 150*time.Millisecond)
 	defer cancel()
 	start = time.Now()
-	if exclusive, err := record.PromoteContext(ctx, target, 30*time.Second); !errors.Is(err, context.DeadlineExceeded) || exclusive != nil {
+	if exclusive, err := record.Promote(ctx, target, 30*time.Second); !errors.Is(err, context.DeadlineExceeded) || exclusive != nil {
 		t.Fatalf("the promotion lock wait: %v", err)
 	}
 	if took := time.Since(start); took > 5*time.Second {
@@ -50,7 +50,7 @@ func TestLockWaitsEndWithTheContext(t *testing.T) {
 	}
 	done, cancelled := context.WithCancel(context.Background())
 	cancelled()
-	if _, err := record.PromoteContext(done, filepath.Join(dir, "other.json"), 0); !errors.Is(err, context.Canceled) {
+	if _, err := record.Promote(done, filepath.Join(dir, "other.json"), 0); !errors.Is(err, context.Canceled) {
 		t.Fatalf("a context already done takes nothing: %v", err)
 	}
 }

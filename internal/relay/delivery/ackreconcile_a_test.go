@@ -1,6 +1,7 @@
 package delivery
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -16,7 +17,7 @@ const acr = "test_ack_reconcile"
 // noArchiveInfo is the Python tests' NoArchiveInfo: is_archived answers None, the rest passes through.
 type noArchiveInfo struct{ Adapter }
 
-func (noArchiveInfo) IsArchived(string, any) (*bool, error) { return nil, nil }
+func (noArchiveInfo) IsArchived(context.Context, string, any) (*bool, error) { return nil, nil }
 
 // sentAt is datetime.fromtimestamp(1789420929.360483, timezone.utc).isoformat().
 func sentAt() string {
@@ -55,7 +56,7 @@ func Test21_ACR01_turn_start_precision(t *testing.T) {
 
 func Test21_ACR02_archive_observation(t *testing.T) {
 	mirror(t, acr, "UnknownArchiveState.test_an_unknown_archive_observation_is_not_evidence_of_being_unarchived", func(h *hl) {
-		o := Observe(noArchiveInfo{h.host}, parent, nil, true)
+		o := Observe(context.Background(), noArchiveInfo{h.host}, parent, nil, true)
 		h.eq(o.Deliverable)
 		h.eq(o.WithholdReason)
 		h.eq(o.MaySend())
@@ -63,17 +64,17 @@ func Test21_ACR02_archive_observation(t *testing.T) {
 	mirror(t, acr, "UnknownArchiveState.test_a_confirmed_unarchived_recipient_stays_deliverable", func(h *hl) {
 		f := false
 		h.host.threads[parent].archived = &f
-		h.eq(Observe(h.host, parent, nil, true).MaySend())
+		h.eq(Observe(context.Background(), h.host, parent, nil, true).MaySend())
 	})
 	mirror(t, acr, "UnknownArchiveState.test_a_confirmed_archived_recipient_stays_blocked", func(h *hl) {
 		yes := true
 		h.host.threads[parent].archived = &yes
-		o := Observe(h.host, parent, nil, true)
+		o := Observe(context.Background(), h.host, parent, nil, true)
 		h.eq(o.MaySend())
 		h.eq(o.WithholdReason)
 	})
 	mirror(t, acr, "UnknownArchiveState.test_relaxing_the_evidence_requirement_is_explicit", func(h *hl) {
-		h.eq(Observe(noArchiveInfo{h.host}, parent, nil, false).MaySend())
+		h.eq(Observe(context.Background(), noArchiveInfo{h.host}, parent, nil, false).MaySend())
 	})
 }
 

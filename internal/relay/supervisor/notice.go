@@ -45,7 +45,7 @@ func (n NoticeChannel) Recover(ctx context.Context, id string, now float64) erro
 	return err
 }
 func (n NoticeChannel) Measure(ctx context.Context, task string) error {
-	return delivery.RecordLifecycle(ctx, n.Channel.Store, n.Ledger.Clock, delivery.Observe(n.Host, task, nil, true))
+	return delivery.RecordLifecycle(ctx, n.Channel.Store, n.Ledger.Clock, delivery.Observe(ctx, n.Host, task, nil, true))
 }
 
 // A staged notice is not permission to send. Re-derive the reservation under

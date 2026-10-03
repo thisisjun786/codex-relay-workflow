@@ -1,6 +1,7 @@
 package supervisor
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"math"
@@ -201,7 +202,7 @@ type turnStartHost struct {
 	started any
 }
 
-func (h *turnStartHost) ReadTurn(_ string, id string) (*delivery.TurnInfo, error) {
+func (h *turnStartHost) ReadTurn(_ context.Context, _ string, id string) (*delivery.TurnInfo, error) {
 	return &delivery.TurnInfo{TurnID: id, StartedAt: h.started}, nil
 }
 

@@ -167,8 +167,8 @@ func rawEntries(page map[string]any) ([]any, error) {
 	return items, nil
 }
 
-func (a *Adapter) ReadThread(thread string) (delivery.ThreadFacts, error) {
-	ctx, release, err := a.admitRead(context.Background())
+func (a *Adapter) ReadThread(ctx context.Context, thread string) (delivery.ThreadFacts, error) {
+	ctx, release, err := a.admitRead(ctx)
 	if err != nil {
 		return delivery.ThreadFacts{}, err
 	}
@@ -191,8 +191,8 @@ func (a *Adapter) ReadThread(thread string) (delivery.ThreadFacts, error) {
 	}
 	return delivery.ThreadFacts{RuntimeStatus: runtime, CanAcceptInput: th["canAcceptDirectInput"]}, nil
 }
-func (a *Adapter) ReadGoalStatus(thread string) (any, error) {
-	ctx, release, err := a.admitRead(context.Background())
+func (a *Adapter) ReadGoalStatus(ctx context.Context, thread string) (any, error) {
+	ctx, release, err := a.admitRead(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -204,8 +204,8 @@ func (a *Adapter) ReadGoalStatus(thread string) (any, error) {
 	goal, _ := r["goal"].(map[string]any)
 	return goal["status"], nil
 }
-func (a *Adapter) ListTurnIDs(thread string, limit int) ([]any, error) {
-	ctx, release, err := a.admitRead(context.Background())
+func (a *Adapter) ListTurnIDs(ctx context.Context, thread string, limit int) ([]any, error) {
+	ctx, release, err := a.admitRead(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -243,8 +243,8 @@ func turnInfo(row map[string]any) (*delivery.TurnInfo, error) {
 	}
 	return &delivery.TurnInfo{TurnID: id, Status: status, StartedAt: row["startedAt"]}, nil
 }
-func (a *Adapter) ReadTurn(thread, turn string) (*delivery.TurnInfo, error) {
-	ctx, release, err := a.admitRead(context.Background())
+func (a *Adapter) ReadTurn(ctx context.Context, thread, turn string) (*delivery.TurnInfo, error) {
+	ctx, release, err := a.admitRead(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -279,8 +279,8 @@ func (a *Adapter) ReadTurn(thread, turn string) (*delivery.TurnInfo, error) {
 	}
 	return nil, &HostUnavailable{fmt.Sprintf("turn '%s' not found within %d pages; the listing was not exhausted, so this is not evidence of absence", turn, MaxPagesPerCheck)}
 }
-func (a *Adapter) IsArchived(thread string, cwd any) (*bool, error) {
-	rpc, release, err := a.admitRead(context.Background())
+func (a *Adapter) IsArchived(ctx context.Context, thread string, cwd any) (*bool, error) {
+	rpc, release, err := a.admitRead(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -326,9 +326,10 @@ func (a *Adapter) IsArchived(thread string, cwd any) (*bool, error) {
 }
 
 // scanListing takes the admitted context for its host calls only. What it persists goes to the
-// relay's own store, which Close does not own, so that keeps a context that Close cannot cancel.
+// relay's own store, which neither Close nor the caller's cancellation owns, so that keeps a
+// context nothing can cancel: a listing that failed still records how far it got, as Python did.
 func (a *Adapter) scanListing(rpc context.Context, thread, listing string, filters map[string]any) (bool, error) {
-	ctx := context.Background()
+	ctx := context.WithoutCancel(rpc)
 	var cursor any
 	if a.store != nil {
 		saved, err := a.store.DiscoveryCursor(ctx, thread, listing)
@@ -418,11 +419,11 @@ func ordered(v any) any {
 		return v
 	}
 }
-func (a *Adapter) GetOperation(id string) (delivery.Obj, error) {
+func (a *Adapter) GetOperation(ctx context.Context, id string) (delivery.Obj, error) {
 	if a.ledger == nil {
 		return nil, nil
 	}
-	ctx, release, err := a.admitRead(context.Background())
+	ctx, release, err := a.admitRead(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -482,8 +483,8 @@ func itemKind(value any) string {
 	item, _ := entry["item"].(map[string]any)
 	return text(item["type"])
 }
-func (a *Adapter) FindToken(thread, token string, limit int, messageOnly bool) (delivery.TokenScan, error) {
-	ctx, release, err := a.admitRead(context.Background())
+func (a *Adapter) FindToken(ctx context.Context, thread, token string, limit int, messageOnly bool) (delivery.TokenScan, error) {
+	ctx, release, err := a.admitRead(ctx)
 	if err != nil {
 		return delivery.TokenScan{}, err
 	}
@@ -530,8 +531,8 @@ func (a *Adapter) FindToken(thread, token string, limit int, messageOnly bool) (
 	}
 	return delivery.TokenScan{Scanned: scanned}, nil
 }
-func (a *Adapter) RecipientFingerprint(thread string) (string, error) {
-	ctx, release, err := a.admitRead(context.Background())
+func (a *Adapter) RecipientFingerprint(ctx context.Context, thread string) (string, error) {
+	ctx, release, err := a.admitRead(ctx)
 	if err != nil {
 		return "", err
 	}

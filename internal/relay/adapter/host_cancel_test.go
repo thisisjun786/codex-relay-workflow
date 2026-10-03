@@ -37,6 +37,8 @@ type hangingHost struct {
 	ended   chan error
 	release chan struct{}
 	once    sync.Once
+	// deadline is the deadline the first held call's context carried, when it carried one.
+	deadline time.Time
 }
 
 func newHangingHost(t *testing.T, answers int, delay time.Duration) *hangingHost {
@@ -57,6 +59,9 @@ func (h *hangingHost) Call(ctx context.Context, method string, params map[string
 		select {
 		case <-h.held:
 		default:
+			h.mu.Lock()
+			h.deadline, _ = ctx.Deadline()
+			h.mu.Unlock()
 			close(h.held)
 		}
 		var later <-chan time.Time
@@ -85,6 +90,13 @@ func (h *hangingHost) awaitHeld(t *testing.T) {
 	case <-time.After(hostEndBound):
 		t.Fatal("the tick never reached the host call the test holds")
 	}
+}
+
+// heldDeadline is the deadline the context of the first held call carried; zero when it had none.
+func (h *hangingHost) heldDeadline() time.Time {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.deadline
 }
 
 // awaitEnd waits for the held call to end by its context and returns the context's error. A call
@@ -176,10 +188,11 @@ func TestDaemonStopEndsTheHostCallInFlight(t *testing.T) {
 
 // The time the observation pass may spend (Policy.MaxObserveSeconds) running out ends the call the
 // pass has in flight on the host, while the tick's own context is still live. The pass's first read
-// is made whatever the clock says, so the held call is the second.
+// is made whatever the clock says, so the held call is the second; a third relationship is there so
+// that the pass asks the clock again afterwards and says why it stopped.
 func TestTickBudgetEndsTheHostCallInFlight(t *testing.T) {
 	host := newHangingHost(t, 1, 0)
-	d := observingDaemon(t, host, 2)
+	d := observingDaemon(t, host, 3)
 	d.Policy.MaxObserveSeconds = 0.2
 	started := time.Now()
 	done := tickAsync(d, context.Background())
@@ -190,6 +203,15 @@ func TestTickBudgetEndsTheHostCallInFlight(t *testing.T) {
 	result := awaitTick(t, done)
 	if result.err != nil {
 		t.Fatal(result.err)
+	}
+	// The context the host call ran under carries the pass's own deadline, fixed when the pass
+	// measured its budget: the 0.2 s from the start of the pass and not a later or a longer one.
+	deadline := host.heldDeadline()
+	if deadline.IsZero() {
+		t.Fatal("the held host call ran under a context with no deadline")
+	}
+	if after := deadline.Sub(started); after > 700*time.Millisecond {
+		t.Errorf("the held call's deadline is %v after the tick began, want about the 0.2 s the pass may spend", after)
 	}
 	if took := time.Since(started); took < 150*time.Millisecond {
 		t.Errorf("the call was ended after %v, before the 0.2 s the pass may spend", took)
@@ -202,10 +224,16 @@ func TestTickBudgetEndsTheHostCallInFlight(t *testing.T) {
 	if !failed || !stopped {
 		t.Errorf("notes %q: want the failed read of the second turn and the stop of the pass", result.report.Notes)
 	}
+	host.mu.Lock()
+	calls := host.calls
+	host.mu.Unlock()
+	if calls != 2 {
+		t.Errorf("the host saw %d calls, want the first read and the one that was held (the third turn waits for the next tick)", calls)
+	}
 }
 
 // The first read of a pass is made whatever the clock says, so the time bound does not end it: a
-// host that answers after the bound has run out is still read.
+// host that answers after the bound has run out is still read, and what it said is recorded.
 func TestTheFirstReadOfAPassOutlivesTheTimeBound(t *testing.T) {
 	host := newHangingHost(t, 0, 300*time.Millisecond)
 	d := observingDaemon(t, host, 1)
@@ -221,5 +249,9 @@ func TestTheFirstReadOfAPassOutlivesTheTimeBound(t *testing.T) {
 	case err := <-host.ended:
 		t.Errorf("the first read was ended with %v", err)
 	default:
+	}
+	var status string
+	if err := d.Store.DB.QueryRow("SELECT last_status FROM poll_observations WHERE turn_id='anchor-00'").Scan(&status); err != nil || status != "inProgress" {
+		t.Errorf("the first read left status %q (%v), want the host's answer", status, err)
 	}
 }

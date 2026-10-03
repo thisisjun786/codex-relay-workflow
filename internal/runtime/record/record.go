@@ -366,15 +366,10 @@ type Delta struct {
 
 // Update is hostrecord.update: apply narrow deltas to state this helper loads itself, inside
 // the .crw-lock, at write time. Nothing is written when the record could not be read; the
-// returned reading says why. A lock that could not be taken is a *Busy error.
-func Update(path string, definitionVersion int, delta Delta) (reading.Reading, error) {
-	return UpdateContext(context.Background(), path, definitionVersion, delta)
-}
-
-// UpdateContext is Update whose wait for the record's lock ends, writing nothing, once ctx is
-// done.
-func UpdateContext(ctx context.Context, path string, definitionVersion int, delta Delta) (reading.Reading, error) {
-	lock, err := LockContext(ctx, path, 0)
+// returned reading says why. A lock that could not be taken is a *Busy error, and the wait for it
+// ends, writing nothing, once ctx is done.
+func Update(ctx context.Context, path string, definitionVersion int, delta Delta) (reading.Reading, error) {
+	lock, err := Lock(ctx, path, 0)
 	if err != nil {
 		return reading.Reading{}, err
 	}
@@ -461,7 +456,8 @@ func dropEnvironment(record Object, environment string) Object {
 // environment unless it is selected or the pointer may still name it. pointerNames is the
 // caller's pointer reading: true, false, or nil when it could not be established.
 func ReleaseCandidate(path string, definitionVersion int, environment string, pointerNames *bool) (reading.Reading, string) {
-	lock, err := Lock(path, 0)
+	// Releasing a candidate is cleanup after a failed install and finishes whatever the context says.
+	lock, err := Lock(context.Background(), path, 0)
 	if err != nil {
 		var busy *Busy
 		if errors.As(err, &busy) {

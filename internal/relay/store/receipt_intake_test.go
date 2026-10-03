@@ -108,7 +108,7 @@ func TestReceiptIntake_python_execution_only_and_daemon(t *testing.T) {
 	})
 	t.Run("test_a_child_failure_carrying_a_manifest_is_refused", func(t *testing.T) {
 		f := newIntakeFixture(t)
-		entries, err := BuildManifest([]string{f.artifact("out.txt", "payload")}, []string{f.root})
+		entries, err := BuildManifest(context.Background(), []string{f.artifact("out.txt", "payload")}, []string{f.root})
 		if err != nil {
 			t.Fatal(err)
 		}

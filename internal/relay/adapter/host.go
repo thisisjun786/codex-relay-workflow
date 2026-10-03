@@ -139,24 +139,24 @@ func (a *Adapter) reads(ctx context.Context) delivery.BridgeReads {
 		return a.callOrdered(ctx, method, plain(params).(map[string]any))
 	}}
 }
-func (a *Adapter) FindDispatchedTurn(thread, turn string, sentAt float64) (delivery.TurnPresence, error) {
-	ctx, release, err := a.admitRead(context.Background())
+func (a *Adapter) FindDispatchedTurn(ctx context.Context, thread, turn string, sentAt float64) (delivery.TurnPresence, error) {
+	ctx, release, err := a.admitRead(ctx)
 	if err != nil {
 		return delivery.TurnPresence{}, err
 	}
 	defer release()
 	return a.reads(ctx).FindDispatchedTurn(thread, turn, sentAt)
 }
-func (a *Adapter) FindTokenSince(thread, token string, older []string, limit int) (delivery.TokenScan, error) {
-	ctx, release, err := a.admitRead(context.Background())
+func (a *Adapter) FindTokenSince(ctx context.Context, thread, token string, older []string, limit int) (delivery.TokenScan, error) {
+	ctx, release, err := a.admitRead(ctx)
 	if err != nil {
 		return delivery.TokenScan{}, err
 	}
 	defer release()
 	return a.reads(ctx).FindTokenSince(thread, token, older, limit)
 }
-func (a *Adapter) FindTokenInTurn(thread, token, turn string, limit int) (delivery.TokenScan, error) {
-	ctx, release, err := a.admitRead(context.Background())
+func (a *Adapter) FindTokenInTurn(ctx context.Context, thread, token, turn string, limit int) (delivery.TokenScan, error) {
+	ctx, release, err := a.admitRead(ctx)
 	if err != nil {
 		return delivery.TokenScan{}, err
 	}
@@ -206,8 +206,8 @@ func (a Managed) SendMessage(ctx context.Context, in managed.SendRequest) (map[s
 	}
 	return plain(r).(map[string]any), nil
 }
-func (a Managed) ReadTurn(_ context.Context, thread, turn string) (*managed.Turn, error) {
-	r, err := a.Adapter.ReadTurn(thread, turn)
+func (a Managed) ReadTurn(ctx context.Context, thread, turn string) (*managed.Turn, error) {
+	r, err := a.Adapter.ReadTurn(ctx, thread, turn)
 	if err != nil || r == nil {
 		return nil, err
 	}

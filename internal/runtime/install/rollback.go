@@ -171,7 +171,7 @@ func Rollback(ctx context.Context, o Options, named string) (Object, int) {
 	if refused != nil {
 		return refused, code
 	}
-	lock, err := record.LockContext(ctx, candidate, 0)
+	lock, err := record.Lock(ctx, candidate, 0)
 	if err != nil {
 		if ctx.Err() != nil {
 			return append(base, field("environment", candidate), field("refused", interrupted(err)), field("note", "nothing was written.")), Refused
@@ -179,7 +179,7 @@ func Rollback(ctx context.Context, o Options, named string) (Object, int) {
 		return append(base, field("environment", candidate), field("refused", "another run is deciding what to do with this runtime directory ("+err.Error()+"): crw install holds "+candidate+record.LockSuffix+" while it decides about it, and one left by a run that died is removed once it is "+record.StaleLock.String()+" old"), field("note", "nothing was written.")), Refused
 	}
 	defer lock.Release()
-	exclusive, err := record.PromoteContext(ctx, o.RecordPath, 0)
+	exclusive, err := record.Promote(ctx, o.RecordPath, 0)
 	if err != nil {
 		if ctx.Err() != nil {
 			return append(base, field("refused", interrupted(err)), field("note", "nothing was written.")), Refused

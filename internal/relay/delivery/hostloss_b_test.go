@@ -293,7 +293,7 @@ func Test21_HLT11_the_lost_attempt_is_the_once_count(t *testing.T) {
 					_, err := h.rc.CheckDispatchedTurn(h.ctx, first, h.host)
 					mustDo(t, err)
 				}
-				return h.host.FindDispatchedTurn(thread, turn, sentAt)
+				return h.host.FindDispatchedTurn(context.Background(), thread, turn, sentAt)
 			}
 			outcome := h.reconcile(first, racing)
 			h.eq(fired)

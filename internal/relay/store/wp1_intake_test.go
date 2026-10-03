@@ -73,7 +73,7 @@ func TestWP1_python_non_regular_and_frozen_artifacts(t *testing.T) {
 		}
 		// Bounded: a regression here hangs in open(2) rather than failing.
 		done := make(chan error, 1)
-		go func() { _, _, _, err := HashArtifact(fifo, []string{f.root}, false); done <- err }()
+		go func() { _, _, _, err := HashArtifact(context.Background(), fifo, []string{f.root}, false); done <- err }()
 		select {
 		case err := <-done:
 			requireReason(t, err, ReasonNotARegularFile)
@@ -83,7 +83,7 @@ func TestWP1_python_non_regular_and_frozen_artifacts(t *testing.T) {
 	})
 	t.Run("test_a_directory_is_refused", func(t *testing.T) {
 		f := newIntakeFixture(t)
-		_, _, _, err := HashArtifact(f.root, []string{f.root}, false)
+		_, _, _, err := HashArtifact(context.Background(), f.root, []string{f.root}, false)
 		requireReason(t, err, ReasonNotARegularFile)
 	})
 	t.Run("test_a_frozen_fallback_cannot_satisfy_an_enforced_minimum", func(t *testing.T) {
@@ -121,7 +121,7 @@ func TestWP1_python_non_regular_and_frozen_artifacts(t *testing.T) {
 	})
 	t.Run("test_frozen_verification_checks_byte_counts", func(t *testing.T) {
 		f := newIntakeFixture(t)
-		entries, err := BuildManifest([]string{f.artifact("sized.txt", "exactly this")}, []string{f.root})
+		entries, err := BuildManifest(context.Background(), []string{f.artifact("sized.txt", "exactly this")}, []string{f.root})
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -143,7 +143,7 @@ func (s *Scheduler) checkArtifacts(ctx context.Context, q store.Querier, accepta
 // hashEntry reads one declared artifact again: through the roots, hashed, compared with what was declared. A finding names the violated path of contract 4.4; digest
 // is what was read when anything was.
 func hashEntry(ctx context.Context, entry consumed, roots []string) (*BlockedFinding, string, error) {
-	digest, size, _, err := store.HashArtifactContext(ctx, entry.Path, roots, false)
+	digest, size, _, err := store.HashArtifact(ctx, entry.Path, roots, false)
 	if err != nil {
 		var refused *store.RefusedError
 		if errors.As(err, &refused) {

@@ -1,6 +1,7 @@
 package delivery
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -150,7 +151,7 @@ func Test21_USL02_reconcile_names_the_parent_the_reason_and_the_command(t *testi
 }
 
 // withReadUnknownSend replaces the hostloss.read_unknown_send seam for one call (mock.patch).
-func withReadUnknownSend(replacement func(Adapter, Clock, Row, Row, string) Reading, body func()) {
+func withReadUnknownSend(replacement func(context.Context, Adapter, Clock, Row, Row, string) Reading, body func()) {
 	original := readUnknownSend
 	readUnknownSend = replacement
 	defer func() { readUnknownSend = original }()
@@ -163,8 +164,8 @@ func Test21_USL03_a_hold_that_loses_its_race_to_a_confirmation_reports_the_confi
 		h.clock.Advance(120)
 		original := readUnknownSend
 		var outcome Obj
-		withReadUnknownSend(func(a Adapter, c Clock, attempt, delivery Row, receipt string) Reading {
-			reading := original(a, c, attempt, delivery, receipt)
+		withReadUnknownSend(func(ctx context.Context, a Adapter, c Clock, attempt, delivery Row, receipt string) Reading {
+			reading := original(ctx, a, c, attempt, delivery, receipt)
 			h.host.startTurn(parent, "", "completed", uslMessage(first))
 			out, err := h.rc.ReconcileAttempt(h.ctx, first, h.host, nil)
 			mustDo(h.t, err)
@@ -292,7 +293,7 @@ func Test21_USL05_a_message_that_turns_up_later_confirms_the_send_and_clears_the
 			h.clock.Advance(120)
 			lands := &hooked{Adapter: h.host}
 			lands.findToken = func(thread, token string, limit int, messageOnly bool) (TokenScan, error) {
-				scan, err := h.host.FindToken(thread, token, limit, messageOnly)
+				scan, err := h.host.FindToken(context.Background(), thread, token, limit, messageOnly)
 				h.item(parent, late.TurnID, uslMessage(first), "")
 				return scan, err
 			}
@@ -628,8 +629,8 @@ func Test21_USL11_a_deciding_reading_replaces_an_undecided_hold_and_nothing_else
 			original := readUnknownSend
 			var raced []Reading
 			var outcome Obj
-			withReadUnknownSend(func(a Adapter, c Clock, attempt, delivery Row, receipt string) Reading {
-				reading := original(a, c, attempt, delivery, receipt)
+			withReadUnknownSend(func(ctx context.Context, a Adapter, c Clock, attempt, delivery Row, receipt string) Reading {
+				reading := original(ctx, a, c, attempt, delivery, receipt)
 				if len(raced) == 0 {
 					raced = append(raced, reading)
 					h.host.startTurn(parent, "", "completed", "the operator asked")

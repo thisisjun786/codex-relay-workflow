@@ -78,7 +78,7 @@ func Evaluate(ctx context.Context, stop Object, options GuardOptions) (verdict O
 			fault("TypeError: expected str, bytes or os.PathLike object, not " + pyvalue.TypeName(workspace))
 			return verdict, nil
 		}
-		directory, marker, unreadable, err = delivery.SelectAssignmentContext(ctx, options.Root, path, session)
+		directory, marker, unreadable, err = delivery.SelectAssignment(ctx, options.Root, path, session)
 		if err != nil {
 			fault(err)
 			return verdict, nil
@@ -95,7 +95,7 @@ func Evaluate(ctx context.Context, stop Object, options GuardOptions) (verdict O
 			o.Malformed = "stop_identity"
 		}
 		var readable bool
-		o.Disposition, readable = delivery.ReadDispositionContext(ctx, directory, session, turn)
+		o.Disposition, readable = delivery.ReadDisposition(ctx, directory, session, turn)
 		if !readable {
 			o.Unreadable = append(o.Unreadable, "disposition")
 		}
@@ -335,7 +335,7 @@ func reserveHold(ctx context.Context, directory string, session, turn any, optio
 	if ctx.Err() != nil {
 		return false, ctx.Err()
 	}
-	result, err := delivery.PublishContext(ctx, filepath.Join(directory, "hook", text(session), text(turn), "hold.json"), Object{{Key: "sessionId", Value: session}, {Key: "turnId", Value: turn}, {Key: "at", Value: options.Now}, {Key: "mode", Value: options.Mode}}, options.Root)
+	result, err := delivery.Publish(ctx, filepath.Join(directory, "hook", text(session), text(turn), "hold.json"), Object{{Key: "sessionId", Value: session}, {Key: "turnId", Value: turn}, {Key: "at", Value: options.Now}, {Key: "mode", Value: options.Mode}}, options.Root)
 	return result == delivery.Published, err
 }
 func RecordObservation(ctx context.Context, directory string, record Object, root string) (string, error) {
@@ -361,7 +361,7 @@ func RecordObservation(ctx context.Context, directory string, record Object, roo
 			}
 		}
 		name := strconv.Itoa(index)
-		result, err := delivery.PublishContext(ctx, filepath.Join(folder, name+".json"), record, root)
+		result, err := delivery.Publish(ctx, filepath.Join(folder, name+".json"), record, root)
 		if err != nil {
 			return "", err
 		}

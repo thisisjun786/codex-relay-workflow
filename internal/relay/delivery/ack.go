@@ -348,7 +348,7 @@ func (a *Ack) verifyAckTurn(ctx context.Context, row Row, ackTurn string, adapte
 	if err != nil {
 		return "", err
 	}
-	turn, err := adapter.ReadTurn(row.S("recipient_thread_id"), ackTurn)
+	turn, err := adapter.ReadTurn(ctx, row.S("recipient_thread_id"), ackTurn)
 	if err != nil || turn == nil || TurnStartedAt(turn) == nil {
 		return "unverified_turn", nil
 	}

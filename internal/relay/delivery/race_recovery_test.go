@@ -175,9 +175,9 @@ func Test21_RCN02_reading_a_transcript_settles_nothing(t *testing.T) {
 		h.register(regOpts{recipients: []string{parent, child}})
 		before := str(h.assignment(), "state")
 		events := h.count("SELECT COUNT(*) AS c FROM events")
-		_, err := h.host.ReadThread(child)
+		_, err := h.host.ReadThread(context.Background(), child)
 		mustDo(t, err)
-		_, err = h.host.ListTurnIDs(child, 20)
+		_, err = h.host.ListTurnIDs(context.Background(), child, 20)
 		mustDo(t, err)
 		after := str(h.assignment(), "state")
 		if after != before {
