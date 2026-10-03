@@ -64,7 +64,7 @@ The stages partition the live nodes: the counts of `stages` add up to `denominat
 | `waiting_resource` | unowned, every edge satisfied, and held back by capacity, an unmeasured ceiling, edit regions, a merge window, an unverified owner, or another owner of the issue (`defer:*`, `skip:already_owned`) |
 | `ready` | released next (the `ready` disposition of `dag-ready`, without the artifact byte checks) |
 | `releasing` | a release is decided and its child is not yet bound to the node |
-| `creation_unknown` | a child's creation was armed and its outcome is not known |
+| `creation_unknown` | a child's creation was armed and its outcome is not known; a repeat of the release observes the App Server and continues, creates again or says why ([dag-scheduler.md](dag-scheduler.md#a-creation-whose-outcome-is-unknown)) |
 | `running` | the relationship is open and nothing has been reported |
 | `reported` | the child reported and nobody has judged (or the child's newest report is `blocked_needs_input`) |
 | `verifying` | a report is under review, or was ruled verified and not yet accepted or merged |

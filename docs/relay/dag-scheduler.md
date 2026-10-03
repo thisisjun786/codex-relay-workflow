@@ -65,7 +65,7 @@ Candidates are then checked against what lies outside the plan, ranked, and cut 
 | blocked | `blocked:inconsistent_inputs` | the inputs rest on two acceptances of one node (B-14) |
 | blocked | `blocked:input_unverified_at_consumption` | the child's own newest report is blocked_needs_input (B-15) |
 | blocked | `blocked:stale_predecessor` | an input of an accepted predecessor is no longer the active acceptance of its node, or the accepted result of the predecessor is stale (see [Invalidation](#invalidation)): the detail names the edge |
-| blocked | `blocked:creation_unknown` | a child's creation was armed and its outcome is not known; repeating the release reconciles it |
+| blocked | `blocked:creation_unknown` | a child's creation was armed and its outcome is not known; repeating the release observes the App Server and continues the creation, creates again once no thread is shown, or stays here and says why ([A creation whose outcome is unknown](#a-creation-whose-outcome-is-unknown)) |
 | blocked | `blocked:effect_unknown` | a merge turn for the accepted head ended with an unknown effect |
 | blocked | `blocked:predecessor_cancelled` | the predecessor's relationship was cancelled before its result was usable |
 | blocked | `blocked:release_abandoned` | the managed start of a decided release was released before it created a child |
@@ -346,7 +346,7 @@ The release is idempotent and never creates a second child. In order:
    decides capacity, reserves a slot of subject kind `dag_node` and key `plan/node` (a character neither id may contain) (decision D-15) and writes the manifest, the frozen request and the release together, or nothing. When no slot is free the
    contest is recorded and `capacity_exhausted` answered; a refusal of the reservation itself (another parent, a ceiling at initiative or store scope) leaves its conflict row and no intent, and any other failure of the store rolls the whole transaction back.
 5. **Start the child**, outside any transaction, with the frozen bytes. A refused or incomplete start (a creation whose outcome is unknown, settings that differ from what was asked) leaves the intent and the slot; the
-   same call again reaches this step again and the engine reconciles with the creation it already made. A request another caller is advancing waits for that caller to bind its child.
+   same call again reaches this step again and the engine reconciles with the creation it already made (an unknown creation by observing the App Server: [A creation whose outcome is unknown](#a-creation-whose-outcome-is-unknown)). A request another caller is advancing waits for that caller to bind its child.
 6. **Bind** the child to the node (`dag_node_executions`, kind `initial`). The engine already refuses a creation whose model, effort, sandbox or approval policy differ from the request; the bind refuses a
    relationship that is not this node's issue and parent.
 
@@ -357,6 +357,22 @@ the child verifies every input against the manifest before consuming it. A start
 
 The slot is held from step 4 until the parent releases it with the acceptance of a non-PR node or the integration of an implementation node, or an operator does.
 
+### A creation whose outcome is unknown
+
+The App Server can create a thread and fail to answer within the bridge's ack bound (a `PhaseTimeout` on `thread/start`, `thread/name/set` or `turn/start`), or the process that was creating it can stop in the middle. The bridge then keeps a creation receipt that is `outcome_unknown` (`in_progress_or_unknown` for the second case) and never runs it again. A repeat of the same `dag-release` sends the same frozen bytes to the managed engine, which no longer answers `creation_unknown` from that receipt alone: it asks the App Server what the creation left, under the same managed request.
+
+| What the engine finds | What the repeat does |
+| --- | --- |
+| a thread with no turn: the one the receipt names, or, when it names none, the only loaded thread that fits (the request's working directory, model and effort, created after the creation began, no first message, a name that is empty or the title) | continues the same request on it: the standby turn under a standby operation of its own, the title after the standby is accepted, then the business turn; the child is that thread |
+| a thread that has a turn, or a receipt whose `turn/start` may have been sent (it is among the attempted effects, or the receipt kept the title and no effects were saved) | stops with `thread_has_turn` or `standby_turn_unknown`: an unanswered `turn/start` is not sent again ([I-488](invariants.md), I-473) |
+| no thread, within 2 minutes of the receipt's last update | stops with `pending` and `repeatAfter`: a thread may still appear |
+| no thread, after those 2 minutes and with the listing read to its end | creates again under the same request, with a bridge operation id derived from the request and the attempt number (at most three creations); the newest attempt that has a receipt is the one every later repeat continues |
+| several threads that fit, a named thread or a listing that cannot be read, more than 64 loaded threads to inspect, a host error, no creation time in the receipt | stops with `ambiguous` or `unobservable` and the detail (the host's own words for a refused read); nothing is created or sent |
+
+Every stop answers `creation_unknown` and carries `creationReconciliation` (`state`, `detail`, `attempt`, `attemptRequestId`, `thread`, `repeatAfter`) in the `managed` answer; the node stays `blocked:creation_unknown` until a repeat reaches the first or the fourth row. A repeat that continues or creates again answers the same object with the state `adopted` or `recreated`, and the answer of a start that reconciled nothing has no such key.
+
+What this does not establish. A thread that was created, never got a message and was unloaded again is in no listing, so "no thread" is a statement about loaded threads, and the grace period and the loaded listing are the whole of the evidence; a thread of an earlier attempt that appears after a later one was created is an orphan with no turn and no writer, never registered and never sent to. Several fitting threads, or a host that cannot be read, stop every repeat until the host answers or the stray thread is archived; the engine never picks one. A standby recovery the host refused (a thread it will not resume, a busy thread, a settings finding) is not sent again, as for a failed creation: the start stays stopped, the answer's `standbyRecovery` says what the host answered, and nothing is created beside the thread.
+
 ### Recovering an abandoned release
 
 A managed start that was released before it created a child (`managed-release`, possible only before the request is armed) is a tombstone: the engine refuses its request id for good, and a release's request id is derived from the plan, the node and the manifest digest only, so the same manifest can never start under it again. The node reads `blocked:release_abandoned` (its detail names the request id), its slot stays held, and a replay of `dag-release` refuses. Two steps end that.
@@ -365,6 +381,8 @@ A managed start that was released before it created a child (`managed-release`, 
 2. The ordinary `dag-release`. A closed intent no longer owns the node, so the reading says it is ready again, and the release judges it from scratch (steps 2 to 4 above). A manifest that changed since (a moved base tip, a predecessor accepted again) is an ordinary new release under its own digest and request id. The same manifest cannot take its old request id, so it takes `RecoveryRequestID`: `dag-` and 40 hex characters of the hash of the canonical list [`recover`, plan, node, digest, the closed request]. It is recorded as a `rereleased` row of `dag_release_recoveries` that holds the successor id and the exact request bytes and selectors, as `dag_release_requests` does for the first release (the shipped release rows are unique on the digest and cannot take a second request). A release after a close of an older manifest of the node is the successor of that manifest's last closed request.
 
 The node's open intent is the `dag_releases` row or `rereleased` row whose request has no `closed` row; there is at most one, and the intent transaction checks that again before it writes, so two calls that release a closed node at once create one child (the loser replays the winner's intent). A replay of a successor sends the successor's own frozen bytes and checks them and their selectors as a first release's replay does. A live child still stops a release: the judgement refuses `duplicate_assignment` while a relationship or a managed start owns the issue. A foreign child that takes the issue after the intent was recorded makes the engine refuse the start without writing a managed row; that is an intent waiting for the issue (it keeps its slot, decision D-15) and not an abandoned one, and the same `dag-release` continues it once the issue is free. A store whose zone predates `dag_release_recoveries` reads as before (a read-only open creates nothing).
+
+A start that was armed is not closed by `dag-release-close`, whatever the observation says: its creation may own a thread, and closing it would return the slot and let `RecoveryRequestID` create a second child beside the first. The way on for an armed start whose creation is unknown is the repeat described in [A creation whose outcome is unknown](#a-creation-whose-outcome-is-unknown), and the close refuses it (`disposition_conflict`) as before.
 
 Not covered: the intent of a node that a plan revision retired (`dag-release-close` needs a live node; invalidation and adoption own it), and any judgement that a manifest is stale (it is made when the node is released again, from scratch).
 
@@ -664,7 +682,7 @@ Nothing is resident, so a restart loses nothing: the plan, the releases, the exe
 | --- | --- |
 | `adopt` | a live child whose relationship this actor holds: release nothing, carry on |
 | `adopt_needed` | the node's relationship was replaced by one this actor holds, for the same child: run `dag-adopt` |
-| `reconcile` | an effect whose outcome is not known (a creation whose response was lost, a release started and not bound, a merge turn whose effect is unknown): resolve it by replaying the same request (`dag-release` reads the host's record of the creation before it creates anything) or by observation (`dag-integration-observe`), never by doing it again. A merge turn whose effect is unknown is `reconcile` for the parent of the accepted result's relationship, the only one that can observe; for another parent it is `needs_operator` |
+| `reconcile` | an effect whose outcome is not known (a creation whose response was lost, a release started and not bound, a merge turn whose effect is unknown): resolve it by replaying the same request (`dag-release` reads the host's record of the creation before it creates anything, and observes the App Server when that record says the outcome is unknown) or by observation (`dag-integration-observe`), never by doing it again. A merge turn whose effect is unknown is `reconcile` for the parent of the accepted result's relationship, the only one that can observe; for another parent it is `needs_operator` |
 | `needs_operator` | nothing in this build moves it on, and the detail says why |
 | `none` | nothing is outstanding (a node with an acceptance: the acceptance is the node's value and belongs to no session) |
 
