@@ -1,10 +1,6 @@
 package faults
 
-import (
-	"context"
-	"fmt"
-	"time"
-)
+import "context"
 
 // dEligibility reads the same relationship and host observation that the Python
 // notification path reads. A missing host measurement never authorizes a send.
@@ -77,47 +73,9 @@ func dAnchorEligibility(ctx context.Context, l *Ledger, anchor row, moment float
 		about["reason"] = "the relationship is " + status
 		return about, nil
 	}
-	// subset ported for todo 22; todo 24 owns supervision.contactable
-	parent := anchor.Text("parent_task_id")
-	var contact map[string]any
-	if parent == "" {
-		contact = map[string]any{"contactable": nil, "asked": false, "reason": "no recipient was named, so deliverability was not part of this question"}
-	} else {
-		lifecycle, e := l.one(ctx, "SELECT deliverable,withhold_reason,detail,observed_at FROM recipient_lifecycle WHERE task_id=?", parent)
-		if e != nil {
-			return nil, e
-		}
-		if lifecycle == nil {
-			contact = map[string]any{"contactable": nil, "reason": "the host has not been observed for this task, so deliverability is unmeasured rather than allowed"}
-		} else {
-			deliverable, observed := lifecycle.Text("deliverable"), lifecycle.Text("observed_at")
-			contact = map[string]any{"deliverable": deliverable, "observedAt": observed}
-			if deliverable != "yes" {
-				reason := lifecycle.Text("withhold_reason")
-				if reason == "" {
-					reason = deliverable
-				}
-				contact["contactable"] = false
-				contact["reason"] = reason
-			} else if stamp, parseErr := time.Parse("2006-01-02T15:04:05.999999Z07:00", observed); parseErr != nil {
-				contact["contactable"] = nil
-				contact["reason"] = "the observation carries no readable time, so its age is unmeasured"
-			} else {
-				age := moment - float64(stamp.UnixNano())/1e9
-				contact["ageSeconds"] = age
-				switch {
-				case age < -60:
-					contact["contactable"] = nil
-					contact["reason"] = fmt.Sprintf("the observation is dated %ds in the future, so it is not evidence about now", int(-age))
-				case age > 900:
-					contact["contactable"] = nil
-					contact["reason"] = fmt.Sprintf("the observation is %ds old, past the 900s this reading treats as current", int(age))
-				default:
-					contact["contactable"] = true
-					contact["reason"] = deliverable
-				}
-			}
-		}
+	contact, e := contactable(ctx, l, anchor.Text("parent_task_id"), moment)
+	if e != nil {
+		return nil, e
 	}
 	about["contact"] = contact
 	eligible := true
