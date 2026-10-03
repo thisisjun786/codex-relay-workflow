@@ -78,6 +78,9 @@ type Options struct {
 	StateBackup string
 	// CandidateSchema is a seam: nil asks the candidate binary for its declared schema.
 	CandidateSchema func(ctx context.Context, binary string) Object
+	// Systemctl is a seam for register-service: it runs systemctl --user with args and returns its standard
+	// output. nil runs the real one.
+	Systemctl func(ctx context.Context, args ...string) (string, error)
 }
 
 func (o Options) stamp() string {

@@ -608,7 +608,7 @@ nothing about a socket accepting a connection.
 | `connected` | `doctor` from the acting process reports `actorReachability.socketConnect` equal to `ok` | A socket file existing on disk |
 | `deliveryAccepted` | An attempt recorded a returned turn id | A dispatch, a staged receipt, or an absent error |
 | `verificationComplete` | Every condition in OPS-6.4 holds at once | A completed turn, a green check, a verdict that merely exists, or an integration |
-| `alwaysActive` | A supervised runtime survives a host restart | Any of the five above |
+| `alwaysActive` | A supervised runtime survives a host restart, observed after one | Any of the five above, or a registered unit that no restart has yet tested |
 
 ### OPS-6.2 Record shape
 

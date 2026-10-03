@@ -65,9 +65,11 @@ func Test30AllWritableEntrypointsFenced(t *testing.T) {
 					t.Fatalf("registration refusal %v", err)
 				}
 			case "probe":
-				p := Probe(t.Context(), StateSelection{Path: filepath.Dir(path)})
-				if p.Access.DBWritable {
-					t.Fatal("probe bypassed fence")
+				for _, opts := range []ProbeOptions{{}, {Write: true}} {
+					p := ProbeWith(t.Context(), StateSelection{Path: filepath.Dir(path)}, opts)
+					if p.Access.DBWritable {
+						t.Fatalf("probe bypassed fence (write probe %v)", opts.Write)
+					}
 				}
 			}
 			after, err := os.ReadFile(path)

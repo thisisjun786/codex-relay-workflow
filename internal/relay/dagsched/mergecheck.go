@@ -2,11 +2,8 @@ package dagsched
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"fmt"
-	"strconv"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -74,10 +71,9 @@ func (s *Scheduler) appendMergeCheck(ctx context.Context, q store.Querier, m mer
 	if m.ChecksBase != "" {
 		checksBase = m.ChecksBase
 	}
-	sum := sha256.Sum256([]byte(m.Acceptance.AcceptanceID + "|" + strconv.FormatInt(seq, 10)))
 	_, err = q.ExecContext(ctx, "INSERT INTO dag_merge_checks (check_id, acceptance_id, check_seq, head_sha, observed_head_sha, base_tip_sha, checks_base_sha, checks_digest, evidence_json,"+
 		" failed_required_json, round_no, outcome, reason, recorded_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-		"dmc-"+hex.EncodeToString(sum[:])[:32], m.Acceptance.AcceptanceID, seq, m.Acceptance.HeadSHA, m.Observed.HeadSHA, m.BaseTip, checksBase, digest, body.JSON(),
+		mergeCheckID(m.Acceptance.AcceptanceID, seq), m.Acceptance.AcceptanceID, seq, m.Acceptance.HeadSHA, m.Observed.HeadSHA, m.BaseTip, checksBase, digest, body.JSON(),
 		failed, m.Round, m.Outcome, m.Reason, s.now())
 	return seq, err == nil, err
 }
@@ -127,7 +123,8 @@ func (s *Scheduler) pinnedPredecessors(ctx context.Context, q store.Querier, pla
 // freshness is E-10 for the pull requests a release builds on: the relay reads each pinned predecessor's pull request itself and refuses the release when its head is
 // no longer the one the acceptance stands on (the accepted head, or after a recorded base refresh the head the record names), after recording that observation (a stale_head row), so no release
 // follows a push (contract E-10). It applies the fail-closed rule in its
-// release form: a reader error or a verdict of unknown is the host's failure and nothing is written, a verdict of stale is refused, a closed or merged pull request is
+// release form: a reader error or a verdict of unknown is the host's failure and nothing is written (a merged pull request is read by the rule in ClassifyPullRequest: its verdict is unknown by
+// construction, and it is readable beside what merging explains), a verdict of stale is refused, a closed or merged pull request is
 // allowed (a predecessor that landed before its successor got capacity keeps its immutable accepted head) and only the head is compared. A failure to read is retryable;
 // a moved head is not. A record that lands while the forge is read moves what the acceptance stands on: the observation is then not written (it would be made under a head the acceptance no longer stands on)
 // and the release is refused as a moved candidate, to be repeated.

@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
-	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
@@ -130,18 +129,6 @@ func (r SweepResult) Object() contract.OrderedObject {
 		{Key: "repository", Value: optionalText(r.Repository)}, {Key: "observed", Value: observed}, {Key: "replayed", Value: replayed}, {Key: "unmeasured", Value: unmeasured}, {Key: "members", Value: members}}
 }
 
-// requireParent refuses a task that is not the registered parent of the plan's project: a measurement is the parent's.
-func (s *Scheduler) requireParent(ctx context.Context, q store.Querier, snap dag.Snapshot, actor string) error {
-	parents, err := projectParents(ctx, q, snap.ProjectKey)
-	if err != nil {
-		return err
-	}
-	if len(parents) != 1 || parents[0] != actor {
-		return refuse(contract.RefusalScopeRoleMismatch, "task %s is not the registered parent of project %s", actor, snap.ProjectKey)
-	}
-	return nil
-}
-
 // ObserveLive measures every pair of the live heads of a plan and every live head against each tip it is given, and records the measurements and a ledger row in one transaction (CRW-410). Git runs
 // first and writes nothing; if recording fails nothing was written and the same call can be made again. A live node is an implementation node that holds its edit regions (running, or accepted and not
 // landed); its head is the one the parent named, else the head of its current accepted result, else the HEAD of the checkout its child works in. A head or tip that cannot be measured is a member that
@@ -168,19 +155,20 @@ func (s *Scheduler) ObserveLive(ctx context.Context, plan, actor string, in Swee
 	if err != nil {
 		return res, err
 	}
-	if err := s.requireParent(ctx, q, snap, actor); err != nil {
+	if err := requireProjectParent(ctx, q, snap.ProjectKey, actor); err != nil {
 		return res, err
 	}
 	if in.TriggerNode != "" {
-		if _, ok := nodeOf(snap, in.TriggerNode); !ok {
-			return res, refuse(contract.RefusalUnregisteredScope, "plan %s has no live node %s", plan, in.TriggerNode)
+		if _, err := requireNode(snap, plan, in.TriggerNode); err != nil {
+			return res, err
 		}
 	}
 	for node, head := range in.Heads {
-		n, ok := nodeOf(snap, node)
+		n, err := requireNode(snap, plan, node)
+		if err != nil {
+			return res, err
+		}
 		switch {
-		case !ok:
-			return res, refuse(contract.RefusalUnregisteredScope, "plan %s has no live node %s", plan, node)
 		case n.Kind != dag.NodeImplementation:
 			return res, refuse(contract.RefusalDispositionConflict, "node %s is a %s node: it has no branch to measure", node, n.Kind)
 		case !commitPattern.MatchString(head):
@@ -299,8 +287,8 @@ func (s *Scheduler) recordSweep(ctx context.Context, plan, actor string, res *Sw
 				if id == "" {
 					continue
 				}
-				if _, ok := nodeOf(current, id); !ok {
-					return refuse(contract.RefusalUnregisteredScope, "plan %s no longer has the live node %s", plan, id)
+				if _, err := requireStillNode(current, plan, id); err != nil {
+					return err
 				}
 			}
 		}
@@ -357,12 +345,12 @@ func (s *Scheduler) recordMeasured(ctx context.Context, tx store.Querier, plan, 
 	var nodes []string
 	switch m.Kind {
 	case MemberPair:
-		id = "dco-" + shaOf([]byte(strings.Join([]string{plan, m.LeftNode, m.RightNode, m.LeftHead, m.RightHead, m.base}, "|")))[:32]
+		id = pairObservationID(plan, m.LeftNode, m.RightNode, m.LeftHead, m.RightHead, m.base)
 		find = "SELECT observation_id, conflict_count FROM dag_conflict_observations WHERE plan_id = ? AND left_node_id = ? AND right_node_id = ? AND left_head = ? AND right_head = ? AND base_sha = ?"
 		findArgs = []any{plan, m.LeftNode, m.RightNode, m.LeftHead, m.RightHead, m.base}
 		nodes = []string{m.LeftNode, m.RightNode}
 	default:
-		id = "dto-" + shaOf([]byte(strings.Join([]string{plan, m.LeftNode, m.LeftHead, m.RightHead, m.base}, "|")))[:32]
+		id = tipObservationID(plan, m.LeftNode, m.LeftHead, m.RightHead, m.base)
 		find = "SELECT observation_id, conflict_count FROM dag_tip_conflict_observations WHERE plan_id = ? AND node_id = ? AND head = ? AND tip_sha = ? AND base_sha = ?"
 		findArgs = []any{plan, m.LeftNode, m.LeftHead, m.RightHead, m.base}
 		nodes = []string{m.LeftNode}

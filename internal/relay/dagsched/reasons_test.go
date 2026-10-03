@@ -337,8 +337,8 @@ func TestReadyOwnedNodeStates(t *testing.T) {
 			f.mergeCheck(a, head1, true)
 			f.exec("INSERT INTO dag_merge_checks (check_id, acceptance_id, check_seq, head_sha, observed_head_sha, base_tip_sha, checks_digest, evidence_json, failed_required_json, round_no, outcome, reason, recorded_at)"+
 				" VALUES ('chk-evict', ?, 2, ?, ?, 'tip', ?, ?, '[\"test\"]', 2, 'evicted', 'again', 't')", a.Acceptance.AcceptanceID, head1, head1,
-				EvidenceDigest(EvidenceBody{Checks: []CheckRow{{Name: "test", RunID: "2", HeadSHA: head1, Conclusion: "failure", Attempt: 2}}, Required: []string{"test"}, ReviewDigest: dig("review")}),
-				EvidenceBody{Checks: []CheckRow{{Name: "test", RunID: "2", HeadSHA: head1, Conclusion: "failure", Attempt: 2}}, Required: []string{"test"}, ReviewDigest: dig("review")}.JSON())
+				EvidenceDigest(EvidenceBody{Checks: []Check{{Name: "test", RunID: "2", HeadSHA: head1, Conclusion: "failure", Attempt: 2}}, Required: []string{"test"}, ReviewDigest: dig("review")}),
+				EvidenceBody{Checks: []Check{{Name: "test", RunID: "2", HeadSHA: head1, Conclusion: "failure", Attempt: 2}}, Required: []string{"test"}, ReviewDigest: dig("review")}.JSON())
 		}, node: "impl-a", state: StateAccepted, reason: BlockedEvicted},
 		{name: "a landing whose effect is unknown", setup: func(f *fixture) {
 			f.acceptNode("p1", "impl-a", pinnedOpts)

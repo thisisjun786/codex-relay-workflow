@@ -80,12 +80,11 @@ func (sw *Sweeper) refusalFaults(ctx context.Context, product string, cursor any
 	reasons := []string{"environments_unknown", "role_binding_mismatch", "role_policy_unconfigured", "setting_unobservable", "settings_incomplete", "settings_mistyped", "settings_not_preserved", "settings_record_stale_for_role", "settings_unavailable", "unsupported_approval_policy", "unsupported_sandbox_type", "unverifiable_permission_profile"}
 	at, _ := after.(int64)
 	args := []any{at, until}
-	args = append(args, settledDelivery...)
 	for _, v := range reasons {
 		args = append(args, v)
 	}
 	args = append(args, sweepLimit)
-	rows, e := sw.Store.All(ctx, "SELECT j.seq,j.subject AS event_id,j.at,"+reason+" AS reason,CASE WHEN json_valid(j.detail) THEN json_extract(j.detail,'$.detail') END AS refusal_detail,d.relationship_id,d.recipient_task_id,d.state,e.execution_generation AS generation,e.turn_id AS turn FROM journal j JOIN deliveries d ON d.event_id=j.subject LEFT JOIN events e ON e.event_id=j.subject WHERE j.kind='delivery_withheld' AND j.seq>? AND j.seq<=? AND d.state NOT IN (?,?,?) AND "+notSuperseded+" AND "+reason+" IN ("+strings.TrimRight(strings.Repeat("?,", len(reasons)), ",")+") AND "+streak+" ORDER BY j.seq LIMIT ?", args...)
+	rows, e := sw.Store.All(ctx, "SELECT j.seq,j.subject AS event_id,j.at,"+reason+" AS reason,CASE WHEN json_valid(j.detail) THEN json_extract(j.detail,'$.detail') END AS refusal_detail,d.relationship_id,d.recipient_task_id,d.state,e.execution_generation AS generation,e.turn_id AS turn FROM journal j JOIN deliveries d ON d.event_id=j.subject LEFT JOIN events e ON e.event_id=j.subject WHERE j.kind='delivery_withheld' AND j.seq>? AND j.seq<=? AND "+notSettled+" AND "+notSuperseded+" AND "+reason+" IN ("+strings.TrimRight(strings.Repeat("?,", len(reasons)), ",")+") AND "+streak+" ORDER BY j.seq LIMIT ?", args...)
 	if e != nil {
 		return page{}, e
 	}
@@ -126,9 +125,8 @@ func (sw *Sweeper) derivedStillPresent(ctx context.Context, class string, signat
 		args = []any{signature["relationship"], signature["generation"]}
 	case "delivery_refused":
 		reason := "(CASE WHEN json_valid(j.detail) THEN json_extract(j.detail,'$.reason') END)"
-		query = "SELECT d.event_id FROM deliveries d WHERE d.relationship_id=? AND d.state NOT IN (?,?,?) AND " + notSuperseded + " AND EXISTS(SELECT 1 FROM journal j WHERE j.subject=d.event_id AND j.kind='delivery_withheld' AND " + reason + "=? AND NOT EXISTS(SELECT 1 FROM journal n WHERE n.subject=j.subject AND n.seq>j.seq AND (n.kind IN ('delivery_attempted','delivery_withheld_inactive') OR (n.kind='delivery_withheld' AND COALESCE((CASE WHEN json_valid(n.detail) THEN json_extract(n.detail,'$.reason') END),'')!=COALESCE(" + reason + ",''))))) LIMIT 1"
-		args = append([]any{signature["relationship"]}, settledDelivery...)
-		args = append(args, signature["errorCode"])
+		query = "SELECT d.event_id FROM deliveries d WHERE d.relationship_id=? AND " + notSettled + " AND " + notSuperseded + " AND EXISTS(SELECT 1 FROM journal j WHERE j.subject=d.event_id AND j.kind='delivery_withheld' AND " + reason + "=? AND NOT EXISTS(SELECT 1 FROM journal n WHERE n.subject=j.subject AND n.seq>j.seq AND (n.kind IN ('delivery_attempted','delivery_withheld_inactive') OR (n.kind='delivery_withheld' AND COALESCE((CASE WHEN json_valid(n.detail) THEN json_extract(n.detail,'$.reason') END),'')!=COALESCE(" + reason + ",''))))) LIMIT 1"
+		args = []any{signature["relationship"], signature["errorCode"]}
 	}
 	if class == "delivery_refused" {
 		query = strings.TrimSuffix(query, " LIMIT 1") + " AND NOT EXISTS(SELECT 1 FROM fault_overtaken_deliveries o WHERE o.event_id=d.event_id) AND d.event_id>? ORDER BY d.event_id LIMIT ?"

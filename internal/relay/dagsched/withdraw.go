@@ -60,13 +60,9 @@ func (s *Scheduler) WithdrawGeneration(ctx context.Context, plan, node, actor st
 		if err := s.fence(txCtx, tx, plan, actor); err != nil {
 			return err
 		}
-		snap, _, err := dag.SnapshotAt(txCtx, tx, plan, 0)
+		snap, n, err := liveNode(txCtx, tx, plan, node)
 		if err != nil {
 			return err
-		}
-		n, ok := nodeOf(snap, node)
-		if !ok {
-			return refuse(contract.RefusalUnregisteredScope, "plan %s has no live node %s", plan, node)
 		}
 		if err := lifecycleRefusal(snap, n, "withdrawing a generation of it", false); err != nil {
 			return err
@@ -102,7 +98,7 @@ func (s *Scheduler) WithdrawGeneration(ctx context.Context, plan, node, actor st
 			return nil
 		}
 		if rel.Status != "active" || rel.Superseded {
-			return refuse(contract.RefusalRelationshipNotActive, "the relationship %s of %s is %s: a generation is withdrawn while its relationship is active", rel.ID, node, map[bool]string{true: "superseded", false: rel.Status}[rel.Superseded])
+			return refuse(contract.RefusalRelationshipNotActive, "the relationship %s of %s is %s: a generation is withdrawn while its relationship is active", rel.ID, node, relationshipState(rel))
 		}
 		if rel.Generation != in.Generation {
 			return refuse(contract.RefusalStaleGeneration, "generation %d is not the generation %s stands on (%d): only the newest generation, the one opened by hand and never sent, is withdrawn", in.Generation, rel.ID, rel.Generation)

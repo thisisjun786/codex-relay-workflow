@@ -51,7 +51,7 @@ func (in ResultInput) validate() error {
 		return refuse(contract.RefusalMalformedReceipt, "the commit a result is about is 7 to 64 lower-case hex digits, not %q", in.Commit)
 	case strings.TrimSpace(in.Evidence) == "":
 		return refuse(contract.RefusalMalformedReceipt, "a result names its evidence (the run, the pull request or the reason): the relay keeps the statement and reads no forge")
-	case len(in.Evidence) > MaxResultEvidenceBytes || hasControl(in.Evidence):
+	case len(in.Evidence) > MaxResultEvidenceBytes || dag.HasControl(in.Evidence):
 		return refuse(contract.RefusalMalformedReceipt, "the evidence of a result is at most %d bytes and has no control character", MaxResultEvidenceBytes)
 	}
 	return nil
@@ -64,7 +64,7 @@ func (s *Scheduler) RecordLandingResult(ctx context.Context, plan, node, actor s
 		return ResultRecord{}, err
 	}
 	out := ResultRecord{PlanID: plan, NodeID: node, Kind: in.Kind, Commit: in.Commit, Evidence: in.Evidence}
-	out.ResultID = digestOf(map[string]any{"plan_id": plan, "node_id": node, "kind": in.Kind, "commit": in.Commit, "evidence": in.Evidence})
+	out.ResultID = dag.Digest(map[string]any{"plan_id": plan, "node_id": node, "kind": in.Kind, "commit": in.Commit, "evidence": in.Evidence})
 	err := s.Store.Compose(ctx, func(txCtx context.Context, _ *sql.Conn) error {
 		q := s.Store.Q(txCtx)
 		if err := s.fence(txCtx, q, plan, actor); err != nil {
@@ -74,7 +74,7 @@ func (s *Scheduler) RecordLandingResult(ctx context.Context, plan, node, actor s
 		if err != nil {
 			return err
 		}
-		if err := s.requireParent(txCtx, q, snap, actor); err != nil {
+		if err := requireProjectParent(txCtx, q, snap.ProjectKey, actor); err != nil {
 			return err
 		}
 		n, live := nodeOf(snap, node)

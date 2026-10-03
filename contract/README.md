@@ -185,3 +185,9 @@ example `{"kind":"eq","path":["observed","record","mode"],"value":384}`,
 SQL rows use `eq` against a query label, e.g.
 `{"kind":"eq","path":["sql","seeded_scope"],"value":[["r","p"]]}`. The bridge fake host is only a fake of the external App Server, not the code
 under test.
+
+## Accepted-node base-refresh proof extension
+
+`dag-base-refresh/1` keeps each conflict file in `steps[].resolved` with its `path` and `blob` (an empty stored blob, null in the CLI, means deletion). A proved mechanical resolution additionally carries `rule`, exactly the declared union or regenerate rule; its absence means manual review. `resolved_paths` is the sorted unique union of manual paths across every hop and must match `--resolved` exactly. A failed declared rule refuses with the existing `disposition_conflict`/`tree_differs`; evaluator errors use existing `merge_target_unreadable`. No schema id, refusal reason, flag, frozen record schema or shipped SQL statement changes. Valid earlier records preserve their stored classification on replay.
+
+The real-git, temporary-store test `TestBaseRefreshMechanicalSerialization` pins both the stored proof and actual CLI serializer in `internal/relay/dagsched/testdata/golden/`. The existing mechanical skill checker keeps its full-check behavior; the relay invokes its shared evaluator only for covered conflict files after proving the whole merge chain.

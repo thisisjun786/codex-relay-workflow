@@ -36,8 +36,24 @@ const (
 )
 
 // RefreshResolved is a path git could not merge in one hop and the blob the head holds for it (empty when the resolution deleted the file): what a hand put there is the one thing the relay cannot prove,
-// so it is recorded for a reviewer to read.
-type RefreshResolved struct{ Path, Blob string }
+// Rule is the proved mechanical rule, or empty when the parent must name and review the file.
+type RefreshResolved struct{ Path, Blob, Rule string }
+
+// RefreshMechanicalChecker evaluates selected conflict paths in one already proved merge.
+// The skill package registers its existing checker at initialization to avoid an import cycle.
+// A missing checker leaves every path manual; a refusal never becomes a manual override.
+type RefreshMechanicalChecker func(context.Context, string, RefreshStep, []Region, []string) (*RefreshMechanicalRefusal, error)
+type RefreshMechanicalRefusal struct{ Detail string }
+
+var refreshMechanical RefreshMechanicalChecker
+
+// RegisterRefreshMechanical is initialization-only, like command registration.
+func RegisterRefreshMechanical(check RefreshMechanicalChecker) {
+	if check == nil || refreshMechanical != nil {
+		panic("base refresh mechanical checker registered twice or nil")
+	}
+	refreshMechanical = check
+}
 
 // RefreshStep is one merge of the chain: the previous head (first parent), the commit of the base that was merged (second parent), the commit and its tree, and the paths that needed a hand resolution.
 type RefreshStep struct {
@@ -51,12 +67,14 @@ type refreshRefusal struct{ Code, Detail string }
 // refreshProof is a passed proof: the merges from the accepted head to the refreshed head, oldest first.
 type refreshProof struct{ Steps []RefreshStep }
 
-// resolvedPaths is every path the chain needed a hand resolution for, sorted and without repeats.
+// resolvedPaths is every path requiring a manual name in any hop, sorted without repeats.
 func (p refreshProof) resolvedPaths() []string {
 	seen := map[string]bool{}
 	for _, s := range p.Steps {
 		for _, r := range s.Resolved {
-			seen[r.Path] = true
+			if r.Rule == "" {
+				seen[r.Path] = true
+			}
 		}
 	}
 	out := make([]string, 0, len(seen))
@@ -65,6 +83,38 @@ func (p refreshProof) resolvedPaths() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func (p *refreshProof) applyMechanical(ctx context.Context, checkout string, regions []Region) (*refreshRefusal, error) {
+	if refreshMechanical == nil {
+		return nil, nil
+	}
+	for i := range p.Steps {
+		st := &p.Steps[i]
+		var paths, descriptions []string
+		rules := map[string]string{}
+		for _, r := range st.Resolved {
+			if rule, ok := MechanicalRuleFor([][]Region{regions}, r.Path); ok {
+				paths = append(paths, r.Path)
+				descriptions = append(descriptions, fmt.Sprintf("%s (%s)", r.Path, rule))
+				rules[r.Path] = rule
+			}
+		}
+		if len(paths) == 0 {
+			continue
+		}
+		why, err := refreshMechanical(ctx, checkout, *st, regions, paths)
+		if err != nil {
+			return nil, fmt.Errorf("mechanical resolution of %s: %w", strings.Join(descriptions, ", "), err)
+		}
+		if why != nil {
+			return &refreshRefusal{Code: RefreshTreeDiffers, Detail: fmt.Sprintf("mechanical resolution of %s: %s", strings.Join(descriptions, ", "), why.Detail)}, nil
+		}
+		for j := range st.Resolved {
+			st.Resolved[j].Rule = rules[st.Resolved[j].Path]
+		}
+	}
+	return nil, nil
 }
 
 var refreshCommitPattern = regexp.MustCompile("^[0-9a-f]{40}([0-9a-f]{24})?$")
@@ -107,7 +157,7 @@ func openRefreshRepo(ctx context.Context, checkout string) (*refreshRepo, error)
 		return nil, err
 	}
 	if format = strings.TrimSpace(format); format != "sha1" && format != "sha256" {
-		return nil, fmt.Errorf("git answered %q to --show-object-format, which is not an object format this proof knows", refreshFirstLine(format))
+		return nil, fmt.Errorf("git answered %q to --show-object-format, which is not an object format this proof knows", firstLine(format))
 	}
 	dir, err := os.MkdirTemp("", "dag-base-refresh-")
 	if err != nil {
@@ -160,7 +210,7 @@ func (g *refreshRepo) parents(ctx context.Context, commit string) ([]string, err
 	}
 	fields := strings.Fields(out)
 	if len(fields) == 0 || fields[0] != commit {
-		return nil, fmt.Errorf("git rev-list answered %q for %s", refreshFirstLine(out), commit)
+		return nil, fmt.Errorf("git rev-list answered %q for %s", firstLine(out), commit)
 	}
 	return fields[1:], nil
 }
@@ -186,7 +236,7 @@ func (g *refreshRepo) treeOf(ctx context.Context, commit string) (string, error)
 	}
 	id := strings.TrimSpace(out)
 	if !refreshCommitPattern.MatchString(id) {
-		return "", fmt.Errorf("git answered %q for the tree of %s", refreshFirstLine(out), commit)
+		return "", fmt.Errorf("git answered %q for the tree of %s", firstLine(out), commit)
 	}
 	return id, nil
 }
@@ -200,7 +250,7 @@ func (g *refreshRepo) mergeTree(ctx context.Context, first, second string) (stri
 	}
 	records := strings.Split(out, "\x00")
 	if len(records) == 0 || !refreshCommitPattern.MatchString(records[0]) {
-		return "", nil, fmt.Errorf("git merge-tree answered %q for %s and %s, which is not a merge result", refreshFirstLine(out), first, second)
+		return "", nil, fmt.Errorf("git merge-tree answered %q for %s and %s, which is not a merge result", firstLine(out), first, second)
 	}
 	if code == 0 {
 		return records[0], nil, nil
@@ -441,14 +491,6 @@ func proveBaseRefresh(ctx context.Context, g *refreshRepo, accepted, head, baseT
 		steps[i], steps[j] = steps[j], steps[i]
 	}
 	return &refreshProof{Steps: steps}, nil, nil
-}
-
-// refreshFirstLine is the text up to the first line break or NUL.
-func refreshFirstLine(s string) string {
-	if i := strings.IndexAny(s, "\n\x00"); i >= 0 {
-		return s[:i]
-	}
-	return s
 }
 
 // markerWidth is the width of the conflict markers git writes for a path: the conflict-marker-size attribute committed in the commit the merge takes its attributes from, seven when there is none or it is
