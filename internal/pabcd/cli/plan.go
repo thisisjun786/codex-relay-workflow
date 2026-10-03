@@ -9,12 +9,14 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
+	"golang.org/x/sys/unix"
 )
 
 // PlanCliArgs is the parsed plan command. A nil Date stamps local today; a
@@ -165,12 +167,12 @@ func planPhaseNumber(raw string) (int, bool) {
 
 // RunPlanCli creates one plan unit or refuses an existing one. Workspace
 // selection follows Cwd (including its links); descendant symlink parents
-// are refused. Root handles confine lookups and exclusive creation never
+// are refused. Directory descriptors confine lookups and exclusive creation never
 // truncates a pre-existing file. A partial new unit is retained after failure,
-// as in the oracle. A privileged directory mover or mount is outside this guard.
+// as in the oracle. A process allowed to relocate opened directories or mount filesystems is outside this guard.
 func RunPlanCli(args PlanCliArgs) PlanCliResult { return runPlanCli(args, writePlanDoc) }
 
-func runPlanCli(args PlanCliArgs, writeDoc func(*os.Root, string, string) error) PlanCliResult {
+func runPlanCli(args PlanCliArgs, writeDoc func(*planDir, string, string) error) PlanCliResult {
 	if args.Verb == "help" {
 		return PlanCliResult{Output: planHelp}
 	}
@@ -195,12 +197,7 @@ func runPlanCli(args PlanCliArgs, writeDoc func(*os.Root, string, string) error)
 		return planFailure(err)
 	}
 	defer parent.Close()
-	if _, err := parent.Lstat(name); err == nil {
-		return refuse()
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return planFailure(planPathError("mkdir", unitDir, err))
-	}
-	if err := parent.Mkdir(name, 0o777); err != nil {
+	if err := unix.Mkdirat(int(parent.file.Fd()), name, 0o777); err != nil {
 		if errors.Is(err, os.ErrExist) {
 			return refuse()
 		}
@@ -223,16 +220,16 @@ func runPlanCli(args PlanCliArgs, writeDoc func(*os.Root, string, string) error)
 	return PlanCliResult{Output: fmt.Sprintf("plan init: scaffolded %s (000_plan.md + %d phase doc(s)).\nWrite every doc to diff-level BEFORE P -> A; the P>A gate requires planUnit to carry numbered docs.", filepath.Join("devlog", "_plan", name), args.Phases)}
 }
 
-func planParent(cwd, unitDir string) (*os.Root, error) {
+func planParent(cwd, unitDir string) (*planDir, error) {
 	if err := os.MkdirAll(cwd, 0o777); err != nil {
 		return nil, planPathError("mkdir", unitDir, err)
 	}
-	root, err := os.OpenRoot(cwd)
+	root, err := openPlanWorkspace(cwd)
 	if err != nil {
 		return nil, planPathError("mkdir", unitDir, err)
 	}
 	for _, part := range []string{"devlog", "_plan"} {
-		if err := root.Mkdir(part, 0o777); err != nil && !errors.Is(err, os.ErrExist) {
+		if err := unix.Mkdirat(int(root.file.Fd()), part, 0o777); err != nil && !errors.Is(err, os.ErrExist) {
 			root.Close()
 			return nil, planPathError("mkdir", unitDir, err)
 		}
@@ -246,36 +243,72 @@ func planParent(cwd, unitDir string) (*os.Root, error) {
 	return root, nil
 }
 
-// Pin each non-link directory and check the opened inode against Lstat. A link
-// swapped in before OpenRoot cannot redirect subsequent work to another inode.
-func openPlanChild(parent *os.Root, name string) (*os.Root, error) {
-	info, err := parent.Lstat(name)
+// planDir pins directory lookup; name is only the lexical spelling for messages.
+type planDir struct{ file *os.File }
+
+func (d *planDir) Name() string { return d.file.Name() }
+func (d *planDir) Close() error { return d.file.Close() }
+
+// Platform headers give these search-only bits different names. Named numeric
+// constants keep this single source file buildable for both release platforms.
+// Darwin: apple-oss-distributions/xnu bsd/sys/fcntl.h, O_EXEC and O_SEARCH.
+func planDirectoryFlags() int {
+	const linuxOPath = 0x200000
+	const darwinOExec = 0x40000000
+	search := linuxOPath
+	if runtime.GOOS == "darwin" {
+		search = darwinOExec
+	}
+	return search | unix.O_DIRECTORY | unix.O_CLOEXEC | unix.O_NONBLOCK
+}
+func openPlanWorkspace(cwd string) (*planDir, error) {
+	fd, err := unix.Open(cwd, planDirectoryFlags(), 0)
 	if err != nil {
 		return nil, err
 	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		return nil, fmt.Errorf("plan parent must not be a symlink: %s", filepath.Join(parent.Name(), name))
-	}
-	if !info.IsDir() {
-		return nil, syscall.ENOTDIR
-	}
-	child, err := parent.OpenRoot(name)
-	if err != nil {
-		return nil, err
-	}
-	opened, err := child.Stat(".")
-	if err != nil || !os.SameFile(info, opened) {
-		child.Close()
-		return nil, errors.New("plan directory changed while opening")
-	}
-	return child, nil
+	return &planDir{os.NewFile(uintptr(fd), cwd)}, nil
 }
 
-func writePlanDoc(root *os.Root, name, data string) error {
-	f, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o666)
+func openPlanChild(parent *planDir, name string) (*planDir, error) {
+	return openPlanChildWith(parent, name, nil)
+}
+
+// No-follow directory-only opening is the safety boundary, before any descriptor
+// is accepted: replacing a checked directory by a FIFO cannot block this call.
+func openPlanChildWith(parent *planDir, name string, beforeOpen func() error) (*planDir, error) {
+	var info unix.Stat_t
+	if err := unix.Fstatat(int(parent.file.Fd()), name, &info, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return nil, err
+	}
+	if info.Mode&unix.S_IFMT == unix.S_IFLNK {
+		return nil, fmt.Errorf("plan parent must not be a symlink: %s", filepath.Join(parent.Name(), name))
+	}
+	if info.Mode&unix.S_IFMT != unix.S_IFDIR {
+		return nil, syscall.ENOTDIR
+	}
+	if beforeOpen != nil {
+		if err := beforeOpen(); err != nil {
+			return nil, err
+		}
+	}
+	fd, err := unix.Openat(int(parent.file.Fd()), name, planDirectoryFlags()|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, err
+	}
+	var opened unix.Stat_t
+	if err := unix.Fstat(fd, &opened); err != nil || info.Dev != opened.Dev || info.Ino != opened.Ino {
+		unix.Close(fd)
+		return nil, errors.New("plan directory changed while opening")
+	}
+	return &planDir{os.NewFile(uintptr(fd), filepath.Join(parent.Name(), name))}, nil
+}
+
+func writePlanDoc(root *planDir, name, data string) error {
+	fd, err := unix.Openat(int(root.file.Fd()), name, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0o666)
 	if err != nil {
 		return planPathError("open", filepath.Join(root.Name(), name), err)
 	}
+	f := os.NewFile(uintptr(fd), filepath.Join(root.Name(), name))
 	_, writeErr := f.WriteString(data)
 	closeErr := f.Close()
 	if writeErr != nil {

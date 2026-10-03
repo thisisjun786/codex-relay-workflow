@@ -1,10 +1,12 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -13,6 +15,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 // These expectations were recorded by Node v24 from CXC v0.2.40, not from Go.
@@ -407,13 +411,13 @@ func TestPlanPostMkdirExclusiveDocument(t *testing.T) {
 			if err := os.WriteFile(victim, []byte("ORIGINAL_RECORD"), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			r := runPlanCli(parsedPlan(t, cwd, "init", "260821_race"), func(root *os.Root, name, data string) error {
+			r := runPlanCli(parsedPlan(t, cwd, "init", "260821_race"), func(root *planDir, name, data string) error {
 				if kind == "file" {
-					if err := root.WriteFile(name, []byte("ORIGINAL_RECORD"), 0o644); err != nil {
+					if err := os.WriteFile(filepath.Join(root.Name(), name), []byte("ORIGINAL_RECORD"), 0o644); err != nil {
 						return err
 					}
 				} else {
-					if err := root.Symlink(victim, name); err != nil {
+					if err := os.Symlink(victim, filepath.Join(root.Name(), name)); err != nil {
 						return err
 					}
 				}
@@ -438,7 +442,7 @@ func TestPlanPartialUnitPreserved(t *testing.T) {
 	cwd := t.TempDir()
 	a := parsedPlan(t, cwd, "init", "260821_partial", "--phases", "2")
 	calls := 0
-	r := runPlanCli(a, func(root *os.Root, name, data string) error {
+	r := runPlanCli(a, func(root *planDir, name, data string) error {
 		calls++
 		if calls == 2 {
 			return &os.PathError{Op: "write", Path: filepath.Join(root.Name(), name), Err: syscall.EIO}
@@ -540,7 +544,7 @@ func TestPlanOrdinaryErrorOracle(t *testing.T) {
 				got = RunPlanCli(a)
 			} else {
 				errno := map[string]syscall.Errno{"ENOTDIR": syscall.ENOTDIR, "EACCES": syscall.EACCES, "EIO": syscall.EIO, "EEXIST": syscall.EEXIST}[c.Errno]
-				got = runPlanCli(a, func(root *os.Root, name, data string) error {
+				got = runPlanCli(a, func(root *planDir, name, data string) error {
 					path := filepath.Join(root.Name(), name)
 					if c.Operation == "mkdir" {
 						path = root.Name()
@@ -575,15 +579,97 @@ func TestPlanRelativeCwd(t *testing.T) {
 }
 
 func TestPlanWriteErrorDoesNotOverwrite(t *testing.T) {
-	root, err := os.OpenRoot(t.TempDir())
+	root, err := openPlanWorkspace(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer root.Close()
-	if err := root.WriteFile("doc", []byte("original"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root.Name(), "doc"), []byte("original"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := writePlanDoc(root, "doc", "new"); !errors.Is(err, os.ErrExist) {
 		t.Fatalf("exclusive open: %v", err)
+	}
+}
+
+func TestPlanSearchOnlyDirectoryOracle(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("unprivileged permission case")
+	}
+	var rows []struct {
+		Part, Document string
+		Result         PlanCliResult
+	}
+	raw, err := os.ReadFile("testdata/plan/search-oracle.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &rows); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range rows {
+		t.Run(c.Part, func(t *testing.T) {
+			cwd := t.TempDir()
+			parent := filepath.Join(cwd, "devlog", "_plan")
+			if err := os.MkdirAll(parent, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			limited := cwd
+			if c.Part == "devlog" {
+				limited = filepath.Join(cwd, "devlog")
+			} else if c.Part == "_plan" {
+				limited = parent
+			}
+			if err := os.Chmod(limited, 0o300); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(limited, 0o755) })
+			r := RunPlanCli(parsedPlan(t, cwd, "init", "260821_unit"))
+			if r != c.Result {
+				t.Fatalf("search-only %s: %#v; want %#v", c.Part, r, c.Result)
+			}
+			if err := os.Chmod(limited, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			b, err := os.ReadFile(filepath.Join(parent, "260821_unit", "000_plan.md"))
+			if err != nil || string(b) != c.Document {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestPlanFIFOReplacement(t *testing.T) {
+	if os.Getenv("CRW_PLAN_FIFO_PROBE") == "1" {
+		cwd := t.TempDir()
+		path := filepath.Join(cwd, "child")
+		if err := os.Mkdir(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		root, err := openPlanWorkspace(cwd)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer root.Close()
+		child, err := openPlanChildWith(root, "child", func() error {
+			if err := os.Remove(path); err != nil {
+				return err
+			}
+			return unix.Mkfifo(path, 0o600)
+		})
+		if child != nil {
+			child.Close()
+		}
+		if err == nil {
+			t.Fatal("accepted FIFO replacement")
+		}
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestPlanFIFOReplacement$")
+	cmd.Env = append(os.Environ(), "CRW_PLAN_FIFO_PROBE=1")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("FIFO replacement blocked or failed: %v; %s", err, out)
 	}
 }
