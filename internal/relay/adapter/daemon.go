@@ -13,7 +13,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/supervisor"
 )
 
-func daemonFactory(ctx context.Context, services dispatch.Services, s *store.Store) (*daemon.Daemon, error) {
+func (f hostFactory) daemonFactory(ctx context.Context, services dispatch.Services, s *store.Store) (*daemon.Daemon, error) {
 	selection, err := store.ResolveStateDir("", services.SocketPath)
 	if err != nil {
 		return nil, err
@@ -22,7 +22,7 @@ func daemonFactory(ctx context.Context, services dispatch.Services, s *store.Sto
 	if clock == nil {
 		clock = delivery.SystemClock{}
 	}
-	a, err := Open(services.SocketPath, selection.Path, Options{Store: s, Clock: clock, Policy: registry.EnvironmentRolePolicy().BridgePolicy()})
+	a, err := f.open(services.SocketPath, selection.Path, Options{Store: s, Clock: clock, Policy: registry.EnvironmentRolePolicy().BridgePolicy()})
 	if err != nil {
 		return nil, err
 	}
