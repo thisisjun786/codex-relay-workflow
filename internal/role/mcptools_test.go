@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -192,10 +193,10 @@ func TestMCPToolTimeout(t *testing.T) {
 	must(UpdateSettings(catalogEnv(o.Environ), json.RawMessage(`{"role":"reviewer","mode":"model","model":"provider/model"}`)))
 	synctest.Test(t, func(t *testing.T) {
 		defer func() { time.Sleep(2 * time.Second); synctest.Wait() }()
-		late := false
+		var late atomic.Bool
 		h := MCPToolHandler{Options: o, ReadCatalog: func(CatalogOptions) (LiveCatalog, error) {
 			time.Sleep(6 * time.Second)
-			late = true
+			late.Store(true)
 			return LiveCatalog{}, nil
 		}}
 		started := time.Now()
@@ -206,8 +207,8 @@ func TestMCPToolTimeout(t *testing.T) {
 		var got MCPDecoratedSettings
 		check(t, json.Unmarshal([]byte(r.Content[0].Text), &got))
 		cfg := got.Roles[Reviewer]
-		if cfg.StaleModel != nil || cfg.StaleReason != "catalog read timed out after 5000 ms" || late {
-			t.Fatalf("timeout: %+v, late=%v", cfg, late)
+		if cfg.StaleModel != nil || cfg.StaleReason != "catalog read timed out after 5000 ms" || late.Load() {
+			t.Fatalf("timeout: %+v, late=%v", cfg, late.Load())
 		}
 		var fixture struct {
 			Timeout MCPDecoratedSettings `json:"timeout"`
@@ -218,7 +219,7 @@ func TestMCPToolTimeout(t *testing.T) {
 		}
 		time.Sleep(time.Second)
 		synctest.Wait()
-		if !late {
+		if !late.Load() {
 			t.Fatal("late discovery did not complete")
 		}
 	})
@@ -250,9 +251,9 @@ func TestMCPToolLiveGetJoinsLateDiscovery(t *testing.T) {
 	must(UpdateSettings(catalogEnv(o.Environ), json.RawMessage(`{"role":"reviewer","mode":"model","model":"present","effort":"xhigh"}`)))
 	synctest.Test(t, func(t *testing.T) {
 		defer func() { time.Sleep(7 * time.Second); synctest.Wait() }()
-		calls := 0
+		var calls atomic.Int64
 		o.RunOcx = func([]string) (string, error) {
-			calls++
+			calls.Add(1)
 			time.Sleep(6 * time.Second)
 			return `[{"namespaced":"present"}]`, nil
 		}
@@ -265,13 +266,13 @@ func TestMCPToolLiveGetJoinsLateDiscovery(t *testing.T) {
 		var s MCPDecoratedSettings
 		check(t, json.Unmarshal([]byte(second.Content[0].Text), &s))
 		r := s.Roles[Reviewer]
-		if calls != 1 || r.StaleModel == nil || *r.StaleModel || r.SpawnArgs.ReasoningEffort != "xhigh" {
-			t.Fatalf("joined probe: calls=%d role=%+v", calls, r)
+		if calls.Load() != 1 || r.StaleModel == nil || *r.StaleModel || r.SpawnArgs.ReasoningEffort != "xhigh" {
+			t.Fatalf("joined probe: calls=%d role=%+v", calls.Load(), r)
 		}
 		// Even a successful cache does not suppress a get's forced refresh.
 		mcpToolCall(t, &h, `{"name":"subagents_get"}`)
-		if calls != 2 {
-			t.Fatal("get reused fresh cache", calls)
+		if calls.Load() != 2 {
+			t.Fatal("get reused fresh cache", calls.Load())
 		}
 	})
 }
