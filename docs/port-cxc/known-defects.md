@@ -558,3 +558,8 @@ The pinned oracle already publishes through an exclusive 0600 temporary file and
 - The FTS triggers cover INSERT and DELETE but not UPDATE, so changing a message in place leaves both search indexes stale (source `plugins/codexclaw/components/recall/src/index-db.ts:80-87`); port: kept.
 - `readHitCounts` suppresses every read error as empty history, whereas `bumpHitCounts` throws for a missing table and commits earlier refs before a later ref fails despite the shared tolerance comment (source `plugins/codexclaw/components/recall/src/index-db.ts:172-174`, `:182-205`); port: kept.
 - INTEGER affinity permits nonnumeric text in `hit_count`; its Number conversion can return NaN or Infinity to the penalty consumer (source `plugins/codexclaw/components/recall/src/index-db.ts:190`); port: kept.
+
+## Found by the recall ingest port (CRW-363)
+
+- A larger rewrite is assumed to be an append, leaving the previous prefix indexed and reporting fresh after the new fingerprint is stored (source `plugins/codexclaw/components/recall/src/ingest.ts:222-246`; recorded growth-rewrite case); port: kept.
+- A rewrite preserving size and integer-millisecond mtime is skipped, so its old text remains indexed and freshness reports no change (source `plugins/codexclaw/components/recall/src/ingest.ts:68-73,215`; recorded same-fingerprint case); port: kept.

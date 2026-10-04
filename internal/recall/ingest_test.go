@@ -2,6 +2,8 @@ package recall
 
 import (
 	"bytes"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -236,6 +238,12 @@ func TestIndexFreshnessPathsAndBudgets(t *testing.T) {
 	if b := BannerFreshnessBudget(); b.MaxStats != 512 || b.MaxMs != 50 {
 		t.Fatal(b)
 	}
+	db, _ := indexTestDB(t)
+	home := t.TempDir()
+	writeRolloutTestFile(t, home, "sessions/2026/01/01/new.jsonl", ingestMessage(t, "new"))
+	if f := ingestFresh(t, home, db, 0, &FreshnessBudget{}); f.Truncated || f.MissingFiles != 1 || f.StaleFiles != 1 {
+		t.Fatal("missing paths need no stat budget:", f)
+	}
 }
 
 func TestIngestRewriteAndRollback(t *testing.T) {
@@ -298,5 +306,135 @@ func TestIngestRewriteAndRollback(t *testing.T) {
 	}
 	if _, err := readSlice(filepath.Join(home, "missing"), 0, 1); err == nil {
 		t.Fatal("missing slice accepted")
+	}
+}
+
+func TestIngestBackfillBatchFailure(t *testing.T) {
+	db, _ := indexTestDB(t)
+	home := t.TempDir()
+	state := recallDB(t, filepath.Join(home, "state_2.sqlite"))
+	recallSQL(t, state, "CREATE TABLE threads (id TEXT PRIMARY KEY,title TEXT,cwd TEXT,git_branch TEXT,git_origin_url TEXT,updated_at_ms INTEGER)")
+	thread := recallStmt(t, state, "INSERT INTO threads VALUES (?, '', '/project', NULL, 'https://example.test/team/repo.git', 1)")
+	file := recallStmt(t, db, "INSERT INTO files (path,mtime_ms,size,source,date,cwd,thread_id) VALUES (?,0,0,'main','2026-01-01',?,?)")
+	for i := 0; i < 1002; i++ {
+		id := fmt.Sprintf("thread-%d", i)
+		if _, err := thread.Run(id); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := file.Run(id, "/project", id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := file.Run("no-cwd", nil, "thread-0"); err != nil {
+		t.Fatal(err)
+	}
+	recallSQL(t, db, "INSERT INTO meta VALUES ('last_ingest_at','sentinel'); CREATE TRIGGER refuse BEFORE UPDATE ON files WHEN NEW.thread_id='thread-1000' BEGIN SELECT RAISE(ABORT,'batch fault'); END")
+	backfillRepoKeysFromThreads(home, db)
+	if n := recallRow(t, recallStmt(t, db, "SELECT count(*) AS n FROM files WHERE repo_key IS NOT NULL"))["n"]; n != float64(1000) {
+		t.Fatal("committed batch lost or failed batch retained:", n)
+	}
+	recallSQL(t, db, "DROP TRIGGER refuse")
+	for range 2 {
+		backfillRepoKeysFromThreads(home, db)
+	}
+	if n := recallRow(t, recallStmt(t, db, "SELECT count(*) AS n FROM files WHERE repo_key='example.test/team/repo'"))["n"]; n != float64(1002) {
+		t.Fatal(n)
+	}
+	if ingestStamp(t, db) != "sentinel" {
+		t.Fatal("backfill advanced ingest stamp")
+	}
+	if _, err := file.Run("unknown", "/project", "unknown"); err != nil {
+		t.Fatal(err)
+	}
+	backfillRepoKeysFromThreads(t.TempDir(), db) // Pending key, missing state: fail-soft.
+	if row := recallRow(t, recallStmt(t, db, "SELECT repo_key FROM files WHERE path='unknown'")); row["repo_key"] != nil {
+		t.Fatal(row)
+	}
+	if row := recallRow(t, recallStmt(t, db, "SELECT repo_key FROM files WHERE path='no-cwd'")); row["repo_key"] != nil {
+		t.Fatal(row)
+	}
+}
+
+func TestIngestRecordedOracle(t *testing.T) {
+	data, err := os.ReadFile("testdata/ingest/oracle.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases []struct {
+		Name    string
+		Files   map[string]string
+		Actions []struct {
+			Kind, Path, Data string
+			SameMtime        bool
+		}
+		Expected []any
+	}
+	if err := json.Unmarshal(data, &cases); err != nil {
+		t.Fatal(err)
+	}
+	if len(cases) != 5 {
+		t.Fatal("oracle case set incomplete")
+	}
+	for _, c := range cases {
+		t.Run(c.Name, func(t *testing.T) {
+			db, _ := indexTestDB(t)
+			home := t.TempDir()
+			mtime := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+			write := func(p, data string) {
+				path := writeRolloutTestFile(t, home, p, data)
+				if err := os.Chtimes(path, mtime, mtime); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for p, data := range c.Files {
+				write(p, data)
+			}
+			step := 0
+			for _, a := range c.Actions {
+				switch a.Kind {
+				case "write", "append":
+					if !a.SameMtime {
+						mtime = mtime.Add(2 * time.Second)
+					}
+					data := a.Data
+					if a.Kind == "append" {
+						b, err := os.ReadFile(filepath.Join(home, a.Path))
+						if err != nil {
+							t.Fatal(err)
+						}
+						data = string(b) + data
+					}
+					write(a.Path, data)
+				case "remove":
+					if err := os.Remove(filepath.Join(home, a.Path)); err != nil {
+						t.Fatal(err)
+					}
+				case "ingest":
+					r := ingestForTest(t, home, db, 0)
+					r.ElapsedMs = 0
+					files := indexRows(t, db, "SELECT path,mtime_ms,size,thread_id,cwd,source,date,bytes_ingested,last_ord,repo_key FROM files ORDER BY path")
+					msgs := indexRows(t, db, "SELECT path,ord,ts,role,match_field,synthetic,text FROM msgs ORDER BY path,ord")
+					for _, rows := range [][]map[string]any{files, msgs} {
+						for _, row := range rows {
+							rel, err := filepath.Rel(home, row["path"].(string))
+							if err != nil {
+								t.Fatal(err)
+							}
+							row["path"] = filepath.ToSlash(rel)
+						}
+					}
+					got := map[string]any{"result": r, "freshness": ingestFresh(t, home, db, 0, nil), "files": files, "msgs": msgs}
+					if !reflect.DeepEqual(canon(t, got), c.Expected[step]) {
+						t.Fatalf("step %d differs from recorded Node oracle\ngot: %v\nwant: %v", step, got, c.Expected[step])
+					}
+					step++
+				default:
+					t.Fatal(a.Kind)
+				}
+			}
+			if step != len(c.Expected) {
+				t.Fatal("missing oracle observations")
+			}
+		})
 	}
 }
