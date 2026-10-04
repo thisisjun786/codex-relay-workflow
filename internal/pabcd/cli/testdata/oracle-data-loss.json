@@ -1,0 +1,91 @@
+[
+  {
+    "kind": "memory",
+    "defect": "overflow",
+    "beforeCount": 65,
+    "afterCount": 64,
+    "result": {
+      "output": "memory allow-write: session rec-s1 may perform ONE memory write; grant recorded for cwd <WS>; the next write consumes this grant.",
+      "code": 0
+    },
+    "classification": "intentionally-changed: retain original bytes instead of discarding verdicts"
+  },
+  {
+    "kind": "memory",
+    "defect": "malformed",
+    "beforeCount": 2,
+    "afterCount": 1,
+    "result": {
+      "output": "memory allow-write: session rec-s1 may perform ONE memory write; grant recorded for cwd <WS>; the next write consumes this grant.",
+      "code": 0
+    },
+    "classification": "intentionally-changed: retain original bytes instead of discarding verdicts"
+  },
+  {
+    "kind": "evidence",
+    "defect": "overflow",
+    "beforeCount": 65,
+    "afterCount": 63,
+    "result": {
+      "output": "evidence resolve: agent target resolved against .codexclaw/evidence/receipt.md",
+      "code": 0
+    },
+    "classification": "intentionally-changed: retain original bytes instead of discarding verdicts"
+  },
+  {
+    "kind": "evidence",
+    "defect": "malformed",
+    "beforeCount": 2,
+    "afterCount": 0,
+    "result": {
+      "output": "evidence resolve: agent target resolved against .codexclaw/evidence/receipt.md",
+      "code": 0
+    },
+    "classification": "intentionally-changed: retain original bytes instead of discarding verdicts"
+  },
+  {
+    "kind": "memory",
+    "defect": "unreadable",
+    "before": "{\"phase\":\"B\",\"retained\":\"broken",
+    "result": {
+      "output": "memory allow-write: session rec-s1 may perform ONE memory write; grant recorded for cwd <WS>; the next write consumes this grant.",
+      "code": 0
+    },
+    "after": {
+      "phase": "IDLE",
+      "sessionId": "rec-s1",
+      "slug": "",
+      "updatedAt": "<TIME>",
+      "flags": {
+        "interview": false,
+        "auditPassed": false,
+        "checkPassed": false
+      },
+      "supersededBy": null,
+      "injectedTurns": [],
+      "lastInjectedPhase": null,
+      "orchestrationActive": false,
+      "interview": null,
+      "stopBlockPhase": null,
+      "stopBlockCount": 0,
+      "stopBlockWorkPhaseId": null,
+      "stopMetricCursor": 0,
+      "stopBlockTotal": 0,
+      "stopBlockTurnId": null,
+      "stopBlockCapNotified": false,
+      "loopArmSeen": false,
+      "idleEditNudges": 0,
+      "memoryWriteRequested": false,
+      "memoryWriteTurn": null,
+      "memoryWriteGrant": true,
+      "unverifiedSubagents": [],
+      "unverifiedCorrupt": false,
+      "phaseEntrySource": null,
+      "planUnit": null,
+      "planEpoch": null,
+      "checkEpoch": null,
+      "dcloseRecovery": null
+    },
+    "classification": "intentionally-changed: refuse to overwrite unreadable session bytes"
+  }
+]
