@@ -1,0 +1,4823 @@
+[
+  {
+    "fn": "memory",
+    "in": [
+      {
+        "hits": [
+          {
+            "origin": "file",
+            "kind": "handbook",
+            "threadId": null,
+            "startLine": 1,
+            "cwd": null,
+            "score": 1,
+            "relpath": "MEMORY.md",
+            "excerpt": "no stamp here",
+            "updatedAt": null
+          }
+        ],
+        "warnings": [],
+        "scannedFiles": 1,
+        "elapsedMs": 1
+      },
+      1788998400000
+    ],
+    "out": "# 1 memory hits (1 files scanned, 1ms)\n\n(file/handbook) MEMORY.md:1\nno stamp here\n---"
+  },
+  {
+    "fn": "memory",
+    "in": [
+      {
+        "hits": [
+          {
+            "origin": "file",
+            "kind": "handbook",
+            "threadId": null,
+            "startLine": 1,
+            "cwd": null,
+            "score": 9,
+            "relpath": "rollout_summaries/old.md",
+            "excerpt": "2.49.0 provenance check",
+            "updatedAt": "2026-08-27T00:00:00.000Z"
+          },
+          {
+            "origin": "file",
+            "kind": "handbook",
+            "threadId": null,
+            "startLine": 1,
+            "cwd": null,
+            "score": 3,
+            "relpath": "MEMORY.md",
+            "excerpt": "2.49.0 provenance verified",
+            "updatedAt": "2026-09-09T00:00:00.000Z"
+          }
+        ],
+        "warnings": [],
+        "scannedFiles": 2,
+        "elapsedMs": 1
+      },
+      1788998400000
+    ],
+    "out": "# 2 memory hits (2 files scanned, 1ms)\n\n(file/handbook) rollout_summaries/old.md:1 [2026-08-27T00:00:00.000Z] [age: 14d] [newer: MEMORY.md]\n2.49.0 provenance check\n---\n\n(file/handbook) MEMORY.md:1 [2026-09-09T00:00:00.000Z] [age: 1d]\n2.49.0 provenance verified\n---"
+  },
+  {
+    "fn": "memory",
+    "in": [
+      {
+        "hits": [
+          {
+            "origin": "file",
+            "kind": "handbook",
+            "threadId": null,
+            "startLine": 1,
+            "cwd": null,
+            "score": 1,
+            "relpath": "a.md",
+            "excerpt": "alpha notes about the intake form",
+            "updatedAt": "2026-08-11T00:00:00.000Z"
+          },
+          {
+            "origin": "file",
+            "kind": "handbook",
+            "threadId": null,
+            "startLine": 1,
+            "cwd": null,
+            "score": 1,
+            "relpath": "b.md",
+            "excerpt": "beta notes about the outbox",
+            "updatedAt": "2026-09-08T00:00:00.000Z"
+          }
+        ],
+        "warnings": [],
+        "scannedFiles": 2,
+        "elapsedMs": 1
+      },
+      1788998400000
+    ],
+    "out": "# 2 memory hits (2 files scanned, 1ms)\n\n(file/handbook) a.md:1 [2026-08-11T00:00:00.000Z] [age: 30d]\nalpha notes about the intake form\n---\n\n(file/handbook) b.md:1 [2026-09-08T00:00:00.000Z] [age: 2d]\nbeta notes about the outbox\n---"
+  },
+  {
+    "fn": "memory",
+    "in": [
+      {
+        "hits": [
+          {
+            "origin": "file",
+            "kind": "handbook",
+            "threadId": null,
+            "startLine": 1,
+            "cwd": null,
+            "score": 1,
+            "relpath": "MEMORY.md",
+            "excerpt": "2.49.0 provenance check",
+            "updatedAt": "2026-09-01T00:00:00.000Z"
+          },
+          {
+            "origin": "file",
+            "kind": "handbook",
+            "threadId": null,
+            "startLine": 40,
+            "cwd": null,
+            "score": 1,
+            "relpath": "MEMORY.md",
+            "excerpt": "2.49.0 provenance rerun",
+            "updatedAt": "2026-09-09T00:00:00.000Z"
+          }
+        ],
+        "warnings": [],
+        "scannedFiles": 2,
+        "elapsedMs": 1
+      },
+      1788998400000
+    ],
+    "out": "# 2 memory hits (2 files scanned, 1ms)\n\n(file/handbook) MEMORY.md:1 [2026-09-01T00:00:00.000Z] [age: 9d]\n2.49.0 provenance check\n---\n\n(file/handbook) MEMORY.md:40 [2026-09-09T00:00:00.000Z] [age: 1d]\n2.49.0 provenance rerun\n---"
+  },
+  {
+    "fn": "memory",
+    "in": [
+      {
+        "hits": [
+          {
+            "origin": "file",
+            "kind": "handbook",
+            "threadId": null,
+            "startLine": 12,
+            "cwd": "/repo/current",
+            "score": 1,
+            "relpath": "MEMORY.md",
+            "excerpt": "wp6 recall labels",
+            "updatedAt": "2026-09-08T00:00:00.000Z"
+          }
+        ],
+        "warnings": [
+          "index is stale"
+        ],
+        "scannedFiles": 4,
+        "elapsedMs": 7
+      },
+      1788998400000
+    ],
+    "out": "# 1 memory hits (4 files scanned, 7ms)\n\n(file/handbook) MEMORY.md:12 [2026-09-08T00:00:00.000Z] {/repo/current} [age: 2d]\nwp6 recall labels\n---\n\n--- warnings ---\nindex is stale"
+  },
+  {
+    "fn": "memory",
+    "in": [
+      {
+        "hits": [],
+        "warnings": [],
+        "scannedFiles": 0,
+        "elapsedMs": 1
+      },
+      1788998400000
+    ],
+    "out": "# 0 memory hits (0 files scanned, 1ms)\n(no matches)"
+  },
+  {
+    "fn": "memory",
+    "in": [
+      {
+        "hits": [
+          {
+            "origin": "file",
+            "kind": "handbook",
+            "threadId": null,
+            "startLine": null,
+            "cwd": null,
+            "score": 1,
+            "relpath": "odd.md",
+            "excerpt": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "updatedAt": "not a date"
+          }
+        ],
+        "warnings": [
+          "one",
+          "two"
+        ],
+        "scannedFiles": 1,
+        "elapsedMs": 0.25
+      },
+      1788998400000
+    ],
+    "out": "# 1 memory hits (1 files scanned, 0.25ms)\n\n(file/handbook) odd.md [not a date]\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…\n---\n\n--- warnings ---\none\ntwo"
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-09-07T00:00:00.000Z",
+      1788998400000
+    ],
+    "out": 3
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-09-06T23:59:59.000Z",
+      1788998400000
+    ],
+    "out": 3
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-09-10T00:00:00.000Z",
+      1788998400000
+    ],
+    "out": 0
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-09-15T00:00:00.000Z",
+      1788998400000
+    ],
+    "out": 0
+  },
+  {
+    "fn": "age",
+    "in": [
+      null,
+      1788998400000
+    ],
+    "out": null
+  },
+  {
+    "fn": "age",
+    "in": [
+      "not a date",
+      1788998400000
+    ],
+    "out": null
+  },
+  {
+    "fn": "age",
+    "in": [
+      "",
+      1788998400000
+    ],
+    "out": null
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026",
+      1788998400000
+    ],
+    "out": 252
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-09",
+      1788998400000
+    ],
+    "out": 9
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-09-08",
+      1788998400000
+    ],
+    "out": 2
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-02-30",
+      1788998400000
+    ],
+    "out": 192
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-02-32",
+      1788998400000
+    ],
+    "out": null
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-09-08T24:00:00Z",
+      1788998400000
+    ],
+    "out": 1
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-09-08T24:00:01Z",
+      1788998400000
+    ],
+    "out": null
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-09-08T00:00Z",
+      1788998400000
+    ],
+    "out": 2
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-09-08T00:00:00.123456Z",
+      1788998400000
+    ],
+    "out": 1
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-09-08T00:00:00+0900",
+      1788998400000
+    ],
+    "out": 2
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-09-08T00:00:00+09:00",
+      1788998400000
+    ],
+    "out": 2
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-09-08T00:00:00",
+      1788998400000
+    ],
+    "out": 2
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-09-08t00:00:00z",
+      1788998400000
+    ],
+    "out": 2
+  },
+  {
+    "fn": "age",
+    "in": [
+      "Tue, 08 Sep 2026 00:00:00 GMT",
+      1788998400000
+    ],
+    "out": 2
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026/9/8",
+      1788998400000
+    ],
+    "out": 2
+  },
+  {
+    "fn": "age",
+    "in": [
+      "09/08/2026",
+      1788998400000
+    ],
+    "out": 2
+  },
+  {
+    "fn": "age",
+    "in": [
+      "0",
+      1788998400000
+    ],
+    "out": 9749
+  },
+  {
+    "fn": "age",
+    "in": [
+      "1",
+      1788998400000
+    ],
+    "out": 9383
+  },
+  {
+    "fn": "age",
+    "in": [
+      "13",
+      1788998400000
+    ],
+    "out": null
+  },
+  {
+    "fn": "age",
+    "in": [
+      "31",
+      1788998400000
+    ],
+    "out": null
+  },
+  {
+    "fn": "age",
+    "in": [
+      "32",
+      1788998400000
+    ],
+    "out": 0
+  },
+  {
+    "fn": "age",
+    "in": [
+      "49",
+      1788998400000
+    ],
+    "out": 0
+  },
+  {
+    "fn": "age",
+    "in": [
+      "50",
+      1788998400000
+    ],
+    "out": 28011
+  },
+  {
+    "fn": "age",
+    "in": [
+      "99",
+      1788998400000
+    ],
+    "out": 10114
+  },
+  {
+    "fn": "age",
+    "in": [
+      "100",
+      1788998400000
+    ],
+    "out": 703709
+  },
+  {
+    "fn": "age",
+    "in": [
+      "0000",
+      1788998400000
+    ],
+    "out": 740234
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-9-8",
+      1788998400000
+    ],
+    "out": 2
+  },
+  {
+    "fn": "age",
+    "in": [
+      " 2026-09-08 ",
+      1788998400000
+    ],
+    "out": 2
+  },
+  {
+    "fn": "newer",
+    "in": [
+      {
+        "origin": "file",
+        "kind": "handbook",
+        "threadId": null,
+        "startLine": 1,
+        "cwd": null,
+        "score": 9,
+        "relpath": "rollout_summaries/old.md",
+        "excerpt": "2.49.0 provenance check",
+        "updatedAt": "2026-08-27T00:00:00.000Z"
+      },
+      [
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "threadId": null,
+          "startLine": 1,
+          "cwd": null,
+          "score": 9,
+          "relpath": "rollout_summaries/old.md",
+          "excerpt": "2.49.0 provenance check",
+          "updatedAt": "2026-08-27T00:00:00.000Z"
+        },
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "threadId": null,
+          "startLine": 1,
+          "cwd": null,
+          "score": 3,
+          "relpath": "MEMORY.md",
+          "excerpt": "2.49.0 provenance verified",
+          "updatedAt": "2026-09-09T00:00:00.000Z"
+        }
+      ]
+    ],
+    "out": "MEMORY.md"
+  },
+  {
+    "fn": "newer",
+    "in": [
+      {
+        "origin": "file",
+        "kind": "handbook",
+        "threadId": null,
+        "startLine": 1,
+        "cwd": null,
+        "score": 3,
+        "relpath": "MEMORY.md",
+        "excerpt": "2.49.0 provenance verified",
+        "updatedAt": "2026-09-09T00:00:00.000Z"
+      },
+      [
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "threadId": null,
+          "startLine": 1,
+          "cwd": null,
+          "score": 9,
+          "relpath": "rollout_summaries/old.md",
+          "excerpt": "2.49.0 provenance check",
+          "updatedAt": "2026-08-27T00:00:00.000Z"
+        },
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "threadId": null,
+          "startLine": 1,
+          "cwd": null,
+          "score": 3,
+          "relpath": "MEMORY.md",
+          "excerpt": "2.49.0 provenance verified",
+          "updatedAt": "2026-09-09T00:00:00.000Z"
+        }
+      ]
+    ],
+    "out": null
+  },
+  {
+    "fn": "newer",
+    "in": [
+      {
+        "origin": "file",
+        "kind": "handbook",
+        "threadId": null,
+        "startLine": 1,
+        "cwd": null,
+        "score": 1,
+        "relpath": "a.md",
+        "excerpt": "alpha notes about the intake form",
+        "updatedAt": "2026-08-11T00:00:00.000Z"
+      },
+      [
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "threadId": null,
+          "startLine": 1,
+          "cwd": null,
+          "score": 1,
+          "relpath": "a.md",
+          "excerpt": "alpha notes about the intake form",
+          "updatedAt": "2026-08-11T00:00:00.000Z"
+        },
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "threadId": null,
+          "startLine": 1,
+          "cwd": null,
+          "score": 1,
+          "relpath": "b.md",
+          "excerpt": "beta notes about the outbox",
+          "updatedAt": "2026-09-08T00:00:00.000Z"
+        }
+      ]
+    ],
+    "out": null
+  },
+  {
+    "fn": "newer",
+    "in": [
+      {
+        "origin": "file",
+        "kind": "handbook",
+        "threadId": null,
+        "startLine": 1,
+        "cwd": null,
+        "score": 1,
+        "relpath": "b.md",
+        "excerpt": "beta notes about the outbox",
+        "updatedAt": "2026-09-08T00:00:00.000Z"
+      },
+      [
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "threadId": null,
+          "startLine": 1,
+          "cwd": null,
+          "score": 1,
+          "relpath": "a.md",
+          "excerpt": "alpha notes about the intake form",
+          "updatedAt": "2026-08-11T00:00:00.000Z"
+        },
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "threadId": null,
+          "startLine": 1,
+          "cwd": null,
+          "score": 1,
+          "relpath": "b.md",
+          "excerpt": "beta notes about the outbox",
+          "updatedAt": "2026-09-08T00:00:00.000Z"
+        }
+      ]
+    ],
+    "out": null
+  },
+  {
+    "fn": "newer",
+    "in": [
+      {
+        "origin": "file",
+        "kind": "handbook",
+        "threadId": null,
+        "startLine": 1,
+        "cwd": null,
+        "score": 1,
+        "relpath": "MEMORY.md",
+        "excerpt": "2.49.0 provenance check",
+        "updatedAt": "2026-09-01T00:00:00.000Z"
+      },
+      [
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "threadId": null,
+          "startLine": 1,
+          "cwd": null,
+          "score": 1,
+          "relpath": "MEMORY.md",
+          "excerpt": "2.49.0 provenance check",
+          "updatedAt": "2026-09-01T00:00:00.000Z"
+        },
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "threadId": null,
+          "startLine": 40,
+          "cwd": null,
+          "score": 1,
+          "relpath": "MEMORY.md",
+          "excerpt": "2.49.0 provenance rerun",
+          "updatedAt": "2026-09-09T00:00:00.000Z"
+        }
+      ]
+    ],
+    "out": null
+  },
+  {
+    "fn": "newer",
+    "in": [
+      {
+        "origin": "file",
+        "kind": "handbook",
+        "threadId": null,
+        "startLine": 40,
+        "cwd": null,
+        "score": 1,
+        "relpath": "MEMORY.md",
+        "excerpt": "2.49.0 provenance rerun",
+        "updatedAt": "2026-09-09T00:00:00.000Z"
+      },
+      [
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "threadId": null,
+          "startLine": 1,
+          "cwd": null,
+          "score": 1,
+          "relpath": "MEMORY.md",
+          "excerpt": "2.49.0 provenance check",
+          "updatedAt": "2026-09-01T00:00:00.000Z"
+        },
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "threadId": null,
+          "startLine": 40,
+          "cwd": null,
+          "score": 1,
+          "relpath": "MEMORY.md",
+          "excerpt": "2.49.0 provenance rerun",
+          "updatedAt": "2026-09-09T00:00:00.000Z"
+        }
+      ]
+    ],
+    "out": null
+  },
+  {
+    "fn": "newer",
+    "in": [
+      {
+        "origin": "file",
+        "kind": "handbook",
+        "threadId": null,
+        "startLine": 1,
+        "cwd": null,
+        "score": 9,
+        "relpath": "rollout_summaries/old.md",
+        "excerpt": "2.49.0 provenance check",
+        "updatedAt": "2026-08-27T00:00:00.000Z"
+      },
+      [
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "threadId": null,
+          "startLine": 1,
+          "cwd": null,
+          "score": 9,
+          "relpath": "rollout_summaries/old.md",
+          "excerpt": "2.49.0 provenance check",
+          "updatedAt": "2026-08-27T00:00:00.000Z"
+        },
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "threadId": null,
+          "startLine": 1,
+          "cwd": null,
+          "score": 1,
+          "relpath": "newest.md",
+          "excerpt": "2.49.0 update",
+          "updatedAt": "2026-09-10T00:00:00.000Z"
+        },
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "threadId": null,
+          "startLine": 1,
+          "cwd": null,
+          "score": 3,
+          "relpath": "MEMORY.md",
+          "excerpt": "2.49.0 provenance verified",
+          "updatedAt": "2026-09-09T00:00:00.000Z"
+        }
+      ]
+    ],
+    "out": "newest.md"
+  },
+  {
+    "fn": "newer",
+    "in": [
+      {
+        "origin": "file",
+        "kind": "handbook",
+        "threadId": null,
+        "startLine": 1,
+        "cwd": null,
+        "score": 1,
+        "relpath": "newest.md",
+        "excerpt": "2.49.0 update",
+        "updatedAt": "2026-09-10T00:00:00.000Z"
+      },
+      [
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "threadId": null,
+          "startLine": 1,
+          "cwd": null,
+          "score": 9,
+          "relpath": "rollout_summaries/old.md",
+          "excerpt": "2.49.0 provenance check",
+          "updatedAt": "2026-08-27T00:00:00.000Z"
+        },
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "threadId": null,
+          "startLine": 1,
+          "cwd": null,
+          "score": 1,
+          "relpath": "newest.md",
+          "excerpt": "2.49.0 update",
+          "updatedAt": "2026-09-10T00:00:00.000Z"
+        },
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "threadId": null,
+          "startLine": 1,
+          "cwd": null,
+          "score": 3,
+          "relpath": "MEMORY.md",
+          "excerpt": "2.49.0 provenance verified",
+          "updatedAt": "2026-09-09T00:00:00.000Z"
+        }
+      ]
+    ],
+    "out": null
+  },
+  {
+    "fn": "newer",
+    "in": [
+      {
+        "origin": "file",
+        "kind": "handbook",
+        "threadId": null,
+        "startLine": 1,
+        "cwd": null,
+        "score": 3,
+        "relpath": "MEMORY.md",
+        "excerpt": "2.49.0 provenance verified",
+        "updatedAt": "2026-09-09T00:00:00.000Z"
+      },
+      [
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "threadId": null,
+          "startLine": 1,
+          "cwd": null,
+          "score": 9,
+          "relpath": "rollout_summaries/old.md",
+          "excerpt": "2.49.0 provenance check",
+          "updatedAt": "2026-08-27T00:00:00.000Z"
+        },
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "threadId": null,
+          "startLine": 1,
+          "cwd": null,
+          "score": 1,
+          "relpath": "newest.md",
+          "excerpt": "2.49.0 update",
+          "updatedAt": "2026-09-10T00:00:00.000Z"
+        },
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "threadId": null,
+          "startLine": 1,
+          "cwd": null,
+          "score": 3,
+          "relpath": "MEMORY.md",
+          "excerpt": "2.49.0 provenance verified",
+          "updatedAt": "2026-09-09T00:00:00.000Z"
+        }
+      ]
+    ],
+    "out": "newest.md"
+  },
+  {
+    "fn": "newer",
+    "in": [
+      {
+        "origin": "file",
+        "kind": "handbook",
+        "threadId": null,
+        "startLine": 1,
+        "cwd": null,
+        "score": 9,
+        "relpath": "rollout_summaries/old.md",
+        "excerpt": "2.49.0 provenance check",
+        "updatedAt": "2026-08-27T00:00:00.000Z"
+      },
+      [
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "threadId": null,
+          "startLine": 1,
+          "cwd": null,
+          "score": 9,
+          "relpath": "rollout_summaries/old.md",
+          "excerpt": "2.49.0 provenance check",
+          "updatedAt": "2026-08-27T00:00:00.000Z"
+        },
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "threadId": null,
+          "startLine": 1,
+          "cwd": null,
+          "score": 3,
+          "relpath": "MEMORY.md",
+          "excerpt": "2.49.0 provenance verified",
+          "updatedAt": "2026-09-09T00:00:00.000Z"
+        },
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "threadId": null,
+          "startLine": 1,
+          "cwd": null,
+          "score": 1,
+          "relpath": "tied.md",
+          "excerpt": "2.49.0 update",
+          "updatedAt": "2026-09-09T00:00:00.000Z"
+        }
+      ]
+    ],
+    "out": "MEMORY.md"
+  },
+  {
+    "fn": "newer",
+    "in": [
+      {
+        "origin": "file",
+        "kind": "handbook",
+        "threadId": null,
+        "startLine": 1,
+        "cwd": null,
+        "score": 3,
+        "relpath": "MEMORY.md",
+        "excerpt": "2.49.0 provenance verified",
+        "updatedAt": "2026-09-09T00:00:00.000Z"
+      },
+      [
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "threadId": null,
+          "startLine": 1,
+          "cwd": null,
+          "score": 9,
+          "relpath": "rollout_summaries/old.md",
+          "excerpt": "2.49.0 provenance check",
+          "updatedAt": "2026-08-27T00:00:00.000Z"
+        },
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "threadId": null,
+          "startLine": 1,
+          "cwd": null,
+          "score": 3,
+          "relpath": "MEMORY.md",
+          "excerpt": "2.49.0 provenance verified",
+          "updatedAt": "2026-09-09T00:00:00.000Z"
+        },
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "threadId": null,
+          "startLine": 1,
+          "cwd": null,
+          "score": 1,
+          "relpath": "tied.md",
+          "excerpt": "2.49.0 update",
+          "updatedAt": "2026-09-09T00:00:00.000Z"
+        }
+      ]
+    ],
+    "out": null
+  },
+  {
+    "fn": "newer",
+    "in": [
+      {
+        "origin": "file",
+        "kind": "handbook",
+        "threadId": null,
+        "startLine": 1,
+        "cwd": null,
+        "score": 1,
+        "relpath": "tied.md",
+        "excerpt": "2.49.0 update",
+        "updatedAt": "2026-09-09T00:00:00.000Z"
+      },
+      [
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "threadId": null,
+          "startLine": 1,
+          "cwd": null,
+          "score": 9,
+          "relpath": "rollout_summaries/old.md",
+          "excerpt": "2.49.0 provenance check",
+          "updatedAt": "2026-08-27T00:00:00.000Z"
+        },
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "threadId": null,
+          "startLine": 1,
+          "cwd": null,
+          "score": 3,
+          "relpath": "MEMORY.md",
+          "excerpt": "2.49.0 provenance verified",
+          "updatedAt": "2026-09-09T00:00:00.000Z"
+        },
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "threadId": null,
+          "startLine": 1,
+          "cwd": null,
+          "score": 1,
+          "relpath": "tied.md",
+          "excerpt": "2.49.0 update",
+          "updatedAt": "2026-09-09T00:00:00.000Z"
+        }
+      ]
+    ],
+    "out": null
+  },
+  {
+    "fn": "newer",
+    "in": [
+      {
+        "origin": "file",
+        "kind": "handbook",
+        "threadId": null,
+        "startLine": 1,
+        "cwd": null,
+        "score": 1,
+        "relpath": "old.md",
+        "excerpt": "CommonCamel 2.3 file.ts",
+        "updatedAt": "2026-09-06T00:00:00.000Z"
+      },
+      [
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "threadId": null,
+          "startLine": 1,
+          "cwd": null,
+          "score": 1,
+          "relpath": "old.md",
+          "excerpt": "CommonCamel 2.3 file.ts",
+          "updatedAt": "2026-09-06T00:00:00.000Z"
+        },
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "threadId": null,
+          "startLine": 1,
+          "cwd": null,
+          "score": 1,
+          "relpath": "new.md",
+          "excerpt": "CommonCamel",
+          "updatedAt": "2026-09-09T00:00:00.000Z"
+        }
+      ]
+    ],
+    "out": "new.md"
+  },
+  {
+    "fn": "newer",
+    "in": [
+      {
+        "origin": "file",
+        "kind": "handbook",
+        "threadId": null,
+        "startLine": 1,
+        "cwd": null,
+        "score": 1,
+        "relpath": "new.md",
+        "excerpt": "CommonCamel",
+        "updatedAt": "2026-09-09T00:00:00.000Z"
+      },
+      [
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "threadId": null,
+          "startLine": 1,
+          "cwd": null,
+          "score": 1,
+          "relpath": "old.md",
+          "excerpt": "CommonCamel 2.3 file.ts",
+          "updatedAt": "2026-09-06T00:00:00.000Z"
+        },
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "threadId": null,
+          "startLine": 1,
+          "cwd": null,
+          "score": 1,
+          "relpath": "new.md",
+          "excerpt": "CommonCamel",
+          "updatedAt": "2026-09-09T00:00:00.000Z"
+        }
+      ]
+    ],
+    "out": null
+  },
+  {
+    "fn": "newer",
+    "in": [
+      {
+        "origin": "file",
+        "kind": "handbook",
+        "threadId": null,
+        "startLine": 1,
+        "cwd": null,
+        "score": 1,
+        "relpath": "old.md",
+        "excerpt": "plain words",
+        "updatedAt": "2026-09-06T00:00:00.000Z"
+      },
+      [
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "threadId": null,
+          "startLine": 1,
+          "cwd": null,
+          "score": 1,
+          "relpath": "old.md",
+          "excerpt": "plain words",
+          "updatedAt": "2026-09-06T00:00:00.000Z"
+        },
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "threadId": null,
+          "startLine": 1,
+          "cwd": null,
+          "score": 1,
+          "relpath": "new.md",
+          "excerpt": "plain words",
+          "updatedAt": "2026-09-09T00:00:00.000Z"
+        }
+      ]
+    ],
+    "out": null
+  },
+  {
+    "fn": "newer",
+    "in": [
+      {
+        "origin": "file",
+        "kind": "handbook",
+        "threadId": null,
+        "startLine": 1,
+        "cwd": null,
+        "score": 1,
+        "relpath": "new.md",
+        "excerpt": "plain words",
+        "updatedAt": "2026-09-09T00:00:00.000Z"
+      },
+      [
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "threadId": null,
+          "startLine": 1,
+          "cwd": null,
+          "score": 1,
+          "relpath": "old.md",
+          "excerpt": "plain words",
+          "updatedAt": "2026-09-06T00:00:00.000Z"
+        },
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "threadId": null,
+          "startLine": 1,
+          "cwd": null,
+          "score": 1,
+          "relpath": "new.md",
+          "excerpt": "plain words",
+          "updatedAt": "2026-09-09T00:00:00.000Z"
+        }
+      ]
+    ],
+    "out": null
+  },
+  {
+    "fn": "newer",
+    "in": [
+      {
+        "origin": "file",
+        "kind": "handbook",
+        "threadId": null,
+        "startLine": 1,
+        "cwd": null,
+        "score": 9,
+        "relpath": "rollout_summaries/old.md",
+        "excerpt": "2.49.0 provenance check",
+        "updatedAt": "bad"
+      },
+      [
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "threadId": null,
+          "startLine": 1,
+          "cwd": null,
+          "score": 9,
+          "relpath": "rollout_summaries/old.md",
+          "excerpt": "2.49.0 provenance check",
+          "updatedAt": "bad"
+        },
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "threadId": null,
+          "startLine": 1,
+          "cwd": null,
+          "score": 3,
+          "relpath": "MEMORY.md",
+          "excerpt": "2.49.0 provenance verified",
+          "updatedAt": "2026-09-09T00:00:00.000Z"
+        }
+      ]
+    ],
+    "out": null
+  },
+  {
+    "fn": "newer",
+    "in": [
+      {
+        "origin": "file",
+        "kind": "handbook",
+        "threadId": null,
+        "startLine": 1,
+        "cwd": null,
+        "score": 3,
+        "relpath": "MEMORY.md",
+        "excerpt": "2.49.0 provenance verified",
+        "updatedAt": "2026-09-09T00:00:00.000Z"
+      },
+      [
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "threadId": null,
+          "startLine": 1,
+          "cwd": null,
+          "score": 9,
+          "relpath": "rollout_summaries/old.md",
+          "excerpt": "2.49.0 provenance check",
+          "updatedAt": "bad"
+        },
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "threadId": null,
+          "startLine": 1,
+          "cwd": null,
+          "score": 3,
+          "relpath": "MEMORY.md",
+          "excerpt": "2.49.0 provenance verified",
+          "updatedAt": "2026-09-09T00:00:00.000Z"
+        }
+      ]
+    ],
+    "out": null
+  },
+  {
+    "fn": "clip",
+    "in": [
+      "",
+      0
+    ],
+    "out": ""
+  },
+  {
+    "fn": "clip",
+    "in": [
+      "",
+      60
+    ],
+    "out": ""
+  },
+  {
+    "fn": "clip",
+    "in": [
+      "",
+      200
+    ],
+    "out": ""
+  },
+  {
+    "fn": "clip",
+    "in": [
+      "",
+      300
+    ],
+    "out": ""
+  },
+  {
+    "fn": "clip",
+    "in": [
+      "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      0
+    ],
+    "out": "…"
+  },
+  {
+    "fn": "clip",
+    "in": [
+      "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      60
+    ],
+    "out": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…"
+  },
+  {
+    "fn": "clip",
+    "in": [
+      "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      200
+    ],
+    "out": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…"
+  },
+  {
+    "fn": "clip",
+    "in": [
+      "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      300
+    ],
+    "out": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  },
+  {
+    "fn": "clip",
+    "in": [
+      "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      0
+    ],
+    "out": "…"
+  },
+  {
+    "fn": "clip",
+    "in": [
+      "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      60
+    ],
+    "out": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…"
+  },
+  {
+    "fn": "clip",
+    "in": [
+      "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      200
+    ],
+    "out": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…"
+  },
+  {
+    "fn": "clip",
+    "in": [
+      "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      300
+    ],
+    "out": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  },
+  {
+    "fn": "clip",
+    "in": [
+      "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      0
+    ],
+    "out": "…"
+  },
+  {
+    "fn": "clip",
+    "in": [
+      "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      60
+    ],
+    "out": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…"
+  },
+  {
+    "fn": "clip",
+    "in": [
+      "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      200
+    ],
+    "out": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…"
+  },
+  {
+    "fn": "clip",
+    "in": [
+      "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      300
+    ],
+    "out": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…"
+  },
+  {
+    "fn": "clip",
+    "in": [
+      "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx😀",
+      0
+    ],
+    "out": "…"
+  },
+  {
+    "fn": "clip",
+    "in": [
+      "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx😀",
+      60
+    ],
+    "out": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…"
+  },
+  {
+    "fn": "clip",
+    "in": [
+      "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx😀",
+      200
+    ],
+    "out": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…"
+  },
+  {
+    "fn": "clip",
+    "in": [
+      "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx😀",
+      300
+    ],
+    "out": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\ud83d…",
+    "classification": "intentionally-changed",
+    "reason": "Go UTF-8 represents a UTF-16 slice boundary lone surrogate as U+FFFD; the Node output remains recorded verbatim."
+  },
+  {
+    "fn": "clip",
+    "in": [
+      "한글\t문장\n  정리",
+      0
+    ],
+    "out": "…"
+  },
+  {
+    "fn": "clip",
+    "in": [
+      "한글\t문장\n  정리",
+      60
+    ],
+    "out": "한글 문장 정리"
+  },
+  {
+    "fn": "clip",
+    "in": [
+      "한글\t문장\n  정리",
+      200
+    ],
+    "out": "한글 문장 정리"
+  },
+  {
+    "fn": "clip",
+    "in": [
+      "한글\t문장\n  정리",
+      300
+    ],
+    "out": "한글 문장 정리"
+  },
+  {
+    "fn": "clip",
+    "in": [
+      "﻿a bc᠎d​e",
+      0
+    ],
+    "out": "…"
+  },
+  {
+    "fn": "clip",
+    "in": [
+      "﻿a bc᠎d​e",
+      60
+    ],
+    "out": "a bc᠎d​e"
+  },
+  {
+    "fn": "clip",
+    "in": [
+      "﻿a bc᠎d​e",
+      200
+    ],
+    "out": "a bc᠎d​e"
+  },
+  {
+    "fn": "clip",
+    "in": [
+      "﻿a bc᠎d​e",
+      300
+    ],
+    "out": "a bc᠎d​e"
+  },
+  {
+    "fn": "clip",
+    "in": [
+      "\t \n",
+      0
+    ],
+    "out": ""
+  },
+  {
+    "fn": "clip",
+    "in": [
+      "\t \n",
+      60
+    ],
+    "out": ""
+  },
+  {
+    "fn": "clip",
+    "in": [
+      "\t \n",
+      200
+    ],
+    "out": ""
+  },
+  {
+    "fn": "clip",
+    "in": [
+      "\t \n",
+      300
+    ],
+    "out": ""
+  },
+  {
+    "fn": "topics",
+    "in": [
+      {
+        "origin": "file",
+        "kind": "handbook",
+        "threadId": null,
+        "startLine": 1,
+        "cwd": null,
+        "score": 1,
+        "relpath": "notes.md",
+        "excerpt": "1.2 1.2.3 1.2.3.4",
+        "updatedAt": "2026-09-09T00:00:00.000Z"
+      }
+    ],
+    "out": [
+      "notes.md",
+      "1.2",
+      "1.2.3"
+    ]
+  },
+  {
+    "fn": "topics",
+    "in": [
+      {
+        "origin": "file",
+        "kind": "handbook",
+        "threadId": null,
+        "startLine": 1,
+        "cwd": null,
+        "score": 1,
+        "relpath": "notes.md",
+        "excerpt": "foo.ts x.tsx foo.TS src/hook.ts",
+        "updatedAt": "2026-09-09T00:00:00.000Z"
+      }
+    ],
+    "out": [
+      "notes.md",
+      "foo.ts",
+      "x.tsx",
+      "ts",
+      "hook.ts"
+    ]
+  },
+  {
+    "fn": "topics",
+    "in": [
+      {
+        "origin": "file",
+        "kind": "handbook",
+        "threadId": null,
+        "startLine": 1,
+        "cwd": null,
+        "score": 1,
+        "relpath": "notes.md",
+        "excerpt": "CamelCase HTTP2 CommonCamel ordinary",
+        "updatedAt": "2026-09-09T00:00:00.000Z"
+      }
+    ],
+    "out": [
+      "notes.md",
+      "camelcase",
+      "http2",
+      "commoncamel"
+    ]
+  },
+  {
+    "fn": "topics",
+    "in": [
+      {
+        "origin": "file",
+        "kind": "handbook",
+        "threadId": null,
+        "startLine": 1,
+        "cwd": null,
+        "score": 1,
+        "relpath": "notes.md",
+        "excerpt": "éFile.ts-AlphaBeta 한글FooBar",
+        "updatedAt": "2026-09-09T00:00:00.000Z"
+      }
+    ],
+    "out": [
+      "notes.md",
+      "file.ts",
+      "alphabeta",
+      "foobar"
+    ]
+  },
+  {
+    "fn": "topics",
+    "in": [
+      {
+        "origin": "file",
+        "kind": "handbook",
+        "threadId": null,
+        "startLine": 1,
+        "cwd": null,
+        "score": 1,
+        "relpath": "notes.md",
+        "excerpt": "same.md same.md",
+        "updatedAt": "2026-09-09T00:00:00.000Z"
+      }
+    ],
+    "out": [
+      "notes.md",
+      "same.md"
+    ]
+  },
+  {
+    "fn": "header",
+    "in": [
+      {
+        "ts": "2026-09-08T00:00:00Z",
+        "role": "assistant",
+        "text": "one\n two",
+        "matchField": "content",
+        "threadId": "synthetic-thread",
+        "title": null,
+        "cwd": null,
+        "gitBranch": null,
+        "source": "main",
+        "file": "rollout.jsonl",
+        "context": []
+      }
+    ],
+    "out": "[2026-09-08T00:00:00Z] (assistant)"
+  },
+  {
+    "fn": "chat",
+    "in": [
+      {
+        "hits": [
+          {
+            "ts": "2026-09-08T00:00:00Z",
+            "role": "assistant",
+            "text": "one\n two",
+            "matchField": "content",
+            "threadId": "synthetic-thread",
+            "title": null,
+            "cwd": null,
+            "gitBranch": null,
+            "source": "main",
+            "file": "rollout.jsonl",
+            "context": []
+          }
+        ],
+        "warnings": [
+          "index warning"
+        ],
+        "scannedFiles": 3,
+        "matchedFiles": 2,
+        "totalFiles": 4,
+        "elapsedMs": 7,
+        "mode": "scan"
+      }
+    ],
+    "out": "# 1 hits (3/4 files scanned, 7ms)\n\n[2026-09-08T00:00:00Z] (assistant)\none two\n---\n\n--- warnings ---\nindex warning"
+  },
+  {
+    "fn": "header",
+    "in": [
+      {
+        "ts": "2026-09-08T00:00:00Z",
+        "role": "assistant",
+        "text": "one\n two",
+        "matchField": "tool_log",
+        "threadId": "synthetic-thread",
+        "title": "title xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "cwd": "/repo/current",
+        "gitBranch": null,
+        "source": "subagent",
+        "file": "rollout.jsonl",
+        "context": []
+      }
+    ],
+    "out": "[2026-09-08T00:00:00Z] (assistant) [tool_log] (subagent) «title xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…» {/repo/current}"
+  },
+  {
+    "fn": "chat",
+    "in": [
+      {
+        "hits": [
+          {
+            "ts": "2026-09-08T00:00:00Z",
+            "role": "assistant",
+            "text": "one\n two",
+            "matchField": "tool_log",
+            "threadId": "synthetic-thread",
+            "title": "title xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "cwd": "/repo/current",
+            "gitBranch": null,
+            "source": "subagent",
+            "file": "rollout.jsonl",
+            "context": []
+          }
+        ],
+        "warnings": [
+          "index warning"
+        ],
+        "scannedFiles": 3,
+        "matchedFiles": 2,
+        "totalFiles": 4,
+        "elapsedMs": 7,
+        "mode": "scan"
+      }
+    ],
+    "out": "# 1 hits (3/4 files scanned, 7ms)\n\n[2026-09-08T00:00:00Z] (assistant) [tool_log] (subagent) «title xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…» {/repo/current}\none two\n---\n\n--- warnings ---\nindex warning"
+  },
+  {
+    "fn": "header",
+    "in": [
+      {
+        "ts": "2026-09-08T00:00:00Z",
+        "role": "assistant",
+        "text": "one\n two",
+        "matchField": "content",
+        "threadId": "synthetic-thread",
+        "title": "",
+        "cwd": "",
+        "gitBranch": null,
+        "source": "main",
+        "file": "rollout.jsonl",
+        "context": []
+      }
+    ],
+    "out": "[2026-09-08T00:00:00Z] (assistant)"
+  },
+  {
+    "fn": "chat",
+    "in": [
+      {
+        "hits": [
+          {
+            "ts": "2026-09-08T00:00:00Z",
+            "role": "assistant",
+            "text": "one\n two",
+            "matchField": "content",
+            "threadId": "synthetic-thread",
+            "title": "",
+            "cwd": "",
+            "gitBranch": null,
+            "source": "main",
+            "file": "rollout.jsonl",
+            "context": []
+          }
+        ],
+        "warnings": [
+          "index warning"
+        ],
+        "scannedFiles": 3,
+        "matchedFiles": 2,
+        "totalFiles": 4,
+        "elapsedMs": 7,
+        "mode": "scan"
+      }
+    ],
+    "out": "# 1 hits (3/4 files scanned, 7ms)\n\n[2026-09-08T00:00:00Z] (assistant)\none two\n---\n\n--- warnings ---\nindex warning"
+  },
+  {
+    "fn": "header",
+    "in": [
+      {
+        "ts": "2026-09-08T00:00:00Z",
+        "role": "assistant",
+        "text": "one\n two",
+        "matchField": "content",
+        "threadId": "synthetic-thread",
+        "title": null,
+        "cwd": null,
+        "gitBranch": null,
+        "source": "main",
+        "file": "rollout.jsonl",
+        "context": [
+          {
+            "ts": "a",
+            "role": "user",
+            "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "isMatch": false
+          },
+          {
+            "ts": "b",
+            "role": "assistant",
+            "text": "matched",
+            "isMatch": true
+          }
+        ]
+      }
+    ],
+    "out": "[2026-09-08T00:00:00Z] (assistant)"
+  },
+  {
+    "fn": "chat",
+    "in": [
+      {
+        "hits": [
+          {
+            "ts": "2026-09-08T00:00:00Z",
+            "role": "assistant",
+            "text": "one\n two",
+            "matchField": "content",
+            "threadId": "synthetic-thread",
+            "title": null,
+            "cwd": null,
+            "gitBranch": null,
+            "source": "main",
+            "file": "rollout.jsonl",
+            "context": [
+              {
+                "ts": "a",
+                "role": "user",
+                "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+                "isMatch": false
+              },
+              {
+                "ts": "b",
+                "role": "assistant",
+                "text": "matched",
+                "isMatch": true
+              }
+            ]
+          }
+        ],
+        "warnings": [
+          "index warning"
+        ],
+        "scannedFiles": 3,
+        "matchedFiles": 2,
+        "totalFiles": 4,
+        "elapsedMs": 7,
+        "mode": "scan"
+      }
+    ],
+    "out": "# 1 hits (3/4 files scanned, 7ms)\n\n[2026-09-08T00:00:00Z] (assistant)\n   [a] (user) xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…\n>> [b] (assistant) matched\n---\n\n--- warnings ---\nindex warning"
+  },
+  {
+    "fn": "chat",
+    "in": [
+      {
+        "hits": [],
+        "warnings": [],
+        "scannedFiles": 3,
+        "matchedFiles": 2,
+        "totalFiles": 4,
+        "elapsedMs": 7,
+        "mode": "scan"
+      }
+    ],
+    "out": "# 0 hits (3/4 files scanned, 7ms)\n(no matches)"
+  },
+  {
+    "fn": "json",
+    "in": [
+      {
+        "hits": [
+          {
+            "ts": "2026-09-08T00:00:00Z",
+            "role": "assistant",
+            "text": "",
+            "matchField": "content",
+            "threadId": "synthetic-thread",
+            "title": null,
+            "cwd": null,
+            "gitBranch": null,
+            "source": "main",
+            "file": "rollout.jsonl",
+            "context": []
+          }
+        ],
+        "warnings": [],
+        "scannedFiles": 3,
+        "matchedFiles": 2,
+        "totalFiles": 4,
+        "elapsedMs": 7,
+        "mode": "scan"
+      }
+    ],
+    "out": {
+      "hits": [
+        {
+          "ts": "2026-09-08T00:00:00Z",
+          "role": "assistant",
+          "text": "",
+          "matchField": "content",
+          "threadId": "synthetic-thread",
+          "title": null,
+          "cwd": null,
+          "gitBranch": null,
+          "source": "main",
+          "file": "rollout.jsonl",
+          "context": []
+        }
+      ],
+      "warnings": [],
+      "scannedFiles": 3,
+      "matchedFiles": 2,
+      "totalFiles": 4,
+      "elapsedMs": 7,
+      "mode": "scan",
+      "clipped": false
+    }
+  },
+  {
+    "fn": "json",
+    "in": [
+      {
+        "hits": [
+          {
+            "ts": "2026-09-08T00:00:00Z",
+            "role": "assistant",
+            "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "matchField": "content",
+            "threadId": "synthetic-thread",
+            "title": null,
+            "cwd": null,
+            "gitBranch": null,
+            "source": "main",
+            "file": "rollout.jsonl",
+            "context": []
+          }
+        ],
+        "warnings": [],
+        "scannedFiles": 3,
+        "matchedFiles": 2,
+        "totalFiles": 4,
+        "elapsedMs": 7,
+        "mode": "scan"
+      }
+    ],
+    "out": {
+      "hits": [
+        {
+          "ts": "2026-09-08T00:00:00Z",
+          "role": "assistant",
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "matchField": "content",
+          "threadId": "synthetic-thread",
+          "title": null,
+          "cwd": null,
+          "gitBranch": null,
+          "source": "main",
+          "file": "rollout.jsonl",
+          "context": []
+        }
+      ],
+      "warnings": [],
+      "scannedFiles": 3,
+      "matchedFiles": 2,
+      "totalFiles": 4,
+      "elapsedMs": 7,
+      "mode": "scan",
+      "clipped": false
+    }
+  },
+  {
+    "fn": "json",
+    "in": [
+      {
+        "hits": [
+          {
+            "ts": "2026-09-08T00:00:00Z",
+            "role": "assistant",
+            "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "matchField": "content",
+            "threadId": "synthetic-thread",
+            "title": null,
+            "cwd": null,
+            "gitBranch": null,
+            "source": "main",
+            "file": "rollout.jsonl",
+            "context": []
+          }
+        ],
+        "warnings": [],
+        "scannedFiles": 3,
+        "matchedFiles": 2,
+        "totalFiles": 4,
+        "elapsedMs": 7,
+        "mode": "scan"
+      }
+    ],
+    "out": {
+      "hits": [
+        {
+          "ts": "2026-09-08T00:00:00Z",
+          "role": "assistant",
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "matchField": "content",
+          "threadId": "synthetic-thread",
+          "title": null,
+          "cwd": null,
+          "gitBranch": null,
+          "source": "main",
+          "file": "rollout.jsonl",
+          "context": []
+        }
+      ],
+      "warnings": [],
+      "scannedFiles": 3,
+      "matchedFiles": 2,
+      "totalFiles": 4,
+      "elapsedMs": 7,
+      "mode": "scan",
+      "clipped": false
+    }
+  },
+  {
+    "fn": "json",
+    "in": [
+      {
+        "hits": [
+          {
+            "ts": "2026-09-08T00:00:00Z",
+            "role": "assistant",
+            "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "matchField": "content",
+            "threadId": "synthetic-thread",
+            "title": null,
+            "cwd": null,
+            "gitBranch": null,
+            "source": "main",
+            "file": "rollout.jsonl",
+            "context": []
+          }
+        ],
+        "warnings": [],
+        "scannedFiles": 3,
+        "matchedFiles": 2,
+        "totalFiles": 4,
+        "elapsedMs": 7,
+        "mode": "scan"
+      }
+    ],
+    "out": {
+      "hits": [
+        {
+          "ts": "2026-09-08T00:00:00Z",
+          "role": "assistant",
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…",
+          "matchField": "content",
+          "threadId": "synthetic-thread",
+          "title": null,
+          "cwd": null,
+          "gitBranch": null,
+          "source": "main",
+          "file": "rollout.jsonl",
+          "context": []
+        }
+      ],
+      "warnings": [],
+      "scannedFiles": 3,
+      "matchedFiles": 2,
+      "totalFiles": 4,
+      "elapsedMs": 7,
+      "mode": "scan",
+      "clipped": true
+    }
+  },
+  {
+    "fn": "json",
+    "in": [
+      {
+        "hits": [
+          {
+            "ts": "2026-09-08T00:00:00Z",
+            "role": "assistant",
+            "text": "one\n two",
+            "matchField": "content",
+            "threadId": "synthetic-thread",
+            "title": "",
+            "cwd": null,
+            "gitBranch": null,
+            "source": "main",
+            "file": "rollout.jsonl",
+            "context": []
+          }
+        ],
+        "warnings": [],
+        "scannedFiles": 3,
+        "matchedFiles": 2,
+        "totalFiles": 4,
+        "elapsedMs": 7,
+        "mode": "scan"
+      }
+    ],
+    "out": {
+      "hits": [
+        {
+          "ts": "2026-09-08T00:00:00Z",
+          "role": "assistant",
+          "text": "one\n two",
+          "matchField": "content",
+          "threadId": "synthetic-thread",
+          "title": "",
+          "cwd": null,
+          "gitBranch": null,
+          "source": "main",
+          "file": "rollout.jsonl",
+          "context": []
+        }
+      ],
+      "warnings": [],
+      "scannedFiles": 3,
+      "matchedFiles": 2,
+      "totalFiles": 4,
+      "elapsedMs": 7,
+      "mode": "scan",
+      "clipped": false
+    }
+  },
+  {
+    "fn": "json",
+    "in": [
+      {
+        "hits": [
+          {
+            "ts": "2026-09-08T00:00:00Z",
+            "role": "assistant",
+            "text": "one\n two",
+            "matchField": "content",
+            "threadId": "synthetic-thread",
+            "title": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "cwd": null,
+            "gitBranch": null,
+            "source": "main",
+            "file": "rollout.jsonl",
+            "context": []
+          }
+        ],
+        "warnings": [],
+        "scannedFiles": 3,
+        "matchedFiles": 2,
+        "totalFiles": 4,
+        "elapsedMs": 7,
+        "mode": "scan"
+      }
+    ],
+    "out": {
+      "hits": [
+        {
+          "ts": "2026-09-08T00:00:00Z",
+          "role": "assistant",
+          "text": "one\n two",
+          "matchField": "content",
+          "threadId": "synthetic-thread",
+          "title": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "cwd": null,
+          "gitBranch": null,
+          "source": "main",
+          "file": "rollout.jsonl",
+          "context": []
+        }
+      ],
+      "warnings": [],
+      "scannedFiles": 3,
+      "matchedFiles": 2,
+      "totalFiles": 4,
+      "elapsedMs": 7,
+      "mode": "scan",
+      "clipped": false
+    }
+  },
+  {
+    "fn": "json",
+    "in": [
+      {
+        "hits": [
+          {
+            "ts": "2026-09-08T00:00:00Z",
+            "role": "assistant",
+            "text": "one\n two",
+            "matchField": "content",
+            "threadId": "synthetic-thread",
+            "title": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "cwd": null,
+            "gitBranch": null,
+            "source": "main",
+            "file": "rollout.jsonl",
+            "context": []
+          }
+        ],
+        "warnings": [],
+        "scannedFiles": 3,
+        "matchedFiles": 2,
+        "totalFiles": 4,
+        "elapsedMs": 7,
+        "mode": "scan"
+      }
+    ],
+    "out": {
+      "hits": [
+        {
+          "ts": "2026-09-08T00:00:00Z",
+          "role": "assistant",
+          "text": "one\n two",
+          "matchField": "content",
+          "threadId": "synthetic-thread",
+          "title": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "cwd": null,
+          "gitBranch": null,
+          "source": "main",
+          "file": "rollout.jsonl",
+          "context": []
+        }
+      ],
+      "warnings": [],
+      "scannedFiles": 3,
+      "matchedFiles": 2,
+      "totalFiles": 4,
+      "elapsedMs": 7,
+      "mode": "scan",
+      "clipped": false
+    }
+  },
+  {
+    "fn": "json",
+    "in": [
+      {
+        "hits": [
+          {
+            "ts": "2026-09-08T00:00:00Z",
+            "role": "assistant",
+            "text": "one\n two",
+            "matchField": "content",
+            "threadId": "synthetic-thread",
+            "title": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "cwd": null,
+            "gitBranch": null,
+            "source": "main",
+            "file": "rollout.jsonl",
+            "context": []
+          }
+        ],
+        "warnings": [],
+        "scannedFiles": 3,
+        "matchedFiles": 2,
+        "totalFiles": 4,
+        "elapsedMs": 7,
+        "mode": "scan"
+      }
+    ],
+    "out": {
+      "hits": [
+        {
+          "ts": "2026-09-08T00:00:00Z",
+          "role": "assistant",
+          "text": "one\n two",
+          "matchField": "content",
+          "threadId": "synthetic-thread",
+          "title": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…",
+          "cwd": null,
+          "gitBranch": null,
+          "source": "main",
+          "file": "rollout.jsonl",
+          "context": []
+        }
+      ],
+      "warnings": [],
+      "scannedFiles": 3,
+      "matchedFiles": 2,
+      "totalFiles": 4,
+      "elapsedMs": 7,
+      "mode": "scan",
+      "clipped": true
+    }
+  },
+  {
+    "fn": "json",
+    "in": [
+      {
+        "hits": [
+          {
+            "ts": "2026-09-08T00:00:00Z",
+            "role": "assistant",
+            "text": "one\n two",
+            "matchField": "content",
+            "threadId": "synthetic-thread",
+            "title": null,
+            "cwd": null,
+            "gitBranch": null,
+            "source": "main",
+            "file": "rollout.jsonl",
+            "context": [
+              {
+                "ts": "a",
+                "role": "user",
+                "text": "",
+                "isMatch": true
+              }
+            ]
+          }
+        ],
+        "warnings": [],
+        "scannedFiles": 3,
+        "matchedFiles": 2,
+        "totalFiles": 4,
+        "elapsedMs": 7,
+        "mode": "scan"
+      }
+    ],
+    "out": {
+      "hits": [
+        {
+          "ts": "2026-09-08T00:00:00Z",
+          "role": "assistant",
+          "text": "one\n two",
+          "matchField": "content",
+          "threadId": "synthetic-thread",
+          "title": null,
+          "cwd": null,
+          "gitBranch": null,
+          "source": "main",
+          "file": "rollout.jsonl",
+          "context": [
+            {
+              "ts": "a",
+              "role": "user",
+              "text": "",
+              "isMatch": true
+            }
+          ]
+        }
+      ],
+      "warnings": [],
+      "scannedFiles": 3,
+      "matchedFiles": 2,
+      "totalFiles": 4,
+      "elapsedMs": 7,
+      "mode": "scan",
+      "clipped": false
+    }
+  },
+  {
+    "fn": "json",
+    "in": [
+      {
+        "hits": [
+          {
+            "ts": "2026-09-08T00:00:00Z",
+            "role": "assistant",
+            "text": "one\n two",
+            "matchField": "content",
+            "threadId": "synthetic-thread",
+            "title": null,
+            "cwd": null,
+            "gitBranch": null,
+            "source": "main",
+            "file": "rollout.jsonl",
+            "context": [
+              {
+                "ts": "a",
+                "role": "user",
+                "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+                "isMatch": true
+              }
+            ]
+          }
+        ],
+        "warnings": [],
+        "scannedFiles": 3,
+        "matchedFiles": 2,
+        "totalFiles": 4,
+        "elapsedMs": 7,
+        "mode": "scan"
+      }
+    ],
+    "out": {
+      "hits": [
+        {
+          "ts": "2026-09-08T00:00:00Z",
+          "role": "assistant",
+          "text": "one\n two",
+          "matchField": "content",
+          "threadId": "synthetic-thread",
+          "title": null,
+          "cwd": null,
+          "gitBranch": null,
+          "source": "main",
+          "file": "rollout.jsonl",
+          "context": [
+            {
+              "ts": "a",
+              "role": "user",
+              "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+              "isMatch": true
+            }
+          ]
+        }
+      ],
+      "warnings": [],
+      "scannedFiles": 3,
+      "matchedFiles": 2,
+      "totalFiles": 4,
+      "elapsedMs": 7,
+      "mode": "scan",
+      "clipped": false
+    }
+  },
+  {
+    "fn": "json",
+    "in": [
+      {
+        "hits": [
+          {
+            "ts": "2026-09-08T00:00:00Z",
+            "role": "assistant",
+            "text": "one\n two",
+            "matchField": "content",
+            "threadId": "synthetic-thread",
+            "title": null,
+            "cwd": null,
+            "gitBranch": null,
+            "source": "main",
+            "file": "rollout.jsonl",
+            "context": [
+              {
+                "ts": "a",
+                "role": "user",
+                "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+                "isMatch": true
+              }
+            ]
+          }
+        ],
+        "warnings": [],
+        "scannedFiles": 3,
+        "matchedFiles": 2,
+        "totalFiles": 4,
+        "elapsedMs": 7,
+        "mode": "scan"
+      }
+    ],
+    "out": {
+      "hits": [
+        {
+          "ts": "2026-09-08T00:00:00Z",
+          "role": "assistant",
+          "text": "one\n two",
+          "matchField": "content",
+          "threadId": "synthetic-thread",
+          "title": null,
+          "cwd": null,
+          "gitBranch": null,
+          "source": "main",
+          "file": "rollout.jsonl",
+          "context": [
+            {
+              "ts": "a",
+              "role": "user",
+              "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+              "isMatch": true
+            }
+          ]
+        }
+      ],
+      "warnings": [],
+      "scannedFiles": 3,
+      "matchedFiles": 2,
+      "totalFiles": 4,
+      "elapsedMs": 7,
+      "mode": "scan",
+      "clipped": false
+    }
+  },
+  {
+    "fn": "json",
+    "in": [
+      {
+        "hits": [
+          {
+            "ts": "2026-09-08T00:00:00Z",
+            "role": "assistant",
+            "text": "one\n two",
+            "matchField": "content",
+            "threadId": "synthetic-thread",
+            "title": null,
+            "cwd": null,
+            "gitBranch": null,
+            "source": "main",
+            "file": "rollout.jsonl",
+            "context": [
+              {
+                "ts": "a",
+                "role": "user",
+                "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+                "isMatch": true
+              }
+            ]
+          }
+        ],
+        "warnings": [],
+        "scannedFiles": 3,
+        "matchedFiles": 2,
+        "totalFiles": 4,
+        "elapsedMs": 7,
+        "mode": "scan"
+      }
+    ],
+    "out": {
+      "hits": [
+        {
+          "ts": "2026-09-08T00:00:00Z",
+          "role": "assistant",
+          "text": "one\n two",
+          "matchField": "content",
+          "threadId": "synthetic-thread",
+          "title": null,
+          "cwd": null,
+          "gitBranch": null,
+          "source": "main",
+          "file": "rollout.jsonl",
+          "context": [
+            {
+              "ts": "a",
+              "role": "user",
+              "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…",
+              "isMatch": true
+            }
+          ]
+        }
+      ],
+      "warnings": [],
+      "scannedFiles": 3,
+      "matchedFiles": 2,
+      "totalFiles": 4,
+      "elapsedMs": 7,
+      "mode": "scan",
+      "clipped": true
+    }
+  },
+  {
+    "fn": "help",
+    "in": [
+      []
+    ],
+    "out": false
+  },
+  {
+    "fn": "parse",
+    "in": [
+      []
+    ],
+    "out": {
+      "values": {
+        "any": false,
+        "all": false,
+        "no-tools": false,
+        "rank": false,
+        "recent": false,
+        "scan": false,
+        "no-refresh": false,
+        "no-synonyms": false,
+        "synonyms": false,
+        "no-chat": false,
+        "full": false,
+        "rebuild": false,
+        "status": false,
+        "json": false
+      },
+      "positionals": []
+    }
+  },
+  {
+    "fn": "help",
+    "in": [
+      [
+        "help"
+      ]
+    ],
+    "out": false
+  },
+  {
+    "fn": "parse",
+    "in": [
+      [
+        "help"
+      ]
+    ],
+    "out": {
+      "values": {
+        "any": false,
+        "all": false,
+        "no-tools": false,
+        "rank": false,
+        "recent": false,
+        "scan": false,
+        "no-refresh": false,
+        "no-synonyms": false,
+        "synonyms": false,
+        "no-chat": false,
+        "full": false,
+        "rebuild": false,
+        "status": false,
+        "json": false
+      },
+      "positionals": [
+        "help"
+      ]
+    }
+  },
+  {
+    "fn": "help",
+    "in": [
+      [
+        "/?"
+      ]
+    ],
+    "out": false
+  },
+  {
+    "fn": "parse",
+    "in": [
+      [
+        "/?"
+      ]
+    ],
+    "out": {
+      "values": {
+        "any": false,
+        "all": false,
+        "no-tools": false,
+        "rank": false,
+        "recent": false,
+        "scan": false,
+        "no-refresh": false,
+        "no-synonyms": false,
+        "synonyms": false,
+        "no-chat": false,
+        "full": false,
+        "rebuild": false,
+        "status": false,
+        "json": false
+      },
+      "positionals": [
+        "/?"
+      ]
+    }
+  },
+  {
+    "fn": "help",
+    "in": [
+      [
+        "--help"
+      ]
+    ],
+    "out": true
+  },
+  {
+    "fn": "parse",
+    "in": [
+      [
+        "--help"
+      ]
+    ],
+    "error": "Unknown option '--help'. To specify a positional argument starting with a '-', place it at the end of the command after '--', as in '-- \"--help\""
+  },
+  {
+    "fn": "help",
+    "in": [
+      [
+        "-h"
+      ]
+    ],
+    "out": true
+  },
+  {
+    "fn": "parse",
+    "in": [
+      [
+        "-h"
+      ]
+    ],
+    "error": "Unknown option '-h'. To specify a positional argument starting with a '-', place it at the end of the command after '--', as in '-- \"-h\""
+  },
+  {
+    "fn": "help",
+    "in": [
+      [
+        "--",
+        "--help"
+      ]
+    ],
+    "out": true
+  },
+  {
+    "fn": "parse",
+    "in": [
+      [
+        "--",
+        "--help"
+      ]
+    ],
+    "out": {
+      "values": {
+        "any": false,
+        "all": false,
+        "no-tools": false,
+        "rank": false,
+        "recent": false,
+        "scan": false,
+        "no-refresh": false,
+        "no-synonyms": false,
+        "synonyms": false,
+        "no-chat": false,
+        "full": false,
+        "rebuild": false,
+        "status": false,
+        "json": false
+      },
+      "positionals": [
+        "--help"
+      ]
+    }
+  },
+  {
+    "fn": "help",
+    "in": [
+      [
+        "--help=x"
+      ]
+    ],
+    "out": false
+  },
+  {
+    "fn": "parse",
+    "in": [
+      [
+        "--help=x"
+      ]
+    ],
+    "error": "Unknown option '--help'. To specify a positional argument starting with a '-', place it at the end of the command after '--', as in '-- \"--help\""
+  },
+  {
+    "fn": "help",
+    "in": [
+      [
+        "query",
+        "--days",
+        "0",
+        "--context=1",
+        "--any"
+      ]
+    ],
+    "out": false
+  },
+  {
+    "fn": "parse",
+    "in": [
+      [
+        "query",
+        "--days",
+        "0",
+        "--context=1",
+        "--any"
+      ]
+    ],
+    "out": {
+      "values": {
+        "days": "0",
+        "context": "1",
+        "any": true,
+        "all": false,
+        "no-tools": false,
+        "rank": false,
+        "recent": false,
+        "scan": false,
+        "no-refresh": false,
+        "no-synonyms": false,
+        "synonyms": false,
+        "no-chat": false,
+        "full": false,
+        "rebuild": false,
+        "status": false,
+        "json": false
+      },
+      "positionals": [
+        "query"
+      ]
+    }
+  },
+  {
+    "fn": "help",
+    "in": [
+      [
+        "-d7",
+        "-l",
+        "2",
+        "-c1"
+      ]
+    ],
+    "out": false
+  },
+  {
+    "fn": "parse",
+    "in": [
+      [
+        "-d7",
+        "-l",
+        "2",
+        "-c1"
+      ]
+    ],
+    "out": {
+      "values": {
+        "days": "7",
+        "limit": "2",
+        "context": "1",
+        "any": false,
+        "all": false,
+        "no-tools": false,
+        "rank": false,
+        "recent": false,
+        "scan": false,
+        "no-refresh": false,
+        "no-synonyms": false,
+        "synonyms": false,
+        "no-chat": false,
+        "full": false,
+        "rebuild": false,
+        "status": false,
+        "json": false
+      },
+      "positionals": []
+    }
+  },
+  {
+    "fn": "help",
+    "in": [
+      [
+        "-d=7"
+      ]
+    ],
+    "out": false
+  },
+  {
+    "fn": "parse",
+    "in": [
+      [
+        "-d=7"
+      ]
+    ],
+    "out": {
+      "values": {
+        "days": "=7",
+        "any": false,
+        "all": false,
+        "no-tools": false,
+        "rank": false,
+        "recent": false,
+        "scan": false,
+        "no-refresh": false,
+        "no-synonyms": false,
+        "synonyms": false,
+        "no-chat": false,
+        "full": false,
+        "rebuild": false,
+        "status": false,
+        "json": false
+      },
+      "positionals": []
+    }
+  },
+  {
+    "fn": "help",
+    "in": [
+      [
+        "-dl2"
+      ]
+    ],
+    "out": false
+  },
+  {
+    "fn": "parse",
+    "in": [
+      [
+        "-dl2"
+      ]
+    ],
+    "out": {
+      "values": {
+        "days": "l2",
+        "any": false,
+        "all": false,
+        "no-tools": false,
+        "rank": false,
+        "recent": false,
+        "scan": false,
+        "no-refresh": false,
+        "no-synonyms": false,
+        "synonyms": false,
+        "no-chat": false,
+        "full": false,
+        "rebuild": false,
+        "status": false,
+        "json": false
+      },
+      "positionals": []
+    }
+  },
+  {
+    "fn": "help",
+    "in": [
+      [
+        "--limit="
+      ]
+    ],
+    "out": false
+  },
+  {
+    "fn": "parse",
+    "in": [
+      [
+        "--limit="
+      ]
+    ],
+    "out": {
+      "values": {
+        "limit": "",
+        "any": false,
+        "all": false,
+        "no-tools": false,
+        "rank": false,
+        "recent": false,
+        "scan": false,
+        "no-refresh": false,
+        "no-synonyms": false,
+        "synonyms": false,
+        "no-chat": false,
+        "full": false,
+        "rebuild": false,
+        "status": false,
+        "json": false
+      },
+      "positionals": []
+    }
+  },
+  {
+    "fn": "help",
+    "in": [
+      [
+        "--limit",
+        "-2"
+      ]
+    ],
+    "out": false
+  },
+  {
+    "fn": "parse",
+    "in": [
+      [
+        "--limit",
+        "-2"
+      ]
+    ],
+    "error": "Option '--limit' argument is ambiguous.\nDid you forget to specify the option argument for '--limit'?\nTo specify an option argument starting with a dash use '--limit=-XYZ'."
+  },
+  {
+    "fn": "help",
+    "in": [
+      [
+        "--limit=-2"
+      ]
+    ],
+    "out": false
+  },
+  {
+    "fn": "parse",
+    "in": [
+      [
+        "--limit=-2"
+      ]
+    ],
+    "out": {
+      "values": {
+        "limit": "-2",
+        "any": false,
+        "all": false,
+        "no-tools": false,
+        "rank": false,
+        "recent": false,
+        "scan": false,
+        "no-refresh": false,
+        "no-synonyms": false,
+        "synonyms": false,
+        "no-chat": false,
+        "full": false,
+        "rebuild": false,
+        "status": false,
+        "json": false
+      },
+      "positionals": []
+    }
+  },
+  {
+    "fn": "help",
+    "in": [
+      [
+        "--cwd",
+        "--json"
+      ]
+    ],
+    "out": false
+  },
+  {
+    "fn": "parse",
+    "in": [
+      [
+        "--cwd",
+        "--json"
+      ]
+    ],
+    "error": "Option '--cwd' argument is ambiguous.\nDid you forget to specify the option argument for '--cwd'?\nTo specify an option argument starting with a dash use '--cwd=-XYZ'."
+  },
+  {
+    "fn": "help",
+    "in": [
+      [
+        "--cwd",
+        "-"
+      ]
+    ],
+    "out": false
+  },
+  {
+    "fn": "parse",
+    "in": [
+      [
+        "--cwd",
+        "-"
+      ]
+    ],
+    "out": {
+      "values": {
+        "cwd": "-",
+        "any": false,
+        "all": false,
+        "no-tools": false,
+        "rank": false,
+        "recent": false,
+        "scan": false,
+        "no-refresh": false,
+        "no-synonyms": false,
+        "synonyms": false,
+        "no-chat": false,
+        "full": false,
+        "rebuild": false,
+        "status": false,
+        "json": false
+      },
+      "positionals": []
+    }
+  },
+  {
+    "fn": "help",
+    "in": [
+      [
+        "--cwd=-x"
+      ]
+    ],
+    "out": false
+  },
+  {
+    "fn": "parse",
+    "in": [
+      [
+        "--cwd=-x"
+      ]
+    ],
+    "out": {
+      "values": {
+        "cwd": "-x",
+        "any": false,
+        "all": false,
+        "no-tools": false,
+        "rank": false,
+        "recent": false,
+        "scan": false,
+        "no-refresh": false,
+        "no-synonyms": false,
+        "synonyms": false,
+        "no-chat": false,
+        "full": false,
+        "rebuild": false,
+        "status": false,
+        "json": false
+      },
+      "positionals": []
+    }
+  },
+  {
+    "fn": "help",
+    "in": [
+      [
+        "--home=--json"
+      ]
+    ],
+    "out": false
+  },
+  {
+    "fn": "parse",
+    "in": [
+      [
+        "--home=--json"
+      ]
+    ],
+    "out": {
+      "values": {
+        "home": "--json",
+        "any": false,
+        "all": false,
+        "no-tools": false,
+        "rank": false,
+        "recent": false,
+        "scan": false,
+        "no-refresh": false,
+        "no-synonyms": false,
+        "synonyms": false,
+        "no-chat": false,
+        "full": false,
+        "rebuild": false,
+        "status": false,
+        "json": false
+      },
+      "positionals": []
+    }
+  },
+  {
+    "fn": "help",
+    "in": [
+      [
+        "--cwd-only"
+      ]
+    ],
+    "out": false
+  },
+  {
+    "fn": "parse",
+    "in": [
+      [
+        "--cwd-only"
+      ]
+    ],
+    "error": "Option '--cwd-only <value>' argument missing"
+  },
+  {
+    "fn": "help",
+    "in": [
+      [
+        "--days"
+      ]
+    ],
+    "out": false
+  },
+  {
+    "fn": "parse",
+    "in": [
+      [
+        "--days"
+      ]
+    ],
+    "error": "Option '-d, --days <value>' argument missing"
+  },
+  {
+    "fn": "help",
+    "in": [
+      [
+        "--json=false"
+      ]
+    ],
+    "out": false
+  },
+  {
+    "fn": "parse",
+    "in": [
+      [
+        "--json=false"
+      ]
+    ],
+    "error": "Option '--json' does not take an argument"
+  },
+  {
+    "fn": "help",
+    "in": [
+      [
+        "--what"
+      ]
+    ],
+    "out": false
+  },
+  {
+    "fn": "parse",
+    "in": [
+      [
+        "--what"
+      ]
+    ],
+    "error": "Unknown option '--what'. To specify a positional argument starting with a '-', place it at the end of the command after '--', as in '-- \"--what\""
+  },
+  {
+    "fn": "help",
+    "in": [
+      [
+        "-x"
+      ]
+    ],
+    "out": false
+  },
+  {
+    "fn": "parse",
+    "in": [
+      [
+        "-x"
+      ]
+    ],
+    "error": "Unknown option '-x'. To specify a positional argument starting with a '-', place it at the end of the command after '--', as in '-- \"-x\""
+  },
+  {
+    "fn": "help",
+    "in": [
+      [
+        "-al2"
+      ]
+    ],
+    "out": false
+  },
+  {
+    "fn": "parse",
+    "in": [
+      [
+        "-al2"
+      ]
+    ],
+    "error": "Unknown option '-a'. To specify a positional argument starting with a '-', place it at the end of the command after '--', as in '-- \"-a\""
+  },
+  {
+    "fn": "help",
+    "in": [
+      [
+        "query",
+        "--",
+        "-x"
+      ]
+    ],
+    "out": false
+  },
+  {
+    "fn": "parse",
+    "in": [
+      [
+        "query",
+        "--",
+        "-x"
+      ]
+    ],
+    "out": {
+      "values": {
+        "any": false,
+        "all": false,
+        "no-tools": false,
+        "rank": false,
+        "recent": false,
+        "scan": false,
+        "no-refresh": false,
+        "no-synonyms": false,
+        "synonyms": false,
+        "no-chat": false,
+        "full": false,
+        "rebuild": false,
+        "status": false,
+        "json": false
+      },
+      "positionals": [
+        "query",
+        "-x"
+      ]
+    }
+  },
+  {
+    "fn": "help",
+    "in": [
+      [
+        "--days",
+        "1",
+        "--days",
+        "2"
+      ]
+    ],
+    "out": false
+  },
+  {
+    "fn": "parse",
+    "in": [
+      [
+        "--days",
+        "1",
+        "--days",
+        "2"
+      ]
+    ],
+    "out": {
+      "values": {
+        "days": "2",
+        "any": false,
+        "all": false,
+        "no-tools": false,
+        "rank": false,
+        "recent": false,
+        "scan": false,
+        "no-refresh": false,
+        "no-synonyms": false,
+        "synonyms": false,
+        "no-chat": false,
+        "full": false,
+        "rebuild": false,
+        "status": false,
+        "json": false
+      },
+      "positionals": []
+    }
+  },
+  {
+    "fn": "help",
+    "in": [
+      [
+        "--source",
+        "--help"
+      ]
+    ],
+    "out": true
+  },
+  {
+    "fn": "parse",
+    "in": [
+      [
+        "--source",
+        "--help"
+      ]
+    ],
+    "error": "Option '--source' argument is ambiguous.\nDid you forget to specify the option argument for '--source'?\nTo specify an option argument starting with a dash use '--source=-XYZ'."
+  },
+  {
+    "fn": "help",
+    "in": [
+      [
+        "--",
+        "-h"
+      ]
+    ],
+    "out": true
+  },
+  {
+    "fn": "parse",
+    "in": [
+      [
+        "--",
+        "-h"
+      ]
+    ],
+    "out": {
+      "values": {
+        "any": false,
+        "all": false,
+        "no-tools": false,
+        "rank": false,
+        "recent": false,
+        "scan": false,
+        "no-refresh": false,
+        "no-synonyms": false,
+        "synonyms": false,
+        "no-chat": false,
+        "full": false,
+        "rebuild": false,
+        "status": false,
+        "json": false
+      },
+      "positionals": [
+        "-h"
+      ]
+    }
+  },
+  {
+    "fn": "help",
+    "in": [
+      [
+        "-",
+        "query"
+      ]
+    ],
+    "out": false
+  },
+  {
+    "fn": "parse",
+    "in": [
+      [
+        "-",
+        "query"
+      ]
+    ],
+    "out": {
+      "values": {
+        "any": false,
+        "all": false,
+        "no-tools": false,
+        "rank": false,
+        "recent": false,
+        "scan": false,
+        "no-refresh": false,
+        "no-synonyms": false,
+        "synonyms": false,
+        "no-chat": false,
+        "full": false,
+        "rebuild": false,
+        "status": false,
+        "json": false
+      },
+      "positionals": [
+        "-",
+        "query"
+      ]
+    }
+  },
+  {
+    "fn": "help",
+    "in": [
+      [
+        "-d",
+        "-1"
+      ]
+    ],
+    "out": false
+  },
+  {
+    "fn": "parse",
+    "in": [
+      [
+        "-d",
+        "-1"
+      ]
+    ],
+    "error": "Option '-d' argument is ambiguous.\nDid you forget to specify the option argument for '-d'?\nTo specify an option argument starting with a dash use '--days=-XYZ' or '-d-XYZ'."
+  },
+  {
+    "fn": "help",
+    "in": [
+      [
+        "-d"
+      ]
+    ],
+    "out": false
+  },
+  {
+    "fn": "parse",
+    "in": [
+      [
+        "-d"
+      ]
+    ],
+    "error": "Option '-d, --days <value>' argument missing"
+  },
+  {
+    "fn": "help",
+    "in": [
+      [
+        "--what=x"
+      ]
+    ],
+    "out": false
+  },
+  {
+    "fn": "parse",
+    "in": [
+      [
+        "--what=x"
+      ]
+    ],
+    "error": "Unknown option '--what'. To specify a positional argument starting with a '-', place it at the end of the command after '--', as in '-- \"--what\""
+  },
+  {
+    "fn": "help",
+    "in": [
+      [
+        "--json="
+      ]
+    ],
+    "out": false
+  },
+  {
+    "fn": "parse",
+    "in": [
+      [
+        "--json="
+      ]
+    ],
+    "error": "Option '--json' does not take an argument"
+  },
+  {
+    "fn": "help",
+    "in": [
+      [
+        "--days",
+        "--"
+      ]
+    ],
+    "out": false
+  },
+  {
+    "fn": "parse",
+    "in": [
+      [
+        "--days",
+        "--"
+      ]
+    ],
+    "error": "Option '--days' argument is ambiguous.\nDid you forget to specify the option argument for '--days'?\nTo specify an option argument starting with a dash use '--days=-XYZ'."
+  },
+  {
+    "fn": "help",
+    "in": [
+      [
+        "-d-5"
+      ]
+    ],
+    "out": false
+  },
+  {
+    "fn": "parse",
+    "in": [
+      [
+        "-d-5"
+      ]
+    ],
+    "out": {
+      "values": {
+        "days": "-5",
+        "any": false,
+        "all": false,
+        "no-tools": false,
+        "rank": false,
+        "recent": false,
+        "scan": false,
+        "no-refresh": false,
+        "no-synonyms": false,
+        "synonyms": false,
+        "no-chat": false,
+        "full": false,
+        "rebuild": false,
+        "status": false,
+        "json": false
+      },
+      "positionals": []
+    }
+  },
+  {
+    "fn": "help",
+    "in": [
+      [
+        "--days=--x"
+      ]
+    ],
+    "out": false
+  },
+  {
+    "fn": "parse",
+    "in": [
+      [
+        "--days=--x"
+      ]
+    ],
+    "out": {
+      "values": {
+        "days": "--x",
+        "any": false,
+        "all": false,
+        "no-tools": false,
+        "rank": false,
+        "recent": false,
+        "scan": false,
+        "no-refresh": false,
+        "no-synonyms": false,
+        "synonyms": false,
+        "no-chat": false,
+        "full": false,
+        "rebuild": false,
+        "status": false,
+        "json": false
+      },
+      "positionals": []
+    }
+  },
+  {
+    "fn": "path",
+    "in": [
+      {
+        "cwd": "-"
+      }
+    ],
+    "out": "--cwd path must not start with '-': got \"-\""
+  },
+  {
+    "fn": "path",
+    "in": [
+      {
+        "cwd": "-x"
+      }
+    ],
+    "out": "--cwd path must not start with '-': got \"-x\""
+  },
+  {
+    "fn": "path",
+    "in": [
+      {
+        "cwd": "--json"
+      }
+    ],
+    "out": "--cwd path must not start with '-': got \"--json\""
+  },
+  {
+    "fn": "path",
+    "in": [
+      {
+        "cwd": ""
+      }
+    ],
+    "out": null
+  },
+  {
+    "fn": "path",
+    "in": [
+      {
+        "cwd": "."
+      }
+    ],
+    "out": null
+  },
+  {
+    "fn": "path",
+    "in": [
+      {
+        "cwd": "/tmp/synthetic"
+      }
+    ],
+    "out": null
+  },
+  {
+    "fn": "path",
+    "in": [
+      {
+        "cwd": 1
+      }
+    ],
+    "out": null
+  },
+  {
+    "fn": "path",
+    "in": [
+      {
+        "cwd-only": "-"
+      }
+    ],
+    "out": "--cwd-only path must not start with '-': got \"-\""
+  },
+  {
+    "fn": "path",
+    "in": [
+      {
+        "cwd-only": "-x"
+      }
+    ],
+    "out": "--cwd-only path must not start with '-': got \"-x\""
+  },
+  {
+    "fn": "path",
+    "in": [
+      {
+        "cwd-only": "--json"
+      }
+    ],
+    "out": "--cwd-only path must not start with '-': got \"--json\""
+  },
+  {
+    "fn": "path",
+    "in": [
+      {
+        "cwd-only": ""
+      }
+    ],
+    "out": null
+  },
+  {
+    "fn": "path",
+    "in": [
+      {
+        "cwd-only": "."
+      }
+    ],
+    "out": null
+  },
+  {
+    "fn": "path",
+    "in": [
+      {
+        "cwd-only": "/tmp/synthetic"
+      }
+    ],
+    "out": null
+  },
+  {
+    "fn": "path",
+    "in": [
+      {
+        "cwd-only": 1
+      }
+    ],
+    "out": null
+  },
+  {
+    "fn": "path",
+    "in": [
+      {
+        "home": "-"
+      }
+    ],
+    "out": "--home path must not start with '-': got \"-\""
+  },
+  {
+    "fn": "path",
+    "in": [
+      {
+        "home": "-x"
+      }
+    ],
+    "out": "--home path must not start with '-': got \"-x\""
+  },
+  {
+    "fn": "path",
+    "in": [
+      {
+        "home": "--json"
+      }
+    ],
+    "out": "--home path must not start with '-': got \"--json\""
+  },
+  {
+    "fn": "path",
+    "in": [
+      {
+        "home": ""
+      }
+    ],
+    "out": null
+  },
+  {
+    "fn": "path",
+    "in": [
+      {
+        "home": "."
+      }
+    ],
+    "out": null
+  },
+  {
+    "fn": "path",
+    "in": [
+      {
+        "home": "/tmp/synthetic"
+      }
+    ],
+    "out": null
+  },
+  {
+    "fn": "path",
+    "in": [
+      {
+        "home": 1
+      }
+    ],
+    "out": null
+  },
+  {
+    "fn": "path",
+    "in": [
+      {
+        "index-path": "-"
+      }
+    ],
+    "out": "--index-path path must not start with '-': got \"-\""
+  },
+  {
+    "fn": "path",
+    "in": [
+      {
+        "index-path": "-x"
+      }
+    ],
+    "out": "--index-path path must not start with '-': got \"-x\""
+  },
+  {
+    "fn": "path",
+    "in": [
+      {
+        "index-path": "--json"
+      }
+    ],
+    "out": "--index-path path must not start with '-': got \"--json\""
+  },
+  {
+    "fn": "path",
+    "in": [
+      {
+        "index-path": ""
+      }
+    ],
+    "out": null
+  },
+  {
+    "fn": "path",
+    "in": [
+      {
+        "index-path": "."
+      }
+    ],
+    "out": null
+  },
+  {
+    "fn": "path",
+    "in": [
+      {
+        "index-path": "/tmp/synthetic"
+      }
+    ],
+    "out": null
+  },
+  {
+    "fn": "path",
+    "in": [
+      {
+        "index-path": 1
+      }
+    ],
+    "out": null
+  },
+  {
+    "fn": "num",
+    "in": [
+      {
+        "limit": null
+      },
+      "limit"
+    ],
+    "out": null
+  },
+  {
+    "fn": "num",
+    "in": [
+      {
+        "limit": false
+      },
+      "limit"
+    ],
+    "out": null
+  },
+  {
+    "fn": "num",
+    "in": [
+      {
+        "limit": 0
+      },
+      "limit"
+    ],
+    "out": null
+  },
+  {
+    "fn": "num",
+    "in": [
+      {
+        "limit": ""
+      },
+      "limit"
+    ],
+    "out": null
+  },
+  {
+    "fn": "num",
+    "in": [
+      {
+        "limit": " "
+      },
+      "limit"
+    ],
+    "out": null
+  },
+  {
+    "fn": "num",
+    "in": [
+      {
+        "limit": "﻿ 4.5  "
+      },
+      "limit"
+    ],
+    "out": 4
+  },
+  {
+    "fn": "num",
+    "in": [
+      {
+        "limit": "0"
+      },
+      "limit"
+    ],
+    "out": 0
+  },
+  {
+    "fn": "num",
+    "in": [
+      {
+        "limit": "-0"
+      },
+      "limit"
+    ],
+    "out": 0
+  },
+  {
+    "fn": "num",
+    "in": [
+      {
+        "limit": "-1"
+      },
+      "limit"
+    ],
+    "out": null
+  },
+  {
+    "fn": "num",
+    "in": [
+      {
+        "limit": "2.99"
+      },
+      "limit"
+    ],
+    "out": 2
+  },
+  {
+    "fn": "num",
+    "in": [
+      {
+        "limit": "1e2"
+      },
+      "limit"
+    ],
+    "out": 100
+  },
+  {
+    "fn": "num",
+    "in": [
+      {
+        "limit": "0x10"
+      },
+      "limit"
+    ],
+    "out": 16
+  },
+  {
+    "fn": "num",
+    "in": [
+      {
+        "limit": "0b11"
+      },
+      "limit"
+    ],
+    "out": 3
+  },
+  {
+    "fn": "num",
+    "in": [
+      {
+        "limit": "0o10"
+      },
+      "limit"
+    ],
+    "out": 8
+  },
+  {
+    "fn": "num",
+    "in": [
+      {
+        "limit": "Infinity"
+      },
+      "limit"
+    ],
+    "out": null
+  },
+  {
+    "fn": "num",
+    "in": [
+      {
+        "limit": "NaN"
+      },
+      "limit"
+    ],
+    "out": null
+  },
+  {
+    "fn": "num",
+    "in": [
+      {
+        "limit": "1_000"
+      },
+      "limit"
+    ],
+    "out": null
+  },
+  {
+    "fn": "num",
+    "in": [
+      {
+        "limit": "0x1p2"
+      },
+      "limit"
+    ],
+    "out": null
+  },
+  {
+    "fn": "num",
+    "in": [
+      {
+        "limit": "1e309"
+      },
+      "limit"
+    ],
+    "out": null
+  },
+  {
+    "fn": "num",
+    "in": [
+      {
+        "limit": "+0x10"
+      },
+      "limit"
+    ],
+    "out": null
+  },
+  {
+    "fn": "num",
+    "in": [
+      {
+        "limit": "foo"
+      },
+      "limit"
+    ],
+    "out": null
+  },
+  {
+    "fn": "read",
+    "in": [
+      [
+        "--cwd=-x"
+      ]
+    ],
+    "out": null,
+    "stderr": "--cwd path must not start with '-': got \"-x\"\n"
+  },
+  {
+    "fn": "read",
+    "in": [
+      [
+        "--home=--json"
+      ]
+    ],
+    "out": null,
+    "stderr": "--home path must not start with '-': got \"--json\"\n"
+  },
+  {
+    "fn": "read",
+    "in": [
+      [
+        "--index-path",
+        "-"
+      ]
+    ],
+    "out": null,
+    "stderr": "--index-path path must not start with '-': got \"-\"\n"
+  },
+  {
+    "fn": "read",
+    "in": [
+      [
+        "help",
+        "--cwd",
+        "."
+      ]
+    ],
+    "out": {
+      "values": {
+        "cwd": ".",
+        "any": false,
+        "all": false,
+        "no-tools": false,
+        "rank": false,
+        "recent": false,
+        "scan": false,
+        "no-refresh": false,
+        "no-synonyms": false,
+        "synonyms": false,
+        "no-chat": false,
+        "full": false,
+        "rebuild": false,
+        "status": false,
+        "json": false
+      },
+      "positionals": [
+        "help"
+      ]
+    },
+    "stderr": ""
+  },
+  {
+    "fn": "read",
+    "in": [
+      [
+        "--cwd",
+        "-x"
+      ]
+    ],
+    "out": null,
+    "stderr": "Option '--cwd' argument is ambiguous.\nDid you forget to specify the option argument for '--cwd'?\nTo specify an option argument starting with a dash use '--cwd=-XYZ'.\n"
+  },
+  {
+    "fn": "usage",
+    "in": [],
+    "out": "crw recall chat search \"<query>\" [--days N] [--cwd PATH] [--role r] [--source main|subagent|all]\n                           [--limit N] [--context N] [--any] [--all] [--no-tools]\n                           [--recent] [--scan] [--no-refresh] [--synonyms] [--json]\ncrw recall chat index [--rebuild] [--status] [--json]\ncrw recall memory search \"<query>\" [--days N] [--limit N] [--any] [--no-synonyms]\n                             [--cwd PATH] [--cwd-only PATH] [--no-chat] [--json]\ncrw recall memory status [--json] [--home PATH]\ncrw recall memory requeue [--apply] [--include-context-window] [--kind K] [--limit N]\n                   [--retries N] [--json] [--home PATH]\n\n  --days N     restrict to the last N days (chat default 7, 0 = full history)\n  --cwd PATH   scope to PATH and to other checkouts of the same git origin\n               (chat: only those sessions; memory: rank those hits first)\n  --cwd-only PATH  memory search: drop hits recorded outside that project\n  --role r     only messages with this role (user|assistant|tool)\n  --source s   main (default) | subagent | all\n  --limit N    max hits (chat default 50, memory default 20)\n  --context N  include N neighbouring messages around each hit\n  --any        OR the query words (default: AND)\n  --all        include harness-injected synthetic messages\n  --no-tools   skip tool call/output (tool_log) matching\n  --recent     order by time instead of relevance (index engine default: relevance)\n  --rank       order by relevance (the default; accepted for explicitness)\n  --no-chat    memory search: do not fall back to raw chat when nothing matches\n  --scan       force the raw JSONL scan path (skip the sidecar index)\n  --no-refresh skip refresh-on-query ingest (fastest, index may be stale)\n  --no-synonyms memory search: raw words only — no ko/en synonyms, no korean stem\n  --synonyms   chat search: expand ko/en synonyms + korean stems (default off)\n  --json       machine-readable output (text fields clipped at 500 chars)\n  --full       with --json: emit unclipped text fields\n  --home PATH  search an alternate Codex home (default $CODEX_HOME ?? ~/.codex)"
+  },
+  {
+    "fn": "age",
+    "in": [
+      "+275760-09-13T00:00:00.000Z",
+      1788998400000,
+      "UTC"
+    ],
+    "out": 0
+  },
+  {
+    "fn": "age",
+    "in": [
+      "+275760-09-13T00:00:00.001Z",
+      1788998400000,
+      "UTC"
+    ],
+    "out": null
+  },
+  {
+    "fn": "age",
+    "in": [
+      "-271821-04-20T00:00:00.000Z",
+      1788998400000,
+      "UTC"
+    ],
+    "out": 100020706
+  },
+  {
+    "fn": "age",
+    "in": [
+      "-271821-04-19T23:59:59.999Z",
+      1788998400000,
+      "UTC"
+    ],
+    "out": null
+  },
+  {
+    "fn": "age",
+    "in": [
+      "-000000-01-01T00:00:00Z",
+      1788998400000,
+      "UTC"
+    ],
+    "out": null
+  },
+  {
+    "fn": "age",
+    "in": [
+      "+010000-01-01T00:00:00Z",
+      1788998400000,
+      "UTC"
+    ],
+    "out": 0
+  },
+  {
+    "fn": "age",
+    "in": [
+      "-000001-01-01T00:00:00Z",
+      1788998400000,
+      "UTC"
+    ],
+    "out": 740599
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-09-08T24:00:00.0001Z",
+      1788998400000,
+      "UTC"
+    ],
+    "out": null
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-09-08T24:00:00.000Z",
+      1788998400000,
+      "UTC"
+    ],
+    "out": 1
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-09-08T24:00Z",
+      1788998400000,
+      "UTC"
+    ],
+    "out": 1
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-09-08T00:00:00+24:00",
+      1788998400000,
+      "UTC"
+    ],
+    "out": null
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-09-08T00:00:60Z",
+      1788998400000,
+      "UTC"
+    ],
+    "out": null
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-09-08T00:00:00.0009Z",
+      1788998400000,
+      "UTC"
+    ],
+    "out": 2
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-09-08T00:00:00.0019Z",
+      1788998400000,
+      "UTC"
+    ],
+    "out": 1
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026/2/30",
+      1788998400000,
+      "UTC"
+    ],
+    "out": 192
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2/30/2026",
+      1788998400000,
+      "UTC"
+    ],
+    "out": 192
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-9-8",
+      1788998400000,
+      "UTC"
+    ],
+    "out": 2
+  },
+  {
+    "fn": "age",
+    "in": [
+      " 2026-09-08 ",
+      1788998400000,
+      "UTC"
+    ],
+    "out": 2
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-09-08Z",
+      1788998400000,
+      "UTC"
+    ],
+    "out": 2
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-09-08T00:00:00",
+      1788998400000,
+      "UTC"
+    ],
+    "out": 2
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-09-08",
+      1788998400000,
+      "UTC"
+    ],
+    "out": 2
+  },
+  {
+    "fn": "age",
+    "in": [
+      "100",
+      1788998400000,
+      "UTC"
+    ],
+    "out": 703709
+  },
+  {
+    "fn": "age",
+    "in": [
+      "0099",
+      1788998400000,
+      "UTC"
+    ],
+    "out": 704074
+  },
+  {
+    "fn": "age",
+    "in": [
+      "Sept 8, 2026",
+      1788998400000,
+      "UTC"
+    ],
+    "out": 2
+  },
+  {
+    "fn": "age",
+    "in": [
+      "+275760-09-13T00:00:00.000Z",
+      1788998400000,
+      "Asia/Seoul"
+    ],
+    "out": 0
+  },
+  {
+    "fn": "age",
+    "in": [
+      "+275760-09-13T00:00:00.001Z",
+      1788998400000,
+      "Asia/Seoul"
+    ],
+    "out": null
+  },
+  {
+    "fn": "age",
+    "in": [
+      "-271821-04-20T00:00:00.000Z",
+      1788998400000,
+      "Asia/Seoul"
+    ],
+    "out": 100020706
+  },
+  {
+    "fn": "age",
+    "in": [
+      "-271821-04-19T23:59:59.999Z",
+      1788998400000,
+      "Asia/Seoul"
+    ],
+    "out": null
+  },
+  {
+    "fn": "age",
+    "in": [
+      "-000000-01-01T00:00:00Z",
+      1788998400000,
+      "Asia/Seoul"
+    ],
+    "out": null
+  },
+  {
+    "fn": "age",
+    "in": [
+      "+010000-01-01T00:00:00Z",
+      1788998400000,
+      "Asia/Seoul"
+    ],
+    "out": 0
+  },
+  {
+    "fn": "age",
+    "in": [
+      "-000001-01-01T00:00:00Z",
+      1788998400000,
+      "Asia/Seoul"
+    ],
+    "out": 740599
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-09-08T24:00:00.0001Z",
+      1788998400000,
+      "Asia/Seoul"
+    ],
+    "out": null
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-09-08T24:00:00.000Z",
+      1788998400000,
+      "Asia/Seoul"
+    ],
+    "out": 1
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-09-08T24:00Z",
+      1788998400000,
+      "Asia/Seoul"
+    ],
+    "out": 1
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-09-08T00:00:00+24:00",
+      1788998400000,
+      "Asia/Seoul"
+    ],
+    "out": null
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-09-08T00:00:60Z",
+      1788998400000,
+      "Asia/Seoul"
+    ],
+    "out": null
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-09-08T00:00:00.0009Z",
+      1788998400000,
+      "Asia/Seoul"
+    ],
+    "out": 2
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-09-08T00:00:00.0019Z",
+      1788998400000,
+      "Asia/Seoul"
+    ],
+    "out": 1
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026/2/30",
+      1788998400000,
+      "Asia/Seoul"
+    ],
+    "out": 192
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2/30/2026",
+      1788998400000,
+      "Asia/Seoul"
+    ],
+    "out": 192
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-9-8",
+      1788998400000,
+      "Asia/Seoul"
+    ],
+    "out": 2
+  },
+  {
+    "fn": "age",
+    "in": [
+      " 2026-09-08 ",
+      1788998400000,
+      "Asia/Seoul"
+    ],
+    "out": 2
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-09-08Z",
+      1788998400000,
+      "Asia/Seoul"
+    ],
+    "out": 2
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-09-08T00:00:00",
+      1788998400000,
+      "Asia/Seoul"
+    ],
+    "out": 2
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-09-08",
+      1788998400000,
+      "Asia/Seoul"
+    ],
+    "out": 2
+  },
+  {
+    "fn": "age",
+    "in": [
+      "100",
+      1788998400000,
+      "Asia/Seoul"
+    ],
+    "out": 703709
+  },
+  {
+    "fn": "age",
+    "in": [
+      "0099",
+      1788998400000,
+      "Asia/Seoul"
+    ],
+    "out": 704074
+  },
+  {
+    "fn": "age",
+    "in": [
+      "Sept 8, 2026",
+      1788998400000,
+      "Asia/Seoul"
+    ],
+    "out": 2
+  },
+  {
+    "fn": "age",
+    "in": [
+      "+275760-09-13T00:00:00.000Z",
+      1788998400000,
+      "America/New_York"
+    ],
+    "out": 0
+  },
+  {
+    "fn": "age",
+    "in": [
+      "+275760-09-13T00:00:00.001Z",
+      1788998400000,
+      "America/New_York"
+    ],
+    "out": null
+  },
+  {
+    "fn": "age",
+    "in": [
+      "-271821-04-20T00:00:00.000Z",
+      1788998400000,
+      "America/New_York"
+    ],
+    "out": 100020706
+  },
+  {
+    "fn": "age",
+    "in": [
+      "-271821-04-19T23:59:59.999Z",
+      1788998400000,
+      "America/New_York"
+    ],
+    "out": null
+  },
+  {
+    "fn": "age",
+    "in": [
+      "-000000-01-01T00:00:00Z",
+      1788998400000,
+      "America/New_York"
+    ],
+    "out": null
+  },
+  {
+    "fn": "age",
+    "in": [
+      "+010000-01-01T00:00:00Z",
+      1788998400000,
+      "America/New_York"
+    ],
+    "out": 0
+  },
+  {
+    "fn": "age",
+    "in": [
+      "-000001-01-01T00:00:00Z",
+      1788998400000,
+      "America/New_York"
+    ],
+    "out": 740599
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-09-08T24:00:00.0001Z",
+      1788998400000,
+      "America/New_York"
+    ],
+    "out": null
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-09-08T24:00:00.000Z",
+      1788998400000,
+      "America/New_York"
+    ],
+    "out": 1
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-09-08T24:00Z",
+      1788998400000,
+      "America/New_York"
+    ],
+    "out": 1
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-09-08T00:00:00+24:00",
+      1788998400000,
+      "America/New_York"
+    ],
+    "out": null
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-09-08T00:00:60Z",
+      1788998400000,
+      "America/New_York"
+    ],
+    "out": null
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-09-08T00:00:00.0009Z",
+      1788998400000,
+      "America/New_York"
+    ],
+    "out": 2
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-09-08T00:00:00.0019Z",
+      1788998400000,
+      "America/New_York"
+    ],
+    "out": 1
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026/2/30",
+      1788998400000,
+      "America/New_York"
+    ],
+    "out": 191
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2/30/2026",
+      1788998400000,
+      "America/New_York"
+    ],
+    "out": 191
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-9-8",
+      1788998400000,
+      "America/New_York"
+    ],
+    "out": 1
+  },
+  {
+    "fn": "age",
+    "in": [
+      " 2026-09-08 ",
+      1788998400000,
+      "America/New_York"
+    ],
+    "out": 1
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-09-08Z",
+      1788998400000,
+      "America/New_York"
+    ],
+    "out": 2
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-09-08T00:00:00",
+      1788998400000,
+      "America/New_York"
+    ],
+    "out": 1
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-09-08",
+      1788998400000,
+      "America/New_York"
+    ],
+    "out": 2
+  },
+  {
+    "fn": "age",
+    "in": [
+      "100",
+      1788998400000,
+      "America/New_York"
+    ],
+    "out": 703708
+  },
+  {
+    "fn": "age",
+    "in": [
+      "0099",
+      1788998400000,
+      "America/New_York"
+    ],
+    "out": 704074
+  },
+  {
+    "fn": "age",
+    "in": [
+      "Sept 8, 2026",
+      1788998400000,
+      "America/New_York"
+    ],
+    "out": 1
+  }
+]
