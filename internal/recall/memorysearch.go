@@ -1,5 +1,16 @@
 package recall
 
+import (
+	"math"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
+)
+
 // ChatSearchFn uses the already-landed chat result and option contracts.
 type ChatSearchFn func(string, ChatSearchOptions) (ChatSearchResult, error)
 
@@ -29,6 +40,247 @@ type CwdScope struct {
 	repoKey       string
 }
 
-func SearchMemory(_ string, _ MemorySearchOptions) (MemorySearchResult, error) {
-	return MemorySearchResult{Hits: []MemoryHit{}, Warnings: []string{}}, nil
+func memorySearchIsAbsolute(raw string) bool {
+	return strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "\\") ||
+		len(raw) >= 3 && (raw[0] >= 'A' && raw[0] <= 'Z' || raw[0] >= 'a' && raw[0] <= 'z') && raw[1] == ':' && (raw[2] == '/' || raw[2] == '\\')
+}
+
+// Relative paths resolve against the process cwd, not the Codex home. Absolute
+// paths keep their recording platform's spelling until NormalizeCwd runs.
+func memorySearchBuildCwdScope(home string, opts MemorySearchOptions, warnings *[]string) (*CwdScope, error) {
+	if opts.Cwd == nil || text.Trim(*opts.Cwd) == "" {
+		return nil, nil
+	}
+	prefix := *opts.Cwd
+	if !memorySearchIsAbsolute(prefix) {
+		var err error
+		prefix, err = filepath.Abs(prefix)
+		if err != nil {
+			return nil, err
+		}
+	}
+	prefix = NormalizeCwd(prefix)
+	path, err := stateDbPath(home)
+	if err != nil {
+		return nil, err
+	}
+	meta := loadThreadMeta(path)
+	if meta.Warning != "" {
+		*warnings = append(*warnings, meta.Warning)
+	}
+	lower := Lower(prefix)
+	return &CwdScope{prefix, [2]string{lower, strings.ReplaceAll(lower, "/", "\\")}, opts.CwdOnly, meta.ByID, repoKeyForCwd(prefix, opts.ReadOriginUrl)}, nil
+}
+
+func memorySearchScopeAdjust(scope *CwdScope, hitCwd *string, lowerText, hitRepoKey string) (bool, float64) {
+	if scope == nil {
+		return true, 0
+	}
+	if hitCwd != nil && *hitCwd != "" && CwdMatches(*hitCwd, scope.prefix, FoldCwdCase()) || repoKeysEqual(scope.repoKey, hitRepoKey) {
+		return true, CwdBoost
+	}
+	for _, prefix := range scope.lowerPrefixes {
+		if strings.Contains(lowerText, prefix) {
+			return true, CwdBoost / 2
+		}
+	}
+	return !scope.only, 0
+}
+
+type memorySearchState struct {
+	root, lowerPhrase string
+	files, words      []string
+	groups            []QueryGroup
+	present           []bool
+	anyMode, relax    bool
+	cutoffMs          *float64
+	nowMs             float64
+	scope             *CwdScope
+	warnings          []string
+	scannedFiles      int
+}
+
+func memorySearchISO(ms float64) string {
+	return time.UnixMilli(int64(ms)).UTC().Format("2006-01-02T15:04:05.000Z")
+}
+
+// Collect recompiles the plan on each pass. The retained thread IDs are the
+// successor's searchStage1 deduplication input (memory-search.ts:544-559).
+func (s *memorySearchState) memorySearchCollectFiles(active []QueryGroup, tally bool) ([]MemoryHit, map[string]bool, error) {
+	plan := CompileMatchPlan(active, s.words, s.anyMode, s.relax)
+	candidates, matchedThreadIDs := []MemoryHit{}, map[string]bool{}
+	s.scannedFiles = 0
+	for _, file := range s.files {
+		data, readErr := os.ReadFile(file)
+		var info os.FileInfo
+		var statErr error
+		if readErr == nil {
+			info, statErr = os.Stat(file)
+		}
+		if readErr != nil || statErr != nil {
+			s.warnings = append(s.warnings, "unreadable memory file: "+file)
+			continue
+		}
+		stamp := float64(info.ModTime().Unix())*1000 + float64(info.ModTime().Nanosecond())/1e6
+		if s.cutoffMs != nil && *s.cutoffMs != 0 && stamp < *s.cutoffMs {
+			continue
+		}
+		s.scannedFiles++
+		content := source.DecodeUTF8(data)
+		lowerFile := Lower(content)
+		if tally {
+			markGroupPresence(lowerFile, s.groups, s.present)
+		}
+		if !PlanMatches(lowerFile, plan) {
+			continue
+		}
+		threadID, fileCwd := frontmatterThreadID(content), frontmatterCwd(content)
+		relpath, err := filepath.Rel(s.root, file)
+		if err != nil {
+			return nil, nil, err
+		}
+		kind := KindOfRelpath(filepath.ToSlash(relpath), "file")
+		repoKey := ""
+		if threadID != nil && s.scope != nil {
+			if meta, found := s.scope.threadCwd[*threadID]; found {
+				if fileCwd == nil {
+					fileCwd = &meta.Cwd
+				}
+				if meta.GitOriginURL != nil {
+					repoKey = normalizeRepoKey(*meta.GitOriginURL)
+				}
+			}
+		}
+		updatedAt := memorySearchISO(stamp)
+		base := MemoryHit{Origin: "file", Kind: kind, Relpath: filepath.ToSlash(relpath), ThreadID: threadID, UpdatedAt: &updatedAt, Cwd: fileCwd}
+		keptBefore, paragraphMatches := len(candidates), 0
+		for _, chunk := range ParagraphChunks(content) {
+			lower := Lower(chunk.Text)
+			if !PlanMatches(lower, plan) {
+				continue
+			}
+			paragraphMatches++
+			keep, bonus := memorySearchScopeAdjust(s.scope, fileCwd, lower, repoKey)
+			if !keep {
+				continue
+			}
+			hit := base
+			hit.Excerpt = excerptAround(chunk.Text, firstPresentMember(lower, active), 400)
+			hit.StartLine = &chunk.StartLine
+			hit.Score = FinalScore(ScoreChunk(lower, active, s.lowerPhrase), kind, &stamp, s.nowMs) + bonus
+			candidates = append(candidates, hit)
+		}
+		// A paragraph that matched and was rejected by scope must not cause a
+		// file-span fallback, even if another paragraph mentions the cwd.
+		if paragraphMatches == 0 {
+			keep, bonus := memorySearchScopeAdjust(s.scope, fileCwd, lowerFile, repoKey)
+			if keep {
+				hit := base
+				hit.Excerpt = excerptAround(strings.Join(text.SplitLines(content), "\n"), firstPresentMember(lowerFile, active), 400)
+				line := firstMatchStartLine(content, active)
+				hit.StartLine = &line
+				hit.Score = FinalScore(ScoreChunk(lowerFile, active, s.lowerPhrase), kind, &stamp, s.nowMs) + bonus
+				candidates = append(candidates, hit)
+			}
+		}
+		if threadID != nil && *threadID != "" && len(candidates) > keptBefore {
+			matchedThreadIDs[*threadID] = true
+		}
+	}
+	// searchStage1 belongs here, using matchedThreadIDs and the same plan.
+	return candidates, matchedThreadIDs, nil
+}
+
+// SearchMemory ports memory-search.ts:426-591 at CXC v0.2.40 (3c1459ac),
+// excluding stage1 and chat fallback. Thrown IO errors become Go errors; the
+// oracle's caught per-file and metadata errors remain warnings.
+func SearchMemory(query string, opts MemorySearchOptions) (MemorySearchResult, error) {
+	started := time.Now().UnixMilli()
+	home := ""
+	if opts.Home != nil {
+		home = *opts.Home
+	} else {
+		var err error
+		home, err = codexHome()
+		if err != nil {
+			return MemorySearchResult{}, err
+		}
+	}
+	limit, days, nowMs := float64(DefaultMemoryLimit), 0.0, float64(time.Now().UnixMilli())
+	if opts.Limit != nil {
+		limit = *opts.Limit
+	}
+	limit = math.Max(limit, 1)
+	if opts.Days != nil {
+		days = *opts.Days
+	}
+	if opts.NowMs != nil {
+		nowMs = *opts.NowMs
+	}
+	raw := SplitQueryWordsRaw(query)
+	words := DropStopwords(raw)
+	groups := ExpandQueryWords(words)
+	if opts.Synonyms != nil && !*opts.Synonyms {
+		for i, group := range groups {
+			groups[i] = group[:1]
+		}
+	}
+	s := memorySearchState{root: memoriesDir(home), words: words, groups: groups, present: make([]bool, len(groups)), anyMode: opts.Any, relax: len(raw) > MaxWords, nowMs: nowMs, lowerPhrase: flatten(Lower(query)), warnings: []string{}}
+	if days > 0 {
+		cutoff := nowMs - days*86_400_000
+		s.cutoffMs = &cutoff
+	}
+	if len(words) == 0 {
+		return MemorySearchResult{Hits: []MemoryHit{}, Warnings: []string{"empty query"}, ElapsedMs: float64(time.Now().UnixMilli() - started)}, nil
+	}
+	if _, err := os.Stat(s.root); err != nil {
+		s.warnings = append(s.warnings, "memories root not found (file search off)")
+	}
+	dbPath, err := memoriesDbPath(home)
+	if err != nil {
+		return MemorySearchResult{}, err
+	}
+	if dbPath == "" {
+		s.warnings = append(s.warnings, "memories db not found (stage1 search off)")
+	}
+	s.files, err = listMarkdownFiles(s.root)
+	if err != nil {
+		return MemorySearchResult{}, err
+	}
+	s.scope, err = memorySearchBuildCwdScope(home, opts, &s.warnings)
+	if err != nil {
+		return MemorySearchResult{}, err
+	}
+	candidates, _, err := s.memorySearchCollectFiles(groups, true)
+	if err != nil {
+		return MemorySearchResult{}, err
+	}
+	if len(candidates) == 0 && HasBoundaryTerm(groups) {
+		// The successor fills stage1 presence here before deciding which
+		// original groups are absent (memory-search.ts:570-571).
+		miss := map[int]bool{}
+		for i, group := range groups {
+			if HasBoundaryTerm([]QueryGroup{group}) && !s.present[i] {
+				miss[i] = true
+			}
+		}
+		if len(miss) > 0 {
+			candidates, _, err = s.memorySearchCollectFiles(RelaxGroupsAt(groups, miss), false)
+			if err != nil {
+				return MemorySearchResult{}, err
+			}
+			if len(candidates) > 0 {
+				for i := range candidates {
+					candidates[i].Score -= relaxedPenalty
+				}
+				s.warnings = append(s.warnings, "no word-boundary matches — showing substring matches (lower confidence)")
+			}
+		}
+	}
+	hits := RankAndTrim(candidates, limit)
+	// The successor inserts backfillFromChat before the empty-scope advice.
+	if len(hits) == 0 && s.scope != nil && s.scope.only {
+		s.warnings = append(s.warnings, "no matches inside --cwd-only "+s.scope.prefix+" — retry with --cwd to rank it first instead")
+	}
+	return MemorySearchResult{Hits: hits, Warnings: s.warnings, ScannedFiles: s.scannedFiles, ElapsedMs: float64(time.Now().UnixMilli() - started)}, nil
 }

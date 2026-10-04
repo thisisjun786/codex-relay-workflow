@@ -186,3 +186,57 @@ func TestMemorySearchNonfiniteLimit(t *testing.T) {
 		}
 	}
 }
+
+func TestMemorySearchScopeAndReadErrors(t *testing.T) {
+	home := t.TempDir()
+	path := writeRolloutTestFile(t, home, "memories/a.md", "thread_id: kept\ncwd: /proj/here\n\nPR3956")
+	calls := 0
+	opts := MemorySearchOptions{Home: &home, Cwd: memoryPtr("/proj/here"), ReadOriginUrl: func(string) string { calls++; return "" }}
+	r, err := SearchMemory("3956", opts)
+	if err != nil || len(r.Hits) != 1 || calls != 1 {
+		t.Fatalf("retry must reuse scope/origin: %+v, %v, calls %d", r, err, calls)
+	}
+	opts.ReadOriginUrl = func(string) string {
+		calls++
+		// Scope is built after listing, so rename the owned synthetic file to
+		// exercise readFileSync's caught error without a timing race.
+		if err := os.Rename(path, path+".gone"); err != nil {
+			t.Fatal(err)
+		}
+		return ""
+	}
+	r, err = SearchMemory("zebra", opts)
+	if err != nil || r.ScannedFiles != 0 || !strings.Contains(strings.Join(r.Warnings, "\n"), "unreadable memory file: "+path) {
+		t.Fatalf("read error: %+v, %v", r, err)
+	}
+	warnings := []string{}
+	_, err = memorySearchBuildCwdScope(path+".gone", opts, &warnings)
+	if err == nil {
+		t.Fatal("metadata path enumeration of a file must return an error")
+	}
+	before := calls
+	r, err = SearchMemory(" \t\ufeff", opts)
+	if err != nil || calls != before || !reflect.DeepEqual(r.Warnings, []string{"empty query"}) {
+		t.Fatalf("empty query must skip filesystem enrichment: %+v, %v", r, err)
+	}
+}
+
+func TestMemorySearchRetainedThreadSeam(t *testing.T) {
+	home := t.TempDir()
+	root := filepath.Join(home, "memories")
+	f := writeRolloutTestFile(t, home, "memories/a.md", "thread_id: t-one\ncwd: /proj/other\n\nHandbook\n\nconsolidated")
+	groups := ExpandQueryWords([]string{"Handbook", "consolidated"})
+	s := memorySearchState{root: root, files: []string{f}, words: []string{"Handbook", "consolidated"}, groups: groups, present: make([]bool, len(groups)), scope: &CwdScope{prefix: "/proj/here", lowerPrefixes: [2]string{"/proj/here", "\\proj\\here"}, only: true}, warnings: []string{}}
+	hits, ids, err := s.memorySearchCollectFiles(groups, true)
+	if err != nil || len(hits) != 0 || len(ids) != 0 {
+		t.Fatalf("rejected file-span cannot suppress future stage1: %+v, %v, %v", hits, ids, err)
+	}
+	s.scope.only = false
+	hits, ids, err = s.memorySearchCollectFiles(groups, true)
+	if err != nil || len(hits) != 1 || !ids["t-one"] {
+		t.Fatalf("retained file-span must mark its thread: %+v, %v, %v", hits, ids, err)
+	}
+	if !reflect.DeepEqual(s.present, []bool{true, true}) {
+		t.Fatalf("presence must precede scope filtering: %v", s.present)
+	}
+}

@@ -694,3 +694,8 @@ The pinned oracle already publishes through an exclusive 0600 temporary file and
 - Equal score/date hits compare as -1 in both directions, so the ranking depends on V8's comparison schedule rather than a consistent ordering (source recall/src/memory-search.ts:222-225; tie grids in TestRankAndTrimNodeOracle); port: kept.
 - NaN scores compare unequal even to themselves and produce NaN differences, which V8 treats as zero; mixing these with the nonzero tie comparator makes ranking implementation-dependent (source recall/src/memory-search.ts:223-225; mixed grids in TestRankAndTrimNodeOracle); port: kept.
 - The limit is checked after appending, so a nonpositive limit returns one hit from nonempty candidates rather than none (source recall/src/memory-search.ts:232-233; cap-limit grids in TestRankAndTrimNodeOracle); port: kept.
+
+## CRW-351 — markdown memory search and cwd scope
+
+- Prose cwd matching uses substring containment, so a mention of an adjacent path such as `/proj/here-adjacent` earns the half boost and survives a `/proj/here` hard filter (CXC v0.2.40 `recall/src/memory-search.ts:357-358`); port: kept.
+- A computed date cutoff of exactly zero disables file age filtering because the cutoff check uses JavaScript truthiness (CXC v0.2.40 `recall/src/memory-search.ts:484`); port: kept.
