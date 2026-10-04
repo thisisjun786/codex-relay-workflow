@@ -1,0 +1,72 @@
+[
+  {
+    "operation": "mkdir",
+    "errno": "ENOTDIR",
+    "result": {
+      "output": "plan init failed: ENOTDIR: not a directory, mkdir 'WORKSPACE/devlog/_plan/260821_unit'",
+      "code": 1
+    },
+    "classification": "identical",
+    "recording": "Node util system-error description through oracle catch; injected filesystem boundary"
+  },
+  {
+    "operation": "mkdir",
+    "errno": "EACCES",
+    "result": {
+      "output": "plan init failed: EACCES: permission denied, mkdir 'WORKSPACE/devlog/_plan/260821_unit'",
+      "code": 1
+    },
+    "classification": "identical",
+    "recording": "Node util system-error description through oracle catch; injected filesystem boundary"
+  },
+  {
+    "operation": "open",
+    "errno": "EACCES",
+    "result": {
+      "output": "plan init failed: EACCES: permission denied, open 'WORKSPACE/devlog/_plan/260821_unit/000_plan.md'",
+      "code": 1
+    },
+    "classification": "identical",
+    "recording": "Node util system-error description through oracle catch; injected filesystem boundary"
+  },
+  {
+    "operation": "write",
+    "errno": "EIO",
+    "result": {
+      "output": "plan init failed: EIO: i/o error, write",
+      "code": 1
+    },
+    "classification": "identical",
+    "recording": "Node util system-error description through oracle catch; injected filesystem boundary"
+  },
+  {
+    "operation": "open",
+    "errno": "EEXIST",
+    "result": {
+      "output": "plan init failed: EEXIST: file already exists, open 'WORKSPACE/devlog/_plan/260821_unit/000_plan.md'",
+      "code": 1
+    },
+    "classification": "identical",
+    "recording": "Node util system-error description through oracle catch; injected filesystem boundary"
+  },
+  {
+    "operation": "mkdir",
+    "errno": "ENOTDIR",
+    "result": {
+      "output": "plan init failed: ENOTDIR: not a directory, mkdir 'WORKSPACE/devlog/_plan/260821_unit'",
+      "code": 1
+    },
+    "classification": "identical",
+    "recording": "Actual parent-file failure through oracle"
+  },
+  {
+    "operation": "mkdir",
+    "errno": "EACCES",
+    "result": {
+      "output": "plan init failed: EACCES: permission denied, mkdir 'WORKSPACE/devlog/_plan/260821_unit'",
+      "code": 1
+    },
+    "classification": "identical",
+    "recording": "Actual read-only workspace failure through oracle"
+  }
+]
