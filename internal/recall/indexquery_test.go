@@ -165,10 +165,12 @@ func TestIndexQueryCandidates(t *testing.T) {
 		if filesHasColumn(reader, "repo_key") == legacy {
 			t.Fatal("wrong test schema")
 		}
+		seen := 0
 		for i, c := range oracle.Cases {
 			if c.Fn != "candidates" || arg[bool](t, c, 3) != legacy {
 				continue
 			}
+			seen++
 			q := queryOracleOptions(t, c)
 			where, params := candidateFilterFor(q, arg[bool](t, c, 1), arg[bool](t, c, 2))
 			stmt, err := reader.Prepare("SELECT m.id,m.text FROM msgs m JOIN files f ON f.path=m.path WHERE " + where + " ORDER BY m.id")
@@ -194,6 +196,9 @@ func TestIndexQueryCandidates(t *testing.T) {
 			if actual := canon(t, got); !reflect.DeepEqual(actual, want) {
 				t.Errorf("case %d legacy=%v: got %v oracle %v", i, legacy, actual, want)
 			}
+		}
+		if seen < 100 {
+			t.Fatalf("legacy=%v: only %d recorded candidate cases", legacy, seen)
 		}
 		if n := recallRow(t, recallStmt(t, reader, "SELECT COUNT(*) AS n FROM msgs"))["n"].(float64); int(n) != len(oracle.Seeds.Msgs) {
 			t.Fatal("hostile input changed the indexed rows")
