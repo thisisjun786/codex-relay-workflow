@@ -19,6 +19,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/review/command"
+	"github.com/thisisjun786/codex-relay-workflow/internal/role"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/buildinfo"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install"
@@ -27,7 +28,7 @@ import (
 	// The relay commands register in the relay command table when their packages load; cli
 	// brings its own and the registry, delivery and fault families.
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/capacity"
-	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/childcleanup"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/childcleanup"
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/managed"
@@ -44,7 +45,7 @@ const parserExit = 2
 
 func main() {
 	started := time.Now()
-	adapter.Register()
+	adapter.Register(childcleanup.ConfigureSubscriptions)
 	os.Exit(serve(os.Args[0], os.Args[1:], os.Stdout, os.Stderr, started))
 }
 
@@ -176,6 +177,7 @@ func modes() []mode {
 		}},
 		{"review", true, func(c invocation) int { return command.Run(c.ctx, c.args, c.stdout, c.stderr) }},
 		{"pabcd", false, func(c invocation) int { return harness.Pabcd(c.args, os.Stdin, c.stdout, c.stderr, harness.Verbs()) }},
+		{"role", false, func(c invocation) int { return role.CLI(c.args, os.Stdin, c.stdout, c.stderr, os.LookupEnv) }},
 		{"provider", false, func(c invocation) int { return provider.Run(c.ctx, c.stdout) }},
 		{"map", false, runRepoMap},
 		{"help", true, help}, {"-h", false, help}, {"--help", false, help},
@@ -199,7 +201,7 @@ func bridge(ctx context.Context, program string, args []string) int {
 	if len(args) > 0 && args[0] == pluginwiring.Flag {
 		return pluginwiring.Bridge(program, args[1:])
 	}
-	return mcp.Run(ctx, args)
+	return mcp.Run(ctx, args, childcleanup.ConfigureSubscriptions)
 }
 
 // relay is the relay CLI.

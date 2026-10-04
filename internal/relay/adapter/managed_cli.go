@@ -19,7 +19,7 @@ import (
 // managedStart is managed.HostStart: readiness, the store, the engine and every host call run
 // on the command's ctx, so an interrupt ends a start through the adapter's caller
 // cancellation (decision 39) instead of being ignored until the host answers.
-func managedStart(ctx context.Context, services dispatch.Services, args dispatch.Args, raw []byte) (out any, err error) {
+func (f hostFactory) managedStart(ctx context.Context, services dispatch.Services, args dispatch.Args, raw []byte) (out any, err error) {
 	request, err := managed.ParseRequest(raw)
 	if err != nil {
 		return nil, err
@@ -43,7 +43,7 @@ func managedStart(ctx context.Context, services dispatch.Services, args dispatch
 	if err != nil {
 		return nil, err
 	}
-	a, err := Open(services.SocketPath, services.Selection.Path, Options{Policy: bridgePolicy, Clock: delivery.CommandClock})
+	a, err := f.open(services.SocketPath, services.Selection.Path, Options{Policy: bridgePolicy, Clock: delivery.CommandClock})
 	if err != nil {
 		return nil, err
 	}

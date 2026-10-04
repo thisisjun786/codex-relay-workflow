@@ -1,0 +1,3065 @@
+{
+  "normalization": [
+    {
+      "id": "evidence-0",
+      "mind": "contrarian",
+      "raw": [
+        {
+          "dimension": "goal",
+          "contradiction": "  gap  ",
+          "severity": "high",
+          "evidence": "src/x.ts:42"
+        }
+      ],
+      "round": 4,
+      "expected": [
+        {
+          "mind": "contrarian",
+          "correlationId": "4-contrarian",
+          "dimension": "goal",
+          "contradiction": "gap",
+          "severity": "high",
+          "evidence": "src/x.ts:42"
+        }
+      ]
+    },
+    {
+      "id": "evidence-1",
+      "mind": "contrarian",
+      "raw": [
+        {
+          "dimension": "goal",
+          "contradiction": "  gap  ",
+          "severity": "high",
+          "evidence": "see section Goals"
+        }
+      ],
+      "round": 4,
+      "expected": [
+        {
+          "mind": "contrarian",
+          "correlationId": "4-contrarian",
+          "dimension": "goal",
+          "contradiction": "gap",
+          "severity": "high",
+          "evidence": "see section Goals"
+        }
+      ]
+    },
+    {
+      "id": "evidence-2",
+      "mind": "contrarian",
+      "raw": [
+        {
+          "dimension": "goal",
+          "contradiction": "  gap  ",
+          "severity": "high",
+          "evidence": "\"must be max\""
+        }
+      ],
+      "round": 4,
+      "expected": [
+        {
+          "mind": "contrarian",
+          "correlationId": "4-contrarian",
+          "dimension": "goal",
+          "contradiction": "gap",
+          "severity": "high",
+          "evidence": "\"must be max\""
+        }
+      ]
+    },
+    {
+      "id": "evidence-3",
+      "mind": "contrarian",
+      "raw": [
+        {
+          "dimension": "goal",
+          "contradiction": "  gap  ",
+          "severity": "high",
+          "evidence": "I think this is wrong"
+        }
+      ],
+      "round": 4,
+      "expected": []
+    },
+    {
+      "id": "evidence-4",
+      "mind": "contrarian",
+      "raw": [
+        {
+          "dimension": "goal",
+          "contradiction": "  gap  ",
+          "severity": "high",
+          "evidence": "﻿spec.md:1﻿"
+        }
+      ],
+      "round": 4,
+      "expected": [
+        {
+          "mind": "contrarian",
+          "correlationId": "4-contrarian",
+          "dimension": "goal",
+          "contradiction": "gap",
+          "severity": "high",
+          "evidence": "spec.md:1"
+        }
+      ]
+    },
+    {
+      "id": "evidence-5",
+      "mind": "contrarian",
+      "raw": [
+        {
+          "dimension": "goal",
+          "contradiction": "  gap  ",
+          "severity": "high",
+          "evidence": ":3"
+        }
+      ],
+      "round": 4,
+      "expected": [
+        {
+          "mind": "contrarian",
+          "correlationId": "4-contrarian",
+          "dimension": "goal",
+          "contradiction": "gap",
+          "severity": "high",
+          "evidence": ":3"
+        }
+      ]
+    },
+    {
+      "id": "evidence-6",
+      "mind": "contrarian",
+      "raw": [
+        {
+          "dimension": "goal",
+          "contradiction": "  gap  ",
+          "severity": "high",
+          "evidence": " :3"
+        }
+      ],
+      "round": 4,
+      "expected": []
+    },
+    {
+      "id": "evidence-7",
+      "mind": "contrarian",
+      "raw": [
+        {
+          "dimension": "goal",
+          "contradiction": "  gap  ",
+          "severity": "high",
+          "evidence": ":1"
+        }
+      ],
+      "round": 4,
+      "expected": []
+    },
+    {
+      "id": "evidence-8",
+      "mind": "contrarian",
+      "raw": [
+        {
+          "dimension": "goal",
+          "contradiction": "  gap  ",
+          "severity": "high",
+          "evidence": "http://host:443"
+        }
+      ],
+      "round": 4,
+      "expected": [
+        {
+          "mind": "contrarian",
+          "correlationId": "4-contrarian",
+          "dimension": "goal",
+          "contradiction": "gap",
+          "severity": "high",
+          "evidence": "http://host:443"
+        }
+      ]
+    },
+    {
+      "id": "evidence-9",
+      "mind": "contrarian",
+      "raw": [
+        {
+          "dimension": "goal",
+          "contradiction": "  gap  ",
+          "severity": "high",
+          "evidence": "\"a\rb\""
+        }
+      ],
+      "round": 4,
+      "expected": []
+    },
+    {
+      "id": "evidence-10",
+      "mind": "contrarian",
+      "raw": [
+        {
+          "dimension": "goal",
+          "contradiction": "  gap  ",
+          "severity": "high",
+          "evidence": "\"a\nb\""
+        }
+      ],
+      "round": 4,
+      "expected": []
+    },
+    {
+      "id": "evidence-11",
+      "mind": "contrarian",
+      "raw": [
+        {
+          "dimension": "goal",
+          "contradiction": "  gap  ",
+          "severity": "high",
+          "evidence": "\"a b\""
+        }
+      ],
+      "round": 4,
+      "expected": []
+    },
+    {
+      "id": "evidence-12",
+      "mind": "contrarian",
+      "raw": [
+        {
+          "dimension": "goal",
+          "contradiction": "  gap  ",
+          "severity": "high",
+          "evidence": "\"a b\""
+        }
+      ],
+      "round": 4,
+      "expected": []
+    },
+    {
+      "id": "evidence-13",
+      "mind": "contrarian",
+      "raw": [
+        {
+          "dimension": "goal",
+          "contradiction": "  gap  ",
+          "severity": "high",
+          "evidence": "\"ab\""
+        }
+      ],
+      "round": 4,
+      "expected": [
+        {
+          "mind": "contrarian",
+          "correlationId": "4-contrarian",
+          "dimension": "goal",
+          "contradiction": "gap",
+          "severity": "high",
+          "evidence": "\"ab\""
+        }
+      ]
+    },
+    {
+      "id": "evidence-14",
+      "mind": "contrarian",
+      "raw": [
+        {
+          "dimension": "goal",
+          "contradiction": "  gap  ",
+          "severity": "high",
+          "evidence": "ſection Goals"
+        }
+      ],
+      "round": 4,
+      "expected": []
+    },
+    {
+      "id": "evidence-15",
+      "mind": "contrarian",
+      "raw": [
+        {
+          "dimension": "goal",
+          "contradiction": "  gap  ",
+          "severity": "high",
+          "evidence": "Section Goals"
+        }
+      ],
+      "round": 4,
+      "expected": [
+        {
+          "mind": "contrarian",
+          "correlationId": "4-contrarian",
+          "dimension": "goal",
+          "contradiction": "gap",
+          "severity": "high",
+          "evidence": "Section Goals"
+        }
+      ]
+    },
+    {
+      "id": "evidence-16",
+      "mind": "contrarian",
+      "raw": [
+        {
+          "dimension": "goal",
+          "contradiction": "  gap  ",
+          "severity": "high",
+          "evidence": "## Goals"
+        }
+      ],
+      "round": 4,
+      "expected": [
+        {
+          "mind": "contrarian",
+          "correlationId": "4-contrarian",
+          "dimension": "goal",
+          "contradiction": "gap",
+          "severity": "high",
+          "evidence": "## Goals"
+        }
+      ]
+    },
+    {
+      "id": "evidence-17",
+      "mind": "contrarian",
+      "raw": [
+        {
+          "dimension": "goal",
+          "contradiction": "  gap  ",
+          "severity": "high",
+          "evidence": "see ## Goals"
+        }
+      ],
+      "round": 4,
+      "expected": []
+    },
+    {
+      "id": "evidence-18",
+      "mind": "contrarian",
+      "raw": [
+        {
+          "dimension": "goal",
+          "contradiction": "  gap  ",
+          "severity": "high",
+          "evidence": "x## Goals"
+        }
+      ],
+      "round": 4,
+      "expected": [
+        {
+          "mind": "contrarian",
+          "correlationId": "4-contrarian",
+          "dimension": "goal",
+          "contradiction": "gap",
+          "severity": "high",
+          "evidence": "x## Goals"
+        }
+      ]
+    },
+    {
+      "id": "evidence-19",
+      "mind": "contrarian",
+      "raw": [
+        {
+          "dimension": "goal",
+          "contradiction": "  gap  ",
+          "severity": "high",
+          "evidence": "L9.2"
+        }
+      ],
+      "round": 4,
+      "expected": [
+        {
+          "mind": "contrarian",
+          "correlationId": "4-contrarian",
+          "dimension": "goal",
+          "contradiction": "gap",
+          "severity": "high",
+          "evidence": "L9.2"
+        }
+      ]
+    },
+    {
+      "id": "evidence-20",
+      "mind": "contrarian",
+      "raw": [
+        {
+          "dimension": "goal",
+          "contradiction": "  gap  ",
+          "severity": "high",
+          "evidence": "αL9"
+        }
+      ],
+      "round": 4,
+      "expected": [
+        {
+          "mind": "contrarian",
+          "correlationId": "4-contrarian",
+          "dimension": "goal",
+          "contradiction": "gap",
+          "severity": "high",
+          "evidence": "αL9"
+        }
+      ]
+    },
+    {
+      "id": "evidence-21",
+      "mind": "contrarian",
+      "raw": [
+        {
+          "dimension": "goal",
+          "contradiction": "  gap  ",
+          "severity": "high",
+          "evidence": "xL9"
+        }
+      ],
+      "round": 4,
+      "expected": []
+    },
+    {
+      "id": "evidence-22",
+      "mind": "contrarian",
+      "raw": [
+        {
+          "dimension": "goal",
+          "contradiction": "  gap  ",
+          "severity": "high",
+          "evidence": "\"a'"
+        }
+      ],
+      "round": 4,
+      "expected": [
+        {
+          "mind": "contrarian",
+          "correlationId": "4-contrarian",
+          "dimension": "goal",
+          "contradiction": "gap",
+          "severity": "high",
+          "evidence": "\"a'"
+        }
+      ]
+    },
+    {
+      "id": "evidence-23",
+      "mind": "contrarian",
+      "raw": [
+        {
+          "dimension": "goal",
+          "contradiction": "  gap  ",
+          "severity": "high",
+          "evidence": "\"\""
+        }
+      ],
+      "round": 4,
+      "expected": []
+    },
+    {
+      "id": "evidence-24",
+      "mind": "contrarian",
+      "raw": [
+        {
+          "dimension": "goal",
+          "contradiction": "  gap  ",
+          "severity": "high",
+          "evidence": "\"ab\""
+        }
+      ],
+      "round": 4,
+      "expected": [
+        {
+          "mind": "contrarian",
+          "correlationId": "4-contrarian",
+          "dimension": "goal",
+          "contradiction": "gap",
+          "severity": "high",
+          "evidence": "\"ab\""
+        }
+      ]
+    },
+    {
+      "id": "evidence-25",
+      "mind": "contrarian",
+      "raw": [
+        {
+          "dimension": "goal",
+          "contradiction": "  gap  ",
+          "severity": "high",
+          "evidence": "\"😀\""
+        }
+      ],
+      "round": 4,
+      "expected": [
+        {
+          "mind": "contrarian",
+          "correlationId": "4-contrarian",
+          "dimension": "goal",
+          "contradiction": "gap",
+          "severity": "high",
+          "evidence": "\"😀\""
+        }
+      ]
+    },
+    {
+      "id": "evidence-26",
+      "mind": "contrarian",
+      "raw": [
+        {
+          "dimension": "goal",
+          "contradiction": "  gap  ",
+          "severity": "high",
+          "evidence": " \t "
+        }
+      ],
+      "round": 4,
+      "expected": []
+    },
+    {
+      "id": "mixed",
+      "mind": "socratic",
+      "raw": [
+        {
+          "dimension": "goal",
+          "contradiction": "  gap  ",
+          "severity": "high",
+          "evidence": "spec.md:1"
+        },
+        {
+          "dimension": "invalid",
+          "contradiction": "  gap  ",
+          "severity": "high",
+          "evidence": "spec.md:1"
+        },
+        {
+          "dimension": "goal",
+          "contradiction": "  gap  ",
+          "severity": "critical",
+          "evidence": "spec.md:1"
+        },
+        {
+          "dimension": "goal",
+          "contradiction": " ",
+          "severity": "high",
+          "evidence": "spec.md:1"
+        },
+        {
+          "dimension": "goal",
+          "contradiction": "  gap  ",
+          "severity": "high",
+          "evidence": " "
+        },
+        null,
+        [],
+        3,
+        "x"
+      ],
+      "round": 2,
+      "expected": [
+        {
+          "mind": "socratic",
+          "correlationId": "2-socratic",
+          "dimension": "goal",
+          "contradiction": "gap",
+          "severity": "high",
+          "evidence": "spec.md:1"
+        }
+      ]
+    },
+    {
+      "id": "extra",
+      "mind": "socratic",
+      "raw": [
+        {
+          "dimension": "goal",
+          "contradiction": "  gap  ",
+          "severity": "high",
+          "evidence": "spec.md:1",
+          "action": "edit",
+          "writeState": true
+        }
+      ],
+      "round": 2,
+      "expected": [
+        {
+          "mind": "socratic",
+          "correlationId": "2-socratic",
+          "dimension": "goal",
+          "contradiction": "gap",
+          "severity": "high",
+          "evidence": "spec.md:1"
+        }
+      ]
+    },
+    {
+      "id": "notArray",
+      "mind": "socratic",
+      "raw": {
+        "x": 1
+      },
+      "round": 2,
+      "expected": []
+    },
+    {
+      "id": "nil",
+      "mind": "socratic",
+      "raw": null,
+      "round": 2,
+      "expected": []
+    },
+    {
+      "id": "string",
+      "mind": "socratic",
+      "raw": "[]",
+      "round": 2,
+      "expected": []
+    },
+    {
+      "id": "round-negative",
+      "mind": "evaluator",
+      "raw": [
+        {
+          "dimension": "goal",
+          "contradiction": "  gap  ",
+          "severity": "high",
+          "evidence": "spec.md:1"
+        }
+      ],
+      "round": -1,
+      "expected": [
+        {
+          "mind": "evaluator",
+          "correlationId": "0-evaluator",
+          "dimension": "goal",
+          "contradiction": "gap",
+          "severity": "high",
+          "evidence": "spec.md:1"
+        }
+      ]
+    },
+    {
+      "id": "round-fraction",
+      "mind": "evaluator",
+      "raw": [
+        {
+          "dimension": "goal",
+          "contradiction": "  gap  ",
+          "severity": "high",
+          "evidence": "spec.md:1"
+        }
+      ],
+      "round": 3.9,
+      "expected": [
+        {
+          "mind": "evaluator",
+          "correlationId": "3-evaluator",
+          "dimension": "goal",
+          "contradiction": "gap",
+          "severity": "high",
+          "evidence": "spec.md:1"
+        }
+      ]
+    },
+    {
+      "id": "round-string",
+      "mind": "evaluator",
+      "raw": [
+        {
+          "dimension": "goal",
+          "contradiction": "  gap  ",
+          "severity": "high",
+          "evidence": "spec.md:1"
+        }
+      ],
+      "round": "4",
+      "expected": [
+        {
+          "mind": "evaluator",
+          "correlationId": "0-evaluator",
+          "dimension": "goal",
+          "contradiction": "gap",
+          "severity": "high",
+          "evidence": "spec.md:1"
+        }
+      ]
+    },
+    {
+      "id": "round-null",
+      "mind": "evaluator",
+      "raw": [
+        {
+          "dimension": "goal",
+          "contradiction": "  gap  ",
+          "severity": "high",
+          "evidence": "spec.md:1"
+        }
+      ],
+      "round": null,
+      "expected": [
+        {
+          "mind": "evaluator",
+          "correlationId": "0-evaluator",
+          "dimension": "goal",
+          "contradiction": "gap",
+          "severity": "high",
+          "evidence": "spec.md:1"
+        }
+      ]
+    },
+    {
+      "id": "round-nan",
+      "mind": "evaluator",
+      "raw": [
+        {
+          "dimension": "goal",
+          "contradiction": "  gap  ",
+          "severity": "high",
+          "evidence": "spec.md:1"
+        }
+      ],
+      "round": "nan",
+      "expected": [
+        {
+          "mind": "evaluator",
+          "correlationId": "0-evaluator",
+          "dimension": "goal",
+          "contradiction": "gap",
+          "severity": "high",
+          "evidence": "spec.md:1"
+        }
+      ]
+    },
+    {
+      "id": "round-infinity",
+      "mind": "evaluator",
+      "raw": [
+        {
+          "dimension": "goal",
+          "contradiction": "  gap  ",
+          "severity": "high",
+          "evidence": "spec.md:1"
+        }
+      ],
+      "round": "infinity",
+      "expected": [
+        {
+          "mind": "evaluator",
+          "correlationId": "0-evaluator",
+          "dimension": "goal",
+          "contradiction": "gap",
+          "severity": "high",
+          "evidence": "spec.md:1"
+        }
+      ]
+    },
+    {
+      "id": "round-big",
+      "mind": "evaluator",
+      "raw": [
+        {
+          "dimension": "goal",
+          "contradiction": "  gap  ",
+          "severity": "high",
+          "evidence": "spec.md:1"
+        }
+      ],
+      "round": 1e+21,
+      "expected": [
+        {
+          "mind": "evaluator",
+          "correlationId": "1e+21-evaluator",
+          "dimension": "goal",
+          "contradiction": "gap",
+          "severity": "high",
+          "evidence": "spec.md:1"
+        }
+      ]
+    },
+    {
+      "id": "round-negativeZero",
+      "mind": "contrarian",
+      "raw": [
+        {
+          "dimension": "goal",
+          "contradiction": "  gap  ",
+          "severity": "high",
+          "evidence": "spec.md:1"
+        }
+      ],
+      "round": "negativeZero",
+      "expected": [
+        {
+          "mind": "contrarian",
+          "correlationId": "0-contrarian",
+          "dimension": "goal",
+          "contradiction": "gap",
+          "severity": "high",
+          "evidence": "spec.md:1"
+        }
+      ]
+    }
+  ],
+  "selection": [
+    {
+      "id": "goal-low",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "low"
+          },
+          "constraint": {
+            "level": "high"
+          },
+          "success": {
+            "level": "mid"
+          },
+          "ontology": {
+            "level": "low"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "socratic",
+        "ontologist",
+        "evaluator"
+      ]
+    },
+    {
+      "id": "goal-mid",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "mid"
+          },
+          "constraint": {
+            "level": "high"
+          },
+          "success": {
+            "level": "mid"
+          },
+          "ontology": {
+            "level": "low"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "ontologist",
+        "socratic",
+        "evaluator"
+      ]
+    },
+    {
+      "id": "goal-high",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "high"
+          },
+          "constraint": {
+            "level": "high"
+          },
+          "success": {
+            "level": "mid"
+          },
+          "ontology": {
+            "level": "low"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "ontologist",
+        "evaluator",
+        "contrarian"
+      ]
+    },
+    {
+      "id": "goal-max",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "max"
+          },
+          "constraint": {
+            "level": "high"
+          },
+          "success": {
+            "level": "mid"
+          },
+          "ontology": {
+            "level": "low"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "ontologist",
+        "evaluator",
+        "contrarian"
+      ]
+    },
+    {
+      "id": "goal-weird",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "weird"
+          },
+          "constraint": {
+            "level": "high"
+          },
+          "success": {
+            "level": "mid"
+          },
+          "ontology": {
+            "level": "low"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "socratic",
+        "ontologist",
+        "evaluator"
+      ]
+    },
+    {
+      "id": "goal-constructor",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "constructor"
+          },
+          "constraint": {
+            "level": "high"
+          },
+          "success": {
+            "level": "mid"
+          },
+          "ontology": {
+            "level": "low"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "contrarian",
+        "socratic",
+        "ontologist"
+      ]
+    },
+    {
+      "id": "goal-__proto__",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "__proto__"
+          },
+          "constraint": {
+            "level": "high"
+          },
+          "success": {
+            "level": "mid"
+          },
+          "ontology": {
+            "level": "low"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "contrarian",
+        "socratic",
+        "ontologist"
+      ]
+    },
+    {
+      "id": "goal-toString",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "toString"
+          },
+          "constraint": {
+            "level": "high"
+          },
+          "success": {
+            "level": "mid"
+          },
+          "ontology": {
+            "level": "low"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "contrarian",
+        "socratic",
+        "ontologist"
+      ]
+    },
+    {
+      "id": "constraint-low",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "max"
+          },
+          "constraint": {
+            "level": "low"
+          },
+          "success": {
+            "level": "mid"
+          },
+          "ontology": {
+            "level": "low"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "contrarian",
+        "ontologist",
+        "simplifier"
+      ]
+    },
+    {
+      "id": "constraint-mid",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "max"
+          },
+          "constraint": {
+            "level": "mid"
+          },
+          "success": {
+            "level": "mid"
+          },
+          "ontology": {
+            "level": "low"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "ontologist",
+        "contrarian",
+        "evaluator"
+      ]
+    },
+    {
+      "id": "constraint-high",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "max"
+          },
+          "constraint": {
+            "level": "high"
+          },
+          "success": {
+            "level": "mid"
+          },
+          "ontology": {
+            "level": "low"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "ontologist",
+        "evaluator",
+        "contrarian"
+      ]
+    },
+    {
+      "id": "constraint-max",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "max"
+          },
+          "constraint": {
+            "level": "max"
+          },
+          "success": {
+            "level": "mid"
+          },
+          "ontology": {
+            "level": "low"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "ontologist",
+        "evaluator",
+        "contrarian"
+      ]
+    },
+    {
+      "id": "constraint-weird",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "max"
+          },
+          "constraint": {
+            "level": "weird"
+          },
+          "success": {
+            "level": "mid"
+          },
+          "ontology": {
+            "level": "low"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "contrarian",
+        "ontologist",
+        "simplifier"
+      ]
+    },
+    {
+      "id": "constraint-constructor",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "max"
+          },
+          "constraint": {
+            "level": "constructor"
+          },
+          "success": {
+            "level": "mid"
+          },
+          "ontology": {
+            "level": "low"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "contrarian",
+        "ontologist",
+        "evaluator"
+      ]
+    },
+    {
+      "id": "constraint-__proto__",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "max"
+          },
+          "constraint": {
+            "level": "__proto__"
+          },
+          "success": {
+            "level": "mid"
+          },
+          "ontology": {
+            "level": "low"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "contrarian",
+        "ontologist",
+        "evaluator"
+      ]
+    },
+    {
+      "id": "constraint-toString",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "max"
+          },
+          "constraint": {
+            "level": "toString"
+          },
+          "success": {
+            "level": "mid"
+          },
+          "ontology": {
+            "level": "low"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "contrarian",
+        "ontologist",
+        "evaluator"
+      ]
+    },
+    {
+      "id": "success-low",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "max"
+          },
+          "constraint": {
+            "level": "high"
+          },
+          "success": {
+            "level": "low"
+          },
+          "ontology": {
+            "level": "low"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "ontologist",
+        "evaluator",
+        "contrarian"
+      ]
+    },
+    {
+      "id": "success-mid",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "max"
+          },
+          "constraint": {
+            "level": "high"
+          },
+          "success": {
+            "level": "mid"
+          },
+          "ontology": {
+            "level": "low"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "ontologist",
+        "evaluator",
+        "contrarian"
+      ]
+    },
+    {
+      "id": "success-high",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "max"
+          },
+          "constraint": {
+            "level": "high"
+          },
+          "success": {
+            "level": "high"
+          },
+          "ontology": {
+            "level": "low"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "ontologist",
+        "contrarian",
+        "evaluator"
+      ]
+    },
+    {
+      "id": "success-max",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "max"
+          },
+          "constraint": {
+            "level": "high"
+          },
+          "success": {
+            "level": "max"
+          },
+          "ontology": {
+            "level": "low"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "ontologist",
+        "contrarian",
+        "simplifier"
+      ]
+    },
+    {
+      "id": "success-weird",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "max"
+          },
+          "constraint": {
+            "level": "high"
+          },
+          "success": {
+            "level": "weird"
+          },
+          "ontology": {
+            "level": "low"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "ontologist",
+        "evaluator",
+        "contrarian"
+      ]
+    },
+    {
+      "id": "success-constructor",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "max"
+          },
+          "constraint": {
+            "level": "high"
+          },
+          "success": {
+            "level": "constructor"
+          },
+          "ontology": {
+            "level": "low"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "ontologist",
+        "contrarian",
+        "simplifier"
+      ]
+    },
+    {
+      "id": "success-__proto__",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "max"
+          },
+          "constraint": {
+            "level": "high"
+          },
+          "success": {
+            "level": "__proto__"
+          },
+          "ontology": {
+            "level": "low"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "ontologist",
+        "contrarian",
+        "simplifier"
+      ]
+    },
+    {
+      "id": "success-toString",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "max"
+          },
+          "constraint": {
+            "level": "high"
+          },
+          "success": {
+            "level": "toString"
+          },
+          "ontology": {
+            "level": "low"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "ontologist",
+        "contrarian",
+        "simplifier"
+      ]
+    },
+    {
+      "id": "ontology-low",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "max"
+          },
+          "constraint": {
+            "level": "high"
+          },
+          "success": {
+            "level": "mid"
+          },
+          "ontology": {
+            "level": "low"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "ontologist",
+        "evaluator",
+        "contrarian"
+      ]
+    },
+    {
+      "id": "ontology-mid",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "max"
+          },
+          "constraint": {
+            "level": "high"
+          },
+          "success": {
+            "level": "mid"
+          },
+          "ontology": {
+            "level": "mid"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "ontologist",
+        "evaluator",
+        "contrarian"
+      ]
+    },
+    {
+      "id": "ontology-high",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "max"
+          },
+          "constraint": {
+            "level": "high"
+          },
+          "success": {
+            "level": "mid"
+          },
+          "ontology": {
+            "level": "high"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "evaluator",
+        "contrarian",
+        "ontologist"
+      ]
+    },
+    {
+      "id": "ontology-max",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "max"
+          },
+          "constraint": {
+            "level": "high"
+          },
+          "success": {
+            "level": "mid"
+          },
+          "ontology": {
+            "level": "max"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "evaluator",
+        "contrarian",
+        "simplifier"
+      ]
+    },
+    {
+      "id": "ontology-weird",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "max"
+          },
+          "constraint": {
+            "level": "high"
+          },
+          "success": {
+            "level": "mid"
+          },
+          "ontology": {
+            "level": "weird"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "ontologist",
+        "evaluator",
+        "contrarian"
+      ]
+    },
+    {
+      "id": "ontology-constructor",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "max"
+          },
+          "constraint": {
+            "level": "high"
+          },
+          "success": {
+            "level": "mid"
+          },
+          "ontology": {
+            "level": "constructor"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "contrarian",
+        "socratic",
+        "ontologist"
+      ]
+    },
+    {
+      "id": "ontology-__proto__",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "max"
+          },
+          "constraint": {
+            "level": "high"
+          },
+          "success": {
+            "level": "mid"
+          },
+          "ontology": {
+            "level": "__proto__"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "contrarian",
+        "socratic",
+        "ontologist"
+      ]
+    },
+    {
+      "id": "ontology-toString",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "max"
+          },
+          "constraint": {
+            "level": "high"
+          },
+          "success": {
+            "level": "mid"
+          },
+          "ontology": {
+            "level": "toString"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "contrarian",
+        "socratic",
+        "ontologist"
+      ]
+    },
+    {
+      "id": "count-default",
+      "tracker": null,
+      "count": "default",
+      "expected": [
+        "contrarian",
+        "socratic"
+      ]
+    },
+    {
+      "id": "count-negative",
+      "tracker": null,
+      "count": -4,
+      "expected": [
+        "contrarian"
+      ]
+    },
+    {
+      "id": "count-zero",
+      "tracker": null,
+      "count": 0,
+      "expected": [
+        "contrarian"
+      ]
+    },
+    {
+      "id": "count-fraction",
+      "tracker": null,
+      "count": 2.8,
+      "expected": [
+        "contrarian",
+        "socratic"
+      ]
+    },
+    {
+      "id": "count-cap",
+      "tracker": null,
+      "count": 99,
+      "expected": [
+        "contrarian",
+        "socratic",
+        "ontologist"
+      ]
+    },
+    {
+      "id": "count-nan",
+      "tracker": null,
+      "count": "nan",
+      "expected": []
+    },
+    {
+      "id": "count-infinity",
+      "tracker": null,
+      "count": "infinity",
+      "expected": [
+        "contrarian",
+        "socratic",
+        "ontologist"
+      ]
+    },
+    {
+      "id": "count-negativeInfinity",
+      "tracker": null,
+      "count": "negativeInfinity",
+      "expected": [
+        "contrarian"
+      ]
+    },
+    {
+      "id": "nil",
+      "tracker": null,
+      "count": 2,
+      "expected": [
+        "contrarian",
+        "socratic"
+      ]
+    },
+    {
+      "id": "primitive",
+      "tracker": 3,
+      "count": 2,
+      "expected": [
+        "contrarian",
+        "socratic"
+      ]
+    },
+    {
+      "id": "badDimensions",
+      "tracker": {
+        "dimensions": "x"
+      },
+      "count": 2,
+      "expected": [
+        "contrarian",
+        "socratic"
+      ]
+    },
+    {
+      "id": "empty",
+      "tracker": {},
+      "count": 2,
+      "expected": [
+        "contrarian",
+        "socratic"
+      ]
+    },
+    {
+      "id": "partial",
+      "tracker": {
+        "dimensions": {
+          "ontology": {
+            "level": "low"
+          },
+          "constraint": {
+            "level": "max"
+          }
+        }
+      },
+      "count": 2,
+      "expected": [
+        "socratic",
+        "ontologist"
+      ]
+    },
+    {
+      "id": "key-[\"mid\"]",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "max"
+          },
+          "constraint": {
+            "level": [
+              "mid"
+            ]
+          },
+          "success": {
+            "level": "high"
+          },
+          "ontology": {
+            "level": "low"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "ontologist",
+        "contrarian",
+        "simplifier"
+      ]
+    },
+    {
+      "id": "key-[\"constructor\"]",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "max"
+          },
+          "constraint": {
+            "level": [
+              "constructor"
+            ]
+          },
+          "success": {
+            "level": "high"
+          },
+          "ontology": {
+            "level": "low"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "contrarian",
+        "ontologist",
+        "evaluator"
+      ]
+    },
+    {
+      "id": "key-[]",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "max"
+          },
+          "constraint": {
+            "level": []
+          },
+          "success": {
+            "level": "high"
+          },
+          "ontology": {
+            "level": "low"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "contrarian",
+        "ontologist",
+        "simplifier"
+      ]
+    },
+    {
+      "id": "key-5",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "max"
+          },
+          "constraint": {
+            "level": 5
+          },
+          "success": {
+            "level": "high"
+          },
+          "ontology": {
+            "level": "low"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "contrarian",
+        "ontologist",
+        "simplifier"
+      ]
+    },
+    {
+      "id": "key-true",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "max"
+          },
+          "constraint": {
+            "level": true
+          },
+          "success": {
+            "level": "high"
+          },
+          "ontology": {
+            "level": "low"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "contrarian",
+        "ontologist",
+        "simplifier"
+      ]
+    },
+    {
+      "id": "key-{}",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "max"
+          },
+          "constraint": {
+            "level": {}
+          },
+          "success": {
+            "level": "high"
+          },
+          "ontology": {
+            "level": "low"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "contrarian",
+        "ontologist",
+        "simplifier"
+      ]
+    },
+    {
+      "id": "key-null",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "max"
+          },
+          "constraint": {
+            "level": null
+          },
+          "success": {
+            "level": "high"
+          },
+          "ontology": {
+            "level": "low"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "contrarian",
+        "ontologist",
+        "simplifier"
+      ]
+    },
+    {
+      "id": "mixed-0",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "low"
+          },
+          "constraint": {
+            "level": "constructor"
+          },
+          "success": {
+            "level": "high"
+          },
+          "ontology": {
+            "level": "toString"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "contrarian",
+        "socratic",
+        "ontologist"
+      ]
+    },
+    {
+      "id": "mixed-1",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "max"
+          },
+          "constraint": {
+            "level": "low"
+          },
+          "success": {
+            "level": "constructor"
+          },
+          "ontology": {
+            "level": "high"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "contrarian",
+        "simplifier",
+        "ontologist"
+      ]
+    },
+    {
+      "id": "mixed-2",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "__proto__"
+          },
+          "constraint": {
+            "level": "max"
+          },
+          "success": {
+            "level": "low"
+          },
+          "ontology": {
+            "level": "constructor"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "contrarian",
+        "socratic",
+        "ontologist"
+      ]
+    },
+    {
+      "id": "mixed-3",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "mid"
+          },
+          "constraint": {
+            "level": "__proto__"
+          },
+          "success": {
+            "level": "max"
+          },
+          "ontology": {
+            "level": "low"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "contrarian",
+        "ontologist",
+        "socratic"
+      ]
+    },
+    {
+      "id": "mixed-4",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "weird"
+          },
+          "constraint": {
+            "level": "mid"
+          },
+          "success": {
+            "level": "__proto__"
+          },
+          "ontology": {
+            "level": "max"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "socratic",
+        "contrarian",
+        "simplifier"
+      ]
+    },
+    {
+      "id": "mixed-5",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "toString"
+          },
+          "constraint": {
+            "level": "weird"
+          },
+          "success": {
+            "level": "mid"
+          },
+          "ontology": {
+            "level": "__proto__"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "contrarian",
+        "socratic",
+        "ontologist"
+      ]
+    },
+    {
+      "id": "mixed-6",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "high"
+          },
+          "constraint": {
+            "level": "toString"
+          },
+          "success": {
+            "level": "weird"
+          },
+          "ontology": {
+            "level": "mid"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "contrarian",
+        "evaluator",
+        "ontologist"
+      ]
+    },
+    {
+      "id": "mixed-7",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "constructor"
+          },
+          "constraint": {
+            "level": "high"
+          },
+          "success": {
+            "level": "toString"
+          },
+          "ontology": {
+            "level": "weird"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "contrarian",
+        "socratic",
+        "ontologist"
+      ]
+    },
+    {
+      "id": "mixed-8",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "low"
+          },
+          "constraint": {
+            "level": "constructor"
+          },
+          "success": {
+            "level": "high"
+          },
+          "ontology": {
+            "level": "toString"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "contrarian",
+        "socratic",
+        "ontologist"
+      ]
+    },
+    {
+      "id": "mixed-9",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "max"
+          },
+          "constraint": {
+            "level": "low"
+          },
+          "success": {
+            "level": "constructor"
+          },
+          "ontology": {
+            "level": "high"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "contrarian",
+        "simplifier",
+        "ontologist"
+      ]
+    },
+    {
+      "id": "mixed-10",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "__proto__"
+          },
+          "constraint": {
+            "level": "max"
+          },
+          "success": {
+            "level": "low"
+          },
+          "ontology": {
+            "level": "constructor"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "contrarian",
+        "socratic",
+        "ontologist"
+      ]
+    },
+    {
+      "id": "mixed-11",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "mid"
+          },
+          "constraint": {
+            "level": "__proto__"
+          },
+          "success": {
+            "level": "max"
+          },
+          "ontology": {
+            "level": "low"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "contrarian",
+        "ontologist",
+        "socratic"
+      ]
+    },
+    {
+      "id": "mixed-12",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "weird"
+          },
+          "constraint": {
+            "level": "mid"
+          },
+          "success": {
+            "level": "__proto__"
+          },
+          "ontology": {
+            "level": "max"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "socratic",
+        "contrarian",
+        "simplifier"
+      ]
+    },
+    {
+      "id": "mixed-13",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "toString"
+          },
+          "constraint": {
+            "level": "weird"
+          },
+          "success": {
+            "level": "mid"
+          },
+          "ontology": {
+            "level": "__proto__"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "contrarian",
+        "socratic",
+        "ontologist"
+      ]
+    },
+    {
+      "id": "mixed-14",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "high"
+          },
+          "constraint": {
+            "level": "toString"
+          },
+          "success": {
+            "level": "weird"
+          },
+          "ontology": {
+            "level": "mid"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "contrarian",
+        "evaluator",
+        "ontologist"
+      ]
+    },
+    {
+      "id": "mixed-15",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "constructor"
+          },
+          "constraint": {
+            "level": "high"
+          },
+          "success": {
+            "level": "toString"
+          },
+          "ontology": {
+            "level": "weird"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "contrarian",
+        "socratic",
+        "ontologist"
+      ]
+    },
+    {
+      "id": "mixed-16",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "low"
+          },
+          "constraint": {
+            "level": "constructor"
+          },
+          "success": {
+            "level": "high"
+          },
+          "ontology": {
+            "level": "toString"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "contrarian",
+        "socratic",
+        "ontologist"
+      ]
+    },
+    {
+      "id": "mixed-17",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "max"
+          },
+          "constraint": {
+            "level": "low"
+          },
+          "success": {
+            "level": "constructor"
+          },
+          "ontology": {
+            "level": "high"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "contrarian",
+        "simplifier",
+        "ontologist"
+      ]
+    },
+    {
+      "id": "mixed-18",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "__proto__"
+          },
+          "constraint": {
+            "level": "max"
+          },
+          "success": {
+            "level": "low"
+          },
+          "ontology": {
+            "level": "constructor"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "contrarian",
+        "socratic",
+        "ontologist"
+      ]
+    },
+    {
+      "id": "mixed-19",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "mid"
+          },
+          "constraint": {
+            "level": "__proto__"
+          },
+          "success": {
+            "level": "max"
+          },
+          "ontology": {
+            "level": "low"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "contrarian",
+        "ontologist",
+        "socratic"
+      ]
+    },
+    {
+      "id": "mixed-20",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "weird"
+          },
+          "constraint": {
+            "level": "mid"
+          },
+          "success": {
+            "level": "__proto__"
+          },
+          "ontology": {
+            "level": "max"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "socratic",
+        "contrarian",
+        "simplifier"
+      ]
+    },
+    {
+      "id": "mixed-21",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "toString"
+          },
+          "constraint": {
+            "level": "weird"
+          },
+          "success": {
+            "level": "mid"
+          },
+          "ontology": {
+            "level": "__proto__"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "contrarian",
+        "socratic",
+        "ontologist"
+      ]
+    },
+    {
+      "id": "mixed-22",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "high"
+          },
+          "constraint": {
+            "level": "toString"
+          },
+          "success": {
+            "level": "weird"
+          },
+          "ontology": {
+            "level": "mid"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "contrarian",
+        "evaluator",
+        "ontologist"
+      ]
+    },
+    {
+      "id": "mixed-23",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "constructor"
+          },
+          "constraint": {
+            "level": "high"
+          },
+          "success": {
+            "level": "toString"
+          },
+          "ontology": {
+            "level": "weird"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "contrarian",
+        "socratic",
+        "ontologist"
+      ]
+    },
+    {
+      "id": "mixed-24",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "low"
+          },
+          "constraint": {
+            "level": "constructor"
+          },
+          "success": {
+            "level": "high"
+          },
+          "ontology": {
+            "level": "toString"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "contrarian",
+        "socratic",
+        "ontologist"
+      ]
+    },
+    {
+      "id": "mixed-25",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "max"
+          },
+          "constraint": {
+            "level": "low"
+          },
+          "success": {
+            "level": "constructor"
+          },
+          "ontology": {
+            "level": "high"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "contrarian",
+        "simplifier",
+        "ontologist"
+      ]
+    },
+    {
+      "id": "mixed-26",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "__proto__"
+          },
+          "constraint": {
+            "level": "max"
+          },
+          "success": {
+            "level": "low"
+          },
+          "ontology": {
+            "level": "constructor"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "contrarian",
+        "socratic",
+        "ontologist"
+      ]
+    },
+    {
+      "id": "mixed-27",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "mid"
+          },
+          "constraint": {
+            "level": "__proto__"
+          },
+          "success": {
+            "level": "max"
+          },
+          "ontology": {
+            "level": "low"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "contrarian",
+        "ontologist",
+        "socratic"
+      ]
+    },
+    {
+      "id": "mixed-28",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "weird"
+          },
+          "constraint": {
+            "level": "mid"
+          },
+          "success": {
+            "level": "__proto__"
+          },
+          "ontology": {
+            "level": "max"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "socratic",
+        "contrarian",
+        "simplifier"
+      ]
+    },
+    {
+      "id": "mixed-29",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "toString"
+          },
+          "constraint": {
+            "level": "weird"
+          },
+          "success": {
+            "level": "mid"
+          },
+          "ontology": {
+            "level": "__proto__"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "contrarian",
+        "socratic",
+        "ontologist"
+      ]
+    },
+    {
+      "id": "mixed-30",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "high"
+          },
+          "constraint": {
+            "level": "toString"
+          },
+          "success": {
+            "level": "weird"
+          },
+          "ontology": {
+            "level": "mid"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "contrarian",
+        "evaluator",
+        "ontologist"
+      ]
+    },
+    {
+      "id": "mixed-31",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": "constructor"
+          },
+          "constraint": {
+            "level": "high"
+          },
+          "success": {
+            "level": "toString"
+          },
+          "ontology": {
+            "level": "weird"
+          }
+        }
+      },
+      "count": 3,
+      "expected": [
+        "contrarian",
+        "socratic",
+        "ontologist"
+      ]
+    }
+  ],
+  "rounds": [
+    {
+      "tracker": null,
+      "expected": 1
+    },
+    {
+      "tracker": {},
+      "expected": 1
+    },
+    {
+      "tracker": {
+        "scanRounds": "3"
+      },
+      "expected": 1
+    },
+    {
+      "tracker": {
+        "scanRounds": 3.9,
+        "roundId": 99,
+        "lastScanRoundId": 50
+      },
+      "expected": 4
+    },
+    {
+      "tracker": {
+        "scanRounds": -1
+      },
+      "expected": 1
+    },
+    {
+      "tracker": {
+        "scanRounds": 1e+21
+      },
+      "expected": 1e+21
+    }
+  ],
+  "pending": [
+    {
+      "id": "empty",
+      "rows": [],
+      "tracker": null,
+      "expected": {
+        "pendingQuestionIds": [],
+        "highContradictionCount": 0,
+        "pending": false
+      }
+    },
+    {
+      "id": "pending",
+      "rows": [
+        {
+          "event": "question_asked",
+          "eventId": "e",
+          "turnId": "t1",
+          "questionId": "q"
+        }
+      ],
+      "tracker": null,
+      "expected": {
+        "pendingQuestionIds": [
+          "t1\u0000q"
+        ],
+        "highContradictionCount": 0,
+        "pending": true
+      }
+    },
+    {
+      "id": "cleared",
+      "rows": [
+        {
+          "event": "question_asked",
+          "eventId": "e",
+          "turnId": "t1",
+          "questionId": "q"
+        },
+        {
+          "event": "answer_recorded",
+          "eventId": "e",
+          "turnId": "t1",
+          "questionId": "q"
+        }
+      ],
+      "tracker": null,
+      "expected": {
+        "pendingQuestionIds": [],
+        "highContradictionCount": 0,
+        "pending": false
+      }
+    },
+    {
+      "id": "reused",
+      "rows": [
+        {
+          "event": "question_asked",
+          "eventId": "e",
+          "turnId": "t1",
+          "questionId": "q"
+        },
+        {
+          "event": "answer_recorded",
+          "eventId": "e",
+          "turnId": "t1",
+          "questionId": "q"
+        },
+        {
+          "event": "question_asked",
+          "eventId": "e",
+          "turnId": "t2",
+          "questionId": "q"
+        }
+      ],
+      "tracker": null,
+      "expected": {
+        "pendingQuestionIds": [
+          "t2\u0000q"
+        ],
+        "highContradictionCount": 0,
+        "pending": true
+      }
+    },
+    {
+      "id": "order",
+      "rows": [
+        {
+          "event": "question_asked",
+          "eventId": "e",
+          "turnId": "b",
+          "questionId": "q"
+        },
+        {
+          "event": "question_asked",
+          "eventId": "e",
+          "turnId": "a",
+          "questionId": "q"
+        },
+        {
+          "event": "question_asked",
+          "eventId": "e",
+          "turnId": "b",
+          "questionId": "q"
+        }
+      ],
+      "tracker": null,
+      "expected": {
+        "pendingQuestionIds": [
+          "b\u0000q",
+          "a\u0000q"
+        ],
+        "highContradictionCount": 0,
+        "pending": true
+      }
+    },
+    {
+      "id": "badFields",
+      "rows": [
+        {
+          "event": "question_asked",
+          "eventId": "e",
+          "turnId": 3,
+          "questionId": "q"
+        },
+        {
+          "event": "question_asked",
+          "eventId": "e",
+          "turnId": "t",
+          "questionId": false
+        },
+        {
+          "event": "question_asked",
+          "eventId": "e",
+          "turnId": "",
+          "questionId": ""
+        }
+      ],
+      "tracker": null,
+      "expected": {
+        "pendingQuestionIds": [
+          "\u0000"
+        ],
+        "highContradictionCount": 0,
+        "pending": true
+      }
+    },
+    {
+      "id": "scanOnly",
+      "rows": [
+        {
+          "event": "scan_completed",
+          "eventId": "e",
+          "turnId": "t",
+          "questionId": "q"
+        }
+      ],
+      "tracker": null,
+      "expected": {
+        "pendingQuestionIds": [],
+        "highContradictionCount": 0,
+        "pending": false
+      }
+    },
+    {
+      "id": "tracker",
+      "rows": [],
+      "tracker": {
+        "contradictions": [
+          null,
+          {},
+          {
+            "severity": "high"
+          },
+          {
+            "severity": "medium"
+          },
+          {
+            "severity": "high"
+          }
+        ]
+      },
+      "expected": {
+        "pendingQuestionIds": [],
+        "highContradictionCount": 2,
+        "pending": true
+      }
+    },
+    {
+      "id": "badTracker",
+      "rows": [],
+      "tracker": {
+        "contradictions": "nope"
+      },
+      "expected": {
+        "pendingQuestionIds": [],
+        "highContradictionCount": 0,
+        "pending": false
+      }
+    },
+    {
+      "id": "nulCollision",
+      "rows": [
+        {
+          "event": "question_asked",
+          "eventId": "e",
+          "turnId": "t\u0000q",
+          "questionId": "r"
+        },
+        {
+          "event": "answer_recorded",
+          "eventId": "e",
+          "turnId": "t",
+          "questionId": "q\u0000r"
+        }
+      ],
+      "tracker": null,
+      "expected": {
+        "pendingQuestionIds": [],
+        "highContradictionCount": 0,
+        "pending": false
+      }
+    },
+    {
+      "id": "emptyAnswer",
+      "rows": [
+        {
+          "event": "question_asked",
+          "eventId": "e",
+          "turnId": "t",
+          "questionId": "q"
+        },
+        {
+          "event": "answer_recorded",
+          "eventId": "e",
+          "turnId": "t",
+          "questionId": "q",
+          "answers": []
+        }
+      ],
+      "tracker": null,
+      "expected": {
+        "pendingQuestionIds": [],
+        "highContradictionCount": 0,
+        "pending": false
+      }
+    }
+  ],
+  "failures": [
+    {
+      "id": "object-normal",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": {
+              "toString": null
+            }
+          }
+        }
+      },
+      "count": 2,
+      "error": "Cannot convert object to primitive value",
+      "kind": "TypeError"
+    },
+    {
+      "id": "object-nan",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": {
+              "toString": null
+            }
+          }
+        }
+      },
+      "count": "nan",
+      "error": "Cannot convert object to primitive value",
+      "kind": "TypeError"
+    },
+    {
+      "id": "nested-normal",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": [
+              {
+                "toString": 3
+              }
+            ]
+          }
+        }
+      },
+      "count": 2,
+      "error": "Cannot convert object to primitive value",
+      "kind": "TypeError"
+    },
+    {
+      "id": "nested-nan",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": [
+              {
+                "toString": 3
+              }
+            ]
+          }
+        }
+      },
+      "count": "nan",
+      "error": "Cannot convert object to primitive value",
+      "kind": "TypeError"
+    }
+  ],
+  "overflow": {
+    "row": "{\"event\":\"question_asked\",\"eventId\":\"e\",\"turnId\":\"t\",\"questionId\":\"q\",\"extra\":1e400}",
+    "expected": {
+      "pendingQuestionIds": [
+        "t\u0000q"
+      ],
+      "highContradictionCount": 0,
+      "pending": true
+    }
+  }
+}

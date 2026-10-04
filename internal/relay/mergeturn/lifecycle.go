@@ -147,13 +147,30 @@ func (s *Service) Release(ctx context.Context, turn, actor, disposition, reason,
 // A head that moved on a holding turn is a new candidate, so it gets its own grant (cause
 // candidate_restated) to answer: the grant it holds names a head that no longer exists, and
 // unansweredGrant (refusals.go) stops merge-turn-check until the new one is acknowledged.
+//
+// A head that moves on a turn bound to a pull request must be that pull request's head (CRW-538): the head is read
+// from the forge before the transaction and compared with it (pullRequestVerdict), because nothing the turn records
+// says which head belongs to which pull request. A head that did not move, a turn that records no pull request and a
+// relay with no pull request reader read nothing.
 func (s *Service) Ready(ctx context.Context, turn, actor string, ready bool, head, cause string) (map[string]any, error) {
+	var read *pullRequestRead
+	if s.Pulls != nil && head != "" {
+		early, err := s.Store.MergeTurn(ctx, turn)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		}
+		if err == nil && early.PRNumber.Valid && forgeRepository(early.Repository) && early.HolderTaskID == actor && (early.State == Waiting || early.State == Holding) && head != early.CandidateHead {
+			read = readPullRequest(ctx, s.Pulls, early, head)
+		}
+	}
 	at := s.now()
 	var blocked any
 	var reset *headReset
+	var decided map[string]any
 	var refusal *registry.CoordinationRefusal
 	err := s.Store.Transaction(ctx, func(tx context.Context, _ *sql.Conn) error {
 		reset = nil
+		decided = nil
 		r, err := s.row(tx, turn)
 		if err != nil {
 			return err
@@ -180,6 +197,11 @@ func (s *Service) Ready(ctx context.Context, turn, actor string, ready bool, hea
 			head = r.CandidateHead
 		}
 		moved := head != r.CandidateHead
+		if moved && s.Pulls != nil && r.PRNumber.Valid {
+			if refusal, decided = pullRequestVerdict(r, actor, "declares", head, read); refusal != nil {
+				return s.Registry.RecordCoordinationConflict(tx, *refusal, at)
+			}
+		}
 		if moved {
 			reset = &headReset{from: r.CandidateHead, to: head, readyAsked: ready}
 		}
@@ -283,6 +305,9 @@ func (s *Service) Ready(ctx context.Context, turn, actor string, ready bool, hea
 	answer["blockedBy"] = blocked
 	if reset != nil {
 		answer["readinessReset"] = reset.answer(turn, actor)
+	}
+	if decided != nil {
+		answer["pullRequestHead"] = decided
 	}
 	return answer, nil
 }
