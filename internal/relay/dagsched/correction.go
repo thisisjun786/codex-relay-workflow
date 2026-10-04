@@ -25,8 +25,12 @@ import (
 
 // CorrectionInstruction is the line a correction message must carry. The child cannot read the relay's store, so the manifest travels as a file under its own artifact root: the line names
 // the path, the manifest digest (the one name of the manifest in the line, which RecordCorrection reads back) and the sha256 of the file's bytes.
-func CorrectionInstruction(issue string, generation int64, digest, path, fileSHA string) string {
-	return fmt.Sprintf("Correction generation %d of %s: address the findings of the current ruling. Before consuming any input, read the input manifest at %s (manifest %s, file sha256 %s), re-verify every uri, sha256 and byte count in it against the files on disk, and answer blocked_needs_input on any mismatch.", generation, issue, path, digest, fileSHA)
+func CorrectionInstruction(issue string, generation int64, digest, path, fileSHA string, pinnedInputs ...bool) string {
+	instruction := fmt.Sprintf("Correction generation %d of %s: address the findings of the current ruling. Before consuming any input, read the input manifest at %s (manifest %s, file sha256 %s), re-verify every uri, sha256 and byte count in it against the files on disk, and answer blocked_needs_input on any mismatch.", generation, issue, path, digest, fileSHA)
+	if len(pinnedInputs) != 0 && pinnedInputs[0] {
+		instruction += pinnedInputReadInstruction
+	}
+	return instruction
 }
 
 // Prepared is what PrepareCorrection returns.
@@ -98,6 +102,9 @@ func (s *Scheduler) PrepareCorrection(ctx context.Context, plan, node, actor str
 	if len(blocked) > 0 {
 		return out, refusalOfFinding(blocked[0])
 	}
+	if err := s.pinnedInputKeep(ctx, plan, body, opts); err != nil {
+		return out, err
+	}
 	if findings, err := s.VerifyManifest(ctx, q, plan, snap, n, body, opts); err != nil {
 		return out, err
 	} else if len(findings) > 0 {
@@ -149,7 +156,7 @@ func (s *Scheduler) PrepareCorrection(ctx context.Context, plan, node, actor str
 	if err != nil {
 		return out, err
 	}
-	out.Instruction = CorrectionInstruction(n.IssueKey, next, digest, path, shaOf(canonical))
+	out.Instruction = CorrectionInstruction(n.IssueKey, next, digest, path, shaOf(canonical), s.pinnedInputHasCopies(plan, keptBody))
 	out.DispatchRequestID = CorrectionRequestID(plan, node, digest, next)
 	return out, nil
 }
@@ -300,7 +307,7 @@ func (s *Scheduler) RecordCorrection(ctx context.Context, plan, node, actor, sup
 				return refuse(contract.RefusalManifestUnverified, "relationship %s has no artifact root, so the child cannot have been given the manifest %s", rel.ID, digest)
 			}
 			canonical := []byte(dag.Canonical(body))
-			want := CorrectionInstruction(n.IssueKey, rel.Generation, digest, frozenManifestPath(roots[0], canonical), shaOf(canonical))
+			want := CorrectionInstruction(n.IssueKey, rel.Generation, digest, frozenManifestPath(roots[0], canonical), shaOf(canonical), s.pinnedInputHasCopies(plan, body))
 			if !lineSafe(want) {
 				return refuse(contract.RefusalMalformedReceipt, "the artifact root of %s has a control character: the relay's message would carry another path than the one the manifest copy has", rel.ID)
 			}
