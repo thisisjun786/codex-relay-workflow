@@ -662,6 +662,13 @@ The pinned oracle already publishes through an exclusive 0600 temporary file and
 - With cwd case folding enabled, SQL's ASCII-only `lower()` misses a non-ASCII case variant in a child path (`/Ü/child` for `/ü`) that the explicitly folded scan predicate accepts (source `recall/src/index-search.ts:243-246`; darwin-recorded candidate cases); port: kept.
 - An embedded NUL in a word of at least three code points survives FTS quoting and makes MATCH raise `unterminated string`, although the final text predicate can match that word (source `recall/src/index-search.ts:156-158,185-188`; Node-recorded NUL candidate case); port: kept.
 
+## Found by the recall format and flag port
+
+- Help detection scans every argument before parsing, so a literal --help or -h query after the -- terminator prints usage instead of searching (source recall/src/cli.ts:70-71,418-421; recorded help cases and TestRecallReadFlagsAndHelpPrecedence); port: kept.
+- Explicit home validation checks existence only, so an existing regular file is accepted as a home and later readers must handle it (source recall/src/cli.ts:97-103; TestRecallExplicitHome); port: kept.
+- Date.parse accepts calendar rollover and zone-less legacy stamps, so February 30 normalizes and an age/newer label for a local-time stamp depends on host timezone (source recall/src/format.ts:61-65,89-105; recorded age cases across UTC, Seoul and New York, including DST transitions); port: kept.
+- UTF-16 clipping can split an astral pair; the Go UTF-8 result represents that lone surrogate as U+FFFD instead of JavaScript's lone-surrogate JSON escape, matching the existing recall string boundary (source recall/src/format.ts:18,143; explicitly classified representation case in testdata/format/oracle.json and TestFormatOracle); port: kept as a platform-boundary difference outside well-formed UTF-8 output.
+
 ## CRW-520: session CLI diagnostics
 
 - Plain session output coerces the bound source identity to `[object Object]`, hiding its fields (pabcd-state/src/session-cli.ts:118 at v0.2.40); port: kept.
