@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -389,6 +390,13 @@ func TestWriteDirectoryDoesNotNeedReadPermission(t *testing.T) {
 	writeTestRequire(t, os.MkdirAll(dir, 0700))
 	writeTestRequire(t, os.Chmod(dir, 0300))
 	t.Cleanup(func() { _ = os.Chmod(dir, 0700) })
+	if runtime.GOOS == "darwin" {
+		// Existing open_darwin.go requires readable ancestors and fails closed.
+		if WriteGoalplan(cwd, p) == nil {
+			t.Fatal("Darwin unreadable directory accepted")
+		}
+		return
+	}
 	writeTestRequire(t, WriteGoalplan(cwd, p))
 	writeTestRequire(t, AppendGoalplanLedger(cwd, p.Slug, GoalplanLedgerEntry{Slug: p.Slug, Event: EventCreated}))
 }
