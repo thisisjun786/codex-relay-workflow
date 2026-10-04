@@ -1,0 +1,49 @@
+[
+  {
+    "name": "missing-session",
+    "result": {
+      "output": "receipt test: --session <id> is required",
+      "code": 1
+    },
+    "priorPreserved": true
+  },
+  {
+    "name": "missing-command",
+    "result": {
+      "output": "receipt test: a command is required after `--`, e.g. `crw pabcd receipt test --session <id> -- npm test`",
+      "code": 1
+    },
+    "priorPreserved": true
+  },
+  {
+    "name": "phase-b",
+    "result": {
+      "output": "receipt test: session is at B, not C — a check receipt is produced during Check",
+      "code": 1
+    },
+    "priorPreserved": true
+  },
+  {
+    "name": "missing-epoch",
+    "result": {
+      "output": "receipt test: no check binding on this session. Step back with `crw pabcd orchestrate B` and re-enter `crw pabcd orchestrate C` to mint one (this cycle predates CHECK-BINDING-01).",
+      "code": 1
+    },
+    "priorPreserved": true
+  },
+  {
+    "name": "missing-executable",
+    "result": {
+      "output": "receipt test: the command did not run to completion (spawnSync crw-receipt-missing-command ENOENT); no receipt written",
+      "code": 1
+    },
+    "priorPreserved": false
+  },
+  {
+    "name": "relative-path",
+    "result": {
+      "code": 0,
+      "output": "<RECEIPT>"
+    }
+  }
+]

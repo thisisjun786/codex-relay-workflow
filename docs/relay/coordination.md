@@ -449,6 +449,60 @@ a pull request comment is never exempted.
   like `--required` and `--actor`; the payload carries each entry so the merge record keeps the
   grade and the evidence that were given.
 
+## An independent review beside a restatement
+
+A child that ran the independent code review (`crw review`) states what it did with the result in an
+`independentReview` item. The item is a reference opinion for the parent and never a merge gate, so
+everything below is a warning: it is read beside the restatement, not in it, and changes neither
+`restatement.current`, its problems, the verdict nor the exit code.
+
+The item is one JSON object (its definition is `definitions.IndependentReview` in the
+completion-receipt contract): `artifact` (`path`, absolute, and `sha256` of the file's bytes), `status`
+(`complete`, `partial` or `unavailable`) with its `reason`, `invalidReviewerCalls`, an optional
+`headPatchId`, and `dispositions`, one `{finding, disposition, evidence}` per answered finding, where
+`finding` is the zero-based position in the artifact's `findings` and `disposition` is `fixed`,
+`refuted` or `recorded`. Without an artifact (`unavailable`, nothing was written) there is nothing to
+compare. The child states it in two places: `emit --independent-review <file>` puts it on a
+`ready_for_review` receipt, which the relay stores as stated and never reads the artifact it names (an
+execution-only receipt carrying it is refused `malformed_receipt`), and the same object is the
+`independentReview` member of the handoff record. The relay's `work_report_handoffs` rows have fixed
+columns and do not carry it.
+
+`merge-evidence --restate <record>` reads the record's member. The payload gains a top-level
+`independentReview` object, `{"stated": <bool>, "warnings": [{"code", "detail"}]}`, when the record states
+the item, or when `--expect-independent-review` is given (the flag grades a restated record and is a
+usage error without `--restate`). Otherwise the payload is exactly what it was.
+
+- **What is compared.** The item's shape; the file at `artifact.path`; its sha256 against the file's
+  bytes; its status against the artifact's; the artifact's head against the head under restatement; and
+  every kept P0, P1 or security finding of the artifact against the dispositions. The head matches when
+  it is the same commit, or when the item's `headPatchId` equals the artifact's `patchId`: a base refresh
+  does not change the patch, and a head whose patch-id is unchanged is not reviewed again. The relay does
+  not compute the patch-id; the parent confirms the stated one with the diff the review bundle builds
+  (command below; its options are fixed in `internal/review/bundle/gitdiff.go`, and a plain `git diff`
+  differs on binary files).
+- **Warning codes**, all prefixed `independent_review_`: `absent` (flag, no member), `malformed`,
+  `unreadable`, `sha256_mismatch`, `artifact_invalid`, `status_differs`, `head_differs`,
+  `disposition_missing` and `disposition_unknown`. A file that cannot be read or does not hash to the
+  stated sha256 ends the comparison with that one warning, since nothing read from other bytes
+  describes the file the child meant.
+- **Reading a path the record names.** The path must be absolute; the file is opened without waiting
+  for a writer, must be a regular file and is read to at most 8 MiB. No warning repeats what the file
+  holds, a validator's message or an operating-system error: only fixed text, the item's own scalars and
+  digests.
+- **What the relay does not decide.** Whether a finding is real, or whether an open one matters, is the
+  parent's judgement from the raw artifact ([the crw-run reading](../../plugins/crw/skills/crw-run/references/merge-readiness.md#the-independent-review-is-a-reference-opinion)).
+  The item is unauthenticated, like the rest of the record.
+
+The patch-id of `<head>` against `<base>`, as the review bundle computes it:
+
+```sh
+git diff -z --no-abbrev --full-index --find-renames=50% --no-ext-diff --no-textconv --no-color \
+  --no-relative --diff-algorithm=myers --no-indent-heuristic --inter-hunk-context=0 \
+  --src-prefix=a/ --dst-prefix=b/ --submodule=short --ignore-submodules=none -O/dev/null -U3 -p \
+  $(git merge-base <base> <head>) <head> -- | git patch-id --stable
+```
+
 ## What this is not
 - **`reaffirm` spans two transactions, and that is a choice with a stated reason.** The first
   validates and records its refusals - ownership, an open agreement, a revision that actually
