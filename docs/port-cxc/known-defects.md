@@ -737,3 +737,7 @@ The pinned oracle already publishes through an exclusive 0600 temporary file and
 - A nonfinite `nowMs` can yield NaN scores for dated rows but finite lane scores for undated rows, making the score/timestamp/id comparator inconsistent; its observable order then depends on V8's comparison schedule (source `recall/src/index-search.ts:149-153,349-357`, recorded `dates/date/1`); port: kept, using the existing V8-compatible sorter and preserving Map insertion order.
 - Fractional limits are not normalized: a recent page truncated at limit 1.5 throws `Invalid array length`, and a limit of 10.25 makes the 102.5-row pool throw `datatype mismatch` in either ordering (source `recall/src/index-search.ts:96-98,314,378-386`, recorded rank/edge numeric cases); port: kept.
 - The ranking test's comment that a two-character Korean query leaves both lanes empty is not universal: unicode61 FTS can rank a standalone `한글` token; `한글` within `한글문서` is the actual empty-lane LIKE witness (source `recall/test/index-rank.test.ts:166-176`, recorded rank/edge Korean cases); port: kept.
+
+## Found by the CRW-381 recall chat-search entry port
+
+- The entry computes a positive-days cutoff before checking the empty plan or forced-scan flag, so an out-of-range value throws `Invalid time value` even for an empty query and before the origin callback (source `recall/src/chat-search.ts:159-164`, recorded `invalid-days` in `internal/recall/testdata/chatsearch/oracle.json`); port: kept.
