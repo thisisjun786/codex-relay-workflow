@@ -14,6 +14,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -55,6 +56,14 @@ func receiptHelper(a []string) {
 		for _, key := range a[1:] {
 			fmt.Fprintf(os.Stdout, "%s=%s\n", key, os.Getenv(key))
 		}
+	case "output":
+		_, _ = io.Copy(os.Stdout, strings.NewReader(strings.Repeat("o", 1<<20)))
+	case "mixed-output":
+		var writers sync.WaitGroup
+		writers.Add(2)
+		go func() { defer writers.Done(); _, _ = io.Copy(os.Stdout, strings.NewReader(strings.Repeat("o", 1<<20))) }()
+		go func() { defer writers.Done(); _, _ = io.Copy(os.Stderr, strings.NewReader(strings.Repeat("e", 1<<20))) }()
+		writers.Wait()
 	case "block":
 		fmt.Fprintln(os.Stdout, "ready")
 		_, _ = io.Copy(io.Discard, os.Stdin)
@@ -618,5 +627,39 @@ func TestReceiptCancellationWithInheritedStream(t *testing.T) {
 		_ = holder.Kill()
 		<-result // release inherited descriptors before failing; leave no overlapping process
 		t.Fatal("cancelled runner waited for grandchild pipe EOF")
+	}
+}
+
+type receiptFailWriter struct{}
+
+func (receiptFailWriter) Write(b []byte) (int, error) {
+	return 0, errors.New("injected output failure")
+}
+
+func TestReceiptWriterFailureClosesPipe(t *testing.T) {
+	root := receiptRepo(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	a := ReceiptCLIArgs{Verb: "test", Cwd: root, Session: "s1", Command: receiptCommand(t, "output")}
+	got := receiptRun(t, a, ReceiptRunOptions{Context: ctx, Stdout: receiptFailWriter{}})
+	if ctx.Err() != nil {
+		t.Fatal("output failure blocked the child until the context deadline")
+	}
+	if got.Code == 0 {
+		t.Fatal("output failure produced success")
+	}
+	receiptAbsent(t, root)
+}
+
+func TestReceiptSharedOutputDestination(t *testing.T) {
+	root := receiptRepo(t)
+	var output bytes.Buffer
+	a := ReceiptCLIArgs{Verb: "test", Cwd: root, Session: "s1", Command: receiptCommand(t, "mixed-output")}
+	got := receiptRun(t, a, ReceiptRunOptions{Stdout: &output, Stderr: &output})
+	if got.Code != 0 {
+		t.Fatal(got)
+	}
+	if bytes.Count(output.Bytes(), []byte("o")) != 1<<20 || bytes.Count(output.Bytes(), []byte("e")) != 1<<20 {
+		t.Fatal("shared output was lost or corrupted")
 	}
 }

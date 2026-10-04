@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"syscall"
 	"time"
@@ -45,6 +46,7 @@ type ReceiptCLIResult struct {
 
 // ReceiptRunOptions supplies the caller's streams and cancellation. Nil fields inherit process stdio and an uncancelled
 // context. Cancellation kills only the process this call started, then follows the oracle's after-capture/result ordering.
+// Caller-owned reader/writer callbacks must make progress; closing a pipe cannot interrupt a blocked callback.
 type ReceiptRunOptions struct {
 	Context        context.Context
 	Stdin          io.Reader
@@ -237,6 +239,17 @@ func runReceiptCommand(argv []string, cwd string, o ReceiptRunOptions) error {
 		if _, file := (*slot).(*os.File); file {
 			continue
 		}
+		shared := false
+		for _, p := range pipes {
+			if reflect.TypeOf(p.destination).Comparable() && p.destination == *slot {
+				*slot = p.child
+				shared = true
+				break
+			}
+		}
+		if shared {
+			continue
+		}
 		r, w, err := os.Pipe()
 		if err != nil {
 			return err
@@ -252,7 +265,11 @@ func runReceiptCommand(argv []string, cwd string, o ReceiptRunOptions) error {
 	drained := make(chan error, len(pipes))
 	for _, p := range pipes {
 		_ = p.child.Close()
-		go func() { _, err := io.Copy(p.destination, p.reader); drained <- err }()
+		go func() {
+			defer p.reader.Close() // a failed destination must not leave the child blocked on a full pipe
+			_, err := io.Copy(p.destination, p.reader)
+			drained <- err
+		}()
 	}
 	stop := make(chan struct{})
 	defer close(stop)
