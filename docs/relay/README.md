@@ -909,8 +909,8 @@ pending change it is.
 
 ## How invocation actually becomes automatic
 
-By POLLING, not by notification. The transport bridge answers every server-initiated message with
-an error and exposes no subscription seam, so the daemon detects a terminal turn by reading, on a
+By POLLING, not by notification. The transport exposes no delivery-notification seam,
+so the daemon detects a terminal turn by reading, on a
 bounded cadence, and then dispatches the authorized wake itself. That is what makes it automatic:
 saving an inbox item until somebody looks is not a wake, and is never reported as one.
 
@@ -921,7 +921,8 @@ actually changed, or when a previous failure recorded that work is owed.
 
 These are recorded because behaviour depends on them.
 
-- No notification subscription exists, so terminal turns are found by bounded polling.
+- Delivery terminal turns are found by bounded polling. The client has a private
+  terminal observer only for [subscription release](subscriptions.md); it does not wake tasks.
 - An interactive parent cannot be pushed to. Its event is stored and reported `stored_not_woken`.
 - Path binding is proven; byte stability is enforced only with a read lease, which is opt-in
   because holding one blocks writers for the kernel's lease-break timeout.
