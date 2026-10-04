@@ -80,7 +80,7 @@ func rewriteCount(stored any, kept float64) bool {
 	if !ok || len(n) > rewriteNumberMaxLen {
 		return false
 	}
-	if e := strings.IndexAny(string(n), "eE"); e >= 0 && len(n)-e > 5 { // e, a sign and three digits
+	if e := strings.IndexAny(string(n), "eE"); e >= 0 && len(strings.TrimLeft(string(n)[e+1:], "+-")) > 3 {
 		return false
 	}
 	written, err := json.Marshal(kept)
