@@ -848,3 +848,9 @@ Source: `plugins/codexclaw/components/pabcd-state/src/memory-write-gate.ts` at v
 - Hard links to a memory file, and names that differ only in case on a case-insensitive volume, reach the root without matching it (the gate :122-126); port: kept.
 - A non-canonical session id spends the state file its sanitised form names, and an empty `memoryWriteTurn` restores as none, so a marker without a turn is spendable by any turn (the gate :267-289 through `state.ts` readState); port: kept.
 - The PowerShell write verbs of the oracle test `Windows write abbreviations, aliases, and interpreters are gated` (Set-Content, Out-File, Add-Content, Copy-Item, sc, ni, `[IO.File]::WriteAllText`) are read by the oracle's parser and not by the Go one, which has no PowerShell reading (Windows is outside the port, decision 9; the three python and node interpreter cases of that test are covered by `TestMemoryGateShellSurface`); port: kept (platform).
+
+## Found by the CRW-196 spawn mention normalization port
+
+- Skill discovery and existing standalone-link targets accept a directory named `SKILL.md`, because they check existence rather than file type (source `subagent-config/src/spawn-attach-hook.ts:127-129,152-155`; recorded directory cases in `internal/role/spawn/testdata/normalize/oracle.json`); port: kept.
+- Bare mentions have no preceding-token boundary or escape check, so `prefix$cxc-dev` and `\$cxc-dev` are rewritten (source `subagent-config/src/spawn-attach-hook.ts:161-174,178-190`; recorded prefix and escape cases in `internal/role/spawn/testdata/normalize/oracle.json`); port: kept.
+- Canonical links escape no target characters; roots containing angle brackets or quotes pass the whitespace/parenthesis check and yield a raw Markdown target (source `subagent-config/src/spawn-attach-hook.ts:132-134`; recorded angle-root case in `internal/role/spawn/testdata/normalize/oracle.json` and quoted-root test); port: kept.
