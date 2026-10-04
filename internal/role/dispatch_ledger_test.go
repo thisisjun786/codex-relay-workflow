@@ -44,6 +44,24 @@ func dispatchTestSafetyError(t *testing.T, id string) string {
 	return ""
 }
 
+func TestDispatchLedgerEqualCandidatePersists(t *testing.T) {
+	ws := t.TempDir()
+	env, dir := home(t)
+	writeStore(t, dir, `{"roles":{"executor":{"mode":"model","model":"same/model","fallback":{"model":"same/model","effort":null}}}}`)
+	r := dispatchTestCall(t, ws, env, map[string]any{"action": "start", "role": "executor", "dispatchId": "equal-candidate"})
+	dispatchTestCall(t, ws, env, map[string]any{"action": "claim", "dispatchId": "equal-candidate", "attemptId": r.AttemptID})
+	dispatchTestCall(t, ws, env, map[string]any{"action": "report", "dispatchId": "equal-candidate", "attemptId": r.AttemptID, "outcome": "failed", "error": "insufficient_quota", "executionState": "not_created", "reconciliation": "native creation explicitly rejected without a child"})
+	status := dispatchTestCall(t, ws, env, map[string]any{"action": "status", "dispatchId": "equal-candidate"})
+	if status.Action != "main-direct" || len(status.Attempts) != 1 || status.Attempts[0].Status != "failed" {
+		t.Fatalf("restart status = %+v", status)
+	}
+	var stored Dispatch
+	check(t, json.Unmarshal(must(os.ReadFile(filepath.Join(ws, ".crw", "dispatches", "session-test", "equal-candidate.json"))), &stored))
+	if stored.Status != "main-direct" || len(stored.Candidates) != 1 || stored.Attempts[0].Status != "failed" {
+		t.Fatalf("stored terminal state = %+v", stored)
+	}
+}
+
 func TestDispatchLedgerPublishFailure(t *testing.T) {
 	ws, env, r, file := dispatchTestFixture(t)
 	before := must(os.ReadFile(file))
