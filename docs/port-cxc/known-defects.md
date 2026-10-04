@@ -12,7 +12,7 @@ Behavior of CXC v0.2.40 that looks unintended and that the recorded corpus ([con
 - `cxc reset --help` is not help: the scope parser defaults to state, so it deletes session state exactly like `reset --state` and exits 0 (fixture `cli__reset__help_is_not_help_and_resets_state`); port: fixed, the one exception.
 - `cxc doctor --help` is not help: the hooks option parser rejects it with `cxc-ops error: unknown hooks option: --help` and exit 1 (fixture `cli__doctor__help_is_an_unknown_option`); port: pending.
 - `cxc provider` ignores every argument, even `--help`, and runs the same probe (fixture `cli__provider__detect_line_and_ignored_args`); port: pending.
-- `cxc metric parse-line` cannot succeed through the dispatcher: its help says it reads stdin, but v0.2.40 parses the argv after the verb (`--session` included), and both the stdin form and an argv form exit 1 (fixture `cli__metric__record_show_kind_parse_line`); port: pending.
+- `cxc metric parse-line` does not read stdin as its help says: v0.2.40 joins the argv after the verb (the `--session` token included), so the stdin form and the ordinary argv form exit 1 with `null`, and only a form whose session value itself completes the METRIC line, such as `parse-line METRIC --session =1`, succeeds (fixture `cli__metric__record_show_kind_parse_line`; source `plugins/codexclaw/components/pabcd-state/src/metric-cli.ts:145`); port: kept.
 - `cxc plan init` ignores `--date` whatever its value: the parser reads only `--phases` and `--cwd`, skips every other `--` token and takes the first bare argument as the slug, so the unit date is a YYMMDD prefix of that argument or else the day's date, although the verb's help says `--date` is for callers that carry their own prefix (fixture `cli__plan__init_normalises_slug_and_date`, whose `--date 2026-01-01` coincides with the recorded clock's day; source `plugins/codexclaw/components/pabcd-state/src/plan-cli.ts:92`, `:95` and `:177`); port: pending.
 - `cxc loop init` with a goalplans directory that is a symlink fails with a thrown error that only the CLI's generic handler prints (`codexclaw cli failed: goalplan state path must not be a symlink: ...`, exit 1) instead of a command-level refusal (fixture `cli__loop__symlinked_goalplans_root_refused`; source `plugins/codexclaw/components/pabcd-state/src/goalplan.ts:311`, `plugins/codexclaw/components/pabcd-state/src/cli.ts:531`); port: pending.
 - The managed-worktree deletion guard exits 1 with empty stdout, and no deny envelope, when its stdin is oversized: its verb `worktree-guard-pretool` does not start with `pre-tool-use`, so the generic oversize deny does not apply (fixture `hook__pre-tool-use-guarding-managed-worktree-deletion__oversized_stdin_exits_1`); port: pending.
@@ -854,6 +854,75 @@ Source: `plugins/codexclaw/components/pabcd-state/src/memory-write-gate.ts` at v
 - Skill discovery and existing standalone-link targets accept a directory named `SKILL.md`, because they check existence rather than file type (source `subagent-config/src/spawn-attach-hook.ts:127-129,152-155`; recorded directory cases in `internal/role/spawn/testdata/normalize/oracle.json`); port: kept.
 - Bare mentions have no preceding-token boundary or escape check, so `prefix$cxc-dev` and `\$cxc-dev` are rewritten (source `subagent-config/src/spawn-attach-hook.ts:161-174,178-190`; recorded prefix and escape cases in `internal/role/spawn/testdata/normalize/oracle.json`); port: kept.
 - Canonical links escape no target characters; roots containing angle brackets or quotes pass the whitespace/parenthesis check and yield a raw Markdown target (source `subagent-config/src/spawn-attach-hook.ts:132-134`; recorded angle-root case in `internal/role/spawn/testdata/normalize/oracle.json` and quoted-root test); port: kept.
+
+## Found by the review-round port
+
+- The sign-off parser accepts bare `GO-WITH-FIXES` but rejects the reviewer doctrine's `GO-WITH-FIXES (blockers=N)` suffix, so that normal closing form cannot record a near-pass (source `plugins/codexclaw/components/pabcd-state/src/review-round.ts:386`); port: kept.
+- A usable cursor chooses an older open round even when a newer one exists; same-document pending reuse refreshes that older round and leaves the newer round open, although a verdict on the reused launch is then stale (source `plugins/codexclaw/components/pabcd-state/src/review-round.ts:78` and `:137-141`); port: kept.
+- Aborting with multiple open rounds closes only the cursor-selected round, clears the cursor and leaves the other round live (source `plugins/codexclaw/components/pabcd-state/src/review-round.ts:342-354`); port: kept.
+- Round ordering accepts signed decimal prefixes with trailing junk and maps malformed or infinite ids to zero; beyond safe integer precision the next id can repeat the previous id (source `plugins/codexclaw/components/pabcd-state/src/review-round.ts:61-63` and `:98-99`); port: kept.
+- The CLI omits the required workspace argument when marking a round launching, so its lane has no stored workspaceRoot (source `plugins/codexclaw/components/pabcd-state/src/review-round-cli.ts:259`); port: kept.
+- Verdict normalization accepts non-ASCII spellings such as `paß`, `paſſ` and `GO-WITH-ﬁXES` because JavaScript uppercasing expands them into accepted verdict words (source `plugins/codexclaw/components/pabcd-state/src/review-round.ts:382-386`); port: kept.
+
+## CRW-332 — doctor targets and workspace reset
+
+- A symlinked state root or sessions directory lets state reset delete JSON records outside the workspace state tree, and an internal sessions-to-goalplans alias deletes preserved plans (CXC v0.2.40 `plugins/codexclaw/components/cxc-ops/src/reset.ts:49-63`); port: fixed (security and data loss: separately pinned non-link state and sessions directories).
+- Unknown or competing reset flags silently select a destructive default or precedence winner (CXC v0.2.40 `plugins/codexclaw/components/cxc-ops/src/reset.ts:88-93`); port: fixed (security: scope parsing is strict before any deletion).
+- If either target realpath fails, both paths fall back to lexical resolution, so a missing leaf below an outside symlink becomes a missing-target finding rather than an escape finding (CXC v0.2.40 `plugins/codexclaw/components/cxc-ops/src/manifest-targets.ts:106-117`); port: kept.
+- Target validation accepts a non-empty directory as a target and ignores non-array manifest hooks or non-string mcpServers declarations (CXC v0.2.40 `plugins/codexclaw/components/cxc-ops/src/manifest-targets.ts:138-144,157,181`); port: kept.
+
+## Found by the CRW-391 recall CLI port
+
+- Unknown recall verbs print usage and exit 0, while an empty search query prints usage on stdout and exits 1 (source `recall/src/cli.ts:154-157,196-199,418-446`; recorded CLI cases); port: kept.
+- Memory status and requeue ignore unknown flags, consume dash-leading string values and accept a missing string value as boolean true, unlike the strict search/index parser (source `recall/src/cli.ts:306-358`; recorded lax-parser cases); port: kept.
+- An unsupported memory schema exits 0 for status and 1 for requeue, so status success does not establish schema support (source `recall/src/cli.ts:320,358`; `TestRecallCLIRecordedCorpus`); port: kept.
+- `chat index --status --rebuild` writes and re-ingests despite the status flag; help still wins before opening the index (source `recall/src/cli.ts:272-278,419-422`; hygiene and index corpus cases); port: kept.
+- Requeue accepts a decimal integer prefix such as `2tail`, whereas search flags use whole-value Number conversion (source `recall/src/cli.ts:140-144,345-348`; recorded CLI cases); port: kept.
+- The oracle recorder advances Date by 1 ms on each read, while the landed search owners accept one rank timestamp per call: only `hits[].score` in `TestRecallCLIRecordedCorpus` permits an absolute difference of 1e-8 for that stepping; every other normalized stdout field, stderr and exit stays compared (source `recall/src/memory-search.ts:427-433`, `index-search.ts:309`; fixture cases driven at the recorded epoch); port: kept.
+- The executable corpus replay supplies no frozen clock, so nine clock-sensitive CLI fixtures stay pending and `TestRecallCLIRecordedCorpus` drives their unchanged recordings with an injected epoch; the same test drives the three bare-memory help fixtures that the name table does not map; `memory allow-write` remains a separate permission surface (source `contract/notes/cxc/README.md`, `contract/schema/cxc/name-substitution.json`; pending reasons recorded here because the notes schema accepts only fixture IDs); port: kept.
+
+## Found by the goalplan DAG query port (CRW-368)
+
+- With duplicate work-phase IDs, `nextOpenTask` can return the first phase's record paired with a pending task from a later phase because it re-finds the phase by ID after selecting the task (source `plugins/codexclaw/components/pabcd-state/src/goalplan.ts:1090-1094`; recorded case `first phase match and mismatched next pair` in `internal/pabcd/goalplan/testdata/query/oracle.json`); port: kept (the structural validator rejects the duplicate plan, while these selection queries remain direct derived views).
+
+## CRW-530 managed spawn and checked dispatch
+
+- Created accepts an arbitrary syntactically valid agent ID without a native subagent or parent witness (`subagent-config/src/fallback-dispatch.ts:171-176`); port: fixed, intentionally-changed by the assignment: the product dispatch boundary reads the native host thread_spawn marker from the read-only thread database and checks child identity and parent before publishing the report.
+- A mistaken created ID cannot be corrected and no honest terminal close exists (`subagent-config/src/fallback-dispatch.ts:173,183-184`); port: fixed, intentionally-changed by the assignment: a stopped report requires caller-asserted stopped execution and reconciliation, preserves the recorded ID and permanently closes without another spawn.
+- A managed marker can occur after an arbitrary earlier line, rather than only at the start of the message (`subagent-config/src/fallback-dispatch.ts:239,252`); port: kept, including JavaScript CR, LF, LS and PS line boundaries.
+- Dispatch ignores trailing command arguments, so dispatch --help still reads stdin and errors on empty input (`subagent-config/src/fallback-dispatch-cli.ts:23-40`; `plugins/codexclaw/bin/cxc.mjs:176-179`); port: kept. JSON and filesystem error wording is intentionally-changed to the Go library's wording; exit 1 and the JSON error-object shape are preserved.
+
+## Found by the scan record runner port (CRW-540)
+
+- A scan of an unreadable state replaces its bytes with a fresh default, losing stored state (pabcd-state/src/scan-cli.ts:322,391; state.ts:420-422,494-511 at v0.2.40); port: fixed (strict read refuses before either write; recorded case intentionally-changed).
+- A scan rewrites a reconstructed state after unreadable or overflowed unverified records were dropped, losing those records (pabcd-state/src/scan-cli.ts:322,391; state.ts:57-90,587-589 at v0.2.40); port: fixed (reuse the existing stored-record count refusal before append; recorded case intentionally-changed).
+- The scan read-modify-write has no session lock, so overlapping processes can replace a sibling's state update (pabcd-state/src/scan-cli.ts:322-391 at v0.2.40); port: fixed (the required state session lock covers the read, append and write; the recorded concurrent-write case is intentionally-changed).
+- Derivation detects changes by array lengths only; at the keep-first cap it can report zero derived dimensions and the nothing-matched warning even with matched answers, preserving a prior explicit level (pabcd-state/src/scan-cli.ts:342-351,395-405 at v0.2.40); port: kept.
+- A malformed ledger's truthy non-string question or non-string answers can grant a level before write normalization drops those values, leaving high/mid with empty arrays (pabcd-state/src/scan-cli.ts:249-279,366-369; interview.ts:348-360 at v0.2.40); port: kept.
+- A question id whose object cannot convert to a property key throws after the scan row was appended, leaving that row without its tracker write (pabcd-state/src/scan-cli.ts:255,325-336,391,412-415 at v0.2.40); port: kept.
+
+## CRW-388 — recall hooks
+
+- The recovery pointer is sliced at 160 UTF-16 units and can end inside a long command invocation, leaving an unusable command (source `recall/src/hook.ts:646-653`; recorded long-invocation recovery rows); port: kept.
+- Version target extraction matches date and IP address fragments without distinguishing them from software versions (source `recall/src/hook.ts:131`; recorded `2026.10.04 1.2.3.4` target rows); port: kept.
+- The unavailable-project diagnostic hardcodes the bare command instead of the resolved invocation, so it can be unusable when that command is absent from PATH (source `recall/src/hook.ts:718`; Devin yellow bug finding and `TestRecallHookUnavailableAdviceParity`); port: kept.
+- The cwd basename is interpolated into the header outside the historical-data delimiter without quoting, so a locally chosen directory name containing newlines can insert extra prompt lines (source `recall/src/hook.ts:348-351`; Codex Code Review P2 and Node-rendered newline basename); port: kept (the hook payload supplies cwd; historical records do not supply this label; retained under the assigned as-is parity rule).
+
+## Found by the divergence CLI port
+
+- An invalid `--status` is silently recorded as `proposed`, while an invalid `--change-class` or `--killed-at-phase` is refused (source `plugins/codexclaw/components/pabcd-state/src/divergence-cli.ts:122` against `:132` and `:134`); port: kept.
+- An invalid or empty `--collapse` is silently recorded as `D` (source `plugins/codexclaw/components/pabcd-state/src/divergence-cli.ts:113`); port: kept.
+- `divergence mode --help` and `divergence candidate --help` are not help: the help check sees only the topic, so the session guard exits 1 (source `plugins/codexclaw/components/pabcd-state/src/divergence-cli.ts:100` and `:104`; the corpus fixtures `cli-help__divergence__mode_dashdash_help` and `cli-help__divergence__candidate_dashdash_help` record it); port: kept.
+- `--help` is recognized only in the topic position, so `divergence mode on --help` runs the mode write (source `plugins/codexclaw/components/pabcd-state/src/divergence-cli.ts:100`); port: kept.
+- `readAllFlags` drops a following token that is empty, so an empty `--source` and a trailing `--source` vanish and only the "at least one --source" refusal reports them (source `plugins/codexclaw/components/pabcd-state/src/divergence-cli.ts:36-42` and `:137`); port: kept.
+- A value flag consumes the next token even when it is another flag, so `--session --json` names the session `--json` (source `plugins/codexclaw/components/pabcd-state/src/divergence-cli.ts:30-34`); port: kept.
+- The mode write sits outside any try, so its failure throws out of `runDivergenceCli`; the entry point's unhandledRejection listener reports `codexclaw cli failed: <message>` on stderr and exits 1 (source `plugins/codexclaw/components/pabcd-state/src/divergence-cli.ts:115` and `src/cli.ts:530`, against the caught candidate path at `:152`); port: kept (`RunDivergenceCli` returns the error for its caller to report; the dispatcher row's adapter prints `crw cli failed: <message>` on stderr, exit 1).
+
+## Found by the metric CLI port
+
+- `cxc metric kind` has no `--set` flag: positionalArgs skips every flag-shaped token, so the documented `--set maximize` reaches the parser only because `maximize` is a bare token, a `--set` without a value sets nothing without an error, and an invalid `--set bogus` is silently ignored rather than refused (source `plugins/codexclaw/components/pabcd-state/src/metric-cli.ts:40-53` and `:137`); port: kept.
+- A whitespace-only `--value` records 0 while an empty one is refused: the guard tests `!rawValue`, and `Number(" ")` is 0 (source `plugins/codexclaw/components/pabcd-state/src/metric-cli.ts:110-111`); port: kept.
+- A subcommand's `--help` is not help: only the first token counts, so `metric record --help` (like `ingest`, `show`, `kind` and `parse-line`) answers `metric: --session <id> is required` with exit 1 (fixtures `cli-help__metric__record_dashdash_help`, `cli-help__metric__ingest_dashdash_help`, `cli-help__metric__kind_dashdash_help`, `cli-help__metric__parse-line_dashdash_help` and `cli-help__metric__show_dashdash_help`); port: kept.
 
 ## Found by the CRW-543 spawn inline and guard library port
 

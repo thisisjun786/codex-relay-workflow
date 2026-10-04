@@ -20,6 +20,7 @@ func Verbs() []Verb {
 		{Name: "receipt", Run: receiptVerb},
 		{Name: "evidence", Run: evidenceVerb},
 		{Name: "memory", Run: memoryVerb},
+		{Name: "reset", Run: resetVerb},
 	}
 }
 
