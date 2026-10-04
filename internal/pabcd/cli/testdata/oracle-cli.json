@@ -1,0 +1,806 @@
+[
+  {
+    "id": "evidence-parse-0",
+    "kind": "evidence",
+    "argv": [],
+    "expect": {
+      "error": "unknown evidence verb '' (expected resolve)"
+    }
+  },
+  {
+    "id": "evidence-parse-1",
+    "kind": "evidence",
+    "argv": [
+      "help"
+    ],
+    "expect": {
+      "error": "unknown evidence verb 'help' (expected resolve)"
+    }
+  },
+  {
+    "id": "evidence-parse-2",
+    "kind": "evidence",
+    "argv": [
+      "resolve"
+    ],
+    "expect": {
+      "error": "missing required argument(s): --session <id> (must be a canonical session id); --agent <agent-id>; --receipt <path> (resolving without evidence would defeat the gate; if an external blocker prevents verifying the work, use update_goal status \"blocked\")"
+    }
+  },
+  {
+    "id": "evidence-parse-3",
+    "kind": "evidence",
+    "argv": [
+      "resolve",
+      "--session",
+      "../x",
+      "--agent",
+      "a1"
+    ],
+    "expect": {
+      "error": "missing required argument(s): --session <id> (must be a canonical session id); --receipt <path> (resolving without evidence would defeat the gate; if an external blocker prevents verifying the work, use update_goal status \"blocked\")"
+    }
+  },
+  {
+    "id": "evidence-parse-4",
+    "kind": "evidence",
+    "argv": [
+      "resolve",
+      "--session",
+      "rec-s1",
+      "--agent",
+      "a1",
+      "--receipt",
+      ".codexclaw/evidence/check.md"
+    ],
+    "expect": {
+      "verb": "resolve",
+      "sessionId": "rec-s1",
+      "agentId": "a1",
+      "receipt": ".codexclaw/evidence/check.md",
+      "cwd": "<WS>"
+    }
+  },
+  {
+    "id": "evidence-parse-5",
+    "kind": "evidence",
+    "argv": [
+      "resolve",
+      "--session",
+      "rec-s1",
+      "--agent",
+      "a1",
+      "--receipt",
+      ".codexclaw/evidence/check.md",
+      "--turn",
+      ""
+    ],
+    "expect": {
+      "verb": "resolve",
+      "sessionId": "rec-s1",
+      "agentId": "a1",
+      "receipt": ".codexclaw/evidence/check.md",
+      "turnId": "",
+      "cwd": "<WS>"
+    }
+  },
+  {
+    "id": "evidence-parse-6",
+    "kind": "evidence",
+    "argv": [
+      "resolve",
+      "--session",
+      "rec-s1",
+      "--agent",
+      "a1",
+      "--receipt",
+      ".codexclaw/evidence/check.md",
+      "--turn"
+    ],
+    "expect": {
+      "verb": "resolve",
+      "sessionId": "rec-s1",
+      "agentId": "a1",
+      "receipt": ".codexclaw/evidence/check.md",
+      "cwd": "<WS>"
+    }
+  },
+  {
+    "id": "evidence-parse-7",
+    "kind": "evidence",
+    "argv": [
+      "resolve",
+      "--session",
+      "rec-s1",
+      "--agent",
+      "a1",
+      "--receipt",
+      ".codexclaw/evidence/check.md",
+      "--override"
+    ],
+    "expect": {
+      "verb": "resolve",
+      "sessionId": "rec-s1",
+      "agentId": "a1",
+      "receipt": ".codexclaw/evidence/check.md",
+      "cwd": "<WS>"
+    }
+  },
+  {
+    "id": "evidence-parse-8",
+    "kind": "evidence",
+    "argv": [
+      "resolve",
+      "--session",
+      "rec-s1",
+      "--agent",
+      "a1",
+      "--receipt",
+      ".codexclaw/evidence/check.md",
+      "--receipt",
+      "later"
+    ],
+    "expect": {
+      "verb": "resolve",
+      "sessionId": "rec-s1",
+      "agentId": "a1",
+      "receipt": ".codexclaw/evidence/check.md",
+      "cwd": "<WS>"
+    }
+  },
+  {
+    "id": "evidence-parse-9",
+    "kind": "evidence",
+    "argv": [
+      "resolve",
+      "--session=rec-s1",
+      "--agent",
+      "a1",
+      "--receipt",
+      "x"
+    ],
+    "expect": {
+      "error": "missing required argument(s): --session <id> (must be a canonical session id)"
+    }
+  },
+  {
+    "id": "evidence-parse-10",
+    "kind": "evidence",
+    "argv": [
+      "resolve",
+      "--session",
+      "rec-s1",
+      "--agent",
+      "--receipt",
+      "--receipt",
+      "--override"
+    ],
+    "expect": {
+      "verb": "resolve",
+      "sessionId": "rec-s1",
+      "agentId": "--receipt",
+      "receipt": "--receipt",
+      "cwd": "<WS>"
+    }
+  },
+  {
+    "id": "memory-parse-0",
+    "kind": "memory",
+    "argv": [],
+    "expect": {
+      "error": "unknown memory verb '' (expected allow-write)"
+    }
+  },
+  {
+    "id": "memory-parse-1",
+    "kind": "memory",
+    "argv": [
+      "grant"
+    ],
+    "expect": {
+      "error": "unknown memory verb 'grant' (expected allow-write)"
+    }
+  },
+  {
+    "id": "memory-parse-2",
+    "kind": "memory",
+    "argv": [
+      "allow-write"
+    ],
+    "expect": {
+      "error": "missing required argument: --session <id> (must be a canonical session id)"
+    }
+  },
+  {
+    "id": "memory-parse-3",
+    "kind": "memory",
+    "argv": [
+      "allow-write",
+      "--session",
+      "../x"
+    ],
+    "expect": {
+      "error": "missing required argument: --session <id> (must be a canonical session id)"
+    }
+  },
+  {
+    "id": "memory-parse-4",
+    "kind": "memory",
+    "argv": [
+      "allow-write",
+      "--session=rec-s1"
+    ],
+    "expect": {
+      "verb": "allow-write",
+      "sessionId": "rec-s1",
+      "cwd": "<WS>"
+    }
+  },
+  {
+    "id": "memory-parse-5",
+    "kind": "memory",
+    "argv": [
+      "allow-write",
+      "--session",
+      "rec-s1"
+    ],
+    "expect": {
+      "verb": "allow-write",
+      "sessionId": "rec-s1",
+      "cwd": "<WS>"
+    }
+  },
+  {
+    "id": "memory-parse-6",
+    "kind": "memory",
+    "argv": [
+      "allow-write",
+      "--session",
+      "first",
+      "--session=last"
+    ],
+    "expect": {
+      "verb": "allow-write",
+      "sessionId": "last",
+      "cwd": "<WS>"
+    }
+  },
+  {
+    "id": "memory-parse-7",
+    "kind": "memory",
+    "argv": [
+      "allow-write",
+      "--session"
+    ],
+    "expect": {
+      "error": "missing required argument: --session <id> (must be a canonical session id)"
+    }
+  },
+  {
+    "id": "memory-parse-8",
+    "kind": "memory",
+    "argv": [
+      "allow-write",
+      "--session",
+      "rec-s1",
+      "--force"
+    ],
+    "expect": {
+      "error": "unknown argument '--force'"
+    }
+  },
+  {
+    "id": "memory-parse-9",
+    "kind": "memory",
+    "argv": [
+      "allow-write",
+      "--help"
+    ],
+    "expect": {
+      "help": true
+    }
+  },
+  {
+    "id": "memory-parse-10",
+    "kind": "memory",
+    "argv": [
+      "allow-write",
+      "-h"
+    ],
+    "expect": {
+      "help": true
+    }
+  },
+  {
+    "id": "memory-parse-11",
+    "kind": "memory",
+    "argv": [
+      "allow-write",
+      "--session",
+      "rec-s1",
+      "--help"
+    ],
+    "expect": {
+      "help": true
+    }
+  },
+  {
+    "id": "memory-parse-12",
+    "kind": "memory",
+    "argv": [
+      "allow-write",
+      "--unknown",
+      "--help"
+    ],
+    "expect": {
+      "help": true
+    }
+  },
+  {
+    "id": "memory-parse-13",
+    "kind": "memory",
+    "argv": [
+      "allow-write",
+      "--session",
+      "--help"
+    ],
+    "expect": {
+      "help": true
+    }
+  },
+  {
+    "id": "memory-usage",
+    "kind": "usage",
+    "expect": "Usage:\n  cxc memory allow-write --session <id>\n  cxc memory allow-write --session=<id>\n  cxc memory allow-write --help\n\nAuthorizes exactly ONE memory write (memories.add_ad_hoc_note, or an edit under\n~/.codex/memories) for that session. The grant is consumed by the next write.\n\nThe grant is stored at <cwd>/.codexclaw/sessions/<id>.json and is keyed by that\ncwd plus the session id. The success line names the cwd it wrote to. Issuing the\ngrant from a different working directory will print success and never be seen by\nthe hook running in this session.\n\nThe ordinary path needs no command: when the user asks in their own words to\nremember something, the session records that request and the next write passes."
+  },
+  {
+    "id": "memory-new",
+    "kind": "run",
+    "expect": {
+      "result": {
+        "output": "memory allow-write: session rec-s1 may perform ONE memory write; grant recorded for cwd <WS>; the next write consumes this grant.",
+        "code": 0
+      },
+      "state": {
+        "phase": "IDLE",
+        "sessionId": "rec-s1",
+        "slug": "",
+        "updatedAt": "<TIME>",
+        "flags": {
+          "interview": false,
+          "auditPassed": false,
+          "checkPassed": false
+        },
+        "supersededBy": null,
+        "injectedTurns": [],
+        "lastInjectedPhase": null,
+        "orchestrationActive": false,
+        "interview": null,
+        "stopBlockPhase": null,
+        "stopBlockCount": 0,
+        "stopBlockWorkPhaseId": null,
+        "stopMetricCursor": 0,
+        "stopBlockTotal": 0,
+        "stopBlockTurnId": null,
+        "stopBlockCapNotified": false,
+        "loopArmSeen": false,
+        "idleEditNudges": 0,
+        "memoryWriteRequested": false,
+        "memoryWriteTurn": null,
+        "memoryWriteGrant": true,
+        "unverifiedSubagents": [],
+        "unverifiedCorrupt": false,
+        "phaseEntrySource": null,
+        "planUnit": null,
+        "planEpoch": null,
+        "checkEpoch": null,
+        "dcloseRecovery": null
+      },
+      "counters": [
+        3,
+        3,
+        3
+      ],
+      "ledger": []
+    }
+  },
+  {
+    "id": "memory-existing",
+    "kind": "run",
+    "expect": {
+      "result": {
+        "output": "memory allow-write: session rec-s1 may perform ONE memory write; grant recorded for cwd <WS>; the next write consumes this grant.",
+        "code": 0
+      },
+      "state": {
+        "phase": "B",
+        "sessionId": "rec-s1",
+        "slug": "keep",
+        "updatedAt": "<TIME>",
+        "flags": {
+          "interview": false,
+          "auditPassed": false,
+          "checkPassed": false
+        },
+        "supersededBy": null,
+        "injectedTurns": [],
+        "lastInjectedPhase": null,
+        "orchestrationActive": false,
+        "interview": null,
+        "stopBlockPhase": null,
+        "stopBlockCount": 0,
+        "stopBlockWorkPhaseId": null,
+        "stopMetricCursor": 0,
+        "stopBlockTotal": 7,
+        "stopBlockTurnId": null,
+        "stopBlockCapNotified": false,
+        "loopArmSeen": false,
+        "idleEditNudges": 0,
+        "memoryWriteRequested": true,
+        "memoryWriteTurn": null,
+        "memoryWriteGrant": true,
+        "unverifiedSubagents": [
+          {
+            "agentId": "a1",
+            "turnId": "t1",
+            "agentType": "worker",
+            "attempts": 3,
+            "receiptClaimed": "none",
+            "recordedAt": "recorded",
+            "resolvable": true
+          },
+          {
+            "agentId": "a1",
+            "turnId": "t2",
+            "agentType": "worker",
+            "attempts": 3,
+            "receiptClaimed": "none",
+            "recordedAt": "recorded",
+            "resolvable": true
+          },
+          {
+            "agentId": "a1",
+            "turnId": "",
+            "agentType": "worker",
+            "attempts": 3,
+            "receiptClaimed": "none",
+            "recordedAt": "recorded",
+            "resolvable": true
+          }
+        ],
+        "unverifiedCorrupt": false,
+        "phaseEntrySource": null,
+        "planUnit": null,
+        "planEpoch": null,
+        "checkEpoch": null,
+        "dcloseRecovery": null
+      },
+      "counters": [
+        3,
+        3,
+        3
+      ],
+      "ledger": []
+    }
+  },
+  {
+    "id": "evidence-resolve",
+    "kind": "run",
+    "expect": {
+      "result": {
+        "output": "evidence resolve: agent a1 resolved against .codexclaw/evidence/check.md",
+        "code": 0
+      },
+      "state": {
+        "phase": "B",
+        "sessionId": "rec-s1",
+        "slug": "keep",
+        "updatedAt": "<TIME>",
+        "flags": {
+          "interview": false,
+          "auditPassed": false,
+          "checkPassed": false
+        },
+        "supersededBy": null,
+        "injectedTurns": [],
+        "lastInjectedPhase": null,
+        "orchestrationActive": false,
+        "interview": null,
+        "stopBlockPhase": null,
+        "stopBlockCount": 0,
+        "stopBlockWorkPhaseId": null,
+        "stopMetricCursor": 0,
+        "stopBlockTotal": 7,
+        "stopBlockTurnId": null,
+        "stopBlockCapNotified": false,
+        "loopArmSeen": false,
+        "idleEditNudges": 0,
+        "memoryWriteRequested": true,
+        "memoryWriteTurn": null,
+        "memoryWriteGrant": false,
+        "unverifiedSubagents": [
+          {
+            "agentId": "a1",
+            "turnId": "t2",
+            "agentType": "worker",
+            "attempts": 3,
+            "receiptClaimed": "none",
+            "recordedAt": "recorded",
+            "resolvable": true
+          },
+          {
+            "agentId": "a1",
+            "turnId": "",
+            "agentType": "worker",
+            "attempts": 3,
+            "receiptClaimed": "none",
+            "recordedAt": "recorded",
+            "resolvable": true
+          }
+        ],
+        "unverifiedCorrupt": false,
+        "phaseEntrySource": null,
+        "planUnit": null,
+        "planEpoch": null,
+        "checkEpoch": null,
+        "dcloseRecovery": null
+      },
+      "counters": [
+        0,
+        3,
+        3
+      ],
+      "ledger": [
+        {
+          "ts": "<TIME>",
+          "sessionId": "rec-s1",
+          "from": "B",
+          "to": "B",
+          "reason": "evidence resolve: agent=a1 turn=t1 resolved with a valid receipt",
+          "evidence": ".codexclaw/evidence/check.md",
+          "actor": "agent",
+          "override": false
+        }
+      ]
+    }
+  },
+  {
+    "id": "evidence-ambiguous",
+    "kind": "run",
+    "expect": {
+      "result": {
+        "output": "evidence resolve: agent 'a1' has more than one unverified record; pass --turn <turn-id> to name exactly which one this receipt verifies",
+        "code": 1
+      },
+      "state": {
+        "phase": "B",
+        "sessionId": "rec-s1",
+        "slug": "keep",
+        "updatedAt": "<TIME>",
+        "flags": {
+          "interview": false,
+          "auditPassed": false,
+          "checkPassed": false
+        },
+        "supersededBy": null,
+        "injectedTurns": [],
+        "lastInjectedPhase": null,
+        "orchestrationActive": false,
+        "interview": null,
+        "stopBlockPhase": null,
+        "stopBlockCount": 0,
+        "stopBlockWorkPhaseId": null,
+        "stopMetricCursor": 0,
+        "stopBlockTotal": 7,
+        "stopBlockTurnId": null,
+        "stopBlockCapNotified": false,
+        "loopArmSeen": false,
+        "idleEditNudges": 0,
+        "memoryWriteRequested": true,
+        "memoryWriteTurn": null,
+        "memoryWriteGrant": false,
+        "unverifiedSubagents": [
+          {
+            "agentId": "a1",
+            "turnId": "t1",
+            "agentType": "worker",
+            "attempts": 3,
+            "receiptClaimed": "none",
+            "recordedAt": "recorded",
+            "resolvable": true
+          },
+          {
+            "agentId": "a1",
+            "turnId": "t2",
+            "agentType": "worker",
+            "attempts": 3,
+            "receiptClaimed": "none",
+            "recordedAt": "recorded",
+            "resolvable": true
+          },
+          {
+            "agentId": "a1",
+            "turnId": "",
+            "agentType": "worker",
+            "attempts": 3,
+            "receiptClaimed": "none",
+            "recordedAt": "recorded",
+            "resolvable": true
+          }
+        ],
+        "unverifiedCorrupt": false,
+        "phaseEntrySource": null,
+        "planUnit": null,
+        "planEpoch": null,
+        "checkEpoch": null,
+        "dcloseRecovery": null
+      },
+      "counters": [
+        3,
+        3,
+        3
+      ],
+      "ledger": []
+    }
+  },
+  {
+    "id": "evidence-no-match",
+    "kind": "run",
+    "expect": {
+      "result": {
+        "output": "evidence resolve: no resolvable unverified record for agent 'other' in session rec-s1",
+        "code": 1
+      },
+      "state": {
+        "phase": "B",
+        "sessionId": "rec-s1",
+        "slug": "keep",
+        "updatedAt": "<TIME>",
+        "flags": {
+          "interview": false,
+          "auditPassed": false,
+          "checkPassed": false
+        },
+        "supersededBy": null,
+        "injectedTurns": [],
+        "lastInjectedPhase": null,
+        "orchestrationActive": false,
+        "interview": null,
+        "stopBlockPhase": null,
+        "stopBlockCount": 0,
+        "stopBlockWorkPhaseId": null,
+        "stopMetricCursor": 0,
+        "stopBlockTotal": 7,
+        "stopBlockTurnId": null,
+        "stopBlockCapNotified": false,
+        "loopArmSeen": false,
+        "idleEditNudges": 0,
+        "memoryWriteRequested": true,
+        "memoryWriteTurn": null,
+        "memoryWriteGrant": false,
+        "unverifiedSubagents": [
+          {
+            "agentId": "a1",
+            "turnId": "t1",
+            "agentType": "worker",
+            "attempts": 3,
+            "receiptClaimed": "none",
+            "recordedAt": "recorded",
+            "resolvable": true
+          },
+          {
+            "agentId": "a1",
+            "turnId": "t2",
+            "agentType": "worker",
+            "attempts": 3,
+            "receiptClaimed": "none",
+            "recordedAt": "recorded",
+            "resolvable": true
+          },
+          {
+            "agentId": "a1",
+            "turnId": "",
+            "agentType": "worker",
+            "attempts": 3,
+            "receiptClaimed": "none",
+            "recordedAt": "recorded",
+            "resolvable": true
+          }
+        ],
+        "unverifiedCorrupt": false,
+        "phaseEntrySource": null,
+        "planUnit": null,
+        "planEpoch": null,
+        "checkEpoch": null,
+        "dcloseRecovery": null
+      },
+      "counters": [
+        3,
+        3,
+        3
+      ],
+      "ledger": []
+    }
+  },
+  {
+    "id": "evidence-empty-turn",
+    "kind": "run",
+    "expect": {
+      "result": {
+        "output": "evidence resolve: agent a1 resolved against .codexclaw/evidence/check.md",
+        "code": 0
+      },
+      "state": {
+        "phase": "B",
+        "sessionId": "rec-s1",
+        "slug": "keep",
+        "updatedAt": "<TIME>",
+        "flags": {
+          "interview": false,
+          "auditPassed": false,
+          "checkPassed": false
+        },
+        "supersededBy": null,
+        "injectedTurns": [],
+        "lastInjectedPhase": null,
+        "orchestrationActive": false,
+        "interview": null,
+        "stopBlockPhase": null,
+        "stopBlockCount": 0,
+        "stopBlockWorkPhaseId": null,
+        "stopMetricCursor": 0,
+        "stopBlockTotal": 7,
+        "stopBlockTurnId": null,
+        "stopBlockCapNotified": false,
+        "loopArmSeen": false,
+        "idleEditNudges": 0,
+        "memoryWriteRequested": true,
+        "memoryWriteTurn": null,
+        "memoryWriteGrant": false,
+        "unverifiedSubagents": [
+          {
+            "agentId": "a1",
+            "turnId": "t1",
+            "agentType": "worker",
+            "attempts": 3,
+            "receiptClaimed": "none",
+            "recordedAt": "recorded",
+            "resolvable": true
+          },
+          {
+            "agentId": "a1",
+            "turnId": "t2",
+            "agentType": "worker",
+            "attempts": 3,
+            "receiptClaimed": "none",
+            "recordedAt": "recorded",
+            "resolvable": true
+          }
+        ],
+        "unverifiedCorrupt": false,
+        "phaseEntrySource": null,
+        "planUnit": null,
+        "planEpoch": null,
+        "checkEpoch": null,
+        "dcloseRecovery": null
+      },
+      "counters": [
+        3,
+        3,
+        0
+      ],
+      "ledger": [
+        {
+          "ts": "<TIME>",
+          "sessionId": "rec-s1",
+          "from": "B",
+          "to": "B",
+          "reason": "evidence resolve: agent=a1 turn=<none> resolved with a valid receipt",
+          "evidence": ".codexclaw/evidence/check.md",
+          "actor": "agent",
+          "override": false
+        }
+      ]
+    }
+  }
+]
