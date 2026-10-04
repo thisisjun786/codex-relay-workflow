@@ -40,6 +40,11 @@ type TargetParseError struct {
 func (e *TargetParseError) Error() string { return e.Err.Error() }
 func (e *TargetParseError) Unwrap() error { return e.Err }
 
+// targetShapeError retains JavaScript's TypeError message spelling.
+type targetShapeError string
+
+func (e targetShapeError) Error() string { return string(e) }
+
 // pluginRootTarget is PLUGIN_ROOT_TARGET; JS whitespace is checked separately.
 const pluginRootTarget = `\$\{PLUGIN_ROOT\}[\\/]([^"\t\n\v\f\r ]+)`
 
@@ -123,7 +128,7 @@ func targetCheck(issues *[]TargetIssue, kind TargetKind, root, rel, missing stri
 // throw, while primitive values yield undefined properties.
 func targetProperty(v any, key string) (any, error) {
 	if v == nil {
-		return nil, fmt.Errorf("Cannot read properties of null (reading '%s')", key)
+		return nil, targetShapeError(fmt.Sprintf("Cannot read properties of null (reading '%s')", key))
 	}
 	if o, ok := v.(pyjson.Object); ok {
 		return o.Get(key), nil
