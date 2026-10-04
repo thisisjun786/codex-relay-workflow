@@ -1,4 +1,4 @@
-# Root thread subscription lifetime
+# Root and descendant thread subscription lifetime
 
 The bridge and relay release the App Server root subscriptions they own after
 finishing their useful observations and confirming the delivered turn ended.
@@ -43,10 +43,58 @@ cannot clear it; the first terminal does. No failed read is used to materialize
 a rollout. Connection loss can still end a never-run subscription; this path
 does not claim to make that host state recoverable across disconnection.
 
-Finished sub-threads are handled by the separate **Automatic release of finished
-sub-threads** follow-up. A parent's unsubscribe does not prove descendant release.
-This root path performs no descendant discovery or archive and invokes no
-cleanup command. The explicit finished-child cleanup procedure remains available.
+Before releasing a completed root subscription, the executable-configured callback
+releases its finished descendants. A parent's unsubscribe alone does not prove
+descendant release. The explicit finished-child cleanup procedure remains available.
+
+## Automatic release of finished sub-threads
+
+`cmd/crw` supplies `childcleanup.ConfigureSubscriptions` to the relay adapter and
+bridge MCP entry point. The bridge library receives a callback and imports no relay
+package. After pending watches finish their operation and observe their terminals,
+the release worker invokes descendant-only cleanup on the original socket under
+the existing root gate. A client-wide admission barrier also drains admitted
+operations and prevents direct descendant sends during this callback. Waits hold
+neither client nor subscription-manager mutex. Close cancels and drains the worker.
+
+Cleanup first proves the root is idle with its latest turn completed, scans the
+loaded subtree twice, and checks every member's completion. A running, unknown,
+unreadable or never-run member holds the whole subtree. An active root alone is
+also an incomplete report, even with no loaded descendants. Pending completion
+proof survives holds and later refused sends. Immediately before each descendant
+archive, cleanup rechecks the root, reads the descendant's newest turn, then
+re-reads its identity and status with `thread/read`. Only idle descendants whose
+latest turn completed are archived, deepest first. The root is never archived.
+
+Each callback attempt has a thirty-second budget. Genuine holds keep polling with
+the existing five-second to five-minute backoff. Transport, phase and archive
+errors stop the attempt before an ancestor archive; eight consecutive errors log
+that descendants remain unreleased and fall back to root subscription release.
+An unreadable RPC observation is a hold. Loss abandons only the original socket;
+cleanup never reconnects. None of this runs the cleanup command or changes receipts.
+
+An isolated codex-cli 0.154.0 probe found that `thread/archive` **accepts an active
+sub-thread**, unloads it, interrupts its turn and stops its helper. Host refusal
+is therefore no safety fence. The guarantee covers this client's guarded sends
+and the checked host observations. The residual race is another client starting
+a turn on that descendant between its final re-read and archive. Archival is
+reversible with `thread/unarchive`, which restores visibility, not an interrupted
+turn. A host API with an atomic idle precondition would be needed to remove that race.
+
+The isolated reproduction used a fresh home and socket, a synthetic Responses
+provider, one MCP helper per thread, and the configured Go client's normal watch
+lifecycle. Three completed roots and one completed sub-thread measured as follows:
+
+| Observation after finishing watches | Loaded threads | MCP helpers |
+| --- | ---: | ---: |
+| Before automatic release | 4 | 4 |
+| 1.036 seconds | 3 | 3 |
+| 60.413 seconds | 0 | 0 |
+
+No cleanup command ran. All probe-owned processes were stopped afterward. These
+are measurements of this host version, not a universal unload deadline. Synthetic
+regressions additionally cover running descendants, unknown completion, F4's sole
+active-root hold, the admission barrier, socket loss and bounded errors.
 
 ## Measurement limits
 

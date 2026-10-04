@@ -67,6 +67,44 @@ func TestDescendantReportHoldsActiveRootAlone(t *testing.T) {
 		t.Fatalf("F4: sole active root hold lost: err=%v report=%+v archives=%v", err, r, s.archived())
 	}
 }
+
+func TestDescendantReportKeepsRootHoldFromFinalScan(t *testing.T) {
+	s := newScripted(t, thread{id: "child", loaded: true, rollout: true})
+	completedHistory(s, nil)
+	started := func() { s.mu.Lock(); s.byID["child"].status = "active"; s.mu.Unlock() }
+	r, err := Clean(context.Background(), &afterCall{Host: s.client(t), method: "thread/read", n: 2, then: started}, "child", descendantOptions(t))
+	if err != nil || r.Complete() || outcomes(r) != "child:held_active" || len(s.archived()) != 0 {
+		t.Fatalf("final scan root hold lost: err=%v report=%+v", err, r)
+	}
+}
+
+type descendantHistoryHook struct {
+	Host
+	summaries int
+	start     func()
+}
+
+func (h *descendantHistoryHook) Call(ctx context.Context, method string, params map[string]any) (json.RawMessage, error) {
+	raw, err := h.Host.Call(ctx, method, params)
+	if method == "thread/turns/list" && params["threadId"] == "sub" {
+		h.summaries++
+		if h.summaries == 2 {
+			h.start()
+		}
+	}
+	return raw, err
+}
+
+func TestDescendantImmediateReadSeesTurnStartedAfterHistory(t *testing.T) {
+	s := newScripted(t, thread{id: "child", loaded: true, rollout: true}, thread{id: "sub", parent: "child", loaded: true, rollout: true})
+	completedHistory(s, nil)
+	started := func() { s.mu.Lock(); s.byID["sub"].status = "active"; s.mu.Unlock() }
+	h := &descendantHistoryHook{Host: s.client(t), start: started}
+	r, err := Clean(context.Background(), h, "child", descendantOptions(t))
+	if err != nil || r.Complete() || len(s.archived()) != 0 || h.summaries != 2 {
+		t.Fatalf("immediate active read missed: err=%v report=%+v summaries=%d", err, r, h.summaries)
+	}
+}
 func TestDescendantsHoldRunningOrUnprovedTurns(t *testing.T) {
 	for _, who := range []string{"child", "sub"} {
 		for _, status := range []string{"inProgress", "failed", "interrupted", "", "unknown"} {
