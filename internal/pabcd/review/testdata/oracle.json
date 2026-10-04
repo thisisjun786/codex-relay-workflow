@@ -1,0 +1,2974 @@
+[
+  {
+    "name": "signoff-0",
+    "op": "parseSignoff",
+    "args": [
+      ""
+    ],
+    "expected": null
+  },
+  {
+    "name": "signoff-1",
+    "op": "parseSignoff",
+    "args": [
+      "LAUNCH: id\nVERDICT: PASS"
+    ],
+    "expected": {
+      "launchId": "id",
+      "verdict": "pass"
+    }
+  },
+  {
+    "name": "signoff-2",
+    "op": "parseSignoff",
+    "args": [
+      "laUnch : id\r\n verdict : fail\r\n"
+    ],
+    "expected": {
+      "launchId": "id",
+      "verdict": "fail"
+    }
+  },
+  {
+    "name": "signoff-3",
+    "op": "parseSignoff",
+    "args": [
+      "LAUNCH: id\nVERDICT: NEAR-PASS"
+    ],
+    "expected": {
+      "launchId": "id",
+      "verdict": "near-pass"
+    }
+  },
+  {
+    "name": "signoff-4",
+    "op": "parseSignoff",
+    "args": [
+      "LAUNCH: id\nVERDICT: GO-WITH-FIXES"
+    ],
+    "expected": {
+      "launchId": "id",
+      "verdict": "near-pass"
+    }
+  },
+  {
+    "name": "signoff-5",
+    "op": "parseSignoff",
+    "args": [
+      "LAUNCH: id\nVERDICT: GO-WITH-FIXES (blockers=0)"
+    ],
+    "expected": null
+  },
+  {
+    "name": "signoff-6",
+    "op": "parseSignoff",
+    "args": [
+      "LAUNCH: id\nVERDICT: PASS\ntrailer"
+    ],
+    "expected": null
+  },
+  {
+    "name": "signoff-7",
+    "op": "parseSignoff",
+    "args": [
+      "LAUNCH: id\nVERDICT: paß"
+    ],
+    "expected": {
+      "launchId": "id",
+      "verdict": "pass"
+    }
+  },
+  {
+    "name": "signoff-8",
+    "op": "parseSignoff",
+    "args": [
+      "LAUNCH: id\nVERDICT: paſſ"
+    ],
+    "expected": {
+      "launchId": "id",
+      "verdict": "pass"
+    }
+  },
+  {
+    "name": "signoff-9",
+    "op": "parseSignoff",
+    "args": [
+      "LAUNCH: id\nVERDICT: faıl"
+    ],
+    "expected": {
+      "launchId": "id",
+      "verdict": "fail"
+    }
+  },
+  {
+    "name": "signoff-10",
+    "op": "parseSignoff",
+    "args": [
+      "LAUNCH: id\nVERDICT: GO-WITH-ﬁXES"
+    ],
+    "expected": {
+      "launchId": "id",
+      "verdict": "near-pass"
+    }
+  },
+  {
+    "name": "signoff-11",
+    "op": "parseSignoff",
+    "args": [
+      "LAUNCH: ab\nVERDICT: PASS"
+    ],
+    "expected": {
+      "launchId": "ab",
+      "verdict": "pass"
+    }
+  },
+  {
+    "name": "signoff-12",
+    "op": "parseSignoff",
+    "args": [
+      "LAUNCH: id\nVERDICT: PASS"
+    ],
+    "expected": null
+  },
+  {
+    "name": "signoff-13",
+    "op": "parseSignoff",
+    "args": [
+      "LAUNCH﻿:﻿id\nVERDICT: PASS"
+    ],
+    "expected": {
+      "launchId": "id",
+      "verdict": "pass"
+    }
+  },
+  {
+    "name": "signoff-14",
+    "op": "parseSignoff",
+    "args": [
+      "LAUNCH : id\nVERDICT: PASS"
+    ],
+    "expected": {
+      "launchId": "id",
+      "verdict": "pass"
+    }
+  },
+  {
+    "name": "signoff-15",
+    "op": "parseSignoff",
+    "args": [
+      "LAUNCH: a b\nVERDICT: PASS"
+    ],
+    "expected": null
+  },
+  {
+    "name": "signoff-16",
+    "op": "parseSignoff",
+    "args": [
+      "LAUNCH: id\nVERDICT: PA\rSS"
+    ],
+    "expected": null
+  },
+  {
+    "name": "signoff-17",
+    "op": "parseSignoff",
+    "args": [
+      "LAUNCH: id\nVERDICT: PA SS"
+    ],
+    "expected": null
+  },
+  {
+    "name": "signoff-18",
+    "op": "parseSignoff",
+    "args": [
+      "LAUNCH: id\nVERDICT: PA SS"
+    ],
+    "expected": null
+  },
+  {
+    "name": "signoff-19",
+    "op": "parseSignoff",
+    "args": [
+      "LAUNCH: id\nVERDICT: ＰＡＳＳ"
+    ],
+    "expected": null
+  },
+  {
+    "name": "signoff-20",
+    "op": "parseSignoff",
+    "args": [
+      "LAUNCH: id extra\nVERDICT: PASS"
+    ],
+    "expected": null
+  },
+  {
+    "name": "signoff-21",
+    "op": "parseSignoff",
+    "args": [
+      "LAUNCH: id\n\nVERDICT: PASS\n\n"
+    ],
+    "expected": {
+      "launchId": "id",
+      "verdict": "pass"
+    }
+  },
+  {
+    "name": "order-r01",
+    "op": "openRound",
+    "args": [
+      {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "r01",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "approved",
+            "lane": {
+              "launchId": "r01-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z"
+          }
+        ]
+      },
+      {
+        "purpose": "plan_audit",
+        "planPath": "plan.md",
+        "planSha256": "hash-b"
+      }
+    ],
+    "expected": {
+      "kind": "ok",
+      "plan": {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "r01",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "approved",
+            "lane": {
+              "launchId": "r01-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z"
+          },
+          {
+            "roundId": "r2",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-b",
+            "status": "pending",
+            "lane": {
+              "launchId": "r2-20260101000000"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z"
+          }
+        ],
+        "activePlanAuditRoundId": "r2"
+      },
+      "round": {
+        "roundId": "r2",
+        "purpose": "plan_audit",
+        "planPath": "plan.md",
+        "planSha256": "hash-b",
+        "status": "pending",
+        "lane": {
+          "launchId": "r2-20260101000000"
+        },
+        "openedAt": "2026-01-01T00:00:00.000Z"
+      }
+    }
+  },
+  {
+    "name": "order-junk",
+    "op": "openRound",
+    "args": [
+      {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "junk",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "approved",
+            "lane": {
+              "launchId": "junk-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z"
+          }
+        ]
+      },
+      {
+        "purpose": "plan_audit",
+        "planPath": "plan.md",
+        "planSha256": "hash-b"
+      }
+    ],
+    "expected": {
+      "kind": "ok",
+      "plan": {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "junk",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "approved",
+            "lane": {
+              "launchId": "junk-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z"
+          },
+          {
+            "roundId": "r1",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-b",
+            "status": "pending",
+            "lane": {
+              "launchId": "r1-20260101000000"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z"
+          }
+        ],
+        "activePlanAuditRoundId": "r1"
+      },
+      "round": {
+        "roundId": "r1",
+        "purpose": "plan_audit",
+        "planPath": "plan.md",
+        "planSha256": "hash-b",
+        "status": "pending",
+        "lane": {
+          "launchId": "r1-20260101000000"
+        },
+        "openedAt": "2026-01-01T00:00:00.000Z"
+      }
+    }
+  },
+  {
+    "name": "order-r+10tail",
+    "op": "openRound",
+    "args": [
+      {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "r+10tail",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "approved",
+            "lane": {
+              "launchId": "r+10tail-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z"
+          }
+        ]
+      },
+      {
+        "purpose": "plan_audit",
+        "planPath": "plan.md",
+        "planSha256": "hash-b"
+      }
+    ],
+    "expected": {
+      "kind": "ok",
+      "plan": {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "r+10tail",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "approved",
+            "lane": {
+              "launchId": "r+10tail-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z"
+          },
+          {
+            "roundId": "r11",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-b",
+            "status": "pending",
+            "lane": {
+              "launchId": "r11-20260101000000"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z"
+          }
+        ],
+        "activePlanAuditRoundId": "r11"
+      },
+      "round": {
+        "roundId": "r11",
+        "purpose": "plan_audit",
+        "planPath": "plan.md",
+        "planSha256": "hash-b",
+        "status": "pending",
+        "lane": {
+          "launchId": "r11-20260101000000"
+        },
+        "openedAt": "2026-01-01T00:00:00.000Z"
+      }
+    }
+  },
+  {
+    "name": "order-r-2tail",
+    "op": "openRound",
+    "args": [
+      {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "r-2tail",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "approved",
+            "lane": {
+              "launchId": "r-2tail-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z"
+          }
+        ]
+      },
+      {
+        "purpose": "plan_audit",
+        "planPath": "plan.md",
+        "planSha256": "hash-b"
+      }
+    ],
+    "expected": {
+      "kind": "ok",
+      "plan": {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "r-2tail",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "approved",
+            "lane": {
+              "launchId": "r-2tail-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z"
+          },
+          {
+            "roundId": "r1",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-b",
+            "status": "pending",
+            "lane": {
+              "launchId": "r1-20260101000000"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z"
+          }
+        ],
+        "activePlanAuditRoundId": "r1"
+      },
+      "round": {
+        "roundId": "r1",
+        "purpose": "plan_audit",
+        "planPath": "plan.md",
+        "planSha256": "hash-b",
+        "status": "pending",
+        "lane": {
+          "launchId": "r1-20260101000000"
+        },
+        "openedAt": "2026-01-01T00:00:00.000Z"
+      }
+    }
+  },
+  {
+    "name": "order-r ﻿8rest",
+    "op": "openRound",
+    "args": [
+      {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "r ﻿8rest",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "approved",
+            "lane": {
+              "launchId": "r ﻿8rest-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z"
+          }
+        ]
+      },
+      {
+        "purpose": "plan_audit",
+        "planPath": "plan.md",
+        "planSha256": "hash-b"
+      }
+    ],
+    "expected": {
+      "kind": "ok",
+      "plan": {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "r ﻿8rest",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "approved",
+            "lane": {
+              "launchId": "r ﻿8rest-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z"
+          },
+          {
+            "roundId": "r9",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-b",
+            "status": "pending",
+            "lane": {
+              "launchId": "r9-20260101000000"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z"
+          }
+        ],
+        "activePlanAuditRoundId": "r9"
+      },
+      "round": {
+        "roundId": "r9",
+        "purpose": "plan_audit",
+        "planPath": "plan.md",
+        "planSha256": "hash-b",
+        "status": "pending",
+        "lane": {
+          "launchId": "r9-20260101000000"
+        },
+        "openedAt": "2026-01-01T00:00:00.000Z"
+      }
+    }
+  },
+  {
+    "name": "order-r9007199254740992",
+    "op": "openRound",
+    "args": [
+      {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "r9007199254740992",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "approved",
+            "lane": {
+              "launchId": "r9007199254740992-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z"
+          }
+        ]
+      },
+      {
+        "purpose": "plan_audit",
+        "planPath": "plan.md",
+        "planSha256": "hash-b"
+      }
+    ],
+    "expected": {
+      "kind": "ok",
+      "plan": {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "r9007199254740992",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "approved",
+            "lane": {
+              "launchId": "r9007199254740992-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z"
+          },
+          {
+            "roundId": "r9007199254740992",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-b",
+            "status": "pending",
+            "lane": {
+              "launchId": "r9007199254740992-20260101000000"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z"
+          }
+        ],
+        "activePlanAuditRoundId": "r9007199254740992"
+      },
+      "round": {
+        "roundId": "r9007199254740992",
+        "purpose": "plan_audit",
+        "planPath": "plan.md",
+        "planSha256": "hash-b",
+        "status": "pending",
+        "lane": {
+          "launchId": "r9007199254740992-20260101000000"
+        },
+        "openedAt": "2026-01-01T00:00:00.000Z"
+      }
+    }
+  },
+  {
+    "name": "order-r100000000000000000000",
+    "op": "openRound",
+    "args": [
+      {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "r100000000000000000000",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "approved",
+            "lane": {
+              "launchId": "r100000000000000000000-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z"
+          }
+        ]
+      },
+      {
+        "purpose": "plan_audit",
+        "planPath": "plan.md",
+        "planSha256": "hash-b"
+      }
+    ],
+    "expected": {
+      "kind": "ok",
+      "plan": {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "r100000000000000000000",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "approved",
+            "lane": {
+              "launchId": "r100000000000000000000-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z"
+          },
+          {
+            "roundId": "r100000000000000000000",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-b",
+            "status": "pending",
+            "lane": {
+              "launchId": "r100000000000000000000-20260101000000"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z"
+          }
+        ],
+        "activePlanAuditRoundId": "r100000000000000000000"
+      },
+      "round": {
+        "roundId": "r100000000000000000000",
+        "purpose": "plan_audit",
+        "planPath": "plan.md",
+        "planSha256": "hash-b",
+        "status": "pending",
+        "lane": {
+          "launchId": "r100000000000000000000-20260101000000"
+        },
+        "openedAt": "2026-01-01T00:00:00.000Z"
+      }
+    }
+  },
+  {
+    "name": "order-r999999999999999999999",
+    "op": "openRound",
+    "args": [
+      {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "r999999999999999999999",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "approved",
+            "lane": {
+              "launchId": "r999999999999999999999-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z"
+          }
+        ]
+      },
+      {
+        "purpose": "plan_audit",
+        "planPath": "plan.md",
+        "planSha256": "hash-b"
+      }
+    ],
+    "expected": {
+      "kind": "ok",
+      "plan": {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "r999999999999999999999",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "approved",
+            "lane": {
+              "launchId": "r999999999999999999999-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z"
+          },
+          {
+            "roundId": "r1e+21",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-b",
+            "status": "pending",
+            "lane": {
+              "launchId": "r1e+21-20260101000000"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z"
+          }
+        ],
+        "activePlanAuditRoundId": "r1e+21"
+      },
+      "round": {
+        "roundId": "r1e+21",
+        "purpose": "plan_audit",
+        "planPath": "plan.md",
+        "planSha256": "hash-b",
+        "status": "pending",
+        "lane": {
+          "launchId": "r1e+21-20260101000000"
+        },
+        "openedAt": "2026-01-01T00:00:00.000Z"
+      }
+    }
+  },
+  {
+    "name": "order-r100000000000000000000000",
+    "op": "openRound",
+    "args": [
+      {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "r1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "approved",
+            "lane": {
+              "launchId": "r1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z"
+          }
+        ]
+      },
+      {
+        "purpose": "plan_audit",
+        "planPath": "plan.md",
+        "planSha256": "hash-b"
+      }
+    ],
+    "expected": {
+      "kind": "ok",
+      "plan": {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "r1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "approved",
+            "lane": {
+              "launchId": "r1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z"
+          },
+          {
+            "roundId": "r1",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-b",
+            "status": "pending",
+            "lane": {
+              "launchId": "r1-20260101000000"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z"
+          }
+        ],
+        "activePlanAuditRoundId": "r1"
+      },
+      "round": {
+        "roundId": "r1",
+        "purpose": "plan_audit",
+        "planPath": "plan.md",
+        "planSha256": "hash-b",
+        "status": "pending",
+        "lane": {
+          "launchId": "r1-20260101000000"
+        },
+        "openedAt": "2026-01-01T00:00:00.000Z"
+      }
+    }
+  },
+  {
+    "name": "order-R9",
+    "op": "openRound",
+    "args": [
+      {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "R9",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "approved",
+            "lane": {
+              "launchId": "R9-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z"
+          }
+        ]
+      },
+      {
+        "purpose": "plan_audit",
+        "planPath": "plan.md",
+        "planSha256": "hash-b"
+      }
+    ],
+    "expected": {
+      "kind": "ok",
+      "plan": {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "R9",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "approved",
+            "lane": {
+              "launchId": "R9-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z"
+          },
+          {
+            "roundId": "r1",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-b",
+            "status": "pending",
+            "lane": {
+              "launchId": "r1-20260101000000"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z"
+          }
+        ],
+        "activePlanAuditRoundId": "r1"
+      },
+      "round": {
+        "roundId": "r1",
+        "purpose": "plan_audit",
+        "planPath": "plan.md",
+        "planSha256": "hash-b",
+        "status": "pending",
+        "lane": {
+          "launchId": "r1-20260101000000"
+        },
+        "openedAt": "2026-01-01T00:00:00.000Z"
+      }
+    }
+  },
+  {
+    "name": "order-rr8",
+    "op": "openRound",
+    "args": [
+      {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "rr8",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "approved",
+            "lane": {
+              "launchId": "rr8-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z"
+          }
+        ]
+      },
+      {
+        "purpose": "plan_audit",
+        "planPath": "plan.md",
+        "planSha256": "hash-b"
+      }
+    ],
+    "expected": {
+      "kind": "ok",
+      "plan": {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "rr8",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "approved",
+            "lane": {
+              "launchId": "rr8-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z"
+          },
+          {
+            "roundId": "r1",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-b",
+            "status": "pending",
+            "lane": {
+              "launchId": "r1-20260101000000"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z"
+          }
+        ],
+        "activePlanAuditRoundId": "r1"
+      },
+      "round": {
+        "roundId": "r1",
+        "purpose": "plan_audit",
+        "planPath": "plan.md",
+        "planSha256": "hash-b",
+        "status": "pending",
+        "lane": {
+          "launchId": "r1-20260101000000"
+        },
+        "openedAt": "2026-01-01T00:00:00.000Z"
+      }
+    }
+  },
+  {
+    "name": "cursor-reuse",
+    "op": "openRound",
+    "args": [
+      {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "r1",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "pending",
+            "lane": {
+              "launchId": "r1-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z"
+          },
+          {
+            "roundId": "r2",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "in_flight",
+            "lane": {
+              "launchId": "r2-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z"
+          }
+        ],
+        "activePlanAuditRoundId": "r1"
+      },
+      {
+        "purpose": "plan_audit",
+        "planPath": "plan.md",
+        "planSha256": "hash-b"
+      }
+    ],
+    "expected": {
+      "kind": "ok",
+      "plan": {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "r1",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-b",
+            "status": "pending",
+            "lane": {
+              "launchId": "r1-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z"
+          },
+          {
+            "roundId": "r2",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "in_flight",
+            "lane": {
+              "launchId": "r2-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z"
+          }
+        ],
+        "activePlanAuditRoundId": "r1"
+      },
+      "round": {
+        "roundId": "r1",
+        "purpose": "plan_audit",
+        "planPath": "plan.md",
+        "planSha256": "hash-b",
+        "status": "pending",
+        "lane": {
+          "launchId": "r1-launch"
+        },
+        "openedAt": "2026-01-01T00:00:00.000Z"
+      }
+    }
+  },
+  {
+    "name": "cursor-abort",
+    "op": "abortRound",
+    "args": [
+      {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "r1",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "pending",
+            "lane": {
+              "launchId": "r1-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z"
+          },
+          {
+            "roundId": "r2",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "in_flight",
+            "lane": {
+              "launchId": "r2-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z"
+          }
+        ],
+        "activePlanAuditRoundId": "r1"
+      },
+      "plan_audit",
+      "stop"
+    ],
+    "expected": {
+      "kind": "ok",
+      "plan": {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "r1",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "inconclusive",
+            "lane": {
+              "launchId": "r1-launch",
+              "reviewerSession": "aborted: stop"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "closedAt": "2026-01-01T00:00:00.000Z"
+          },
+          {
+            "roundId": "r2",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "in_flight",
+            "lane": {
+              "launchId": "r2-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z"
+          }
+        ]
+      },
+      "round": {
+        "roundId": "r1",
+        "purpose": "plan_audit",
+        "planPath": "plan.md",
+        "planSha256": "hash-a",
+        "status": "inconclusive",
+        "lane": {
+          "launchId": "r1-launch",
+          "reviewerSession": "aborted: stop"
+        },
+        "openedAt": "2026-01-01T00:00:00.000Z",
+        "closedAt": "2026-01-01T00:00:00.000Z"
+      }
+    }
+  },
+  {
+    "name": "launch-omitted-workspace",
+    "op": "markLaunching",
+    "args": [
+      {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "r1",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "pending",
+            "lane": {
+              "launchId": "r1-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z"
+          }
+        ]
+      },
+      "plan_audit",
+      "r1",
+      "r1-launch"
+    ],
+    "expected": {
+      "kind": "ok",
+      "plan": {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "r1",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "launching",
+            "lane": {
+              "launchId": "r1-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z"
+          }
+        ],
+        "activePlanAuditRoundId": "r1"
+      },
+      "round": {
+        "roundId": "r1",
+        "purpose": "plan_audit",
+        "planPath": "plan.md",
+        "planSha256": "hash-a",
+        "status": "launching",
+        "lane": {
+          "launchId": "r1-launch"
+        },
+        "openedAt": "2026-01-01T00:00:00.000Z"
+      }
+    }
+  },
+  {
+    "name": "duplicate-id",
+    "op": "openRound",
+    "args": [
+      {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "r9007199254740992",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "approved",
+            "lane": {
+              "launchId": "r9007199254740992-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z"
+          }
+        ]
+      },
+      {
+        "purpose": "plan_audit",
+        "planPath": "plan.md",
+        "planSha256": "hash-b"
+      }
+    ],
+    "expected": {
+      "kind": "ok",
+      "plan": {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "r9007199254740992",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "approved",
+            "lane": {
+              "launchId": "r9007199254740992-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z"
+          },
+          {
+            "roundId": "r9007199254740992",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-b",
+            "status": "pending",
+            "lane": {
+              "launchId": "r9007199254740992-20260101000000"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z"
+          }
+        ],
+        "activePlanAuditRoundId": "r9007199254740992"
+      },
+      "round": {
+        "roundId": "r9007199254740992",
+        "purpose": "plan_audit",
+        "planPath": "plan.md",
+        "planSha256": "hash-b",
+        "status": "pending",
+        "lane": {
+          "launchId": "r9007199254740992-20260101000000"
+        },
+        "openedAt": "2026-01-01T00:00:00.000Z"
+      }
+    }
+  },
+  {
+    "name": "verdict-pass",
+    "op": "recordVerdict",
+    "args": [
+      {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "r1",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "in_flight",
+            "lane": {
+              "launchId": "r1-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z"
+          }
+        ]
+      },
+      {
+        "purpose": "plan_audit",
+        "roundId": "r1",
+        "launchId": "r1-launch",
+        "verdict": "pass",
+        "artifactSha256": "",
+        "reviewerSession": "",
+        "sourceIdentity": {
+          "kind": "resolved",
+          "commitSha": "c",
+          "dirty": false,
+          "capturedAt": "2026-01-01T00:00:00.000Z",
+          "treeHash": ""
+        }
+      }
+    ],
+    "expected": {
+      "kind": "ok",
+      "plan": {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "r1",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "approved",
+            "lane": {
+              "launchId": "r1-launch",
+              "verdict": "pass",
+              "artifactSha256": "",
+              "reviewerSession": "",
+              "sourceIdentity": {
+                "kind": "resolved",
+                "commitSha": "c",
+                "dirty": false,
+                "capturedAt": "2026-01-01T00:00:00.000Z",
+                "treeHash": ""
+              }
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "closedAt": "2026-01-01T00:00:00.000Z"
+          }
+        ]
+      },
+      "round": {
+        "roundId": "r1",
+        "purpose": "plan_audit",
+        "planPath": "plan.md",
+        "planSha256": "hash-a",
+        "status": "approved",
+        "lane": {
+          "launchId": "r1-launch",
+          "verdict": "pass",
+          "artifactSha256": "",
+          "reviewerSession": "",
+          "sourceIdentity": {
+            "kind": "resolved",
+            "commitSha": "c",
+            "dirty": false,
+            "capturedAt": "2026-01-01T00:00:00.000Z",
+            "treeHash": ""
+          }
+        },
+        "openedAt": "2026-01-01T00:00:00.000Z",
+        "closedAt": "2026-01-01T00:00:00.000Z"
+      }
+    }
+  },
+  {
+    "name": "verdict-near-pass",
+    "op": "recordVerdict",
+    "args": [
+      {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "r1",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "in_flight",
+            "lane": {
+              "launchId": "r1-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z"
+          }
+        ]
+      },
+      {
+        "purpose": "plan_audit",
+        "roundId": "r1",
+        "launchId": "r1-launch",
+        "verdict": "near-pass",
+        "artifactSha256": "",
+        "reviewerSession": "",
+        "sourceIdentity": {
+          "kind": "resolved",
+          "commitSha": "c",
+          "dirty": false,
+          "capturedAt": "2026-01-01T00:00:00.000Z",
+          "treeHash": ""
+        }
+      }
+    ],
+    "expected": {
+      "kind": "ok",
+      "plan": {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "r1",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "approved",
+            "lane": {
+              "launchId": "r1-launch",
+              "verdict": "near-pass",
+              "artifactSha256": "",
+              "reviewerSession": "",
+              "sourceIdentity": {
+                "kind": "resolved",
+                "commitSha": "c",
+                "dirty": false,
+                "capturedAt": "2026-01-01T00:00:00.000Z",
+                "treeHash": ""
+              }
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "closedAt": "2026-01-01T00:00:00.000Z"
+          }
+        ]
+      },
+      "round": {
+        "roundId": "r1",
+        "purpose": "plan_audit",
+        "planPath": "plan.md",
+        "planSha256": "hash-a",
+        "status": "approved",
+        "lane": {
+          "launchId": "r1-launch",
+          "verdict": "near-pass",
+          "artifactSha256": "",
+          "reviewerSession": "",
+          "sourceIdentity": {
+            "kind": "resolved",
+            "commitSha": "c",
+            "dirty": false,
+            "capturedAt": "2026-01-01T00:00:00.000Z",
+            "treeHash": ""
+          }
+        },
+        "openedAt": "2026-01-01T00:00:00.000Z",
+        "closedAt": "2026-01-01T00:00:00.000Z"
+      }
+    }
+  },
+  {
+    "name": "verdict-fail",
+    "op": "recordVerdict",
+    "args": [
+      {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "r1",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "in_flight",
+            "lane": {
+              "launchId": "r1-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z"
+          }
+        ]
+      },
+      {
+        "purpose": "plan_audit",
+        "roundId": "r1",
+        "launchId": "r1-launch",
+        "verdict": "fail",
+        "artifactSha256": "",
+        "reviewerSession": "",
+        "sourceIdentity": {
+          "kind": "resolved",
+          "commitSha": "c",
+          "dirty": false,
+          "capturedAt": "2026-01-01T00:00:00.000Z",
+          "treeHash": ""
+        }
+      }
+    ],
+    "expected": {
+      "kind": "ok",
+      "plan": {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "r1",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "changes_requested",
+            "lane": {
+              "launchId": "r1-launch",
+              "verdict": "fail",
+              "artifactSha256": "",
+              "reviewerSession": "",
+              "sourceIdentity": {
+                "kind": "resolved",
+                "commitSha": "c",
+                "dirty": false,
+                "capturedAt": "2026-01-01T00:00:00.000Z",
+                "treeHash": ""
+              }
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "closedAt": "2026-01-01T00:00:00.000Z"
+          }
+        ]
+      },
+      "round": {
+        "roundId": "r1",
+        "purpose": "plan_audit",
+        "planPath": "plan.md",
+        "planSha256": "hash-a",
+        "status": "changes_requested",
+        "lane": {
+          "launchId": "r1-launch",
+          "verdict": "fail",
+          "artifactSha256": "",
+          "reviewerSession": "",
+          "sourceIdentity": {
+            "kind": "resolved",
+            "commitSha": "c",
+            "dirty": false,
+            "capturedAt": "2026-01-01T00:00:00.000Z",
+            "treeHash": ""
+          }
+        },
+        "openedAt": "2026-01-01T00:00:00.000Z",
+        "closedAt": "2026-01-01T00:00:00.000Z"
+      }
+    }
+  },
+  {
+    "name": "epoch-pending",
+    "op": "supersedeStaleRounds",
+    "args": [
+      {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "r1",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "pending",
+            "lane": {
+              "launchId": "r1-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "ownerSessionId": "s",
+            "planEpoch": "old"
+          },
+          {
+            "roundId": "r2",
+            "purpose": "final_gate",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "in_flight",
+            "lane": {
+              "launchId": "r2-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "ownerSessionId": "s",
+            "planEpoch": "old"
+          },
+          {
+            "roundId": "r3",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "in_flight",
+            "lane": {
+              "launchId": "r3-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "ownerSessionId": "other",
+            "planEpoch": "old"
+          },
+          {
+            "roundId": "r4",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "in_flight",
+            "lane": {
+              "launchId": "r4-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "ownerSessionId": "s",
+            "planEpoch": "new"
+          }
+        ],
+        "activePlanAuditRoundId": "r4"
+      },
+      "plan_audit",
+      "s",
+      "old"
+    ],
+    "expected": {
+      "plan": {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "r1",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "inconclusive",
+            "lane": {
+              "launchId": "r1-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "ownerSessionId": "s",
+            "planEpoch": "old",
+            "closedAt": "2026-01-01T00:00:00.000Z"
+          },
+          {
+            "roundId": "r2",
+            "purpose": "final_gate",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "in_flight",
+            "lane": {
+              "launchId": "r2-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "ownerSessionId": "s",
+            "planEpoch": "old"
+          },
+          {
+            "roundId": "r3",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "in_flight",
+            "lane": {
+              "launchId": "r3-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "ownerSessionId": "other",
+            "planEpoch": "old"
+          },
+          {
+            "roundId": "r4",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "in_flight",
+            "lane": {
+              "launchId": "r4-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "ownerSessionId": "s",
+            "planEpoch": "new"
+          }
+        ]
+      },
+      "closed": [
+        "r1"
+      ]
+    }
+  },
+  {
+    "name": "epoch-launching",
+    "op": "supersedeStaleRounds",
+    "args": [
+      {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "r1",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "launching",
+            "lane": {
+              "launchId": "r1-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "ownerSessionId": "s",
+            "planEpoch": "old"
+          },
+          {
+            "roundId": "r2",
+            "purpose": "final_gate",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "in_flight",
+            "lane": {
+              "launchId": "r2-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "ownerSessionId": "s",
+            "planEpoch": "old"
+          },
+          {
+            "roundId": "r3",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "in_flight",
+            "lane": {
+              "launchId": "r3-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "ownerSessionId": "other",
+            "planEpoch": "old"
+          },
+          {
+            "roundId": "r4",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "in_flight",
+            "lane": {
+              "launchId": "r4-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "ownerSessionId": "s",
+            "planEpoch": "new"
+          }
+        ],
+        "activePlanAuditRoundId": "r4"
+      },
+      "plan_audit",
+      "s",
+      "old"
+    ],
+    "expected": {
+      "plan": {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "r1",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "inconclusive",
+            "lane": {
+              "launchId": "r1-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "ownerSessionId": "s",
+            "planEpoch": "old",
+            "closedAt": "2026-01-01T00:00:00.000Z"
+          },
+          {
+            "roundId": "r2",
+            "purpose": "final_gate",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "in_flight",
+            "lane": {
+              "launchId": "r2-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "ownerSessionId": "s",
+            "planEpoch": "old"
+          },
+          {
+            "roundId": "r3",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "in_flight",
+            "lane": {
+              "launchId": "r3-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "ownerSessionId": "other",
+            "planEpoch": "old"
+          },
+          {
+            "roundId": "r4",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "in_flight",
+            "lane": {
+              "launchId": "r4-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "ownerSessionId": "s",
+            "planEpoch": "new"
+          }
+        ]
+      },
+      "closed": [
+        "r1"
+      ]
+    }
+  },
+  {
+    "name": "epoch-in_flight",
+    "op": "supersedeStaleRounds",
+    "args": [
+      {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "r1",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "in_flight",
+            "lane": {
+              "launchId": "r1-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "ownerSessionId": "s",
+            "planEpoch": "old"
+          },
+          {
+            "roundId": "r2",
+            "purpose": "final_gate",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "in_flight",
+            "lane": {
+              "launchId": "r2-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "ownerSessionId": "s",
+            "planEpoch": "old"
+          },
+          {
+            "roundId": "r3",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "in_flight",
+            "lane": {
+              "launchId": "r3-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "ownerSessionId": "other",
+            "planEpoch": "old"
+          },
+          {
+            "roundId": "r4",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "in_flight",
+            "lane": {
+              "launchId": "r4-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "ownerSessionId": "s",
+            "planEpoch": "new"
+          }
+        ],
+        "activePlanAuditRoundId": "r4"
+      },
+      "plan_audit",
+      "s",
+      "old"
+    ],
+    "expected": {
+      "plan": {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "r1",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "inconclusive",
+            "lane": {
+              "launchId": "r1-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "ownerSessionId": "s",
+            "planEpoch": "old",
+            "closedAt": "2026-01-01T00:00:00.000Z"
+          },
+          {
+            "roundId": "r2",
+            "purpose": "final_gate",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "in_flight",
+            "lane": {
+              "launchId": "r2-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "ownerSessionId": "s",
+            "planEpoch": "old"
+          },
+          {
+            "roundId": "r3",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "in_flight",
+            "lane": {
+              "launchId": "r3-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "ownerSessionId": "other",
+            "planEpoch": "old"
+          },
+          {
+            "roundId": "r4",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "in_flight",
+            "lane": {
+              "launchId": "r4-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "ownerSessionId": "s",
+            "planEpoch": "new"
+          }
+        ]
+      },
+      "closed": [
+        "r1"
+      ]
+    }
+  },
+  {
+    "name": "epoch-approved",
+    "op": "supersedeStaleRounds",
+    "args": [
+      {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "r1",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "approved",
+            "lane": {
+              "launchId": "r1-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "ownerSessionId": "s",
+            "planEpoch": "old"
+          },
+          {
+            "roundId": "r2",
+            "purpose": "final_gate",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "in_flight",
+            "lane": {
+              "launchId": "r2-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "ownerSessionId": "s",
+            "planEpoch": "old"
+          },
+          {
+            "roundId": "r3",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "in_flight",
+            "lane": {
+              "launchId": "r3-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "ownerSessionId": "other",
+            "planEpoch": "old"
+          },
+          {
+            "roundId": "r4",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "in_flight",
+            "lane": {
+              "launchId": "r4-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "ownerSessionId": "s",
+            "planEpoch": "new"
+          }
+        ],
+        "activePlanAuditRoundId": "r4"
+      },
+      "plan_audit",
+      "s",
+      "old"
+    ],
+    "expected": {
+      "plan": {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "r1",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "approved",
+            "lane": {
+              "launchId": "r1-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "ownerSessionId": "s",
+            "planEpoch": "old"
+          },
+          {
+            "roundId": "r2",
+            "purpose": "final_gate",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "in_flight",
+            "lane": {
+              "launchId": "r2-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "ownerSessionId": "s",
+            "planEpoch": "old"
+          },
+          {
+            "roundId": "r3",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "in_flight",
+            "lane": {
+              "launchId": "r3-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "ownerSessionId": "other",
+            "planEpoch": "old"
+          },
+          {
+            "roundId": "r4",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "in_flight",
+            "lane": {
+              "launchId": "r4-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "ownerSessionId": "s",
+            "planEpoch": "new"
+          }
+        ],
+        "activePlanAuditRoundId": "r4"
+      },
+      "closed": []
+    }
+  },
+  {
+    "name": "epoch-changes_requested",
+    "op": "supersedeStaleRounds",
+    "args": [
+      {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "r1",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "changes_requested",
+            "lane": {
+              "launchId": "r1-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "ownerSessionId": "s",
+            "planEpoch": "old"
+          },
+          {
+            "roundId": "r2",
+            "purpose": "final_gate",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "in_flight",
+            "lane": {
+              "launchId": "r2-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "ownerSessionId": "s",
+            "planEpoch": "old"
+          },
+          {
+            "roundId": "r3",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "in_flight",
+            "lane": {
+              "launchId": "r3-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "ownerSessionId": "other",
+            "planEpoch": "old"
+          },
+          {
+            "roundId": "r4",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "in_flight",
+            "lane": {
+              "launchId": "r4-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "ownerSessionId": "s",
+            "planEpoch": "new"
+          }
+        ],
+        "activePlanAuditRoundId": "r4"
+      },
+      "plan_audit",
+      "s",
+      "old"
+    ],
+    "expected": {
+      "plan": {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "r1",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "changes_requested",
+            "lane": {
+              "launchId": "r1-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "ownerSessionId": "s",
+            "planEpoch": "old"
+          },
+          {
+            "roundId": "r2",
+            "purpose": "final_gate",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "in_flight",
+            "lane": {
+              "launchId": "r2-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "ownerSessionId": "s",
+            "planEpoch": "old"
+          },
+          {
+            "roundId": "r3",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "in_flight",
+            "lane": {
+              "launchId": "r3-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "ownerSessionId": "other",
+            "planEpoch": "old"
+          },
+          {
+            "roundId": "r4",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "in_flight",
+            "lane": {
+              "launchId": "r4-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "ownerSessionId": "s",
+            "planEpoch": "new"
+          }
+        ],
+        "activePlanAuditRoundId": "r4"
+      },
+      "closed": []
+    }
+  },
+  {
+    "name": "epoch-inconclusive",
+    "op": "supersedeStaleRounds",
+    "args": [
+      {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "r1",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "inconclusive",
+            "lane": {
+              "launchId": "r1-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "ownerSessionId": "s",
+            "planEpoch": "old"
+          },
+          {
+            "roundId": "r2",
+            "purpose": "final_gate",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "in_flight",
+            "lane": {
+              "launchId": "r2-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "ownerSessionId": "s",
+            "planEpoch": "old"
+          },
+          {
+            "roundId": "r3",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "in_flight",
+            "lane": {
+              "launchId": "r3-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "ownerSessionId": "other",
+            "planEpoch": "old"
+          },
+          {
+            "roundId": "r4",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "in_flight",
+            "lane": {
+              "launchId": "r4-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "ownerSessionId": "s",
+            "planEpoch": "new"
+          }
+        ],
+        "activePlanAuditRoundId": "r4"
+      },
+      "plan_audit",
+      "s",
+      "old"
+    ],
+    "expected": {
+      "plan": {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "r1",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "inconclusive",
+            "lane": {
+              "launchId": "r1-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "ownerSessionId": "s",
+            "planEpoch": "old"
+          },
+          {
+            "roundId": "r2",
+            "purpose": "final_gate",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "in_flight",
+            "lane": {
+              "launchId": "r2-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "ownerSessionId": "s",
+            "planEpoch": "old"
+          },
+          {
+            "roundId": "r3",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "in_flight",
+            "lane": {
+              "launchId": "r3-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "ownerSessionId": "other",
+            "planEpoch": "old"
+          },
+          {
+            "roundId": "r4",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "in_flight",
+            "lane": {
+              "launchId": "r4-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "ownerSessionId": "s",
+            "planEpoch": "new"
+          }
+        ],
+        "activePlanAuditRoundId": "r4"
+      },
+      "closed": []
+    }
+  },
+  {
+    "name": "epoch-no-owner",
+    "op": "supersedeStaleRounds",
+    "args": [
+      {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "r1",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "in_flight",
+            "lane": {
+              "launchId": "r1-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "planEpoch": "old"
+          }
+        ]
+      },
+      "plan_audit",
+      "",
+      "old"
+    ],
+    "expected": {
+      "plan": {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "r1",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "in_flight",
+            "lane": {
+              "launchId": "r1-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "planEpoch": "old"
+          }
+        ]
+      },
+      "closed": []
+    }
+  },
+  {
+    "name": "revived-owner-absent",
+    "op": "revivedOwner",
+    "args": [
+      {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "r1",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "in_flight",
+            "lane": {
+              "launchId": "r1-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "planEpoch": "old"
+          }
+        ]
+      }
+    ],
+    "expected": {
+      "owner": null,
+      "closed": []
+    }
+  },
+  {
+    "name": "revived-owner-empty",
+    "op": "revivedOwner",
+    "args": [
+      {
+        "objective": "review round fixture",
+        "slug": "review-round-fixture",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "reviewRounds": [
+          {
+            "roundId": "r1",
+            "purpose": "plan_audit",
+            "planPath": "plan.md",
+            "planSha256": "hash-a",
+            "status": "in_flight",
+            "lane": {
+              "launchId": "r1-launch"
+            },
+            "openedAt": "2026-01-01T00:00:00.000Z",
+            "planEpoch": "old",
+            "ownerSessionId": ""
+          }
+        ]
+      }
+    ],
+    "expected": {
+      "owner": null,
+      "closed": []
+    }
+  }
+]
