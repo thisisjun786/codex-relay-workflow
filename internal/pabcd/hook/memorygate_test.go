@@ -519,6 +519,12 @@ func TestMemoryGateFollowsSymlinks(t *testing.T) {
 	if got := memoryGateClassify("Bash", map[string]any{"command": "echo hi > alias/n.md"}, cwd, env); got.Target != filepath.Join(cwd, "alias", "n.md") {
 		t.Errorf("target: %+v", got)
 	}
+	// An empty HOME expands to nothing in the shell, so $HOME/x is the absolute /x.
+	elsewhere := t.TempDir()
+	emptyHome := gateEnvOf(map[string]string{"HOME": "", "CODEX_HOME": filepath.Join(elsewhere, "ch")})
+	if got := memoryGateClassify("Bash", map[string]any{"command": "echo hi > \"$HOME" + filepath.Join(elsewhere, "ch", "memories", "n.md") + "\""}, cwd, emptyHome); got.Surface != "shell" {
+		t.Errorf("empty HOME: %+v", got)
+	}
 	// A root that leads to "/" holds every absolute path.
 	slash := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(slash, "ch"), 0o755); err != nil {
@@ -557,12 +563,12 @@ func TestMemoryGateFollowsSymlinks(t *testing.T) {
 		t.Fatal(err)
 	}
 	// And names that end in a space or a quote, behind a home prefix.
-	for _, name := range []string{"alias ", "alias'"} {
+	for _, name := range []string{"trail ", "quote'"} { // their trimmed names do not exist
 		if err := os.Symlink(filepath.Join(home, ".codex", "memories", "new.md"), filepath.Join(home, name)); err != nil {
 			t.Fatal(err)
 		}
 	}
-	for _, dest := range []string{"$HOME/alias/../n.md", "~/alias/../n.md", "${HOME}/alias/../n.md", "$env:USERPROFILE/alias/../n.md", `"$HOME/bad\alias/../n.md"`, "\"$HOME/alias \"", "\"$HOME/alias'\""} {
+	for _, dest := range []string{"$HOME/alias/../n.md", "~/alias/../n.md", "${HOME}/alias/../n.md", "$env:USERPROFILE/alias/../n.md", `"$HOME/bad\alias/../n.md"`, "\"$HOME/trail \"", "\"$HOME/quote'\""} {
 		if got := memoryGateClassify("Bash", map[string]any{"command": "echo hi > " + dest}, cwd, gateEnvOf(map[string]string{"HOME": home})); got.Surface != "shell" {
 			t.Errorf("%s: %+v", dest, got)
 		}

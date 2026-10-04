@@ -316,8 +316,8 @@ func (g memoryGateEnv) expand(raw string) (norm, kept string) {
 }
 
 func memoryGateJoin(base, rest string) (norm, kept string) {
-	if base == "" {
-		return path.Join(base, rest), rest
+	if base == "" { // the shell expands an empty home to nothing, so the name is absolute; Node's join made it relative
+		return path.Clean("/" + rest), "/" + rest
 	}
 	return path.Join(base, rest), base + "/" + rest
 }
