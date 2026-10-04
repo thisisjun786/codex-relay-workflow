@@ -96,6 +96,16 @@ func livePullDecision(t *testing.T, answer map[string]any, head string) {
 	}
 }
 
+// livePullRecordDecision is the answer of a turn whose pull request cannot be read: it says the record decided and why.
+func livePullRecordDecision(t *testing.T, answer map[string]any, number int64) {
+	t.Helper()
+	decided, _ := answer["pullRequestHead"].(map[string]any)
+	reason, _ := decided["reason"].(string)
+	if decided == nil || decided["decidedBy"] != "record" || decided["pullRequest"] != number || decided["head"] != nil || !strings.Contains(reason, "not an owner/name forge repository") {
+		t.Fatalf("the answer does not say the record decided: %v", answer["pullRequestHead"])
+	}
+}
+
 // The 2026-10-04 case: pull request 501's head declared on the turn of pull request 500.
 func TestLivePullReadyRefusesAnotherPullRequestsHead(t *testing.T) {
 	w, pulls, turn := livePullBound(t)
@@ -107,7 +117,7 @@ func TestLivePullReadyRefusesAnotherPullRequestsHead(t *testing.T) {
 		t.Fatalf("the head of another pull request was accepted: %v %v", answer, err)
 	}
 	detail := livePullDetail(err)
-	for _, want := range []string{"pull request 500", "head-500", "head-501", "read the pull request again"} {
+	for _, want := range []string{turn, "pull request 500", "head-500", "head-501", "read the pull request again"} {
 		if !strings.Contains(detail, want) {
 			t.Errorf("the refusal does not say %q: %s", want, detail)
 		}
@@ -161,15 +171,44 @@ func TestLivePullReadyFailsClosedWhenThePullRequestIsNotRead(t *testing.T) {
 	}
 }
 
-// Where the turn's own record decides, nothing is read: the head did not move, the turn records no pull request,
-// or the repository is a local path with no forge behind it.
+// Heads are the same commit however their text is cased or padded, as the base tip is compared.
+func TestLivePullReadyComparesHeadsAsCommits(t *testing.T) {
+	w, pulls, turn := livePullBound(t)
+	pulls.set(fxRepo, 500, "head-500-refreshed")
+	answer := w.must(w.m.Ready(w.ctx, turn, alpha.TaskID, false, " HEAD-500-REFRESHED ", "refreshed the base"))
+	livePullDecision(t, answer, "head-500-refreshed")
+}
+
+// The head that was read is the one that decides. A head that moved between the early read of the turn and its
+// transaction (a concurrent call) was not read, so it is not accepted on the strength of a read made for another.
+func TestLivePullReadyRefusesAHeadThatMovedAfterTheEarlyRead(t *testing.T) {
+	w, _, turn := livePullBound(t)
+	moved := false
+	w.m.Now = func() string {
+		if !moved {
+			moved = true
+			w.exec("UPDATE merge_turns SET candidate_head = ? WHERE turn_id = ?", "head-elsewhere", turn)
+		}
+		return fxISO
+	}
+	// head-500 is the candidate when the call begins, so nothing is read for it; by the transaction it is a moved head
+	_, err := w.m.Ready(w.ctx, turn, alpha.TaskID, true, "head-500", "")
+	if reasonOf(err) != "merge_target_unreadable" || !strings.Contains(livePullDetail(err), "changed during the call") {
+		t.Fatalf("a head that moved without being read was accepted: %v", err)
+	}
+	if live := w.must(w.m.Turn(w.ctx, turn)); live["candidateHead"] != "head-elsewhere" {
+		t.Errorf("the refused call changed the turn: %v", live["candidateHead"])
+	}
+}
+
+// Where the turn's own record decides, nothing is read: the head did not move, or the turn records no pull request.
 func TestLivePullReadyReadsNothingWhenTheRecordDecides(t *testing.T) {
 	w, pulls, turn := livePullBound(t)
-	if _, err := w.m.Ready(w.ctx, turn, alpha.TaskID, true, "head-500", ""); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := w.m.Ready(w.ctx, turn, alpha.TaskID, false, "", ""); err != nil {
-		t.Fatal(err)
+	for _, head := range []string{"head-500", ""} {
+		answer, err := w.m.Ready(w.ctx, turn, alpha.TaskID, true, head, "")
+		if err != nil || answer["pullRequestHead"] != nil {
+			t.Fatalf("an unchanged head: %v %v", answer, err)
+		}
 	}
 	if pulls.readCount() != 0 {
 		t.Fatalf("a head that did not move read the forge %d times", pulls.readCount())
@@ -183,11 +222,31 @@ func TestLivePullReadyReadsNothingWhenTheRecordDecides(t *testing.T) {
 	if answer["candidateHead"] != "head-anything" || answer["pullRequestHead"] != nil || pulls2.readCount() != 0 {
 		t.Fatalf("a turn bound to no pull request: %v, %d reads", answer, pulls2.readCount())
 	}
+}
 
-	local := w2.must(w2.m.Request(w2.ctx, "/srv/local/R.git", fxBase, fxA, alpha.TaskID, alpha.HostID, "head-local", true, livePullOptions(7, "")))["turnId"].(string)
-	answer = w2.must(w2.m.Ready(w2.ctx, local, alpha.TaskID, false, "head-local-2", ""))
-	if answer["candidateHead"] != "head-local-2" || answer["pullRequestHead"] != nil || pulls2.readCount() != 0 {
-		t.Fatalf("a local repository has no pull request to read: %v, %d reads", answer, pulls2.readCount())
+// A pull request on a repository that is a local path has no forge to read from the turn alone: the record decides, and the answer says so.
+func TestLivePullLocalRepositoryIsDecidedByTheRecordAndSaysSo(t *testing.T) {
+	w := newFx(t)
+	pulls := newLivePullHeads()
+	w.m.Pulls = pulls
+	const local = "/srv/local/R.git"
+	w.target.set(local, fxBase, "base-0")
+	turn := w.must(w.m.Request(w.ctx, local, fxBase, fxA, alpha.TaskID, alpha.HostID, "head-local", true, livePullOptions(7, "")))["turnId"].(string)
+	w.answer(turn, alpha.TaskID)
+	answer := w.must(w.m.Ready(w.ctx, turn, alpha.TaskID, false, "head-local-2", ""))
+	if answer["candidateHead"] != "head-local-2" {
+		t.Fatalf("%v", answer)
+	}
+	livePullRecordDecision(t, answer, 7)
+	w.must(w.m.Ready(w.ctx, turn, alpha.TaskID, true, "head-local-2", ""))
+	w.answer(turn, alpha.TaskID)
+	checked, err := livePullCheck(w, turn, "head-local-2", livePullReader{target: w.target, pulls: pulls})
+	if err != nil || checked["state"] != Merging {
+		t.Fatalf("%v %v", checked, err)
+	}
+	livePullRecordDecision(t, checked, 7)
+	if pulls.readCount() != 0 {
+		t.Fatalf("a local repository read the forge %d times", pulls.readCount())
 	}
 }
 

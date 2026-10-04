@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -47,6 +48,28 @@ func livePullCount(w *fx, query string, args ...any) int64 {
 	return n
 }
 
+// livePullTicking gives every request its own instant, so the order the lane serves claims in is the order they were made.
+func livePullTicking(w *fx) {
+	var tick int64
+	w.m.Now = func() string {
+		tick++
+		return registry.ISO(time.Unix(1_700_000_000+tick, 0))
+	}
+}
+
+func livePullRefusedWith(t *testing.T, err error, wants ...string) {
+	t.Helper()
+	detail := livePullDetail(err)
+	if reasonOf(err) != "disposition_conflict" {
+		t.Fatalf("not refused as disposition_conflict: %v", err)
+	}
+	for _, want := range wants {
+		if !strings.Contains(detail, want) {
+			t.Errorf("the refusal does not say %q: %s", want, detail)
+		}
+	}
+}
+
 // The 2026-10-04 case: the parent holds the turn of pull request 500 and asks for one for pull request 501.
 func TestLivePullAnotherPullRequestRequestIsRefusedNamingTheLiveTurn(t *testing.T) {
 	w := newFx(t)
@@ -55,15 +78,10 @@ func TestLivePullAnotherPullRequestRequestIsRefusedNamingTheLiveTurn(t *testing.
 	ledger := livePullCount(w, "SELECT COUNT(*) FROM merge_turn_ledger")
 
 	answer, err := livePullClaim(w, alpha, fxA, "head-501", 501, "rel-501")
-	if reasonOf(err) != "disposition_conflict" || answer != nil {
-		t.Fatalf("the request for another pull request was not refused as disposition_conflict: %v %v", answer, err)
+	if answer != nil {
+		t.Fatalf("the request for another pull request was answered: %v", answer)
 	}
-	detail := livePullDetail(err)
-	for _, want := range []string{turn, "pull request 500", "rel-500", "holding", "place 1 of 1", "pull request 501", "rel-501"} {
-		if !strings.Contains(detail, want) {
-			t.Errorf("the refusal does not say %q: %s", want, detail)
-		}
-	}
+	livePullRefusedWith(t, err, turn, "pull request 500", "rel-500", "head-500", "holding", "place 1 of 1", "pull request 501", "rel-501")
 	if got := livePullCount(w, "SELECT COUNT(*) FROM merge_turns"); got != turns {
 		t.Errorf("a refused request wrote a turn: %d rows, was %d", got, turns)
 	}
@@ -81,22 +99,28 @@ func TestLivePullAnotherPullRequestRequestIsRefusedNamingTheLiveTurn(t *testing.
 	}
 }
 
-// A claim that waits behind another project's turn has a place in the order too, and says it.
-func TestLivePullRefusalNamesTheWaitingPlace(t *testing.T) {
+// A claim that waits has a place in the order too, counted among the live claims in the order the lane serves them:
+// the holder first, then the waiting claims by the time they were made.
+func TestLivePullRefusalNamesThePlaceInTheOrder(t *testing.T) {
 	w := newFx(t)
+	livePullTicking(w)
+	gamma := ep("task-gamma", "host-c", "/gamma")
+	w.bindParent("PRJ-C", gamma)
 	w.must(livePullClaim(w, beta, fxB, "head-b", 9, ""))
-	waiting := w.must(livePullClaim(w, alpha, fxA, "head-500", 500, ""))
-	if waiting["state"] != Waiting {
-		t.Fatalf("the claim behind another project's turn is %v", waiting["state"])
+	first := w.must(livePullClaim(w, gamma, "PRJ-C", "head-c", 8, ""))
+	mine := w.must(livePullClaim(w, alpha, fxA, "head-500", 500, ""))
+	if first["state"] != Waiting || mine["state"] != Waiting {
+		t.Fatalf("the claims behind another project's turn are %v and %v", first["state"], mine["state"])
 	}
 	_, err := livePullClaim(w, alpha, fxA, "head-501", 501, "")
-	detail := livePullDetail(err)
-	if reasonOf(err) != "disposition_conflict" || !strings.Contains(detail, waiting["turnId"].(string)) || !strings.Contains(detail, "waiting") || !strings.Contains(detail, "place 2 of 2") {
-		t.Fatalf("the waiting claim's refusal: %v", err)
-	}
+	livePullRefusedWith(t, err, mine["turnId"].(string), "waiting", "place 3 of 3")
+	_, err = livePullClaim(w, gamma, "PRJ-C", "head-c2", 7, "")
+	livePullRefusedWith(t, err, first["turnId"].(string), "waiting", "place 2 of 3")
 }
 
-// What is another pull request: a recorded pull request or relationship that the request contradicts.
+// What is another pull request. A request that states no identity is the live turn's replay. One that states some is its
+// replay only when none contradicts what the turn records and at least one agrees; stated identities the turn does not
+// record at all cannot be told from another pull request's, which is how dag-merge-request already reads the answer.
 func TestLivePullWhatCountsAsAnotherPullRequest(t *testing.T) {
 	for _, tc := range []struct {
 		name             string
@@ -106,23 +130,27 @@ func TestLivePullWhatCountsAsAnotherPullRequest(t *testing.T) {
 		askRelationship  string
 		refused          bool
 	}{
-		{"another pull request", 500, "rel-500", 501, "rel-500", true},
-		{"another pull request only", 500, "", 501, "", true},
+		{"another pull request and the same relationship", 500, "rel-500", 501, "rel-500", true},
+		{"another pull request only", 500, "rel-500", 501, "", true},
 		{"another relationship only", 0, "rel-500", 0, "rel-501", true},
-		{"same pull request and relationship", 500, "rel-500", 500, "rel-500", false},
-		{"same pull request only", 500, "rel-500", 500, "", false},
-		{"same relationship only", 500, "rel-500", 0, "rel-500", false},
+		{"the same pull request and another relationship", 500, "rel-500", 500, "rel-501", true},
+		{"a pull request against a claim recording only a relationship", 0, "rel-500", 501, "", true},
+		{"a relationship against a claim recording only a pull request", 500, "", 0, "rel-500", true},
+		{"identities against a claim recording none", 0, "", 501, "rel-501", true},
+		{"the same pull request and relationship", 500, "rel-500", 500, "rel-500", false},
+		{"the same pull request only", 500, "rel-500", 500, "", false},
+		{"the same relationship only", 500, "rel-500", 0, "rel-500", false},
 		{"nothing stated", 500, "rel-500", 0, "", false},
-		{"the live claim records no pull request", 0, "rel-500", 501, "rel-500", false},
-		{"the live claim records no relationship", 500, "", 500, "rel-other", false},
-		{"the live claim records nothing", 0, "", 501, "rel-501", false},
+		{"nothing stated against a claim recording none", 0, "", 0, "", false},
+		{"a relationship that agrees beside a pull request the claim does not record", 0, "rel-500", 501, "rel-500", false},
+		{"a pull request that agrees beside a relationship the claim does not record", 500, "", 500, "rel-other", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newFx(t)
 			turn := w.must(livePullClaim(w, alpha, fxA, "head-500", tc.livePR, tc.liveRelationship))["turnId"].(string)
 			answer, err := livePullClaim(w, alpha, fxA, "head-ask", tc.askPR, tc.askRelationship)
 			if tc.refused {
-				if reasonOf(err) != "disposition_conflict" {
+				if reasonOf(err) != "disposition_conflict" || answer != nil {
 					t.Fatalf("not refused: %v %v", answer, err)
 				}
 				return
@@ -137,16 +165,30 @@ func TestLivePullWhatCountsAsAnotherPullRequest(t *testing.T) {
 	}
 }
 
-// Once the earlier turn is returned, the other pull request gets its own turn.
+// A turn whose merge began or whose outcome is unknown is still the parent's one live turn for the target.
+func TestLivePullRefusalNamesAMergingAndAnUnknownTurn(t *testing.T) {
+	w, pulls, turn := livePullBound(t)
+	if _, err := livePullCheck(w, turn, "head-500", livePullReader{target: w.target, pulls: pulls}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := livePullClaim(w, alpha, fxA, "head-501", 501, "rel-501")
+	livePullRefusedWith(t, err, turn, "merging", "place 1 of 1", "merge-turn-land")
+	w.must(w.m.Unknown(w.ctx, turn, alpha.TaskID, "lost the connection"))
+	_, err = livePullClaim(w, alpha, fxA, "head-501", 501, "rel-501")
+	livePullRefusedWith(t, err, turn, "unknown", "place 1 of 1", "merge-turn-resolve")
+}
+
+// Once the earlier turn is returned, the other pull request gets its own turn, and a closed turn is no longer counted.
 func TestLivePullOtherPullRequestIsGrantedAfterTheEarlierTurnIsReturned(t *testing.T) {
 	w := newFx(t)
 	first := w.must(livePullClaim(w, alpha, fxA, "head-500", 500, "rel-500"))["turnId"].(string)
-	if _, err := livePullClaim(w, alpha, fxA, "head-501", 501, "rel-501"); reasonOf(err) != "disposition_conflict" {
-		t.Fatalf("not refused while the first turn is live: %v", err)
-	}
+	_, err := livePullClaim(w, alpha, fxA, "head-501", 501, "rel-501")
+	livePullRefusedWith(t, err, first, "holding")
 	w.must(w.m.Release(w.ctx, first, alpha.TaskID, "returned", "the next pull request goes first", ""))
 	second := w.must(livePullClaim(w, alpha, fxA, "head-501", 501, "rel-501"))
 	if second["turnId"] == first || second["prNumber"] != int64(501) || second["relationshipId"] != "rel-501" || second["state"] != Holding || second["tenure"] != int64(2) {
 		t.Fatalf("the second pull request's turn: %v", second)
 	}
+	_, err = livePullClaim(w, alpha, fxA, "head-502", 502, "rel-502")
+	livePullRefusedWith(t, err, second["turnId"].(string), "pull request 501", "place 1 of 1")
 }
