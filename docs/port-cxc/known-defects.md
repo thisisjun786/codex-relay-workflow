@@ -761,3 +761,21 @@ The parser feeds a fail-closed memory write gate, so a destination the oracle mi
 
 - Prose cwd matching uses substring containment, so a mention of an adjacent path such as `/proj/here-adjacent` earns the half boost and survives a `/proj/here` hard filter (CXC v0.2.40 `recall/src/memory-search.ts:357-358`); port: kept.
 - A computed date cutoff of exactly zero disables file age filtering because the cutoff check uses JavaScript truthiness (CXC v0.2.40 `recall/src/memory-search.ts:484`); port: kept.
+
+## Found by the rescan and Mind port (CRW-356)
+
+- An `answer_recorded` row clears its question pair even with empty or missing answers, so a captured non-answer can remove pending work (source `plugins/codexclaw/components/pabcd-state/src/rescan-coordinator.ts:84`; oracle case `emptyAnswer`); port: kept.
+- NUL-separated pair keys collide when either id contains NUL: `(t\u0000q, r)` and `(t, q\u0000r)` share a key (source `plugins/codexclaw/components/pabcd-state/src/rescan-coordinator.ts:39-40`; oracle case `nulCollision`); port: kept.
+- A NaN selection count returns no Minds despite the documented minimum of one (source `plugins/codexclaw/components/pabcd-state/src/minds.ts:163-165`; oracle case `count-nan`); port: kept.
+- The rank lookup inherits Object prototype properties, so a level such as `constructor` causes rank subtraction to fall through to canonical id order and mixed ranks form a nontransitive comparator (source `plugins/codexclaw/components/pabcd-state/src/minds.ts:169-173`; oracle cases `constraint-constructor`, `ontology-constructor`); port: kept.
+- The grounding heuristic accepts a URL port as a file line and unmatched quote types as a quote; it checks spelling, not that the claimed evidence exists (source `plugins/codexclaw/components/pabcd-state/src/minds.ts:107-109`; oracle cases `evidence-8`, `evidence-22`); port: kept.
+- The section-marker regex rejects `see ## Goals` but accepts `x## Goals` because the boundary applies before the first hash (source `plugins/codexclaw/components/pabcd-state/src/minds.ts:108`; oracle cases `evidence-17`, `evidence-18`); port: kept.
+- A JSON level object that shadows `toString` with a noncallable value throws `TypeError: Cannot convert object to primitive value` during rank lookup, even with a NaN selection count; the Go port preserves the failure as a panic with the same message (source `plugins/codexclaw/components/pabcd-state/src/minds.ts:169`; oracle cases `object-normal`, `object-nan`, `nested-normal`, `nested-nan`); port: kept.
+
+## CRW-523 — PABCD CLI verb adapters
+
+- Evidence has no help branch: `evidence help`, `-h` and `--help` are unknown-verb errors, and `evidence resolve --help` reports missing required arguments instead of displaying usage (source `plugins/codexclaw/components/pabcd-state/src/cli.ts:276-285`, `evidence-cli.ts:35-62`; four `cli-help__evidence__*` fixtures); port: kept.
+
+## Found by the CRW-381 recall chat-search entry port
+
+- The entry computes a positive-days cutoff before checking the empty plan or forced-scan flag, so an out-of-range value throws `Invalid time value` even for an empty query and before the origin callback (source `recall/src/chat-search.ts:159-164`, recorded `invalid-days` in `internal/recall/testdata/chatsearch/oracle.json`); port: kept.
