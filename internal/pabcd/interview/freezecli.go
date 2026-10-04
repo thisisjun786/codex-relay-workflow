@@ -115,7 +115,7 @@ func subpart(b []byte) int {
 // readdirSync: a directory that cannot be stat'ed is no files, one that can and cannot be read is an error, links are followed, and a
 // name is decoded as Node decodes it (invalid bytes become U+FFFD) before it is joined, stat'ed, read and reported. A file is hashed
 // as the text readFileSync(path, "utf8") returns, so its invalid bytes hash as U+FFFD. Unlike the oracle it refuses a plan directory or
-// a file whose real path is outside the working directory cwd (see realPath).
+// a file whose real path is outside the working directory cwd (see confined).
 func ListPlanFiles(cwd, planDir string) ([]PlanFileHash, error) {
 	if _, err := os.Stat(planDir); err != nil {
 		return nil, nil

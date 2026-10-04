@@ -208,6 +208,17 @@ func TestFreezeRefusesLinksOutOfTheWorkspace(t *testing.T) {
 	}
 }
 
+// A manifest directory that is a link is refused even where the link stays inside the workspace: Publish would follow it.
+func TestFreezeRefusesALinkedManifestDirectoryInsideTheWorkspace(t *testing.T) {
+	ws := t.TempDir()
+	if err := errors.Join(os.MkdirAll(filepath.Join(ws, ".crw", "elsewhere"), 0o777), os.Symlink("elsewhere", filepath.Join(ws, ".crw", "interview"))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RunFreeze(FreezeCliArgs{Cwd: ws, SessionID: "default"}, freezeFileReader); err == nil {
+		t.Error("freeze published through a linked manifest directory")
+	}
+}
+
 // The check judges the path the kernel opens. "<root>/jump/.." (jump a link) is composed as <root>, and ".." from a process whose $PWD is
 // a link to its directory is that directory's real parent: neither is refused, and nothing is created beside the links.
 func TestFreezeConfinementUsesTheCwdAsComposed(t *testing.T) {

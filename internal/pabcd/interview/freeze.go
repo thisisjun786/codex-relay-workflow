@@ -61,7 +61,7 @@ const collationOrder = "\t\n\v\f\r _-,;:!?.'\"()[]{}@*/\\&#%`^+<=>|~$0123456789a
 
 // localeCompare compares the whole primary sequence first and then the whole case sequence (lower before upper). A character beyond
 // ASCII weighs more than every ASCII one, by code point: ICU orders accents and scripts by tables this port does not have, so names
-// with such characters can sort differently than they do under Node (known defect, port: pending).
+// with such characters can sort differently than they do under Node (known defect, port: kept).
 func localeCompare(a, b string) int {
 	weights := func(s string) (primary, upper []int) {
 		for _, r := range s {
