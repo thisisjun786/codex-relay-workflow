@@ -175,24 +175,13 @@ func Test30ControlDisconnectBeforeARequestIsNoFailure(t *testing.T) {
 		}
 	})
 	t.Run("daemon", func(t *testing.T) {
-		daemon := exec.Command(testBinary, "relay", "--state", home+"/state", "--socket", home+"/socket", "daemon", "--deadline", "2", "--allow-isolated-scope")
-		daemon.Env = environment(home)
-		var stdout, stderr bytes.Buffer
-		daemon.Stdout, daemon.Stderr = &stdout, &stderr
-		if err := daemon.Start(); err != nil {
-			t.Fatal(err)
-		}
-		path := controlPath(home + "/state")
-		if err := awaitControlAccepting(path, 10*time.Second); err != nil {
-			_ = daemon.Process.Kill()
-			_ = daemon.Wait()
-			t.Fatalf("the daemon never accepted on control.sock: %v: %s %s", err, stdout.String(), stderr.String())
-		}
+		daemon := startControlDaemon(t, home)
+		path := daemon.path
 		probe(t, path, nil)
 		err := daemon.Wait()
 		var result map[string]any
-		if err != nil || json.Unmarshal(stdout.Bytes(), &result) != nil || result["ok"] != true {
-			t.Fatalf("daemon after a probe: %v\n%s%s", err, stdout.String(), stderr.String())
+		if err != nil || json.Unmarshal(daemon.stdout.Bytes(), &result) != nil || result["ok"] != true {
+			t.Fatalf("daemon after a probe: %v\n%s%s", err, daemon.stdout.String(), daemon.stderr.String())
 		}
 	})
 }
@@ -403,25 +392,14 @@ func Test30ControlPeerFailuresAreAnsweredWithTheHostRecord(t *testing.T) {
 		}
 	})
 	t.Run("daemon", func(t *testing.T) {
-		daemon := exec.Command(testBinary, "relay", "--state", home+"/state", "--socket", home+"/socket", "daemon", "--deadline", "2", "--allow-isolated-scope")
-		daemon.Env = environment(home)
-		var stdout, stderr bytes.Buffer
-		daemon.Stdout, daemon.Stderr = &stdout, &stderr
-		if err := daemon.Start(); err != nil {
-			t.Fatal(err)
-		}
-		path := controlPath(home + "/state")
-		if err := awaitControlAccepting(path, 10*time.Second); err != nil {
-			_ = daemon.Process.Kill()
-			_ = daemon.Wait()
-			t.Fatalf("the daemon never accepted on control.sock: %v: %s %s", err, stdout.String(), stderr.String())
-		}
+		daemon := startControlDaemon(t, home)
+		path := daemon.path
 		hostRecord(t, "params not an object", ask(t, path, frames["params not an object"]))
 		hangUp(t, path, frame(params(later, "")))
 		err := daemon.Wait()
 		var result map[string]any
-		if err != nil || json.Unmarshal(stdout.Bytes(), &result) != nil || result["ok"] != true {
-			t.Fatalf("daemon after failed peers: %v\n%s%s", err, stdout.String(), stderr.String())
+		if err != nil || json.Unmarshal(daemon.stdout.Bytes(), &result) != nil || result["ok"] != true {
+			t.Fatalf("daemon after failed peers: %v\n%s%s", err, daemon.stdout.String(), daemon.stderr.String())
 		}
 	})
 }
