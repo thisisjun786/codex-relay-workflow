@@ -1,0 +1,753 @@
+[
+  {
+    "name": "lifecycle",
+    "files": {
+      "sessions/2026/01/01/main.jsonl": "{\"type\":\"session_meta\",\"payload\":{\"id\":\"thread\",\"cwd\":\"/project\",\"git\":{\"repository_url\":\"https://example.test/team/repo.git\"}}}\n{\"type\":\"response_item\",\"timestamp\":\"2026-01-01T00:00:00Z\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"original 한글\"}]}}\n"
+    },
+    "actions": [
+      {
+        "kind": "ingest"
+      },
+      {
+        "kind": "ingest"
+      },
+      {
+        "kind": "append",
+        "path": "sessions/2026/01/01/main.jsonl",
+        "data": "{\"type\":\"response_item\",\"timestamp\":\"2026-01-01T00:00:00Z\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"appended quokka\"}]}}\n{\"type\":\"response_item\",\"timestamp\":\"2026-01-01T00:00:00Z\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"partial 한글\"}]}"
+      },
+      {
+        "kind": "ingest"
+      },
+      {
+        "kind": "append",
+        "path": "sessions/2026/01/01/main.jsonl",
+        "data": "}\n"
+      },
+      {
+        "kind": "ingest"
+      },
+      {
+        "kind": "write",
+        "path": "sessions/2026/01/01/main.jsonl",
+        "data": "{\"type\":\"session_meta\",\"payload\":{\"id\":\"thread\",\"cwd\":\"/project\",\"git\":{\"repository_url\":\"https://example.test/team/repo.git\"}}}\n{\"type\":\"response_item\",\"timestamp\":\"2026-01-01T00:00:00Z\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"new\"}]}}\n"
+      },
+      {
+        "kind": "ingest"
+      },
+      {
+        "kind": "remove",
+        "path": "sessions/2026/01/01/main.jsonl"
+      },
+      {
+        "kind": "ingest"
+      }
+    ],
+    "expected": [
+      {
+        "result": {
+          "scanned": 1,
+          "ingested": 1,
+          "appended": 0,
+          "pruned": 0,
+          "msgs": 1,
+          "elapsedMs": 0
+        },
+        "freshness": {
+          "sourceFiles": 1,
+          "indexedFiles": 1,
+          "missingFiles": 0,
+          "changedFiles": 0,
+          "extraFiles": 0,
+          "staleFiles": 0,
+          "truncated": false
+        },
+        "files": [
+          {
+            "path": "sessions/2026/01/01/main.jsonl",
+            "mtime_ms": 1767225600000,
+            "size": 291,
+            "thread_id": "thread",
+            "cwd": "/project",
+            "source": "main",
+            "date": "2026-01-01",
+            "bytes_ingested": 291,
+            "last_ord": 1,
+            "repo_key": "example.test/team/repo"
+          }
+        ],
+        "msgs": [
+          {
+            "path": "sessions/2026/01/01/main.jsonl",
+            "ord": 0,
+            "ts": "2026-01-01T00:00:00Z",
+            "role": "user",
+            "match_field": "content",
+            "synthetic": 0,
+            "text": "original 한글"
+          }
+        ]
+      },
+      {
+        "result": {
+          "scanned": 1,
+          "ingested": 0,
+          "appended": 0,
+          "pruned": 0,
+          "msgs": 0,
+          "elapsedMs": 0
+        },
+        "freshness": {
+          "sourceFiles": 1,
+          "indexedFiles": 1,
+          "missingFiles": 0,
+          "changedFiles": 0,
+          "extraFiles": 0,
+          "staleFiles": 0,
+          "truncated": false
+        },
+        "files": [
+          {
+            "path": "sessions/2026/01/01/main.jsonl",
+            "mtime_ms": 1767225600000,
+            "size": 291,
+            "thread_id": "thread",
+            "cwd": "/project",
+            "source": "main",
+            "date": "2026-01-01",
+            "bytes_ingested": 291,
+            "last_ord": 1,
+            "repo_key": "example.test/team/repo"
+          }
+        ],
+        "msgs": [
+          {
+            "path": "sessions/2026/01/01/main.jsonl",
+            "ord": 0,
+            "ts": "2026-01-01T00:00:00Z",
+            "role": "user",
+            "match_field": "content",
+            "synthetic": 0,
+            "text": "original 한글"
+          }
+        ]
+      },
+      {
+        "result": {
+          "scanned": 1,
+          "ingested": 0,
+          "appended": 1,
+          "pruned": 0,
+          "msgs": 1,
+          "elapsedMs": 0
+        },
+        "freshness": {
+          "sourceFiles": 1,
+          "indexedFiles": 1,
+          "missingFiles": 0,
+          "changedFiles": 0,
+          "extraFiles": 0,
+          "staleFiles": 0,
+          "truncated": false
+        },
+        "files": [
+          {
+            "path": "sessions/2026/01/01/main.jsonl",
+            "mtime_ms": 1767225602000,
+            "size": 612,
+            "thread_id": "thread",
+            "cwd": "/project",
+            "source": "main",
+            "date": "2026-01-01",
+            "bytes_ingested": 453,
+            "last_ord": 2,
+            "repo_key": "example.test/team/repo"
+          }
+        ],
+        "msgs": [
+          {
+            "path": "sessions/2026/01/01/main.jsonl",
+            "ord": 0,
+            "ts": "2026-01-01T00:00:00Z",
+            "role": "user",
+            "match_field": "content",
+            "synthetic": 0,
+            "text": "original 한글"
+          },
+          {
+            "path": "sessions/2026/01/01/main.jsonl",
+            "ord": 1,
+            "ts": "2026-01-01T00:00:00Z",
+            "role": "user",
+            "match_field": "content",
+            "synthetic": 0,
+            "text": "appended quokka"
+          }
+        ]
+      },
+      {
+        "result": {
+          "scanned": 1,
+          "ingested": 0,
+          "appended": 1,
+          "pruned": 0,
+          "msgs": 1,
+          "elapsedMs": 0
+        },
+        "freshness": {
+          "sourceFiles": 1,
+          "indexedFiles": 1,
+          "missingFiles": 0,
+          "changedFiles": 0,
+          "extraFiles": 0,
+          "staleFiles": 0,
+          "truncated": false
+        },
+        "files": [
+          {
+            "path": "sessions/2026/01/01/main.jsonl",
+            "mtime_ms": 1767225604000,
+            "size": 614,
+            "thread_id": "thread",
+            "cwd": "/project",
+            "source": "main",
+            "date": "2026-01-01",
+            "bytes_ingested": 614,
+            "last_ord": 3,
+            "repo_key": "example.test/team/repo"
+          }
+        ],
+        "msgs": [
+          {
+            "path": "sessions/2026/01/01/main.jsonl",
+            "ord": 0,
+            "ts": "2026-01-01T00:00:00Z",
+            "role": "user",
+            "match_field": "content",
+            "synthetic": 0,
+            "text": "original 한글"
+          },
+          {
+            "path": "sessions/2026/01/01/main.jsonl",
+            "ord": 1,
+            "ts": "2026-01-01T00:00:00Z",
+            "role": "user",
+            "match_field": "content",
+            "synthetic": 0,
+            "text": "appended quokka"
+          },
+          {
+            "path": "sessions/2026/01/01/main.jsonl",
+            "ord": 2,
+            "ts": "2026-01-01T00:00:00Z",
+            "role": "user",
+            "match_field": "content",
+            "synthetic": 0,
+            "text": "partial 한글"
+          }
+        ]
+      },
+      {
+        "result": {
+          "scanned": 1,
+          "ingested": 1,
+          "appended": 0,
+          "pruned": 0,
+          "msgs": 1,
+          "elapsedMs": 0
+        },
+        "freshness": {
+          "sourceFiles": 1,
+          "indexedFiles": 1,
+          "missingFiles": 0,
+          "changedFiles": 0,
+          "extraFiles": 0,
+          "staleFiles": 0,
+          "truncated": false
+        },
+        "files": [
+          {
+            "path": "sessions/2026/01/01/main.jsonl",
+            "mtime_ms": 1767225606000,
+            "size": 279,
+            "thread_id": "thread",
+            "cwd": "/project",
+            "source": "main",
+            "date": "2026-01-01",
+            "bytes_ingested": 279,
+            "last_ord": 1,
+            "repo_key": "example.test/team/repo"
+          }
+        ],
+        "msgs": [
+          {
+            "path": "sessions/2026/01/01/main.jsonl",
+            "ord": 0,
+            "ts": "2026-01-01T00:00:00Z",
+            "role": "user",
+            "match_field": "content",
+            "synthetic": 0,
+            "text": "new"
+          }
+        ]
+      },
+      {
+        "result": {
+          "scanned": 0,
+          "ingested": 0,
+          "appended": 0,
+          "pruned": 1,
+          "msgs": 0,
+          "elapsedMs": 0
+        },
+        "freshness": {
+          "sourceFiles": 0,
+          "indexedFiles": 0,
+          "missingFiles": 0,
+          "changedFiles": 0,
+          "extraFiles": 0,
+          "staleFiles": 0,
+          "truncated": false
+        },
+        "files": [],
+        "msgs": []
+      }
+    ]
+  },
+  {
+    "name": "growth-rewrite-kept",
+    "files": {
+      "sessions/2026/01/01/main.jsonl": "{\"type\":\"response_item\",\"timestamp\":\"2026-01-01T00:00:00Z\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"original\"}]}}\n"
+    },
+    "actions": [
+      {
+        "kind": "ingest"
+      },
+      {
+        "kind": "write",
+        "path": "sessions/2026/01/01/main.jsonl",
+        "data": "{\"type\":\"response_item\",\"timestamp\":\"2026-01-01T00:00:00Z\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"rewritten prefix that is longer\"}]}}\n{\"type\":\"response_item\",\"timestamp\":\"2026-01-01T00:00:00Z\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"later message\"}]}}\n"
+      },
+      {
+        "kind": "ingest"
+      }
+    ],
+    "expected": [
+      {
+        "result": {
+          "scanned": 1,
+          "ingested": 1,
+          "appended": 0,
+          "pruned": 0,
+          "msgs": 1,
+          "elapsedMs": 0
+        },
+        "freshness": {
+          "sourceFiles": 1,
+          "indexedFiles": 1,
+          "missingFiles": 0,
+          "changedFiles": 0,
+          "extraFiles": 0,
+          "staleFiles": 0,
+          "truncated": false
+        },
+        "files": [
+          {
+            "path": "sessions/2026/01/01/main.jsonl",
+            "mtime_ms": 1767225600000,
+            "size": 155,
+            "thread_id": null,
+            "cwd": null,
+            "source": "main",
+            "date": "2026-01-01",
+            "bytes_ingested": 155,
+            "last_ord": 1,
+            "repo_key": null
+          }
+        ],
+        "msgs": [
+          {
+            "path": "sessions/2026/01/01/main.jsonl",
+            "ord": 0,
+            "ts": "2026-01-01T00:00:00Z",
+            "role": "user",
+            "match_field": "content",
+            "synthetic": 0,
+            "text": "original"
+          }
+        ]
+      },
+      {
+        "result": {
+          "scanned": 1,
+          "ingested": 0,
+          "appended": 1,
+          "pruned": 0,
+          "msgs": 1,
+          "elapsedMs": 0
+        },
+        "freshness": {
+          "sourceFiles": 1,
+          "indexedFiles": 1,
+          "missingFiles": 0,
+          "changedFiles": 0,
+          "extraFiles": 0,
+          "staleFiles": 0,
+          "truncated": false
+        },
+        "files": [
+          {
+            "path": "sessions/2026/01/01/main.jsonl",
+            "mtime_ms": 1767225602000,
+            "size": 338,
+            "thread_id": null,
+            "cwd": null,
+            "source": "main",
+            "date": "2026-01-01",
+            "bytes_ingested": 338,
+            "last_ord": 2,
+            "repo_key": null
+          }
+        ],
+        "msgs": [
+          {
+            "path": "sessions/2026/01/01/main.jsonl",
+            "ord": 0,
+            "ts": "2026-01-01T00:00:00Z",
+            "role": "user",
+            "match_field": "content",
+            "synthetic": 0,
+            "text": "original"
+          },
+          {
+            "path": "sessions/2026/01/01/main.jsonl",
+            "ord": 1,
+            "ts": "2026-01-01T00:00:00Z",
+            "role": "user",
+            "match_field": "content",
+            "synthetic": 0,
+            "text": "later message"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "same-fingerprint-rewrite-kept",
+    "files": {
+      "sessions/2026/01/01/main.jsonl": "{\"type\":\"response_item\",\"timestamp\":\"2026-01-01T00:00:00Z\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"first\"}]}}\n"
+    },
+    "actions": [
+      {
+        "kind": "ingest"
+      },
+      {
+        "kind": "write",
+        "path": "sessions/2026/01/01/main.jsonl",
+        "data": "{\"type\":\"response_item\",\"timestamp\":\"2026-01-01T00:00:00Z\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"other\"}]}}\n",
+        "sameMtime": true
+      },
+      {
+        "kind": "ingest"
+      },
+      {
+        "kind": "write",
+        "path": "sessions/2026/01/01/main.jsonl",
+        "data": "{\"type\":\"response_item\",\"timestamp\":\"2026-01-01T00:00:00Z\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"other\"}]}}\n"
+      },
+      {
+        "kind": "ingest"
+      }
+    ],
+    "expected": [
+      {
+        "result": {
+          "scanned": 1,
+          "ingested": 1,
+          "appended": 0,
+          "pruned": 0,
+          "msgs": 1,
+          "elapsedMs": 0
+        },
+        "freshness": {
+          "sourceFiles": 1,
+          "indexedFiles": 1,
+          "missingFiles": 0,
+          "changedFiles": 0,
+          "extraFiles": 0,
+          "staleFiles": 0,
+          "truncated": false
+        },
+        "files": [
+          {
+            "path": "sessions/2026/01/01/main.jsonl",
+            "mtime_ms": 1767225600000,
+            "size": 152,
+            "thread_id": null,
+            "cwd": null,
+            "source": "main",
+            "date": "2026-01-01",
+            "bytes_ingested": 152,
+            "last_ord": 1,
+            "repo_key": null
+          }
+        ],
+        "msgs": [
+          {
+            "path": "sessions/2026/01/01/main.jsonl",
+            "ord": 0,
+            "ts": "2026-01-01T00:00:00Z",
+            "role": "user",
+            "match_field": "content",
+            "synthetic": 0,
+            "text": "first"
+          }
+        ]
+      },
+      {
+        "result": {
+          "scanned": 1,
+          "ingested": 0,
+          "appended": 0,
+          "pruned": 0,
+          "msgs": 0,
+          "elapsedMs": 0
+        },
+        "freshness": {
+          "sourceFiles": 1,
+          "indexedFiles": 1,
+          "missingFiles": 0,
+          "changedFiles": 0,
+          "extraFiles": 0,
+          "staleFiles": 0,
+          "truncated": false
+        },
+        "files": [
+          {
+            "path": "sessions/2026/01/01/main.jsonl",
+            "mtime_ms": 1767225600000,
+            "size": 152,
+            "thread_id": null,
+            "cwd": null,
+            "source": "main",
+            "date": "2026-01-01",
+            "bytes_ingested": 152,
+            "last_ord": 1,
+            "repo_key": null
+          }
+        ],
+        "msgs": [
+          {
+            "path": "sessions/2026/01/01/main.jsonl",
+            "ord": 0,
+            "ts": "2026-01-01T00:00:00Z",
+            "role": "user",
+            "match_field": "content",
+            "synthetic": 0,
+            "text": "first"
+          }
+        ]
+      },
+      {
+        "result": {
+          "scanned": 1,
+          "ingested": 1,
+          "appended": 0,
+          "pruned": 0,
+          "msgs": 1,
+          "elapsedMs": 0
+        },
+        "freshness": {
+          "sourceFiles": 1,
+          "indexedFiles": 1,
+          "missingFiles": 0,
+          "changedFiles": 0,
+          "extraFiles": 0,
+          "staleFiles": 0,
+          "truncated": false
+        },
+        "files": [
+          {
+            "path": "sessions/2026/01/01/main.jsonl",
+            "mtime_ms": 1767225602000,
+            "size": 152,
+            "thread_id": null,
+            "cwd": null,
+            "source": "main",
+            "date": "2026-01-01",
+            "bytes_ingested": 152,
+            "last_ord": 1,
+            "repo_key": null
+          }
+        ],
+        "msgs": [
+          {
+            "path": "sessions/2026/01/01/main.jsonl",
+            "ord": 0,
+            "ts": "2026-01-01T00:00:00Z",
+            "role": "user",
+            "match_field": "content",
+            "synthetic": 0,
+            "text": "other"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "utf16-cap",
+    "files": {
+      "sessions/2026/01/01/main.jsonl": "{\"type\":\"session_meta\",\"payload\":{\"id\":\"thread\",\"cwd\":\"/project\",\"git\":{\"repository_url\":\"https://example.test/team/repo.git\"}}}\n{\"type\":\"response_item\",\"timestamp\":\"2026-01-01T00:00:00Z\",\"payload\":{\"type\":\"function_call_output\",\"output\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa😀tail\"}}\n"
+    },
+    "actions": [
+      {
+        "kind": "ingest"
+      }
+    ],
+    "expected": [
+      {
+        "result": {
+          "scanned": 1,
+          "ingested": 1,
+          "appended": 0,
+          "pruned": 0,
+          "msgs": 1,
+          "elapsedMs": 0
+        },
+        "freshness": {
+          "sourceFiles": 1,
+          "indexedFiles": 1,
+          "missingFiles": 0,
+          "changedFiles": 0,
+          "extraFiles": 0,
+          "staleFiles": 0,
+          "truncated": false
+        },
+        "files": [
+          {
+            "path": "sessions/2026/01/01/main.jsonl",
+            "mtime_ms": 1767225600000,
+            "size": 8442,
+            "thread_id": "thread",
+            "cwd": "/project",
+            "source": "main",
+            "date": "2026-01-01",
+            "bytes_ingested": 8442,
+            "last_ord": 1,
+            "repo_key": "example.test/team/repo"
+          }
+        ],
+        "msgs": [
+          {
+            "path": "sessions/2026/01/01/main.jsonl",
+            "ord": 0,
+            "ts": "2026-01-01T00:00:00Z",
+            "role": "tool",
+            "match_field": "tool_log",
+            "synthetic": 0,
+            "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa�"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "no-complete-line",
+    "files": {
+      "sessions/2026/01/01/main.jsonl": "{\"type\":\"session_meta\",\"payload\":{\"id\":\"thread\",\"cwd\":\"/project\",\"git\":{\"repository_url\":\"https://example.test/team/repo.git\"}}}"
+    },
+    "actions": [
+      {
+        "kind": "ingest"
+      },
+      {
+        "kind": "append",
+        "path": "sessions/2026/01/01/main.jsonl",
+        "data": "\n{\"type\":\"response_item\",\"timestamp\":\"2026-01-01T00:00:00Z\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"complete\"}]}}\n"
+      },
+      {
+        "kind": "ingest"
+      }
+    ],
+    "expected": [
+      {
+        "result": {
+          "scanned": 1,
+          "ingested": 1,
+          "appended": 0,
+          "pruned": 0,
+          "msgs": 0,
+          "elapsedMs": 0
+        },
+        "freshness": {
+          "sourceFiles": 1,
+          "indexedFiles": 1,
+          "missingFiles": 0,
+          "changedFiles": 0,
+          "extraFiles": 0,
+          "staleFiles": 0,
+          "truncated": false
+        },
+        "files": [
+          {
+            "path": "sessions/2026/01/01/main.jsonl",
+            "mtime_ms": 1767225600000,
+            "size": 128,
+            "thread_id": "thread",
+            "cwd": "/project",
+            "source": "main",
+            "date": "2026-01-01",
+            "bytes_ingested": 0,
+            "last_ord": 0,
+            "repo_key": "example.test/team/repo"
+          }
+        ],
+        "msgs": []
+      },
+      {
+        "result": {
+          "scanned": 1,
+          "ingested": 1,
+          "appended": 0,
+          "pruned": 0,
+          "msgs": 1,
+          "elapsedMs": 0
+        },
+        "freshness": {
+          "sourceFiles": 1,
+          "indexedFiles": 1,
+          "missingFiles": 0,
+          "changedFiles": 0,
+          "extraFiles": 0,
+          "staleFiles": 0,
+          "truncated": false
+        },
+        "files": [
+          {
+            "path": "sessions/2026/01/01/main.jsonl",
+            "mtime_ms": 1767225602000,
+            "size": 284,
+            "thread_id": "thread",
+            "cwd": "/project",
+            "source": "main",
+            "date": "2026-01-01",
+            "bytes_ingested": 284,
+            "last_ord": 1,
+            "repo_key": "example.test/team/repo"
+          }
+        ],
+        "msgs": [
+          {
+            "path": "sessions/2026/01/01/main.jsonl",
+            "ord": 0,
+            "ts": "2026-01-01T00:00:00Z",
+            "role": "user",
+            "match_field": "content",
+            "synthetic": 0,
+            "text": "complete"
+          }
+        ]
+      }
+    ]
+  }
+]

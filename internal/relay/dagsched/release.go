@@ -225,6 +225,9 @@ func (s *Scheduler) Release(ctx context.Context, plan, node, actor string, req R
 	if len(blocked) > 0 {
 		return out, refusalOfFinding(blocked[0])
 	}
+	if err := s.pinnedInputKeep(ctx, plan, body, opts); err != nil {
+		return out, err
+	}
 	if findings, err := s.VerifyManifest(ctx, q, plan, snap, n, body, opts); err != nil {
 		return out, err
 	} else if len(findings) > 0 {
@@ -496,6 +499,10 @@ func (s *Scheduler) assemble(plan string, n dag.SnapNode, project, actor string,
 	prompt.WriteString(strings.TrimSpace(req.Instructions))
 	prompt.WriteString("\n\nInput manifest:\n")
 	prompt.WriteString(text)
+	if s.pinnedInputHasCopies(plan, body) {
+		prompt.WriteString("\n")
+		prompt.WriteString(pinnedInputReadInstruction)
+	}
 	prompt.WriteString("\n\nBefore you consume any input, verify every uri, sha256 and byte count listed in the manifest against the files on disk. If any input is missing, differs from the manifest or lies outside its scope, stop and report blocked_needs_input naming it. Do not continue on a mismatch.\n")
 	if prompt.Len() > 90000 {
 		return nil, copied, refuse(contract.RefusalMalformedReceipt, "the assignment prompt is %d characters; a request carries at most 90000", prompt.Len())
