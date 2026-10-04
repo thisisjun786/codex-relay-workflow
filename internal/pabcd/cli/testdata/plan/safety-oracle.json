@@ -1,0 +1,37 @@
+[
+  {
+    "id": "symlink-parent",
+    "classification": "intentionally-changed",
+    "reason": "Explicit exclusive creation/workspace containment requirement; prevents outside writes or record truncation",
+    "oracleCode": 0,
+    "oracleOutput": "plan init: scaffolded devlog/_plan/260821_unit (000_plan.md + 1 phase doc(s)).\nWrite every doc to diff-level BEFORE P -> A; the P>A gate requires planUnit to carry numbered docs.",
+    "outsideEntries": [
+      "_plan",
+      "records.json"
+    ],
+    "recordPreserved": true
+  },
+  {
+    "id": "unsafe-date",
+    "classification": "intentionally-changed",
+    "reason": "Explicit exclusive creation/workspace containment requirement; prevents outside writes or record truncation",
+    "oracleCode": 0,
+    "oracleOutput": "plan init: scaffolded ../unsafe-date-outside/escaped_unit (000_plan.md + 1 phase doc(s)).\nWrite every doc to diff-level BEFORE P -> A; the P>A gate requires planUnit to carry numbered docs.",
+    "outsideEntries": [
+      "escaped_unit",
+      "records.json"
+    ],
+    "recordPreserved": true
+  },
+  {
+    "id": "raced-file",
+    "classification": "intentionally-changed",
+    "reason": "Explicit exclusive creation/workspace containment requirement; prevents outside writes or record truncation",
+    "oracleCode": 0,
+    "oracleOutput": "plan init: scaffolded devlog/_plan/260821_unit (000_plan.md + 1 phase doc(s)).\nWrite every doc to diff-level BEFORE P -> A; the P>A gate requires planUnit to carry numbered docs.",
+    "outsideEntries": [
+      "records.json"
+    ],
+    "recordPreserved": false
+  }
+]
