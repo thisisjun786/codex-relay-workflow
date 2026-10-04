@@ -1,7 +1,9 @@
 package adjudication
 
 import (
+	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -57,6 +59,58 @@ func scripted() ([]Record, []PR, []Reviewer) {
 	judge("d1", "1", "S", FalsePositive, review.P1, true, nil)
 	judge("c1", "0", "A0", Correct, review.P0, false, nil)
 	return records, prs, groups
+}
+
+func TestFixedCohortCorrectionsAndUnknownAccounting(t *testing.T) {
+	records, prs, groups := scripted()
+	s, err := Report(records, prs, groups)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, _ := json.Marshal(s)
+	slices.Reverse(prs)
+	slices.Reverse(groups)
+	s, err = Report(records, prs, groups)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, _ := json.Marshal(s)
+	if string(first) != string(second) {
+		t.Fatal("input selection order changed report bytes")
+	}
+	j := *records[6].Judgment
+	j.Verdict = FalsePositive // codeChanged remains true; it must not promote correctness.
+	records = append(records, Record{Schema, "parent-correction", nil, &j})
+	s, err = Report(records, prs, groups)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range s.Rows {
+		if r.Source == Independent && r.Model == "A" && (r.Correct != 1 || r.Security.Numerator != 0 || r.CorrectWithChange != 0) {
+			t.Fatalf("another reviewer or code change supplied ground truth: %+v", r)
+		}
+	}
+	r := *records[0].Run
+	r.Calls = slices.Clone(r.Calls)
+	r.Calls[0].TokensKnown = false
+	r.Calls[1].TokensKnown = true
+	r.Calls[1].Record.Tokens = review.TokenUsage{}
+	s, err = Report([]Record{{Schema, "usage", &r, nil}}, []PR{r.PR}, []Reviewer{r.Reviewer})
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := s.Rows[0]
+	if row.Calls != 2 || row.KnownElapsedCalls != 2 || row.KnownTokenCalls != 1 || row.Tokens.Total != 0 || row.RecordedTokens.Total != 16 || row.ElapsedMillis != 24 {
+		t.Fatalf("unknown vs measured zero: %+v", row)
+	}
+	for _, selection := range []struct {
+		prs    []PR
+		groups []Reviewer
+	}{{nil, groups}, {prs, nil}, {append(prs, prs[0]), groups}, {prs, append(groups, groups[0])}} {
+		if _, err := Report(nil, selection.prs, selection.groups); err == nil {
+			t.Fatal("empty/duplicate selection accepted")
+		}
+	}
 }
 
 func TestScriptedMetrics(t *testing.T) {
