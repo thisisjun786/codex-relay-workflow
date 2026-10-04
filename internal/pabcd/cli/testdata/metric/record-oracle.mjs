@@ -65,6 +65,10 @@ for (const [i, value] of ["", "abc", "1_000", "0x", "0b2", "-0x1", "+0x1", "1e",
   "NaN", "1e999"].entries())
   add("value-refused-" + i, ["record", "--session", "s", "--name", "n", "--value", value]);
 add("value-flag-last", ["record", "--session", "s", "--name", "n", "--value"]);
+add("value-accepted-big-rounds-to-even", ["record", "--session", "s", "--name", "n", "--value", "0x1fffffffffffff9"]);
+add("value-accepted-long-binary", ["record", "--session", "s", "--name", "n", "--value", "0b" + "1".repeat(70)]);
+add("value-accepted-long-octal", ["record", "--session", "s", "--name", "n", "--value", "0o" + "7".repeat(24)]);
+add("value-refused-prefixed-overflow", ["record", "--session", "s", "--name", "n", "--value", "0x" + "f".repeat(260)]);
 
 // --- show ---
 add("show-no-rows", ["show", "--session", "s"]);
