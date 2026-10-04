@@ -2549,6 +2549,44 @@
     }
   },
   {
+    "name": "relative-symlink-cwd",
+    "files": [
+      {
+        "path": "s.md",
+        "content": "cwd: $WORK/sub\n\nnumbat",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "numbat",
+    "options": {
+      "nowMs": 1788998400000,
+      "cwd": ".",
+      "cwdOnly": true
+    },
+    "relative": true,
+    "pwdAlias": true,
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "other",
+          "relpath": "s.md",
+          "threadId": null,
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "numbat",
+          "startLine": 3,
+          "cwd": "$WORK/sub",
+          "score": 5.5
+        }
+      ],
+      "warnings": [
+        "memories db not found (stage1 search off)",
+        "state db not found (metadata enrichment off)"
+      ],
+      "scannedFiles": 1
+    }
+  },
+  {
     "name": "root-is-file",
     "files": [],
     "query": "anything",

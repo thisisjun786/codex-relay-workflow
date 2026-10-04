@@ -22,14 +22,14 @@ type memorySearchOracleThread struct {
 }
 
 type memorySearchOracleCase struct {
-	Name, Query, Origin string
-	Files               []memorySearchOracleFile
-	Threads             []memorySearchOracleThread
-	Options             MemorySearchOptions
-	MemoryDB, Legacy    bool
-	RootFile, HomeFile  bool
-	Relative, Error     bool
-	Out                 MemorySearchResult
+	Name, Query, Origin       string
+	Files                     []memorySearchOracleFile
+	Threads                   []memorySearchOracleThread
+	Options                   MemorySearchOptions
+	MemoryDB, Legacy          bool
+	RootFile, HomeFile        bool
+	Relative, PwdAlias, Error bool
+	Out                       MemorySearchResult
 }
 
 func memorySearchOracleHome(t *testing.T, c memorySearchOracleCase) (string, string) {
@@ -39,6 +39,13 @@ func memorySearchOracleHome(t *testing.T, c memorySearchOracleCase) (string, str
 	t.Setenv("CODEX_HOME", home)
 	t.Setenv("CRW_HOME", t.TempDir())
 	t.Chdir(work)
+	if c.PwdAlias {
+		alias := filepath.Join(t.TempDir(), "alias")
+		if err := os.Symlink(work, alias); err != nil {
+			t.Fatal(err)
+		}
+		t.Chdir(alias)
+	}
 	if c.HomeFile {
 		if err := os.WriteFile(home, []byte("not a directory"), 0o600); err != nil {
 			t.Fatal(err)

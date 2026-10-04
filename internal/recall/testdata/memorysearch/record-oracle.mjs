@@ -74,12 +74,17 @@ add('leading-frontmatter', [file('s.md', 'thread_id: t1\nrollout_path: ignored\n
 for (const cwd of ['C:\\proj\\here', 'C:/proj/here', 'c:/proj/here', 'C:\\proj\\here\\', 'C:\\proj\\here2']) add('drive-' + cases.length, [file('s.md', 'thread_id: win\ncwd: C:\\proj\\here\\sub\n\nnumbat')], 'numbat', { cwd, cwdOnly: true });
 add('extended-windows', [file('s.md', 'thread_id: win\ncwd: \\\\?\\C:\\proj\\here\n\nnumbat')], 'numbat', { cwd: 'C:\\proj\\here', cwdOnly: true });
 add('relative-process-cwd', [file('s.md', 'cwd: $WORK/sub\n\nnumbat')], 'numbat', { cwd: '.', cwdOnly: true }, { relative: true });
+add('relative-symlink-cwd', [file('s.md', 'cwd: $WORK/sub\n\nnumbat')], 'numbat', { cwd: '.', cwdOnly: true }, { relative: true, pwdAlias: true });
 add('root-is-file', [], 'anything', {}, { rootFile: true });
 add('home-is-file', [], 'anything', {}, { homeFile: true });
-const oldCwd = process.cwd();
+const oldCwd = process.cwd(), oldPWD = process.env.PWD;
 for (let i = 0; i < cases.length; i++) {
   const c = cases[i], home = path.join(root, 'case-' + i), work = path.join(root, 'work-' + i);
   fs.mkdirSync(work); process.chdir(work);
+  if (c.pwdAlias) {
+    const alias = path.join(root, 'alias-' + i);
+    fs.symlinkSync(work, alias); process.chdir(alias); process.env.PWD = alias;
+  } else process.env.PWD = work;
   if (c.homeFile) fs.writeFileSync(home, 'not a directory'); else fs.mkdirSync(home);
   if (c.rootFile) fs.writeFileSync(path.join(home, 'memories'), 'not a directory');
   for (const f of c.files) {
@@ -101,4 +106,5 @@ for (let i = 0; i < cases.length; i++) {
   } catch { c.error = true; }
 }
 process.chdir(oldCwd);
+if (oldPWD === undefined) delete process.env.PWD; else process.env.PWD = oldPWD;
 process.stdout.write(JSON.stringify(cases, null, 2) + '\n');
