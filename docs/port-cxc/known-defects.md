@@ -705,3 +705,8 @@ The pinned oracle already publishes through an exclusive 0600 temporary file and
 - Per-file writes are atomic but the config and ownership manifest are not one transaction and have no concurrent-writer lock; a later manifest-save failure can leave a prior config write without its updated record (source `config-guard/src/config-set.ts:102,109-113,136,143-156`); port: kept (original bytes remain in the backup; this port claims per-file publication only).
 - Filesystem failures use Go-native diagnostics instead of Node exception stacks; the failure exit remains 1, and unreadable settings remain untouched (source `config-guard/src/config-set.ts:87,123,163`, `TestConfigCommandRefusalsAndHome`); port: kept as a runtime diagnostic difference.
 - Help retains the mapped interview reference even though that command is outside this port and unavailable on its base; reused whitelist caution still names the generic disable verb (source `config-guard/src/cli.ts:28`, `src/managed-keys.ts`, `internal/runtime/install/configguard/managed.go`); port: kept.
+
+## Found by the CRW-366 fallback notice port
+
+- A startup payload stamped only with `agent_type`, without a nonempty string `agent_id`, receives the root dispatch notice (source `plugins/codexclaw/components/subagent-config/src/fallback-dispatch-cli.ts:36-38`; recorded `agent-type` case); port: kept.
+- Non-null JSON primitives and arrays receive a SessionStart dispatch card despite carrying no hook event or session identity; only null and malformed JSON are silent (source `plugins/codexclaw/components/subagent-config/src/fallback-dispatch-cli.ts:36-38`; recorded `array`, `boolean`, `string` and `null` cases); port: kept.
