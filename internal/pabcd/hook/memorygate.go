@@ -342,7 +342,7 @@ func (g memoryGateEnv) abs(raw, cwd string) []memoryGatePath {
 			wd, _ := os.Getwd()
 			base = wd + "/" + cwd
 		}
-		base = memoryGateReal(base)
+		base = memoryGateReal(base, true)
 	}
 	v := text.Trim(raw)
 	head, tail := v != "" && (v[0] == '"' || v[0] == '\''), len(v) > 1 && (v[len(v)-1] == '"' || v[len(v)-1] == '\'')
@@ -399,12 +399,14 @@ func (g memoryGateEnv) hit(raw, cwd, root string) (string, bool) {
 
 // memoryGateIsPath is isMemoryPath: the path is the memories root or inside it, on a separator boundary so that a sibling
 // such as memories-backup is not. The oracle compared the text only; a symlink in the workspace that leads into the root
-// writes the same bytes, so the places the paths reach count too.
+// writes the same bytes, so the places the paths reach count too: the place the last component leads to, and the entry
+// itself, because a rename over a link inside the root replaces the link and not what it points at.
 func memoryGateIsPath(clean, joined, root string) bool {
 	if clean == "" {
 		return false
 	}
-	return memoryGateWithin(clean, root) || memoryGateWithin(memoryGateReal(joined), memoryGateReal(root))
+	real := memoryGateReal(root, true)
+	return memoryGateWithin(clean, root) || memoryGateWithin(memoryGateReal(joined, true), real) || memoryGateWithin(memoryGateReal(joined, false), real)
 }
 
 func memoryGateWithin(p, root string) bool {
@@ -413,8 +415,9 @@ func memoryGateWithin(p, root string) bool {
 
 // memoryGateReal is the place an open of the absolute path p reaches: each component that is a symlink is replaced by its
 // target (a dangling link too), and a ".." goes up from the place reached so far, not from the text before it. A component
-// that does not exist stays as written; a chain of more than 40 links is left alone.
-func memoryGateReal(p string) string {
+// that does not exist stays as written; a chain of more than 40 links is left alone. With follow false the last component
+// is kept as the entry it names.
+func memoryGateReal(p string, follow bool) string {
 	resolved, rest, hops := "/", strings.Split(p, "/"), 0
 	for len(rest) > 0 {
 		c := rest[0]
@@ -427,6 +430,10 @@ func memoryGateReal(p string) string {
 			continue
 		}
 		next := path.Join(resolved, c)
+		if len(rest) == 0 && !follow {
+			resolved = next
+			continue
+		}
 		target, err := os.Readlink(next)
 		if err != nil {
 			resolved = next

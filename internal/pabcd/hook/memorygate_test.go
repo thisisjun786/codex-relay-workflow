@@ -463,7 +463,10 @@ func TestMemoryGateFollowsSymlinks(t *testing.T) {
 	link(cwd, "home-again")
 	link(filepath.Join(root, "new.md"), "tw ") // names that end in a space or a quote are exact names
 	link(filepath.Join(root, "new.md"), "tq'")
-	link(root, "%USERPROFILE%") // a name that only looks like a home prefix
+	link(root, "%USERPROFILE%")                                                                           // a name that only looks like a home prefix
+	if err := os.Symlink(filepath.Join(cwd, "outside.md"), filepath.Join(root, "entry.md")); err != nil { // a link inside the root that leads out
+		t.Fatal(err)
+	}
 	for command, want := range map[string]bool{
 		"echo hi > alias/n.md":          true,
 		"echo hi > deep/../n.md":        true,
@@ -471,6 +474,7 @@ func TestMemoryGateFollowsSymlinks(t *testing.T) {
 		"echo hi > \"tw \"":             true,
 		"echo hi > \"tq'\"":             true,
 		"echo hi > ./tw":                false,
+		"mv a.md alias/entry.md":        true,
 		"echo hi > %USERPROFILE%/n.md":  true,
 		"cp /w/a.md alias/b.md":         true,
 		"echo hi > home-again/out.md":   false,
