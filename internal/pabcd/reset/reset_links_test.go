@@ -89,7 +89,7 @@ func TestResetLinksRemovedItself(t *testing.T) {
 				resetLinksLink(t, "c"+strconv.Itoa(i+1), filepath.Join(dir, "c"+strconv.Itoa(i)))
 			}
 			resetLinksLink(t, "keep.txt", filepath.Join(dir, "c9"))
-		}, []string{"sessions/a.json", "ledger.jsonl"}, "", map[string]string{"sessions/keep.txt": "keep", "sessions/c9": "keep"}},
+		}, []string{"sessions/a.json", "ledger.jsonl"}, "", map[string]string{"sessions/keep.txt": "keep", "sessions/c1": "keep"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root, outside := resetLinksWorkspace(t)

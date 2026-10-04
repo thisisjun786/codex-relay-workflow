@@ -120,7 +120,8 @@ func resetRmIfExists(root *os.Root, name, display string, result *ResetResult) e
 		return nil
 	}
 	// Remove unlinks the final component without resolving it, so the target
-	// is never opened or deleted, inside the workspace or outside it.
+	// is never deleted, inside the workspace or outside it; the verdict above
+	// only stats it.
 	if err := root.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
