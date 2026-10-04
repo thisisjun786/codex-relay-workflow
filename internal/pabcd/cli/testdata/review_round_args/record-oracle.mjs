@@ -1,4 +1,4 @@
-// CXC v0.2.40 (3c1459ac), pabcd-state/src/review-round-cli.ts:1-209 and 309-318.
+// CXC v0.2.40 (3c1459ac), pabcd-state/src/review-round-cli.ts:1-209 and 308-317.
 // Usage: node record-oracle.mjs <oracle dist directory> <output directory>
 // Only the output directory is written; the oracle is imported read-only. Functions the oracle does not export (collectPlanFiles,
 // v2SpawnSurface, renderOpenPacket) are reached through a copy of the compiled module in the output directory whose relative

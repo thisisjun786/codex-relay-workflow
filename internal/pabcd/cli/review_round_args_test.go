@@ -377,11 +377,14 @@ func TestReviewRoundArgsLinkOutOfWorkspaceIsNotHashed(t *testing.T) {
 	ws, unit := filepath.Join(root, "ws"), "devlog/_plan/u"
 	secret := filepath.Join(root, "out", "secret.md")
 	reviewRoundArgsWrite(t, secret, "TOP SECRET\n")
+	reviewRoundArgsWrite(t, filepath.Join(root, "ws-evil", "secret.md"), "TOP SECRET\n")
 	reviewRoundArgsWrite(t, filepath.Join(ws, unit, "000_plan.md"), "# plan\n")
 	reviewRoundArgsMust(t, os.Symlink(secret, filepath.Join(ws, "leak.md")))
 	reviewRoundArgsMust(t, os.Symlink(filepath.Join(root, "out"), filepath.Join(ws, unit, "000_leak")))
+	reviewRoundArgsMust(t, os.Symlink("../ws-evil/secret.md", filepath.Join(ws, "evil.md")))
 
-	entries := []string{"leak.md", unit + "/000_leak/secret.md", secret, "../out/secret.md", unit + "/000_plan.md"}
+	// ws-evil is a sibling whose name starts with the workspace's: a prefix test on the path text would take it for inside.
+	entries := []string{"leak.md", unit + "/000_leak/secret.md", secret, "../out/secret.md", "evil.md", "../ws-evil/secret.md", unit + "/000_plan.md"}
 	var in []goalplan.PlanFileHash
 	for _, p := range entries {
 		in = append(in, goalplan.PlanFileHash{Path: p, Sha256: "stale"})
@@ -390,13 +393,13 @@ func TestReviewRoundArgsLinkOutOfWorkspaceIsNotHashed(t *testing.T) {
 	if len(got) != len(entries) {
 		t.Fatalf("%d entries read for %d", len(got), len(entries))
 	}
-	for i, f := range got[:4] {
+	for i, f := range got[:6] {
 		if f.Sha256 != "missing" {
 			t.Errorf("%s: read %s through a link or a path out of the workspace", entries[i], f.Sha256)
 		}
 	}
-	if got[4].Sha256 != reviewRoundArgsHex("# plan\n") {
-		t.Errorf("the plan inside the workspace reads %s", got[4].Sha256)
+	if got[6].Sha256 != reviewRoundArgsHex("# plan\n") {
+		t.Errorf("the plan inside the workspace reads %s", got[6].Sha256)
 	}
 	files, refusal, err := reviewRoundArgsCollectPlanFiles(ws, unit, []string{unit + "/000_leak/secret.md"})
 	if want := "plan path " + unit + "/000_leak/secret.md is not a readable regular file"; err != nil || len(files) != 0 || refusal != want {
