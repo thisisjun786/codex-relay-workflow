@@ -1,0 +1,14 @@
+[crw] Subagent dispatch: family unresolved at SessionStart; managed fallback first; swap the probe for the task. First Code Mode cell (resolves and calls):
+const n = ALL_TOOLS.map(t => t.name), has = r => n.some(x => r.test(x));
+const s = n.filter(x => /spawn_agent$/.test(x));
+if (s.length !== 1) throw new Error("expected one spawn_agent helper, found " + s.length);
+const v1 = has(/(send_input|close_agent|resume_agent)$/), v2 = has(/(followup_task|interrupt_agent|list_agents)$/);
+if (v1 === v2) throw new Error("collab family unresolved: v1=" + v1 + " v2=" + v2);
+const a = {message:"Report your model and say OK; do not edit files.",model:"command-code/deepseek-deepseek-v4.1-flash",reasoning_effort:"low"};
+text(await tools[s[0]](v1 ? a : {...a, task_name:"model_probe", fork_turns:"none"}));
+Aliases (map 2026-09-24; local Codex catalog membership only):
+deepseek -> command-code/deepseek-deepseek-v4.1-flash (verified in local catalog)
+swe2 -> devin/swe-2 (unverified, map 2026-09-24)
+kimi -> kimi/kimi-for-coding-highspeed (unverified, map 2026-09-24)
+sol -> gpt-6-sol (unverified, map 2026-09-24)
+luna -> gpt-6-luna (unverified, map 2026-09-24)

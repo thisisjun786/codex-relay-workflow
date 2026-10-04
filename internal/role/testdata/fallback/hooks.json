@@ -1,0 +1,134 @@
+[
+  {
+    "name": "empty",
+    "input": "",
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "malformed",
+    "input": "{",
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "null",
+    "input": "null",
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "array",
+    "input": "[]",
+    "exit": 0,
+    "stdout": "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"[crw] Subagent dispatch: family unresolved at SessionStart; managed fallback first; swap the probe for the task. First Code Mode cell (resolves and calls):\\nconst n = ALL_TOOLS.map(t => t.name), has = r => n.some(x => r.test(x));\\nconst s = n.filter(x => /spawn_agent$/.test(x));\\nif (s.length !== 1) throw new Error(\\\"expected one spawn_agent helper, found \\\" + s.length);\\nconst v1 = has(/(send_input|close_agent|resume_agent)$/), v2 = has(/(followup_task|interrupt_agent|list_agents)$/);\\nif (v1 === v2) throw new Error(\\\"collab family unresolved: v1=\\\" + v1 + \\\" v2=\\\" + v2);\\nconst a = {message:\\\"Report your model and say OK; do not edit files.\\\",model:\\\"command-code/deepseek-deepseek-v4.1-flash\\\",reasoning_effort:\\\"low\\\"};\\ntext(await tools[s[0]](v1 ? a : {...a, task_name:\\\"model_probe\\\", fork_turns:\\\"none\\\"}));\\nAliases (map 2026-09-24; local Codex catalog membership only):\\ndeepseek -> command-code/deepseek-deepseek-v4.1-flash (unverified, map 2026-09-24)\\nswe2 -> devin/swe-2 (unverified, map 2026-09-24)\\nkimi -> kimi/kimi-for-coding-highspeed (unverified, map 2026-09-24)\\nsol -> gpt-6-sol (unverified, map 2026-09-24)\\nluna -> gpt-6-luna (unverified, map 2026-09-24)\"}}\n",
+    "stderr": ""
+  },
+  {
+    "name": "boolean",
+    "input": "true",
+    "exit": 0,
+    "stdout": "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"[crw] Subagent dispatch: family unresolved at SessionStart; managed fallback first; swap the probe for the task. First Code Mode cell (resolves and calls):\\nconst n = ALL_TOOLS.map(t => t.name), has = r => n.some(x => r.test(x));\\nconst s = n.filter(x => /spawn_agent$/.test(x));\\nif (s.length !== 1) throw new Error(\\\"expected one spawn_agent helper, found \\\" + s.length);\\nconst v1 = has(/(send_input|close_agent|resume_agent)$/), v2 = has(/(followup_task|interrupt_agent|list_agents)$/);\\nif (v1 === v2) throw new Error(\\\"collab family unresolved: v1=\\\" + v1 + \\\" v2=\\\" + v2);\\nconst a = {message:\\\"Report your model and say OK; do not edit files.\\\",model:\\\"command-code/deepseek-deepseek-v4.1-flash\\\",reasoning_effort:\\\"low\\\"};\\ntext(await tools[s[0]](v1 ? a : {...a, task_name:\\\"model_probe\\\", fork_turns:\\\"none\\\"}));\\nAliases (map 2026-09-24; local Codex catalog membership only):\\ndeepseek -> command-code/deepseek-deepseek-v4.1-flash (unverified, map 2026-09-24)\\nswe2 -> devin/swe-2 (unverified, map 2026-09-24)\\nkimi -> kimi/kimi-for-coding-highspeed (unverified, map 2026-09-24)\\nsol -> gpt-6-sol (unverified, map 2026-09-24)\\nluna -> gpt-6-luna (unverified, map 2026-09-24)\"}}\n",
+    "stderr": ""
+  },
+  {
+    "name": "string",
+    "input": "\"x\"",
+    "exit": 0,
+    "stdout": "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"[crw] Subagent dispatch: family unresolved at SessionStart; managed fallback first; swap the probe for the task. First Code Mode cell (resolves and calls):\\nconst n = ALL_TOOLS.map(t => t.name), has = r => n.some(x => r.test(x));\\nconst s = n.filter(x => /spawn_agent$/.test(x));\\nif (s.length !== 1) throw new Error(\\\"expected one spawn_agent helper, found \\\" + s.length);\\nconst v1 = has(/(send_input|close_agent|resume_agent)$/), v2 = has(/(followup_task|interrupt_agent|list_agents)$/);\\nif (v1 === v2) throw new Error(\\\"collab family unresolved: v1=\\\" + v1 + \\\" v2=\\\" + v2);\\nconst a = {message:\\\"Report your model and say OK; do not edit files.\\\",model:\\\"command-code/deepseek-deepseek-v4.1-flash\\\",reasoning_effort:\\\"low\\\"};\\ntext(await tools[s[0]](v1 ? a : {...a, task_name:\\\"model_probe\\\", fork_turns:\\\"none\\\"}));\\nAliases (map 2026-09-24; local Codex catalog membership only):\\ndeepseek -> command-code/deepseek-deepseek-v4.1-flash (unverified, map 2026-09-24)\\nswe2 -> devin/swe-2 (unverified, map 2026-09-24)\\nkimi -> kimi/kimi-for-coding-highspeed (unverified, map 2026-09-24)\\nsol -> gpt-6-sol (unverified, map 2026-09-24)\\nluna -> gpt-6-luna (unverified, map 2026-09-24)\"}}\n",
+    "stderr": ""
+  },
+  {
+    "name": "object",
+    "input": "{}",
+    "exit": 0,
+    "stdout": "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"[crw] Subagent dispatch: family unresolved at SessionStart; managed fallback first; swap the probe for the task. First Code Mode cell (resolves and calls):\\nconst n = ALL_TOOLS.map(t => t.name), has = r => n.some(x => r.test(x));\\nconst s = n.filter(x => /spawn_agent$/.test(x));\\nif (s.length !== 1) throw new Error(\\\"expected one spawn_agent helper, found \\\" + s.length);\\nconst v1 = has(/(send_input|close_agent|resume_agent)$/), v2 = has(/(followup_task|interrupt_agent|list_agents)$/);\\nif (v1 === v2) throw new Error(\\\"collab family unresolved: v1=\\\" + v1 + \\\" v2=\\\" + v2);\\nconst a = {message:\\\"Report your model and say OK; do not edit files.\\\",model:\\\"command-code/deepseek-deepseek-v4.1-flash\\\",reasoning_effort:\\\"low\\\"};\\ntext(await tools[s[0]](v1 ? a : {...a, task_name:\\\"model_probe\\\", fork_turns:\\\"none\\\"}));\\nAliases (map 2026-09-24; local Codex catalog membership only):\\ndeepseek -> command-code/deepseek-deepseek-v4.1-flash (unverified, map 2026-09-24)\\nswe2 -> devin/swe-2 (unverified, map 2026-09-24)\\nkimi -> kimi/kimi-for-coding-highspeed (unverified, map 2026-09-24)\\nsol -> gpt-6-sol (unverified, map 2026-09-24)\\nluna -> gpt-6-luna (unverified, map 2026-09-24)\"}}\n",
+    "stderr": ""
+  },
+  {
+    "name": "agent-type",
+    "input": "{\"agent_type\":\"executor\"}",
+    "exit": 0,
+    "stdout": "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"[crw] Subagent dispatch: family unresolved at SessionStart; managed fallback first; swap the probe for the task. First Code Mode cell (resolves and calls):\\nconst n = ALL_TOOLS.map(t => t.name), has = r => n.some(x => r.test(x));\\nconst s = n.filter(x => /spawn_agent$/.test(x));\\nif (s.length !== 1) throw new Error(\\\"expected one spawn_agent helper, found \\\" + s.length);\\nconst v1 = has(/(send_input|close_agent|resume_agent)$/), v2 = has(/(followup_task|interrupt_agent|list_agents)$/);\\nif (v1 === v2) throw new Error(\\\"collab family unresolved: v1=\\\" + v1 + \\\" v2=\\\" + v2);\\nconst a = {message:\\\"Report your model and say OK; do not edit files.\\\",model:\\\"command-code/deepseek-deepseek-v4.1-flash\\\",reasoning_effort:\\\"low\\\"};\\ntext(await tools[s[0]](v1 ? a : {...a, task_name:\\\"model_probe\\\", fork_turns:\\\"none\\\"}));\\nAliases (map 2026-09-24; local Codex catalog membership only):\\ndeepseek -> command-code/deepseek-deepseek-v4.1-flash (unverified, map 2026-09-24)\\nswe2 -> devin/swe-2 (unverified, map 2026-09-24)\\nkimi -> kimi/kimi-for-coding-highspeed (unverified, map 2026-09-24)\\nsol -> gpt-6-sol (unverified, map 2026-09-24)\\nluna -> gpt-6-luna (unverified, map 2026-09-24)\"}}\n",
+    "stderr": ""
+  },
+  {
+    "name": "agent-id",
+    "input": "{\"agent_id\":\"child\"}",
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "empty-agent",
+    "input": "{\"agent_id\":\"\"}",
+    "exit": 0,
+    "stdout": "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"[crw] Subagent dispatch: family unresolved at SessionStart; managed fallback first; swap the probe for the task. First Code Mode cell (resolves and calls):\\nconst n = ALL_TOOLS.map(t => t.name), has = r => n.some(x => r.test(x));\\nconst s = n.filter(x => /spawn_agent$/.test(x));\\nif (s.length !== 1) throw new Error(\\\"expected one spawn_agent helper, found \\\" + s.length);\\nconst v1 = has(/(send_input|close_agent|resume_agent)$/), v2 = has(/(followup_task|interrupt_agent|list_agents)$/);\\nif (v1 === v2) throw new Error(\\\"collab family unresolved: v1=\\\" + v1 + \\\" v2=\\\" + v2);\\nconst a = {message:\\\"Report your model and say OK; do not edit files.\\\",model:\\\"command-code/deepseek-deepseek-v4.1-flash\\\",reasoning_effort:\\\"low\\\"};\\ntext(await tools[s[0]](v1 ? a : {...a, task_name:\\\"model_probe\\\", fork_turns:\\\"none\\\"}));\\nAliases (map 2026-09-24; local Codex catalog membership only):\\ndeepseek -> command-code/deepseek-deepseek-v4.1-flash (unverified, map 2026-09-24)\\nswe2 -> devin/swe-2 (unverified, map 2026-09-24)\\nkimi -> kimi/kimi-for-coding-highspeed (unverified, map 2026-09-24)\\nsol -> gpt-6-sol (unverified, map 2026-09-24)\\nluna -> gpt-6-luna (unverified, map 2026-09-24)\"}}\n",
+    "stderr": ""
+  },
+  {
+    "name": "numeric-agent",
+    "input": "{\"agent_id\":7}",
+    "exit": 0,
+    "stdout": "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"[crw] Subagent dispatch: family unresolved at SessionStart; managed fallback first; swap the probe for the task. First Code Mode cell (resolves and calls):\\nconst n = ALL_TOOLS.map(t => t.name), has = r => n.some(x => r.test(x));\\nconst s = n.filter(x => /spawn_agent$/.test(x));\\nif (s.length !== 1) throw new Error(\\\"expected one spawn_agent helper, found \\\" + s.length);\\nconst v1 = has(/(send_input|close_agent|resume_agent)$/), v2 = has(/(followup_task|interrupt_agent|list_agents)$/);\\nif (v1 === v2) throw new Error(\\\"collab family unresolved: v1=\\\" + v1 + \\\" v2=\\\" + v2);\\nconst a = {message:\\\"Report your model and say OK; do not edit files.\\\",model:\\\"command-code/deepseek-deepseek-v4.1-flash\\\",reasoning_effort:\\\"low\\\"};\\ntext(await tools[s[0]](v1 ? a : {...a, task_name:\\\"model_probe\\\", fork_turns:\\\"none\\\"}));\\nAliases (map 2026-09-24; local Codex catalog membership only):\\ndeepseek -> command-code/deepseek-deepseek-v4.1-flash (unverified, map 2026-09-24)\\nswe2 -> devin/swe-2 (unverified, map 2026-09-24)\\nkimi -> kimi/kimi-for-coding-highspeed (unverified, map 2026-09-24)\\nsol -> gpt-6-sol (unverified, map 2026-09-24)\\nluna -> gpt-6-luna (unverified, map 2026-09-24)\"}}\n",
+    "stderr": ""
+  },
+  {
+    "name": "null-agent",
+    "input": "{\"agent_id\":null}",
+    "exit": 0,
+    "stdout": "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"[crw] Subagent dispatch: family unresolved at SessionStart; managed fallback first; swap the probe for the task. First Code Mode cell (resolves and calls):\\nconst n = ALL_TOOLS.map(t => t.name), has = r => n.some(x => r.test(x));\\nconst s = n.filter(x => /spawn_agent$/.test(x));\\nif (s.length !== 1) throw new Error(\\\"expected one spawn_agent helper, found \\\" + s.length);\\nconst v1 = has(/(send_input|close_agent|resume_agent)$/), v2 = has(/(followup_task|interrupt_agent|list_agents)$/);\\nif (v1 === v2) throw new Error(\\\"collab family unresolved: v1=\\\" + v1 + \\\" v2=\\\" + v2);\\nconst a = {message:\\\"Report your model and say OK; do not edit files.\\\",model:\\\"command-code/deepseek-deepseek-v4.1-flash\\\",reasoning_effort:\\\"low\\\"};\\ntext(await tools[s[0]](v1 ? a : {...a, task_name:\\\"model_probe\\\", fork_turns:\\\"none\\\"}));\\nAliases (map 2026-09-24; local Codex catalog membership only):\\ndeepseek -> command-code/deepseek-deepseek-v4.1-flash (unverified, map 2026-09-24)\\nswe2 -> devin/swe-2 (unverified, map 2026-09-24)\\nkimi -> kimi/kimi-for-coding-highspeed (unverified, map 2026-09-24)\\nsol -> gpt-6-sol (unverified, map 2026-09-24)\\nluna -> gpt-6-luna (unverified, map 2026-09-24)\"}}\n",
+    "stderr": ""
+  },
+  {
+    "name": "whitespace-agent",
+    "input": "{\"agent_id\":\" \"}",
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "exact-limit",
+    "input": "{}",
+    "pad": 65536,
+    "exit": 0,
+    "stdout": "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"[crw] Subagent dispatch: family unresolved at SessionStart; managed fallback first; swap the probe for the task. First Code Mode cell (resolves and calls):\\nconst n = ALL_TOOLS.map(t => t.name), has = r => n.some(x => r.test(x));\\nconst s = n.filter(x => /spawn_agent$/.test(x));\\nif (s.length !== 1) throw new Error(\\\"expected one spawn_agent helper, found \\\" + s.length);\\nconst v1 = has(/(send_input|close_agent|resume_agent)$/), v2 = has(/(followup_task|interrupt_agent|list_agents)$/);\\nif (v1 === v2) throw new Error(\\\"collab family unresolved: v1=\\\" + v1 + \\\" v2=\\\" + v2);\\nconst a = {message:\\\"Report your model and say OK; do not edit files.\\\",model:\\\"command-code/deepseek-deepseek-v4.1-flash\\\",reasoning_effort:\\\"low\\\"};\\ntext(await tools[s[0]](v1 ? a : {...a, task_name:\\\"model_probe\\\", fork_turns:\\\"none\\\"}));\\nAliases (map 2026-09-24; local Codex catalog membership only):\\ndeepseek -> command-code/deepseek-deepseek-v4.1-flash (unverified, map 2026-09-24)\\nswe2 -> devin/swe-2 (unverified, map 2026-09-24)\\nkimi -> kimi/kimi-for-coding-highspeed (unverified, map 2026-09-24)\\nsol -> gpt-6-sol (unverified, map 2026-09-24)\\nluna -> gpt-6-luna (unverified, map 2026-09-24)\"}}\n",
+    "stderr": ""
+  },
+  {
+    "name": "over-limit",
+    "input": "{}",
+    "pad": 65537,
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "bom",
+    "input": "﻿{}",
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "bad-utf8",
+    "input": [
+      123,
+      34,
+      120,
+      34,
+      58,
+      34,
+      226,
+      130,
+      34,
+      125
+    ],
+    "exit": 0,
+    "stdout": "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"[crw] Subagent dispatch: family unresolved at SessionStart; managed fallback first; swap the probe for the task. First Code Mode cell (resolves and calls):\\nconst n = ALL_TOOLS.map(t => t.name), has = r => n.some(x => r.test(x));\\nconst s = n.filter(x => /spawn_agent$/.test(x));\\nif (s.length !== 1) throw new Error(\\\"expected one spawn_agent helper, found \\\" + s.length);\\nconst v1 = has(/(send_input|close_agent|resume_agent)$/), v2 = has(/(followup_task|interrupt_agent|list_agents)$/);\\nif (v1 === v2) throw new Error(\\\"collab family unresolved: v1=\\\" + v1 + \\\" v2=\\\" + v2);\\nconst a = {message:\\\"Report your model and say OK; do not edit files.\\\",model:\\\"command-code/deepseek-deepseek-v4.1-flash\\\",reasoning_effort:\\\"low\\\"};\\ntext(await tools[s[0]](v1 ? a : {...a, task_name:\\\"model_probe\\\", fork_turns:\\\"none\\\"}));\\nAliases (map 2026-09-24; local Codex catalog membership only):\\ndeepseek -> command-code/deepseek-deepseek-v4.1-flash (unverified, map 2026-09-24)\\nswe2 -> devin/swe-2 (unverified, map 2026-09-24)\\nkimi -> kimi/kimi-for-coding-highspeed (unverified, map 2026-09-24)\\nsol -> gpt-6-sol (unverified, map 2026-09-24)\\nluna -> gpt-6-luna (unverified, map 2026-09-24)\"}}\n",
+    "stderr": ""
+  }
+]
