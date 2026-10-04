@@ -87,7 +87,14 @@ func TestIndexQueryOracle(t *testing.T) {
 			where := groupCondition(arg[QueryGroup](t, c, 0), &params)
 			got = []any{where, params}
 		case "filter":
-			where, params := candidateFilterFor(queryOracleOptions(t, c), arg[bool](t, c, 1), arg[bool](t, c, 2))
+			q, withWords, fold := queryOracleOptions(t, c), arg[bool](t, c, 1), arg[bool](t, c, 2)
+			where, params := candidateFilterFor(q, withWords, fold)
+			if fold == FoldCwdCase() {
+				nativeWhere, nativeParams := candidateFilter(q, withWords)
+				if nativeWhere != where || !reflect.DeepEqual(nativeParams, params) {
+					t.Fatal("runtime platform wrapper disagrees with its recorded branch")
+				}
+			}
 			got = []any{where, params}
 		case "origin":
 			meta := ThreadMetaResult{ByID: map[string]ThreadMeta{}}

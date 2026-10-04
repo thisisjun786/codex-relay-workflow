@@ -558,3 +558,9 @@ The pinned oracle already publishes through an exclusive 0600 temporary file and
 - The FTS triggers cover INSERT and DELETE but not UPDATE, so changing a message in place leaves both search indexes stale (source `plugins/codexclaw/components/recall/src/index-db.ts:80-87`); port: kept.
 - `readHitCounts` suppresses every read error as empty history, whereas `bumpHitCounts` throws for a missing table and commits earlier refs before a later ref fails despite the shared tolerance comment (source `plugins/codexclaw/components/recall/src/index-db.ts:172-174`, `:182-205`); port: kept.
 - INTEGER affinity permits nonnumeric text in `hit_count`; its Number conversion can return NaN or Infinity to the penalty consumer (source `plugins/codexclaw/components/recall/src/index-db.ts:190`); port: kept.
+
+## Found by the CRW-507 recall query-condition port
+
+- Short words use SQLite's ASCII-only `lower()` and LIKE folding, so a query for `ü` misses an indexed `Ü` even though the final Unicode text predicate accepts it (source `recall/src/index-search.ts:185-191,268-270`; Node-recorded candidate cases in `internal/recall/testdata/indexquery/oracle.json`); port: kept.
+- With cwd case folding enabled, SQL's ASCII-only `lower()` misses a non-ASCII case variant in a child path (`/Ü/child` for `/ü`) that the explicitly folded scan predicate accepts (source `recall/src/index-search.ts:243-246`; darwin-recorded candidate cases); port: kept.
+- An embedded NUL in a word of at least three code points survives FTS quoting and makes MATCH raise `unterminated string`, although the final text predicate can match that word (source `recall/src/index-search.ts:156-158,185-188`; Node-recorded NUL candidate case); port: kept.
