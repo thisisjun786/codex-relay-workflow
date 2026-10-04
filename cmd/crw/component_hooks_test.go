@@ -162,7 +162,9 @@ func TestFallbackHookRecordedRawInputs(t *testing.T) {
 
 type fallbackBrokenIO struct{}
 
-func (fallbackBrokenIO) Read([]byte) (int, error)  { return 0, errors.New("read failure") }
+func (fallbackBrokenIO) Read(p []byte) (int, error) {
+	return copy(p, []byte(`{"session_id":"fixture-session"}`)), errors.New("read failure")
+}
 func (fallbackBrokenIO) Write([]byte) (int, error) { return 0, errors.New("write failure") }
 
 type fallbackSignalReader struct {
@@ -225,6 +227,9 @@ func TestFallbackHookObservationAndErrorOrder(t *testing.T) {
 				}
 				cancel()
 				code = <-result
+				if _, err := io.WriteString(w, raw); err != nil {
+					t.Fatal(err)
+				}
 				w.Close()
 				<-sr.finished
 			} else {

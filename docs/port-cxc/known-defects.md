@@ -577,3 +577,8 @@ The pinned oracle already publishes through an exclusive 0600 temporary file and
 - Positive days outside JavaScript's Date range throw `Invalid time value` after metadata loading; an empty direct-scan plan returns before that cutoff is evaluated (source `recall/src/chat-search.ts:296-307`; recorded infinite-days and empty-query cases); port: kept.
 - A NaN limit defeats both limit comparisons and the truncation warning, allowing more hits than the maximum advertised cap (source `recall/src/chat-search.ts:313,342,370`; recorded 250-hit dense case); port: kept.
 - The raw JSON file prefilter can miss decoded text containing escaped query characters, even though the per-message matcher would find it (source `recall/src/chat-search.ts:334,349`; recorded escaped `CI` case); port: kept.
+
+## Found by the CRW-366 fallback notice port
+
+- A startup payload stamped only with `agent_type`, without a nonempty string `agent_id`, receives the root dispatch notice (source `plugins/codexclaw/components/subagent-config/src/fallback-dispatch-cli.ts:36-38`; recorded `agent-type` case); port: kept.
+- Non-null JSON primitives and arrays receive a SessionStart dispatch card despite carrying no hook event or session identity; only null and malformed JSON are silent (source `plugins/codexclaw/components/subagent-config/src/fallback-dispatch-cli.ts:36-38`; recorded `array`, `boolean`, `string` and `null` cases); port: kept.
