@@ -207,3 +207,16 @@ func TestBusinessResendLegacySameRequest(t *testing.T) {
 		t.Fatal("business turn duplicated")
 	}
 }
+
+func TestBusinessResendIDStability(t *testing.T) {
+	// Independently calculated with Node's SHA256, not the production helper.
+	for attempt, want := range []string{
+		"original-dispatch",
+		"managed-business-0234b0a039e13b7420850fc7500c963463f5841e0f2e80ec4d03d67843748bc4",
+		"managed-business-88d99ca77068dbecc2b55e5e2ec061fdd2dac2e080bccb230a4dd4400bd435de",
+	} {
+		if got := businessResendID("managed-1", "original-dispatch", attempt); got != want {
+			t.Fatalf("attempt %d: got %s, want %s", attempt, got, want)
+		}
+	}
+}
