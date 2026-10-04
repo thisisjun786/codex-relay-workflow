@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -437,7 +438,7 @@ func TestMemoryGateAbsolutize(t *testing.T) {
 	if got := g.abs("a ", "/w"); len(got) != 2 || got[0].clean != "/w/a" || got[1].clean != "/w/a " {
 		t.Errorf("trimmed and exact candidates: %+v", got)
 	}
-	if got := g.abs("~/x/../y", "/w"); len(got) != 1 || got[0] != (memoryGatePath{"/h/y", "/h/x/../y"}) {
+	if got := g.abs("~/x/../y", "/w"); len(got) != 2 || got[0] != (memoryGatePath{"/h/y", "/h/x/../y"}) || got[1] != (memoryGatePath{"/w/~/y", "/w/~/x/../y"}) {
 		t.Errorf("home prefix: %+v", got)
 	}
 }
@@ -462,6 +463,7 @@ func TestMemoryGateFollowsSymlinks(t *testing.T) {
 	link(cwd, "home-again")
 	link(filepath.Join(root, "new.md"), "tw ") // names that end in a space or a quote are exact names
 	link(filepath.Join(root, "new.md"), "tq'")
+	link(root, "%USERPROFILE%") // a name that only looks like a home prefix
 	for command, want := range map[string]bool{
 		"echo hi > alias/n.md":          true,
 		"echo hi > deep/../n.md":        true,
@@ -469,6 +471,7 @@ func TestMemoryGateFollowsSymlinks(t *testing.T) {
 		"echo hi > \"tw \"":             true,
 		"echo hi > \"tq'\"":             true,
 		"echo hi > ./tw":                false,
+		"echo hi > %USERPROFILE%/n.md":  true,
 		"cp /w/a.md alias/b.md":         true,
 		"echo hi > home-again/out.md":   false,
 		"echo hi > loop-a/x":            false,
@@ -482,6 +485,35 @@ func TestMemoryGateFollowsSymlinks(t *testing.T) {
 	// A cwd that holds "link/.." is followed from the place the link led to.
 	if got := memoryGateClassify("Bash", map[string]any{"command": "echo hi > n.md"}, cwd+"/deep/..", env); got.Surface != "shell" {
 		t.Errorf("cwd with link/..: %+v", got)
+	}
+	// A relative cwd is made absolute without cleaning, and a long chain of links in the cwd does not use up the budget of the name.
+	t.Chdir(t.TempDir())
+	if err := os.MkdirAll("work", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(sub, "work/deep"); err != nil {
+		t.Fatal(err)
+	}
+	if got := memoryGateClassify("Bash", map[string]any{"command": "echo hi > n.md"}, "work/deep/..", env); got.Surface != "shell" {
+		t.Errorf("relative cwd with link/..: %+v", got)
+	}
+	chain := filepath.Join(t.TempDir(), "c0")
+	if err := os.MkdirAll(chain, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(root, "new.md"), filepath.Join(chain, "target")); err != nil {
+		t.Fatal(err)
+	}
+	head := chain
+	for i := 1; i <= 40; i++ {
+		next := filepath.Join(filepath.Dir(chain), "c"+strconv.Itoa(i))
+		if err := os.Symlink(head, next); err != nil {
+			t.Fatal(err)
+		}
+		head = next
+	}
+	if got := memoryGateClassify("Bash", map[string]any{"command": "echo hi > target"}, head, env); got.Surface != "shell" {
+		t.Errorf("a name opened from a cwd behind 40 links: %+v", got)
 	}
 	// The deny names the path as written, cleaned, not the place it leads to.
 	if got := memoryGateClassify("Bash", map[string]any{"command": "echo hi > alias/n.md"}, cwd, env); got.Target != filepath.Join(cwd, "alias", "n.md") {

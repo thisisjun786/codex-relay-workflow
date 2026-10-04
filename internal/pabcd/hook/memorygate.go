@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path"
+	"slices"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
@@ -325,17 +326,23 @@ type memoryGatePath struct{ clean, joined string }
 
 // abs is absolutize: the quotes off the ends, the home prefix expanded, backslashes read as slashes, and the path resolved
 // against cwd. clean is that path, which the lexical test reads and the deny reason names; joined is the same path with its
-// ".." components kept (cwd's too), which the physical test follows. These readings are the oracle's, made for Windows text:
-// they trim the ends, strip quotes and turn a backslash into a separator. On POSIX the destination the shell parser or the
-// tool hands over is an exact name, whose ends may be a space or a quote and whose backslash is a character (a directory
-// called `\..` is one component), so the text as written is a candidate too, and the oracle's reading stays first.
+// ".." components kept, which the physical test follows. These readings are the oracle's, made for Windows text: they trim
+// the ends, strip quotes, expand a home prefix and turn a backslash into a separator. On POSIX the destination the shell
+// parser or the tool hands over is an exact name, whose ends may be a space or a quote, whose first word may look like a
+// home prefix and whose backslash is a character (a directory called `\..` is one component), so the text as written is a
+// further candidate, and the oracle's reading stays first. A relative name is opened from the physical cwd, whose own
+// links are followed on their own budget.
 func (g memoryGateEnv) abs(raw, cwd string) []memoryGatePath {
 	if !g.homeOK {
 		return nil
 	}
 	base := cwd
-	if cwd != "" && !path.IsAbs(cwd) {
-		base = resolveFrom(cwd, "")
+	if cwd != "" {
+		if !path.IsAbs(cwd) {
+			wd, _ := os.Getwd()
+			base = wd + "/" + cwd
+		}
+		base = memoryGateReal(base)
 	}
 	v := text.Trim(raw)
 	head, tail := v != "" && (v[0] == '"' || v[0] == '\''), len(v) > 1 && (v[len(v)-1] == '"' || v[len(v)-1] == '\'')
@@ -347,10 +354,13 @@ func (g memoryGateEnv) abs(raw, cwd string) []memoryGatePath {
 	}
 	var out []memoryGatePath
 	for i, as := range [...]string{v, raw} {
-		if as == "" || (i == 1 && as == v) {
+		if as == "" {
 			continue
 		}
-		norm, kept := g.expand(as)
+		norm, kept := as, as
+		if i == 0 {
+			norm, kept = g.expand(as)
+		}
 		for _, slashes := range [...]bool{true, false} {
 			n, k := norm, kept
 			if slashes {
@@ -358,11 +368,17 @@ func (g memoryGateEnv) abs(raw, cwd string) []memoryGatePath {
 			} else if !strings.Contains(k, "\\") {
 				continue
 			}
+			var p memoryGatePath
 			switch {
 			case path.IsAbs(n):
-				out = append(out, memoryGatePath{path.Clean(n), k})
+				p = memoryGatePath{path.Clean(n), k}
 			case cwd != "":
-				out = append(out, memoryGatePath{resolveFrom(cwd, n), base + "/" + k})
+				p = memoryGatePath{resolveFrom(cwd, n), base + "/" + k}
+			default:
+				continue
+			}
+			if !slices.Contains(out, p) {
+				out = append(out, p)
 			}
 		}
 	}
