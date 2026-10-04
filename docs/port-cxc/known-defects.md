@@ -622,3 +622,11 @@ The pinned oracle already publishes through an exclusive 0600 temporary file and
 - A failed BEGIN reports that requeue was rolled back even when no transaction began (`recall/src/memory-requeue.ts:133,146-152` at v0.2.40); port: kept.
 - Reopening for apply uses a create-capable SQLite open, so external removal between selection and reopening can leave a new empty store (`recall/src/memory-requeue.ts:128` and `recall/src/sqlite.ts:34-36` at v0.2.40); port: kept.
 - Duplicate kind/key rows with a retry allowance floored to zero remain eligible across repeated updates, counting the same rows more than once (`recall/src/memory-requeue.ts:73,137-143` at v0.2.40); port: kept.
+
+## Found by the orchestrate session/status library port (CRW-519)
+
+- Session discovery accepts any stat-able name ending in `.json`, including a directory, and raw existence then permits status to report that unreadable directory as IDLE (source `orchestrate-cli.ts:301-316,328-330,509-516`; recorded directory case); port: kept.
+- Status uses advisory `readState`, so an existing corrupt session file reports default IDLE with exit zero rather than distinguishing unreadable state (source `orchestrate-cli.ts:509-516`; recorded corrupt-state case); port: kept.
+- The CLI checks the raw session path but reads a sanitized path, so an explicit id containing spaces or punctuation can pass existence for one file and report another file's phase (source `orchestrate-cli.ts:328-330,414-418,509-516`, `state.ts:327-329`; recorded raw/sanitized case); port: kept.
+- With no resolved session, status prints plain `no active session` even under `--json`, making that success response a different output form (source `orchestrate-cli.ts:500-501`; recorded empty JSON case); port: kept.
+- A sessions directory that exists but cannot be listed escapes the CLI's advertised never-throws behavior; the Go library propagates that IO error instead of turning it into success or a missing-session refusal (source `orchestrate-cli.ts:306,423,498`; deterministic non-directory listing test); port: kept.
