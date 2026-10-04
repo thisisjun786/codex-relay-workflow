@@ -338,3 +338,45 @@ func TestWriteLeafLinks(t *testing.T) { // TS:494-514; rename replaces the plan 
 		t.Fatal("outside ledger leaf written")
 	}
 }
+
+func TestWriteRefusesInitiallyDanglingSlugAfterTargetAppears(t *testing.T) {
+	cwd, outside := t.TempDir(), t.TempDir()
+	target := filepath.Join(outside, "later")
+	slug := filepath.Join(cwd, crwdir.DirName, GoalplansSubdir, "hello-world")
+	writeTestRequire(t, os.MkdirAll(filepath.Dir(slug), 0700))
+	writeTestRequire(t, os.Symlink(target, slug))
+	checked, e := GoalplanDir(cwd, "hello-world")
+	writeTestRequire(t, e) // the lexical oracle helper misses the dangling link
+	writeTestRequire(t, os.Mkdir(target, 0700))
+	dir, _, e := writeOpenCheckedDir(cwd, checked)
+	if dir != nil {
+		dir.Close()
+	}
+	if e == nil {
+		t.Fatal("initially dangling slug link was followed after its target appeared")
+	}
+	entries, e := os.ReadDir(target)
+	writeTestRequire(t, e)
+	if len(entries) != 0 {
+		t.Fatal("outside written")
+	}
+}
+
+func TestWriteLedgerUnreadableTailAndExistingIgnore(t *testing.T) {
+	cwd := t.TempDir()
+	dir, e := GoalplanDir(cwd, "led")
+	writeTestRequire(t, e)
+	writeTestRequire(t, os.MkdirAll(dir, 0700))
+	ignore := filepath.Join(cwd, crwdir.DirName, ".gitignore")
+	writeTestRequire(t, os.WriteFile(ignore, []byte("owner"), 0600))
+	path := filepath.Join(dir, GoalplanLedgerFile)
+	writeTestRequire(t, os.WriteFile(path, []byte(`{"old":true}`), 0200))
+	writeTestRequire(t, AppendGoalplanLedger(cwd, "led", GoalplanLedgerEntry{Ts: "t", Slug: "led", Event: EventCreated}))
+	writeTestRequire(t, os.Chmod(path, 0600))
+	if !bytes.HasPrefix(writeTestFile(t, path), []byte("{\"old\":true}\n{\"ts\"")) {
+		t.Fatal("unreadable tail fused the new row")
+	}
+	if string(writeTestFile(t, ignore)) != "owner" {
+		t.Fatal("existing ignore overwritten")
+	}
+}
