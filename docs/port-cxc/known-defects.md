@@ -668,3 +668,8 @@ The pinned oracle already publishes through an exclusive 0600 temporary file and
 - Explicit home validation checks existence only, so an existing regular file is accepted as a home and later readers must handle it (source recall/src/cli.ts:97-103; TestRecallExplicitHome); port: kept.
 - Date.parse accepts calendar rollover and zone-less legacy stamps, so February 30 normalizes and an age/newer label for a local-time stamp depends on host timezone (source recall/src/format.ts:61-65,89-105; recorded age cases across UTC, Seoul and New York, including DST transitions); port: kept.
 - UTF-16 clipping can split an astral pair; the Go UTF-8 result represents that lone surrogate as U+FFFD instead of JavaScript's lone-surrogate JSON escape, matching the existing recall string boundary (source recall/src/format.ts:18,143; explicitly classified representation case in testdata/format/oracle.json and TestFormatOracle); port: kept as a platform-boundary difference outside well-formed UTF-8 output.
+
+## CRW-520: session CLI diagnostics
+
+- Plain session output coerces the bound source identity to `[object Object]`, hiding its fields (pabcd-state/src/session-cli.ts:118 at v0.2.40); port: kept.
+- Native-database read failures still suggest checking Node SQLite support, even though the port uses Go SQLite and needs no Node at runtime (pabcd-state/src/session-binding.ts:108 at v0.2.40); port: kept.
