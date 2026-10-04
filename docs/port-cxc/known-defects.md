@@ -592,3 +592,9 @@ The pinned oracle already publishes through an exclusive 0600 temporary file and
 - The cwd reader captures only the first non-whitespace token, truncating paths containing spaces and retaining quote characters (source recall/src/memory-search.ts:276-284; recorded cwd cases and TestMemoryMarkdownTreeAndFrontmatter); port: kept.
 - Excerpt offsets are found in lowercased text but applied to the original, so U+0130 lowercase expansion shifts the excerpt after that character (source recall/src/memory-search.ts:418-424; recorded excerpt cases and TestMemoryParagraphsAndExcerpts); port: kept.
 - UTF-16 prefix/excerpt slices can leave a lone surrogate; Go strings encode that boundary as U+FFFD instead of JavaScript's lone-surrogate JSON escape (source recall/src/memory-search.ts:261,277,421-423; explicitly intentionally-changed representation cases with a reason in testdata/memoryrank/oracle.json and TestMemoryOracle); port: kept as a platform-boundary difference outside the well-formed UTF-8 output domain.
+
+## Found by the CRW-526 recall memory trim port
+
+- Equal score/date hits compare as -1 in both directions, so the ranking depends on V8's comparison schedule rather than a consistent ordering (source recall/src/memory-search.ts:222-225; tie grids in TestRankAndTrimNodeOracle); port: kept.
+- NaN scores compare unequal even to themselves and produce NaN differences, which V8 treats as zero; mixing these with the nonzero tie comparator makes ranking implementation-dependent (source recall/src/memory-search.ts:223-225; mixed grids in TestRankAndTrimNodeOracle); port: kept.
+- The limit is checked after appending, so a nonpositive limit returns one hit from nonempty candidates rather than none (source recall/src/memory-search.ts:232-233; cap-limit grids in TestRankAndTrimNodeOracle); port: kept.
