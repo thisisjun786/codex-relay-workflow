@@ -871,6 +871,11 @@ Source: `plugins/codexclaw/components/pabcd-state/src/memory-write-gate.ts` at v
 - If either target realpath fails, both paths fall back to lexical resolution, so a missing leaf below an outside symlink becomes a missing-target finding rather than an escape finding (CXC v0.2.40 `plugins/codexclaw/components/cxc-ops/src/manifest-targets.ts:106-117`); port: kept.
 - Target validation accepts a non-empty directory as a target and ignores non-array manifest hooks or non-string mcpServers declarations (CXC v0.2.40 `plugins/codexclaw/components/cxc-ops/src/manifest-targets.ts:138-144,157,181`); port: kept.
 
+## CRW-555 — lone surrogates in doctor manifest paths
+
+- The oracle's containment test compares resolved path spellings when both realpath calls succeed and lexical spellings otherwise, and in those strings a lone surrogate differs from the U+FFFD that names the same file, so converting each lone surrogate to U+FFFD where the manifest string is taken up can change the verdict when U+FFFD appears in the root, in a parent or in a symlink on the way (a root `.../plugin-\ufffd` with the target `../plugin-\ud800/missing.js` is `target escapes plugin root` in the oracle and a missing target in the port, and a symlink named with U+FFFD can differ in either direction); these cases are examples, not a complete list, a path with no U+FFFD in any component did not differ in any case checked, and the port differs on purpose until a lossless string form is chosen (source `plugins/codexclaw/components/cxc-ops/src/manifest-targets.ts:106-117` and `:126-129`; checked with Node 24 on the oracle's `dist`); port: pending.
+- A lone surrogate in a finding message is kept by the oracle, so its JSON report writes it as the escape `\ud800` while its text report writes U+FFFD; the port's message holds U+FFFD in both, a platform difference of the same family as the lone-surrogate lines above (source `plugins/codexclaw/components/cxc-ops/src/doctor.ts:234-241` and `plugins/codexclaw/components/cxc-ops/src/cli.ts:84-86`; checked with Node 24); port: kept.
+
 ## Found by the CRW-391 recall CLI port
 
 - Unknown recall verbs print usage and exit 0, while an empty search query prints usage on stdout and exits 1 (source `recall/src/cli.ts:154-157,196-199,418-446`; recorded CLI cases); port: kept.

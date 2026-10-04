@@ -48,6 +48,24 @@ func (e targetShapeError) Error() string { return string(e) }
 // pluginRootTarget is PLUGIN_ROOT_TARGET; JS whitespace is checked separately.
 const pluginRootTarget = `\$\{PLUGIN_ROOT\}[\\/]([^"\t\n\v\f\r ]+)`
 
+// targetNodeText is a manifest string as Node's path encoding reads it. pyjson.Loads keeps a lone surrogate
+// escape as three WTF-8 bytes (ED A0..BF 80..BF), which Go reads as three invalid bytes and rewrites as three
+// U+FFFD; V8 writes the one lone surrogate as one U+FFFD (EF BF BD) when a string becomes a file name, so the
+// existence check must look for that name. A valid pair is a four-byte character and stays.
+func targetNodeText(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		r, n := pyjson.CodePoint(s, i)
+		if n == 3 && pyjson.IsSurrogate(r) {
+			b.WriteString("\uFFFD")
+		} else {
+			b.WriteString(s[i : i+n])
+		}
+		i += n
+	}
+	return b.String()
+}
+
 func targetReadJSON(kind TargetKind, path string) (any, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -64,6 +82,7 @@ func targetCommands(command any) []string {
 	if !ok {
 		return nil
 	}
+	s = targetNodeText(s)
 	s = strings.Map(func(r rune) rune {
 		if text.Trim(string(r)) == "" {
 			return ' '
@@ -186,7 +205,7 @@ func targetString(v any) string {
 	case nil:
 		return "null"
 	case string:
-		return x
+		return targetNodeText(x)
 	case bool:
 		return strconv.FormatBool(x)
 	case json.Number:
@@ -238,6 +257,7 @@ func ValidateManifestTargets(pluginRoot string) ([]TargetIssue, error) {
 			issues = append(issues, TargetIssue{TargetHook, "manifest hook file must be a string: " + targetString(entry)})
 			continue
 		}
+		rel = targetNodeText(rel)
 		file := targetResolve(pluginRoot, rel)
 		if filepath.IsAbs(rel) || targetEscapesRoot(pluginRoot, file) {
 			issues = append(issues, TargetIssue{TargetHook, "manifest hook file escapes plugin root: " + rel})
@@ -267,6 +287,7 @@ func ValidateManifestTargets(pluginRoot string) ([]TargetIssue, error) {
 	if !ok {
 		return issues, nil
 	}
+	rel = targetNodeText(rel)
 	file := targetResolve(pluginRoot, rel)
 	if filepath.IsAbs(rel) || targetEscapesRoot(pluginRoot, file) {
 		return append(issues, TargetIssue{TargetMCP, "manifest mcpServers file escapes plugin root: " + rel}), nil
@@ -293,7 +314,8 @@ func ValidateManifestTargets(pluginRoot string) ([]TargetIssue, error) {
 		}
 		for _, arg := range a {
 			if rel, ok := arg.(string); ok && strings.HasSuffix(rel, ".js") {
-				if e := targetCheck(&issues, TargetMCP, pluginRoot, rel, "mcp server "+srv.Key+" references missing dist: "+rel); e != nil {
+				rel = targetNodeText(rel)
+				if e := targetCheck(&issues, TargetMCP, pluginRoot, rel, "mcp server "+targetNodeText(srv.Key)+" references missing dist: "+rel); e != nil {
 					return nil, e
 				}
 			}
