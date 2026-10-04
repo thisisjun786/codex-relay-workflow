@@ -911,6 +911,9 @@ clean, every accepted criterion maps to evidence that still applies at that head
 and any finding still open is named. The handoff's disclosures are part of that: every decision
 request is answered before the verdict, under
 [what the handoff discloses, checked at the verdict](references/merge-readiness.md#what-the-handoff-discloses-checked-at-the-verdict).
+A merge without a conflict is not yet a merge that builds, so the head merged with the base tip is
+built and vetted before the verdict too, with `crw skill merge-build-check`
+([Build and vet the merged tree before the verdict](references/merge-readiness.md#build-and-vet-the-merged-tree-before-the-verdict)).
 The one head that differs from the report on
 purpose is a base refresh the parent made itself under
 [Merge readiness](references/merge-readiness.md#refresh-the-base-yourself-when-only-the-base-moved),

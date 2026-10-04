@@ -14,8 +14,8 @@ import (
 // ChatSearchFn uses the already-landed chat result and option contracts.
 type ChatSearchFn func(string, ChatSearchOptions) (ChatSearchResult, error)
 
-// MemorySearchOptions ports recall/src/memory-search.ts:49-77. The three chat
-// fields are successor integration seams; this port searches markdown only.
+// MemorySearchOptions ports recall/src/memory-search.ts:49-77. A nil SearchChat
+// retains memory-only behavior, the CLI's --no-chat integration seam.
 type MemorySearchOptions struct {
 	Limit             *float64      `json:"limit,omitempty"`
 	Days              *float64      `json:"days,omitempty"`
@@ -111,8 +111,8 @@ func memorySearchISO(ms float64) string {
 	return time.UnixMilli(int64(ms)).UTC().Format("2006-01-02T15:04:05.000Z")
 }
 
-// Collect recompiles the plan on each pass. The retained thread IDs are the
-// successor's searchStage1 deduplication input (memory-search.ts:544-559).
+// Collect recompiles the plan on each pass and returns the retained file thread
+// IDs for stage1 deduplication (memory-search.ts:544-559).
 func (s *memorySearchState) memorySearchCollectFiles(active []QueryGroup, tally bool) ([]MemoryHit, map[string]bool, error) {
 	plan := CompileMatchPlan(active, s.words, s.anyMode, s.relax)
 	candidates, matchedThreadIDs := []MemoryHit{}, map[string]bool{}
@@ -194,13 +194,12 @@ func (s *memorySearchState) memorySearchCollectFiles(active []QueryGroup, tally 
 			matchedThreadIDs[*threadID] = true
 		}
 	}
-	// searchStage1 belongs here, using matchedThreadIDs and the same plan.
 	return candidates, matchedThreadIDs, nil
 }
 
-// SearchMemory ports memory-search.ts:426-591 at CXC v0.2.40 (3c1459ac),
-// excluding stage1 and chat fallback. Thrown IO errors become Go errors; the
-// oracle's caught per-file and metadata errors remain warnings.
+// SearchMemory ports memory-search.ts:426-789 at CXC v0.2.40 (3c1459ac).
+// Thrown IO errors become Go errors; caught file, database and chat failures
+// remain warnings. Stage1 and fallback helpers are in memorystage1.go.
 func SearchMemory(query string, opts MemorySearchOptions) (MemorySearchResult, error) {
 	started := time.Now().UnixMilli()
 	home := ""
@@ -258,13 +257,14 @@ func SearchMemory(query string, opts MemorySearchOptions) (MemorySearchResult, e
 	if err != nil {
 		return MemorySearchResult{}, err
 	}
-	candidates, _, err := s.memorySearchCollectFiles(groups, true)
+	candidates, _, err := s.memoryStage1Collect(home, groups, true)
 	if err != nil {
 		return MemorySearchResult{}, err
 	}
 	if len(candidates) == 0 && HasBoundaryTerm(groups) {
-		// The successor fills stage1 presence here before deciding which
-		// original groups are absent (memory-search.ts:570-571).
+		if err := s.memoryStage1FillPresence(home); err != nil {
+			return MemorySearchResult{}, err
+		}
 		miss := map[int]bool{}
 		for i, group := range groups {
 			if HasBoundaryTerm([]QueryGroup{group}) && !s.present[i] {
@@ -272,7 +272,7 @@ func SearchMemory(query string, opts MemorySearchOptions) (MemorySearchResult, e
 			}
 		}
 		if len(miss) > 0 {
-			candidates, _, err = s.memorySearchCollectFiles(RelaxGroupsAt(groups, miss), false)
+			candidates, _, err = s.memoryStage1Collect(home, RelaxGroupsAt(groups, miss), false)
 			if err != nil {
 				return MemorySearchResult{}, err
 			}
@@ -285,7 +285,7 @@ func SearchMemory(query string, opts MemorySearchOptions) (MemorySearchResult, e
 		}
 	}
 	hits := RankAndTrim(candidates, limit)
-	// The successor inserts backfillFromChat before the empty-scope advice.
+	hits = s.memoryStage1Backfill(query, hits, opts, home, limit, days)
 	if len(hits) == 0 && s.scope != nil && s.scope.only {
 		s.warnings = append(s.warnings, "no matches inside --cwd-only "+s.scope.prefix+" — retry with --cwd to rank it first instead")
 	}
