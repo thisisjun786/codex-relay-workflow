@@ -64,7 +64,9 @@ func TestSourceIsImmutableReportsDirtyIdentityAndFailsClosedWhenMissing(t *testi
 		t.Fatalf("source: %+v", r)
 	}
 	id := Result{Out: field(t, r, "sourceIdentity")}
-	if field(t, id, "kind") != "resolved" || field(t, id, "dirty") != true || field(t, id, "treeHash") == nil || field(t, id, "sourceRoot") != target {
+	// Recorded from the pinned Node oracle for tracked.txt containing changed followed by a newline.
+	wantHash := "604478fb75aa312771cef8d0aedba4eb" + "0ae948692d05040c11bd9d66c626561c"
+	if field(t, id, "kind") != "resolved" || field(t, id, "dirty") != true || field(t, id, "treeHash") != wantHash || field(t, id, "sourceRoot") != target {
 		t.Fatalf("dirty source identity: %+v", id)
 	}
 	binding := filepath.Join(f.cwd, ".crw", "sources", child+".json")

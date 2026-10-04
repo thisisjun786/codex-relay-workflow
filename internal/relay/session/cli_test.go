@@ -109,6 +109,13 @@ func snapshot(t *testing.T, root string) map[string]string {
 			}
 			value += string(body)
 		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			target, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			value += target
+		}
 		out[path] = value
 		return nil
 	}))
@@ -250,6 +257,7 @@ func TestRedirectedOrNonregularStateFailsClosed(t *testing.T) {
 func TestBindRechecksConcurrentWinnerAndCreationFailure(t *testing.T) {
 	for _, kind := range []string{"corrupt", "wrong-id", "symlink", "disappeared", "error"} {
 		f := newFixture(t, nil)
+		winner := snapshot(t, f.root)
 		ensure := func(cwd, id string) (bool, error) {
 			switch kind {
 			case "error":
@@ -265,10 +273,11 @@ func TestBindRechecksConcurrentWinnerAndCreationFailure(t *testing.T) {
 			default:
 				f.write(t, f.path, "PRIVATE_TRANSCRIPT {")
 			}
+			winner = snapshot(t, f.root)
 			return false, nil
 		}
 		r := run(Options{Command: "bind", JSON: true}, f.cwd, f.lookup, ensure)
-		if r.Code != 1 || field(t, r, "hooksVerified") != false || strings.Contains(fmt.Sprint(r.Out), "private failure") {
+		if r.Code != 1 || field(t, r, "hooksVerified") != false || strings.Contains(fmt.Sprint(r.Out), "private failure") || !reflect.DeepEqual(winner, snapshot(t, f.root)) {
 			t.Fatalf("%s: %+v", kind, r)
 		}
 	}
