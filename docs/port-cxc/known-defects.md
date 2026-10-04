@@ -601,6 +601,100 @@ The pinned oracle already publishes through an exclusive 0600 temporary file and
 - Both writes publish a reconstructed verdict list that drops malformed entries or caps the list at 64 (`pabcd-state/src/evidence-cli.ts:100-101`, `memory-cli.ts:81-82`, `state.ts:57-90,587-589`; recorded intentionally-changed overflow/malformed cases and `TestCLIDataLossPreservesVerdictBytes`); port: fixed, refusing publication when the raw record count/shape cannot be retained.
 - Filesystem error diagnostics other than the stale-lock EEXIST case use the Go state owner's native error text instead of Node/libuv wording (`pabcd-state/src/evidence-cli.ts:132`, `memory-cli.ts:86`; `TestEvidenceAuditFailureAndUnresolvable`, `TestMemoryStateDirectoryFailure`); port: kept as a runtime diagnostic limitation, with exit/failure preservation unchanged.
 
+## Found by the receipt test library port
+
+- The parser drops empty command arguments, so `-- cmd "" arg` executes `cmd arg`, although an empty argument is meaningful to a command (source `plugins/codexclaw/components/pabcd-state/src/receipt-cli.ts:63`; recorded parser case 10); port: kept.
+- Missing `--session` and `--cwd` values are accepted, and a following flag can be consumed as their value; only `--generated` checks for an empty or absent value (source `plugins/codexclaw/components/pabcd-state/src/receipt-cli.ts:52-58`; recorded parser cases 7-9); port: kept.
+- `--generated` accepts absolute and parent paths, consumes `--` as a value, strips only one leading `./` and keeps a trailing slash, which makes a directory exclusion such as `build/` match no children (source `plugins/codexclaw/components/pabcd-state/src/receipt-cli.ts:55-59` and `source-identity.ts:215-218`; tests `TestReceiptParserOracle` and `TestReceiptFailuresClearPrior/trailing-generated`); port: kept.
+- `receipt test --help` is a parser error instead of help (source `plugins/codexclaw/components/pabcd-state/src/receipt-cli.ts:41` and `:61`; fixture `cli-help__receipt__test_dashdash_help`); port: kept.
+- `receiptPathFor` accepts the sanitized key `..`, which places the receipt directly under the state directory instead of its evidence root, where the receipt reader then refuses it (source `plugins/codexclaw/components/pabcd-state/src/receipt-cli.ts:70`; test `TestReceiptHelpAndPath`); port: kept.
+- The recorded command joins argv with spaces and loses argument boundaries, so distinct invocations can record the same command text (source `plugins/codexclaw/components/pabcd-state/src/receipt-cli.ts:174`; test `TestReceiptArgvNoShellAndEncoding`); port: kept.
+- The first source capture is outside the runner's catch, while the second is caught, so a binding broken between the initial resolution and first capture throws instead of returning the runner's SOURCE-ROOT refusal (source `plugins/codexclaw/components/pabcd-state/src/receipt-cli.ts:120-127` and `:145-147`); port: kept.
+- The receipt is written in place, so a failed write leaves a truncated record (source `plugins/codexclaw/components/pabcd-state/src/receipt-cli.ts:184`; intentionally-changed recorded case `internal/pabcd/cli/testdata/atomic-change.json`, test `TestReceiptAtomicPublicationFailure`); port: fixed (record-file data loss: fsynced temporary-file publication and rename, with failed publication removing its partial temporary file).
+
+## CRW-352 memory requeue
+
+- A positive retry allowance below one is floored to zero, clearing backoff without restoring eligibility (`recall/src/memory-requeue.ts:73` at v0.2.40); port: kept.
+- The schema guard omits `retry_at`, so a selected store lacking it passes selection but apply fails and rolls back (`recall/src/memory-requeue.ts:66,94-98,137` at v0.2.40); port: kept.
+- NULL, numeric and BLOB kind/key values are coerced to strings for selection and binding, so an untyped jobs table can report selected candidates with zero rows changed (`recall/src/memory-requeue.ts:105-109,137-143` at v0.2.40); port: kept.
+- With no kind filter, exhausted consolidation jobs are selected despite the module's safety prose claiming otherwise (`recall/src/memory-requeue.ts:17-18,107` at v0.2.40); port: kept.
+- Candidates removed by the limit appear in neither the selected list nor skipped cause counts (`recall/src/memory-requeue.ts:107-112` at v0.2.40); port: kept.
+- A failed BEGIN reports that requeue was rolled back even when no transaction began (`recall/src/memory-requeue.ts:133,146-152` at v0.2.40); port: kept.
+- Reopening for apply uses a create-capable SQLite open, so external removal between selection and reopening can leave a new empty store (`recall/src/memory-requeue.ts:128` and `recall/src/sqlite.ts:34-36` at v0.2.40); port: kept.
+- Duplicate kind/key rows with a retry allowance floored to zero remain eligible across repeated updates, counting the same rows more than once (`recall/src/memory-requeue.ts:73,137-143` at v0.2.40); port: kept.
+
+## Found by the orchestrate session/status library port (CRW-519)
+
+- Session discovery accepts any stat-able name ending in `.json`, including a directory, and raw existence then permits status to report that unreadable directory as IDLE (source `orchestrate-cli.ts:301-316,328-330,509-516`; recorded directory case); port: kept.
+- Status uses advisory `readState`, so an existing corrupt session file reports default IDLE with exit zero rather than distinguishing unreadable state (source `orchestrate-cli.ts:509-516`; recorded corrupt-state case); port: kept.
+- The CLI checks the raw session path but reads a sanitized path, so an explicit id containing spaces or punctuation can pass existence for one file and report another file's phase (source `orchestrate-cli.ts:328-330,414-418,509-516`, `state.ts:327-329`; recorded raw/sanitized case); port: kept.
+- With no resolved session, status prints plain `no active session` even under `--json`, making that success response a different output form (source `orchestrate-cli.ts:500-501`; recorded empty JSON case); port: kept.
+- A sessions directory that exists but cannot be listed escapes the CLI's advertised never-throws behavior; the Go library propagates that IO error instead of turning it into success or a missing-session refusal (source `orchestrate-cli.ts:306,423,498`; deterministic non-directory listing test); port: kept.
+
+## Found by the recall ingest port (CRW-363)
+
+- A larger rewrite is assumed to be an append, leaving the previous prefix indexed and reporting fresh after the new fingerprint is stored (source `plugins/codexclaw/components/recall/src/ingest.ts:222-246`; recorded growth-rewrite case); port: kept.
+- A rewrite preserving size and integer-millisecond mtime is skipped, so its old text remains indexed and freshness reports no change (source `plugins/codexclaw/components/recall/src/ingest.ts:68-73,215`; recorded same-fingerprint case); port: kept.
+
+## Found by the shell write destination lexer port (CRW-361)
+
+- The destination token reads through adjacent operators, ends after the first quoted fragment, and retains shell escapes, missing actual files for `> a>b`, `>"a"x` and `> a\ b` (source `pabcd-state/src/shell-write-destinations.ts:173-184,234-235`); port: fixed (security: the exported result retains the oracle reports and adds the actual literal targets; helper tokenization kept).
+- Stderr `2>`, read/write `<>`, an unquoted arrow's `>`, and file-valued `>&` are skipped despite opening or writing files (source `shell-write-destinations.ts:209-235`); port: fixed (security: add literal file destinations, including the deliberately changed arrow test; numeric descriptor duplication, close and `/dev/null` remain excluded).
+- Heredoc delimiters stop at punctuation, ignore escaped spelling and compare `<<-` terminators without removing tabs, so later real redirects can be swallowed (source `shell-write-destinations.ts:52-77,87-99`); port: fixed (security: the exported scanner reads the raw command, recognizes literal delimiter words and tab-stripped terminators; the recorded helpers remain unchanged).
+- Only the first heredoc on a header has its body stripped; text in a later queued body can be returned as a destination (`leaked` in the recorded two-body case; source `shell-write-destinations.ts:58-77`); port: kept (legacy reports are retained, although the additive scanner suppresses all queued bodies).
+- Unterminated quoted tokens lose their last UTF-16 unit and double-quoted escapes remain encoded in the token (source `shell-write-destinations.ts:141-152,176-180`); port: kept (completed literal redirect words are additionally decoded; malformed quotes retain truncation, and a lone surrogate becomes U+FFFD at the Go string boundary, as in Node UTF-8 encoding).
+- JavaScript Unicode whitespace is treated as a shell token separator although POSIX shell blanks are ASCII (source `shell-write-destinations.ts:174-184`); port: fixed (security: add literal targets retaining a leading BOM or non-breaking space while preserving the oracle token).
+- Quoted command substitutions, variable/tilde/glob expansion and arbitrary executable behavior are not evaluated by the lexical parser (source `shell-write-destinations.ts:46-50,173-184,192-194`); port: kept (the library is not a shell evaluator; consumer policy must account for dynamic destinations).
+- Escaped blanks before `#` and backslash-newline joins are not lexed as shell word/operator boundaries, which can conceal stderr or clobber destinations (source `shell-write-destinations.ts:102-137,173-184,235`); port: fixed (security: the additive scanner tracks word boundaries and joins complete headers before operator recognition).
+- Empty quoted and dollar-bearing heredoc delimiters are not recognized, letting a quote in the body conceal a following real redirect (source `shell-write-destinations.ts:54-57,87-99`); port: fixed (security: delimiter parsing removes quotes without expansion, accepts a present empty word, and strips the body independently of its contents).
+- CR is JavaScript whitespace but is part of a POSIX filename, so `>a\rb` reports only `a` (source `shell-write-destinations.ts:174-184`); port: fixed (security: add the full CR-containing filename while retaining the oracle target).
+- An unquoted heredoc terminator continued with backslash-newline is not joined by the oracle, hiding following Bash redirects (source `shell-write-destinations.ts:64-75`); port: fixed (security: the additive scanner also recognizes Bash's continued terminator; this intentionally conservative addition covers that shell-specific behavior).
+
+## CRW-364 — current-directory session context
+
+- Only the first four nonsynthetic user rows are inspected, so four read-time harness blocks hide a later human opener (recall/src/cwd-context.ts:143-157 at v0.2.40); port: kept.
+- Excerpt limits below three use a negative slice end and can produce an excerpt longer than the requested limit (recall/src/cwd-context.ts:156 at v0.2.40); port: kept.
+- Heading whitespace can span line breaks, so a bare heading marker can take the next body line as its summary title (recall/src/cwd-context.ts:231-233 at v0.2.40); port: kept.
+
+## Found by the CRW-507 recall query-condition port
+
+- Short words use SQLite's ASCII-only `lower()` and LIKE folding, so a query for `ü` misses an indexed `Ü` even though the final Unicode text predicate accepts it (source `recall/src/index-search.ts:185-191,268-270`; Node-recorded candidate cases in `internal/recall/testdata/indexquery/oracle.json`); port: kept.
+- With cwd case folding enabled, SQL's ASCII-only `lower()` misses a non-ASCII case variant in a child path (`/Ü/child` for `/ü`) that the explicitly folded scan predicate accepts (source `recall/src/index-search.ts:243-246`; darwin-recorded candidate cases); port: kept.
+- An embedded NUL in a word of at least three code points survives FTS quoting and makes MATCH raise `unterminated string`, although the final text predicate can match that word (source `recall/src/index-search.ts:156-158,185-188`; Node-recorded NUL candidate case); port: kept.
+
+## Found by the recall format and flag port
+
+- Help detection scans every argument before parsing, so a literal --help or -h query after the -- terminator prints usage instead of searching (source recall/src/cli.ts:70-71,418-421; recorded help cases and TestRecallReadFlagsAndHelpPrecedence); port: kept.
+- Explicit home validation checks existence only, so an existing regular file is accepted as a home and later readers must handle it (source recall/src/cli.ts:97-103; TestRecallExplicitHome); port: kept.
+- Date.parse accepts calendar rollover and zone-less legacy stamps, so February 30 normalizes and an age/newer label for a local-time stamp depends on host timezone (source recall/src/format.ts:61-65,89-105; recorded age cases across UTC, Seoul and New York, including DST transitions); port: kept.
+- UTF-16 clipping can split an astral pair; the Go UTF-8 result represents that lone surrogate as U+FFFD instead of JavaScript's lone-surrogate JSON escape, matching the existing recall string boundary (source recall/src/format.ts:18,143; explicitly classified representation case in testdata/format/oracle.json and TestFormatOracle); port: kept as a platform-boundary difference outside well-formed UTF-8 output.
+
+## CRW-520: session CLI diagnostics
+
+- Plain session output coerces the bound source identity to `[object Object]`, hiding its fields (pabcd-state/src/session-cli.ts:118 at v0.2.40); port: kept.
+- Native-database read failures still suggest checking Node SQLite support, even though the port uses Go SQLite and needs no Node at runtime (pabcd-state/src/session-binding.ts:108 at v0.2.40); port: kept.
+
+## CRW-528 — Helper role MCP tool library
+
+- `catalog_list` does not catch a catalog read rejection, so the stdio queue swallows it without a tool reply (source `subagent-config/src/mcp.ts:148-152,198`); port: kept, the library returns that error to its caller; home-resolution failure is source-reviewed only under the required isolated-home tests.
+- A non-object tool argument is accepted by `subagents_get` as having no scope, while `subagents_set` refuses the same value as a missing body (source `subagent-config/src/mcp.ts:130,134,141`); port: kept; the existing global-only settings API defaults absent scope to global, an inherited decision 7 difference explicitly applied only to the recorded argument-shape get expectations.
+- The five-second get probe does not cancel a late catalog read, which can still publish its cache after the timeout answer (source `subagent-config/src/mcp.ts:135-139`); port: kept.
+- The retained tool descriptions and schemas advertise project scope although the absorbed settings API supports global scope only (source `subagent-config/src/mcp.ts:38-39,48`); port: kept as metadata; project calls are refused by the existing settings API and no project store is restored.
+
+## CRW-531 — multi_agent_v2 settings library
+
+- Inline detection matches `not_enabled = true` and the prefix `enabled = trueish`, while table/scalar forms require a complete boolean (source `config-guard/src/multi-agent-v2.ts:55-58,77-80`; `TestMultiAgentV2OracleGrammar`); port: kept.
+- Read-only detection treats headers and enabled-like lines inside multiline strings as configuration, and a nested table without `enabled` shadows a scalar flag (source `config-guard/src/toml-edit.ts:52-69`, `multi-agent-v2.ts:68-71`; `TestMultiAgentV2OracleGrammar`); port: kept.
+- A successful runner call reports `changed: true` even when the resulting config is absent or the flag stayed disabled (source `config-guard/src/multi-agent-v2.ts:100-118`; `TestMultiAgentV2RunnerOutcomes`); port: kept.
+- Read failures are swallowed before mutation, so the runner can replace settings without a readable pre-image; repair writes truncate in place (source `config-guard/src/multi-agent-v2.ts:46-53,94-109`; `TestMultiAgentV2UnreadableRefused`, `TestMultiAgentV2AtomicRepair`); port: fixed (data loss: intentionally-changed mutation cases refuse unreadable pre/post images and reuse fsynced temporary-file/rename publication; pure status reads retain the oracle's v1 fallback).
+- Tuning-table repair trims multiline string payloads, removes comment/enabled-like payload lines and compresses blank lines in post-file strings (source `config-guard/src/activate.ts:173-192`, `multi-agent-v2.ts:108-109`; `TestMultiAgentV2MultilineSettingsPreserved`); port: fixed (data loss: intentionally-changed repair shields whole pre/post multiline blocks and restores their exact value bytes before publication).
+
+## Found by the CRW-526 recall memory trim port
+
+- Equal score/date hits compare as -1 in both directions, so the ranking depends on V8's comparison schedule rather than a consistent ordering (source recall/src/memory-search.ts:222-225; tie grids in TestRankAndTrimNodeOracle); port: kept.
+- NaN scores compare unequal even to themselves and produce NaN differences, which V8 treats as zero; mixing these with the nonzero tie comparator makes ranking implementation-dependent (source recall/src/memory-search.ts:223-225; mixed grids in TestRankAndTrimNodeOracle); port: kept.
+- The limit is checked after appending, so a nonpositive limit returns one hit from nonempty candidates rather than none (source recall/src/memory-search.ts:232-233; cap-limit grids in TestRankAndTrimNodeOracle); port: kept.
+
 ## CRW-348 — managed config command port
 
 - Config, manifest and backup writes can truncate files if interrupted (source `config-guard/src/config-set.ts:43-45,99-103,129-136`); port: fixed (data loss: reuse the read-refusing, fsynced temporary-file/rename owners; intentionally-changed atomic-publication cases keep old inodes whole and dangling destinations unchanged).

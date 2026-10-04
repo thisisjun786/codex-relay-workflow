@@ -80,6 +80,9 @@ func TestReadyDefersEveryCandidateWhileHostMemoryIsShort(t *testing.T) {
 			}
 
 			f.sched.Host = hostBound(c.sample)
+			if c.name == hostSwap {
+				f.sched.Host.Limits.MaxSwapPercent = 85 // occupancy holds only when explicitly enabled
+			}
 			short := f.read("hm")
 			if len(short.Ready) != 0 || short.Pass.ReadyCount != 0 || short.Pass.DecidingLimit != LimitHostMemory || short.Pass.FreeSlots != 6 {
 				t.Fatalf("a short host: ready %v, pass %+v, want nothing ready, the host memory limit and the slots untouched", readyIDs(short), short.Pass)
@@ -98,7 +101,7 @@ func TestReadyDefersEveryCandidateWhileHostMemoryIsShort(t *testing.T) {
 			printed := asJSON(t, short.Object())["pass"].(map[string]any)["host_memory"].(map[string]any)
 			measured := printed["measured"].(map[string]any)
 			limits := printed["limits"].(map[string]any)
-			if printed["state"] != "deferring" || printed["limits_from"] != "default" || limits["min_available_bytes"] != float64(15<<30) || limits["max_swap_percent"] != float64(85) || limits["max_pressure_some_avg60"] != float64(10) ||
+			if printed["state"] != "deferring" || printed["limits_from"] != "default" || limits["min_available_bytes"] != float64(15<<30) || limits["max_swap_percent"] != f.sched.Host.Limits.MaxSwapPercent || limits["max_pressure_some_avg60"] != float64(10) ||
 				measured["available_bytes"] != float64(*c.sample.AvailableBytes) || measured["pressure_some_avg60"] != *c.sample.PressureSomeAvg60 {
 				t.Fatalf("host_memory = %v", printed)
 			}
@@ -146,7 +149,7 @@ func TestHostMemoryPrecedenceAndAbsence(t *testing.T) {
 		f.threeNodes("hm")
 		f.sched.Host = &HostMemoryBound{Sample: ReadHostMemory(t.TempDir()), Limits: DefaultHostMemoryLimits(), LimitsFrom: LimitsDefault}
 		reading := f.read("hm")
-		if len(reading.Ready) != 3 || hostState(reading) != HostMemoryUnmeasured || len(reading.Pass.HostMemory.Unmeasured) != 3 {
+		if len(reading.Ready) != 3 || hostState(reading) != HostMemoryUnmeasured || len(reading.Pass.HostMemory.Unmeasured) != 4 {
 			t.Fatalf("ready %v, host %+v, want all three ready and the bound unmeasured", readyIDs(reading), reading.Pass.HostMemory)
 		}
 	})
@@ -272,6 +275,7 @@ func TestPassRecordsTheHostMemoryBound(t *testing.T) {
 	f.sched.Host = hostBound(healthyHost())
 	f.recordPass("hm")
 	f.sched.Host = hostBound(shortHosts[1].sample)
+	f.sched.Host.Limits.MaxSwapPercent = 85 // record an explicitly selected occupancy ceiling
 	short, seq := f.recordPass("hm")
 	if seq != 3 || short.Pass.DecidingLimit != LimitHostMemory {
 		t.Fatalf("pass %d = %+v", seq, short.Pass)
