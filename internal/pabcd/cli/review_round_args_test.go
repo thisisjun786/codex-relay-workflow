@@ -500,3 +500,24 @@ func TestReviewRoundArgsHomeThatCannotBeResolvedIsAnError(t *testing.T) {
 		t.Errorf("packet: %q %v, want an error", packet, err)
 	}
 }
+
+// The race a review named: a link swapped in between the real-path check and the read must not lead the read out of the working
+// directory. Here the unit directory becomes a link to a directory outside the workspace after the check.
+func TestReviewRoundArgsReadBelowRefusesAPathSwappedAfterTheCheck(t *testing.T) {
+	root := t.TempDir()
+	ws, unit := filepath.Join(root, "ws"), filepath.Join(root, "ws", "devlog", "u")
+	reviewRoundArgsWrite(t, filepath.Join(unit, "000_plan.md"), "# plan\n")
+	reviewRoundArgsWrite(t, filepath.Join(root, "out", "000_plan.md"), "TOP SECRET\n")
+	base, below, ok := reviewRoundArgsInside(ws, filepath.Join(unit, "000_plan.md"))
+	if !ok {
+		t.Fatal("the plan inside the workspace reads as outside")
+	}
+	if data, err := reviewRoundArgsReadBelow(base, below); err != nil || string(data) != "# plan\n" {
+		t.Fatalf("before the swap: %q %v", data, err)
+	}
+	reviewRoundArgsMust(t, os.Rename(unit, unit+".moved"))
+	reviewRoundArgsMust(t, os.Symlink(filepath.Join(root, "out"), unit))
+	if data, err := reviewRoundArgsReadBelow(base, below); err == nil || strings.Contains(string(data), "SECRET") {
+		t.Errorf("read %q after the swap (err %v)", data, err)
+	}
+}

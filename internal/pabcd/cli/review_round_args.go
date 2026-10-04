@@ -147,21 +147,32 @@ func reviewRoundArgsAbs(cwd, p string) (string, error) {
 	return filepath.Join(wd, p), err
 }
 
-// reviewRoundArgsInside is the real path of abs, links followed, and whether it is the working directory cwd (itself resolved) or
-// lies below it. This is the departure from the oracle, by decision (a review finding of kind security): the oracle read a path as
-// spelled, so a link inside the workspace made it hash a file outside. A path whose real path cannot be named is not inside. The
-// check and the later read are not atomic: a link swapped in between is not guarded against, as in the plan gate.
-func reviewRoundArgsInside(cwd, abs string) (string, bool) {
+// reviewRoundArgsInside is the working directory cwd's real path and the real path of abs, links followed, relative to it, and
+// whether abs lies in that directory. This is the departure from the oracle, by decision (a review finding of kind security): the
+// oracle read a path as spelled, so a link inside the workspace made it hash a file outside. A path whose real path cannot be named
+// is not inside. The file is then read by reviewRoundArgsReadBelow, so a path swapped after this check cannot lead the read out.
+func reviewRoundArgsInside(cwd, abs string) (base, below string, ok bool) {
 	base, err := reviewRoundArgsAbs("", cwd)
 	if err == nil {
 		base, err = filepath.EvalSymlinks(base)
 	}
 	physical, perr := filepath.EvalSymlinks(abs)
 	if err != nil || perr != nil {
-		return "", false
+		return "", "", false
 	}
-	rel, err := filepath.Rel(base, physical)
-	return physical, err == nil && filepath.IsLocal(rel)
+	below, err = filepath.Rel(base, physical)
+	return base, below, err == nil && filepath.IsLocal(below)
+}
+
+// reviewRoundArgsReadBelow reads below, relative to the directory base, through os.Root, which refuses any path that leads out of
+// base, a link swapped in since reviewRoundArgsInside included, and a link given as an absolute path.
+func reviewRoundArgsReadBelow(base, below string) ([]byte, error) {
+	root, err := os.OpenRoot(base)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	return root.ReadFile(below)
 }
 
 // reviewRoundArgsNumberedDoc is NUMBERED_DOC_RE, /^\d{3}_.+\.md$/ (review-round-cli.ts:34): three ASCII digits, an underscore, at
@@ -176,9 +187,9 @@ func reviewRoundArgsNumberedDoc(rel string) bool {
 
 // reviewRoundArgsCollectPlanFiles ports collectPlanFiles (review-round-cli.ts:141-165): the --plan-path entries resolved against
 // the unit P>A validated. refusal is the message of a refused entry; err is where the oracle throws, an unreadable file or a working
-// directory that cannot be read. Unlike the oracle each entry is read through its real path and must lie inside the working
-// directory (reviewRoundArgsInside); one that does not reads as missing. An entry is decoded as Node decodes argv, so a stored key
-// is valid text.
+// directory that cannot be read. Unlike the oracle each entry must have a real path inside the working directory
+// (reviewRoundArgsInside), one that does not reads as missing, and the read stays below that directory (reviewRoundArgsReadBelow).
+// An entry is decoded as Node decodes argv, so a stored key is valid text.
 func reviewRoundArgsCollectPlanFiles(cwd, planUnit string, paths []string) ([]goalplan.PlanFileHash, string, error) {
 	if len(paths) == 0 {
 		return nil, "--plan-path is required at least once: a round with no files audits nothing", nil
@@ -207,7 +218,7 @@ func reviewRoundArgsCollectPlanFiles(cwd, planUnit string, paths []string) ([]go
 			return nil, fmt.Sprintf("plan path %s is not a numbered plan document (000_*.md) directly inside %s", p, planUnit), nil
 		}
 		info, statErr := os.Lstat(abs)
-		physical, inside := reviewRoundArgsInside(cwd, abs)
+		root, below, inside := reviewRoundArgsInside(cwd, abs)
 		if statErr != nil || !info.Mode().IsRegular() || !inside {
 			return nil, fmt.Sprintf("plan path %s is not a readable regular file", p), nil
 		}
@@ -216,7 +227,7 @@ func reviewRoundArgsCollectPlanFiles(cwd, planUnit string, paths []string) ([]go
 			continue
 		}
 		seen[key] = true
-		data, err := os.ReadFile(physical)
+		data, err := reviewRoundArgsReadBelow(root, below)
 		if err != nil {
 			return nil, "", err
 		}
@@ -240,8 +251,8 @@ func Recomputed(cwd string, files []goalplan.PlanFileHash) []goalplan.PlanFileHa
 		if err != nil {
 			continue
 		}
-		if physical, inside := reviewRoundArgsInside(cwd, abs); inside {
-			if data, err := os.ReadFile(physical); err == nil {
+		if root, below, inside := reviewRoundArgsInside(cwd, abs); inside {
+			if data, err := reviewRoundArgsReadBelow(root, below); err == nil {
 				out[i].Sha256 = reviewRoundArgsSum(data)
 			}
 		}
