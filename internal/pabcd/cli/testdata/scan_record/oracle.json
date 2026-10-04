@@ -1,0 +1,6400 @@
+[
+  {
+    "id": "raw-numeric-answer",
+    "actions": [
+      {
+        "kind": "raw",
+        "row": {
+          "event": "question_asked",
+          "eventId": "q",
+          "questionId": "q0",
+          "question": "Goal?"
+        }
+      },
+      {
+        "kind": "raw",
+        "row": {
+          "event": "answer_recorded",
+          "eventId": "a",
+          "questionId": "q0",
+          "answers": [
+            1,
+            1,
+            "ok"
+          ]
+        }
+      },
+      {
+        "kind": "scan",
+        "argv": [
+          "--derive",
+          "--map",
+          "q0=goal"
+        ]
+      }
+    ],
+    "expect": {
+      "results": [
+        {
+          "output": "scan record: round 1 recorded for session s1 (contradictions=0, high=0, derived=1 dimension(s) from the answer ledger)",
+          "code": 0
+        }
+      ],
+      "tracker": {
+        "roundId": 0,
+        "dimensions": {
+          "goal": {
+            "level": "high",
+            "known": [
+              "ok"
+            ],
+            "unknown": [],
+            "confidence": 0
+          },
+          "constraint": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "success": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "ontology": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          }
+        },
+        "contradictions": [],
+        "assumptions": [],
+        "autoResolveCount": 0,
+        "consecutiveAutoResolves": 0,
+        "scanRounds": 1,
+        "lastScanRoundId": 1
+      },
+      "rows": [
+        {
+          "sessionId": "s1",
+          "event": "scan_completed",
+          "roundId": 1,
+          "contradictionCount": 0,
+          "highContradictionCount": 0,
+          "map": {
+            "q0": "goal"
+          }
+        }
+      ],
+      "mapOrders": [
+        [
+          "q0"
+        ]
+      ],
+      "gate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      },
+      "shapeGate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      }
+    }
+  },
+  {
+    "id": "raw-numeric-question",
+    "actions": [
+      {
+        "kind": "raw",
+        "row": {
+          "event": "question_asked",
+          "eventId": "q",
+          "questionId": "q0",
+          "question": 3
+        }
+      },
+      {
+        "kind": "scan",
+        "argv": [
+          "--derive",
+          "--map",
+          "q0=goal"
+        ]
+      }
+    ],
+    "expect": {
+      "results": [
+        {
+          "output": "scan record: round 1 recorded for session s1 (contradictions=0, high=0, derived=1 dimension(s) from the answer ledger)",
+          "code": 0
+        }
+      ],
+      "tracker": {
+        "roundId": 0,
+        "dimensions": {
+          "goal": {
+            "level": "mid",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "constraint": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "success": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "ontology": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          }
+        },
+        "contradictions": [],
+        "assumptions": [],
+        "autoResolveCount": 0,
+        "consecutiveAutoResolves": 0,
+        "scanRounds": 1,
+        "lastScanRoundId": 1
+      },
+      "rows": [
+        {
+          "sessionId": "s1",
+          "event": "scan_completed",
+          "roundId": 1,
+          "contradictionCount": 0,
+          "highContradictionCount": 0,
+          "map": {
+            "q0": "goal"
+          }
+        }
+      ],
+      "mapOrders": [
+        [
+          "q0"
+        ]
+      ],
+      "gate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      },
+      "shapeGate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      }
+    }
+  },
+  {
+    "id": "raw-coercion-error",
+    "actions": [
+      {
+        "kind": "raw",
+        "row": {
+          "event": "question_asked",
+          "eventId": "q",
+          "questionId": {
+            "toString": 3
+          },
+          "question": "Bad?"
+        }
+      },
+      {
+        "kind": "scan",
+        "argv": [
+          "--derive",
+          "--map",
+          "q0=goal"
+        ]
+      }
+    ],
+    "expect": {
+      "results": [
+        {
+          "output": "scan record failed: Cannot convert object to primitive value",
+          "code": 1
+        }
+      ],
+      "tracker": null,
+      "rows": [
+        {
+          "sessionId": "s1",
+          "event": "scan_completed",
+          "roundId": 1,
+          "contradictionCount": 0,
+          "highContradictionCount": 0,
+          "map": {
+            "q0": "goal"
+          }
+        }
+      ],
+      "mapOrders": [
+        [
+          "q0"
+        ]
+      ],
+      "gate": {
+        "ready": false,
+        "scanRan": false,
+        "highContradictionCount": 0,
+        "warnings": [
+          "no contradiction scan has been recorded for this interview"
+        ]
+      },
+      "shapeGate": {
+        "ready": false,
+        "scanRan": false,
+        "highContradictionCount": 0,
+        "warnings": [
+          "no contradiction scan has been recorded for this interview"
+        ]
+      }
+    }
+  },
+  {
+    "id": "raw-number-format",
+    "actions": [
+      {
+        "kind": "raw",
+        "row": {
+          "event": "question_asked",
+          "eventId": "q",
+          "questionId": 1,
+          "question": "One?"
+        }
+      },
+      {
+        "kind": "raw",
+        "row": {
+          "event": "answer_recorded",
+          "eventId": "a",
+          "questionId": 1,
+          "answers": [
+            "one"
+          ]
+        }
+      },
+      {
+        "kind": "scan",
+        "argv": [
+          "--derive",
+          "--map",
+          "1=goal"
+        ]
+      }
+    ],
+    "expect": {
+      "results": [
+        {
+          "output": "scan record: round 1 recorded for session s1 (contradictions=0, high=0, derived=1 dimension(s) from the answer ledger)",
+          "code": 0
+        }
+      ],
+      "tracker": {
+        "roundId": 0,
+        "dimensions": {
+          "goal": {
+            "level": "high",
+            "known": [
+              "one"
+            ],
+            "unknown": [],
+            "confidence": 0
+          },
+          "constraint": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "success": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "ontology": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          }
+        },
+        "contradictions": [],
+        "assumptions": [],
+        "autoResolveCount": 0,
+        "consecutiveAutoResolves": 0,
+        "scanRounds": 1,
+        "lastScanRoundId": 1
+      },
+      "rows": [
+        {
+          "sessionId": "s1",
+          "event": "scan_completed",
+          "roundId": 1,
+          "contradictionCount": 0,
+          "highContradictionCount": 0,
+          "map": {
+            "1": "goal"
+          }
+        }
+      ],
+      "mapOrders": [
+        [
+          "1"
+        ]
+      ],
+      "gate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      },
+      "shapeGate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      }
+    }
+  },
+  {
+    "id": "huge-counts",
+    "actions": [
+      {
+        "kind": "scan",
+        "argv": [
+          "--contradictions",
+          "1000000000000000000000",
+          "--high",
+          "-0"
+        ]
+      }
+    ],
+    "expect": {
+      "results": [
+        {
+          "output": "scan record: round 1 recorded for session s1 (contradictions=1e+21, high=0)",
+          "code": 0
+        }
+      ],
+      "tracker": {
+        "roundId": 0,
+        "dimensions": {
+          "goal": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "constraint": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "success": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "ontology": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          }
+        },
+        "contradictions": [],
+        "assumptions": [],
+        "autoResolveCount": 0,
+        "consecutiveAutoResolves": 0,
+        "scanRounds": 1,
+        "lastScanRoundId": 1
+      },
+      "rows": [
+        {
+          "sessionId": "s1",
+          "event": "scan_completed",
+          "roundId": 1,
+          "contradictionCount": 1e+21,
+          "highContradictionCount": 0
+        }
+      ],
+      "mapOrders": [
+        []
+      ],
+      "gate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      },
+      "shapeGate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      }
+    }
+  },
+  {
+    "id": "raw-id-values",
+    "actions": [
+      {
+        "kind": "raw",
+        "row": {
+          "event": "question_asked",
+          "eventId": "q",
+          "questionId": 3,
+          "question": "Numeric?"
+        }
+      },
+      {
+        "kind": "raw",
+        "row": {
+          "event": "answer_recorded",
+          "eventId": "a",
+          "questionId": 3,
+          "answers": [
+            "yes"
+          ]
+        }
+      },
+      {
+        "kind": "raw",
+        "row": {
+          "event": "question_asked",
+          "eventId": "q2",
+          "question": "Absent?"
+        }
+      },
+      {
+        "kind": "raw",
+        "row": {
+          "event": "answer_recorded",
+          "eventId": "a2",
+          "answers": [
+            "missing"
+          ]
+        }
+      },
+      {
+        "kind": "raw",
+        "row": {
+          "event": "question_asked",
+          "eventId": "q3",
+          "questionId": null,
+          "question": "Null?"
+        }
+      },
+      {
+        "kind": "raw",
+        "row": {
+          "event": "answer_recorded",
+          "eventId": "a3",
+          "questionId": null,
+          "answers": [
+            "null"
+          ]
+        }
+      },
+      {
+        "kind": "scan",
+        "argv": [
+          "--derive",
+          "--map",
+          "3=goal",
+          "--map",
+          "undefined=constraint",
+          "--map",
+          "null=success"
+        ]
+      }
+    ],
+    "expect": {
+      "results": [
+        {
+          "output": "scan record: round 1 recorded for session s1 (contradictions=0, high=0, derived=3 dimension(s) from the answer ledger)",
+          "code": 0
+        }
+      ],
+      "tracker": {
+        "roundId": 0,
+        "dimensions": {
+          "goal": {
+            "level": "high",
+            "known": [
+              "yes"
+            ],
+            "unknown": [],
+            "confidence": 0
+          },
+          "constraint": {
+            "level": "high",
+            "known": [
+              "missing"
+            ],
+            "unknown": [],
+            "confidence": 0
+          },
+          "success": {
+            "level": "high",
+            "known": [
+              "null"
+            ],
+            "unknown": [],
+            "confidence": 0
+          },
+          "ontology": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          }
+        },
+        "contradictions": [],
+        "assumptions": [],
+        "autoResolveCount": 0,
+        "consecutiveAutoResolves": 0,
+        "scanRounds": 1,
+        "lastScanRoundId": 1
+      },
+      "rows": [
+        {
+          "sessionId": "s1",
+          "event": "scan_completed",
+          "roundId": 1,
+          "contradictionCount": 0,
+          "highContradictionCount": 0,
+          "map": {
+            "3": "goal",
+            "undefined": "constraint",
+            "null": "success"
+          }
+        }
+      ],
+      "mapOrders": [
+        [
+          "3",
+          "undefined",
+          "null"
+        ]
+      ],
+      "gate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      },
+      "shapeGate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      }
+    }
+  },
+  {
+    "id": "raw-reference-answers",
+    "actions": [
+      {
+        "kind": "raw",
+        "row": {
+          "event": "question_asked",
+          "eventId": "q",
+          "questionId": "q0",
+          "question": "Objects?"
+        }
+      },
+      {
+        "kind": "raw",
+        "row": {
+          "event": "answer_recorded",
+          "eventId": "a",
+          "questionId": "q0",
+          "answers": [
+            {},
+            {},
+            [],
+            [],
+            false,
+            null
+          ]
+        }
+      },
+      {
+        "kind": "scan",
+        "argv": [
+          "--derive",
+          "--map",
+          "q0=goal"
+        ]
+      }
+    ],
+    "expect": {
+      "results": [
+        {
+          "output": "scan record: round 1 recorded for session s1 (contradictions=0, high=0, derived=1 dimension(s) from the answer ledger)",
+          "code": 0
+        }
+      ],
+      "tracker": {
+        "roundId": 0,
+        "dimensions": {
+          "goal": {
+            "level": "high",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "constraint": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "success": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "ontology": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          }
+        },
+        "contradictions": [],
+        "assumptions": [],
+        "autoResolveCount": 0,
+        "consecutiveAutoResolves": 0,
+        "scanRounds": 1,
+        "lastScanRoundId": 1
+      },
+      "rows": [
+        {
+          "sessionId": "s1",
+          "event": "scan_completed",
+          "roundId": 1,
+          "contradictionCount": 0,
+          "highContradictionCount": 0,
+          "map": {
+            "q0": "goal"
+          }
+        }
+      ],
+      "mapOrders": [
+        [
+          "q0"
+        ]
+      ],
+      "gate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      },
+      "shapeGate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      }
+    }
+  },
+  {
+    "id": "raw-reference-ids",
+    "actions": [
+      {
+        "kind": "raw",
+        "row": {
+          "event": "question_asked",
+          "eventId": "q",
+          "questionId": [
+            "a",
+            "b"
+          ],
+          "question": "Array?"
+        }
+      },
+      {
+        "kind": "raw",
+        "row": {
+          "event": "answer_recorded",
+          "eventId": "a",
+          "questionId": [
+            "a",
+            "b"
+          ],
+          "answers": [
+            "unpaired"
+          ]
+        }
+      },
+      {
+        "kind": "raw",
+        "row": {
+          "event": "question_asked",
+          "eventId": "q2",
+          "questionId": {},
+          "question": "Object?"
+        }
+      },
+      {
+        "kind": "scan",
+        "argv": [
+          "--derive",
+          "--map",
+          "a,b=goal",
+          "--map",
+          "[object Object]=success"
+        ]
+      }
+    ],
+    "expect": {
+      "results": [
+        {
+          "output": "scan record: round 1 recorded for session s1 (contradictions=0, high=0, derived=2 dimension(s) from the answer ledger)",
+          "code": 0
+        }
+      ],
+      "tracker": {
+        "roundId": 0,
+        "dimensions": {
+          "goal": {
+            "level": "mid",
+            "known": [],
+            "unknown": [
+              "Array?"
+            ],
+            "confidence": 0
+          },
+          "constraint": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "success": {
+            "level": "mid",
+            "known": [],
+            "unknown": [
+              "Object?"
+            ],
+            "confidence": 0
+          },
+          "ontology": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          }
+        },
+        "contradictions": [],
+        "assumptions": [],
+        "autoResolveCount": 0,
+        "consecutiveAutoResolves": 0,
+        "scanRounds": 1,
+        "lastScanRoundId": 1
+      },
+      "rows": [
+        {
+          "sessionId": "s1",
+          "event": "scan_completed",
+          "roundId": 1,
+          "contradictionCount": 0,
+          "highContradictionCount": 0,
+          "map": {
+            "a,b": "goal",
+            "[object Object]": "success"
+          }
+        }
+      ],
+      "mapOrders": [
+        [
+          "a,b",
+          "[object Object]"
+        ]
+      ],
+      "gate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      },
+      "shapeGate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      }
+    }
+  },
+  {
+    "id": "map-order",
+    "actions": [
+      {
+        "kind": "scan",
+        "argv": [
+          "--derive",
+          "--map",
+          "qb=success",
+          "--map",
+          "qa=goal",
+          "--map",
+          "2=constraint",
+          "--map",
+          "1=ontology",
+          "--map",
+          "qb=constraint"
+        ]
+      }
+    ],
+    "expect": {
+      "results": [
+        {
+          "output": "scan record: round 1 recorded for session s1 (contradictions=0, high=0, derived=0 dimension(s) from the answer ledger — WARNING: nothing matched; check that --map ids match the ledger's questionIds.)",
+          "code": 0
+        }
+      ],
+      "tracker": {
+        "roundId": 0,
+        "dimensions": {
+          "goal": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "constraint": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "success": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "ontology": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          }
+        },
+        "contradictions": [],
+        "assumptions": [],
+        "autoResolveCount": 0,
+        "consecutiveAutoResolves": 0,
+        "scanRounds": 1,
+        "lastScanRoundId": 1
+      },
+      "rows": [
+        {
+          "sessionId": "s1",
+          "event": "scan_completed",
+          "roundId": 1,
+          "contradictionCount": 0,
+          "highContradictionCount": 0,
+          "map": {
+            "1": "ontology",
+            "2": "constraint",
+            "qb": "constraint",
+            "qa": "goal"
+          }
+        }
+      ],
+      "mapOrders": [
+        [
+          "1",
+          "2",
+          "qb",
+          "qa"
+        ]
+      ],
+      "gate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      },
+      "shapeGate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      }
+    }
+  },
+  {
+    "id": "max-kept",
+    "actions": [
+      {
+        "kind": "scan",
+        "argv": []
+      },
+      {
+        "kind": "patch",
+        "value": {
+          "dimensions": {
+            "goal": {
+              "level": "max",
+              "known": [],
+              "unknown": [],
+              "confidence": 1
+            },
+            "constraint": {
+              "level": "low",
+              "known": [],
+              "unknown": [],
+              "confidence": 0
+            },
+            "success": {
+              "level": "low",
+              "known": [],
+              "unknown": [],
+              "confidence": 0
+            },
+            "ontology": {
+              "level": "low",
+              "known": [],
+              "unknown": [],
+              "confidence": 0
+            }
+          }
+        }
+      },
+      {
+        "kind": "scan",
+        "argv": [
+          "--unknown",
+          "goal=gap"
+        ]
+      }
+    ],
+    "expect": {
+      "results": [
+        {
+          "output": "scan record: round 1 recorded for session s1 (contradictions=0, high=0)",
+          "code": 0
+        },
+        {
+          "output": "scan record: round 2 recorded for session s1 (contradictions=0, high=0)",
+          "code": 0
+        }
+      ],
+      "tracker": {
+        "roundId": 0,
+        "dimensions": {
+          "goal": {
+            "level": "max",
+            "known": [],
+            "unknown": [
+              "gap"
+            ],
+            "confidence": 1
+          },
+          "constraint": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "success": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "ontology": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          }
+        },
+        "contradictions": [],
+        "assumptions": [],
+        "autoResolveCount": 0,
+        "consecutiveAutoResolves": 0,
+        "scanRounds": 2,
+        "lastScanRoundId": 2
+      },
+      "rows": [
+        {
+          "sessionId": "s1",
+          "event": "scan_completed",
+          "roundId": 1,
+          "contradictionCount": 0,
+          "highContradictionCount": 0
+        },
+        {
+          "sessionId": "s1",
+          "event": "scan_completed",
+          "roundId": 2,
+          "contradictionCount": 0,
+          "highContradictionCount": 0
+        }
+      ],
+      "mapOrders": [
+        [],
+        []
+      ],
+      "gate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      },
+      "shapeGate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      }
+    }
+  },
+  {
+    "id": "empty-question",
+    "actions": [
+      {
+        "kind": "qa",
+        "id": "q0",
+        "question": "",
+        "answers": [
+          "answer"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "scan",
+        "argv": [
+          "--derive",
+          "--map",
+          "q0=goal"
+        ]
+      }
+    ],
+    "expect": {
+      "results": [
+        {
+          "output": "scan record: round 1 recorded for session s1 (contradictions=0, high=0, derived=0 dimension(s) from the answer ledger — WARNING: nothing matched; check that --map ids match the ledger's questionIds.)",
+          "code": 0
+        }
+      ],
+      "tracker": {
+        "roundId": 0,
+        "dimensions": {
+          "goal": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "constraint": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "success": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "ontology": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          }
+        },
+        "contradictions": [],
+        "assumptions": [],
+        "autoResolveCount": 0,
+        "consecutiveAutoResolves": 0,
+        "scanRounds": 1,
+        "lastScanRoundId": 1
+      },
+      "rows": [
+        {
+          "sessionId": "s1",
+          "event": "scan_completed",
+          "roundId": 1,
+          "contradictionCount": 0,
+          "highContradictionCount": 0,
+          "map": {
+            "q0": "goal"
+          }
+        }
+      ],
+      "mapOrders": [
+        [
+          "q0"
+        ]
+      ],
+      "gate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      },
+      "shapeGate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      }
+    }
+  },
+  {
+    "id": "blank-answer",
+    "actions": [
+      {
+        "kind": "qa",
+        "id": "q0",
+        "question": "Goal?",
+        "answers": [
+          ""
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "scan",
+        "argv": [
+          "--derive",
+          "--map",
+          "q0=goal"
+        ]
+      }
+    ],
+    "expect": {
+      "results": [
+        {
+          "output": "scan record: round 1 recorded for session s1 (contradictions=0, high=0, derived=1 dimension(s) from the answer ledger)",
+          "code": 0
+        }
+      ],
+      "tracker": {
+        "roundId": 0,
+        "dimensions": {
+          "goal": {
+            "level": "high",
+            "known": [
+              ""
+            ],
+            "unknown": [],
+            "confidence": 0
+          },
+          "constraint": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "success": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "ontology": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          }
+        },
+        "contradictions": [],
+        "assumptions": [],
+        "autoResolveCount": 0,
+        "consecutiveAutoResolves": 0,
+        "scanRounds": 1,
+        "lastScanRoundId": 1
+      },
+      "rows": [
+        {
+          "sessionId": "s1",
+          "event": "scan_completed",
+          "roundId": 1,
+          "contradictionCount": 0,
+          "highContradictionCount": 0,
+          "map": {
+            "q0": "goal"
+          }
+        }
+      ],
+      "mapOrders": [
+        [
+          "q0"
+        ]
+      ],
+      "gate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      },
+      "shapeGate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      }
+    }
+  },
+  {
+    "id": "help",
+    "actions": [
+      {
+        "kind": "help"
+      }
+    ],
+    "expect": {
+      "results": [
+        {
+          "output": "cxc scan — record an interview rescan round and fold answers into the tracker\n\nUsage:\n  cxc scan record --session <id> [--cwd <path>] [--contradictions N] [--high N]\n                  [--derive] [--map <questionId>=<dimension>]...\n                  [--dim <dimension>=<level>]... [--known <dimension>=<text>]...\n                  [--unknown <dimension>=<text>]... [--confidence <dimension>=<0..1>]...\n  cxc scan --help\n\nNotes:\n  --session is required; there is no latest-session fallback for a mutating command.\n  --cwd matters when the answer ledger lives outside the process cwd:\n  answers are read from <cwd>/.codexclaw/interviews/<session>.jsonl.\n  --derive folds captured answers in; --map attributes a questionId to a dimension.\n  --derive is what makes a dimension count for I->P readiness: the gate re-reads the\n  ledger and requires an asked+answered+mapped question per dimension. --known records\n  a fact but lends no provenance, and --dim cannot set 'max'.",
+          "code": 0
+        }
+      ],
+      "tracker": null,
+      "rows": [],
+      "mapOrders": [],
+      "gate": {
+        "ready": false,
+        "scanRan": false,
+        "highContradictionCount": 0,
+        "warnings": [
+          "no contradiction scan has been recorded for this interview"
+        ]
+      },
+      "shapeGate": {
+        "ready": false,
+        "scanRan": false,
+        "highContradictionCount": 0,
+        "warnings": [
+          "no contradiction scan has been recorded for this interview"
+        ]
+      }
+    }
+  },
+  {
+    "id": "fresh",
+    "actions": [
+      {
+        "kind": "scan",
+        "argv": [
+          "--contradictions",
+          "2",
+          "--high",
+          "1"
+        ]
+      }
+    ],
+    "expect": {
+      "results": [
+        {
+          "output": "scan record: round 1 recorded for session s1 (contradictions=2, high=1)",
+          "code": 0
+        }
+      ],
+      "tracker": {
+        "roundId": 0,
+        "dimensions": {
+          "goal": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "constraint": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "success": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "ontology": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          }
+        },
+        "contradictions": [],
+        "assumptions": [],
+        "autoResolveCount": 0,
+        "consecutiveAutoResolves": 0,
+        "scanRounds": 1,
+        "lastScanRoundId": 1
+      },
+      "rows": [
+        {
+          "sessionId": "s1",
+          "event": "scan_completed",
+          "roundId": 1,
+          "contradictionCount": 2,
+          "highContradictionCount": 1
+        }
+      ],
+      "mapOrders": [
+        []
+      ],
+      "gate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      },
+      "shapeGate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      }
+    }
+  },
+  {
+    "id": "monotonic",
+    "actions": [
+      {
+        "kind": "scan",
+        "argv": []
+      },
+      {
+        "kind": "scan",
+        "argv": [
+          "--contradictions",
+          "3"
+        ]
+      }
+    ],
+    "expect": {
+      "results": [
+        {
+          "output": "scan record: round 1 recorded for session s1 (contradictions=0, high=0)",
+          "code": 0
+        },
+        {
+          "output": "scan record: round 2 recorded for session s1 (contradictions=3, high=0)",
+          "code": 0
+        }
+      ],
+      "tracker": {
+        "roundId": 0,
+        "dimensions": {
+          "goal": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "constraint": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "success": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "ontology": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          }
+        },
+        "contradictions": [],
+        "assumptions": [],
+        "autoResolveCount": 0,
+        "consecutiveAutoResolves": 0,
+        "scanRounds": 2,
+        "lastScanRoundId": 2
+      },
+      "rows": [
+        {
+          "sessionId": "s1",
+          "event": "scan_completed",
+          "roundId": 1,
+          "contradictionCount": 0,
+          "highContradictionCount": 0
+        },
+        {
+          "sessionId": "s1",
+          "event": "scan_completed",
+          "roundId": 2,
+          "contradictionCount": 3,
+          "highContradictionCount": 0
+        }
+      ],
+      "mapOrders": [
+        [],
+        []
+      ],
+      "gate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      },
+      "shapeGate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      }
+    }
+  },
+  {
+    "id": "manual-text",
+    "actions": [
+      {
+        "kind": "scan",
+        "argv": [
+          "--known",
+          "goal=endpoint=https://x/y?a=b:c"
+        ]
+      },
+      {
+        "kind": "scan",
+        "argv": [
+          "--known",
+          "goal=second",
+          "--unknown",
+          "success=measure?"
+        ]
+      }
+    ],
+    "expect": {
+      "results": [
+        {
+          "output": "scan record: round 1 recorded for session s1 (contradictions=0, high=0)",
+          "code": 0
+        },
+        {
+          "output": "scan record: round 2 recorded for session s1 (contradictions=0, high=0)",
+          "code": 0
+        }
+      ],
+      "tracker": {
+        "roundId": 0,
+        "dimensions": {
+          "goal": {
+            "level": "high",
+            "known": [
+              "endpoint=https://x/y?a=b:c",
+              "second"
+            ],
+            "unknown": [],
+            "confidence": 0
+          },
+          "constraint": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "success": {
+            "level": "mid",
+            "known": [],
+            "unknown": [
+              "measure?"
+            ],
+            "confidence": 0
+          },
+          "ontology": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          }
+        },
+        "contradictions": [],
+        "assumptions": [],
+        "autoResolveCount": 0,
+        "consecutiveAutoResolves": 0,
+        "scanRounds": 2,
+        "lastScanRoundId": 2
+      },
+      "rows": [
+        {
+          "sessionId": "s1",
+          "event": "scan_completed",
+          "roundId": 1,
+          "contradictionCount": 0,
+          "highContradictionCount": 0
+        },
+        {
+          "sessionId": "s1",
+          "event": "scan_completed",
+          "roundId": 2,
+          "contradictionCount": 0,
+          "highContradictionCount": 0
+        }
+      ],
+      "mapOrders": [
+        [],
+        []
+      ],
+      "gate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      },
+      "shapeGate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      }
+    }
+  },
+  {
+    "id": "dimension-confidence",
+    "actions": [
+      {
+        "kind": "scan",
+        "argv": [
+          "--dim",
+          "goal=high",
+          "--confidence",
+          "constraint=0.5"
+        ]
+      }
+    ],
+    "expect": {
+      "results": [
+        {
+          "output": "scan record: round 1 recorded for session s1 (contradictions=0, high=0)",
+          "code": 0
+        }
+      ],
+      "tracker": {
+        "roundId": 0,
+        "dimensions": {
+          "goal": {
+            "level": "high",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "constraint": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0.5
+          },
+          "success": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "ontology": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          }
+        },
+        "contradictions": [],
+        "assumptions": [],
+        "autoResolveCount": 0,
+        "consecutiveAutoResolves": 0,
+        "scanRounds": 1,
+        "lastScanRoundId": 1
+      },
+      "rows": [
+        {
+          "sessionId": "s1",
+          "event": "scan_completed",
+          "roundId": 1,
+          "contradictionCount": 0,
+          "highContradictionCount": 0
+        }
+      ],
+      "mapOrders": [
+        []
+      ],
+      "gate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      },
+      "shapeGate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      }
+    }
+  },
+  {
+    "id": "derive",
+    "actions": [
+      {
+        "kind": "qa",
+        "id": "q0",
+        "question": "Goal?",
+        "answers": [
+          "ship"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q2",
+        "question": "Measure?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "scan",
+        "argv": [
+          "--derive",
+          "--map",
+          "q0=goal",
+          "--map",
+          "q2=success"
+        ]
+      }
+    ],
+    "expect": {
+      "results": [
+        {
+          "output": "scan record: round 1 recorded for session s1 (contradictions=0, high=0, derived=2 dimension(s) from the answer ledger)",
+          "code": 0
+        }
+      ],
+      "tracker": {
+        "roundId": 0,
+        "dimensions": {
+          "goal": {
+            "level": "high",
+            "known": [
+              "ship"
+            ],
+            "unknown": [],
+            "confidence": 0
+          },
+          "constraint": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "success": {
+            "level": "mid",
+            "known": [],
+            "unknown": [
+              "Measure?"
+            ],
+            "confidence": 0
+          },
+          "ontology": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          }
+        },
+        "contradictions": [],
+        "assumptions": [],
+        "autoResolveCount": 0,
+        "consecutiveAutoResolves": 0,
+        "scanRounds": 1,
+        "lastScanRoundId": 1
+      },
+      "rows": [
+        {
+          "sessionId": "s1",
+          "event": "scan_completed",
+          "roundId": 1,
+          "contradictionCount": 0,
+          "highContradictionCount": 0,
+          "map": {
+            "q0": "goal",
+            "q2": "success"
+          }
+        }
+      ],
+      "mapOrders": [
+        [
+          "q0",
+          "q2"
+        ]
+      ],
+      "gate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      },
+      "shapeGate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      }
+    }
+  },
+  {
+    "id": "explicit-wins",
+    "actions": [
+      {
+        "kind": "qa",
+        "id": "q0",
+        "question": "Goal?",
+        "answers": [
+          "ship"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "scan",
+        "argv": [
+          "--derive",
+          "--map",
+          "q0=goal",
+          "--dim",
+          "goal=mid"
+        ]
+      }
+    ],
+    "expect": {
+      "results": [
+        {
+          "output": "scan record: round 1 recorded for session s1 (contradictions=0, high=0, derived=1 dimension(s) from the answer ledger)",
+          "code": 0
+        }
+      ],
+      "tracker": {
+        "roundId": 0,
+        "dimensions": {
+          "goal": {
+            "level": "mid",
+            "known": [
+              "ship"
+            ],
+            "unknown": [],
+            "confidence": 0
+          },
+          "constraint": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "success": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "ontology": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          }
+        },
+        "contradictions": [],
+        "assumptions": [],
+        "autoResolveCount": 0,
+        "consecutiveAutoResolves": 0,
+        "scanRounds": 1,
+        "lastScanRoundId": 1
+      },
+      "rows": [
+        {
+          "sessionId": "s1",
+          "event": "scan_completed",
+          "roundId": 1,
+          "contradictionCount": 0,
+          "highContradictionCount": 0,
+          "map": {
+            "q0": "goal"
+          }
+        }
+      ],
+      "mapOrders": [
+        [
+          "q0"
+        ]
+      ],
+      "gate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      },
+      "shapeGate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      }
+    }
+  },
+  {
+    "id": "prototype-unmapped",
+    "actions": [
+      {
+        "kind": "qa",
+        "id": "toString",
+        "question": "hostile?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "hasOwnProperty",
+        "question": "also?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q0",
+        "question": "Goal?",
+        "answers": [
+          "fine"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "scan",
+        "argv": [
+          "--derive",
+          "--map",
+          "q0=goal"
+        ]
+      }
+    ],
+    "expect": {
+      "results": [
+        {
+          "output": "scan record: round 1 recorded for session s1 (contradictions=0, high=0, derived=1 dimension(s) from the answer ledger)",
+          "code": 0
+        }
+      ],
+      "tracker": {
+        "roundId": 0,
+        "dimensions": {
+          "goal": {
+            "level": "high",
+            "known": [
+              "fine"
+            ],
+            "unknown": [],
+            "confidence": 0
+          },
+          "constraint": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "success": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "ontology": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          }
+        },
+        "contradictions": [],
+        "assumptions": [],
+        "autoResolveCount": 0,
+        "consecutiveAutoResolves": 0,
+        "scanRounds": 1,
+        "lastScanRoundId": 1
+      },
+      "rows": [
+        {
+          "sessionId": "s1",
+          "event": "scan_completed",
+          "roundId": 1,
+          "contradictionCount": 0,
+          "highContradictionCount": 0,
+          "map": {
+            "q0": "goal"
+          }
+        }
+      ],
+      "mapOrders": [
+        [
+          "q0"
+        ]
+      ],
+      "gate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      },
+      "shapeGate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      }
+    }
+  },
+  {
+    "id": "retire-gap",
+    "actions": [
+      {
+        "kind": "qa",
+        "id": "q0",
+        "question": "Goal?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "scan",
+        "argv": [
+          "--derive",
+          "--map",
+          "q0=goal"
+        ]
+      },
+      {
+        "kind": "qa",
+        "id": "q0",
+        "question": "Goal?",
+        "answers": [
+          "ship"
+        ],
+        "turn": "t2"
+      },
+      {
+        "kind": "scan",
+        "argv": [
+          "--derive",
+          "--map",
+          "q0=goal"
+        ]
+      }
+    ],
+    "expect": {
+      "results": [
+        {
+          "output": "scan record: round 1 recorded for session s1 (contradictions=0, high=0, derived=1 dimension(s) from the answer ledger)",
+          "code": 0
+        },
+        {
+          "output": "scan record: round 2 recorded for session s1 (contradictions=0, high=0, derived=1 dimension(s) from the answer ledger)",
+          "code": 0
+        }
+      ],
+      "tracker": {
+        "roundId": 0,
+        "dimensions": {
+          "goal": {
+            "level": "high",
+            "known": [
+              "ship"
+            ],
+            "unknown": [],
+            "confidence": 0
+          },
+          "constraint": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "success": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "ontology": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          }
+        },
+        "contradictions": [],
+        "assumptions": [],
+        "autoResolveCount": 0,
+        "consecutiveAutoResolves": 0,
+        "scanRounds": 2,
+        "lastScanRoundId": 2
+      },
+      "rows": [
+        {
+          "sessionId": "s1",
+          "event": "scan_completed",
+          "roundId": 1,
+          "contradictionCount": 0,
+          "highContradictionCount": 0,
+          "map": {
+            "q0": "goal"
+          }
+        },
+        {
+          "sessionId": "s1",
+          "event": "scan_completed",
+          "roundId": 2,
+          "contradictionCount": 0,
+          "highContradictionCount": 0,
+          "map": {
+            "q0": "goal"
+          }
+        }
+      ],
+      "mapOrders": [
+        [
+          "q0"
+        ],
+        [
+          "q0"
+        ]
+      ],
+      "gate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      },
+      "shapeGate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      }
+    }
+  },
+  {
+    "id": "answers-merge",
+    "actions": [
+      {
+        "kind": "qa",
+        "id": "q0",
+        "question": "Q?",
+        "answers": [
+          "first"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q0",
+        "question": "Q?",
+        "answers": [
+          "second",
+          "first"
+        ],
+        "turn": "t2"
+      },
+      {
+        "kind": "scan",
+        "argv": [
+          "--derive",
+          "--map",
+          "q0=goal"
+        ]
+      }
+    ],
+    "expect": {
+      "results": [
+        {
+          "output": "scan record: round 1 recorded for session s1 (contradictions=0, high=0, derived=1 dimension(s) from the answer ledger)",
+          "code": 0
+        }
+      ],
+      "tracker": {
+        "roundId": 0,
+        "dimensions": {
+          "goal": {
+            "level": "high",
+            "known": [
+              "first",
+              "second"
+            ],
+            "unknown": [],
+            "confidence": 0
+          },
+          "constraint": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "success": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "ontology": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          }
+        },
+        "contradictions": [],
+        "assumptions": [],
+        "autoResolveCount": 0,
+        "consecutiveAutoResolves": 0,
+        "scanRounds": 1,
+        "lastScanRoundId": 1
+      },
+      "rows": [
+        {
+          "sessionId": "s1",
+          "event": "scan_completed",
+          "roundId": 1,
+          "contradictionCount": 0,
+          "highContradictionCount": 0,
+          "map": {
+            "q0": "goal"
+          }
+        }
+      ],
+      "mapOrders": [
+        [
+          "q0"
+        ]
+      ],
+      "gate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      },
+      "shapeGate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      }
+    }
+  },
+  {
+    "id": "known-cap",
+    "actions": [
+      {
+        "kind": "qa",
+        "id": "q0",
+        "question": "Q0?",
+        "answers": [
+          "fact-0"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q1",
+        "question": "Q1?",
+        "answers": [
+          "fact-1"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q2",
+        "question": "Q2?",
+        "answers": [
+          "fact-2"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q3",
+        "question": "Q3?",
+        "answers": [
+          "fact-3"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q4",
+        "question": "Q4?",
+        "answers": [
+          "fact-4"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q5",
+        "question": "Q5?",
+        "answers": [
+          "fact-5"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q6",
+        "question": "Q6?",
+        "answers": [
+          "fact-6"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q7",
+        "question": "Q7?",
+        "answers": [
+          "fact-7"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q8",
+        "question": "Q8?",
+        "answers": [
+          "fact-8"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q9",
+        "question": "Q9?",
+        "answers": [
+          "fact-9"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q10",
+        "question": "Q10?",
+        "answers": [
+          "fact-10"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q11",
+        "question": "Q11?",
+        "answers": [
+          "fact-11"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q12",
+        "question": "Q12?",
+        "answers": [
+          "fact-12"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q13",
+        "question": "Q13?",
+        "answers": [
+          "fact-13"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q14",
+        "question": "Q14?",
+        "answers": [
+          "fact-14"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q15",
+        "question": "Q15?",
+        "answers": [
+          "fact-15"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q16",
+        "question": "Q16?",
+        "answers": [
+          "fact-16"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q17",
+        "question": "Q17?",
+        "answers": [
+          "fact-17"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q18",
+        "question": "Q18?",
+        "answers": [
+          "fact-18"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q19",
+        "question": "Q19?",
+        "answers": [
+          "fact-19"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q20",
+        "question": "Q20?",
+        "answers": [
+          "fact-20"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q21",
+        "question": "Q21?",
+        "answers": [
+          "fact-21"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q22",
+        "question": "Q22?",
+        "answers": [
+          "fact-22"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q23",
+        "question": "Q23?",
+        "answers": [
+          "fact-23"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q24",
+        "question": "Q24?",
+        "answers": [
+          "fact-24"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q25",
+        "question": "Q25?",
+        "answers": [
+          "fact-25"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q26",
+        "question": "Q26?",
+        "answers": [
+          "fact-26"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q27",
+        "question": "Q27?",
+        "answers": [
+          "fact-27"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q28",
+        "question": "Q28?",
+        "answers": [
+          "fact-28"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q29",
+        "question": "Q29?",
+        "answers": [
+          "fact-29"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q30",
+        "question": "Q30?",
+        "answers": [
+          "fact-30"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q31",
+        "question": "Q31?",
+        "answers": [
+          "fact-31"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q32",
+        "question": "Q32?",
+        "answers": [
+          "fact-32"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q33",
+        "question": "Q33?",
+        "answers": [
+          "fact-33"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q34",
+        "question": "Q34?",
+        "answers": [
+          "fact-34"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q35",
+        "question": "Q35?",
+        "answers": [
+          "fact-35"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q36",
+        "question": "Q36?",
+        "answers": [
+          "fact-36"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q37",
+        "question": "Q37?",
+        "answers": [
+          "fact-37"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q38",
+        "question": "Q38?",
+        "answers": [
+          "fact-38"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q39",
+        "question": "Q39?",
+        "answers": [
+          "fact-39"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q40",
+        "question": "Q40?",
+        "answers": [
+          "fact-40"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q41",
+        "question": "Q41?",
+        "answers": [
+          "fact-41"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q42",
+        "question": "Q42?",
+        "answers": [
+          "fact-42"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q43",
+        "question": "Q43?",
+        "answers": [
+          "fact-43"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q44",
+        "question": "Q44?",
+        "answers": [
+          "fact-44"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q45",
+        "question": "Q45?",
+        "answers": [
+          "fact-45"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q46",
+        "question": "Q46?",
+        "answers": [
+          "fact-46"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q47",
+        "question": "Q47?",
+        "answers": [
+          "fact-47"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q48",
+        "question": "Q48?",
+        "answers": [
+          "fact-48"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q49",
+        "question": "Q49?",
+        "answers": [
+          "fact-49"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q50",
+        "question": "Q50?",
+        "answers": [
+          "fact-50"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q51",
+        "question": "Q51?",
+        "answers": [
+          "fact-51"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q52",
+        "question": "Q52?",
+        "answers": [
+          "fact-52"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q53",
+        "question": "Q53?",
+        "answers": [
+          "fact-53"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q54",
+        "question": "Q54?",
+        "answers": [
+          "fact-54"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q55",
+        "question": "Q55?",
+        "answers": [
+          "fact-55"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q56",
+        "question": "Q56?",
+        "answers": [
+          "fact-56"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q57",
+        "question": "Q57?",
+        "answers": [
+          "fact-57"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q58",
+        "question": "Q58?",
+        "answers": [
+          "fact-58"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q59",
+        "question": "Q59?",
+        "answers": [
+          "fact-59"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "scan",
+        "argv": [
+          "--derive",
+          "--map",
+          "q0=goal",
+          "--map",
+          "q1=goal",
+          "--map",
+          "q2=goal",
+          "--map",
+          "q3=goal",
+          "--map",
+          "q4=goal",
+          "--map",
+          "q5=goal",
+          "--map",
+          "q6=goal",
+          "--map",
+          "q7=goal",
+          "--map",
+          "q8=goal",
+          "--map",
+          "q9=goal",
+          "--map",
+          "q10=goal",
+          "--map",
+          "q11=goal",
+          "--map",
+          "q12=goal",
+          "--map",
+          "q13=goal",
+          "--map",
+          "q14=goal",
+          "--map",
+          "q15=goal",
+          "--map",
+          "q16=goal",
+          "--map",
+          "q17=goal",
+          "--map",
+          "q18=goal",
+          "--map",
+          "q19=goal",
+          "--map",
+          "q20=goal",
+          "--map",
+          "q21=goal",
+          "--map",
+          "q22=goal",
+          "--map",
+          "q23=goal",
+          "--map",
+          "q24=goal",
+          "--map",
+          "q25=goal",
+          "--map",
+          "q26=goal",
+          "--map",
+          "q27=goal",
+          "--map",
+          "q28=goal",
+          "--map",
+          "q29=goal",
+          "--map",
+          "q30=goal",
+          "--map",
+          "q31=goal",
+          "--map",
+          "q32=goal",
+          "--map",
+          "q33=goal",
+          "--map",
+          "q34=goal",
+          "--map",
+          "q35=goal",
+          "--map",
+          "q36=goal",
+          "--map",
+          "q37=goal",
+          "--map",
+          "q38=goal",
+          "--map",
+          "q39=goal",
+          "--map",
+          "q40=goal",
+          "--map",
+          "q41=goal",
+          "--map",
+          "q42=goal",
+          "--map",
+          "q43=goal",
+          "--map",
+          "q44=goal",
+          "--map",
+          "q45=goal",
+          "--map",
+          "q46=goal",
+          "--map",
+          "q47=goal",
+          "--map",
+          "q48=goal",
+          "--map",
+          "q49=goal",
+          "--map",
+          "q50=goal",
+          "--map",
+          "q51=goal",
+          "--map",
+          "q52=goal",
+          "--map",
+          "q53=goal",
+          "--map",
+          "q54=goal",
+          "--map",
+          "q55=goal",
+          "--map",
+          "q56=goal",
+          "--map",
+          "q57=goal",
+          "--map",
+          "q58=goal",
+          "--map",
+          "q59=goal"
+        ]
+      },
+      {
+        "kind": "scan",
+        "argv": [
+          "--derive",
+          "--map",
+          "q0=goal",
+          "--map",
+          "q1=goal",
+          "--map",
+          "q2=goal",
+          "--map",
+          "q3=goal",
+          "--map",
+          "q4=goal",
+          "--map",
+          "q5=goal",
+          "--map",
+          "q6=goal",
+          "--map",
+          "q7=goal",
+          "--map",
+          "q8=goal",
+          "--map",
+          "q9=goal",
+          "--map",
+          "q10=goal",
+          "--map",
+          "q11=goal",
+          "--map",
+          "q12=goal",
+          "--map",
+          "q13=goal",
+          "--map",
+          "q14=goal",
+          "--map",
+          "q15=goal",
+          "--map",
+          "q16=goal",
+          "--map",
+          "q17=goal",
+          "--map",
+          "q18=goal",
+          "--map",
+          "q19=goal",
+          "--map",
+          "q20=goal",
+          "--map",
+          "q21=goal",
+          "--map",
+          "q22=goal",
+          "--map",
+          "q23=goal",
+          "--map",
+          "q24=goal",
+          "--map",
+          "q25=goal",
+          "--map",
+          "q26=goal",
+          "--map",
+          "q27=goal",
+          "--map",
+          "q28=goal",
+          "--map",
+          "q29=goal",
+          "--map",
+          "q30=goal",
+          "--map",
+          "q31=goal",
+          "--map",
+          "q32=goal",
+          "--map",
+          "q33=goal",
+          "--map",
+          "q34=goal",
+          "--map",
+          "q35=goal",
+          "--map",
+          "q36=goal",
+          "--map",
+          "q37=goal",
+          "--map",
+          "q38=goal",
+          "--map",
+          "q39=goal",
+          "--map",
+          "q40=goal",
+          "--map",
+          "q41=goal",
+          "--map",
+          "q42=goal",
+          "--map",
+          "q43=goal",
+          "--map",
+          "q44=goal",
+          "--map",
+          "q45=goal",
+          "--map",
+          "q46=goal",
+          "--map",
+          "q47=goal",
+          "--map",
+          "q48=goal",
+          "--map",
+          "q49=goal",
+          "--map",
+          "q50=goal",
+          "--map",
+          "q51=goal",
+          "--map",
+          "q52=goal",
+          "--map",
+          "q53=goal",
+          "--map",
+          "q54=goal",
+          "--map",
+          "q55=goal",
+          "--map",
+          "q56=goal",
+          "--map",
+          "q57=goal",
+          "--map",
+          "q58=goal",
+          "--map",
+          "q59=goal"
+        ]
+      }
+    ],
+    "expect": {
+      "results": [
+        {
+          "output": "scan record: round 1 recorded for session s1 (contradictions=0, high=0, derived=1 dimension(s) from the answer ledger)",
+          "code": 0
+        },
+        {
+          "output": "scan record: round 2 recorded for session s1 (contradictions=0, high=0, derived=0 dimension(s) from the answer ledger — WARNING: nothing matched; check that --map ids match the ledger's questionIds.)",
+          "code": 0
+        }
+      ],
+      "tracker": {
+        "roundId": 0,
+        "dimensions": {
+          "goal": {
+            "level": "high",
+            "known": [
+              "fact-0",
+              "fact-1",
+              "fact-2",
+              "fact-3",
+              "fact-4",
+              "fact-5",
+              "fact-6",
+              "fact-7",
+              "fact-8",
+              "fact-9",
+              "fact-10",
+              "fact-11",
+              "fact-12",
+              "fact-13",
+              "fact-14",
+              "fact-15",
+              "fact-16",
+              "fact-17",
+              "fact-18",
+              "fact-19",
+              "fact-20",
+              "fact-21",
+              "fact-22",
+              "fact-23",
+              "fact-24",
+              "fact-25",
+              "fact-26",
+              "fact-27",
+              "fact-28",
+              "fact-29",
+              "fact-30",
+              "fact-31",
+              "fact-32",
+              "fact-33",
+              "fact-34",
+              "fact-35",
+              "fact-36",
+              "fact-37",
+              "fact-38",
+              "fact-39",
+              "fact-40",
+              "fact-41",
+              "fact-42",
+              "fact-43",
+              "fact-44",
+              "fact-45",
+              "fact-46",
+              "fact-47",
+              "fact-48",
+              "fact-49"
+            ],
+            "unknown": [],
+            "confidence": 0
+          },
+          "constraint": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "success": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "ontology": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          }
+        },
+        "contradictions": [],
+        "assumptions": [],
+        "autoResolveCount": 0,
+        "consecutiveAutoResolves": 0,
+        "scanRounds": 2,
+        "lastScanRoundId": 2
+      },
+      "rows": [
+        {
+          "sessionId": "s1",
+          "event": "scan_completed",
+          "roundId": 1,
+          "contradictionCount": 0,
+          "highContradictionCount": 0,
+          "map": {
+            "q0": "goal",
+            "q1": "goal",
+            "q2": "goal",
+            "q3": "goal",
+            "q4": "goal",
+            "q5": "goal",
+            "q6": "goal",
+            "q7": "goal",
+            "q8": "goal",
+            "q9": "goal",
+            "q10": "goal",
+            "q11": "goal",
+            "q12": "goal",
+            "q13": "goal",
+            "q14": "goal",
+            "q15": "goal",
+            "q16": "goal",
+            "q17": "goal",
+            "q18": "goal",
+            "q19": "goal",
+            "q20": "goal",
+            "q21": "goal",
+            "q22": "goal",
+            "q23": "goal",
+            "q24": "goal",
+            "q25": "goal",
+            "q26": "goal",
+            "q27": "goal",
+            "q28": "goal",
+            "q29": "goal",
+            "q30": "goal",
+            "q31": "goal",
+            "q32": "goal",
+            "q33": "goal",
+            "q34": "goal",
+            "q35": "goal",
+            "q36": "goal",
+            "q37": "goal",
+            "q38": "goal",
+            "q39": "goal",
+            "q40": "goal",
+            "q41": "goal",
+            "q42": "goal",
+            "q43": "goal",
+            "q44": "goal",
+            "q45": "goal",
+            "q46": "goal",
+            "q47": "goal",
+            "q48": "goal",
+            "q49": "goal",
+            "q50": "goal",
+            "q51": "goal",
+            "q52": "goal",
+            "q53": "goal",
+            "q54": "goal",
+            "q55": "goal",
+            "q56": "goal",
+            "q57": "goal",
+            "q58": "goal",
+            "q59": "goal"
+          }
+        },
+        {
+          "sessionId": "s1",
+          "event": "scan_completed",
+          "roundId": 2,
+          "contradictionCount": 0,
+          "highContradictionCount": 0,
+          "map": {
+            "q0": "goal",
+            "q1": "goal",
+            "q2": "goal",
+            "q3": "goal",
+            "q4": "goal",
+            "q5": "goal",
+            "q6": "goal",
+            "q7": "goal",
+            "q8": "goal",
+            "q9": "goal",
+            "q10": "goal",
+            "q11": "goal",
+            "q12": "goal",
+            "q13": "goal",
+            "q14": "goal",
+            "q15": "goal",
+            "q16": "goal",
+            "q17": "goal",
+            "q18": "goal",
+            "q19": "goal",
+            "q20": "goal",
+            "q21": "goal",
+            "q22": "goal",
+            "q23": "goal",
+            "q24": "goal",
+            "q25": "goal",
+            "q26": "goal",
+            "q27": "goal",
+            "q28": "goal",
+            "q29": "goal",
+            "q30": "goal",
+            "q31": "goal",
+            "q32": "goal",
+            "q33": "goal",
+            "q34": "goal",
+            "q35": "goal",
+            "q36": "goal",
+            "q37": "goal",
+            "q38": "goal",
+            "q39": "goal",
+            "q40": "goal",
+            "q41": "goal",
+            "q42": "goal",
+            "q43": "goal",
+            "q44": "goal",
+            "q45": "goal",
+            "q46": "goal",
+            "q47": "goal",
+            "q48": "goal",
+            "q49": "goal",
+            "q50": "goal",
+            "q51": "goal",
+            "q52": "goal",
+            "q53": "goal",
+            "q54": "goal",
+            "q55": "goal",
+            "q56": "goal",
+            "q57": "goal",
+            "q58": "goal",
+            "q59": "goal"
+          }
+        }
+      ],
+      "mapOrders": [
+        [
+          "q0",
+          "q1",
+          "q2",
+          "q3",
+          "q4",
+          "q5",
+          "q6",
+          "q7",
+          "q8",
+          "q9",
+          "q10",
+          "q11",
+          "q12",
+          "q13",
+          "q14",
+          "q15",
+          "q16",
+          "q17",
+          "q18",
+          "q19",
+          "q20",
+          "q21",
+          "q22",
+          "q23",
+          "q24",
+          "q25",
+          "q26",
+          "q27",
+          "q28",
+          "q29",
+          "q30",
+          "q31",
+          "q32",
+          "q33",
+          "q34",
+          "q35",
+          "q36",
+          "q37",
+          "q38",
+          "q39",
+          "q40",
+          "q41",
+          "q42",
+          "q43",
+          "q44",
+          "q45",
+          "q46",
+          "q47",
+          "q48",
+          "q49",
+          "q50",
+          "q51",
+          "q52",
+          "q53",
+          "q54",
+          "q55",
+          "q56",
+          "q57",
+          "q58",
+          "q59"
+        ],
+        [
+          "q0",
+          "q1",
+          "q2",
+          "q3",
+          "q4",
+          "q5",
+          "q6",
+          "q7",
+          "q8",
+          "q9",
+          "q10",
+          "q11",
+          "q12",
+          "q13",
+          "q14",
+          "q15",
+          "q16",
+          "q17",
+          "q18",
+          "q19",
+          "q20",
+          "q21",
+          "q22",
+          "q23",
+          "q24",
+          "q25",
+          "q26",
+          "q27",
+          "q28",
+          "q29",
+          "q30",
+          "q31",
+          "q32",
+          "q33",
+          "q34",
+          "q35",
+          "q36",
+          "q37",
+          "q38",
+          "q39",
+          "q40",
+          "q41",
+          "q42",
+          "q43",
+          "q44",
+          "q45",
+          "q46",
+          "q47",
+          "q48",
+          "q49",
+          "q50",
+          "q51",
+          "q52",
+          "q53",
+          "q54",
+          "q55",
+          "q56",
+          "q57",
+          "q58",
+          "q59"
+        ]
+      ],
+      "gate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      },
+      "shapeGate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      }
+    }
+  },
+  {
+    "id": "unknown-cap",
+    "actions": [
+      {
+        "kind": "qa",
+        "id": "q0",
+        "question": "Q0?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q1",
+        "question": "Q1?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q2",
+        "question": "Q2?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q3",
+        "question": "Q3?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q4",
+        "question": "Q4?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q5",
+        "question": "Q5?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q6",
+        "question": "Q6?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q7",
+        "question": "Q7?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q8",
+        "question": "Q8?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q9",
+        "question": "Q9?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q10",
+        "question": "Q10?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q11",
+        "question": "Q11?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q12",
+        "question": "Q12?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q13",
+        "question": "Q13?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q14",
+        "question": "Q14?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q15",
+        "question": "Q15?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q16",
+        "question": "Q16?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q17",
+        "question": "Q17?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q18",
+        "question": "Q18?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q19",
+        "question": "Q19?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q20",
+        "question": "Q20?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q21",
+        "question": "Q21?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q22",
+        "question": "Q22?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q23",
+        "question": "Q23?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q24",
+        "question": "Q24?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q25",
+        "question": "Q25?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q26",
+        "question": "Q26?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q27",
+        "question": "Q27?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q28",
+        "question": "Q28?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q29",
+        "question": "Q29?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q30",
+        "question": "Q30?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q31",
+        "question": "Q31?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q32",
+        "question": "Q32?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q33",
+        "question": "Q33?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q34",
+        "question": "Q34?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q35",
+        "question": "Q35?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q36",
+        "question": "Q36?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q37",
+        "question": "Q37?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q38",
+        "question": "Q38?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q39",
+        "question": "Q39?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q40",
+        "question": "Q40?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q41",
+        "question": "Q41?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q42",
+        "question": "Q42?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q43",
+        "question": "Q43?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q44",
+        "question": "Q44?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q45",
+        "question": "Q45?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q46",
+        "question": "Q46?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q47",
+        "question": "Q47?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q48",
+        "question": "Q48?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q49",
+        "question": "Q49?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q50",
+        "question": "Q50?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q51",
+        "question": "Q51?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q52",
+        "question": "Q52?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q53",
+        "question": "Q53?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q54",
+        "question": "Q54?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q55",
+        "question": "Q55?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q56",
+        "question": "Q56?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q57",
+        "question": "Q57?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q58",
+        "question": "Q58?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q59",
+        "question": "Q59?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "scan",
+        "argv": [
+          "--derive",
+          "--map",
+          "q0=goal",
+          "--map",
+          "q1=goal",
+          "--map",
+          "q2=goal",
+          "--map",
+          "q3=goal",
+          "--map",
+          "q4=goal",
+          "--map",
+          "q5=goal",
+          "--map",
+          "q6=goal",
+          "--map",
+          "q7=goal",
+          "--map",
+          "q8=goal",
+          "--map",
+          "q9=goal",
+          "--map",
+          "q10=goal",
+          "--map",
+          "q11=goal",
+          "--map",
+          "q12=goal",
+          "--map",
+          "q13=goal",
+          "--map",
+          "q14=goal",
+          "--map",
+          "q15=goal",
+          "--map",
+          "q16=goal",
+          "--map",
+          "q17=goal",
+          "--map",
+          "q18=goal",
+          "--map",
+          "q19=goal",
+          "--map",
+          "q20=goal",
+          "--map",
+          "q21=goal",
+          "--map",
+          "q22=goal",
+          "--map",
+          "q23=goal",
+          "--map",
+          "q24=goal",
+          "--map",
+          "q25=goal",
+          "--map",
+          "q26=goal",
+          "--map",
+          "q27=goal",
+          "--map",
+          "q28=goal",
+          "--map",
+          "q29=goal",
+          "--map",
+          "q30=goal",
+          "--map",
+          "q31=goal",
+          "--map",
+          "q32=goal",
+          "--map",
+          "q33=goal",
+          "--map",
+          "q34=goal",
+          "--map",
+          "q35=goal",
+          "--map",
+          "q36=goal",
+          "--map",
+          "q37=goal",
+          "--map",
+          "q38=goal",
+          "--map",
+          "q39=goal",
+          "--map",
+          "q40=goal",
+          "--map",
+          "q41=goal",
+          "--map",
+          "q42=goal",
+          "--map",
+          "q43=goal",
+          "--map",
+          "q44=goal",
+          "--map",
+          "q45=goal",
+          "--map",
+          "q46=goal",
+          "--map",
+          "q47=goal",
+          "--map",
+          "q48=goal",
+          "--map",
+          "q49=goal",
+          "--map",
+          "q50=goal",
+          "--map",
+          "q51=goal",
+          "--map",
+          "q52=goal",
+          "--map",
+          "q53=goal",
+          "--map",
+          "q54=goal",
+          "--map",
+          "q55=goal",
+          "--map",
+          "q56=goal",
+          "--map",
+          "q57=goal",
+          "--map",
+          "q58=goal",
+          "--map",
+          "q59=goal"
+        ]
+      },
+      {
+        "kind": "scan",
+        "argv": [
+          "--derive",
+          "--map",
+          "q0=goal",
+          "--map",
+          "q1=goal",
+          "--map",
+          "q2=goal",
+          "--map",
+          "q3=goal",
+          "--map",
+          "q4=goal",
+          "--map",
+          "q5=goal",
+          "--map",
+          "q6=goal",
+          "--map",
+          "q7=goal",
+          "--map",
+          "q8=goal",
+          "--map",
+          "q9=goal",
+          "--map",
+          "q10=goal",
+          "--map",
+          "q11=goal",
+          "--map",
+          "q12=goal",
+          "--map",
+          "q13=goal",
+          "--map",
+          "q14=goal",
+          "--map",
+          "q15=goal",
+          "--map",
+          "q16=goal",
+          "--map",
+          "q17=goal",
+          "--map",
+          "q18=goal",
+          "--map",
+          "q19=goal",
+          "--map",
+          "q20=goal",
+          "--map",
+          "q21=goal",
+          "--map",
+          "q22=goal",
+          "--map",
+          "q23=goal",
+          "--map",
+          "q24=goal",
+          "--map",
+          "q25=goal",
+          "--map",
+          "q26=goal",
+          "--map",
+          "q27=goal",
+          "--map",
+          "q28=goal",
+          "--map",
+          "q29=goal",
+          "--map",
+          "q30=goal",
+          "--map",
+          "q31=goal",
+          "--map",
+          "q32=goal",
+          "--map",
+          "q33=goal",
+          "--map",
+          "q34=goal",
+          "--map",
+          "q35=goal",
+          "--map",
+          "q36=goal",
+          "--map",
+          "q37=goal",
+          "--map",
+          "q38=goal",
+          "--map",
+          "q39=goal",
+          "--map",
+          "q40=goal",
+          "--map",
+          "q41=goal",
+          "--map",
+          "q42=goal",
+          "--map",
+          "q43=goal",
+          "--map",
+          "q44=goal",
+          "--map",
+          "q45=goal",
+          "--map",
+          "q46=goal",
+          "--map",
+          "q47=goal",
+          "--map",
+          "q48=goal",
+          "--map",
+          "q49=goal",
+          "--map",
+          "q50=goal",
+          "--map",
+          "q51=goal",
+          "--map",
+          "q52=goal",
+          "--map",
+          "q53=goal",
+          "--map",
+          "q54=goal",
+          "--map",
+          "q55=goal",
+          "--map",
+          "q56=goal",
+          "--map",
+          "q57=goal",
+          "--map",
+          "q58=goal",
+          "--map",
+          "q59=goal"
+        ]
+      }
+    ],
+    "expect": {
+      "results": [
+        {
+          "output": "scan record: round 1 recorded for session s1 (contradictions=0, high=0, derived=1 dimension(s) from the answer ledger)",
+          "code": 0
+        },
+        {
+          "output": "scan record: round 2 recorded for session s1 (contradictions=0, high=0, derived=0 dimension(s) from the answer ledger — WARNING: nothing matched; check that --map ids match the ledger's questionIds.)",
+          "code": 0
+        }
+      ],
+      "tracker": {
+        "roundId": 0,
+        "dimensions": {
+          "goal": {
+            "level": "mid",
+            "known": [],
+            "unknown": [
+              "Q0?",
+              "Q1?",
+              "Q2?",
+              "Q3?",
+              "Q4?",
+              "Q5?",
+              "Q6?",
+              "Q7?",
+              "Q8?",
+              "Q9?",
+              "Q10?",
+              "Q11?",
+              "Q12?",
+              "Q13?",
+              "Q14?",
+              "Q15?",
+              "Q16?",
+              "Q17?",
+              "Q18?",
+              "Q19?",
+              "Q20?",
+              "Q21?",
+              "Q22?",
+              "Q23?",
+              "Q24?",
+              "Q25?",
+              "Q26?",
+              "Q27?",
+              "Q28?",
+              "Q29?",
+              "Q30?",
+              "Q31?",
+              "Q32?",
+              "Q33?",
+              "Q34?",
+              "Q35?",
+              "Q36?",
+              "Q37?",
+              "Q38?",
+              "Q39?",
+              "Q40?",
+              "Q41?",
+              "Q42?",
+              "Q43?",
+              "Q44?",
+              "Q45?",
+              "Q46?",
+              "Q47?",
+              "Q48?",
+              "Q49?"
+            ],
+            "confidence": 0
+          },
+          "constraint": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "success": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "ontology": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          }
+        },
+        "contradictions": [],
+        "assumptions": [],
+        "autoResolveCount": 0,
+        "consecutiveAutoResolves": 0,
+        "scanRounds": 2,
+        "lastScanRoundId": 2
+      },
+      "rows": [
+        {
+          "sessionId": "s1",
+          "event": "scan_completed",
+          "roundId": 1,
+          "contradictionCount": 0,
+          "highContradictionCount": 0,
+          "map": {
+            "q0": "goal",
+            "q1": "goal",
+            "q2": "goal",
+            "q3": "goal",
+            "q4": "goal",
+            "q5": "goal",
+            "q6": "goal",
+            "q7": "goal",
+            "q8": "goal",
+            "q9": "goal",
+            "q10": "goal",
+            "q11": "goal",
+            "q12": "goal",
+            "q13": "goal",
+            "q14": "goal",
+            "q15": "goal",
+            "q16": "goal",
+            "q17": "goal",
+            "q18": "goal",
+            "q19": "goal",
+            "q20": "goal",
+            "q21": "goal",
+            "q22": "goal",
+            "q23": "goal",
+            "q24": "goal",
+            "q25": "goal",
+            "q26": "goal",
+            "q27": "goal",
+            "q28": "goal",
+            "q29": "goal",
+            "q30": "goal",
+            "q31": "goal",
+            "q32": "goal",
+            "q33": "goal",
+            "q34": "goal",
+            "q35": "goal",
+            "q36": "goal",
+            "q37": "goal",
+            "q38": "goal",
+            "q39": "goal",
+            "q40": "goal",
+            "q41": "goal",
+            "q42": "goal",
+            "q43": "goal",
+            "q44": "goal",
+            "q45": "goal",
+            "q46": "goal",
+            "q47": "goal",
+            "q48": "goal",
+            "q49": "goal",
+            "q50": "goal",
+            "q51": "goal",
+            "q52": "goal",
+            "q53": "goal",
+            "q54": "goal",
+            "q55": "goal",
+            "q56": "goal",
+            "q57": "goal",
+            "q58": "goal",
+            "q59": "goal"
+          }
+        },
+        {
+          "sessionId": "s1",
+          "event": "scan_completed",
+          "roundId": 2,
+          "contradictionCount": 0,
+          "highContradictionCount": 0,
+          "map": {
+            "q0": "goal",
+            "q1": "goal",
+            "q2": "goal",
+            "q3": "goal",
+            "q4": "goal",
+            "q5": "goal",
+            "q6": "goal",
+            "q7": "goal",
+            "q8": "goal",
+            "q9": "goal",
+            "q10": "goal",
+            "q11": "goal",
+            "q12": "goal",
+            "q13": "goal",
+            "q14": "goal",
+            "q15": "goal",
+            "q16": "goal",
+            "q17": "goal",
+            "q18": "goal",
+            "q19": "goal",
+            "q20": "goal",
+            "q21": "goal",
+            "q22": "goal",
+            "q23": "goal",
+            "q24": "goal",
+            "q25": "goal",
+            "q26": "goal",
+            "q27": "goal",
+            "q28": "goal",
+            "q29": "goal",
+            "q30": "goal",
+            "q31": "goal",
+            "q32": "goal",
+            "q33": "goal",
+            "q34": "goal",
+            "q35": "goal",
+            "q36": "goal",
+            "q37": "goal",
+            "q38": "goal",
+            "q39": "goal",
+            "q40": "goal",
+            "q41": "goal",
+            "q42": "goal",
+            "q43": "goal",
+            "q44": "goal",
+            "q45": "goal",
+            "q46": "goal",
+            "q47": "goal",
+            "q48": "goal",
+            "q49": "goal",
+            "q50": "goal",
+            "q51": "goal",
+            "q52": "goal",
+            "q53": "goal",
+            "q54": "goal",
+            "q55": "goal",
+            "q56": "goal",
+            "q57": "goal",
+            "q58": "goal",
+            "q59": "goal"
+          }
+        }
+      ],
+      "mapOrders": [
+        [
+          "q0",
+          "q1",
+          "q2",
+          "q3",
+          "q4",
+          "q5",
+          "q6",
+          "q7",
+          "q8",
+          "q9",
+          "q10",
+          "q11",
+          "q12",
+          "q13",
+          "q14",
+          "q15",
+          "q16",
+          "q17",
+          "q18",
+          "q19",
+          "q20",
+          "q21",
+          "q22",
+          "q23",
+          "q24",
+          "q25",
+          "q26",
+          "q27",
+          "q28",
+          "q29",
+          "q30",
+          "q31",
+          "q32",
+          "q33",
+          "q34",
+          "q35",
+          "q36",
+          "q37",
+          "q38",
+          "q39",
+          "q40",
+          "q41",
+          "q42",
+          "q43",
+          "q44",
+          "q45",
+          "q46",
+          "q47",
+          "q48",
+          "q49",
+          "q50",
+          "q51",
+          "q52",
+          "q53",
+          "q54",
+          "q55",
+          "q56",
+          "q57",
+          "q58",
+          "q59"
+        ],
+        [
+          "q0",
+          "q1",
+          "q2",
+          "q3",
+          "q4",
+          "q5",
+          "q6",
+          "q7",
+          "q8",
+          "q9",
+          "q10",
+          "q11",
+          "q12",
+          "q13",
+          "q14",
+          "q15",
+          "q16",
+          "q17",
+          "q18",
+          "q19",
+          "q20",
+          "q21",
+          "q22",
+          "q23",
+          "q24",
+          "q25",
+          "q26",
+          "q27",
+          "q28",
+          "q29",
+          "q30",
+          "q31",
+          "q32",
+          "q33",
+          "q34",
+          "q35",
+          "q36",
+          "q37",
+          "q38",
+          "q39",
+          "q40",
+          "q41",
+          "q42",
+          "q43",
+          "q44",
+          "q45",
+          "q46",
+          "q47",
+          "q48",
+          "q49",
+          "q50",
+          "q51",
+          "q52",
+          "q53",
+          "q54",
+          "q55",
+          "q56",
+          "q57",
+          "q58",
+          "q59"
+        ]
+      ],
+      "gate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      },
+      "shapeGate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      }
+    }
+  },
+  {
+    "id": "assertion-persists",
+    "actions": [
+      {
+        "kind": "scan",
+        "argv": [
+          "--dim",
+          "goal=high",
+          "--dim",
+          "constraint=mid"
+        ]
+      },
+      {
+        "kind": "scan",
+        "argv": [
+          "--contradictions",
+          "2",
+          "--high",
+          "1"
+        ]
+      },
+      {
+        "kind": "scan",
+        "argv": [
+          "--known",
+          "ontology=entity"
+        ]
+      }
+    ],
+    "expect": {
+      "results": [
+        {
+          "output": "scan record: round 1 recorded for session s1 (contradictions=0, high=0)",
+          "code": 0
+        },
+        {
+          "output": "scan record: round 2 recorded for session s1 (contradictions=2, high=1)",
+          "code": 0
+        },
+        {
+          "output": "scan record: round 3 recorded for session s1 (contradictions=0, high=0)",
+          "code": 0
+        }
+      ],
+      "tracker": {
+        "roundId": 0,
+        "dimensions": {
+          "goal": {
+            "level": "high",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "constraint": {
+            "level": "mid",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "success": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "ontology": {
+            "level": "high",
+            "known": [
+              "entity"
+            ],
+            "unknown": [],
+            "confidence": 0
+          }
+        },
+        "contradictions": [],
+        "assumptions": [],
+        "autoResolveCount": 0,
+        "consecutiveAutoResolves": 0,
+        "scanRounds": 3,
+        "lastScanRoundId": 3
+      },
+      "rows": [
+        {
+          "sessionId": "s1",
+          "event": "scan_completed",
+          "roundId": 1,
+          "contradictionCount": 0,
+          "highContradictionCount": 0
+        },
+        {
+          "sessionId": "s1",
+          "event": "scan_completed",
+          "roundId": 2,
+          "contradictionCount": 2,
+          "highContradictionCount": 1
+        },
+        {
+          "sessionId": "s1",
+          "event": "scan_completed",
+          "roundId": 3,
+          "contradictionCount": 0,
+          "highContradictionCount": 0
+        }
+      ],
+      "mapOrders": [
+        [],
+        [],
+        []
+      ],
+      "gate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      },
+      "shapeGate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      }
+    }
+  },
+  {
+    "id": "no-map-warning",
+    "actions": [
+      {
+        "kind": "qa",
+        "id": "q0",
+        "question": "Goal?",
+        "answers": [
+          "ship"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "scan",
+        "argv": [
+          "--derive"
+        ]
+      }
+    ],
+    "expect": {
+      "results": [
+        {
+          "output": "scan record: round 1 recorded for session s1 (contradictions=0, high=0, derived=0 dimension(s) from the answer ledger — WARNING: no --map given, so every question was skipped and the tracker stays empty.)",
+          "code": 0
+        }
+      ],
+      "tracker": {
+        "roundId": 0,
+        "dimensions": {
+          "goal": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "constraint": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "success": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "ontology": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          }
+        },
+        "contradictions": [],
+        "assumptions": [],
+        "autoResolveCount": 0,
+        "consecutiveAutoResolves": 0,
+        "scanRounds": 1,
+        "lastScanRoundId": 1
+      },
+      "rows": [
+        {
+          "sessionId": "s1",
+          "event": "scan_completed",
+          "roundId": 1,
+          "contradictionCount": 0,
+          "highContradictionCount": 0
+        }
+      ],
+      "mapOrders": [
+        []
+      ],
+      "gate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      },
+      "shapeGate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      }
+    }
+  },
+  {
+    "id": "wrong-map-warning",
+    "actions": [
+      {
+        "kind": "qa",
+        "id": "q0",
+        "question": "Goal?",
+        "answers": [
+          "ship"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "scan",
+        "argv": [
+          "--derive",
+          "--map",
+          "absent=goal"
+        ]
+      }
+    ],
+    "expect": {
+      "results": [
+        {
+          "output": "scan record: round 1 recorded for session s1 (contradictions=0, high=0, derived=0 dimension(s) from the answer ledger — WARNING: nothing matched; check that --map ids match the ledger's questionIds.)",
+          "code": 0
+        }
+      ],
+      "tracker": {
+        "roundId": 0,
+        "dimensions": {
+          "goal": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "constraint": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "success": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "ontology": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          }
+        },
+        "contradictions": [],
+        "assumptions": [],
+        "autoResolveCount": 0,
+        "consecutiveAutoResolves": 0,
+        "scanRounds": 1,
+        "lastScanRoundId": 1
+      },
+      "rows": [
+        {
+          "sessionId": "s1",
+          "event": "scan_completed",
+          "roundId": 1,
+          "contradictionCount": 0,
+          "highContradictionCount": 0,
+          "map": {
+            "absent": "goal"
+          }
+        }
+      ],
+      "mapOrders": [
+        [
+          "absent"
+        ]
+      ],
+      "gate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      },
+      "shapeGate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      }
+    }
+  },
+  {
+    "id": "last-question-text",
+    "actions": [
+      {
+        "kind": "qa",
+        "id": "q0",
+        "question": "first?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q1",
+        "question": "second?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q0",
+        "question": "revised?",
+        "answers": [],
+        "turn": "t2"
+      },
+      {
+        "kind": "scan",
+        "argv": [
+          "--derive",
+          "--map",
+          "q0=goal",
+          "--map",
+          "q1=goal"
+        ]
+      }
+    ],
+    "expect": {
+      "results": [
+        {
+          "output": "scan record: round 1 recorded for session s1 (contradictions=0, high=0, derived=1 dimension(s) from the answer ledger)",
+          "code": 0
+        }
+      ],
+      "tracker": {
+        "roundId": 0,
+        "dimensions": {
+          "goal": {
+            "level": "mid",
+            "known": [],
+            "unknown": [
+              "revised?",
+              "second?"
+            ],
+            "confidence": 0
+          },
+          "constraint": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "success": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "ontology": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          }
+        },
+        "contradictions": [],
+        "assumptions": [],
+        "autoResolveCount": 0,
+        "consecutiveAutoResolves": 0,
+        "scanRounds": 1,
+        "lastScanRoundId": 1
+      },
+      "rows": [
+        {
+          "sessionId": "s1",
+          "event": "scan_completed",
+          "roundId": 1,
+          "contradictionCount": 0,
+          "highContradictionCount": 0,
+          "map": {
+            "q0": "goal",
+            "q1": "goal"
+          }
+        }
+      ],
+      "mapOrders": [
+        [
+          "q0",
+          "q1"
+        ]
+      ],
+      "gate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      },
+      "shapeGate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      }
+    }
+  },
+  {
+    "id": "length-only-touch",
+    "actions": [
+      {
+        "kind": "scan",
+        "argv": [
+          "--known",
+          "goal=fact-0",
+          "--known",
+          "goal=fact-1",
+          "--known",
+          "goal=fact-2",
+          "--known",
+          "goal=fact-3",
+          "--known",
+          "goal=fact-4",
+          "--known",
+          "goal=fact-5",
+          "--known",
+          "goal=fact-6",
+          "--known",
+          "goal=fact-7",
+          "--known",
+          "goal=fact-8",
+          "--known",
+          "goal=fact-9",
+          "--known",
+          "goal=fact-10",
+          "--known",
+          "goal=fact-11",
+          "--known",
+          "goal=fact-12",
+          "--known",
+          "goal=fact-13",
+          "--known",
+          "goal=fact-14",
+          "--known",
+          "goal=fact-15",
+          "--known",
+          "goal=fact-16",
+          "--known",
+          "goal=fact-17",
+          "--known",
+          "goal=fact-18",
+          "--known",
+          "goal=fact-19",
+          "--known",
+          "goal=fact-20",
+          "--known",
+          "goal=fact-21",
+          "--known",
+          "goal=fact-22",
+          "--known",
+          "goal=fact-23",
+          "--known",
+          "goal=fact-24",
+          "--known",
+          "goal=fact-25",
+          "--known",
+          "goal=fact-26",
+          "--known",
+          "goal=fact-27",
+          "--known",
+          "goal=fact-28",
+          "--known",
+          "goal=fact-29",
+          "--known",
+          "goal=fact-30",
+          "--known",
+          "goal=fact-31",
+          "--known",
+          "goal=fact-32",
+          "--known",
+          "goal=fact-33",
+          "--known",
+          "goal=fact-34",
+          "--known",
+          "goal=fact-35",
+          "--known",
+          "goal=fact-36",
+          "--known",
+          "goal=fact-37",
+          "--known",
+          "goal=fact-38",
+          "--known",
+          "goal=fact-39",
+          "--known",
+          "goal=fact-40",
+          "--known",
+          "goal=fact-41",
+          "--known",
+          "goal=fact-42",
+          "--known",
+          "goal=fact-43",
+          "--known",
+          "goal=fact-44",
+          "--known",
+          "goal=fact-45",
+          "--known",
+          "goal=fact-46",
+          "--known",
+          "goal=fact-47",
+          "--known",
+          "goal=fact-48",
+          "--known",
+          "goal=fact-49",
+          "--dim",
+          "goal=low"
+        ]
+      },
+      {
+        "kind": "qa",
+        "id": "q0",
+        "question": "Goal?",
+        "answers": [
+          "another"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "scan",
+        "argv": [
+          "--derive",
+          "--map",
+          "q0=goal"
+        ]
+      }
+    ],
+    "expect": {
+      "results": [
+        {
+          "output": "scan record: round 1 recorded for session s1 (contradictions=0, high=0)",
+          "code": 0
+        },
+        {
+          "output": "scan record: round 2 recorded for session s1 (contradictions=0, high=0, derived=0 dimension(s) from the answer ledger — WARNING: nothing matched; check that --map ids match the ledger's questionIds.)",
+          "code": 0
+        }
+      ],
+      "tracker": {
+        "roundId": 0,
+        "dimensions": {
+          "goal": {
+            "level": "low",
+            "known": [
+              "fact-0",
+              "fact-1",
+              "fact-2",
+              "fact-3",
+              "fact-4",
+              "fact-5",
+              "fact-6",
+              "fact-7",
+              "fact-8",
+              "fact-9",
+              "fact-10",
+              "fact-11",
+              "fact-12",
+              "fact-13",
+              "fact-14",
+              "fact-15",
+              "fact-16",
+              "fact-17",
+              "fact-18",
+              "fact-19",
+              "fact-20",
+              "fact-21",
+              "fact-22",
+              "fact-23",
+              "fact-24",
+              "fact-25",
+              "fact-26",
+              "fact-27",
+              "fact-28",
+              "fact-29",
+              "fact-30",
+              "fact-31",
+              "fact-32",
+              "fact-33",
+              "fact-34",
+              "fact-35",
+              "fact-36",
+              "fact-37",
+              "fact-38",
+              "fact-39",
+              "fact-40",
+              "fact-41",
+              "fact-42",
+              "fact-43",
+              "fact-44",
+              "fact-45",
+              "fact-46",
+              "fact-47",
+              "fact-48",
+              "fact-49"
+            ],
+            "unknown": [],
+            "confidence": 0
+          },
+          "constraint": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "success": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          },
+          "ontology": {
+            "level": "low",
+            "known": [],
+            "unknown": [],
+            "confidence": 0
+          }
+        },
+        "contradictions": [],
+        "assumptions": [],
+        "autoResolveCount": 0,
+        "consecutiveAutoResolves": 0,
+        "scanRounds": 2,
+        "lastScanRoundId": 2
+      },
+      "rows": [
+        {
+          "sessionId": "s1",
+          "event": "scan_completed",
+          "roundId": 1,
+          "contradictionCount": 0,
+          "highContradictionCount": 0
+        },
+        {
+          "sessionId": "s1",
+          "event": "scan_completed",
+          "roundId": 2,
+          "contradictionCount": 0,
+          "highContradictionCount": 0,
+          "map": {
+            "q0": "goal"
+          }
+        }
+      ],
+      "mapOrders": [
+        [],
+        [
+          "q0"
+        ]
+      ],
+      "gate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      },
+      "shapeGate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      }
+    }
+  },
+  {
+    "id": "real-ready",
+    "actions": [
+      {
+        "kind": "qa",
+        "id": "q0",
+        "question": "what about goal?",
+        "answers": [
+          "answer goal"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q1",
+        "question": "what about constraint?",
+        "answers": [
+          "answer constraint"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q2",
+        "question": "what about success?",
+        "answers": [
+          "answer success"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q3",
+        "question": "what about ontology?",
+        "answers": [
+          "answer ontology"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "scan",
+        "argv": [
+          "--derive",
+          "--map",
+          "q0=goal",
+          "--map",
+          "q1=constraint",
+          "--map",
+          "q2=success",
+          "--map",
+          "q3=ontology"
+        ]
+      }
+    ],
+    "expect": {
+      "results": [
+        {
+          "output": "scan record: round 1 recorded for session s1 (contradictions=0, high=0, derived=4 dimension(s) from the answer ledger)",
+          "code": 0
+        }
+      ],
+      "tracker": {
+        "roundId": 0,
+        "dimensions": {
+          "goal": {
+            "level": "high",
+            "known": [
+              "answer goal"
+            ],
+            "unknown": [],
+            "confidence": 0
+          },
+          "constraint": {
+            "level": "high",
+            "known": [
+              "answer constraint"
+            ],
+            "unknown": [],
+            "confidence": 0
+          },
+          "success": {
+            "level": "high",
+            "known": [
+              "answer success"
+            ],
+            "unknown": [],
+            "confidence": 0
+          },
+          "ontology": {
+            "level": "high",
+            "known": [
+              "answer ontology"
+            ],
+            "unknown": [],
+            "confidence": 0
+          }
+        },
+        "contradictions": [],
+        "assumptions": [],
+        "autoResolveCount": 0,
+        "consecutiveAutoResolves": 0,
+        "scanRounds": 1,
+        "lastScanRoundId": 1
+      },
+      "rows": [
+        {
+          "sessionId": "s1",
+          "event": "scan_completed",
+          "roundId": 1,
+          "contradictionCount": 0,
+          "highContradictionCount": 0,
+          "map": {
+            "q0": "goal",
+            "q1": "constraint",
+            "q2": "success",
+            "q3": "ontology"
+          }
+        }
+      ],
+      "mapOrders": [
+        [
+          "q0",
+          "q1",
+          "q2",
+          "q3"
+        ]
+      ],
+      "gate": {
+        "ready": true,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": []
+      },
+      "shapeGate": {
+        "ready": true,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": []
+      }
+    }
+  },
+  {
+    "id": "typed-not-ready",
+    "actions": [
+      {
+        "kind": "scan",
+        "argv": [
+          "--known",
+          "goal=x",
+          "--known",
+          "constraint=x",
+          "--known",
+          "success=x",
+          "--known",
+          "ontology=x"
+        ]
+      }
+    ],
+    "expect": {
+      "results": [
+        {
+          "output": "scan record: round 1 recorded for session s1 (contradictions=0, high=0)",
+          "code": 0
+        }
+      ],
+      "tracker": {
+        "roundId": 0,
+        "dimensions": {
+          "goal": {
+            "level": "high",
+            "known": [
+              "x"
+            ],
+            "unknown": [],
+            "confidence": 0
+          },
+          "constraint": {
+            "level": "high",
+            "known": [
+              "x"
+            ],
+            "unknown": [],
+            "confidence": 0
+          },
+          "success": {
+            "level": "high",
+            "known": [
+              "x"
+            ],
+            "unknown": [],
+            "confidence": 0
+          },
+          "ontology": {
+            "level": "high",
+            "known": [
+              "x"
+            ],
+            "unknown": [],
+            "confidence": 0
+          }
+        },
+        "contradictions": [],
+        "assumptions": [],
+        "autoResolveCount": 0,
+        "consecutiveAutoResolves": 0,
+        "scanRounds": 1,
+        "lastScanRoundId": 1
+      },
+      "rows": [
+        {
+          "sessionId": "s1",
+          "event": "scan_completed",
+          "roundId": 1,
+          "contradictionCount": 0,
+          "highContradictionCount": 0
+        }
+      ],
+      "mapOrders": [
+        []
+      ],
+      "gate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "goal, constraint, success, ontology reached \"high\" without an answered question in the interview ledger — ask and record one per dimension (`cxc scan record --derive --map <questionId>=<dimension>`), or assert the level deliberately"
+        ]
+      },
+      "shapeGate": {
+        "ready": true,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": []
+      }
+    }
+  },
+  {
+    "id": "unanswered-not-ready",
+    "actions": [
+      {
+        "kind": "qa",
+        "id": "q0",
+        "question": "what about goal?",
+        "answers": [
+          "answer goal"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q1",
+        "question": "what about constraint?",
+        "answers": [
+          "answer constraint"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q2",
+        "question": "what about success?",
+        "answers": [
+          "answer success"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q3",
+        "question": "what about ontology?",
+        "answers": [],
+        "turn": "t1"
+      },
+      {
+        "kind": "scan",
+        "argv": [
+          "--derive",
+          "--map",
+          "q0=goal",
+          "--map",
+          "q1=constraint",
+          "--map",
+          "q2=success",
+          "--map",
+          "q3=ontology"
+        ]
+      }
+    ],
+    "expect": {
+      "results": [
+        {
+          "output": "scan record: round 1 recorded for session s1 (contradictions=0, high=0, derived=4 dimension(s) from the answer ledger)",
+          "code": 0
+        }
+      ],
+      "tracker": {
+        "roundId": 0,
+        "dimensions": {
+          "goal": {
+            "level": "high",
+            "known": [
+              "answer goal"
+            ],
+            "unknown": [],
+            "confidence": 0
+          },
+          "constraint": {
+            "level": "high",
+            "known": [
+              "answer constraint"
+            ],
+            "unknown": [],
+            "confidence": 0
+          },
+          "success": {
+            "level": "high",
+            "known": [
+              "answer success"
+            ],
+            "unknown": [],
+            "confidence": 0
+          },
+          "ontology": {
+            "level": "mid",
+            "known": [],
+            "unknown": [
+              "what about ontology?"
+            ],
+            "confidence": 0
+          }
+        },
+        "contradictions": [],
+        "assumptions": [],
+        "autoResolveCount": 0,
+        "consecutiveAutoResolves": 0,
+        "scanRounds": 1,
+        "lastScanRoundId": 1
+      },
+      "rows": [
+        {
+          "sessionId": "s1",
+          "event": "scan_completed",
+          "roundId": 1,
+          "contradictionCount": 0,
+          "highContradictionCount": 0,
+          "map": {
+            "q0": "goal",
+            "q1": "constraint",
+            "q2": "success",
+            "q3": "ontology"
+          }
+        }
+      ],
+      "mapOrders": [
+        [
+          "q0",
+          "q1",
+          "q2",
+          "q3"
+        ]
+      ],
+      "gate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      },
+      "shapeGate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      }
+    }
+  },
+  {
+    "id": "extra-fact-ready",
+    "actions": [
+      {
+        "kind": "qa",
+        "id": "q0",
+        "question": "what about goal?",
+        "answers": [
+          "answer goal"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q1",
+        "question": "what about constraint?",
+        "answers": [
+          "answer constraint"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q2",
+        "question": "what about success?",
+        "answers": [
+          "answer success"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q3",
+        "question": "what about ontology?",
+        "answers": [
+          "answer ontology"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "scan",
+        "argv": [
+          "--derive",
+          "--map",
+          "q0=goal",
+          "--map",
+          "q1=constraint",
+          "--map",
+          "q2=success",
+          "--map",
+          "q3=ontology"
+        ]
+      },
+      {
+        "kind": "scan",
+        "argv": [
+          "--known",
+          "goal=extra"
+        ]
+      }
+    ],
+    "expect": {
+      "results": [
+        {
+          "output": "scan record: round 1 recorded for session s1 (contradictions=0, high=0, derived=4 dimension(s) from the answer ledger)",
+          "code": 0
+        },
+        {
+          "output": "scan record: round 2 recorded for session s1 (contradictions=0, high=0)",
+          "code": 0
+        }
+      ],
+      "tracker": {
+        "roundId": 0,
+        "dimensions": {
+          "goal": {
+            "level": "high",
+            "known": [
+              "answer goal",
+              "extra"
+            ],
+            "unknown": [],
+            "confidence": 0
+          },
+          "constraint": {
+            "level": "high",
+            "known": [
+              "answer constraint"
+            ],
+            "unknown": [],
+            "confidence": 0
+          },
+          "success": {
+            "level": "high",
+            "known": [
+              "answer success"
+            ],
+            "unknown": [],
+            "confidence": 0
+          },
+          "ontology": {
+            "level": "high",
+            "known": [
+              "answer ontology"
+            ],
+            "unknown": [],
+            "confidence": 0
+          }
+        },
+        "contradictions": [],
+        "assumptions": [],
+        "autoResolveCount": 0,
+        "consecutiveAutoResolves": 0,
+        "scanRounds": 2,
+        "lastScanRoundId": 2
+      },
+      "rows": [
+        {
+          "sessionId": "s1",
+          "event": "scan_completed",
+          "roundId": 1,
+          "contradictionCount": 0,
+          "highContradictionCount": 0,
+          "map": {
+            "q0": "goal",
+            "q1": "constraint",
+            "q2": "success",
+            "q3": "ontology"
+          }
+        },
+        {
+          "sessionId": "s1",
+          "event": "scan_completed",
+          "roundId": 2,
+          "contradictionCount": 0,
+          "highContradictionCount": 0
+        }
+      ],
+      "mapOrders": [
+        [
+          "q0",
+          "q1",
+          "q2",
+          "q3"
+        ],
+        []
+      ],
+      "gate": {
+        "ready": true,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": []
+      },
+      "shapeGate": {
+        "ready": true,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": []
+      }
+    }
+  },
+  {
+    "id": "missing-provenance",
+    "actions": [
+      {
+        "kind": "qa",
+        "id": "q0",
+        "question": "what about goal?",
+        "answers": [
+          "answer goal"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q1",
+        "question": "what about constraint?",
+        "answers": [
+          "answer constraint"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q2",
+        "question": "what about success?",
+        "answers": [
+          "answer success"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "scan",
+        "argv": [
+          "--derive",
+          "--map",
+          "q0=goal",
+          "--map",
+          "q1=constraint",
+          "--map",
+          "q2=success"
+        ]
+      },
+      {
+        "kind": "scan",
+        "argv": [
+          "--known",
+          "ontology=asserted"
+        ]
+      }
+    ],
+    "expect": {
+      "results": [
+        {
+          "output": "scan record: round 1 recorded for session s1 (contradictions=0, high=0, derived=3 dimension(s) from the answer ledger)",
+          "code": 0
+        },
+        {
+          "output": "scan record: round 2 recorded for session s1 (contradictions=0, high=0)",
+          "code": 0
+        }
+      ],
+      "tracker": {
+        "roundId": 0,
+        "dimensions": {
+          "goal": {
+            "level": "high",
+            "known": [
+              "answer goal"
+            ],
+            "unknown": [],
+            "confidence": 0
+          },
+          "constraint": {
+            "level": "high",
+            "known": [
+              "answer constraint"
+            ],
+            "unknown": [],
+            "confidence": 0
+          },
+          "success": {
+            "level": "high",
+            "known": [
+              "answer success"
+            ],
+            "unknown": [],
+            "confidence": 0
+          },
+          "ontology": {
+            "level": "high",
+            "known": [
+              "asserted"
+            ],
+            "unknown": [],
+            "confidence": 0
+          }
+        },
+        "contradictions": [],
+        "assumptions": [],
+        "autoResolveCount": 0,
+        "consecutiveAutoResolves": 0,
+        "scanRounds": 2,
+        "lastScanRoundId": 2
+      },
+      "rows": [
+        {
+          "sessionId": "s1",
+          "event": "scan_completed",
+          "roundId": 1,
+          "contradictionCount": 0,
+          "highContradictionCount": 0,
+          "map": {
+            "q0": "goal",
+            "q1": "constraint",
+            "q2": "success"
+          }
+        },
+        {
+          "sessionId": "s1",
+          "event": "scan_completed",
+          "roundId": 2,
+          "contradictionCount": 0,
+          "highContradictionCount": 0
+        }
+      ],
+      "mapOrders": [
+        [
+          "q0",
+          "q1",
+          "q2"
+        ],
+        []
+      ],
+      "gate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "ontology reached \"high\" without an answered question in the interview ledger — ask and record one per dimension (`cxc scan record --derive --map <questionId>=<dimension>`), or assert the level deliberately"
+        ]
+      },
+      "shapeGate": {
+        "ready": true,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": []
+      }
+    }
+  },
+  {
+    "id": "max-ready",
+    "actions": [
+      {
+        "kind": "scan",
+        "argv": [
+          "--known",
+          "goal=x"
+        ]
+      },
+      {
+        "kind": "patch",
+        "value": {
+          "dimensions": {
+            "goal": {
+              "level": "max",
+              "known": [
+                "k"
+              ],
+              "unknown": [],
+              "confidence": 1
+            },
+            "constraint": {
+              "level": "max",
+              "known": [
+                "k"
+              ],
+              "unknown": [],
+              "confidence": 1
+            },
+            "success": {
+              "level": "max",
+              "known": [
+                "k"
+              ],
+              "unknown": [],
+              "confidence": 1
+            },
+            "ontology": {
+              "level": "max",
+              "known": [
+                "k"
+              ],
+              "unknown": [],
+              "confidence": 1
+            }
+          }
+        }
+      }
+    ],
+    "expect": {
+      "results": [
+        {
+          "output": "scan record: round 1 recorded for session s1 (contradictions=0, high=0)",
+          "code": 0
+        }
+      ],
+      "tracker": {
+        "roundId": 0,
+        "dimensions": {
+          "goal": {
+            "level": "max",
+            "known": [
+              "k"
+            ],
+            "unknown": [],
+            "confidence": 1
+          },
+          "constraint": {
+            "level": "max",
+            "known": [
+              "k"
+            ],
+            "unknown": [],
+            "confidence": 1
+          },
+          "success": {
+            "level": "max",
+            "known": [
+              "k"
+            ],
+            "unknown": [],
+            "confidence": 1
+          },
+          "ontology": {
+            "level": "max",
+            "known": [
+              "k"
+            ],
+            "unknown": [],
+            "confidence": 1
+          }
+        },
+        "contradictions": [],
+        "assumptions": [],
+        "autoResolveCount": 0,
+        "consecutiveAutoResolves": 0,
+        "scanRounds": 1,
+        "lastScanRoundId": 1
+      },
+      "rows": [
+        {
+          "sessionId": "s1",
+          "event": "scan_completed",
+          "roundId": 1,
+          "contradictionCount": 0,
+          "highContradictionCount": 0
+        }
+      ],
+      "mapOrders": [
+        []
+      ],
+      "gate": {
+        "ready": true,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": []
+      },
+      "shapeGate": {
+        "ready": true,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": []
+      }
+    }
+  },
+  {
+    "id": "contradiction-blocks",
+    "actions": [
+      {
+        "kind": "qa",
+        "id": "q0",
+        "question": "what about goal?",
+        "answers": [
+          "answer goal"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q1",
+        "question": "what about constraint?",
+        "answers": [
+          "answer constraint"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q2",
+        "question": "what about success?",
+        "answers": [
+          "answer success"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q3",
+        "question": "what about ontology?",
+        "answers": [
+          "answer ontology"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "scan",
+        "argv": [
+          "--derive",
+          "--map",
+          "q0=goal",
+          "--map",
+          "q1=constraint",
+          "--map",
+          "q2=success",
+          "--map",
+          "q3=ontology"
+        ]
+      },
+      {
+        "kind": "patch",
+        "value": {
+          "contradictions": [
+            {
+              "contradictionId": "c1",
+              "severity": "high",
+              "summary": "conflict"
+            }
+          ]
+        }
+      }
+    ],
+    "expect": {
+      "results": [
+        {
+          "output": "scan record: round 1 recorded for session s1 (contradictions=0, high=0, derived=4 dimension(s) from the answer ledger)",
+          "code": 0
+        }
+      ],
+      "tracker": {
+        "roundId": 0,
+        "dimensions": {
+          "goal": {
+            "level": "high",
+            "known": [
+              "answer goal"
+            ],
+            "unknown": [],
+            "confidence": 0
+          },
+          "constraint": {
+            "level": "high",
+            "known": [
+              "answer constraint"
+            ],
+            "unknown": [],
+            "confidence": 0
+          },
+          "success": {
+            "level": "high",
+            "known": [
+              "answer success"
+            ],
+            "unknown": [],
+            "confidence": 0
+          },
+          "ontology": {
+            "level": "high",
+            "known": [
+              "answer ontology"
+            ],
+            "unknown": [],
+            "confidence": 0
+          }
+        },
+        "contradictions": [
+          {
+            "contradictionId": "c1",
+            "severity": "high",
+            "summary": "conflict"
+          }
+        ],
+        "assumptions": [],
+        "autoResolveCount": 0,
+        "consecutiveAutoResolves": 0,
+        "scanRounds": 1,
+        "lastScanRoundId": 1
+      },
+      "rows": [
+        {
+          "sessionId": "s1",
+          "event": "scan_completed",
+          "roundId": 1,
+          "contradictionCount": 0,
+          "highContradictionCount": 0,
+          "map": {
+            "q0": "goal",
+            "q1": "constraint",
+            "q2": "success",
+            "q3": "ontology"
+          }
+        }
+      ],
+      "mapOrders": [
+        [
+          "q0",
+          "q1",
+          "q2",
+          "q3"
+        ]
+      ],
+      "gate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 1,
+        "warnings": [
+          "1 high-severity contradiction(s) still open"
+        ]
+      },
+      "shapeGate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 1,
+        "warnings": [
+          "1 high-severity contradiction(s) still open"
+        ]
+      }
+    }
+  },
+  {
+    "id": "assumption-blocks",
+    "actions": [
+      {
+        "kind": "qa",
+        "id": "q0",
+        "question": "what about goal?",
+        "answers": [
+          "answer goal"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q1",
+        "question": "what about constraint?",
+        "answers": [
+          "answer constraint"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q2",
+        "question": "what about success?",
+        "answers": [
+          "answer success"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "qa",
+        "id": "q3",
+        "question": "what about ontology?",
+        "answers": [
+          "answer ontology"
+        ],
+        "turn": "t1"
+      },
+      {
+        "kind": "scan",
+        "argv": [
+          "--derive",
+          "--map",
+          "q0=goal",
+          "--map",
+          "q1=constraint",
+          "--map",
+          "q2=success",
+          "--map",
+          "q3=ontology"
+        ]
+      },
+      {
+        "kind": "patch",
+        "value": {
+          "assumptions": [
+            {
+              "id": "a1",
+              "text": "unrecorded",
+              "recorded": false
+            }
+          ]
+        }
+      }
+    ],
+    "expect": {
+      "results": [
+        {
+          "output": "scan record: round 1 recorded for session s1 (contradictions=0, high=0, derived=4 dimension(s) from the answer ledger)",
+          "code": 0
+        }
+      ],
+      "tracker": {
+        "roundId": 0,
+        "dimensions": {
+          "goal": {
+            "level": "high",
+            "known": [
+              "answer goal"
+            ],
+            "unknown": [],
+            "confidence": 0
+          },
+          "constraint": {
+            "level": "high",
+            "known": [
+              "answer constraint"
+            ],
+            "unknown": [],
+            "confidence": 0
+          },
+          "success": {
+            "level": "high",
+            "known": [
+              "answer success"
+            ],
+            "unknown": [],
+            "confidence": 0
+          },
+          "ontology": {
+            "level": "high",
+            "known": [
+              "answer ontology"
+            ],
+            "unknown": [],
+            "confidence": 0
+          }
+        },
+        "contradictions": [],
+        "assumptions": [
+          {
+            "id": "a1",
+            "text": "unrecorded",
+            "recorded": false
+          }
+        ],
+        "autoResolveCount": 0,
+        "consecutiveAutoResolves": 0,
+        "scanRounds": 1,
+        "lastScanRoundId": 1
+      },
+      "rows": [
+        {
+          "sessionId": "s1",
+          "event": "scan_completed",
+          "roundId": 1,
+          "contradictionCount": 0,
+          "highContradictionCount": 0,
+          "map": {
+            "q0": "goal",
+            "q1": "constraint",
+            "q2": "success",
+            "q3": "ontology"
+          }
+        }
+      ],
+      "mapOrders": [
+        [
+          "q0",
+          "q1",
+          "q2",
+          "q3"
+        ]
+      ],
+      "gate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      },
+      "shapeGate": {
+        "ready": false,
+        "scanRan": true,
+        "highContradictionCount": 0,
+        "warnings": [
+          "interview is not ready (dimensions/assumptions incomplete)"
+        ]
+      }
+    }
+  },
+  {
+    "id": "unverified-record-data-loss",
+    "classification": "intentionally-changed",
+    "reason": "Refuse a state rewrite that discards stored unverified records; reuse existing cliVerdictsIntact.",
+    "oracle": {
+      "result": {
+        "output": "scan record: round 1 recorded for session s1 (contradictions=0, high=0)",
+        "code": 0
+      },
+      "recordsAfter": []
+    }
+  },
+  {
+    "id": "unreadable-state-data-loss",
+    "classification": "intentionally-changed",
+    "reason": "Refuse replacement of an unreadable state file; preserve existing bytes and ledger.",
+    "oracle": {
+      "result": {
+        "output": "scan record: round 1 recorded for session s1 (contradictions=0, high=0)",
+        "code": 0
+      },
+      "stateReplaced": true
+    }
+  }
+]
