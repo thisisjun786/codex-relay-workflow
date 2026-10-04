@@ -5,7 +5,6 @@ package recall
 import (
 	"errors"
 	"math"
-	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -161,16 +160,15 @@ func indexRankRows(db *RwDb, opts resolvedQuery) ([]indexRankRow, bool, error) {
 		score := indexRankLaneScore(fts, id, LaneWeightFTS) + indexRankLaneScore(tri, id, LaneWeightTri) + RecencyScore(ts, nowMs)
 		scored = append(scored, indexRankScoredRow{id, score, row})
 	}
-	sort.SliceStable(scored, func(i, j int) bool {
-		a, b := scored[i], scored[j]
+	JSSort(scored, func(a, b indexRankScoredRow) float64 {
 		delta := b.score - a.score
 		if delta != 0 && !math.IsNaN(delta) {
-			return delta < 0
+			return delta
 		}
 		if c := rolloutCompare(memoryStatusString(a.row["ts"]), memoryStatusString(b.row["ts"])); c != 0 {
-			return c > 0
+			return -float64(c)
 		}
-		return a.id < b.id
+		return a.id - b.id
 	})
 	truncated := float64(len(scored)) > opts.Limit
 	rows := make([]indexRankRow, indexRankSliceEnd(len(scored), opts.Limit))

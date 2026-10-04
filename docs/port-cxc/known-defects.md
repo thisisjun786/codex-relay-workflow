@@ -694,3 +694,9 @@ The pinned oracle already publishes through an exclusive 0600 temporary file and
 - Equal score/date hits compare as -1 in both directions, so the ranking depends on V8's comparison schedule rather than a consistent ordering (source recall/src/memory-search.ts:222-225; tie grids in TestRankAndTrimNodeOracle); port: kept.
 - NaN scores compare unequal even to themselves and produce NaN differences, which V8 treats as zero; mixing these with the nonzero tie comparator makes ranking implementation-dependent (source recall/src/memory-search.ts:223-225; mixed grids in TestRankAndTrimNodeOracle); port: kept.
 - The limit is checked after appending, so a nonpositive limit returns one hit from nonempty candidates rather than none (source recall/src/memory-search.ts:232-233; cap-limit grids in TestRankAndTrimNodeOracle); port: kept.
+
+## Found by the CRW-373 recall index ranking port
+
+- A nonfinite `nowMs` can yield NaN scores for dated rows but finite lane scores for undated rows, making the score/timestamp/id comparator inconsistent; its observable order then depends on V8's comparison schedule (source `recall/src/index-search.ts:149-153,349-357`, recorded `dates/date/1`); port: kept, using the existing V8-compatible sorter and preserving Map insertion order.
+- Fractional limits are not normalized: a recent page truncated at limit 1.5 throws `Invalid array length`, and a limit of 10.25 makes the 102.5-row pool throw `datatype mismatch` in either ordering (source `recall/src/index-search.ts:96-98,314,378-386`, recorded rank/edge numeric cases); port: kept.
+- The ranking test's comment that a two-character Korean query leaves both lanes empty is not universal: unicode61 FTS can rank a standalone `한글` token; `한글` within `한글문서` is the actual empty-lane LIKE witness (source `recall/test/index-rank.test.ts:166-176`, recorded rank/edge Korean cases); port: kept.
