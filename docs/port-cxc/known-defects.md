@@ -649,3 +649,9 @@ The pinned oracle already publishes through an exclusive 0600 temporary file and
 - Empty quoted and dollar-bearing heredoc delimiters are not recognized, letting a quote in the body conceal a following real redirect (source `shell-write-destinations.ts:54-57,87-99`); port: fixed (security: delimiter parsing removes quotes without expansion, accepts a present empty word, and strips the body independently of its contents).
 - CR is JavaScript whitespace but is part of a POSIX filename, so `>a\rb` reports only `a` (source `shell-write-destinations.ts:174-184`); port: fixed (security: add the full CR-containing filename while retaining the oracle target).
 - An unquoted heredoc terminator continued with backslash-newline is not joined by the oracle, hiding following Bash redirects (source `shell-write-destinations.ts:64-75`); port: fixed (security: the additive scanner also recognizes Bash's continued terminator; this intentionally conservative addition covers that shell-specific behavior).
+
+## CRW-364 — current-directory session context
+
+- Only the first four nonsynthetic user rows are inspected, so four read-time harness blocks hide a later human opener (recall/src/cwd-context.ts:143-157 at v0.2.40); port: kept.
+- Excerpt limits below three use a negative slice end and can produce an excerpt longer than the requested limit (recall/src/cwd-context.ts:156 at v0.2.40); port: kept.
+- Heading whitespace can span line breaks, so a bare heading marker can take the next body line as its summary title (recall/src/cwd-context.ts:231-233 at v0.2.40); port: kept.
