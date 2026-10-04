@@ -29,21 +29,26 @@ func TestCleanupObservationsOutliveErrorBound(t *testing.T) {
 	}
 }
 func TestCleanupFailuresAreBounded(t *testing.T) {
-	for _, failure := range []error{errors.New("archive refusal"), &PhaseTimeout{Method: "thread/read", Phase: "ack", Bound: time.Second}} {
+	for _, failure := range []error{errors.New("archive refusal"), &PhaseTimeout{Method: "thread/read", Phase: "ack", Bound: time.Second}, ErrDescendantsUnproved} {
 		t.Run(failure.Error(), func(t *testing.T) {
 			c, host := subscriptionClient(t)
 			c.subscriptions.retryFloor = time.Millisecond
 			var calls atomic.Int32
+			wantCalls, unsubscribes := descendantErrorLimit, 1
+			if errors.Is(failure, ErrDescendantsUnproved) {
+				wantCalls, unsubscribes = 1, 2
+				host.Script("thread/unsubscribe", fakehost.Reply{Error: &fakehost.RPCError{Message: "unsubscribe refusal"}}, fakehost.Reply{})
+			}
 			c.ConfigureSubscriptions(func(context.Context, string) (bool, error) { calls.Add(1); return false, failure })
 			w := rootWatch(t, c)
 			w.Finish("done", false)
 			announceEnd(t, c, host, "done")
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			if err := host.WaitCount(ctx, "thread/unsubscribe", 1); err != nil {
+			if err := host.WaitCount(ctx, "thread/unsubscribe", unsubscribes); err != nil {
 				t.Fatal(err)
 			}
-			if calls.Load() != descendantErrorLimit {
+			if calls.Load() != int32(wantCalls) {
 				t.Fatalf("failed cleanup attempts %d", calls.Load())
 			}
 		})

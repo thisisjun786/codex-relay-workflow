@@ -2,6 +2,7 @@ package appserver
 
 import (
 	"context"
+	"errors"
 	"log"
 	"time"
 
@@ -13,9 +14,14 @@ const descendantErrorLimit = 8
 
 type cleanupConnectionKey struct{}
 
+// ErrDescendantsUnproved admits root release while leaving unproved members loaded.
+var ErrDescendantsUnproved = errors.New("unproved descendants remain loaded")
+
 // ConfigureSubscriptions composes descendant release before client operations.
 // The callback runs under the root gate, on its original socket, after Finish
 // and terminal observations. Bridge libraries know no relay or archive policy.
+// A wrapped ErrDescendantsUnproved warns once and admits unsubscribe; false/nil
+// holds a running subtree, and other errors use bounded retries.
 func (c *Client) ConfigureSubscriptions(cleanup func(context.Context, string) (bool, error)) {
 	c.subscriptions.mu.Lock()
 	c.subscriptions.cleanup = cleanup
@@ -117,6 +123,11 @@ func (m *subscriptionManager) cleanupRoot(thread string, r *subscriptionRoot, co
 		r.cleanupErrors = 0
 		return m.ready(r)
 	}
+	if errors.Is(err, ErrDescendantsUnproved) {
+		r.cleanupAbandoned = true
+		log.Printf("descendant subscription release: %s: %v; releasing root subscription", thread, err)
+		return m.ready(r)
+	}
 	if err != nil {
 		r.cleanupErrors++
 		if r.cleanupErrors == 1 {
@@ -128,7 +139,7 @@ func (m *subscriptionManager) cleanupRoot(thread string, r *subscriptionRoot, co
 			return m.ready(r)
 		}
 	} else {
-		r.cleanupErrors = 0 // A genuine active/unknown hold is not an error retry.
+		r.cleanupErrors = 0 // A running hold is not an error retry.
 	}
 	r.delay = min(releaseRetryCeiling, max(m.retryFloor, r.delay*2))
 	r.due = time.Now().Add(r.delay)

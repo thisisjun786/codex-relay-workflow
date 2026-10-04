@@ -121,15 +121,17 @@ func Clean(ctx context.Context, host Host, child string, opts Options) (Report, 
 		report.Stopped = err.Error()
 		return report, err
 	}
+	var rootHold, rootDetail string
 	if opts.DescendantsOnly {
 		hold, detail, err := d.completedIdle(ctx, child)
 		if err != nil {
 			return stop(err)
 		}
-		if hold != "" {
+		if hold == OutcomeHeldActive {
 			report.Items = append(report.Items, Item{ThreadID: child, Outcome: hold, Detail: detail})
 			return report, nil
 		}
+		rootHold, rootDetail = hold, detail
 	}
 	members, hold, detail, err := d.scan(ctx, child, &report)
 	if err == nil && hold == "" && !opts.DryRun && len(members) > 0 {
@@ -140,13 +142,19 @@ func Clean(ctx context.Context, host Host, child string, opts Options) (Report, 
 	if err != nil {
 		return stop(err)
 	}
-	if opts.DescendantsOnly && hold == "" {
+	if opts.DescendantsOnly && hold != OutcomeHeldActive {
+		if hold == "" {
+			hold, detail = rootHold, rootDetail
+		}
 		for _, m := range members {
-			hold, detail, err = d.completedIdle(ctx, m.id)
+			nextHold, nextDetail, err := d.completedIdle(ctx, m.id)
 			if err != nil {
 				return stop(err)
 			}
-			if hold != "" {
+			if hold == "" || nextHold == OutcomeHeldActive {
+				hold, detail = nextHold, nextDetail
+			}
+			if hold == OutcomeHeldActive {
 				break
 			}
 		}
@@ -179,6 +187,9 @@ func Clean(ctx context.Context, host Host, child string, opts Options) (Report, 
 				return stop(fmt.Errorf("descendant archive: %s: %s", m.id, detail))
 			}
 		}
+	}
+	if opts.DescendantsOnly && hold != "" && !slices.ContainsFunc(members, func(m member) bool { return m.id == child }) {
+		report.Items = append(report.Items, Item{ThreadID: child, Outcome: hold, Detail: detail})
 	}
 	// a never-run thread left loaded may have been taken by the archive of an ancestor that followed
 	if ids, err := d.loadedIDs(ctx); err == nil && slices.ContainsFunc(report.Items, func(it Item) bool { return it.Outcome == OutcomeNoRolloutLeftLoaded }) {

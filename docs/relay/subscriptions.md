@@ -59,19 +59,25 @@ neither client nor subscription-manager mutex. Close cancels and drains the work
 
 Cleanup first proves the root is idle with its latest turn completed, scans the
 loaded subtree twice, and checks every member's completion. A running, unknown,
-unreadable or never-run member holds the whole subtree. An active root alone is
+unreadable or never-run member holds archival of the whole subtree. An active root alone is
 also an incomplete report, even with no loaded descendants. Pending completion
 proof survives holds and later refused sends. Immediately before each descendant
 archive, cleanup rechecks the root, reads the descendant's newest turn, then
 re-reads its identity and status with `thread/read`. Only idle descendants whose
 latest turn completed are archived, deepest first. The root is never archived.
 
-Each callback attempt has a thirty-second budget. Genuine holds keep polling with
-the existing five-second to five-minute backoff. Transport, phase and archive
+Each callback attempt has a thirty-second budget. Known running holds keep polling
+with the existing five-second to five-minute backoff, including mixed subtrees
+with an incomplete idle member. With no known running member, interrupted, failed,
+missing, unreadable or unlistable completion leaves unproved members unarchived,
+logs their identities once, and releases the root subscription on the first attempt.
+Unsubscribe retries reuse that decision; a new acknowledged turn rearms cleanup.
+This advisory release shares the independent-client race described below.
+Transport, phase and archive
 errors stop the attempt before an ancestor archive; eight consecutive errors log
 that descendants remain unreleased and fall back to root subscription release.
 Success resets the error streak; a new acknowledged turn rearms exhausted cleanup
-without discarding older completion proof. An unreadable RPC observation is a hold.
+without discarding older completion proof. An unreadable RPC observation forbids archive.
 Loss abandons only the original socket;
 cleanup never reconnects. None of this runs the cleanup command or changes receipts.
 
