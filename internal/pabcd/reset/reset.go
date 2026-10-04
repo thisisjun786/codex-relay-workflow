@@ -92,21 +92,77 @@ func resetPin(parent *os.Root, name string, observed os.FileInfo) (*os.Root, err
 	return root, nil
 }
 
+// resetRmIfExists is reset.ts rmIfExists. existsSync follows a link, so a link
+// whose target exists is removed (the link itself, never its target) and a
+// dangling one is absent and stays; a non-link is removed with its contents.
 func resetRmIfExists(root *os.Root, name, display string, result *ResetResult) error {
-	// Stat preserves existsSync's dangling-link absence; escaping links fail
-	// closed. RemoveAll removes final links without recursing through them.
-	if _, err := root.Stat(name); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			result.Absent = append(result.Absent, display)
-			return nil
-		}
+	info, err := root.Lstat(name)
+	if errors.Is(err, os.ErrNotExist) {
+		result.Absent = append(result.Absent, display)
+		return nil
+	}
+	if err != nil {
 		return err
 	}
-	if err := root.RemoveAll(name); err != nil {
+	if info.Mode()&os.ModeSymlink == 0 {
+		if err := root.RemoveAll(name); err != nil {
+			return err
+		}
+		result.Removed = append(result.Removed, display)
+		return nil
+	}
+	exists, err := resetLinkTargetExists(root, name)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		result.Absent = append(result.Absent, display)
+		return nil
+	}
+	// Remove unlinks the final component without resolving it, so the target
+	// is never opened or deleted, inside the workspace or outside it.
+	if err := root.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	result.Removed = append(result.Removed, display)
 	return nil
+}
+
+// resetLinkTargetExists is existsSync for the link name in a pinned root.
+// os.Root resolves a target that stays inside the root through the descriptor
+// itself. Any other failure (an absolute target, ".." past the root, more link
+// hops than os.Root follows) is judged by the OS on the root's own path, which
+// is accepted only while that path still names the pinned directory before and
+// after the stat; otherwise the verdict could describe another directory than
+// the one the removal acts on. Callers pass a bare leaf name.
+func resetLinkTargetExists(root *os.Root, name string) (bool, error) {
+	_, err := root.Stat(name)
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	pinned, err := root.Stat(".")
+	if err != nil {
+		return false, err
+	}
+	samePinned := func() error {
+		current, err := os.Stat(root.Name())
+		if err != nil || !os.SameFile(pinned, current) {
+			return fmt.Errorf("reset directory changed while judging a link: %s", name)
+		}
+		return nil
+	}
+	if err := samePinned(); err != nil {
+		return false, err
+	}
+	// Concatenated, not filepath.Join: Join cleans "..", which the kernel resolves physically.
+	_, statErr := os.Stat(root.Name() + string(filepath.Separator) + name)
+	if err := samePinned(); err != nil {
+		return false, err
+	}
+	return statErr == nil, nil
 }
 
 func resetSessions(root *os.Root, base string, result *ResetResult) error {
