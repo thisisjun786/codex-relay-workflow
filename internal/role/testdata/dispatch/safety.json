@@ -1,0 +1,23 @@
+{
+  "oracle": "CXC v0.2.40 commit 3c1459ac",
+  "cases": [
+    {
+      "id": "top-directory-link",
+      "classification": "intentionally-changed",
+      "reason": "Assignment requires refusing every linked ledger component; oracle follows the top .codexclaw link.",
+      "source": "subagent-config/src/fallback-dispatch.ts:71-80",
+      "oracleAction": "ready",
+      "oracleWroteOutsideWorkspace": true,
+      "goErrorContains": "symlink"
+    },
+    {
+      "id": "unrelated-git-root",
+      "classification": "intentionally-changed",
+      "reason": "Assignment requires workspace containment; oracle trusts inherited git routing to an unrelated root.",
+      "source": "subagent-config/src/fallback-dispatch.ts:48-50",
+      "oracleAction": "ready",
+      "oracleWroteOutsideWorkspace": true,
+      "goErrorContains": "contain the workspace"
+    }
+  ]
+}

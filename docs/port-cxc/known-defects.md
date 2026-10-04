@@ -710,3 +710,11 @@ The pinned oracle already publishes through an exclusive 0600 temporary file and
 
 - A startup payload stamped only with `agent_type`, without a nonempty string `agent_id`, receives the root dispatch notice (source `plugins/codexclaw/components/subagent-config/src/fallback-dispatch-cli.ts:36-38`; recorded `agent-type` case); port: kept.
 - Non-null JSON primitives and arrays receive a SessionStart dispatch card despite carrying no hook event or session identity; only null and malformed JSON are silent (source `plugins/codexclaw/components/subagent-config/src/fallback-dispatch-cli.ts:36-38`; recorded `array`, `boolean`, `string` and `null` cases); port: kept.
+
+## CRW-529 dispatch ledger library
+
+- A linked top-level `.codexclaw` redirects dispatch storage outside the workspace because only its descendants are checked (`subagent-config/src/fallback-dispatch.ts:71-80`); port: fixed, the assignment requires refusing every ledger directory link, including `.crw`.
+- Root discovery trusts a successful git response naming an unrelated workspace (`subagent-config/src/fallback-dispatch.ts:48-50`); port: fixed, the assignment requires canonical cwd containment before storage.
+- A created report is accepted before spawn issuance and can turn a reconciled attempt back into running (`subagent-config/src/fallback-dispatch.ts:171-176`); port: kept, issuance rules belong to the managed-spawn slice.
+- Stored status validation coerces values to strings, admitting singleton arrays while subsequent strict comparisons can return an array action or reconcile a nominally ready attempt (`subagent-config/src/fallback-dispatch.ts:95,100,121,156,158`); port: kept.
+- A process killed between temporary write and rename can leave an orphan temporary dispatch record, with no sweep (`subagent-config/src/fallback-dispatch.ts:110-114`); port: kept.

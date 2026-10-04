@@ -292,7 +292,10 @@ func dispatchRead(path, session, id string) (Dispatch, error) {
 		return d, errors.New("invalid attempts")
 	}
 	if d.Status, err = dispatchStatus(dispatchRaw(o, "status"), "active", "stopped", "complete", "main-direct"); err != nil {
-		return d, errors.New("invalid dispatch status")
+		if errors.Is(err, errNotObject) {
+			return d, errors.New("invalid dispatch status")
+		}
+		return d, err
 	}
 	for i, raw := range attempts {
 		a := DispatchAttempt{}
@@ -317,7 +320,10 @@ func dispatchRead(path, session, id string) (Dispatch, error) {
 		}
 		a.SpawnIssued = string(spawn) == "true"
 		if a.Status, err = dispatchStatus(dispatchRaw(a.raw, "status"), "ready", "claimed", "running", "reconcile", "failed", "complete"); err != nil {
-			return d, errors.New("invalid attempt status")
+			if errors.Is(err, errNotObject) {
+				return d, errors.New("invalid attempt status")
+			}
+			return d, err
 		}
 		for _, field := range []struct {
 			key string
