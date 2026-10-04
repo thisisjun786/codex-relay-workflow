@@ -47,12 +47,17 @@ func TestLivePullTargetReaderRefusesAnswersThatDoNotNameThePullRequestHead(t *te
 			}
 		})
 	}
-	for _, repository := range []string{"/srv/local/R.git", "owner", "owner/repo/extra", "-owner/repo"} {
-		if _, err := (TargetReader{GH: "/nonexistent/gh"}).PullRequestHead(context.Background(), repository, 500); err == nil {
-			t.Fatalf("%s has no pull request this can read", repository)
+	// a repository that is no owner/name, and a number that is no pull request, are refused before the forge is asked
+	gh, log := fakeGH(t, "printf '%s\\n' '{\"number\":500,\"head\":{\"sha\":\""+sha+"\"}}'")
+	for _, tc := range []struct {
+		repository string
+		number     int64
+	}{{"/srv/local/R.git", 500}, {"owner", 500}, {"owner/repo/extra", 500}, {"-owner/repo", 500}, {"owner/repo", 0}, {"owner/repo", -3}} {
+		if _, err := (TargetReader{GH: gh}).PullRequestHead(context.Background(), tc.repository, tc.number); err == nil {
+			t.Fatalf("%s#%d has no pull request this can read", tc.repository, tc.number)
 		}
 	}
-	if _, err := (TargetReader{GH: "/nonexistent/gh"}).PullRequestHead(context.Background(), "owner/repo", 0); err == nil {
-		t.Fatal("pull request 0 does not exist")
+	if _, err := os.Stat(log); !os.IsNotExist(err) {
+		t.Fatalf("the forge was asked for a pull request that cannot exist: %v", err)
 	}
 }

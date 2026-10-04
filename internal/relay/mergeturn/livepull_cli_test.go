@@ -58,7 +58,7 @@ func TestLivePullRequestThroughTheCLI(t *testing.T) {
 	}
 	code, refused := c.request("501", "head-501")
 	detail, _ := refused["detail"].(string)
-	if code != 2 || refused["ok"] != false || refused["reason"] != "disposition_conflict" || !strings.Contains(detail, turn) || !strings.Contains(detail, "pull request 500") || !strings.Contains(detail, "place 1 of 1") {
+	if code != 2 || refused["error"] != "refused" || refused["reason"] != "disposition_conflict" || !strings.Contains(detail, turn) || !strings.Contains(detail, "pull request 500") || !strings.Contains(detail, "place 1 of 1") {
 		t.Fatalf("another pull request: exit %d %v", code, refused)
 	}
 }

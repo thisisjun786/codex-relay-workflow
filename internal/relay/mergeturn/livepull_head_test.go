@@ -304,6 +304,16 @@ func TestLivePullCheckRefusesAHeadThatIsNotThePullRequests(t *testing.T) {
 	livePullDecision(t, answer, "head-500")
 }
 
+// The check compares the pull request's head with the restated one as commits too: the forge's text is not the declared text.
+func TestLivePullCheckComparesHeadsAsCommits(t *testing.T) {
+	w, pulls, turn := livePullBound(t)
+	pulls.set(fxRepo, 500, " HEAD-500 ")
+	answer, err := livePullCheck(w, turn, "head-500", livePullReader{target: w.target, pulls: pulls})
+	if err != nil || answer["state"] != Merging {
+		t.Fatalf("a head that is the same commit was refused: %v %v", answer, err)
+	}
+}
+
 func TestLivePullCheckFailsClosedWhenThePullRequestIsNotRead(t *testing.T) {
 	w, pulls, turn := livePullBound(t)
 	pulls.breakRead(fxRepo, 500, "the forge timed out")

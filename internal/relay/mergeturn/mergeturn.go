@@ -215,6 +215,17 @@ func (s *Service) Request(ctx context.Context, repository, base, project, holder
 		}
 		live, e := s.Store.LiveMergeClaim(tx, target, holder)
 		if e == nil {
+			var asked ClaimOptions
+			if len(options) > 0 {
+				asked = options[0]
+			}
+			// the holder has one live claim per target: a request for another pull request is refused, not answered with it
+			if !requestIsLiveClaim(live, asked) {
+				if refusal, e = s.otherPullRequestRefusal(tx, live, asked, holder); e != nil {
+					return e
+				}
+				return s.Registry.RecordCoordinationConflict(tx, *refusal, at)
+			}
 			id = live.TurnID
 			replayed = true
 			return nil
