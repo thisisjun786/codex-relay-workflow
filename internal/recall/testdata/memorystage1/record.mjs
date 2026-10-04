@@ -26,6 +26,7 @@ add('sql-quote', "quagga' OR 1=1", [row('no','quagga')], {synonyms:false});
 add('unicode-like-kept', 'ü', [row('upper','Ü')]);
 add('scalar-body', '123', [['number',123,null,null]]);
 add('blob-body', '97', [], {}, {schema: "CREATE TABLE stage1_outputs(thread_id,raw_memory,rollout_summary,source_updated_at); INSERT INTO stage1_outputs VALUES ('blob', X'6162',NULL,NULL)"});
+add('blob-body-positive', 'ab 97', [], {any:true}, {schema: "CREATE TABLE stage1_outputs(thread_id,raw_memory,rollout_summary,source_updated_at); INSERT INTO stage1_outputs VALUES ('blob', X'6162',NULL,NULL)"});
 add('null-empty-id-crlf', 'quagga', [row(null,'quagga\r\nnotes','',null),row('','quagga')]);
 add('nonstring-id', 'quagga', [row(42,'quagga')]);
 add('invalid-date-partial', 'quagga', [row('fresh','quagga','',now/1000),row('bad','quagga','',-1e13)]);

@@ -530,6 +530,35 @@
     }
   },
   {
+    "name": "blob-body-positive",
+    "query": "ab 97",
+    "rows": [],
+    "options": {
+      "nowMs": 1783296000000,
+      "any": true
+    },
+    "schema": "CREATE TABLE stage1_outputs(thread_id,raw_memory,rollout_summary,source_updated_at); INSERT INTO stage1_outputs VALUES ('blob', X'6162',NULL,NULL)",
+    "calls": [],
+    "out": {
+      "hits": [
+        {
+          "origin": "stage1",
+          "kind": "stage1",
+          "relpath": "stage1_outputs/blob",
+          "threadId": "blob",
+          "updatedAt": null,
+          "excerpt": "97,98\n",
+          "startLine": null,
+          "cwd": null,
+          "score": 2
+        }
+      ],
+      "warnings": [],
+      "scannedFiles": 0,
+      "elapsedMs": 0
+    }
+  },
+  {
     "name": "null-empty-id-crlf",
     "query": "quagga",
     "rows": [
