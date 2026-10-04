@@ -89,7 +89,7 @@ func shellVerbLoadGolden(t *testing.T) shellVerbGolden {
 	if err := json.Unmarshal(raw, &golden); err != nil {
 		t.Fatal(err)
 	}
-	if len(golden.Entry) != 341 || len(golden.Units) != 353 {
+	if len(golden.Entry) != 342 || len(golden.Units) != 353 {
 		t.Fatalf("incomplete recording: %d entries, %d units", len(golden.Entry), len(golden.Units))
 	}
 	return golden
