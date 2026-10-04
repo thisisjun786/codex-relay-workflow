@@ -296,6 +296,7 @@ func scanRecordPropertyKey(v any) (string, error) {
 	case *scanRecordReference:
 		if m, ok := x.value.(map[string]any); ok {
 			if _, own := m["toString"]; own {
+				//lint:ignore ST1005 Preserve the oracle's observable TypeError text.
 				return "", errors.New("Cannot convert object to primitive value")
 			}
 			return "[object Object]", nil
@@ -314,6 +315,7 @@ func scanRecordPropertyKey(v any) (string, error) {
 		}
 		return strings.Join(parts, ","), nil
 	}
+	//lint:ignore ST1005 Preserve the oracle's observable TypeError text.
 	return "", errors.New("Cannot convert object to primitive value")
 }
 func scanRecordNumberText(n float64) string {
