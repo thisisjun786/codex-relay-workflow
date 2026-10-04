@@ -558,3 +558,45 @@ The pinned oracle already publishes through an exclusive 0600 temporary file and
 - The FTS triggers cover INSERT and DELETE but not UPDATE, so changing a message in place leaves both search indexes stale (source `plugins/codexclaw/components/recall/src/index-db.ts:80-87`); port: kept.
 - `readHitCounts` suppresses every read error as empty history, whereas `bumpHitCounts` throws for a missing table and commits earlier refs before a later ref fails despite the shared tolerance comment (source `plugins/codexclaw/components/recall/src/index-db.ts:172-174`, `:182-205`); port: kept.
 - INTEGER affinity permits nonnumeric text in `hit_count`; its Number conversion can return NaN or Infinity to the penalty consumer (source `plugins/codexclaw/components/recall/src/index-db.ts:190`); port: kept.
+
+## Found by CRW-360 plan init library port
+
+- The seeded plan `--date` observation remains physically unchanged under this append-only port: unknown flags are ignored and their bare values can become the positional slug, including `--date` before `--slug`; this section records its disposition (source `plugins/codexclaw/components/pabcd-state/src/plan-cli.ts:83-101`); port: kept.
+- `plan init -h` treats `-h` as the slug `h`, while `plan init --help` rejects the missing slug instead of displaying help (source `plugins/codexclaw/components/pabcd-state/src/plan-cli.ts:76-94`); port: kept.
+- A six-digit date prefix is accepted without checking the calendar, so `999999_name` creates a unit bearing that prefix (source `plugins/codexclaw/components/pabcd-state/src/plan-cli.ts:51-55`); port: kept.
+- A failed document write leaves the partially created plan unit and blocks a later init of that name; the scaffold is not fsynced (source `plugins/codexclaw/components/pabcd-state/src/plan-cli.ts:183-192`); port: kept.
+- A symlinked plan parent is followed and can redirect creation outside the workspace, and a direct caller's date or slug can escape the workspace (source `plugins/codexclaw/components/pabcd-state/src/plan-cli.ts:177-185`); port: fixed by the explicit containment and symlink-parent refusal requirement; recorded safety cases are intentionally-changed.
+- The exists-then-recursive-mkdir and non-exclusive document writes can overwrite a concurrent creator's files or truncate a record reached by a document symlink (source `plugins/codexclaw/components/pabcd-state/src/plan-cli.ts:179-190`); port: fixed as a record data-loss defect using exclusive unit and document creation; the recorded raced-file case is intentionally-changed.
+- A direct library caller can bypass the nine-phase parser cap: phase 10 has file `100_phase10.md` but heading `0100`, because the document template interpolates `0${n}0` rather than padding the decade (source `plugins/codexclaw/components/pabcd-state/src/plan-cli.ts:137` and `:189`); port: kept.
+
+## Found by the CRW-508 recall chat scan port
+
+- Scan limits are applied in file/entry iteration order before the stable global timestamp sort, so a newer matching message can be excluded by an earlier message in the same rollout (source `recall/src/chat-search.ts:313-315,342-344,373`; recorded `chronology` case in `testdata/chatscan/oracle.json`); port: kept.
+- Reaching the limit can report truncation merely because another entry/file remains, before its source, role or match filters run; reaching it on the final entry of the final file reports no warning (source `recall/src/chat-search.ts:313-319,342-349`; recorded limit cases); port: kept.
+- A fractional context window throws when its clamped start is a positive noninteger; windows starting at zero can succeed, and infinite context includes every visible entry (source `recall/src/chat-search.ts:383-387`; recorded context cases); port: kept.
+- Positive days outside JavaScript's Date range throw `Invalid time value` after metadata loading; an empty direct-scan plan returns before that cutoff is evaluated (source `recall/src/chat-search.ts:296-307`; recorded infinite-days and empty-query cases); port: kept.
+- A NaN limit defeats both limit comparisons and the truncation warning, allowing more hits than the maximum advertised cap (source `recall/src/chat-search.ts:313,342,370`; recorded 250-hit dense case); port: kept.
+- The raw JSON file prefilter can miss decoded text containing escaped query characters, even though the per-message matcher would find it (source `recall/src/chat-search.ts:334,349`; recorded escaped `CI` case); port: kept.
+
+## CRW-499 — install features commands
+
+- Enable, disable and status ignore trailing arguments except position-independent help, so an unknown option can still run a mutation (source `config-guard/src/cli.ts:159-167,197-262` at v0.2.40; `TestFeaturesHelpUsageAndStatus`); port: kept.
+- Explicit enable clears the self-heal opt-out even after a soft flag failure, and marker read/write errors are swallowed (source `config-guard/src/cli.ts:199-204,223-227` at v0.2.40; `TestFeaturesSoftAndHardFailures`, `TestFeaturesUnreadableSettingsAndManifest`); port: kept.
+- Disable prints success and exits 0 when individual feature-disable calls fail; failed flags are omitted without a diagnostic (source `config-guard/src/deactivate.ts:184-185`, `src/cli.ts:230-258` at v0.2.40; `TestFeaturesDisableBranches`); port: kept.
+- Repeated enable records the now-enabled flags as pre-existing, losing the earlier feature ownership, while managed-key ownership survives (source `config-guard/src/activate.ts:225-231,269-286` at v0.2.40; `TestFeaturesManagedKeyRoundTrips`); port: kept.
+- Settings and manifest writes can truncate a file when interrupted, and marker read failures can replace unread consent data (source `config-guard/src/activate.ts:278,299`, `src/deactivate.ts:58-65,155`, `src/self-heal.ts:258-269,276-277` at v0.2.40); port: fixed (data loss: command glue reuses the already ported read-refusing, fsynced temporary-file/rename owners; intentionally-changed unreadable-settings command cases preserve dangling links).
+
+## Found by the CRW-509 recall memory helper port
+
+- The thread-id reader scans anywhere in the first 2,000 UTF-16 units, and its whitespace match can cross a newline to capture a heading or another key as the id (source recall/src/memory-search.ts:260-262; recorded threadId cases and TestMemoryMarkdownTreeAndFrontmatter); port: kept.
+- The cwd reader captures only the first non-whitespace token, truncating paths containing spaces and retaining quote characters (source recall/src/memory-search.ts:276-284; recorded cwd cases and TestMemoryMarkdownTreeAndFrontmatter); port: kept.
+- Excerpt offsets are found in lowercased text but applied to the original, so U+0130 lowercase expansion shifts the excerpt after that character (source recall/src/memory-search.ts:418-424; recorded excerpt cases and TestMemoryParagraphsAndExcerpts); port: kept.
+- UTF-16 prefix/excerpt slices can leave a lone surrogate; Go strings encode that boundary as U+FFFD instead of JavaScript's lone-surrogate JSON escape (source recall/src/memory-search.ts:261,277,421-423; explicitly intentionally-changed representation cases with a reason in testdata/memoryrank/oracle.json and TestMemoryOracle); port: kept as a platform-boundary difference outside the well-formed UTF-8 output domain.
+
+## CRW-522 — evidence resolve and memory allow-write libraries
+
+- Evidence argument lookup ignores unknown tokens, accepts a following flag as a value, uses the first duplicate and does not recognize equals syntax; `--override` is ignored when a receipt is present, rather than rejected (`pabcd-state/src/evidence-cli.ts:36-62`, recorded parser cases); port: kept.
+- Memory help anywhere masks unknown arguments and missing values; repeated session flags use the last value (`pabcd-state/src/memory-cli.ts:46-70`, recorded parser cases); port: kept.
+- Memory allow-write replaces unreadable/corrupt session bytes with default IDLE plus a grant (`pabcd-state/src/memory-cli.ts:80-82`, `TestMemoryDataLossPreservesUnreadableBytes` and recorded intentionally-changed data-loss case); port: fixed, refusing publication and preserving the original bytes.
+- Both writes publish a reconstructed verdict list that drops malformed entries or caps the list at 64 (`pabcd-state/src/evidence-cli.ts:100-101`, `memory-cli.ts:81-82`, `state.ts:57-90,587-589`; recorded intentionally-changed overflow/malformed cases and `TestCLIDataLossPreservesVerdictBytes`); port: fixed, refusing publication when the raw record count/shape cannot be retained.
+- Filesystem error diagnostics other than the stale-lock EEXIST case use the Go state owner's native error text instead of Node/libuv wording (`pabcd-state/src/evidence-cli.ts:132`, `memory-cli.ts:86`; `TestEvidenceAuditFailureAndUnresolvable`, `TestMemoryStateDirectoryFailure`); port: kept as a runtime diagnostic limitation, with exit/failure preservation unchanged.

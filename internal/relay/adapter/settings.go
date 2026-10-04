@@ -31,6 +31,7 @@ func verifyResume(settings delivery.TaskSettings, response any, status any) (con
 			}
 			message = code + ": " + pyjson.Text(first.Get("field")) + " is " + returned + " on the loaded thread and " + pyvalue.Repr(first.Get("expected")) + " in the record; " + sent + " and no turn was started"
 		}
+		message += mcpRecovery(settings, status, mismatches)
 		return contract.OrderedObject{{Key: "code", Value: code}, {Key: "message", Value: message}}, findings, nil
 	}
 	notes := []any{}
