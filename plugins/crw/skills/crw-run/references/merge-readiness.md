@@ -361,6 +361,57 @@ if the child had seen it, and never reads its own triage as a verdict or a merge
 the merge turn still run on a record that has seen the thread or a disposition for it, and nothing merges outside
 the lane.
 
+## The independent review is a reference opinion
+
+A child may run the independent code review (`crw review`) on its pull request's head and state what
+it did with the result in an `independentReview` item: on the receipt (`emit --independent-review <file>`)
+and as the `independentReview` member of its handoff record. The result is a reference opinion, like the
+Devin and Codex reviews and unlike [the three gates](#the-three-gates). The merge waits for no
+independent review, a missing one stops nothing, and nothing in this section changes the restatement's
+`current`, its problems, the verdict or the exit code of `merge-evidence`.
+
+**Read the raw artifact.** The item names the review's output file by `artifact.path` and the sha256 of
+its bytes. Read that file, not the child's summary of it: its findings and grades, the `needsContext`
+findings the reviewer could not judge from the material it was given, and the status and reason. An
+unusable reviewer call (`invalidReviewerCalls`, and the calls of the artifact recorded as invalid) is
+not a review that found nothing, so a `partial` or `unavailable` status is read as a review that
+covered less, never as a clean one. A finding is judged by its [impact](#judge-a-finding-by-its-impact)
+whoever raised it. For a pull request that changes activation wiring, an installer or security
+text, the parent may run the review once more itself before it decides; that is its choice and not a rule.
+
+**A head the review did not see is usually a base refresh.** The review runs once per patch-id. A head
+that only merged the base has the patch-id of the head the review covered, so it is not reviewed again
+and no review is awaited for it ([a later head has no review of its own](#the-one-run-of-each-reviewer-awaited-before-the-receipt)).
+The item states the candidate's `headPatchId` when the artifact covers another head. Confirm it, since
+the relay does not compute it:
+
+    git diff $(git merge-base origin/dev <head>) <head> | git patch-id --stable
+
+and compare it with the artifact's `patchId`. A different patch-id means the code changed after the
+review; the changed part has had no independent look, which the verdict says.
+
+**The warnings.** `merge-evidence --restate <record> --expect-independent-review` adds an
+`independentReview` object, `{stated, warnings}`, to its output; without the flag it appears only when
+the record states the item. Every warning code starts `independent_review_`:
+
+| Code | The reading found | What the parent does |
+| --- | --- | --- |
+| `absent` | the record states no item | read the handoff for why: the review did not run, or the child did not say so |
+| `malformed` | the item is not the shape the contract states | ask the child to restate it; read the artifact if the path is in it |
+| `unreadable` | the artifact's path is missing, not a regular file or over 8 MiB | open it yourself or ask for the file |
+| `sha256_mismatch` | the file's bytes are not the stated sha256 | the file changed after the child described it: read it as it is, and say so |
+| `artifact_invalid` | the file is not a schema v1 review artifact | treat the review as unusable |
+| `status_differs` | the item's status is not the artifact's | trust the artifact |
+| `head_differs` | the artifact covers another head and the stated patch-id is missing or different | run the patch-id check above |
+| `disposition_missing` | a P0, P1 or security finding of the artifact has no disposition | ask the child, or judge the finding yourself by its impact |
+| `disposition_unknown` | a disposition names a finding the artifact does not have | the item and the artifact disagree: trust the artifact |
+
+A warning is a question to read the artifact, never a reason to return the candidate by itself. A
+finding that is a defect by impact is a defect whether or not it was warned about, and goes back as any
+other finding does; a warning with no such finding behind it is recorded in the verdict and the merge
+goes on. Do not turn a warning into a gate by waiting for a rerun, a fix or a statement that only the
+warning asked for.
+
 ## Judge a finding by its impact
 
 Whether a finding blocks is decided by what it does to this change at its current
