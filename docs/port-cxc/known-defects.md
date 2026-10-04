@@ -828,3 +828,8 @@ The parser feeds a fail-closed memory write gate, so a destination the oracle mi
 - Dates are compared lexically and fallback timestamps are sliced to ten UTF-16 units, without calendar validation (source `recall/src/hook.ts:529,579,582`; recorded non-ISO date label); port: kept.
 - Clipping below three units uses a negative slice end, potentially keeping most of the input and exceeding the requested snippet size (source `recall/src/hook.ts:325-327`; recorded negative and tiny clip budgets); port: kept.
 - A non-ISO fallback timestamp can be sliced through an astral pair in its unquoted date label (source `recall/src/hook.ts:579-582`; recorded two-hit surrogate-date case); port: kept (comparison retains the original units; the unquoted Go UTF-8 presentation uses U+FFFD for the sliced lone unit).
+
+## CRW-388 — recall hooks
+
+- The recovery pointer is sliced at 160 UTF-16 units and can end inside a long command invocation, leaving an unusable command (source `recall/src/hook.ts:646-653`; recorded long-invocation recovery rows); port: kept.
+- Version target extraction matches date and IP address fragments without distinguishing them from software versions (source `recall/src/hook.ts:131`; recorded `2026.10.04 1.2.3.4` target rows); port: kept.

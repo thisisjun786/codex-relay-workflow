@@ -1,0 +1,21 @@
+{
+  "issue": "CRW-388",
+  "pending": [
+    "hook__post-compact-injecting-recall-context__silent_even_with_history",
+    "hook__session-start-injecting-recall-context__baseline_empty_workspace",
+    "hook__session-start-injecting-recall-context__compact_source_gets_recovery_directive",
+    "hook__session-start-injecting-recall-context__resume_source_and_dedicated_tools",
+    "hook__session-start-injecting-recall-context__startup_with_index_injects_untrusted_block",
+    "hook__session-start-injecting-recall-context__startup_without_index_advertises_recall",
+    "hook__session-start-injecting-recall-context__unsupported_memory_store_notice"
+  ],
+  "identical": [
+    "hook__post-compact-injecting-recall-context__baseline_empty_workspace",
+    "hook__user-prompt-submit-detecting-recall-intent__baseline_empty_workspace",
+    "hook__user-prompt-submit-detecting-recall-intent__english_idioms_trigger",
+    "hook__user-prompt-submit-detecting-recall-intent__hardened_patterns_and_raw_invocation_suppression",
+    "hook__user-prompt-submit-detecting-recall-intent__korean_idiom_with_suggested_terms",
+    "hook__user-prompt-submit-detecting-recall-intent__silent_cases"
+  ],
+  "intentionally-changed": []
+}
