@@ -18,7 +18,7 @@
           "op": "mentionedFolders",
           "classification": "intentionally-changed",
           "reason": "CRW skill/namespace/folder, inline tag and marker substitutions.",
-          "input": "$crw-dev and $crw:crw-dev-testing and [$crw-search](skill:///x/skills/search/SKILL.md)",
+          "input": "$crw-dev and $crw:crw-dev-testing and [$crw-search](skill:///x/skills/crw-search/SKILL.md)",
           "folders": [
             "crw-dev",
             "crw-dev-testing",

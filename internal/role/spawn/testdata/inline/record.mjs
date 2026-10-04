@@ -21,7 +21,7 @@ for (const folder of ['dev', 'search', 'dev-testing', 'loop', 'pabcd']) {
   fs.writeFileSync(path.join(skillsDir, folder, 'references/development-practice.md'), 'Detail reference is not automatically loaded.\n');
 }
 const symbolic = s => s.replaceAll(skillsDir, '${SKILLS}');
-const rename = s => s.replaceAll('$codexclaw:cxc-', '$crw:crw-').replaceAll('cxc-', 'crw-').replaceAll('[CXC-', '[CRW-').replaceAll('cxc orchestrate', 'crw orchestrate').replaceAll('cxc loop', 'crw loop').replaceAll('cxc orchestration', 'crw orchestration').replace(/(\$\{SKILLS\})\/([a-z0-9-]+)(?=\/SKILL\.md)/g, '$1/crw-$2');
+const rename = s => s.replaceAll('$codexclaw:cxc-', '$crw:crw-').replaceAll('cxc-', 'crw-').replaceAll('[CXC-', '[CRW-').replaceAll('cxc orchestrate', 'crw orchestrate').replaceAll('cxc loop', 'crw loop').replaceAll('cxc orchestration', 'crw orchestration').replace(/\/(dev|search|dev-testing)(?=\/SKILL\.md)/g, '/crw-$1');
 const groups = [];
 let group;
 const wrap = op => (...args) => {
