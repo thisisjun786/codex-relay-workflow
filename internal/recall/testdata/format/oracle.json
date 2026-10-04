@@ -3631,6 +3631,78 @@
     }
   },
   {
+    "fn": "help",
+    "in": [
+      [
+        "-é"
+      ]
+    ],
+    "out": false
+  },
+  {
+    "fn": "parse",
+    "in": [
+      [
+        "-é"
+      ]
+    ],
+    "error": "Unknown option '-é'. To specify a positional argument starting with a '-', place it at the end of the command after '--', as in '-- \"-é\""
+  },
+  {
+    "fn": "help",
+    "in": [
+      [
+        "-😀"
+      ]
+    ],
+    "out": false
+  },
+  {
+    "fn": "parse",
+    "in": [
+      [
+        "-😀"
+      ]
+    ],
+    "error": "Unknown option '-\ud83d'. To specify a positional argument starting with a '-', place it at the end of the command after '--', as in '-- \"-\\ud83d\""
+  },
+  {
+    "fn": "help",
+    "in": [
+      [
+        "---x"
+      ]
+    ],
+    "out": false
+  },
+  {
+    "fn": "parse",
+    "in": [
+      [
+        "---x"
+      ]
+    ],
+    "error": "Unknown option '---x'. To specify a positional argument starting with a '-', place it at the end of the command after '--', as in '-- \"---x\""
+  },
+  {
+    "fn": "help",
+    "in": [
+      [
+        "--=x"
+      ]
+    ],
+    "out": false
+  },
+  {
+    "fn": "parse",
+    "in": [
+      [
+        "--=x"
+      ]
+    ],
+    "error": "Unknown option '--=x'. To specify a positional argument starting with a '-', place it at the end of the command after '--', as in '-- \"--=x\""
+  },
+  {
     "fn": "path",
     "in": [
       {
@@ -3683,6 +3755,33 @@
       }
     ],
     "out": null
+  },
+  {
+    "fn": "path",
+    "in": [
+      {
+        "cwd": "-<>&"
+      }
+    ],
+    "out": "--cwd path must not start with '-': got \"-<>&\""
+  },
+  {
+    "fn": "path",
+    "in": [
+      {
+        "cwd": "-  "
+      }
+    ],
+    "out": "--cwd path must not start with '-': got \"-  \""
+  },
+  {
+    "fn": "path",
+    "in": [
+      {
+        "cwd": "-\\u2028"
+      }
+    ],
+    "out": "--cwd path must not start with '-': got \"-\\\\u2028\""
   },
   {
     "fn": "path",
@@ -3751,6 +3850,33 @@
     "fn": "path",
     "in": [
       {
+        "cwd-only": "-<>&"
+      }
+    ],
+    "out": "--cwd-only path must not start with '-': got \"-<>&\""
+  },
+  {
+    "fn": "path",
+    "in": [
+      {
+        "cwd-only": "-  "
+      }
+    ],
+    "out": "--cwd-only path must not start with '-': got \"-  \""
+  },
+  {
+    "fn": "path",
+    "in": [
+      {
+        "cwd-only": "-\\u2028"
+      }
+    ],
+    "out": "--cwd-only path must not start with '-': got \"-\\\\u2028\""
+  },
+  {
+    "fn": "path",
+    "in": [
+      {
         "cwd-only": 1
       }
     ],
@@ -3814,6 +3940,33 @@
     "fn": "path",
     "in": [
       {
+        "home": "-<>&"
+      }
+    ],
+    "out": "--home path must not start with '-': got \"-<>&\""
+  },
+  {
+    "fn": "path",
+    "in": [
+      {
+        "home": "-  "
+      }
+    ],
+    "out": "--home path must not start with '-': got \"-  \""
+  },
+  {
+    "fn": "path",
+    "in": [
+      {
+        "home": "-\\u2028"
+      }
+    ],
+    "out": "--home path must not start with '-': got \"-\\\\u2028\""
+  },
+  {
+    "fn": "path",
+    "in": [
+      {
         "home": 1
       }
     ],
@@ -3872,6 +4025,33 @@
       }
     ],
     "out": null
+  },
+  {
+    "fn": "path",
+    "in": [
+      {
+        "index-path": "-<>&"
+      }
+    ],
+    "out": "--index-path path must not start with '-': got \"-<>&\""
+  },
+  {
+    "fn": "path",
+    "in": [
+      {
+        "index-path": "-  "
+      }
+    ],
+    "out": "--index-path path must not start with '-': got \"-  \""
+  },
+  {
+    "fn": "path",
+    "in": [
+      {
+        "index-path": "-\\u2028"
+      }
+    ],
+    "out": "--index-path path must not start with '-': got \"-\\\\u2028\""
   },
   {
     "fn": "path",
@@ -4391,6 +4571,60 @@
   {
     "fn": "age",
     "in": [
+      "September 8 2026",
+      1788998400000,
+      "UTC"
+    ],
+    "out": 2
+  },
+  {
+    "fn": "age",
+    "in": [
+      "8 Sep 2026",
+      1788998400000,
+      "UTC"
+    ],
+    "out": 2
+  },
+  {
+    "fn": "age",
+    "in": [
+      "Tue, 08 Sep 2026 00:00:00 EST",
+      1788998400000,
+      "UTC"
+    ],
+    "out": 1
+  },
+  {
+    "fn": "age",
+    "in": [
+      "Tue, 08 Sep 2026 00:00:00 PST",
+      1788998400000,
+      "UTC"
+    ],
+    "out": 1
+  },
+  {
+    "fn": "age",
+    "in": [
+      "Tue Sep 08 2026 00:00:00 GMT+0000 (Coordinated Universal Time)",
+      1788998400000,
+      "UTC"
+    ],
+    "out": 2
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-9-8 12:00",
+      1788998400000,
+      "UTC"
+    ],
+    "out": 1
+  },
+  {
+    "fn": "age",
+    "in": [
       "+275760-09-13T00:00:00.000Z",
       1788998400000,
       "Asia/Seoul"
@@ -4607,6 +4841,60 @@
   {
     "fn": "age",
     "in": [
+      "September 8 2026",
+      1788998400000,
+      "Asia/Seoul"
+    ],
+    "out": 2
+  },
+  {
+    "fn": "age",
+    "in": [
+      "8 Sep 2026",
+      1788998400000,
+      "Asia/Seoul"
+    ],
+    "out": 2
+  },
+  {
+    "fn": "age",
+    "in": [
+      "Tue, 08 Sep 2026 00:00:00 EST",
+      1788998400000,
+      "Asia/Seoul"
+    ],
+    "out": 1
+  },
+  {
+    "fn": "age",
+    "in": [
+      "Tue, 08 Sep 2026 00:00:00 PST",
+      1788998400000,
+      "Asia/Seoul"
+    ],
+    "out": 1
+  },
+  {
+    "fn": "age",
+    "in": [
+      "Tue Sep 08 2026 00:00:00 GMT+0000 (Coordinated Universal Time)",
+      1788998400000,
+      "Asia/Seoul"
+    ],
+    "out": 2
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-9-8 12:00",
+      1788998400000,
+      "Asia/Seoul"
+    ],
+    "out": 1
+  },
+  {
+    "fn": "age",
+    "in": [
       "+275760-09-13T00:00:00.000Z",
       1788998400000,
       "America/New_York"
@@ -4815,6 +5103,60 @@
     "fn": "age",
     "in": [
       "Sept 8, 2026",
+      1788998400000,
+      "America/New_York"
+    ],
+    "out": 1
+  },
+  {
+    "fn": "age",
+    "in": [
+      "September 8 2026",
+      1788998400000,
+      "America/New_York"
+    ],
+    "out": 1
+  },
+  {
+    "fn": "age",
+    "in": [
+      "8 Sep 2026",
+      1788998400000,
+      "America/New_York"
+    ],
+    "out": 1
+  },
+  {
+    "fn": "age",
+    "in": [
+      "Tue, 08 Sep 2026 00:00:00 EST",
+      1788998400000,
+      "America/New_York"
+    ],
+    "out": 1
+  },
+  {
+    "fn": "age",
+    "in": [
+      "Tue, 08 Sep 2026 00:00:00 PST",
+      1788998400000,
+      "America/New_York"
+    ],
+    "out": 1
+  },
+  {
+    "fn": "age",
+    "in": [
+      "Tue Sep 08 2026 00:00:00 GMT+0000 (Coordinated Universal Time)",
+      1788998400000,
+      "America/New_York"
+    ],
+    "out": 2
+  },
+  {
+    "fn": "age",
+    "in": [
+      "2026-9-8 12:00",
       1788998400000,
       "America/New_York"
     ],
