@@ -412,7 +412,7 @@ func TestMemoryGateAbsolutize(t *testing.T) {
 	for raw, want := range map[string]string{
 		"~": "/h", "'~/x'": "/h/x", `~\x\y`: "/h/x/y", `%UserProfile%/a`: "/h/a", `$env:USERPROFILE\a`: "/h/a", "$Home/a": "/h/a", "$HOME": "/h",
 		"${home}/a": "/h/a", "\"/a/b/\"": "/a/b", "./x": "/w/x", "../x": "/x", "a/../../x": "/x", "": "", "\"": "", "''": "", "   ": "",
-		"~user/x": "/w/~user/x", "$HOMEx/a": "/w/$HOMEx/a", "%USERPROFİLE%/a": "/w/%USERPROFİLE%/a", "'a": "/w/a", `a\b`: "/w/a/b",
+		"~user/x": "/w/~user/x", "$HOMEx/a": "/w/$HOMEx/a", "%USERPROFİLE%": "/w/%USERPROFİLE%", "'a": "/w/a", `a\b`: "/w/a/b", "\"'a'\"": "/w/'a'",
 	} {
 		if got, _ := g.abs(raw, "/w"); got != want {
 			t.Errorf("%q: %q, want %q", raw, got, want)
