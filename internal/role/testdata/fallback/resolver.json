@@ -1,0 +1,80 @@
+[
+  {
+    "name": "multi_agent_v1__spawn_agent",
+    "calls": [
+      {
+        "message": "Report your model and say OK; do not edit files.",
+        "model": "command-code/deepseek-deepseek-v4.1-flash",
+        "reasoning_effort": "low"
+      }
+    ],
+    "output": [
+      {
+        "ok": true
+      }
+    ]
+  },
+  {
+    "name": "collaboration_spawn_agent",
+    "calls": [
+      {
+        "message": "Report your model and say OK; do not edit files.",
+        "model": "command-code/deepseek-deepseek-v4.1-flash",
+        "reasoning_effort": "low",
+        "task_name": "model_probe",
+        "fork_turns": "none"
+      }
+    ],
+    "output": [
+      {
+        "ok": true
+      }
+    ]
+  },
+  {
+    "name": "spawn_agent",
+    "calls": [
+      {
+        "message": "Report your model and say OK; do not edit files.",
+        "model": "command-code/deepseek-deepseek-v4.1-flash",
+        "reasoning_effort": "low",
+        "task_name": "model_probe",
+        "fork_turns": "none"
+      }
+    ],
+    "output": [
+      {
+        "ok": true
+      }
+    ]
+  },
+  {
+    "names": [],
+    "error": "expected one spawn_agent helper, found 0",
+    "calls": []
+  },
+  {
+    "names": [
+      "multi_agent_v1__spawn_agent",
+      "collaboration_spawn_agent"
+    ],
+    "error": "expected one spawn_agent helper, found 2",
+    "calls": []
+  },
+  {
+    "names": [
+      "other_spawn_agent"
+    ],
+    "error": "collab family unresolved: v1=false v2=false",
+    "calls": []
+  },
+  {
+    "names": [
+      "spawn_agent",
+      "send_input",
+      "followup_task"
+    ],
+    "error": "collab family unresolved: v1=true v2=true",
+    "calls": []
+  }
+]

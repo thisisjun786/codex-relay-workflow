@@ -77,7 +77,7 @@ func Environ(entries []string) map[string]string {
 
 // Main is `crw bridge` (and `codex-thread-bridge`): server.py main(). stdout carries MCP frames
 // and nothing else; usage, refusals and logs go to stderr. It returns the process exit code.
-func Main(ctx context.Context, args []string, env map[string]string, stdin io.ReadCloser, stdout io.WriteCloser, stderr io.Writer) int {
+func Main(ctx context.Context, args []string, env map[string]string, stdin io.ReadCloser, stdout io.WriteCloser, stderr io.Writer, configure ...func(*appserver.Client)) int {
 	socket, state := Defaults(env)
 	flags := flag.NewFlagSet("crw bridge", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -118,6 +118,9 @@ func Main(ctx context.Context, args []string, env map[string]string, stdin io.Re
 	}
 	defer store.Close()
 	client := appserver.New(canonical, appserver.DefaultBounds)
+	for _, apply := range configure {
+		apply(client)
+	}
 	defer client.Close()
 	server := NewServer(bridge.New(client, store, policy), PackageVersion, stderr)
 	if err := server.Run(ctx, &sdk.IOTransport{Reader: stdin, Writer: stdout}); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, io.EOF) {
@@ -136,6 +139,6 @@ func expand(path string, env map[string]string) string {
 }
 
 // Run is Main over this process's own streams and environment.
-func Run(ctx context.Context, args []string) int {
-	return Main(ctx, args, Environ(os.Environ()), os.Stdin, os.Stdout, os.Stderr)
+func Run(ctx context.Context, args []string, configure ...func(*appserver.Client)) int {
+	return Main(ctx, args, Environ(os.Environ()), os.Stdin, os.Stdout, os.Stderr, configure...)
 }
