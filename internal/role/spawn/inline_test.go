@@ -196,7 +196,7 @@ func TestSpawnInlineSafeReads(t *testing.T) {
 			root := t.TempDir()
 			outside := t.TempDir()
 			spawnInlineTestWrite(t, root, "crw-dev", "safe")
-			spawnInlineTestWrite(t, outside, "target", "OUTSIDE-SENTINEL")
+			spawnInlineTestWrite(t, outside, "target", "name: crw-dev\ndescription: linked metadata\nOUTSIDE-SENTINEL")
 			target := filepath.Join(outside, "target", "SKILL.md")
 			victim := filepath.Join(root, "crw-dev", "SKILL.md")
 			switch shape {
@@ -205,7 +205,7 @@ func TestSpawnInlineSafeReads(t *testing.T) {
 					t.Fatal(err)
 				}
 				if shape == "file-link-inside" {
-					spawnInlineTestWrite(t, root, "target", "OUTSIDE-SENTINEL")
+					spawnInlineTestWrite(t, root, "target", "name: crw-dev\ndescription: linked metadata\nOUTSIDE-SENTINEL")
 					target = "../target/SKILL.md"
 				}
 				if err := os.Symlink(target, victim); err != nil {
@@ -220,7 +220,7 @@ func TestSpawnInlineSafeReads(t *testing.T) {
 				}
 				target = filepath.Dir(target)
 				if shape == "folder-link-inside" {
-					spawnInlineTestWrite(t, root, "target", "OUTSIDE-SENTINEL")
+					spawnInlineTestWrite(t, root, "target", "name: crw-dev\ndescription: linked metadata\nOUTSIDE-SENTINEL")
 					target = "target"
 				}
 				if err := os.Symlink(target, filepath.Dir(victim)); err != nil {
@@ -358,5 +358,37 @@ func TestSpawnInlineScannerAdversarial(t *testing.T) {
 	}
 	if time.Since(started) > 500*time.Millisecond {
 		t.Fatal("delimiter flood scan exceeded oracle bound")
+	}
+}
+
+func TestSpawnInlineUnicodeLowercase(t *testing.T) {
+	raw, err := os.ReadFile("testdata/inline/unicode.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var f struct {
+		Cases []struct {
+			Input          string
+			Expected       []string
+			Classification string
+		}
+	}
+	if err := json.Unmarshal(raw, &f); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range f.Cases {
+		var got []string
+		for folder := range MentionedFolders(c.Input) {
+			got = append(got, folder)
+		}
+		slices.Sort(got)
+		if !slices.Equal(got, c.Expected) {
+			t.Errorf("%q: got %v want %v", c.Input, got, c.Expected)
+		}
+	}
+	root := spawnInlineTestSkills(t)
+	input := "skill:///x/crw-dev-testİng/SKILL.md"
+	if got := InlineSkillBodies(input, root); got != input {
+		t.Fatal("dotted I selected an ASCII allowlisted skill")
 	}
 }

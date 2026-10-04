@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
@@ -34,7 +35,7 @@ func MentionedFolders(message string) map[string]bool {
 	space := strings.TrimSuffix(strings.TrimPrefix(spawnInlineJSSpace, "["), "]")
 	link := regexp.MustCompile(`[Ss][Kk][Ii][Ll][Ll]://[^` + space + `]*?/([^/` + space + `)]+)/[Ss][Kk][Ii][Ll][Ll]\.[Mm][Dd]`)
 	for _, m := range link.FindAllStringSubmatch(message, -1) {
-		out[strings.ToLower(m[1])] = true
+		out[spawnInlineLowerJS(m[1])] = true
 	}
 	return out
 }
@@ -301,4 +302,53 @@ func spawnInlineDecodeUTF8(data []byte) string {
 		i += taken
 	}
 	return out.String()
+}
+
+// Copied from the unexported JavaScript text helpers in internal/pabcd/attest,
+// keeping this library independent of recall and its storage/runtime features.
+// spawnInlineLowerJS is String.prototype.toLowerCase: the simple case mapping, with U+0130 as "i" and a combining dot above, and capital
+// sigma in its final form at the end of a word (Unicode Final_Sigma).
+func spawnInlineLowerJS(s string) string {
+	rs := []rune(s)
+	var b strings.Builder
+	for i, r := range rs {
+		switch {
+		case r == 0x130:
+			b.WriteString("i\u0307")
+		case r == 0x3a3 && spawnInlineFinalSigma(rs, i):
+			b.WriteRune(0x3c2)
+		default:
+			b.WriteRune(unicode.ToLower(r))
+		}
+	}
+	return b.String()
+}
+
+// spawnInlineFinalSigma: a spawnInlineCased letter precedes rs[i] (skipping case-ignorable characters) and none follows it (likewise).
+func spawnInlineFinalSigma(rs []rune, i int) bool {
+	j := i - 1
+	for j >= 0 && spawnInlineCaseIgnorable(rs[j]) {
+		j--
+	}
+	if j < 0 || !spawnInlineCased(rs[j]) {
+		return false
+	}
+	k := i + 1
+	for k < len(rs) && spawnInlineCaseIgnorable(rs[k]) {
+		k++
+	}
+	return k == len(rs) || !spawnInlineCased(rs[k])
+}
+
+// spawnInlineCased is the Unicode Cased property: Lowercase, Uppercase and titlecase letters.
+func spawnInlineCased(r rune) bool {
+	return unicode.IsUpper(r) || unicode.IsLower(r) || unicode.Is(unicode.Lt, r) || unicode.Is(unicode.Other_Lowercase, r) || unicode.Is(unicode.Other_Uppercase, r)
+}
+
+// spawnInlineCaseIgnorable is the Unicode Case_Ignorable property: the categories Mn, Me, Cf, Lm and Sk, and the Word_Break classes
+// MidLetter, MidNumLet and Single_Quote, which Go's tables do not carry. The data is Go's: a character assigned after the Unicode
+// version of Go's tables or of the oracle's runtime may differ.
+func spawnInlineCaseIgnorable(r rune) bool {
+	return unicode.In(r, unicode.Mn, unicode.Me, unicode.Cf, unicode.Lm, unicode.Sk) ||
+		strings.ContainsRune("'.:\u00b7\u0387\u055f\u05f4\u2018\u2019\u2024\u2027\ufe13\ufe52\ufe55\uff07\uff0e\uff1a", r)
 }
