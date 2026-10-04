@@ -1,0 +1,16 @@
+{
+  "issue": "CRW-521",
+  "pending": [
+    "cli-help__receipt__dash_h",
+    "cli-help__receipt__dashdash_help",
+    "cli-help__receipt__test_dashdash_help",
+    "cli-help__receipt__word_help",
+    "cli__orchestrate__bound_c_to_d_requires_test_receipt",
+    "cli__orchestrate__split_cwd_cycle_closes_on_real_commit_receipt",
+    "cli__receipt__failing_command_recorded",
+    "cli__receipt__not_at_phase_c_refused_plain",
+    "cli__session__bound_worktree_change_advances_b"
+  ],
+  "identical": [],
+  "intentionally-changed": []
+}
