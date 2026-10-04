@@ -114,6 +114,7 @@ func (m *subscriptionManager) cleanupRoot(thread string, r *subscriptionRoot, co
 		return false
 	}
 	if complete && err == nil {
+		r.cleanupErrors = 0
 		return m.ready(r)
 	}
 	if err != nil {

@@ -160,10 +160,10 @@ func TestDescendantDiscoveryPreservesPhaseFailures(t *testing.T) {
 	}
 }
 func TestDescendantArchiveFailureStopsBeforeAncestor(t *testing.T) {
-	s := newScripted(t, thread{id: "child", loaded: true, rollout: true}, thread{id: "sub", parent: "child", loaded: true, rollout: true, refuse: "archive refusal"})
+	s := newScripted(t, thread{id: "child", loaded: true, rollout: true}, thread{id: "sub", parent: "child", loaded: true, rollout: true}, thread{id: "grand", parent: "sub", loaded: true, rollout: true, refuse: "archive refusal"})
 	completedHistory(s, nil)
 	r, err := run(t, s, descendantOptions(t))
-	if err == nil || !strings.Contains(err.Error(), "archive refusal") || outcomes(r) != "sub:failed" || len(s.archived()) != 1 {
+	if err == nil || !strings.Contains(err.Error(), "archive refusal") || outcomes(r) != "grand:failed" || len(s.archived()) != 1 {
 		t.Fatalf("archive failure mapping: err=%v report=%+v archives=%v", err, r, s.archived())
 	}
 }

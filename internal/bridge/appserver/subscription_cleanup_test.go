@@ -2,10 +2,13 @@ package appserver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 )
 
 func TestCleanupObservationsOutliveErrorBound(t *testing.T) {
@@ -44,6 +47,91 @@ func TestCleanupFailuresAreBounded(t *testing.T) {
 				t.Fatalf("failed cleanup attempts %d", calls.Load())
 			}
 		})
+	}
+}
+
+func TestCleanupSuccessResetsErrorStreakAfterUnsubscribeFailure(t *testing.T) {
+	c, host := subscriptionClient(t)
+	c.subscriptions.retryFloor = time.Millisecond
+	host.Script("thread/unsubscribe", fakehost.Reply{Error: &fakehost.RPCError{Message: "unsubscribe refusal"}}, fakehost.Reply{})
+	var calls atomic.Int32
+	c.ConfigureSubscriptions(func(context.Context, string) (bool, error) {
+		n := calls.Add(1)
+		if n < descendantErrorLimit || n == descendantErrorLimit+1 {
+			return false, errors.New("cleanup error")
+		}
+		return true, nil
+	})
+	w := rootWatch(t, c)
+	w.Finish("done", false)
+	announceEnd(t, c, host, "done")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := host.WaitCount(ctx, "thread/unsubscribe", 2); err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != descendantErrorLimit+2 {
+		t.Fatalf("successful cleanup did not reset error streak: %d", calls.Load())
+	}
+}
+
+func TestAcknowledgedTurnRearmsExhaustedCleanup(t *testing.T) {
+	c, host := subscriptionClient(t)
+	c.subscriptions.retryFloor = time.Millisecond
+	entered, release := make(chan struct{}, 1), make(chan struct{})
+	host.Script("thread/unsubscribe", fakehost.Reply{Paused: entered, Release: release, Error: &fakehost.RPCError{Message: "unsubscribe refusal"}}, fakehost.Reply{})
+	var calls atomic.Int32
+	c.ConfigureSubscriptions(func(context.Context, string) (bool, error) {
+		if calls.Add(1) <= descendantErrorLimit {
+			return false, errors.New("cleanup error")
+		}
+		return true, nil
+	})
+	first := rootWatch(t, c)
+	first.Finish("old", false)
+	announceEnd(t, c, host, "old")
+	subscriptionSignal(t, entered)
+	next := make(chan *TurnWatch, 1)
+	go func() { w, _ := c.WatchTurn(context.Background(), "root"); next <- w }()
+	// Observe the queued admission before allowing the old unsubscribe to fail.
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	tick := time.NewTicker(time.Millisecond)
+	defer tick.Stop()
+	for {
+		c.subscriptions.mu.Lock()
+		queued := first.root.refs > len(first.root.watches)
+		c.subscriptions.mu.Unlock()
+		if queued {
+			break
+		}
+		select {
+		case <-tick.C:
+		case <-ctx.Done():
+			close(release)
+			t.Fatal("new watch did not queue")
+		}
+	}
+	close(release)
+	w := <-next
+	if w == nil {
+		t.Fatal("new watch refused")
+	}
+	host.Handle("turn/start", func(json.RawMessage) fakehost.Reply {
+		return fakehost.Reply{Result: map[string]any{"turn": map[string]any{"id": "new"}}}
+	})
+	if _, err := c.Call(w.Context(context.Background()), "turn/start", map[string]any{"threadId": "root"}); err != nil {
+		t.Fatal(err)
+	}
+	w.Finish("new", false)
+	announceEnd(t, c, host, "new")
+	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := host.WaitCount(ctx, "thread/unsubscribe", 2); err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != descendantErrorLimit+1 {
+		t.Fatalf("new turn inherited exhausted cleanup: %d", calls.Load())
 	}
 }
 func TestCleanupBarrierFencesDirectDescendantAdmission(t *testing.T) {

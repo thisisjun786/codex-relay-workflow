@@ -214,6 +214,10 @@ func (m *subscriptionManager) reply(p pending, result, rpcError json.RawMessage)
 			p.watch.refused = rpcError != nil
 			if ids.Turn.ID != "" {
 				p.watch.turn = ids.Turn.ID
+				if rpcError == nil {
+					p.watch.root.cleanupErrors = 0
+					p.watch.root.cleanupAbandoned = false
+				}
 			}
 		}
 		m.mu.Unlock()

@@ -70,7 +70,9 @@ Each callback attempt has a thirty-second budget. Genuine holds keep polling wit
 the existing five-second to five-minute backoff. Transport, phase and archive
 errors stop the attempt before an ancestor archive; eight consecutive errors log
 that descendants remain unreleased and fall back to root subscription release.
-An unreadable RPC observation is a hold. Loss abandons only the original socket;
+Success resets the error streak; a new acknowledged turn rearms exhausted cleanup
+without discarding older completion proof. An unreadable RPC observation is a hold.
+Loss abandons only the original socket;
 cleanup never reconnects. None of this runs the cleanup command or changes receipts.
 
 An isolated codex-cli 0.154.0 probe found that `thread/archive` **accepts an active
@@ -82,7 +84,7 @@ reversible with `thread/unarchive`, which restores visibility, not an interrupte
 turn. A host API with an atomic idle precondition would be needed to remove that race.
 
 The isolated reproduction used a fresh home and socket, a synthetic Responses
-provider, one MCP helper per thread, and the configured Go client's normal watch
+provider, explicit `historyMode: legacy`, one MCP helper per thread, and the configured Go client's normal watch
 lifecycle. Three completed roots and one completed sub-thread measured as follows:
 
 | Observation after finishing watches | Loaded threads | MCP helpers |
