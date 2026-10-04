@@ -1,0 +1,17 @@
+{
+  "issue": "CRW-381",
+  "identical": [],
+  "intentionally-changed": [],
+  "pending": [
+    "cli__chat__natural_language_query_relaxed",
+    "cli__chat__search_help_word_is_a_query",
+    "cli__chat__search_plain_envelope",
+    "cli__chat__search_refresh_builds_index",
+    "cli__chat__search_rejects_bad_arguments",
+    "cli__chat__search_scan_json_and_plain",
+    "cli__memory__search_chat_fallback_and_no_chat",
+    "hook__session-start-injecting-recall-context__startup_with_index_injects_untrusted_block",
+    "hook__session-start-injecting-recall-context__baseline_empty_workspace",
+    "hook__post-compact-injecting-recall-context__baseline_empty_workspace"
+  ]
+}

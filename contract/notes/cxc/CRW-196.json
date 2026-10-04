@@ -1,0 +1,16 @@
+{
+  "issue": "CRW-196",
+  "pending": [
+    "hook__pre-tool-use-attaching-skills__guard_dedupe_needs_exact_prefix",
+    "hook__pre-tool-use-attaching-skills__items_inline_skill_once_across_items",
+    "hook__pre-tool-use-attaching-skills__items_route_and_preserve_attachments",
+    "hook__pre-tool-use-attaching-skills__link_unsafe_skills_root_uses_plugin_token",
+    "hook__pre-tool-use-attaching-skills__recursion_denied_without_grant",
+    "hook__pre-tool-use-attaching-skills__v1_fence_edge_cases",
+    "hook__pre-tool-use-attaching-skills__v1_mention_protection_and_link_repair",
+    "hook__pre-tool-use-attaching-skills__v1_mentions_normalised_leaf_skill_inlined",
+    "hook__pre-tool-use-attaching-skills__v2_surface_guard_inline_affordance"
+  ],
+  "identical": [],
+  "intentionally-changed": []
+}
