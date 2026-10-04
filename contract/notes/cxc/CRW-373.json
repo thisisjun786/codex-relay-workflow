@@ -1,0 +1,8 @@
+{
+  "issue": "CRW-373",
+  "identical": [],
+  "intentionally-changed": [],
+  "pending": [
+    "cli__chat__search_refresh_builds_index"
+  ]
+}

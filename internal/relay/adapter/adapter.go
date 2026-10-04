@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge"
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
@@ -34,16 +35,17 @@ func (e *HostUnavailable) PythonExceptionKind() string { return "HostUnavailable
 
 // Options takes state paths from the caller, never from the host environment.
 type Options struct {
-	RPC         bridge.RPC
-	Ledger      *ledger.Ledger
-	LedgerPath  string
-	Store       *store.Store
-	Clock       delivery.Clock
-	Page        int
-	Policy      bridge.ExecutionPolicy
-	Timeout     time.Duration
-	CallerSlack time.Duration
-	Drain       time.Duration
+	ConfigureClient func(*appserver.Client)
+	RPC             bridge.RPC
+	Ledger          *ledger.Ledger
+	LedgerPath      string
+	Store           *store.Store
+	Clock           delivery.Clock
+	Page            int
+	Policy          bridge.ExecutionPolicy
+	Timeout         time.Duration
+	CallerSlack     time.Duration
+	Drain           time.Duration
 }
 
 // Adapter shares one RPC client and one bridge ledger between concurrent callers.
@@ -62,6 +64,9 @@ type Adapter struct {
 }
 
 func New(options Options) *Adapter {
+	if client, ok := options.RPC.(*appserver.Client); ok && options.ConfigureClient != nil {
+		options.ConfigureClient(client)
+	}
 	page := options.Page
 	if page == 0 {
 		page = Page

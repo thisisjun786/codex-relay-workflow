@@ -27,7 +27,7 @@ import (
 	// The relay commands register in the relay command table when their packages load; cli
 	// brings its own and the registry, delivery and fault families.
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/capacity"
-	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/childcleanup"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/childcleanup"
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/managed"
@@ -44,7 +44,7 @@ const parserExit = 2
 
 func main() {
 	started := time.Now()
-	adapter.Register()
+	adapter.Register(childcleanup.ConfigureSubscriptions)
 	os.Exit(serve(os.Args[0], os.Args[1:], os.Stdout, os.Stderr, started))
 }
 
@@ -199,7 +199,7 @@ func bridge(ctx context.Context, program string, args []string) int {
 	if len(args) > 0 && args[0] == pluginwiring.Flag {
 		return pluginwiring.Bridge(program, args[1:])
 	}
-	return mcp.Run(ctx, args)
+	return mcp.Run(ctx, args, childcleanup.ConfigureSubscriptions)
 }
 
 // relay is the relay CLI.
