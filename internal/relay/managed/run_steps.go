@@ -45,6 +45,10 @@ type startRun struct {
 	record        registry.Relationship
 	sent          map[string]any // the host's receipt for the business send
 	turn          string         // the business turn the host accepted
+
+	attempt    int             // the creation attempt now current: 0 is the request's own operation (reconcile.go)
+	adopted    bool            // the receipt is an unknown creation continued on the thread the App Server showed
+	reconciled *reconciliation // what reconcileCreation concluded, when it ran
 }
 
 // A step settles the request or hands over to the next one. It settles it with the answer Observe gives
@@ -104,6 +108,9 @@ func (r *startRun) finish() {
 // result is the receipt the request has so far, with the ledger the host runs on.
 func (r *startRun) result() startResult {
 	res := NewStartResult(r.identity, r.row, r.assignment, store.PathlibParent(r.m.Store.Path))
+	if r.reconciled != nil {
+		res.Reconciliation = r.reconciled.object()
+	}
 	if r.row.RequestID == "" {
 		res.Revision = nil
 		res.ReservationState = nil
@@ -193,14 +200,14 @@ func (r *startRun) createChild(ctx context.Context) (contract.OrderedObject, err
 	if err := r.m.Adapter.RequireLedger(ctx, r.ledger); err != nil {
 		return nil, err
 	}
-	receipt, err := r.m.Adapter.GetOperation(ctx, r.identity.CreateRequestID)
+	receipt, err := r.currentCreation(ctx)
 	if err != nil {
 		return nil, err
 	}
 	r.receipt = receipt
 	if receipt == nil || receipt["status"] == "not_attempted" {
 		var notReady string
-		r.receipt, notReady, r.projectLock, err = r.m.create(ctx, r.identity, r.req, r.ledger)
+		r.receipt, notReady, r.projectLock, err = r.m.create(ctx, r.attemptIdentity(), r.req, r.ledger)
 		if err != nil {
 			return nil, err
 		}
@@ -211,13 +218,14 @@ func (r *startRun) createChild(ctx context.Context) (contract.OrderedObject, err
 	return nil, nil
 }
 
-// retryStandby is the retry of a creation that failed after its thread started: the standby turn is sent
-// to the thread the failure left, and the receipt says what came of it.
+// retryStandby is the retry of a creation that failed after its thread started, or that was unknown and reconcileCreation continued on the
+// thread it found: the standby turn is sent to that thread, and the receipt says what came of it.
 func (r *startRun) retryStandby(ctx context.Context) (contract.OrderedObject, error) {
-	if pyjson.Text(r.receipt["status"]) != "failed" {
+	if pyjson.Text(r.receipt["status"]) != "failed" && !r.adopted {
 		return nil, nil
 	}
-	receipt, err := r.m.recoverStandby(ctx, r.identity, r.req, r.ledger, r.physical, r.receipt)
+	// The title is set once the standby is accepted, and not again once the receipt is recorded: a replay of an admitted start sets nothing.
+	receipt, err := r.m.recoverStandby(ctx, r.identity, r.req, r.ledger, r.physical, r.receipt, standbyRecovery{attempt: r.attempt, adopted: r.adopted, rename: r.row.ReceiptStatus.String != "accepted"})
 	if err != nil {
 		return nil, err
 	}
@@ -372,14 +380,14 @@ type lifecycleChecker interface {
 	Lifecycle(context.Context, string, string) (bool, string, error)
 }
 
-// awaitStandby holds the business turn back until the standby turn has completed, the child may be sent to
-// and the worker policy is still ready.
+// awaitStandby waits for a known end of the inert standby. An interrupted or failed
+// standby keeps its original anchor; its business send also needs a ready host.
 func (r *startRun) awaitStandby(ctx context.Context) (contract.OrderedObject, error) {
 	turn, err := r.m.Adapter.ReadTurn(ctx, r.task, r.standby)
 	if err != nil {
 		return nil, err
 	}
-	if turn == nil || turn.Status != "completed" {
+	if turn == nil || (turn.Status != "completed" && turn.Status != "interrupted" && turn.Status != "failed") {
 		return r.answer(ctx, "incomplete", "standby", "standby_incomplete")
 	}
 	if check, ok := r.m.Adapter.(lifecycleChecker); ok {
@@ -398,6 +406,17 @@ func (r *startRun) awaitStandby(ctx context.Context) (contract.OrderedObject, er
 	if readiness != "" {
 		return r.answer(ctx, "refused", "business", readiness)
 	}
+	if turn.Status != "completed" {
+		// Observe before consuming the business operation id. The final guard still
+		// rechecks host readiness; neither observation is an atomic turn reservation.
+		code, err := hostReady(ctx, r.m.Adapter, r.task)
+		if err != nil {
+			return nil, err
+		}
+		if code != "" {
+			return r.answer(ctx, "incomplete", "business", code)
+		}
+	}
 	return nil, nil
 }
 
@@ -407,7 +426,7 @@ func (r *startRun) sendBusiness(ctx context.Context) error {
 		return err
 	}
 	var err error
-	r.sent, err = r.m.Adapter.SendMessage(ctx, SendRequest{RequestID: r.identity.DispatchRequestID, ThreadID: r.task, Message: r.m.packet(r.identity, r.row, r.req, r.assignment), Settings: r.childSettings, GuardRPCRequests: 10, BeforeStart: r.businessGuard})
+	r.sent, err = r.m.Adapter.SendMessage(ctx, SendRequest{RequestID: r.identity.DispatchRequestID, ThreadID: r.task, Message: r.m.packet(r.identity, r.row, r.req, r.assignment), Settings: settingsWithRole(r.childSettings, "child"), GuardRPCRequests: 10, BeforeStart: r.businessGuard})
 	return err
 }
 

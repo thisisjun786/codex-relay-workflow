@@ -2,15 +2,13 @@ package dagsched
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
+	"fmt"
 	"sort"
-	"strconv"
-	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -42,13 +40,9 @@ type IntegrationResult struct {
 func (s *Scheduler) ObserveIntegration(ctx context.Context, plan, node, actor string, explicit []Target) (IntegrationResult, error) {
 	out := IntegrationResult{PlanID: plan, NodeID: node}
 	q := s.Store.Q(ctx)
-	snap, _, err := dag.SnapshotAt(ctx, q, plan, 0)
+	snap, n, err := liveNode(ctx, q, plan, node)
 	if err != nil {
 		return out, err
-	}
-	n, ok := nodeOf(snap, node)
-	if !ok {
-		return out, refuse(contract.RefusalUnregisteredScope, "plan %s has no live node %s", plan, node)
 	}
 	if n.Kind != dag.NodeImplementation {
 		return out, refuse(contract.RefusalDispositionConflict, "node %s is a %s node: it has no head to observe", node, n.Kind)
@@ -110,12 +104,9 @@ func (s *Scheduler) ObserveIntegration(ctx context.Context, plan, node, actor st
 			return err
 		}
 		// the targets are judged against the plan as it is now: an edge added while the tips were being read adds a target nobody has observed
-		now, _, err := dag.SnapshotAt(txCtx, tx, plan, 0)
+		now, _, err := stillLive(txCtx, tx, plan, node)
 		if err != nil {
 			return err
-		}
-		if _, ok := nodeOf(now, node); !ok {
-			return refuse(contract.RefusalUnregisteredScope, "plan %s no longer has the live node %s", plan, node)
 		}
 		current, found, err := loadActiveAcceptance(txCtx, tx, plan, node)
 		if err != nil {
@@ -155,8 +146,7 @@ func (s *Scheduler) ObserveIntegration(ctx context.Context, plan, node, actor st
 				}
 			}
 			obs.Seq = lastSeq.Int64 + 1
-			sum := sha256.Sum256([]byte(acc.AcceptanceID + "|" + r.target.Repository + "|" + r.target.BaseRef + "|" + strconv.FormatInt(obs.Seq, 10)))
-			obs.ObservationID = "dio-" + hex.EncodeToString(sum[:])[:32]
+			obs.ObservationID = integrationObservationID(acc.AcceptanceID, r.target.Repository, r.target.BaseRef, obs.Seq)
 			// a merge turn that landed this head on this branch carries the observation
 			var turn sql.NullString
 			if err := tx.QueryRowContext(txCtx, "SELECT turn_id FROM merge_turns WHERE repository = ? AND base_ref = ? AND candidate_head = ? AND state = 'landed' ORDER BY turn_id LIMIT 1",
@@ -241,7 +231,7 @@ func (s *Scheduler) observableRelationship(ctx context.Context, q store.Querier,
 		return refuse(contract.RefusalRelationshipNotActive, "the relationship %s is %s: no integration is recorded for it", rel.ID, rel.Status)
 	}
 	if rel.ParentTaskID != actor {
-		return refuse(contract.RefusalScopeRoleMismatch, "task %s is not the parent of relationship %s, which is held by %s", actor, rel.ID, rel.ParentTaskID)
+		return notParentHeldBy(actor, rel)
 	}
 	return nil
 }
@@ -257,5 +247,39 @@ func landingRef(observations []string) string {
 	}
 	sorted := append([]string(nil), observations...)
 	sort.Strings(sorted)
-	return "dio-set-" + shaOf([]byte(strings.Join(sorted, "|")))[:32]
+	return registry.CoordinationID("dio-set", sorted...)
+}
+
+// ExecutionIntegrated says, for the relationship whose merged mark is (event, generation, revision), whether it executed a plan node and whether every node it executed has landed (CRW-429: the cleanup
+// of a finished child waits for this). applicable is false for a relationship that executed no node. For a node, integrated needs its active acceptance to stand on exactly that mark (its own head, or
+// after a recorded base refresh the later generation) and every target to contain the head with the merged mark on that revision (nodeIntegrated); another relationship's acceptance, none, and another
+// event, generation or revision all answer not integrated. It opens no transaction: call it inside one for one snapshot.
+func (s *Scheduler) ExecutionIntegrated(ctx context.Context, relationship, event string, generation int64, revision string) (applicable, integrated bool, err error) {
+	q := s.Store.Q(ctx)
+	if present, err := tableExists(ctx, q, "dag_node_executions"); err != nil || !present {
+		return false, false, err
+	}
+	nodes, err := s.Store.All(ctx, "SELECT DISTINCT plan_id, node_id FROM dag_node_executions WHERE relationship_id = ? ORDER BY plan_id, node_id", relationship)
+	if err != nil || len(nodes) == 0 {
+		return false, false, err
+	}
+	for _, row := range nodes {
+		plan, node := fmt.Sprint(row.Get("plan_id")), fmt.Sprint(row.Get("node_id"))
+		snap, _, err := dag.SnapshotAt(ctx, q, plan, 0)
+		if err != nil {
+			return true, false, err
+		}
+		acc, found, err := loadActiveAcceptance(ctx, q, plan, node)
+		if err != nil || !found {
+			return true, false, err
+		}
+		stand, err := s.standOf(ctx, q, acc)
+		if err != nil || stand.RelationshipID != relationship || stand.Generation != generation || stand.EventID != event || stand.RevisionHash != revision {
+			return true, false, err
+		}
+		if landed, _, err := s.nodeIntegrated(ctx, q, plan, snap, acc); err != nil || !landed {
+			return true, false, err
+		}
+	}
+	return true, true, nil
 }

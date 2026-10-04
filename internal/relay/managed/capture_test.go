@@ -24,6 +24,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/buildinfo"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
@@ -241,10 +242,7 @@ var executionTime = regexp.MustCompile(`\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?
 // goRuntimeBuild is the build doctor's ownership.runtime_build names for the Go runtime: the
 // holder-identity build, else the version (cli doctor.go runtimeBuild).
 func goRuntimeBuild() string {
-	if cli.Build != "" {
-		return cli.Build
-	}
-	return cli.Version
+	return buildinfo.ID()
 }
 
 // answeringBuild stands for doctor's ownership.runtime_build when it names the runtime that
@@ -259,7 +257,7 @@ func normalizedExecution(t *testing.T, v any, build string) any {
 	case map[string]any:
 		out := map[string]any{}
 		for k, value := range x {
-			if k == "runtime" {
+			if k == "runtime" || k == "writeProbe" {
 				continue
 			}
 			if k == "createdAt" {
@@ -1367,6 +1365,12 @@ func compareManaged(t *testing.T, scenario string, steps int) {
 		var value any
 		if e := json.Unmarshal(buf.Bytes(), &value); e != nil {
 			t.Fatal(e)
+		}
+		if answer, ok := value.(map[string]any); ok && (scenario == "unknown" || scenario == "ledger-retry") {
+			// Go only (CRW-464): the Python engine never asked the host what a lost creation left, so its answer has no such key. The golden is
+			// untouched; TestReconcile* assert the key. Every other scenario compares its whole answer, which shows the key absent whenever
+			// no reconciliation ran.
+			delete(answer, "creationReconciliation")
 		}
 		got = append(got, value)
 		var compact bytes.Buffer

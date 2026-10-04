@@ -20,6 +20,8 @@ type startResult struct {
 	Ledger                                                                           any
 	ReservationState                                                                 any
 	Observed                                                                         contract.OrderedObject
+	// Reconciliation is what the engine concluded about a creation whose outcome was unknown, when it did (reconcile.go).
+	Reconciliation contract.OrderedObject
 }
 
 func (r startResult) result(state, stage string, reason any) contract.OrderedObject {
@@ -42,6 +44,9 @@ func (r startResult) result(state, stage string, reason any) contract.OrderedObj
 		{Key: "selectors", Value: contract.OrderedObject{{Key: "state", Value: r.StatePath}, {Key: "markerRoot", Value: r.MarkerRoot}, {Key: "workspace", Value: r.Workspace}}},
 	}
 	out = append(out, r.Observed...)
+	if r.Reconciliation != nil {
+		out = append(out, contract.Field{Key: "creationReconciliation", Value: r.Reconciliation})
+	}
 	if r.BusinessTurnID != "" {
 		out = append(out, contract.Field{Key: "businessTurnId", Value: r.BusinessTurnID}, contract.Field{Key: "childClaim", Value: "not_observed"}, contract.Field{Key: "hookFiring", Value: "not_observed"})
 		if r.AssignmentID != "" && r.ChildTaskID != "" && validReportingSegment(r.BusinessTurnID) && validReportingSegment(r.ChildTaskID) {

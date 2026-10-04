@@ -161,6 +161,7 @@ type reading struct {
 	unjudged                                                                                 map[string]any
 	lists                                                                                    map[string][]string
 	readerFault                                                                              *string
+	excludedInvocations                                                                      []any
 }
 
 var listNames = []string{"eventsWithMoreThanOneAcceptance", "acceptedWithoutOutcome", "outcomesWithoutClaim", "acceptedRowsWithoutLedger", "guardAskedOnDuplicate", "ledgerUnreadable", "rowsUnreadable", "foreignLedgerEntries", "foreignJournalEntries", "invocationsUnrecorded", "acceptedRowsMissing", "duplicatesWithoutClaim", "hostFilesWithoutClaim", "claimsWithoutHostFile", "recordsThatDisagree"}
@@ -173,6 +174,46 @@ func (r *reading) add(list, value string) { r.addShown(list, shown(value)) }
 
 // addShown adds a path already spelled as the records spell it.
 func (r *reading) addShown(list, value string) { r.lists[list] = append(r.lists[list], value) }
+
+// noteExcluded names a window-chosen invocation that cannot join an event's acceptance count.
+// It reports recorded evidence only: an unestablished identity still asks the guard, and its
+// lack of a claim cannot vouch for the Stop. Nothing here exempts it from the verdict.
+func (r *reading) noteExcluded(one row, reason string) {
+	body := one.body
+	evidence := map[string]any{}
+	for _, field := range []string{"acceptance", "eventKey", "acceptedAs", "adapterOutcome", "guardInvoked", "guardDecision", "held", "eventIdentity"} {
+		evidence[field] = body.Get(field)
+	}
+	if body.Get("adapterOutcome") == "stdin_unreadable" {
+		// Historical adapter.go details identify the branch, not the discarded read error.
+		// Elapsed time cannot establish a timeout, a host restart or a session identity.
+		detail := body.Get("detail").(string) // rowShape already requires a string here.
+		kind := "detail_unrecognized"
+		switch {
+		case detail == hook.StdinUnreadableDetail:
+			kind = "read_failed_cause_unrecorded"
+		case strings.HasPrefix(detail, hook.StdinNotUTF8Prefix):
+			kind = hook.StdinInvalidUTF8
+		}
+		reading := map[string]any{"case": kind, "detail": detail, "elapsedMs": body.Get("elapsedMs")}
+		// A row that recorded its cause (CRW-504) names the case from it and reports what it
+		// recorded; rowShape has vouched for the object. Without the key the reading is the
+		// historical three keys above.
+		if recorded, ok := body.Get("stdinRead").(object); ok {
+			reading["case"] = recorded.Get("cause")
+			for _, name := range []string{"error", "bytesRead", "waitStartedMs", "waitEndedMs"} {
+				reading[name] = recorded.Get(name)
+			}
+		}
+		evidence["stdinRead"] = reading
+	}
+	r.excludedInvocations = append(r.excludedInvocations, map[string]any{
+		"row": shown(one.where), "at": body.Get("at"),
+		"sessionId": body.Get("sessionId"), "turnId": body.Get("turnId"),
+		"reason": reason, "excludedFrom": "per_event_acceptance_count",
+		"preventsTrue": !hook.NativePrescanUnreachable(body), "evidence": evidence,
+	})
+}
 
 // Answer is the reading as its JSON document.
 func (r *reading) Answer() map[string]any {
@@ -201,6 +242,9 @@ func (r *reading) Answer() map[string]any {
 	}
 	if r.readerFault != nil {
 		answer["readerFault"] = *r.readerFault
+	}
+	if len(r.excludedInvocations) > 0 {
+		answer["excludedInvocations"] = r.excludedInvocations
 	}
 	return answer
 }
@@ -509,6 +553,7 @@ func (r *reading) read(roots, hosts []string) {
 			}
 			n, _ := r.unjudged[label].(int)
 			r.unjudged[label] = n + 1
+			r.noteExcluded(one, label)
 			if hook.NativePrescanUnreachable(body) {
 				prescanUnreachable++
 			}

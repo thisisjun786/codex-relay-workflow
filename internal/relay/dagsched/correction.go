@@ -12,6 +12,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -46,13 +47,9 @@ func (s *Scheduler) PrepareCorrection(ctx context.Context, plan, node, actor str
 	if err := s.fence(ctx, q, plan, actor); err != nil {
 		return out, err
 	}
-	snap, _, err := dag.SnapshotAt(ctx, q, plan, 0)
+	snap, n, err := liveNode(ctx, q, plan, node)
 	if err != nil {
 		return out, err
-	}
-	n, ok := nodeOf(snap, node)
-	if !ok {
-		return out, refuse(contract.RefusalUnregisteredScope, "plan %s has no live node %s", plan, node)
 	}
 	if err := lifecycleRefusal(snap, n, "correcting it", false); err != nil {
 		return out, err
@@ -147,8 +144,13 @@ func (s *Scheduler) PrepareCorrection(ctx context.Context, plan, node, actor str
 	}
 	out.ManifestDigest = digest
 	out.FrozenPath = path
-	out.Instruction = CorrectionInstruction(n.IssueKey, rel.Generation+1, digest, path, shaOf(canonical))
-	out.DispatchRequestID = CorrectionRequestID(plan, node, digest, rel.Generation+1)
+	// the number the relay gives the next generation of the relationship: one past the highest it ever held, which a withdrawn generation (dag-generation-withdraw) keeps
+	next, err := store.NextGeneration(ctx, q, rel.ID)
+	if err != nil {
+		return out, err
+	}
+	out.Instruction = CorrectionInstruction(n.IssueKey, next, digest, path, shaOf(canonical))
+	out.DispatchRequestID = CorrectionRequestID(plan, node, digest, next)
 	return out, nil
 }
 
@@ -168,6 +170,9 @@ var manifestNamePattern = regexp.MustCompile(`manifest ([0-9a-f]{64})`)
 // the restoration block of the ruling on the previous generation's head, which names the manifest PrepareCorrection returned, never from the caller's omission; a supplied digest only
 // cross-checks. A ruling with no such block leaves the previous generation's manifest in force (CarriedOver). The previous acceptance, if any, stays active and reads blocked:stale_head
 // (the generation moved) until the parent accepts the corrected result with a supersede; invalidating what depends on it is a later issue.
+//
+// A generation has three ways to have been opened and each is bound by its own rule: a ruling (here), a generation opened by hand (recordHandOpened, revalidation.go) and a decision reply that
+// advanced the generation (recordDecisionOpened, correction_decision.go), which the generation's reason (decision_reply) tells apart.
 func (s *Scheduler) RecordCorrection(ctx context.Context, plan, node, actor, suppliedDigest string) (CorrectionResult, error) {
 	out := CorrectionResult{PlanID: plan, NodeID: node}
 	err := s.Store.Compose(ctx, func(txCtx context.Context, _ *sql.Conn) error {
@@ -175,13 +180,9 @@ func (s *Scheduler) RecordCorrection(ctx context.Context, plan, node, actor, sup
 		if err := s.fence(txCtx, tx, plan, actor); err != nil {
 			return err
 		}
-		snap, _, err := dag.SnapshotAt(txCtx, tx, plan, 0)
+		snap, n, err := liveNode(txCtx, tx, plan, node)
 		if err != nil {
 			return err
-		}
-		n, ok := nodeOf(snap, node)
-		if !ok {
-			return refuse(contract.RefusalUnregisteredScope, "plan %s has no live node %s", plan, node)
 		}
 		if err := lifecycleRefusal(snap, n, "correcting it", false); err != nil {
 			return err
@@ -194,7 +195,7 @@ func (s *Scheduler) RecordCorrection(ctx context.Context, plan, node, actor, sup
 			return refuse(contract.RefusalUnregisteredRelationship, "node %s has no execution to correct", node)
 		}
 		if rel.Status != "active" || rel.Superseded {
-			return refuse(contract.RefusalRelationshipNotActive, "the relationship %s of %s is %s: a correction goes to a child whose relationship is active", rel.ID, node, map[bool]string{true: "superseded", false: rel.Status}[rel.Superseded])
+			return refuse(contract.RefusalRelationshipNotActive, "the relationship %s of %s is %s: a correction goes to a child whose relationship is active", rel.ID, node, relationshipState(rel))
 		}
 		if rel.ParentTaskID != actor {
 			return notParentOf(actor, rel)
@@ -235,21 +236,29 @@ func (s *Scheduler) RecordCorrection(ctx context.Context, plan, node, actor, sup
 				chain = stand.Generation
 			}
 		}
-		if !recorded.Valid || chain != rel.Generation-1 {
-			return refuse(contract.RefusalDispositionConflict, "generation %d of %s follows generation %d, and the last recorded execution of %s is %d", rel.Generation, rel.ID, rel.Generation-1, node, chain)
+		// the generation this one follows: the one before it, or the nearest one that was not withdrawn
+		before, err := store.LiveGenerationBefore(txCtx, tx, rel.ID, rel.Generation)
+		if err != nil {
+			return err
+		}
+		if !recorded.Valid || chain != before {
+			return refuse(contract.RefusalDispositionConflict, "generation %d of %s follows generation %d, and the last recorded execution of %s is %d", rel.Generation, rel.ID, before, node, chain)
 		}
 		var reason sql.NullString
 		if _, err := queryOne(txCtx, tx, "SELECT reason FROM generations WHERE relationship_id = ? AND execution_generation = ?", []any{rel.ID, rel.Generation}, &reason); err != nil {
 			return err
 		}
+		if reason.String == delivery.DecisionReply {
+			return s.recordDecisionOpened(txCtx, tx, plan, snap, n, rel, actor, suppliedDigest, &out)
+		}
 		if reason.String != "needs_changes_revision" {
-			return refuse(contract.RefusalDispositionConflict, "generation %d of %s was not opened by a needs_changes ruling (%q)", rel.Generation, rel.ID, reason.String)
+			return refuse(contract.RefusalDispositionConflict, "generation %d of %s was not opened by a needs_changes ruling or a decision reply (%q)", rel.Generation, rel.ID, reason.String)
 		}
 		// the ruling on the previous generation's head must have opened this generation
 		var findings sql.NullString
 		var next sql.NullInt64
 		ruled, err := queryOne(txCtx, tx, "SELECT v.next_generation, c.findings FROM verdicts v JOIN events e ON e.event_id = v.event_id JOIN verdict_context c ON c.event_id = v.event_id"+
-			" WHERE e.relationship_id = ? AND e.execution_generation = ? AND v.verdict = 'needs_changes' AND v.next_generation = ? ORDER BY v.decided_at DESC LIMIT 1", []any{rel.ID, rel.Generation - 1, rel.Generation}, &next, &findings)
+			" WHERE e.relationship_id = ? AND e.execution_generation = ? AND v.verdict = 'needs_changes' AND v.next_generation = ? ORDER BY v.decided_at DESC LIMIT 1", []any{rel.ID, before, rel.Generation}, &next, &findings)
 		if err != nil {
 			return err
 		}

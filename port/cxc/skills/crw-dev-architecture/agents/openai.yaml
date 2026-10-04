@@ -1,0 +1,6 @@
+interface:
+  display_name: "crw-dev-architecture"
+  short_description: "Module boundaries, circular deps, coupling taxonomy, and boundary-only defensive programming."
+  default_prompt: "Use $crw-dev-architecture to guide this task and verify its result."
+policy:
+  allow_implicit_invocation: false

@@ -18,12 +18,15 @@ func nullable(value string) any {
 }
 
 type CreateThread struct {
-	RequestID, CWD, Prompt, Title, Sandbox, Model, ProjectID, Effort, Exception, Role string
-	Roots                                                                             []string
-	Policy                                                                            map[string]any
+	RequestID, CWD, Prompt, Title, Sandbox, Model, ProjectID, Effort, Exception, Role, MCPProfile string
+	Roots                                                                                         []string
+	Policy                                                                                        map[string]any
 }
 
 func (b *Bridge) CreateThread(ctx context.Context, in CreateThread) (ledger.Receipt, error) {
+	var watch *appserver.TurnWatch
+	var result ledger.Receipt
+	defer func() { finishSubscription(watch, result, true) }()
 	if err := nonempty(in.CWD, "cwd", 100000); err != nil {
 		return nil, err
 	}
@@ -71,8 +74,12 @@ func (b *Bridge) CreateThread(ctx context.Context, in CreateThread) (ledger.Rece
 	if in.Role != "" {
 		params["role"] = in.Role
 	}
+	if in.MCPProfile != "" {
+		params["mcp_profile"] = in.MCPProfile
+	}
 	var authorized execution.Authorized
 	var contract settings.Contract
+	var selection execution.MCPSelection
 	var launch map[string]any
 	validate := func() error {
 		cwd, err := directory(in.CWD)
@@ -87,6 +94,9 @@ func (b *Bridge) CreateThread(ctx context.Context, in CreateThread) (ledger.Rece
 		if err := contract.Validate(); err != nil {
 			return err
 		}
+		if selection, err = b.selectMCP(in.Role, in.MCPProfile); err != nil {
+			return err
+		}
 		launch = map[string]any{"cwd": cwd, "sandbox": in.Sandbox, "approvalPolicy": "never", "ephemeral": false}
 		for k, v := range contract.StartParams() {
 			launch[k] = v
@@ -96,7 +106,7 @@ func (b *Bridge) CreateThread(ctx context.Context, in CreateThread) (ledger.Rece
 		}
 		return nil
 	}
-	return b.mutate(ctx, mutation{requestID: in.RequestID, method: "create_thread", params: params, validate: validate, action: func(ctx context.Context, receipt ledger.Receipt, effects *[]string) error {
+	result, err := b.mutate(ctx, mutation{requestID: in.RequestID, method: "create_thread", params: params, validate: validate, action: func(ctx context.Context, receipt ledger.Receipt, effects *[]string) error {
 		receipt["executionPolicy"] = authorized.Receipt
 		if _, err := b.Ledger.Save(ctx, receipt); err != nil {
 			return err
@@ -106,6 +116,15 @@ func (b *Bridge) CreateThread(ctx context.Context, in CreateThread) (ledger.Rece
 				return err
 			}
 		}
+		if selection.Name != "" {
+			var info map[string]any
+			var err error
+			if contract.MCP, info, err = ResolveMCP(ctx, b.call, selection, contract.CWD); err != nil {
+				return MCPRefusal("config/read", err)
+			}
+			receipt["mcpProfile"] = info
+			launch["config"] = contract.Config()
+		}
 		created, err := b.dispatch(ctx, "thread/start", launch, effects)
 		if err != nil {
 			return err
@@ -113,14 +132,23 @@ func (b *Bridge) CreateThread(ctx context.Context, in CreateThread) (ledger.Rece
 		threadID := id(created, "thread")
 		receipt["threadId"] = threadID
 		receipt["creation"] = created
+		if watch, err = b.watchSubscription(ctx, threadID, true); err != nil {
+			return err
+		}
 		if _, err = b.Ledger.Save(ctx, receipt); err != nil {
 			return err
 		}
-		receipt["settings"] = contract.Receipt(created, "creation")
+		observed := created
+		if contract.MCP != nil {
+			if observed, err = b.observeMCP(ctx, contract.MCP, threadID, created, receipt); err != nil {
+				return err
+			}
+		}
+		receipt["settings"] = contract.Receipt(observed, "creation")
 		if _, err = b.Ledger.Save(ctx, receipt); err != nil {
 			return err
 		}
-		if findings := contract.Findings(created); len(findings) > 0 {
+		if findings := contract.Findings(observed); len(findings) > 0 {
 			first := findings[0]
 			message := findingText(first.Code, first.Field, first.Returned, first.Expected) + "; initial prompt withheld. Inspect creation receipt. The thread remains retained."
 			return &appserver.RPCError{Method: "thread/start", Message: message, Object: map[string]any{"code": first.Code, "message": message}}
@@ -150,4 +178,5 @@ func (b *Bridge) CreateThread(ctx context.Context, in CreateThread) (ledger.Rece
 		}
 		return old
 	}})
+	return result, err
 }

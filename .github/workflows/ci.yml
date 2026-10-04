@@ -41,7 +41,10 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      # A pull request run scans only the commits it adds; any other event scans every ref.
       - run: bash scripts/ci/secrets.sh
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
 
   go-product:
     runs-on: ubuntu-24.04

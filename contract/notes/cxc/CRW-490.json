@@ -1,0 +1,25 @@
+{
+  "issue": "CRW-490",
+  "identical": [
+    "hook__session-start-adopting-background-completions__adopts_previous_sessions_completion",
+    "hook__session-start-adopting-background-completions__baseline_empty_workspace",
+    "hook__session-start-adopting-background-completions__off_flag_adopts_silently",
+    "hook__session-start-adopting-background-completions__own_delivered_task_affordance_only",
+    "hook__stop-waking-on-background-completion__baseline_empty_workspace",
+    "hook__stop-waking-on-background-completion__corrupt_record_releases",
+    "hook__stop-waking-on-background-completion__enabled_at_gate_skips_completions_from_off_window",
+    "hook__stop-waking-on-background-completion__env_cxc_bgwake_0_silences",
+    "hook__stop-waking-on-background-completion__missing_session_id_falls_back_to_codex_thread_id",
+    "hook__stop-waking-on-background-completion__off_flag_silences",
+    "hook__stop-waking-on-background-completion__other_sessions_completion_releases",
+    "hook__stop-waking-on-background-completion__undelivered_completion_blocks_once_then_releases",
+    "hook__stop-waking-on-background-completion__wake_carries_at_most_five",
+    "hook__user-prompt-submit-delivering-background-completions__baseline_empty_workspace",
+    "hook__user-prompt-submit-delivering-background-completions__injects_once_and_never_decides",
+    "hook__user-prompt-submit-delivering-background-completions__off_flag_silences"
+  ],
+  "intentionally-changed": [],
+  "pending": [
+    "hook__stop-waking-on-background-completion__running_record_reconciled_from_exit_file"
+  ]
+}

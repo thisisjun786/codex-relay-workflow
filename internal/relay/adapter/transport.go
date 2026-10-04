@@ -8,10 +8,12 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/managed"
 )
 
 func slicesSort(values []string) { sort.Strings(values) }
@@ -215,7 +217,7 @@ func (a *Adapter) Send(ctx context.Context, requestID, thread, message string, s
 	}
 	answerCh := make(chan answer, 1)
 	go func() {
-		work, stopWork := context.WithCancel(context.WithValue(t.ctx, leaseKey{}, held))
+		work, stopWork := context.WithCancel(context.WithValue(managed.PropagateArmedReplay(t.ctx, ctx), leaseKey{}, held))
 		defer stopWork()
 		// Stops a call the caller no longer waits for. It runs on a goroutine of its own, so it
 		// decides nothing: an answer can land before it runs, and guardedSend asks the caller's
@@ -267,6 +269,13 @@ func (a *Adapter) guardedSend(ctx context.Context, requestID, thread, message st
 		return a.receipt(ctx, requestID, true)
 	}
 	receipt["threadId"] = thread
+	var watch *appserver.TurnWatch
+	defer func() {
+		if watch != nil {
+			turn, _ := receipt["turnId"].(string)
+			watch.Finish(turn, false)
+		}
+	}()
 	save := func() error { _, err := a.ledger.Save(context.WithoutCancel(ctx), receipt); return err }
 	if err = save(); err != nil {
 		return nil, err
@@ -304,9 +313,34 @@ func (a *Adapter) guardedSend(ctx context.Context, requestID, thread, message st
 			refuse("thread/read", contract.OrderedObject{{Key: "code", Value: "thread_busy"}, {Key: "message", Value: "Thread is active; message withheld. Wait for completion."}}, false)
 			return nil
 		}
-		params := plain(settings.ResumeParams(thread)).(map[string]any)
-		if settings.SettingsFreeResume {
+		send, expectedMCP, err := a.withMCP(ctx, settings)
+		if err = awaited(err); err != nil {
+			// Resolving a profile only reads the host, so a refusal or a lost read leaves nothing sent and the
+			// request retryable; a caller that has gone, or the run's own bound, is settled as before.
+			var refused *execution.Refusal
+			code, message := "mcp_profile_unresolved", errorText(err)
+			switch {
+			case claimed != nil, errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+				return err
+			case errors.As(err, &refused):
+				code, message = refused.Code, refused.Detail
+			}
+			refuse("config/read", contract.OrderedObject{{Key: "code", Value: code}, {Key: "message", Value: message}}, true)
+			return nil
+		}
+		params := plain(send.ResumeParams(thread)).(map[string]any)
+		if send.SettingsFreeResume {
 			params = map[string]any{"threadId": thread, "excludeTurns": true}
+			if expectedMCP != nil {
+				params["config"] = expectedMCP.Overrides()
+			}
+		}
+		if client, ok := a.rpc.(*appserver.Client); ok {
+			watch, err = client.WatchTurn(ctx, thread)
+			if err = awaited(err); err != nil {
+				return err
+			}
+			ctx = watch.Context(ctx)
 		}
 		resumed, err := a.callValue(ctx, "thread/resume", params)
 		if err = awaited(err); err != nil {
@@ -316,11 +350,18 @@ func (a *Adapter) guardedSend(ctx context.Context, requestID, thread, message st
 		if settings.SettingsFreeResume {
 			receipt["settingsFreeResume"] = true
 		}
+		response := resumed
+		if expectedMCP != nil {
+			receipt["mcpOverridesTransmitted"] = true
+			response, err = a.observeMCP(ctx, thread, resumed, expectedMCP, receipt)
+			if err = awaited(err); err != nil {
+				return err
+			}
+		}
 		if err = save(); err != nil {
 			return err
 		}
-		response := resumed
-		rpc, findings, notes := verifyResume(*settings, response, status)
+		rpc, findings, notes := verifyResume(*send, response, status)
 		if len(findings) > 0 {
 			receipt["settingsFindings"] = findings
 			refuse("thread/resume", rpc, false)

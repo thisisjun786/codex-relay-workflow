@@ -128,5 +128,22 @@ copies one adds the Apache License 2.0 text and a statement of its changes
 beside the file, and updates this section.
 
 
+5. agentic-code-reviewer (ACR), by Rich Haase
+---------------------------------------------
+
+The independent code review (`crw review`, internal/review and the packages
+under it) adapts parts of agentic-code-reviewer. Each Go file adapted from a
+file of that work carries a header that names the upstream file and commit and
+says that the file was modified; docs/port-acr/provenance.md lists those files
+and how each was compared with its upstream file.
+
+Source:    https://github.com/richhaase/agentic-code-reviewer, commit
+           a3e438e2bd1f0824c1eab88db738aa3c82c69e99
+License:   Apache License 2.0; the full text is in docs/port-acr/LICENSE,
+           a byte-for-byte copy of the upstream LICENSE at that commit
+Copyright: the upstream LICENSE names no copyright owner; the work is by
+           Rich Haase (https://github.com/richhaase)
+
+
 Other separately licensed material and dependencies keep their own licenses and
 notices; this file does not relicense them.

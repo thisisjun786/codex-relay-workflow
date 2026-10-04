@@ -1,0 +1,94 @@
+{
+  "origin": {
+    "tag": "v0.2.40",
+    "commit": "3c1459acadeb1906d97c00a598e1457327ae372d",
+    "skills_listing_sha256": "79d9580f39ca27221cb9c24337080e3fe4a1e71f76338c7329fca63f76a32e89"
+  },
+  "table_sha256": "25b5d19d9da7e07d474d2b31bc4d4139c68607457f59174a597f17505f7f23eb",
+  "from": "dev-scaffolding",
+  "files": {
+    "SKILL.md": {
+      "original": "de5fe5694312ed6c6621734c5bf11235ec8c60ecb0d96e6360c3708d3d197832"
+    },
+    "agents/openai.yaml": {
+      "original": "702104195657930e45915560deafd40ab1f836f63359487e254b7b76477a6c43"
+    },
+    "assets/str_func_template.md": {
+      "original": "9225c35e95a6b07783ab38fe8c1e24b25a5472b03fc4ed0b35721b22bddbd7a7"
+    },
+    "references/api-docs.md": {
+      "original": "89334a04e1b8cc7b6b6a2be67b02c48e464bc8032a07f00aa750be8bcfb6074b"
+    },
+    "references/implementation-log.md": {
+      "original": "461ba278c1a21a809216a47f68d55182041bd8a3294ff2d4ff833bfd30730e5d"
+    },
+    "references/monorepo-tooling.md": {
+      "original": "f78337185e1d2f7a45c65aa5948a536eda7712a5c26e109d6ba498fca1959b08"
+    },
+    "scripts/scaffold-audit.sh": {
+      "original": "314f907e37cf067ab781640e242e2c6dac4621855a863f24850f9004501b98e1",
+      "exec": true
+    }
+  },
+  "edits": [
+    {
+      "file": "SKILL.md",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Normalize frontmatter to the repository-supported name and description fields; preserve invocation description and record the removed oracle metadata.",
+      "hunks": [
+        {
+          "line": 4,
+          "old": [
+            "metadata:\n",
+            "  last-verified: \"2026-07-02\"\n",
+            "  short-description: \"Project and module scaffolding with repo-first convention reuse and structural audits.\"\n"
+          ]
+        },
+        {
+          "line": 116,
+          "old": [
+            "Phase naming is owned by [Implementation units](../pabcd/references/implementation-units.md)\n"
+          ],
+          "new": [
+            "Phase naming is owned by [Implementation units](../crw-pabcd/references/implementation-units.md)\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "agents/openai.yaml",
+      "reason": "Provide the default prompt required by CRW skill metadata while preserving the oracle invocation policy.",
+      "hunks": [
+        {
+          "line": 4,
+          "new": [
+            "  default_prompt: \"Use $crw-dev-scaffolding to scaffold within the existing repository conventions and authorized scope.\"\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/implementation-log.md",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments.",
+      "hunks": [
+        {
+          "line": 5,
+          "old": [
+            "[Implementation units](../../pabcd/references/implementation-units.md);\n"
+          ],
+          "new": [
+            "[Implementation units](../../crw-pabcd/references/implementation-units.md);\n"
+          ]
+        },
+        {
+          "line": 73,
+          "old": [
+            "[Reader documents](../../dev/references/reader-documents.md). Evidence, receipts and\n"
+          ],
+          "new": [
+            "[Reader documents](../../crw-dev/references/reader-documents.md). Evidence, receipts and\n"
+          ]
+        }
+      ]
+    }
+  ]
+}

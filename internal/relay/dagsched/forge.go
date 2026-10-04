@@ -4,35 +4,11 @@ import (
 	"context"
 	"fmt"
 	"math/big"
-	"os/exec"
 	"strings"
-	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 )
-
-// ExecRunner is the forge process runner of production: it runs the argv it is given and reports the exit code and both streams. It is the one cli.forgeRunner is, copied so
-// this package does not import package cli.
-func ExecRunner(ctx context.Context) evidence.Runner {
-	return func(argv []string, timeout time.Duration) (int, string, string, error) {
-		runCtx, cancel := context.WithTimeout(ctx, timeout)
-		defer cancel()
-		cmd := exec.CommandContext(runCtx, argv[0], argv[1:]...)
-		var stdout, stderr strings.Builder
-		cmd.Stdout, cmd.Stderr = &stdout, &stderr
-		err := cmd.Run()
-		if runCtx.Err() != nil {
-			return 0, "", "", runCtx.Err()
-		}
-		if err == nil {
-			return 0, stdout.String(), stderr.String(), nil
-		}
-		if exit, ok := err.(*exec.ExitError); ok {
-			return exit.ExitCode(), stdout.String(), stderr.String(), nil
-		}
-		return 0, stdout.String(), stderr.String(), err
-	}
-}
 
 // ForgePullRequestReader reads a pull request the way merge-evidence does (evidence.Collect over the runner newRunner makes) and projects the snapshot. The collector
 // reports unreadable, truncated or moved evidence as snapshot problems with a nil error, so the caller classifies the answer by its Verdict (ClassifyPullRequest).
@@ -115,7 +91,7 @@ func projectSnapshot(snapshot map[string]any, repository string, number int64) P
 	}
 	var rows []any
 	for _, c := range pr.Checks {
-		rows = append(rows, map[string]any{"runId": c.RunID, "name": c.Name, "headSha": c.HeadSHA, "conclusion": c.Conclusion, "attempt": c.Attempt, "provider": optionalProvider(c.Provider)})
+		rows = append(rows, map[string]any{"runId": c.RunID, "name": c.Name, "headSha": c.HeadSHA, "conclusion": c.Conclusion, "attempt": c.Attempt, "provider": optionalText(c.Provider)})
 	}
 	for _, p := range evidence.ChecksProblemsWith(pr.HeadSHA, required, rows, true, pr.RequiredProviders) {
 		pr.CheckProblems = append(pr.CheckProblems, p.Code+": "+p.Detail)
@@ -131,12 +107,18 @@ func reviewDigest(findings any) (digest string) {
 			digest = ""
 		}
 	}()
-	return digestOf(findings)
+	return dag.Digest(findings)
 }
 
 // ClassifyPullRequest is the fail-closed rule every consumer of a snapshot applies (010): a verdict of unknown means the evidence was unreadable, truncated or unstable and is
 // the host's failure, whatever the checks it did read say; stale means the candidate or its gates moved while it was read and is refused with the existing reasons; not_ready
 // is a judgement (a failing check, an open thread) and is not a read failure.
+//
+// A merged pull request is the one reading whose verdict is unknown by construction (CRW-448): nothing is left to hand over, so merge-evidence says candidate_not_open, and the forge reports no merge
+// state for it, so it says candidate_unknown. The reading is classified like every other, with those two problems set aside (verdictBesideMerge): what is left decides, so a read failure besides them
+// is still the host's failure, a candidate that moved is still refused, and a judgement problem is not a read failure. Passing says only that the reading is complete. What a merged state means is each
+// reader's own decision from pr.State: release compares the head, dag-accept replays the same output and refuses a new one, dag-merge-judge refuses, dag-base-refresh reads the head it proves from.
+// Only a merged pull request is covered: a pull request closed without merging has not been measured, and an open or closed reading with the same two problems stays the host's failure.
 func ClassifyPullRequest(pr PullRequest) error {
 	codes := make([]string, 0, len(pr.Problems))
 	moved, malformed := false, false
@@ -145,7 +127,11 @@ func ClassifyPullRequest(pr PullRequest) error {
 		moved = moved || p.Code == evidence.CandidateMoved
 		malformed = malformed || p.Code == evidence.GatesMoved || p.Code == evidence.BaseRefMissing
 	}
-	switch pr.Verdict {
+	verdict := pr.Verdict
+	if pr.State == "merged" {
+		verdict = verdictBesideMerge(pr.Problems, verdict)
+	}
+	switch verdict {
 	case evidence.UnknownVerdict:
 		return fmt.Errorf("the pull request %s#%d could not be read completely (%s); nothing was written", pr.Repository, pr.Number, strings.Join(codes, ", "))
 	case evidence.Stale:
@@ -161,10 +147,23 @@ func ClassifyPullRequest(pr PullRequest) error {
 	return fmt.Errorf("the pull request %s#%d has a verdict the scheduler does not know, %q", pr.Repository, pr.Number, pr.Verdict)
 }
 
-// optionalProvider is a check's provider as the collector gives it: absent is nil, not an empty text.
-func optionalProvider(p string) any {
-	if p == "" {
-		return nil
+// verdictBesideMerge is the verdict of a merged pull request's reading without the two problems that merging explains. It changes an unknown verdict that carried at least one of them, to the verdict
+// of the problems that are left; every other verdict is returned as it is, and so is an unknown one that carried neither (nothing explains it, and the collector never gives one without a problem).
+func verdictBesideMerge(problems []Problem, verdict string) string {
+	if verdict != evidence.UnknownVerdict {
+		return verdict
 	}
-	return p
+	var rest []evidence.Problem
+	explained := false
+	for _, p := range problems {
+		if p.Code == evidence.CandidateNotOpen || p.Code == evidence.CandidateUnknown {
+			explained = true
+			continue
+		}
+		rest = append(rest, evidence.Problem{Code: p.Code, Detail: p.Detail})
+	}
+	if !explained {
+		return verdict
+	}
+	return evidence.VerdictOf(rest)
 }

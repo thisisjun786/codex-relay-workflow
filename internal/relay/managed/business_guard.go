@@ -25,6 +25,14 @@ func (r *startRun) businessGuard(ctx context.Context) (map[string]any, error) {
 	if err := r.m.Adapter.RequireLedger(ctx, r.ledger); err != nil {
 		return refuse("managed_store_changed")
 	}
+	if ArmedReplay(ctx) {
+		read, unchanged := r.openUnchangedStore(ctx)
+		if !unchanged {
+			return refuse("managed_store_changed")
+		}
+		ctx = recheckReplay(ctx, read, r.identity)
+		read.Close()
+	}
 	if code, err := r.m.ready(ctx, r.req); err != nil {
 		return nil, err
 	} else if code != "" {

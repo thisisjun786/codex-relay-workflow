@@ -9,7 +9,7 @@ Compare Linear records against the rules already agreed for writing and managing
 
 ## Connect the sources
 
-Read [Integrations](../crw-plan/references/integrations.md) first. It owns the rules this skill judges against, and restating them here would create the second copy that goes stale. Use the current connector as [Use the available Linear capability](../crw-plan/references/integrations.md#use-the-available-linear-capability) describes, exhausting pagination before calling anything absent. Use `cxc-recall` to locate a decision whose record you cannot find, and `readchk` when the requested scope is genuinely ambiguous. A missing or failing connector produces a partial audit that names its unread scope, never an assumed clean result.
+Read [Integrations](../crw-plan/references/integrations.md) first. It owns the rules this skill judges against, and restating them here would create the second copy that goes stale. Use the current connector as [Use the available Linear capability](../crw-plan/references/integrations.md#use-the-available-linear-capability) describes, exhausting pagination before calling anything absent. Use `cxc-recall` to locate a decision whose record you cannot find, and restate the requested scope and confirm it when it is genuinely ambiguous. A missing or failing connector produces a partial audit that names its unread scope, never an assumed clean result.
 
 ## Pin the scope and the rules
 

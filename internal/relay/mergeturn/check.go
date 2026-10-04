@@ -105,7 +105,7 @@ func (s *Service) Check(ctx context.Context, turn, actor, head, base string, che
 		case row.State != Holding:
 			refusal = wrongState(row, actor, "beginning a merge")
 		case row.DeclaredReady != 1:
-			refuse(contract.RefusalMergeCandidateMoved, "turn "+pyvalue.StrRepr(turn)+" has not declared its candidate ready, so there is nothing saying "+pyvalue.StrRepr(row.CandidateHead)+" is the head it means to merge", row.CandidateHead, actor)
+			refuse(contract.RefusalMergeCandidateMoved, "turn "+pyvalue.StrRepr(turn)+" has not declared its candidate ready, so there is nothing saying "+pyvalue.StrRepr(row.CandidateHead)+" is the head it means to merge; "+notReadyStep(turn, actor, row.CandidateHead, head), row.CandidateHead, actor)
 		}
 		if refusal == nil {
 			held, e := s.parents(tx, row.ProjectKey)
@@ -135,7 +135,7 @@ func (s *Service) Check(ctx context.Context, turn, actor, head, base string, che
 			}
 		}
 		if refusal == nil && head != row.CandidateHead {
-			refuse(contract.RefusalMergeCandidateMoved, "the candidate head is "+pyvalue.StrRepr(row.CandidateHead)+" and the restated head is "+pyvalue.StrRepr(head)+"; the turn was granted for the first", row.CandidateHead, head)
+			refuse(contract.RefusalMergeCandidateMoved, "the candidate head is "+pyvalue.StrRepr(row.CandidateHead)+" and the restated head is "+pyvalue.StrRepr(head)+"; the turn was granted for the first. Restate the head the turn holds, or declare the one you mean with "+restateCommand(turn, actor, head), row.CandidateHead, head)
 		}
 		if refusal == nil && tip.SHA == "" {
 			refusal = unreadableTarget(row, actor, unread, "the restated base cannot be compared with it")

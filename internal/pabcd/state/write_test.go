@@ -2,10 +2,14 @@ package state
 
 import (
 	"errors"
+	"fmt"
+	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -117,6 +121,453 @@ func TestEnsureStateWhenTheHardLinkFails(t *testing.T) { // oracle 651, 666, 680
 		return !errors.Is(e, syscall.ENOTDIR)
 	})() {
 		t.Fatal("a .crw that is a file must fail with ENOTDIR")
+	}
+}
+
+// hook is a fail hook for ensureStateWith.
+type hook = func(ensureStep, string) error
+
+// failing answers err at step, on the final path (onFinal) or on any other path, which in these tests is a temp file; every
+// other call goes through.
+func failing(final string, step ensureStep, onFinal bool, err error) hook {
+	return func(s ensureStep, path string) error {
+		if s == step && (path == final) == onFinal {
+			return err
+		}
+		return nil
+	}
+}
+
+// unsupported makes the no-replace publication answer errno, as a filesystem or kernel without the flag does.
+func unsupported(final string, errno syscall.Errno) hook {
+	return failing(final, stepPublish, false, &os.LinkError{Op: "rename", Err: errno})
+}
+
+// both fails whatever either hook fails; a runs first.
+func both(a, b hook) hook {
+	return func(s ensureStep, path string) error {
+		if err := a(s, path); err != nil {
+			return err
+		}
+		return b(s, path)
+	}
+}
+
+// recording notes each step the fallback takes, as "<step> temp" or "<step> final", and fails none.
+func recording(final string, calls *[]string) hook {
+	names := [...]string{stepStat: "stat", stepWrite: "write", stepSync: "sync", stepClose: "close", stepPublish: "publish"}
+	return func(s ensureStep, path string) error {
+		where := "temp"
+		if path == final {
+			where = "final"
+		}
+		*calls = append(*calls, names[s]+" "+where)
+		return nil
+	}
+}
+
+// noReplaceWorks reports whether the platform's no-replace rename works on the filesystem of dir, so a test of that route can
+// skip where it does not.
+func noReplaceWorks(t *testing.T, dir string) bool {
+	t.Helper()
+	a, b := filepath.Join(dir, "probe-a"), filepath.Join(dir, "probe-b")
+	for _, p := range []string{a, b} {
+		if err := os.WriteFile(p, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return errors.Is(renameNoReplace(a, b), fs.ErrExist)
+}
+
+// standing is what is at path, without following a link: the text of a file, or the target of a symlink.
+func standing(t *testing.T, path string) string {
+	t.Helper()
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&fs.ModeSymlink != 0 {
+		target, err := os.Readlink(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return "link to " + target
+	}
+	if info.IsDir() {
+		return "directory"
+	}
+	return "file " + fileText(t, path)
+}
+
+func TestEnsureStateFallbackLeavesNothingAtTheFinalPathWhenAStepFails(t *testing.T) {
+	const id = "fallback-fail"
+	onTemp := func(step ensureStep, err syscall.Errno) func(string) hook {
+		return func(final string) hook { return failing(final, step, false, err) }
+	}
+	inPlace := func(step ensureStep, err syscall.Errno) func(string) hook {
+		return func(final string) hook {
+			return both(unsupported(final, syscall.EINVAL), failing(final, step, true, err))
+		}
+	}
+	for _, c := range []struct {
+		name string
+		fail func(final string) hook
+		want syscall.Errno
+	}{
+		{"the identity of the temp file cannot be read", onTemp(stepStat, syscall.EIO), syscall.EIO},
+		{"the write of the temp file fails", onTemp(stepWrite, syscall.ENOSPC), syscall.ENOSPC},
+		{"the fsync of the temp file fails", onTemp(stepSync, syscall.EIO), syscall.EIO},
+		{"the close of the temp file fails", onTemp(stepClose, syscall.EIO), syscall.EIO},
+		{"the publication fails with an error that is not unsupported", onTemp(stepPublish, syscall.EIO), syscall.EIO},
+		{"no rename without replacing, and the identity of the in-place file cannot be read", inPlace(stepStat, syscall.EIO), syscall.EIO},
+		{"no rename without replacing, and the in-place write fails", inPlace(stepWrite, syscall.ENOSPC), syscall.ENOSPC},
+		{"no rename without replacing, and the in-place fsync fails", inPlace(stepSync, syscall.EIO), syscall.EIO},
+		{"no rename without replacing, and the in-place close fails", inPlace(stepClose, syscall.EIO), syscall.EIO},
+	} {
+		cwd := t.TempDir()
+		created, err := ensureStateWith(cwd, id, at, linkFails(syscall.EPERM), c.fail(StatePath(cwd, id)))
+		if created || !errors.Is(err, c.want) || len(sessionFiles(cwd)) != 0 {
+			t.Errorf("%s: created %v, %v, files %v", c.name, created, err, sessionFiles(cwd))
+		}
+	}
+}
+
+// TestFileSizeLimitHelperProcess is the child of TestEnsureStateFallbackALimitedFileSizeLeavesNothingAtTheFinalPath, not a test of its
+// own: a file size limit is a setting of the whole process, and in the process of go test it also fails the writes of the test
+// harness itself (its test log), so the limit is lowered in a child that exits as soon as the call under test has returned.
+func TestFileSizeLimitHelperProcess(t *testing.T) {
+	cwd, mode := os.Getenv("CRW_STATE_FSIZE_CWD"), os.Getenv("CRW_STATE_FSIZE_MODE")
+	if cwd == "" {
+		t.Skip("child of the file size limit test")
+	}
+	var old syscall.Rlimit
+	if err := syscall.Getrlimit(syscall.RLIMIT_FSIZE, &old); err != nil {
+		fmt.Println("setup:", err)
+		os.Exit(2)
+	}
+	limited := syscall.Rlimit{Cur: 16, Max: old.Max} // a write past 16 bytes fails with EFBIG after a partial write, as a full disk does
+	lower := func() {
+		if err := syscall.Setrlimit(syscall.RLIMIT_FSIZE, &limited); err != nil {
+			fmt.Println("setup:", err)
+			os.Exit(2)
+		}
+	}
+	link := func(existing, created string) error {
+		if mode == "temp" {
+			lower() // the temp file of the fallback is the first to be written past the limit
+		}
+		return &os.LinkError{Op: "link", Old: existing, New: created, Err: syscall.EPERM}
+	}
+	fail := hook(nil)
+	if mode == "in place" { // the temp file is written whole, then the publication is unsupported and the in-place file is the one that fails
+		fail = func(s ensureStep, path string) error {
+			if s != stepPublish {
+				return nil
+			}
+			lower()
+			return &os.LinkError{Op: "rename", Err: syscall.EINVAL}
+		}
+	}
+	created, err := ensureStateWith(cwd, "fallback-efbig", at, link, fail)
+	_ = syscall.Setrlimit(syscall.RLIMIT_FSIZE, &old)
+	fmt.Printf("created=%v err=%v\n", created, err)
+	os.Exit(0)
+}
+
+func TestEnsureStateFallbackALimitedFileSizeLeavesNothingAtTheFinalPath(t *testing.T) { // real partial writes (EFBIG), no failing hook
+	for _, mode := range []string{"temp", "in place"} {
+		cwd := t.TempDir()
+		cmd := exec.Command(os.Args[0], "-test.run=^TestFileSizeLimitHelperProcess$")
+		cmd.Env = append(os.Environ(), "CRW_STATE_FSIZE_CWD="+cwd, "CRW_STATE_FSIZE_MODE="+mode)
+		out, err := cmd.Output()
+		if err != nil || !strings.HasPrefix(string(out), "created=false err=") || !strings.Contains(string(out), syscall.EFBIG.Error()) || len(sessionFiles(cwd)) != 0 {
+			t.Errorf("%s: %v, output %q, files %v", mode, err, out, sessionFiles(cwd))
+		}
+	}
+}
+
+func TestEnsureStateFallbackPublishesTheDefaultStateAndLeavesNoTempFile(t *testing.T) {
+	const id = "fallback-ok"
+	want := mustEncode(t, defaultState(id, "", at()))
+	for _, c := range []struct {
+		name  string
+		errno syscall.Errno // the no-replace publication's answer; 0 runs the platform's own
+	}{{"the platform's own rename", 0}, {"EINVAL", syscall.EINVAL}, {"ENOSYS", syscall.ENOSYS}, {"ENOTSUP", syscall.ENOTSUP}, {"EPERM", syscall.EPERM}} {
+		cwd, fail := t.TempDir(), hook(nil)
+		if c.errno != 0 {
+			fail = unsupported(StatePath(cwd, id), c.errno)
+		}
+		created, err := ensureStateWith(cwd, id, at, linkFails(syscall.EXDEV), fail)
+		if !created || err != nil || fileText(t, StatePath(cwd, id)) != want || !slices.Equal(sessionFiles(cwd), []string{id + ".json"}) {
+			t.Errorf("%s: created %v, %v, files %v", c.name, created, err, sessionFiles(cwd))
+		}
+	}
+}
+
+func TestEnsureStateFallbackTakesTheRouteThePlatformOffers(t *testing.T) {
+	const id = "fallback-route"
+	for _, errno := range []syscall.Errno{0, syscall.EINVAL} {
+		if errno == 0 && !noReplaceWorks(t, t.TempDir()) {
+			continue // this filesystem has no no-replace rename, so the in-place route is the platform's own
+		}
+		cwd, calls := t.TempDir(), []string{}
+		final := StatePath(cwd, id)
+		fail := recording(final, &calls)
+		want := []string{"stat temp", "write temp", "sync temp", "close temp", "publish temp"}
+		if errno != 0 {
+			fail, want = both(fail, unsupported(final, errno)), append(want, "stat final", "write final", "sync final", "close final")
+		}
+		if created, err := ensureStateWith(cwd, id, at, linkFails(syscall.EPERM), fail); !created || err != nil || !slices.Equal(calls, want) {
+			t.Errorf("rename answer %v: created %v, %v, steps %q, want %q", errno, created, err, calls, want)
+		}
+	}
+}
+
+func TestEnsureStateFallbackFreesTheStagedCopyBeforeTheInPlaceWrite(t *testing.T) {
+	// near a quota the in-place file must not have to fit beside two other copies: the oracle needed room for the first temp file and
+	// the final file, and the staged copy is of no use once the rename is known to be unsupported
+	cwd, id := t.TempDir(), "fallback-space"
+	final, temps := StatePath(cwd, id), -1
+	look := func(s ensureStep, path string) error {
+		if s == stepWrite && path == final {
+			temps = len(tempFiles(cwd))
+		}
+		return nil
+	}
+	created, err := ensureStateWith(cwd, id, at, linkFails(syscall.EPERM), both(unsupported(final, syscall.EINVAL), look))
+	if !created || err != nil || temps != 1 || !slices.Equal(sessionFiles(cwd), []string{id + ".json"}) {
+		t.Fatalf("created %v, %v, %d temp files while the in-place file was written (only the first temp file may be there), files %v", created, err, temps, sessionFiles(cwd))
+	}
+}
+
+func TestEnsureStateFallbackNeverTouchesAnExistingFile(t *testing.T) {
+	const id = "fallback-existing"
+	resumed := DefaultState(id, "resume-me")
+	resumed.Phase, resumed.OrchestrationActive = PhaseB, true
+	for _, kind := range []string{"valid", "corrupt", "dangling symlink", "directory"} {
+		for _, route := range []string{"rename", "unsupported", "failing temp write"} {
+			cwd := t.TempDir()
+			final := StatePath(cwd, id)
+			switch kind {
+			case "valid":
+				putIn(t, cwd, id, mustEncode(t, resumed))
+			case "corrupt":
+				putIn(t, cwd, id, "{ not valid json \x00")
+			case "directory":
+				if err := os.MkdirAll(final, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			default:
+				if err := makeSessionsDir(cwd); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(filepath.Join(cwd, "nowhere"), final); err != nil {
+					t.Fatal(err)
+				}
+			}
+			before, fail := standing(t, final), hook(nil)
+			switch route {
+			case "unsupported":
+				fail = unsupported(final, syscall.EINVAL)
+			case "failing temp write": // a resumed session on a full disk is still (false, nil), as the oracle answers
+				fail = failing(final, stepWrite, false, syscall.ENOSPC)
+			}
+			created, err := ensureStateWith(cwd, id, at, linkFails(syscall.EPERM), fail)
+			_, nowhere := os.Lstat(filepath.Join(cwd, "nowhere"))
+			if created || err != nil || standing(t, final) != before || !slices.Equal(sessionFiles(cwd), []string{id + ".json"}) || !errors.Is(nowhere, fs.ErrNotExist) {
+				t.Errorf("%s, %s: created %v, %v, files %v, dangling target %v", kind, route, created, err, sessionFiles(cwd), nowhere)
+			}
+		}
+	}
+}
+
+func TestEnsureStateFallbackLosingTheRaceAnswersFalseAndLeavesNoTempFile(t *testing.T) {
+	const id = "fallback-lost"
+	// another creator publishes its file between our temp file and our publication, through the rename and in place
+	for _, inPlace := range []bool{false, true} {
+		cwd := t.TempDir()
+		final := StatePath(cwd, id)
+		other := mustEncode(t, DefaultState(id, "other-creator"))
+		fail := func(s ensureStep, path string) error {
+			if s != stepPublish {
+				return nil
+			}
+			putIn(t, cwd, id, other)
+			if inPlace {
+				return &os.LinkError{Op: "rename", Err: syscall.EINVAL}
+			}
+			return &os.LinkError{Op: "rename", Err: syscall.EEXIST}
+		}
+		created, err := ensureStateWith(cwd, id, at, linkFails(syscall.EPERM), fail)
+		if created || err != nil || fileText(t, final) != other || !slices.Equal(sessionFiles(cwd), []string{id + ".json"}) {
+			t.Errorf("in place %v: created %v, %v, files %v", inPlace, created, err, sessionFiles(cwd))
+		}
+	}
+}
+
+func TestRenameNoReplaceMovesToAFreeNameAndRefusesAnyOccupiedOne(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src")
+	put := func(path, text string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put(src, "new")
+	free := filepath.Join(dir, "free")
+	if err := renameNoReplace(src, free); noReplaceUnsupported(err) {
+		t.Skip("this platform or filesystem has no rename that refuses to replace: ", err)
+	} else if _, statErr := os.Lstat(src); err != nil || fileText(t, free) != "new" || !errors.Is(statErr, fs.ErrNotExist) {
+		t.Fatalf("to a free name: %v, source left %v", err, statErr)
+	}
+	for _, c := range []struct {
+		name  string
+		setup func(path string)
+		same  func(path string) bool
+	}{
+		{"a file", func(p string) { put(p, "keep") }, func(p string) bool { return fileText(t, p) == "keep" }},
+		{"a directory", func(p string) { _ = os.Mkdir(p, 0o755) }, func(p string) bool { i, err := os.Lstat(p); return err == nil && i.IsDir() }},
+		{"a dangling symlink", func(p string) { _ = os.Symlink(filepath.Join(dir, "nowhere"), p) }, func(p string) bool {
+			target, err := os.Readlink(p)
+			_, gone := os.Lstat(filepath.Join(dir, "nowhere"))
+			return err == nil && target == filepath.Join(dir, "nowhere") && errors.Is(gone, fs.ErrNotExist)
+		}},
+	} {
+		put(src, "new")
+		occupied := filepath.Join(dir, "occupied")
+		c.setup(occupied)
+		if err := renameNoReplace(src, occupied); !errors.Is(err, fs.ErrExist) || fileText(t, src) != "new" || !c.same(occupied) {
+			t.Errorf("onto %s: %v", c.name, err)
+		}
+		_ = os.RemoveAll(occupied)
+	}
+}
+
+func TestEnsureStateFallbackKeepsAFileThatReplacedTheOneItCreated(t *testing.T) {
+	// another writer's rename replaces the in-place file before the failed write is rolled back: that file is not the fallback's
+	cwd, id := t.TempDir(), "fallback-replaced"
+	final, other := StatePath(cwd, id), mustEncode(t, DefaultState(id, "other-writer"))
+	swap := func(s ensureStep, path string) error {
+		if s != stepWrite || path != final {
+			return nil
+		}
+		if err := os.WriteFile(final+".other", []byte(other), 0o644); err != nil {
+			return err
+		}
+		if err := os.Rename(final+".other", final); err != nil {
+			return err
+		}
+		return syscall.ENOSPC
+	}
+	created, err := ensureStateWith(cwd, id, at, linkFails(syscall.EPERM), both(unsupported(final, syscall.EINVAL), swap))
+	if created || !errors.Is(err, syscall.ENOSPC) || fileText(t, final) != other || !slices.Equal(sessionFiles(cwd), []string{id + ".json"}) {
+		t.Fatalf("created %v, %v, files %v", created, err, sessionFiles(cwd))
+	}
+}
+
+func TestWriteNewReportsAFileItCannotRemoveOrEvenLookAt(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("a read-only directory does not stop root")
+	}
+	for _, c := range []struct {
+		name string
+		mode os.FileMode
+	}{{"a read-only directory: the file cannot be unlinked", 0o500}, {"a directory without search permission: the file cannot be looked at", 0o000}} {
+		cwd, id := t.TempDir(), "write-new"
+		if err := makeSessionsDir(cwd); err != nil {
+			t.Fatal(err)
+		}
+		dir := filepath.Dir(StatePath(cwd, id))
+		t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+		err := writeNew(StatePath(cwd, id), []byte("data"), func(s ensureStep, path string) error {
+			if s != stepWrite {
+				return nil
+			}
+			if err := os.Chmod(dir, c.mode); err != nil { // the file stays, and the failure has to say so
+				return err
+			}
+			return syscall.ENOSPC
+		})
+		if err := os.Chmod(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if !errors.Is(err, syscall.ENOSPC) || !errors.Is(err, syscall.EACCES) || !slices.Equal(sessionFiles(cwd), []string{id + ".json"}) {
+			t.Errorf("%s: %v, files %v", c.name, err, sessionFiles(cwd))
+		}
+	}
+}
+
+func TestEnsureStateFallbackConcurrentCreatorsYieldOneFile(t *testing.T) {
+	const id, creators = "fallback-race", 16
+	want := mustEncode(t, defaultState(id, "", at()))
+	for _, errno := range []syscall.Errno{0, syscall.EINVAL} {
+		if errno == 0 && !noReplaceWorks(t, t.TempDir()) {
+			continue
+		}
+		cwd := t.TempDir()
+		if err := makeSessionsDir(cwd); err != nil {
+			t.Fatal(err)
+		}
+		final, fail := StatePath(cwd, id), hook(nil)
+		if errno != 0 {
+			fail = unsupported(final, errno)
+		}
+		start, ready, done, torn := make(chan struct{}), make(chan struct{}), make(chan struct{}), make(chan string, 1)
+		var readers, creating sync.WaitGroup
+		if errno == 0 { // through the rename a reader sees no file or the whole one; in place it may see the file being written
+			readers.Add(1)
+			go func() {
+				defer readers.Done()
+				for first := true; ; first = false {
+					select {
+					case <-done:
+						return
+					default:
+					}
+					if b, err := os.ReadFile(final); err == nil && string(b) != want {
+						select {
+						case torn <- string(b):
+						default:
+						}
+					}
+					if first {
+						close(ready) // the reader has looked once before any creator starts
+					}
+				}
+			}()
+			<-ready
+		}
+		created, errs := make([]bool, creators), make([]error, creators)
+		for i := range creators {
+			creating.Add(1)
+			go func() {
+				defer creating.Done()
+				<-start
+				created[i], errs[i] = ensureStateWith(cwd, id, at, linkFails(syscall.EPERM), fail)
+			}()
+		}
+		close(start)
+		creating.Wait()
+		close(done)
+		readers.Wait()
+		wins := 0
+		for i := range creators {
+			if created[i] {
+				wins++
+			}
+			if errs[i] != nil {
+				t.Errorf("rename answer %v, creator %d: %v", errno, i, errs[i])
+			}
+		}
+		select {
+		case b := <-torn:
+			t.Errorf("rename answer %v: a reader saw %q", errno, b)
+		default:
+		}
+		if wins != 1 || fileText(t, final) != want || !slices.Equal(sessionFiles(cwd), []string{id + ".json"}) {
+			t.Errorf("rename answer %v: %d creators won, files %v", errno, wins, sessionFiles(cwd))
+		}
 	}
 }
 

@@ -4684,7 +4684,8 @@ the root, an absent one this user's passwd entry), and an empty `XDG_STATE_HOME`
 its ledger, which the relay's discovery also does.
 
 A store with no ownership stamp, no `takeover.json` and no ownership key in `schema_meta`, whose
-`write-gate.lock` does not exist, is refused in plain words: the `doctor` write probe, a writable
+`write-gate.lock` does not exist, is refused in plain words: the `doctor` write probe (`--probe-write`, decision 76; the default
+judges it and words it the same), a writable
 open and a registration hold answer reason `store_owned_by_other` (unchanged) with the detail
 `the store carries no ownership stamp (no write-gate.lock): no Go writer was ever bound to it; it
 is not the store a running relay serves`. A serving relay holds its store's write gate, so the
@@ -4738,7 +4739,7 @@ zone validates only the frozen tables, so it opens a store that has the zone and
 existing table, column or record changes (decision 14 stands). A command that declares itself read-only does not create the zone.
 
 The zone is a ledger: a shipped statement is never edited, a later column is an appended `ALTER TABLE ... ADD COLUMN` that every open runs, and
-`testdata/dag_zone_shipped.json` holds the shipped text, because the runtime swap gate compares `sqlite_master` text. The gate is aware of the zone, and of nothing else (generation 2 of CRW-183):
+`testdata/dag_zone_shipped.json` holds the shipped text, because the runtime swap gate compares `sqlite_master` text. The gate is aware of the zone (generation 2 of CRW-183) and, since CRW-472, of ordinary indexes on tables both sides declare (`EXTENDS_INDEX`, released by the same backup, and `NARROWS_INDEX`, allowed; [runtime installation](../runtime-install.md#why-the-schema-reading-compares-statements-and-not-versions)), and of nothing else:
 a build that adds the zone reads `EXTENDS_ZONE` against a store without it and refuses until the install command is run with
 `--backup-state-to DIR`, which takes the OPS-4.5 backup of the whole state directory itself (copy only, byte for byte, after the daemon and in-flight
 cells pass and before the swap, recorded beside the backup); a build without the zone reads `NARROWS_ZONE` against a store that has it and is not
@@ -4747,7 +4748,7 @@ refused; every other difference, a `dag_*` object defined differently included, 
 new refusal reason, `plan_revision_conflict`, are in [DAG plans](../relay/dag-plans.md).
 
 Where: internal/relay/store/dag_zone.go, store.go (`open`); internal/runtime/swapgate/swapgate.go (`DeclaredSchema`, `SchemaCell`,
-`ZoneArrivalOnly`, `DecideWithRelease`); internal/runtime/install/zone.go (the route and the backup), cli.go (`--backup-state-to`), install.go
+`ZoneArrivalOnly`, `DecideWithRelease`; CRW-472 added `AdditiveArrivalOnly` and index.go); internal/runtime/install/zone.go (the route and the backup), cli.go (`--backup-state-to`), install.go
 (`gateCells`); internal/relay/dag; tests internal/relay/store/dag_zone_test.go, internal/runtime/swapgate/dag_zone_test.go,
 internal/runtime/install/zone_test.go, internal/relay/dag/*_test.go.
 
@@ -4791,3 +4792,65 @@ runs Python in the product or in CI, so the refusal is a hygiene guard and not a
 Evidence: internal/dev/ci/validate.go (`pythonFileErrors`, `pythonShebang`); internal/dev/ci/validate_test.go (`Test47_VAL_3_PythonFilesAreRefused`),
 nopython_test.go, workflow_test.go (`TestWorkflow_installs_no_python`); internal/contracttest/contract_test.go (`TestCorpusKeepsItsDomains`);
 .github/workflows/ci.yml; docs/port/inventory.md (Files deleted with evidence).
+
+## 76. The relay's `doctor` reads by default and measures writability only on request (CRW-399)
+
+Decision: `doctor`'s default answer is a read of the store. It creates no `.probe-` file, never opens or locks
+`write-gate.lock`, makes no read-write connection, and reads the store without creating SQLite sidecars where SQLite allows.
+`doctor --probe-write` runs the measurement the default used to run: a temporary file created and removed in the state
+directory, then the write gate taken shared for a write transaction begun and rolled back on a read-write connection.
+`store.Probe` is the read, `store.ProbeWith(ctx, selection, ProbeOptions{Write: true})` the measurement, and
+`ProbeAccess.Measured` says which one an answer holds. `doctor` keeps every key, type and exit code; it gains one top-level object,
+`writeProbe` = `{requested, ran, judgedBy}`, placed before `runtime` (both are Go-only and excluded from the Python-form
+comparisons the same way). `requested` is the flag; `ran` is whether the measurement executed a step (a requested probe against a missing
+directory or a store this runtime may not write executes nothing, and its false readings are the refusal); `judgedBy` is
+`measured` exactly when `ran`, else `permission`.
+
+What the default says instead of measuring (`judgeWrite`, after the read leg succeeded and the closing relocation check): the
+directory is writable when `access(2)` grants `W_OK|X_OK`; the database is writable when this runtime is admitted (the
+ownership preflight, then the durable stamp read on the read connection with `stampOn`, one SELECT), `write-gate.lock` is one `ownership.Lock` would take
+(`gateUsable`, from its own metadata and never opened: a regular file this user owns that is closed to group and others or sits in an owner-only
+directory, readable and writable), the file grants `W_OK` and the database's own directory (the one a link resolves to, where SQLite builds the log
+and the index) grants `W_OK|X_OK`. A missing or unusable gate is worded as before (`store_owned_by_other`: the plain
+unstamped-store words, or the gate's own for a stamped store), under the prefix `database write judged unavailable:` where the
+measurement says `database write probe failed:`. It does not see a gate another process holds (the measurement says false with the
+gate's EWOULDBLOCK) or a sandbox that denies writes without changing permissions (Landlock does not hook `access(2)`); only `--probe-write`
+does, and the skill text says to read `actorReachability` from the process that will run the work with it.
+
+Sidecar-free reads: a `mode=ro` connection to a WAL database that no connection holds creates `relay.sqlite3-wal` and `-shm` and leaves
+them (measured on SQLite 3.46.1 and by strace of the base doctor), so a read-only default that only avoided the probe would still create
+files. The diagnostic read connection now takes its URI parameters from `store.InPlaceRead` (decision 36's Stop-path rule): `mode=ro`
+beside a live writer's `-wal` and `-shm`, `immutable=1` where no log holds a frame, and the plain `mode=ro` it always was where
+`InPlaceRead` has no read (a log with frames and no index) or fails, so no store becomes unreadable. Only the parameters are used: the
+connection still opens through `/proc/self/fd/N`, so the descriptor checks (I-08, I-09, I-15) are unchanged. The `Probe` and the reads of
+`doctor` (`ReadOnlyRows` and `NonceLookup` under `store.WithSidecarFreeReads`, which `runDoctor` sets) use it; every other
+`ReadOnlyRows` caller keeps the plain read.
+
+Who takes which: `crw doctor` (`scope.Survey`), the swap gate's in-flight cell and the candidate exercise run `<relay> doctor` with no
+option through `scope.Relay`, so they take the read; nothing in them changed.
+
+Why: the final acceptance of the Go installation (relay real-use run 6) could not prove the operating store's read-only boundary because the one command parents run to look at a store
+created and removed a file in its state directory, took its write gate and began a write transaction, while `docs/runtime-install.md` said
+`crw doctor` wrote nothing and the swap gate read the store without opening it.
+
+Limits, stated rather than claimed away:
+
+- The write probe's shared lock coexists with every writer's lifetime shared lock and only delays the socket binding's exclusive take (bounded 30
+  s); it meets that lock during gate placement and reports false for that moment. It is why `--probe-write` is safe against a running relay,
+  and it stays an explicit request.
+- Not changed: the ownership reading copies the database and its log into the temporary directory (`ownership.CopySnapshot`); the worker-policy
+  reading takes the daemon lock and the scope lock non-blockingly for an instant when a worker record exists (`service/worker.go`
+  `existingLockHeld`); the crashed-log fallback may build the index. The default is therefore "no write gate, no probe file, no read-write
+  connection, no sidecar where SQLite allows", not "no lock of any kind".
+- An immutable read can be stale if a writer starts between the sidecar examination and the connect and a checkpoint writes the file during the
+  read: the window the Stop path's read already accepts.
+- Two read-time windows of the judged stamp: a stamp rewrite between the read and a later write, and a log with frames and no usable index in a
+  directory that cannot be written (the read fails, so nothing is judged).
+- `accessReceipt.observedAccess.write` keeps its key and is, by default, a judged reading.
+- The measured probe reports a database file with mode 0400 as writable (SQLite opens a read-only connection and `BEGIN IMMEDIATE` does not fail
+  on it); the judged default says not writable. Recorded in the refactor backlog.
+
+Evidence: internal/relay/store/diagnostic_probe.go (`ProbeWith`, `judgeWrite`), diagnostic.go (`openHeldRead`, `WithSidecarFreeReads`),
+diagnostic_read.go; internal/relay/cli/doctor.go (`runDoctor`, `writeProbeRecord`); internal/relay/argparse/specs.json;
+probe_readonly_linux_test.go (the inotify observation, the judged table, the log-only values read through the three read paths, and a mutation
+of the read to `immutable=1` that those tests fail), doctor_readonly_linux_test.go (the built binary), descriptor_identity_test.go (both entries).

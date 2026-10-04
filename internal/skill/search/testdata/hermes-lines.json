@@ -1,0 +1,20 @@
+[
+  {
+    "name": "CR",
+    "body": "| [`one`](/x) | First | `cat/one` |\r| [`two`](/x) | Second | `cat/two` |",
+    "rows": [],
+    "classification": "identical"
+  },
+  {
+    "name": "line-separator",
+    "body": "| [`one`](/x) | First | `cat/one` | | [`two`](/x) | Second | `cat/two` |",
+    "rows": [],
+    "classification": "identical"
+  },
+  {
+    "name": "paragraph-separator",
+    "body": "| [`one`](/x) | First | `cat/one` | | [`two`](/x) | Second | `cat/two` |",
+    "rows": [],
+    "classification": "identical"
+  }
+]

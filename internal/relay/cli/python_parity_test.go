@@ -13,6 +13,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/buildinfo"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
@@ -145,7 +146,7 @@ func TestDoctor_on_a_python_created_store(t *testing.T) {
 	}
 	expectSame(t, answerKey(t, argv), home, argv, run{got.code, asPythonReport(t, got.stdout, "python"), ""})
 	runtimeBlock := decode(t, got.stdout)["runtime"].(map[string]any)
-	if runtimeBlock["language"] != "go" || runtimeBlock["version"] != cli.Version {
+	if runtimeBlock["language"] != "go" || runtimeBlock["version"] != buildinfo.Version {
 		t.Fatalf("runtime %v", runtimeBlock)
 	}
 }
@@ -204,7 +205,7 @@ func TestDoctor_expect_inode_mismatch_refuses_with_python_reason(t *testing.T) {
 // 31).
 func asPythonReport(t *testing.T, stdout, pythonSawOwner string) string {
 	t.Helper()
-	report := withoutKey(t, stdout, "runtime")
+	report := withoutKey(t, withoutKey(t, stdout, "runtime"), "writeProbe")
 	report = regexp.MustCompile(`\n    "owner": "[a-z]+",\n`).ReplaceAllString(report, "\n    \"owner\": \""+pythonSawOwner+"\",\n")
 	return regexp.MustCompile(`"runtime_build": "[^"]*"`).ReplaceAllString(report, `"runtime_build": "`+ownership.CompatibilityBuild+`"`)
 }

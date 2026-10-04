@@ -1,0 +1,6 @@
+interface:
+  display_name: "crw-qa"
+  short_description: "Manual surface-driving QA gate: faithful channels, evidence matrix, adversarial classes, teardown receipts."
+  default_prompt: "Use $crw-qa to drive the built surface and capture evidence before claiming the task done."
+policy:
+  allow_implicit_invocation: false

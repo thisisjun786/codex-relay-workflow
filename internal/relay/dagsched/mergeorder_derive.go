@@ -34,15 +34,15 @@ func (p lanePos) before(o lanePos) bool {
 }
 
 // lanePosition reads a holder's place from stored rows only. A node can be in the lane only while its accepted result is the one it would merge (current: it stands on the node's current relationship,
-// generation and head event) and the plan does not hold it. Turn: an open merge turn (waiting, holding, merging or unknown) of its relationship for its accepted head, by requested_at and turn id. Accepted:
-// an active acceptance the reading calls accepted (not blocked, stale, paused or cancelled), by accepted_at. Working: the rest, by the creation time of the earliest relationship of its executions, which a
-// correction or a handover does not move, else by the decided_at of its release (a node that holds regions before it has a child).
-func (s *Scheduler) lanePosition(ctx context.Context, q store.Querier, plan string, h orderHolder, current bool) (lanePos, error) {
-	inLane := current && !h.Held && h.HasAcc && h.Acc.HeadSHA != ""
+// generation and head event, and head is the head it stands on, "" when it is not current) and the plan does not hold it. Turn: an open merge turn (waiting, holding, merging or unknown) of its relationship for that
+// head, by requested_at and turn id. Accepted: an active acceptance the reading calls accepted (not blocked, stale, paused or cancelled), by accepted_at. Working: the rest, by the creation time of the earliest
+// relationship of its executions, which a correction or a handover does not move, else by the decided_at of its release (a node that holds regions before it has a child).
+func (s *Scheduler) lanePosition(ctx context.Context, q store.Querier, plan string, h orderHolder, head string) (lanePos, error) {
+	inLane := head != "" && !h.Held && h.HasAcc && h.Acc.HeadSHA != ""
 	if inLane {
 		var requested, turn string
 		found, err := queryOne(ctx, q, "SELECT requested_at, turn_id FROM merge_turns WHERE relationship_id = ? AND candidate_head = ? AND state IN ('waiting','holding','merging','unknown') ORDER BY requested_at, turn_id LIMIT 1",
-			[]any{h.Acc.RelationshipID, h.Acc.HeadSHA}, &requested, &turn)
+			[]any{h.Acc.RelationshipID, head}, &requested, &turn)
 		if err != nil {
 			return lanePos{}, err
 		}
@@ -253,7 +253,7 @@ func (s *Scheduler) orderConstraints(ctx context.Context, q store.Querier, plan 
 			return nil, 0, err
 		}
 		stored[h.NodeID] = head
-		pos, err := s.lanePosition(ctx, q, plan, h, head != "")
+		pos, err := s.lanePosition(ctx, q, plan, h, head)
 		if err != nil {
 			return nil, 0, err
 		}

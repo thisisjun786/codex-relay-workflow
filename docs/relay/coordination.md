@@ -211,6 +211,44 @@ also be passed on, below), and
 separate facts. The same rule from the other side is that a parent asserting its turn in
 conversation changes nothing: only a write by the registered project parent does.
 
+## A restated head is a new candidate
+
+A holder that refreshes its pull request branch inside its turn has a new head, and the turn still names the old
+one. `merge-turn-ready --turn <id> --actor <holder> --head <new> --not-ready` states it, and two rules follow from
+the head being a different commit. Both are deliberate: they were written with the lane and kept when it was ported.
+
+- **Readiness is reset.** Readiness is a statement about one head, and it is what lets `merge-turn-check` run, so a head
+  that changed cannot inherit it. Without the reset a holder could restate its head and then pass the currency check
+  unchallenged, which is the check's whole purpose. A `--ready` given in the same call is therefore accepted and not
+  recorded; when the readiness was already off, nothing in the ledger shows that it was asked for, so the answer is where
+  it is said (below). The relay does not read CI when readiness is declared: it reads the checks the holder restates at
+  `merge-turn-check`. "Declare readiness once the new head's checks have finished" is the order a holder keeps, not a
+  condition the relay tests. A claim differs: `merge-turn-request --head <h> --ready` records readiness, because a claim
+  has no earlier statement to reset.
+- **A holding turn gets its own grant.** The grant it holds names the old head, so the restated candidate gets a new one
+  (`grantedFrom` `candidate_restated`) that has to be acknowledged before the check, as any grant does: the holder
+  says it re-read the record rather than acting on what it remembered. Without it a holder that had not answered the old
+  grant could never answer it, and one that had could merge a candidate it acknowledged nothing about. This grant wakes
+  nobody. The answer to the restating call names it, and `merge-turn-show` reads it later. A waiting claim holds no grant;
+  it is granted one when it takes the target.
+
+The answer to the restating call carries `readinessReset` whenever the head changed: `previousHead`, `candidateHead`,
+`readyRequested` (what the call asked for), `grantId` (the grant the holder now owes, null for a waiting claim) and
+`detail`, which names the next steps and says so when a `--ready` was dropped. A call that leaves the head as it is
+carries none. The order, with the owner's binding active (`merge-turn-acknowledge` refuses a paused one, so resume it first):
+
+1. refresh the branch and read its new head;
+2. `merge-turn-ready --turn <id> --actor <holder> --head <new> --not-ready`; on a holding turn the answer's `grant` is the new grant;
+3. `merge-turn-acknowledge --turn <id> --actor <holder> --grant <grantId> --evidence <what was read>`;
+4. wait, inside the turn, for the new head's checks to finish (`merge-turn-progress` keeps the turn alive);
+5. `merge-turn-ready --turn <id> --actor <holder> --head <new> --ready` (the head is the turn's own now: recorded, no new grant);
+6. `merge-turn-check`, which states the new head, then the merge and `merge-turn-land`.
+
+The acknowledgement (step 3) may also come after step 5; readiness is declared only once the new head's checks have finished. `merge-turn-check` refuses a missing step with its reason unchanged and the next step in its detail: an
+undeclared head is `merge_candidate_moved` (declare it with `merge-turn-ready ... --head <h> --ready`), an unanswered grant is
+`merge_turn_not_held` (acknowledge it, naming the grant), and a check that restates a head other than the one the turn holds is
+`merge_candidate_moved` (restate the one the turn holds, or declare the head you mean with `--not-ready`).
+
 ## Progress, the holding limit and passing a silent turn
 
 A holder works inside its turn for as long as a refresh, CI and a merge take, and nothing used to
@@ -348,6 +386,68 @@ without a word (CRW-124 G3).
 
 An acceptance takes no condition. One given to `region-settle` used to vanish; it is now refused,
 as `bad_invocation` at the command line.
+
+## A review thread that arrives after the child's record
+
+A child's handoff record lists the review threads it saw in `reviewCoverage.threadsSeen` and judges
+each one. A review that lands afterwards on the same head is not in that list.
+`merge-evidence --restate <record>` reads the pull request again and reports every such thread as
+a `late_finding`, resolved or not, because the record did not see it and no longer describes the
+candidate. The record then went back to the child, which could only answer with a receipt that
+named the thread.
+
+When the coordinator can judge a late thread itself it records that judgement in a file and passes
+the file to the same command:
+
+    codex-session-relay merge-evidence --repository <owner/name> --pull-request <N> \
+      --restate <record.json> --late-dispositions <dispositions.json>
+
+The file is a JSON object whose `lateDispositions` member lists one entry per thread:
+
+    {"lateDispositions": [
+      {"threadId": "PRRT_kwDOExample", "disposition": "backlog",
+       "evidenceUrl": "https://github.com/<owner>/<name>/issues/123",
+       "head": "<the head the record is about>", "grade": "P2"}]}
+
+Every member is a string and none may be blank. `threadId` is the thread's identifier as the
+reading's `findings` and a record's `threadsSeen` give it. `disposition` is `answered` (replied on
+the thread, no change needed), `backlog` (deferred; the evidence is the follow-up), `resolved` (the
+concern is already gone; the evidence shows it) or `refuted` (the finding does not apply; the evidence
+is the code that shows it). `evidenceUrl` is an http or https URL a reader can open. `head` is the full
+commit sha. `grade` is whatever grade the coordinator gave, such as `P2` or `yellow`: the relay
+records it as written and never reads it. Values are kept and matched exactly as written, and a
+duplicate key keeps its last value.
+
+These words are the coordinator's. They cover threads outside `threadsSeen` and never stand in for
+the child's own `threadDispositions`, whose vocabulary differs (`backlog` is roughly the child's
+`accepted`, `refuted` its `disputed`). Only review threads can be disposed of; a review summary or
+a pull request comment is never exempted.
+
+- **What an entry does.** A thread leaves `late_finding` when the file holds an entry for it whose
+  `head` is exactly the head the record is about (`--restate-head` when given) and the record's
+  `threadsSeen` does not list the thread. An entry for another head has no effect, and neither
+  does one for a thread the record already lists or one the reading does not show.
+- **It is not a resolve.** The fresh reading still grades the forge's own state, so an unresolved
+  thread keeps `review_incomplete` in the reading and the restatement whatever is recorded. The
+  coordinator resolves the thread on the forge, then records the judgement.
+- **A malformed document is refused whole.** In a file that is a JSON object, a missing or non-list
+  `lateDispositions`, a non-object entry, a missing, non-string or blank member, a disposition
+  outside the set, an evidence URL that is not http or https, a head that is not a sha, or one
+  thread twice on one head is `malformed_evidence` and no entry takes effect. A file that cannot be
+  read, is not JSON or is not a JSON object, and `--late-dispositions` without `--restate`, are
+  usage errors (exit 4) before anything is read from the forge or graded. An empty value counts as
+  no flag.
+- **What the payload says.** With the flag, `restatement.lateDispositions` lists the entries in file
+  order, each with its five members and `effect` `applied` or `ignored`. An ignored entry carries a
+  `reason`: `other_head`, else `unknown_thread` (no review thread of that id), else `not_late` (the
+  record lists it). The list is empty when the document was rejected or the record could not be
+  graded. Without the flag the payload is exactly what it was. No problem code, refusal reason or
+  exit code was added.
+- **What the relay does not decide.** Whether a thread is minor enough to judge here is the
+  coordinator's decision. A P0, P1 or security finding goes back to the child as before, and
+  nothing in the relay stops an entry that records another grade. The file is unauthenticated,
+  like `--required` and `--actor`; the payload carries each entry so the merge record keeps the
+  grade and the evidence that were given.
 
 ## What this is not
 - **`reaffirm` spans two transactions, and that is a choice with a stated reason.** The first

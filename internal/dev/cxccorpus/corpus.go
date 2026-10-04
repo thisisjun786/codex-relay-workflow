@@ -92,7 +92,7 @@ type GitWorktree struct {
 	Branch string `json:"branch"`
 }
 
-// Step is one invocation. Exactly one of Hook, CLI, Node, MCP or Write is set.
+// Step is one invocation. Exactly one of Hook, CLI, Node, MCP, Write or Wait is set.
 //   - Hook names a registered leg (hook-declarations.json) and runs its declared command.
 //   - CLI runs the repository dispatcher bin/codexclaw.mjs (the `cxc` the README installs);
 //     Payload selects the plugin's own bin/cxc.mjs instead.
@@ -101,6 +101,9 @@ type GitWorktree struct {
 //   - Write is not an oracle invocation: the recorder writes those files (case paths, text with
 //     placeholders) between invocations, standing in for an agent's edit. Its result is
 //     recorded with action "write".
+//   - Wait is not an invocation either: it polls (until the step deadline) for a file a detached process
+//     of an earlier step writes, a case-path glob such as ws/.codexclaw/bg/*.exit, and is recorded with
+//     action "wait".
 type Step struct {
 	Hook    string            `json:"hook,omitempty"`
 	CLI     []string          `json:"cli,omitempty"`
@@ -108,6 +111,7 @@ type Step struct {
 	Node    []string          `json:"node,omitempty"`
 	MCP     []json.RawMessage `json:"mcp,omitempty"`
 	Write   map[string]string `json:"write,omitempty"`
+	Wait    string            `json:"wait,omitempty"`
 	Stdin   json.RawMessage   `json:"stdin,omitempty"`
 	// StdinPad appends that many spaces to stdin: an oversized payload that is still one JSON
 	// document, without storing megabytes in the spec.

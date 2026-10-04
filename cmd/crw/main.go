@@ -14,9 +14,12 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/mcp"
 	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pluginwiring"
+	"github.com/thisisjun786/codex-relay-workflow/internal/provider"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/adapter"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
+	"github.com/thisisjun786/codex-relay-workflow/internal/review/command"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/buildinfo"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install"
 	"github.com/thisisjun786/codex-relay-workflow/internal/skill"
@@ -24,6 +27,7 @@ import (
 	// The relay commands register in the relay command table when their packages load; cli
 	// brings its own and the registry, delivery and fault families.
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/capacity"
+	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/childcleanup"
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/managed"
@@ -105,7 +109,7 @@ func run(ctx context.Context, program string, args []string, stdout, stderr io.W
 }
 
 func runAt(ctx context.Context, program string, args []string, stdout, stderr io.Writer, started time.Time) int {
-	cli.Version = version
+	buildinfo.Version = version
 	switch filepath.Base(program) {
 	case "codex-session-relay":
 		return relay(ctx, program, args, stdout, stderr)
@@ -152,6 +156,9 @@ func modes() []mode {
 		{"relay", true, func(c invocation) int { return relay(c.ctx, "crw relay", c.args, c.stdout, c.stderr) }},
 		{"bridge", true, func(c invocation) int { return bridge(c.ctx, c.program, c.args) }},
 		{"hook", true, func(c invocation) int {
+			if claimed, code := runComponentHook(c, os.Stdin, componentHooks()); claimed {
+				return code
+			}
 			if harness.ClaimsHook(c.args) {
 				return harness.Hook(c.ctx, c.args, os.Stdin, c.stdout, c.stderr, os.LookupEnv, harness.Legs())
 			}
@@ -167,7 +174,10 @@ func modes() []mode {
 			defer stop()
 			return install.Run(ctx, c.args, c.stdout, c.stderr)
 		}},
+		{"review", true, func(c invocation) int { return command.Run(c.ctx, c.args, c.stdout, c.stderr) }},
 		{"pabcd", false, func(c invocation) int { return harness.Pabcd(c.args, os.Stdin, c.stdout, c.stderr, harness.Verbs()) }},
+		{"provider", false, func(c invocation) int { return provider.Run(c.ctx, c.stdout) }},
+		{"map", false, runRepoMap},
 		{"help", true, help}, {"-h", false, help}, {"--help", false, help},
 		{"version", true, showVersion}, {"--version", false, showVersion},
 	}

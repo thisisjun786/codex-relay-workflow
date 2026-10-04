@@ -16,16 +16,16 @@ from the current assignment, linked Linear items, and repository identity. Use
 the active project when the context identifies it; compare projects only when
 the request covers that broader scope.
 
-Use installed `readchk` when the target, meaning of "done", or intended scope is
-ambiguous. Read its current instructions, cross-check the conversation and known
-context, and proceed silently when resolved. Ask one focused question only for a
+When the target, meaning of "done", or intended scope is ambiguous, restate the
+request, cross-check the conversation and known context, and proceed silently when
+that resolves it. Ask one focused question only for a
 material choice the evidence cannot settle. Do not ask Jun to confirm a clear read.
 
 Gather only the evidence needed to choose: product goal and accepted decisions,
 relevant Linear criteria/dependencies, active task ownership, and current repository
 or delivery state. Start with the linked coordination record and scoped reads;
 refresh stale facts and paginate relevant results before claiming absence. Do not
-audit the whole workspace or launch every helper just to select an action.
+audit the whole workspace or run every possible check just to select an action.
 
 Distinguish these two situations. An empty backlog does not prove a fresh start;
 a Done label or completed agent turn does not prove the outcome is delivered.
@@ -79,15 +79,14 @@ goal. If nothing remains, recommend stopping instead of inventing more work.
 
 ## Select and return one action
 
-Read and use installed `nba` with the scoped evidence above: current outcome,
+Choose the action from the scoped evidence above: current outcome,
 starting/finished state, binding constraint, ready candidates, and existing owner.
-It supplies the next-action judgment within the completion and ownership boundaries
+Make the next-action judgment within the completion and ownership boundaries
 above; a completed goal or an active owner does not require another cycle.
-Keep its one-action, evidence, reason,
-and observable completion contract; do not impose its cycle vocabulary on the user
-or require that the project adopt that workflow. Use `readchk` for interpretation,
-not as a recurring approval gate. If a helper is unavailable, disclose that fact
-and make the bounded selection from available evidence without claiming it ran.
+Return one action with its evidence, reason,
+and observable completion condition; do not impose a cycle vocabulary on the user
+or require that the project adopt a workflow. Restate the request for interpretation,
+not as a recurring approval gate.
 
 Honor explicit priorities and deadlines, then choose the action that removes the
 most consequential constraint or closes the nearest useful delivery. Do not rank

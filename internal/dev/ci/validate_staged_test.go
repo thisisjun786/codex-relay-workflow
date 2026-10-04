@@ -14,6 +14,11 @@ import (
 // stagedRepo is validateRepo plus one skill, whose original text is skill, staged by the staging
 // tool from a synthetic CXC tree (a scratch repository stands in for the extracted tree).
 func stagedRepo(t *testing.T, skill string) *fixtureRepo {
+	r, _ := stagedRepoSource(t, skill)
+	return r
+}
+
+func stagedRepoSource(t *testing.T, skill string) (*fixtureRepo, skillport.Source) {
 	t.Helper()
 	r, tree := validateRepo(t), newRepo(t)
 	table, err := os.ReadFile(filepath.Join(repoRoot(), "contract/schema/cxc/name-substitution.json"))
@@ -32,7 +37,7 @@ func stagedRepo(t *testing.T, skill string) *fixtureRepo {
 	if _, err := skillport.Stage(r.root, src, []string{"kwrite"}); err != nil {
 		t.Fatal(err)
 	}
-	return r
+	return r, src
 }
 
 // A staged skill rides the validate check: its fidelity to the record, its metadata and its links.
@@ -52,5 +57,31 @@ func TestStagedSkillsAreValidated(t *testing.T) {
 		{"bad metadata", "---\nname: cxc-kwrite\ndescription: \"Demo\"\nmetadata: x\n---\n", staged + "SKILL.md: expected one name and one description field\n"},
 	} {
 		expectEqual(t, row.name, validate(t, stagedRepo(t, row.skill)), result{1, "", row.want})
+	}
+}
+
+func TestRecordedStagedEditsAreValidated(t *testing.T) {
+	const staged = "port/cxc/skills/crw-kwrite/"
+	const original = "---\nname: cxc-kwrite\ndescription: \"Demo\"\nmetadata: x\n---\n\nSee [a](references/a.md).\n"
+	r, src := stagedRepoSource(t, original)
+	good := "---\nname: crw-kwrite\ndescription: \"Demo\"\n---\n\nSee [a](references/a.md).\n"
+	r.write(staged+"SKILL.md", good)
+	if n, err := skillport.RecordEdits(r.root, src, "crw-kwrite", "remove metadata"); err != nil || n != 1 {
+		t.Fatalf("RecordEdits = %d, %v", n, err)
+	}
+	if got := validate(t, r); got.code != 0 || !strings.HasPrefix(got.stdout, "Validated 2 skills, ") {
+		t.Fatalf("recorded edit: %+v", got)
+	}
+	for _, row := range []struct{ skill, want string }{
+		{good + "See [b](missing.md).\n", "invalid local link missing.md"},
+		{strings.Replace(good, "---\n\n", "metadata: x\n---\n\n", 1), "expected one name and one description field"},
+	} {
+		r.write(staged+"SKILL.md", row.skill)
+		if _, err := skillport.RecordEdits(r.root, src, "crw-kwrite", "test"); err != nil {
+			t.Fatal(err)
+		}
+		if got := validate(t, r); got.code != 1 || !strings.Contains(got.stderr, row.want) {
+			t.Errorf("recorded bad skill: %+v", got)
+		}
 	}
 }

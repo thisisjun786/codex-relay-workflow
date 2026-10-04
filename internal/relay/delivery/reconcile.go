@@ -325,7 +325,7 @@ func (rc *Reconciler) isCurrent(attempt, delivery Row) bool {
 }
 
 func (rc *Reconciler) settleFromReceipt(ctx context.Context, attempt, delivery Row, facts Facts, evidence, observation string, now float64, turnsChecked bool, notes, findings any) (Obj, error) {
-	record, err := AttemptRecord(facts, attempt.S("request_id"), attempt.S("event_id"), attempt.I("attempt_no"), delivery.S("recipient_task_id"), "unknown", rc.Clock.ISO(),
+	record, err := AttemptRecord(facts, attempt.S("request_id"), attempt.S("event_id"), attempt.I("attempt_no"), delivery.S("recipient_task_id"), "unknown", rc.Clock.ISO(), attemptRuntime(attempt),
 		Obj{{Key: "operationReceiptChecked", Value: true}, {Key: "recipientTurnsChecked", Value: turnsChecked}, {Key: "affirmativeEvidence", Value: evidence}, {Key: "checkedAt", Value: rc.Clock.ISO()}})
 	if err != nil {
 		return nil, err
@@ -365,13 +365,24 @@ func unfinishedRecord(attempt, delivery Row, observedAt string) Obj {
 		{Key: "recipientStatusBefore", Value: "unknown"}, {Key: "recipientApprovalPolicy", Value: nil}, {Key: "observedAt", Value: observedAt}}
 }
 
-func (rc *Reconciler) settleFromScan(ctx context.Context, attempt, delivery Row, scan TokenScan, observation, scanDetail string, now float64) (Obj, error) {
-	var record Obj
-	if attempt.N("record") {
-		record = unfinishedRecord(attempt, delivery, rc.Clock.ISO())
-	} else {
-		record = loadsObj(attempt.S("record"))
+func attemptRuntime(attempt Row) Obj {
+	runtime, _ := loadsObj(attempt.S("record")).Get("runtime").(Obj)
+	return runtime
+}
+
+func reconciliationRecord(attempt, delivery Row, clock Clock) Obj {
+	if !attempt.N("record") && attempt.S("internal_state") != "in_flight" {
+		return loadsObj(attempt.S("record"))
 	}
+	record := unfinishedRecord(attempt, delivery, clock.ISO())
+	if runtime := attemptRuntime(attempt); runtime != nil {
+		record = record.Set("runtime", runtime)
+	}
+	return record
+}
+
+func (rc *Reconciler) settleFromScan(ctx context.Context, attempt, delivery Row, scan TokenScan, observation, scanDetail string, now float64) (Obj, error) {
+	record := reconciliationRecord(attempt, delivery, rc.Clock)
 	record = record.Set("reconciliation", Obj{{Key: "operationReceiptChecked", Value: true}, {Key: "recipientTurnsChecked", Value: true}, {Key: "affirmativeEvidence", Value: TurnFound}, {Key: "checkedAt", Value: rc.Clock.ISO()}})
 	anchor, err := rc.write(ctx, attempt, delivery, record, pyjson.Text(record.Get("deliveryState")), TurnFound, observation, scanDetail, nil, writeOpts{aggregate: Dispatched, dispatchEvidence: "turn_found", dispatchTurn: scan.TurnID})
 	if err != nil {
@@ -381,12 +392,7 @@ func (rc *Reconciler) settleFromScan(ctx context.Context, attempt, delivery Row,
 }
 
 func (rc *Reconciler) stayHeld(ctx context.Context, attempt, delivery Row, observation, scanDetail string, reading Reading) (Obj, error) {
-	var record Obj
-	if attempt.N("record") {
-		record = unfinishedRecord(attempt, delivery, rc.Clock.ISO())
-	} else {
-		record = loadsObj(attempt.S("record"))
-	}
+	record := reconciliationRecord(attempt, delivery, rc.Clock)
 	record = record.Set("reconciliation", Obj{{Key: "operationReceiptChecked", Value: true}, {Key: "recipientTurnsChecked", Value: !strings.Contains(scanDetail, "not scanned")}, {Key: "affirmativeEvidence", Value: NoEvidence}, {Key: "checkedAt", Value: rc.Clock.ISO()}})
 	mark := scanDetail
 	var hold any
@@ -526,6 +532,9 @@ func BindAnchorIn(ctx context.Context, s *store.Store, clock Clock, rid string, 
 	}
 	current, err := one(ctx, s, "SELECT anchor_state, dispatch_turn_id FROM generations WHERE relationship_id = ? AND execution_generation = ?", rid, number)
 	if err != nil || current == nil {
+		return "ineligible", err
+	}
+	if withdrawn, err := store.GenerationWithdrawn(ctx, s.Q(ctx), rid, number); err != nil || withdrawn {
 		return "ineligible", err
 	}
 	now := clock.ISO()

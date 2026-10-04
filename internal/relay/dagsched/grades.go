@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 )
 
 // The grades of an edit region and the rules a release is judged by (CRW-409). The grade says how an overlap on a place is settled when two nodes edit it in parallel; the judgement
@@ -91,7 +92,7 @@ func validRule(rule string) bool {
 		return true
 	}
 	command, ok := strings.CutPrefix(rule, RuleRegeneratePref)
-	return ok && command != "" && command == strings.TrimSpace(command) && !hasControl(command)
+	return ok && command != "" && command == strings.TrimSpace(command) && !dag.HasControl(command)
 }
 
 // checkGrade validates a declared grade and rule: the grade is one of the four (empty is independent), a mechanical grade names a valid rule and no other grade names one.
@@ -208,4 +209,49 @@ func gradeWeight(g string) int {
 		return 3
 	}
 	return 0
+}
+
+// MechanicalRuleFor is the common selector used by the skill checker and the relay proof.
+// Every touching region in every given declaration must cover the whole file mechanically
+// with one agreed rule; shared surfaces and symbol regions never prove a file resolution.
+func MechanicalRuleFor(sets [][]Region, p string) (string, bool) {
+	if len(sets) == 0 || SharedSurface(p) {
+		return "", false
+	}
+	rule := ""
+	perSet := make([][]Region, 0, len(sets))
+	for _, set := range sets {
+		var touching []Region
+		for _, r := range set {
+			if (r.Kind == "tree" && within(p, r.Path)) || (r.Kind != "tree" && r.Path == p) {
+				touching = append(touching, r)
+			}
+		}
+		if len(touching) == 0 {
+			return "", false
+		}
+		for _, r := range touching {
+			if r.Kind == "symbol" || EffectiveGrade(r) != GradeMechanical {
+				return "", false
+			}
+			if rule == "" {
+				rule = r.Rule
+			} else if r.Rule != rule {
+				return "", false
+			}
+		}
+		perSet = append(perSet, touching)
+	}
+	for i := range perSet {
+		for j := i + 1; j < len(perSet); j++ {
+			for _, a := range perSet[i] {
+				for _, b := range perSet[j] {
+					if PairGrade(a, b) != GradeMechanical {
+						return "", false
+					}
+				}
+			}
+		}
+	}
+	return rule, rule != ""
 }

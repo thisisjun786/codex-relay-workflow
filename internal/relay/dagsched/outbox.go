@@ -99,18 +99,6 @@ func newestSeq(ctx context.Context, q store.Querier, plan, document string) (int
 	return seq.Int64, err
 }
 
-// summaryActor refuses a task that is not the one registered parent of the entry's project: only that parent writes a plan's summary, and a replaced parent is refused at once.
-func summaryActor(ctx context.Context, q store.Querier, project, actor string) error {
-	parents, err := projectParents(ctx, q, project)
-	if err != nil {
-		return err
-	}
-	if len(parents) != 1 || parents[0] != actor {
-		return refuse(contract.RefusalScopeRoleMismatch, "task %s is not the registered parent of project %s", actor, project)
-	}
-	return nil
-}
-
 func validDocument(document string) error {
 	switch {
 	case document == "" || strings.TrimSpace(document) != document:
@@ -148,7 +136,7 @@ func (s *Scheduler) EnqueueSummary(ctx context.Context, plan, actor, document st
 		if err != nil {
 			return err
 		}
-		if err := summaryActor(txCtx, q, snap.ProjectKey, actor); err != nil {
+		if err := requireProjectParent(txCtx, q, snap.ProjectKey, actor); err != nil {
 			return err
 		}
 		progress, err := s.Progress(txCtx, q, plan)
@@ -166,8 +154,8 @@ func (s *Scheduler) EnqueueSummary(ctx context.Context, plan, actor, document st
 		now := s.now()
 		entry := SummaryEntry{PlanID: plan, ProjectKey: progress.ProjectKey, Document: document, PlanRevision: progress.Reading.PlanRevision, Seq: newest.Seq + 1, SubjectDigest: progress.Digest,
 			StateDigest: progress.Reading.StateDigest, Summary: SummaryText(progress), State: SummaryPending, EnqueuedBy: actor, CreatedAt: now, UpdatedAt: now}
-		entry.SummarySHA256 = sha(entry.Summary)
-		entry.SummaryID = "sum-" + shaOf([]byte(dag.Canonical(map[string]any{"plan_id": plan, "document": document, "plan_revision": entry.PlanRevision, "subject_digest": entry.SubjectDigest, "seq": entry.Seq})))[:32]
+		entry.SummarySHA256 = shaOf([]byte(entry.Summary))
+		entry.SummaryID = summaryID(plan, document, entry.PlanRevision, entry.SubjectDigest, entry.Seq)
 		rows, err := q.QueryContext(txCtx, "SELECT summary_id FROM dag_summary_outbox WHERE plan_id = ? AND document = ? AND state IN ('pending','claimed','failed') ORDER BY seq", plan, document)
 		if err != nil {
 			return err
@@ -340,7 +328,7 @@ func (s *Scheduler) ClaimSummary(ctx context.Context, id, actor string) (Summary
 		if err != nil {
 			return err
 		}
-		if err := summaryActor(txCtx, q, e.ProjectKey, actor); err != nil {
+		if err := requireProjectParent(txCtx, q, e.ProjectKey, actor); err != nil {
 			return err
 		}
 		newest, err := newestSeq(txCtx, q, e.PlanID, e.Document)
@@ -365,7 +353,7 @@ func (s *Scheduler) ClaimSummary(ctx context.Context, id, actor string) (Summary
 	return out, err
 }
 
-// SummaryReconciliation is what a document says of an entry. Outcome is one of already_written (the document carries exactly this entry's block, alone in the plan's container), absent
+// SummaryReconciliation is what a document says of an entry. Outcome is one of already_written (the document carries this entry's block, alone in the plan's container; see sameBlock for the one blank line a save may add), absent
 // (no block of the plan), stale (the plan's one block is another entry's, an older or a newer one, or this entry's with other text, or the container holds more than the block), duplicate
 // (more than one block of the plan) and malformed (a block or container that is not closed, a block outside the container, or two containers).
 type SummaryReconciliation struct {
@@ -383,6 +371,28 @@ type SummaryReconciliation struct {
 	DocumentSeq       int64
 	Relation          string // of the block the document holds to this entry: older, newer, same
 	PreviousBlock     string
+}
+
+// sameBlock says whether a block found in a document is the block written for the entry. Both are compared in canonText form, and without the blank lines that stand directly before the
+// block's end marker: Linear's save puts a blank line between a block's closing code fence and that marker (measured on a real save of a written block, CRW-513), and nothing else of
+// the block changed. Blank lines are the only thing dropped and that is the only place they are dropped. The line before the end marker of the written block is its closing fence, so a
+// block that lost the fence, or carries any text there, is still another block, and so is any blank line anywhere else in it (the headers and the summary are compared line by line).
+func sameBlock(found, written string) bool {
+	return withoutBlankBeforeBlockEnd(canonText(found)) == withoutBlankBeforeBlockEnd(canonText(written))
+}
+
+// withoutBlankBeforeBlockEnd drops the empty lines that stand directly before the last line of a block, which is its end marker.
+func withoutBlankBeforeBlockEnd(block string) string {
+	lines := strings.Split(block, "\n")
+	last := len(lines) - 1
+	keep := last
+	for keep > 0 && lines[keep-1] == "" {
+		keep--
+	}
+	if keep == last {
+		return block
+	}
+	return strings.Join(lines[:keep], "\n") + "\n" + lines[last]
 }
 
 // reconcileDocument judges a document against an entry.
@@ -439,7 +449,7 @@ func reconcileDocument(e SummaryEntry, observed string) SummaryReconciliation {
 		r.Relation = "same"
 		return finish("stale", "replace_container", "the document holds a block of this plan with this sequence number and another identity: replace the container's current text with this entry's")
 	}
-	if canonText(b.text) != canonText(summaryBlock(e)) {
+	if !sameBlock(b.text, summaryBlock(e)) {
 		r.Relation = "same"
 		return finish("stale", "replace_container", "the block in the document is not this entry's block (a header or the text differs): replace the container's current text with this entry's")
 	}
@@ -470,9 +480,10 @@ type SummaryCompleted struct {
 	Replayed bool
 }
 
-// CompleteSummary confirms an entry from the document the parent read back after its write: the document must be the entry's, and its plan container must hold this entry's block exactly
-// and nothing else. A readback that does not is refused (readback_mismatch) and the entry stays claimed with the problem kept, so the parent repairs and reads again. A confirmation is
-// monotonic: completing an entry that is confirmed answers its record and checks nothing more.
+// CompleteSummary confirms an entry from the document the parent read back after its write: the document must be the entry's, and its plan container must hold this entry's block and
+// nothing else. The block is the entry's with or without the blank line Linear adds before its end marker (sameBlock); any other difference is refused (readback_mismatch) and the entry
+// stays claimed with the problem kept, so the parent repairs and reads again. The readback kept on the entry is the block as the document held it. A confirmation is monotonic:
+// completing an entry that is confirmed answers its record and checks nothing more.
 func (s *Scheduler) CompleteSummary(ctx context.Context, id, actor, token, document, readback string) (SummaryCompleted, error) {
 	var out SummaryCompleted
 	var problem string
@@ -482,7 +493,7 @@ func (s *Scheduler) CompleteSummary(ctx context.Context, id, actor, token, docum
 		if err != nil {
 			return err
 		}
-		if err := summaryActor(txCtx, q, e.ProjectKey, actor); err != nil {
+		if err := requireProjectParent(txCtx, q, e.ProjectKey, actor); err != nil {
 			return err
 		}
 		if e.State == SummaryConfirmed {
@@ -547,7 +558,7 @@ func (s *Scheduler) FailSummary(ctx context.Context, id, actor, token, message s
 		if err != nil {
 			return err
 		}
-		if err := summaryActor(txCtx, q, e.ProjectKey, actor); err != nil {
+		if err := requireProjectParent(txCtx, q, e.ProjectKey, actor); err != nil {
 			return err
 		}
 		if e.State == SummaryConfirmed {
@@ -587,7 +598,7 @@ func (s *Scheduler) RetrySummary(ctx context.Context, id, actor string) (Summary
 		if err != nil {
 			return err
 		}
-		if err := summaryActor(txCtx, q, e.ProjectKey, actor); err != nil {
+		if err := requireProjectParent(txCtx, q, e.ProjectKey, actor); err != nil {
 			return err
 		}
 		switch e.State {

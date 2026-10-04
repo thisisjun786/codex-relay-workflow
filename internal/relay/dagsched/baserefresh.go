@@ -5,14 +5,14 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -30,7 +30,7 @@ const SchemaBaseRefresh = "dag-base-refresh/1"
 
 // RefreshInput is what the parent supplies to record a base refresh. A checkout is where the commits are read (git objects are content addressed, so any clone that holds them answers alike): it is
 // needed when the node lands in a forge repository and refused when the target is itself a local checkout. Resolved names the files whose hand resolution the parent accepts; the relay proves where a
-// hand resolution can sit (the files git could not merge) and cannot read what was put into them, so the paths named must be exactly the ones the chain resolved by hand.
+// hand resolution can sit (the files git could not merge) and applies declared mechanical rules; the paths named must be exactly those no rule proved in at least one hop.
 type RefreshInput struct {
 	Checkout string
 	Resolved []string
@@ -59,49 +59,63 @@ type acceptanceStand struct {
 
 // refreshDigest is the identity of a refresh: its refresh_id is the digest of everything it records but the time and the author, so a row written by hand under another content is not read as one.
 func refreshDigest(acceptance, relationship string, generation int64, event, revision, head, baseRepository, baseRef, baseTip, proofJSON, resolvedJSON string) string {
-	return "dbr-" + shaOf([]byte(dag.Canonical(map[string]any{"schema": SchemaBaseRefresh, "acceptance_id": acceptance, "relationship_id": relationship, "execution_generation": generation,
-		"event_id": event, "revision_hash": revision, "head_sha": head, "base_repository": baseRepository, "base_ref": baseRef, "base_tip_sha": baseTip, "proof": proofJSON, "resolved_paths": resolvedJSON})))[:32]
+	return registry.CoordinationID("dbr", dag.Canonical(map[string]any{"schema": SchemaBaseRefresh, "acceptance_id": acceptance, "relationship_id": relationship, "execution_generation": generation,
+		"event_id": event, "revision_hash": revision, "head_sha": head, "base_repository": baseRepository, "base_ref": baseRef, "base_tip_sha": baseTip, "proof": proofJSON, "resolved_paths": resolvedJSON}))
 }
 
-// standOf reads what an acceptance stands on now. The table arrived after the first zone, so a store opened read-only that predates it has no refresh; a row that does not digest to its id is ignored.
-func (s *Scheduler) standOf(ctx context.Context, q store.Querier, a Acceptance) (acceptanceStand, error) {
-	own := acceptanceStand{RelationshipID: a.RelationshipID, Generation: a.ExecutionGeneration, EventID: a.EventID, RevisionHash: a.RevisionHash, Head: a.HeadSHA}
+// ownStand is what an acceptance stands on before any base refresh was recorded for it: its own relationship, generation, event, revision and head.
+func ownStand(a Acceptance) acceptanceStand {
+	return acceptanceStand{RelationshipID: a.RelationshipID, Generation: a.ExecutionGeneration, EventID: a.EventID, RevisionHash: a.RevisionHash, Head: a.HeadSHA}
+}
+
+// validStands are the base refreshes recorded for an acceptance that digest to their ids, newest first. The table arrived after the first zone, so a store opened read-only that predates it has none; a row
+// that does not digest to its id is ignored.
+func (s *Scheduler) validStands(ctx context.Context, q store.Querier, a Acceptance) ([]acceptanceStand, error) {
 	present, err := tableExists(ctx, q, "dag_base_refreshes")
 	if err != nil || !present {
-		return own, err
+		return nil, err
 	}
 	rows, err := q.QueryContext(ctx, "SELECT refresh_id, relationship_id, execution_generation, event_id, revision_hash, head_sha, base_repository, base_ref, base_tip_sha, proof_json, resolved_paths_json"+
 		" FROM dag_base_refreshes WHERE acceptance_id = ? ORDER BY refresh_seq DESC", a.AcceptanceID)
 	if err != nil {
-		return own, err
+		return nil, err
 	}
 	defer rows.Close()
+	var out []acceptanceStand
 	for rows.Next() {
 		var id, rid, event, revision, head, baseRepo, baseRef, baseTip, proof, resolved string
 		var generation int64
 		if err := rows.Scan(&id, &rid, &generation, &event, &revision, &head, &baseRepo, &baseRef, &baseTip, &proof, &resolved); err != nil {
-			return own, err
+			return nil, err
 		}
 		if rid == a.RelationshipID && generation > a.ExecutionGeneration && id == refreshDigest(a.AcceptanceID, rid, generation, event, revision, head, baseRepo, baseRef, baseTip, proof, resolved) {
-			return acceptanceStand{RelationshipID: rid, Generation: generation, EventID: event, RevisionHash: revision, Head: head, RefreshID: id}, nil
+			out = append(out, acceptanceStand{RelationshipID: rid, Generation: generation, EventID: event, RevisionHash: revision, Head: head, RefreshID: id})
 		}
 	}
-	return own, rows.Err()
+	return out, rows.Err()
 }
 
-// refreshReadable is the fail-closed rule for the forge reading a refresh is proved against. An open pull request is read as an acceptance reads one (ClassifyPullRequest: a verdict of unknown, an evidence that was
-// unreadable or truncated, is the host's failure, and a head that moved while it was read is refused). A merged one has the verdict unknown by construction: its snapshot says candidate_not_open and
-// candidate_unknown, because nothing is left to hand over, so it is readable when those two are its only problems.
-func refreshReadable(pr PullRequest) error {
-	if pr.State != "merged" {
-		return ClassifyPullRequest(pr)
+// standOf reads what an acceptance stands on now: the newest valid base refresh recorded for it, else its own.
+func (s *Scheduler) standOf(ctx context.Context, q store.Querier, a Acceptance) (acceptanceStand, error) {
+	stands, err := s.validStands(ctx, q, a)
+	if err != nil || len(stands) == 0 {
+		return ownStand(a), err
 	}
-	for _, p := range pr.Problems {
-		if p.Code != evidence.CandidateNotOpen && p.Code != evidence.CandidateUnknown {
-			return fmt.Errorf("the merged pull request %s#%d could not be read completely (%s: %s); nothing was written", pr.Repository, pr.Number, p.Code, p.Detail)
-		}
+	return stands[0], nil
+}
+
+// stoodOn is every head the acceptance has stood on: its own and the head of each valid base refresh recorded for it, newest first. A merge turn of the node, or a check of its pull request, made for any
+// of them is the node's own (the newest is what it stands on now; the others are what it stood on before a record moved it).
+func (s *Scheduler) stoodOn(ctx context.Context, q store.Querier, a Acceptance) ([]string, error) {
+	stands, err := s.validStands(ctx, q, a)
+	if err != nil {
+		return nil, err
 	}
-	return nil
+	heads := make([]string, 0, len(stands)+1)
+	for _, st := range stands {
+		heads = append(heads, st.Head)
+	}
+	return append(heads, a.HeadSHA), nil
 }
 
 // decodeRefreshProof reads back the proof and the resolved paths a record stores.
@@ -115,6 +129,7 @@ func decodeRefreshProof(proofJSON, resolvedJSON string) ([]RefreshStep, []string
 			Resolved   []struct {
 				Path string `json:"path"`
 				Blob string `json:"blob"`
+				Rule string `json:"rule"`
 			} `json:"resolved"`
 		} `json:"steps"`
 	}
@@ -129,7 +144,7 @@ func decodeRefreshProof(proofJSON, resolvedJSON string) ([]RefreshStep, []string
 	for i, st := range proof.Steps {
 		steps[i] = RefreshStep{Previous: st.Previous, BaseParent: st.BaseParent, Head: st.Head, Tree: st.Tree}
 		for _, r := range st.Resolved {
-			steps[i].Resolved = append(steps[i].Resolved, RefreshResolved{Path: r.Path, Blob: r.Blob})
+			steps[i].Resolved = append(steps[i].Resolved, RefreshResolved{Path: r.Path, Blob: r.Blob, Rule: r.Rule})
 		}
 	}
 	return steps, paths, nil
@@ -160,13 +175,9 @@ func refusedProof(r *refreshRefusal) error {
 func (s *Scheduler) RecordBaseRefresh(ctx context.Context, plan, node, actor string, in RefreshInput) (RefreshResult, error) {
 	out := RefreshResult{PlanID: plan, NodeID: node}
 	q := s.Store.Q(ctx)
-	snap, _, err := dag.SnapshotAt(ctx, q, plan, 0)
+	snap, n, err := liveNode(ctx, q, plan, node)
 	if err != nil {
 		return out, err
-	}
-	n, ok := nodeOf(snap, node)
-	if !ok {
-		return out, refuse(contract.RefusalUnregisteredScope, "plan %s has no live node %s", plan, node)
 	}
 	if n.Kind != dag.NodeImplementation {
 		return out, refuse(contract.RefusalDispositionConflict, "node %s is a %s node: it has no head to refresh", node, n.Kind)
@@ -235,7 +246,8 @@ func (s *Scheduler) RecordBaseRefresh(ctx context.Context, plan, node, actor str
 	if pr.State != "open" && pr.State != "merged" {
 		return out, refuse(contract.RefusalDispositionConflict, "pull request %s#%d is %s: a base refresh is read from a pull request that is open or merged", forge, number, pr.State)
 	}
-	if err := refreshReadable(pr); err != nil {
+	// the reading is classified as every reader of a pull request classifies it; a merged pull request is readable by the rule in ClassifyPullRequest (forge.go)
+	if err := ClassifyPullRequest(pr); err != nil {
 		return out, err
 	}
 	if !refreshCommitPattern.MatchString(pr.HeadSHA) || pr.BaseRef == "" {
@@ -285,18 +297,78 @@ func (s *Scheduler) RecordBaseRefresh(ctx context.Context, plan, node, actor str
 	if refusal != nil {
 		return out, refusedProof(refusal)
 	}
-	resolved := proof.resolvedPaths()
+	// Check authority before executing any declared regeneration command; the write
+	// checks it again in its transaction, as every deciding write does.
+	if err := s.fence(ctx, q, plan, actor); err != nil {
+		return out, err
+	}
+	declarations, err := loadDeclarations(ctx, q, plan)
+	if err != nil {
+		return out, err
+	}
+	names := []string{acc.Repository, forge}
+	canonical, err := canonicalRepository(acc.Repository)
+	if err != nil {
+		return out, err
+	}
+	names = append(names, canonical)
+	var regions []Region
+	for _, r := range declarations[node] {
+		if hasName(names, r.Repository) {
+			r.Repository = canonical
+			regions = append(regions, r)
+		}
+	}
+	// A recorded proof is immutable evidence. Replay its stored classification,
+	// including manual-only proofs made before the checker was linked, without
+	// running candidate code again or making the caller change the original names.
+	var existing, baseRepo, baseRef, baseTip, storedProof, storedResolved string
+	var recordedGeneration int64
+	var recordedRel, recordedRevision string
+	has, err := queryOne(ctx, q, "SELECT refresh_id, relationship_id, execution_generation, revision_hash, base_repository, base_ref, base_tip_sha, proof_json, resolved_paths_json FROM dag_base_refreshes WHERE acceptance_id = ? AND event_id = ? AND head_sha = ?",
+		[]any{acc.AcceptanceID, head.EventID, pr.HeadSHA}, &existing, &recordedRel, &recordedGeneration, &recordedRevision, &baseRepo, &baseRef, &baseTip, &storedProof, &storedResolved)
+	if err != nil {
+		return out, err
+	}
+	var resolved []string
+	var contributors map[string][][]Region
+	if has {
+		if existing != refreshDigest(acc.AcceptanceID, recordedRel, recordedGeneration, head.EventID, recordedRevision, pr.HeadSHA, baseRepo, baseRef, baseTip, storedProof, storedResolved) || recordedRel != rel.ID || recordedGeneration != rel.Generation || recordedRevision != head.RevisionHash {
+			return out, refuse(contract.RefusalDispositionConflict, "the stored base refresh for %s has invalid identity; nothing was replayed", node)
+		}
+		proof.Steps, resolved, err = decodeRefreshProof(storedProof, storedResolved)
+		if err != nil {
+			return out, err
+		}
+	} else {
+		contributors, err = s.refreshContributors(ctx, q, plan, node, canonical, names, declarations)
+		if err != nil {
+			return out, err
+		}
+		refusal, err := proof.applyMechanical(ctx, g, checkout, regions, contributors)
+		if err != nil {
+			return out, refuse(contract.RefusalMergeTargetUnreadable, "mechanical check could not answer: %v", err)
+		}
+		if refusal != nil {
+			return out, refusedProof(refusal)
+		}
+		resolved = proof.resolvedPaths()
+	}
 	named := append([]string{}, in.Resolved...)
 	sort.Strings(named)
 	if strings.Join(named, "\x00") != strings.Join(resolved, "\x00") {
-		return out, refuse(contract.RefusalDispositionConflict, "the merges between %s and %s resolved these files by hand: [%s]; the relay proves only that the resolution is confined to files git could not merge, and cannot read what was put into them. Name exactly them (--resolved) to accept them, after reading them; you named [%s]",
+		return out, refuse(contract.RefusalDispositionConflict, "the merges between %s and %s resolved these files by hand: [%s]; no mechanical rule proved those resolutions. Name exactly them (--resolved) to accept them, after reading them; you named [%s]",
 			short(acc.HeadSHA), short(pr.HeadSHA), strings.Join(resolved, ", "), strings.Join(named, ", "))
 	}
 	steps := make([]any, len(proof.Steps))
 	for i, st := range proof.Steps {
 		list := make([]any, len(st.Resolved))
 		for j, r := range st.Resolved {
-			list[j] = map[string]any{"path": r.Path, "blob": r.Blob}
+			entry := map[string]any{"path": r.Path, "blob": r.Blob}
+			if r.Rule != "" {
+				entry["rule"] = r.Rule
+			}
+			list[j] = entry
 		}
 		steps[i] = map[string]any{"previous": st.Previous, "base_parent": st.BaseParent, "head": st.Head, "tree": st.Tree, "resolved": list}
 	}
@@ -316,6 +388,22 @@ func (s *Scheduler) RecordBaseRefresh(ctx context.Context, plan, node, actor str
 		tx := s.Store.Q(txCtx)
 		if err := s.fence(txCtx, tx, plan, actor); err != nil {
 			return err
+		}
+		currentDeclarations, err := loadDeclarations(txCtx, tx, plan)
+		if err != nil {
+			return err
+		}
+		if !reflect.DeepEqual(declarations, currentDeclarations) {
+			return refuse(contract.RefusalDispositionConflict, "the plan's regions changed while the base refresh of %s was being proved", node)
+		}
+		if !has {
+			currentContributors, err := s.refreshContributors(txCtx, tx, plan, node, canonical, names, currentDeclarations)
+			if err != nil {
+				return err
+			}
+			if !reflect.DeepEqual(contributors, currentContributors) {
+				return refuse(contract.RefusalDispositionConflict, "the contributor heads changed while the base refresh of %s was being proved", node)
+			}
 		}
 		current, _, err := dag.SnapshotAt(txCtx, tx, plan, 0)
 		if err != nil {
@@ -395,6 +483,54 @@ func (s *Scheduler) RecordBaseRefresh(ctx context.Context, plan, node, actor str
 		return err
 	})
 	return out, err
+}
+
+// refreshContributors freezes exact accepted and valid refresh heads of other
+// nodes in this plan/repository. A landing with no such identity remains manual.
+func (s *Scheduler) refreshContributors(ctx context.Context, q store.Querier, plan, node, repository string, names []string, declarations map[string][]Region) (map[string][][]Region, error) {
+	rows, err := q.QueryContext(ctx, "SELECT "+acceptanceColumns+" FROM dag_acceptances WHERE plan_id = ? AND state = 'active' ORDER BY acceptance_id", plan)
+	if err != nil {
+		return nil, err
+	}
+	var acceptances []Acceptance
+	for rows.Next() {
+		a, err := scanAcceptance(rows)
+		if err != nil {
+			rows.Close()
+			return nil, err
+		}
+		acceptances = append(acceptances, a)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	out := map[string][][]Region{}
+	for _, a := range acceptances {
+		if a.NodeID == node || a.AcceptanceID != AcceptanceDigest(a) {
+			continue
+		}
+		repo, err := canonicalRepository(a.Repository)
+		if err != nil || repo != repository {
+			continue
+		}
+		var regions []Region
+		for _, r := range declarations[a.NodeID] {
+			if hasName(names, r.Repository) {
+				r.Repository = repository
+				regions = append(regions, r)
+			}
+		}
+		heads, err := s.stoodOn(ctx, q, a)
+		if err != nil {
+			return nil, err
+		}
+		for _, head := range heads {
+			out[head] = append(out[head], regions)
+		}
+	}
+	return out, nil
 }
 
 // refreshCarries is whether the node's active acceptance stands, through a recorded base refresh, on the current generation of its relationship.

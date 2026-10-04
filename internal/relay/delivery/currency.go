@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -41,7 +42,12 @@ func ambiguous(evidence string, nodes []string, detail string) Obj {
 // requestedPredecessors is currency._requested_predecessors: only the result whose ruling opened
 // this correction is an external root.
 func requestedPredecessors(ctx context.Context, q store.Querier, rid string, generation int64) (map[string][]string, error) {
-	rows, err := allFrom(ctx, q, "SELECT p.event_id, p.revision_hash, v.verdict_turn_id, r.event_id AS request_id, g.dispatch_request_id FROM generations g JOIN verdicts v ON v.next_generation = g.execution_generation JOIN events p ON p.event_id = v.event_id AND p.relationship_id = g.relationship_id JOIN events r ON r.relationship_id = g.relationship_id AND r.execution_generation = g.execution_generation WHERE g.relationship_id = ? AND g.execution_generation = ? AND g.reason = 'needs_changes_revision' AND v.verdict = 'needs_changes' AND p.execution_generation = g.execution_generation - 1 AND p.outcome = ? AND p.stage = 'final' AND p.suppressed_reason IS NULL AND r.outcome = 'revision_request' AND r.producer = 'relay' AND r.stage = 'final' AND r.suppressed_reason IS NULL", rid, generation, "ready_for_review")
+	// the generation a ruling's correction follows: the one before it, or the nearest one that was not withdrawn (CRW-446)
+	before, err := store.LiveGenerationBefore(ctx, q, rid, generation)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := allFrom(ctx, q, "SELECT p.event_id, p.revision_hash, v.verdict_turn_id, r.event_id AS request_id, g.dispatch_request_id FROM generations g JOIN verdicts v ON v.next_generation = g.execution_generation JOIN events p ON p.event_id = v.event_id AND p.relationship_id = g.relationship_id JOIN events r ON r.relationship_id = g.relationship_id AND r.execution_generation = g.execution_generation WHERE g.relationship_id = ? AND g.execution_generation = ? AND g.reason = 'needs_changes_revision' AND v.verdict = 'needs_changes' AND p.execution_generation = ? AND p.outcome = ? AND p.stage = 'final' AND p.suppressed_reason IS NULL AND r.outcome = 'revision_request' AND r.producer = 'relay' AND r.stage = 'final' AND r.suppressed_reason IS NULL", rid, generation, before, "ready_for_review")
 	if err != nil {
 		return nil, err
 	}
@@ -63,13 +69,15 @@ func HeadRevision(ctx context.Context, s *store.Store, rid string, generation in
 	return HeadRevisionFrom(ctx, s.Q(ctx), rid, generation)
 }
 
-// headRevisionSQL reads the reviewable revisions of one generation, each with the predecessor it
-// declares. The lineage row is found by its primary key (relationship, generation, event): joined on
-// event_id alone, SQLite scans the whole of revision_lineage once for every event row, so one judgment
-// cost the revisions of the generation times the lineage rows of the store (CRW-416). The product
-// stores an event and its lineage row together under one relationship and generation, so this reads
-// the rows the event_id join read.
-const headRevisionSQL = "SELECT e.event_id, e.revision_hash, l.supersedes_hash FROM events e LEFT JOIN revision_lineage l ON l.relationship_id = e.relationship_id AND l.execution_generation = e.execution_generation AND l.event_id = e.event_id WHERE e.relationship_id = ? AND e.execution_generation = ? AND e.outcome = ? AND e.suppressed_reason IS NULL ORDER BY e.event_id"
+// headRevisionSQL reads the reviewable receipts of one generation, each with the predecessor it
+// declares and whether the relay holds it as suppressed, in one statement: a suppressed receipt is
+// no revision, but what it declared is read when a revision names it (CRW-470), and one statement
+// is one moment's answer for both. The lineage row is found by its primary key (relationship,
+// generation, event): joined on event_id alone, SQLite scans the whole of revision_lineage once for
+// every event row, so one judgment cost the revisions of the generation times the lineage rows of
+// the store (CRW-416). The product stores an event and its lineage row together under one
+// relationship and generation, so this reads the rows the event_id join read.
+const headRevisionSQL = "SELECT e.event_id, e.revision_hash, l.supersedes_hash, e.suppressed_reason IS NOT NULL FROM events e LEFT JOIN revision_lineage l ON l.relationship_id = e.relationship_id AND l.execution_generation = e.execution_generation AND l.event_id = e.event_id WHERE e.relationship_id = ? AND e.execution_generation = ? AND e.outcome = ? ORDER BY e.event_id"
 
 // revision is one reviewable revision of a generation as the head judgment reads it: its event, its
 // revision hash and the predecessor hash it declares ("" for none).
@@ -86,29 +94,38 @@ func textOf(v any) string {
 	return ""
 }
 
-// reviewableRevisions is every reviewable revision of the generation in event id order. Reading
-// them all is what a head is: a fork, a cycle or an unknown predecessor anywhere among them
-// makes the whole generation ambiguous and names every revision as a competitor.
-func reviewableRevisions(ctx context.Context, q store.Querier, rid string, generation int64) (_ []revision, err error) {
+// reviewableRevisions is every reviewable revision of the generation in event id order, and the
+// suppressed receipts apart: the predecessors they declared by revision hash. Reading the revisions
+// all is what a head is: a fork, a cycle or an unknown predecessor anywhere among them makes the
+// whole generation ambiguous and names every revision as a competitor.
+func reviewableRevisions(ctx context.Context, q store.Querier, rid string, generation int64) (_ []revision, suppressed map[string][]string, err error) {
 	rows, err := q.QueryContext(ctx, headRevisionSQL, rid, generation, "ready_for_review")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer func() { err = errors.Join(err, rows.Close()) }()
 	var out []revision
 	for rows.Next() {
 		var id, hash, declared any
-		if err := rows.Scan(&id, &hash, &declared); err != nil {
-			return nil, err
+		var held bool
+		if err := rows.Scan(&id, &hash, &declared, &held); err != nil {
+			return nil, nil, err
+		}
+		if held {
+			if suppressed == nil {
+				suppressed = map[string][]string{}
+			}
+			suppressed[textOf(hash)] = append(suppressed[textOf(hash)], textOf(declared))
+			continue
 		}
 		out = append(out, revision{id: textOf(id), hash: textOf(hash), declared: textOf(declared)})
 	}
-	return out, rows.Err()
+	return out, suppressed, rows.Err()
 }
 
 // HeadRevisionFrom reads through the caller's snapshot, including a read-only guard connection.
 func HeadRevisionFrom(ctx context.Context, q store.Querier, rid string, generation int64) (Obj, error) {
-	revisions, err := reviewableRevisions(ctx, q, rid, generation)
+	revisions, suppressed, err := reviewableRevisions(ctx, q, rid, generation)
 	if err != nil {
 		return nil, err
 	}
@@ -119,7 +136,40 @@ func HeadRevisionFrom(ctx context.Context, q store.Querier, rid string, generati
 	if err != nil {
 		return nil, err
 	}
-	return judgeHead(revisions, anchors), nil
+	return judgeHead(readThroughSuppressed(revisions, suppressed, anchors), anchors), nil
+}
+
+// readThroughSuppressed returns the revisions with each declared predecessor that names a
+// suppressed receipt of the generation read as naming what that receipt replaced (CRW-470; the
+// rule is registry.ReadThrough's). A suppressed receipt is not a revision, and a child that
+// restarted cannot know its earlier receipt was one. The revisions come back as they were when no
+// receipt is suppressed, which is nearly every judgment.
+func readThroughSuppressed(revisions []revision, suppressed map[string][]string, anchors map[string][]string) []revision {
+	if len(suppressed) == 0 {
+		return revisions
+	}
+	held := make(map[string]int, len(revisions))
+	seen := make(map[string]bool, len(revisions))
+	named := make([]string, 0, len(revisions))
+	// An event id is the events primary key, so each revision is listed once (as in judgeHead).
+	for _, r := range revisions {
+		if !seen[r.id] {
+			seen[r.id] = true
+			held[r.hash]++
+		}
+		named = append(named, r.declared)
+	}
+	through := registry.ReadThrough(named, func(hash string) int { return held[hash] + len(anchors[hash]) }, suppressed)
+	if len(through) == 0 {
+		return revisions
+	}
+	out := slices.Clone(revisions)
+	for i := range out {
+		if effective, ok := through[out[i].declared]; ok {
+			out[i].declared = effective
+		}
+	}
+	return out
 }
 
 // judgeHead is currency.head_revision over the generation's reviewable revisions (at least one, in

@@ -26,6 +26,7 @@ type RPC interface {
 type ExecutionPolicy interface {
 	Authorize(execution.Input) (execution.Authorized, error)
 	Summary() map[string]any
+	Role(name string) (execution.Role, bool)
 }
 
 type Bridge struct {
@@ -61,6 +62,9 @@ func directory(path string) (string, error) {
 	return absolute, nil
 }
 func (b *Bridge) call(ctx context.Context, method string, params map[string]any) (map[string]any, error) {
+	if scope, ok := ctx.Value(subscriptionScopeKey{}).(*subscriptionScope); ok && scope.watch != nil {
+		ctx = scope.watch.Context(ctx)
+	}
 	raw, err := b.RPC.Call(ctx, method, params)
 	if err != nil {
 		return nil, err
@@ -125,6 +129,7 @@ type mutation struct {
 }
 
 func (b *Bridge) mutate(ctx context.Context, op mutation) (ledger.Receipt, error) {
+	ctx = context.WithValue(ctx, subscriptionScopeKey{}, &subscriptionScope{})
 	if b.waiting != nil {
 		b.waiting(op.requestID)
 	}
@@ -153,7 +158,7 @@ func (b *Bridge) mutate(ctx context.Context, op mutation) (ledger.Receipt, error
 	effects := []string{}
 	tracked := appserver.WithSendHook(ctx, func(method string) {
 		switch method {
-		case "initialize", "project/read", "thread/read", "thread/list", "thread/turns/list", "thread/items/list", "thread/goal/get":
+		case "initialize", "project/read", "config/read", "plugin/installed", "mcpServerStatus/list", "thread/read", "thread/list", "thread/turns/list", "thread/items/list", "thread/goal/get":
 			// A lost observation cannot imply that a mutation reached the host.
 		default:
 			effects = append(effects, method)

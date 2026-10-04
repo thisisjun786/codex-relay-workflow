@@ -42,16 +42,20 @@ replaced it is CRW-165's of 2026-09-21.
 
 Recorded here, owned elsewhere, and unchanged by any of this: the initiative task runs the
 user-assigned Astra, a project parent runs anthropic/claude-opus-5-5 at xhigh, and an issue child
-runs anthropic/claude-sonnet-5-5 at xhigh. Both pairs have a history rather than one value, and this row carries the latest
+runs one of two pairs, anthropic/claude-sonnet-5-5 or gpt-6.1-sol, each at xhigh, chosen per issue by
+[Child pair by issue type](../../crw-plan/references/integrations.md#child-pair-by-issue-type). The parent's and the child's rows have a history rather than one value, and this row carries the latest
 recorded decisions rather than an observation of what any task is running. swe-2 at max was the
 recorded parent pair until 2026-09-21, when Jun moved every parent to xai/grok-4.6 at xhigh; Jun's
 restoration decision later that same day put swe-2 at max back, and on 2026-09-23 Jun moved the
 parent to anthropic/claude-opus-5-5 at xhigh. The child ran anthropic/claude-opus-5 at xhigh until
 2026-09-23, when Jun moved it to anthropic/claude-opus-5-5 at the same effort, and on 2026-09-29
-Jun moved it to anthropic/claude-sonnet-5-5, again at xhigh. Sharing a pair, as the parent and the
+Jun moved it to anthropic/claude-sonnet-5-5, again at xhigh. On 2026-10-03 Jun added gpt-6.1-sol at
+xhigh as a second child pair, because children on Sonnet alone used up the Claude quota too fast; from
+then the child role holds two pairs, and the policy ranks neither. Sharing a pair, as the parent and the
 child did between those dates, does not merge the roles: each is still checked against its own row. Each superseded step is kept so
 the transitions can be reproduced and recognised as superseded rather than as second valid
-answers.
+answers. Whether a host's policy file already lists the second pair is read from that policy; this record
+is the decision and shows nothing about what a host declares.
 
 A single task may be excepted by name. The consolidated CRW-127 coordinator ran
 ollama-cloud/glm-5.3 at xhigh under Jun's 2026-09-21 exception, a bounded trial that has since
@@ -300,7 +304,7 @@ one that is usually skipped.
    The wake must also cover the load state the wait will end up in, which is not the one it is
    adjudicated in. An idle recipient and one the host reports `notLoaded` are not woken the same
    way: a resume into an unloaded task transmits a pair only where it derives from the role's
-   declared pair, which [the relay reference](relay.md) states, and a record-based or
+   declared pair (a role that declares several pairs derives none), which [the relay reference](relay.md) states, and a record-based or
    exception-authorized pair is never transmitted - that recipient is loaded by a resume that
    requests nothing and compared with its record before any turn. Adjudication happens while the parent is still loaded, so a loaded wake is
    both the easiest evidence to have and the wrong evidence to rely on — a wait long enough to be
@@ -315,7 +319,7 @@ one that is usually skipped.
 
    A probe stands in for this parent only where it matches in the dimension that decides the
    unloaded route: the role it is bound as, and where its pair comes from. The relay transmits an
-   unloaded resume's pair only where it derives from the role's declared pair, and loads a
+   unloaded resume's pair only where it derives from the role's declared pair (a role that declares several pairs derives none), and loads a
    record-based or exception-authorized one with nothing transmitted and compares it instead, so
    an ordinary parent-role probe waking from `notLoaded` says nothing about a parent running
    under a named exception — that parent's delivery takes the other route, and can be refused on
@@ -470,6 +474,8 @@ reduction applies and the observation is recorded as `unmeasured`, which states 
 rather than claiming the host is safe at the cap. Where an observation shows pressure, such as
 another parent's live children, a resource reading, or a tool or permission constraint, the parent
 lowers or holds dispatch and records the observation that caused it.
+
+Under a DAG plan the relay takes one such resource reading itself. `dag-ready` and `dag-release` read MemAvailable, the swap in use and the memory pressure of the host once per command and, while one is over its threshold (15 GiB, 85 percent and a `some avg60` of 10 unless the environment says otherwise), defer every new release as `defer:host_memory` and refuse `dag-release` with `capacity_exhausted`. The reading and the thresholds are recorded with each recorded pass (`pass.host_memory`), and a reading nobody could take is `unmeasured`, not a clear host. It holds new releases only and stops no child, and it is not a demonstration that any cap is safe.
 
 Three claims this does not support:
 

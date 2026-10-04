@@ -83,7 +83,8 @@ func (d *decoder) object(path string, value any, required, optional []string) (m
 
 func join(path, key string) string { return path + "." + key }
 
-func hasControl(s string) bool {
+// HasControl is whether s holds a control character: one below 0x20, or DEL.
+func HasControl(s string) bool {
 	for _, r := range s {
 		if r < 0x20 || r == 0x7f {
 			return true
@@ -107,7 +108,7 @@ func (d *decoder) text(path string, obj map[string]any, key string, max int, req
 		d.add(RuleEmptyValue, p, "must not be empty (an empty string is a missing value)")
 	case utf8.RuneCountInString(s) > max:
 		d.add(RuleValueTooLong, p, "is %d characters long; the limit is %d", utf8.RuneCountInString(s), max)
-	case hasControl(s):
+	case HasControl(s):
 		d.add(RuleBadText, p, "must not contain control characters")
 	default:
 		return s, true
@@ -240,7 +241,7 @@ func (d *decoder) authorities(path string, obj map[string]any, key string) []str
 			d.add(RuleEmptyValue, ip, "must not be empty")
 		case utf8.RuneCountInString(s) > MaxAuthorityLength:
 			d.add(RuleValueTooLong, ip, "is %d characters long; the limit is %d", utf8.RuneCountInString(s), MaxAuthorityLength)
-		case hasControl(s):
+		case HasControl(s):
 			d.add(RuleBadText, ip, "must not contain control characters")
 		case seen[s]:
 			d.add(RuleDuplicateValue, ip, "%q is named twice", s)

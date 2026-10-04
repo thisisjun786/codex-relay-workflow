@@ -30,9 +30,9 @@ Resolve current installed paths; never copy plugin versions from old records.
 CXC owns those phases and subagent routing; the parent does not adopt a child's FSM.
 
 Read [Integrations](../crw-plan/references/integrations.md) for Linear document
-authority, tools, and Paperthin invocation rules. Use the available Linear tools
+authority and tools. Use the available Linear tools
 and relevant workspace Agent Skills for full documents, criteria, and work records.
-Use `readchk` for bundled scope or model corrections, and `catchup` when the user
+Restate a bundled scope or model correction to resolve it, and refresh the state from the records when the user
 needs a refreshed briefing. Route roadmap authoring to
 [crw-plan](../crw-plan/SKILL.md) within the user's requested scope.
 
@@ -383,6 +383,14 @@ git metadata say so explicitly and assign the fallback, since those are the part
 contract cannot know. A packet carrying neither clause sends a child the previous
 workflow.
 
+Write the first packet in the form of the pair recorded for the issue: the
+[Launch packet](references/task-packet.md#launch-packet) for a Sonnet child and the short
+[SOL packet](references/task-packet.md#sol-packet) for a SOL child; an issue with no recorded pair keeps the
+Launch packet. The rule that picks the pair is "Child pair by issue type" in
+[crw-plan's integrations.md](../crw-plan/references/integrations.md), and both forms carry the restoration block and
+restate the workflow on every send. The choice itself is recorded at release
+([Record the pair choice at release](#record-the-pair-choice-at-release)).
+
 Apply [Child task titles](references/task-packet.md#child-task-titles):
 `ISSUE-ID · descriptive task title` (title text up to 20 characters, including
 spaces; exclude the issue code and separator). Supply the title through the supported
@@ -392,6 +400,14 @@ That title names the Codex task, not the pull request, which the child titles in
 `Language:` ([Child task titles](references/task-packet.md#child-task-titles)). A temporary
 directory the packet names is short, and every make target, CI check and script it names for
 verification was confirmed to exist when the packet was written ([First full assignment required fields](references/task-packet.md#first-full-assignment-required-fields)).
+
+Choose the child's MCP profile at release, from the issue and its packet, and state it in the packet and in the
+release request's `child.settings.mcpProfile`: `ui-qa` for UI or browser QA, `second-opinion` when an
+external-model review is named, otherwise `minimal`. A host whose policy declares profiles for the child role
+refuses a child whose request states none or one it does not declare. A child that needs a server its profile
+lacks raises a decision request; the profile is not widened under it. Selection rule and what the host does
+with it: [MCP profiles](references/mcp-profiles.md).
+
 
 Apply [Independent implementation tasks](#independent-implementation-tasks) even
 when no new branch or worktree is needed. Non-PR work uses its permitted working
@@ -431,8 +447,9 @@ that served the request. Settle a setting the creation path cannot apply before
 creating the task rather than downgrading it.
 
 Record request ID, task ID, host ID when supplied, turn ID, requested/actual title
-and settings, and launch outcome. For code work include the checkout and full Git
-baseline SHA. For non-PR work include the permitted working location and input
+and settings, and launch outcome, with the pair choice as
+[Record the pair choice at release](#record-the-pair-choice-at-release) lists it. For code work include the
+checkout and full Git baseline SHA. For non-PR work include the permitted working location and input
 source revision; add the delivered output identity when the result exists. Do not put raw
 credentials or full private prompts in public project records.
 
@@ -526,6 +543,43 @@ its report, so this text states none.
 
 This is an instruction the parent follows; nothing refuses a dispatch that skipped it, so the run records the answer where it records
 the dispatch.
+
+### Record the pair choice at release
+
+When an issue is released (a packet, a task, a `managed-start` or a DAG release), its pair choice goes into the
+coordination record with the launch record, one row per release, so that a later review can ask whether the
+issue was classified right. [The record at release](../crw-plan/references/integrations.md#the-record-at-release)
+owns what the row holds and why it lives here and not in the relay; this is the order of the steps.
+
+1. Read the issue's child pair line. With no line, route the issue by the shape table, write the line in the
+   [extended form](../crw-plan/references/integrations.md#the-extended-line) and read it back before anything
+   else, as [Child pair by issue type](../crw-plan/references/integrations.md#child-pair-by-issue-type) says.
+   Where the user chooses a pair for the issue now, write the choice onto the line first, with its reason and
+   the source `user choice`.
+2. Take the tags and the bundle from the line, and quote the line, with its own source, in the row. The row's
+   source is the step that decided at release: `issue body` where the line already stated the pair and you
+   follow it, `user choice` for a choice written onto the line now, `table` for an issue you routed because it
+   had no line or for a move under When SOL fails that you apply at this release, `quota` reserved. A line in the older form states no tags: classify the issue by the
+   [tags](../crw-plan/references/integrations.md#classify-the-issue-by-its-kind-of-work), take the bundle from
+   the [Bundles rows](../crw-plan/references/integrations.md#bundles), mark the row `derived at release` and
+   leave the line as it is. The pair the line names stands (precedence): where the derived bundle names the
+   other family, the row says so and the issue is released on the line's pair. A tag the issue does not settle
+   is left blank in the row with the reason, and a blank tag never holds the release.
+3. For a flexible issue whose line the parent writes itself, choose the pair by the count rule under
+   [Bundles](../crw-plan/references/integrations.md#bundles) and put the counts in the row. A flexible issue
+   whose line already names a pair keeps it; nothing here re-chooses it from quota, which is
+   [a later rule](../crw-plan/references/integrations.md#the-place-for-a-quota-rule).
+4. Decide the pair (steps 1 to 3) before the first packet is written, and write the row once the request id
+   exists: the fields of [The record at release](../crw-plan/references/integrations.md#the-record-at-release),
+   naming the family while the model and the effort stay in the launch record's settings entry, read from the
+   creation receipt.
+5. A later change of the pair (a user's choice, a move under When SOL fails, a replacement) adds a row and
+   overwrites none.
+
+Nothing refuses a dispatch that skipped this; the rows are what the review reads, so a missing row shows up
+there. The relay's release request has no field for these values
+([codex-session-relay](references/relay.md)); where the coordination record cannot be written, report that gap
+with the other launch facts that could not be recorded.
 
 ### Release by region grade
 
@@ -743,6 +797,12 @@ scope's service, and the parent that started it does not end it early
 A process of a child's that looks hung is that child's to stop; the parent raises it with that
 child and does not stop it.
 
+What the parent runs locally to verify also follows the launch packet's `Go build resources:` line: the
+shared build cache, `GOFLAGS=-p=4`, the packages the change touches and a memory-limited scope for
+anything heavy. The whole test suite is the hosted CI of the head under verification and is not
+repeated locally
+([The three gates](references/merge-readiness.md#the-three-gates)).
+
 Where a relay holds the assignment, verify the revision it reports as current. If a
 newer revision arrived while the review was in progress, the older result is not a
 completion: re-read the current revision and verify that one. Two competing
@@ -762,10 +822,9 @@ does not fulfill independent verification.
 For substantial intent or acceptance uncertainty, use
 [crw-check](../crw-check/SKILL.md) as a bounded audit and retain coordination
 here. Use [crw-logic](../crw-logic/SKILL.md) for a specific suspected logical
-violation and `mandela` for self-confirming evaluation evidence. Use `shower` when
-a nontrivial task packet needs a fresh-reader check, and `re0` to refresh that
-packet after changes. Do not run every helper on every delivery or auto-invoke
-Paperthin's user-only skills.
+violation, and check that evaluation evidence does not merely confirm its own assumption. When
+a nontrivial task packet needs a fresh-reader check, give it to a context-free reviewer through CXC delegation and rewrite that
+packet after changes so it reads as current. Do not run every check on every delivery.
 
 After verification, the coordinator applies [Default dev integration](../crw-plan/references/integrations.md#default-dev-integration),
 unless the assignment limits delivery. Read [Merge readiness](references/merge-readiness.md)
@@ -785,7 +844,11 @@ enumerated the check runs, so collecting them again repeats work this contract j
 elsewhere, and re-triaging its findings opens a second review round it already owns. What the
 coordinator adds is currency: re-read the head and base immediately before merging and compare
 the counts against the record. That is a mechanical check, not a review. Where they disagree,
-return the candidate to the same child fail-closed rather than fixing it here.
+return the candidate to the same child fail-closed rather than fixing it here. A late review
+thread on the record's head that the coordinator has itself dispositioned with
+`merge-evidence --restate <record> --late-dispositions <file>` is not a disagreement
+([how](references/merge-readiness.md#a-late-thread-the-parent-dispositions-itself)). Where the installed relay
+lacks that option, [Late review threads](references/merge-readiness.md#late-review-threads) has the temporary procedure.
 
 Report **verified**, **needs changes**, or **unverified**, with concrete evidence,
 and distinguish implementation, merge, and deployment. Start a successor
@@ -805,6 +868,8 @@ holds it. Report them separately; a child blocked on a person has a turn that st
 and a delivery that did not move, and one word cannot carry both. A condition neither
 vocabulary names is reported as a blocker against the state that does apply, under
 [OPS-6.2](references/operations.md#ops-62-record-shape).
+
+A child blocked on a person is answered with a decision, never with a verdict or a message the relay cannot see: the answer goes back through `decision-reply`; for a split approval or a scope change, which open the next generation of the same child, `dag-correct` then records that generation for its DAG node; and the child's result in it is ruled and accepted like any other. Follow [Answering a child that stopped for input](references/relay.md#answering-a-child-that-stopped-for-input). A message sent outside that route leaves only the trace `admit-turn` records, which the same section names as the fallback.
 
 After integration, apply [Implementation Done](../crw-plan/references/integrations.md#implementation-done)
 before reporting or recording the issue complete. Read back the one delivery PR's

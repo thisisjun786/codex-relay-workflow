@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strconv"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
@@ -254,18 +255,35 @@ func (s *Scheduler) consumedStanding(ctx context.Context, q store.Querier, plan 
 }
 
 // recordedEvidence is the part of step 8 every edge on an implementation node needs: the latest merge check the relay recorded still digests to what it recorded (B-13). It returns the head
-// that check observed, if there is one.
-func (s *Scheduler) recordedEvidence(ctx context.Context, q store.Querier, a Acceptance) (observed string, st *EdgeStatus, err error) {
+// that check observed and the head the acceptance stood on when the check was made, if there is one.
+func (s *Scheduler) recordedEvidence(ctx context.Context, q store.Querier, a Acceptance) (observed, judged string, st *EdgeStatus, err error) {
 	var digest, evidence string
-	seen, err := queryOne(ctx, q, "SELECT checks_digest, evidence_json, observed_head_sha FROM dag_merge_checks WHERE acceptance_id = ? ORDER BY check_seq DESC LIMIT 1", []any{a.AcceptanceID}, &digest, &evidence, &observed)
+	seen, err := queryOne(ctx, q, "SELECT checks_digest, evidence_json, observed_head_sha, head_sha FROM dag_merge_checks WHERE acceptance_id = ? ORDER BY check_seq DESC LIMIT 1", []any{a.AcceptanceID}, &digest, &evidence, &observed, &judged)
 	if err != nil || !seen {
-		return "", nil, err
+		return "", "", nil, err
 	}
 	if recomputed, perr := RecomputeEvidenceDigest(evidence); perr != nil || recomputed != digest {
 		blockedStatus := blocked(BlockedEvidenceMismatch, "the latest merge check no longer digests to what was recorded")
-		return observed, &blockedStatus, nil
+		return observed, judged, &blockedStatus, nil
 	}
-	return observed, nil, nil
+	return observed, judged, nil, nil
+}
+
+// pullRequestMoved is whether the latest merge check says the pull request is not where the acceptance stands. The check names the head the acceptance stood on when it was made: when that is the head it
+// stands on now, the pull request has to have been at it; when it is a head the acceptance stood on before a base refresh moved it (its own, or an earlier record's), the check is history and says nothing
+// about now; any other head is not a reading of this acceptance and reads as moved. An acceptance no record moved is read as it always was, by the observed head alone.
+func (s *Scheduler) pullRequestMoved(ctx context.Context, q store.Querier, a Acceptance, stand acceptanceStand, observed, judged string) (bool, error) {
+	if observed == "" {
+		return false, nil
+	}
+	if stand.RefreshID == "" || judged == stand.Head {
+		return observed != stand.Head, nil
+	}
+	heads, err := s.stoodOn(ctx, q, a)
+	if err != nil {
+		return false, err
+	}
+	return !slices.Contains(heads, judged), nil
 }
 
 // artifactVerified is contract 2.1 as the reader applies it: the durable acceptance plus the currency checks that make a stale
@@ -281,20 +299,24 @@ func (s *Scheduler) artifactVerified(ctx context.Context, q store.Querier, plan 
 	if st, err := s.standing(ctx, q, plan, from, a); err != nil || st != nil {
 		return valueOf(st), err
 	}
-	// 5. the accepted event is still the head of its generation while the relationship lives.
+	// 5. the accepted event is still the head of its generation while the relationship lives; after a recorded base refresh it is the later generation and the event of its report the acceptance stands on.
+	stand, err := s.standOf(ctx, q, a)
+	if err != nil {
+		return EdgeStatus{}, err
+	}
 	rel, relFound, err := loadRelationship(ctx, q, a.RelationshipID)
 	if err != nil {
 		return EdgeStatus{}, err
 	}
 	if relFound && (rel.Status == "active" || rel.Status == "paused") {
-		if rel.Generation != a.ExecutionGeneration {
+		if rel.Generation != stand.Generation {
 			return blocked(BlockedStaleHead, "the relationship moved to generation "+itoa64(rel.Generation)), nil
 		}
-		head, err := delivery.HeadRevisionFrom(ctx, q, a.RelationshipID, a.ExecutionGeneration)
+		head, err := delivery.HeadRevisionFrom(ctx, q, stand.RelationshipID, stand.Generation)
 		if err != nil {
 			return EdgeStatus{}, err
 		}
-		if id, _ := objString(head, "eventId"); id != a.EventID {
+		if id, _ := objString(head, "eventId"); id != stand.EventID {
 			return blocked(BlockedStaleHead, "the accepted revision is no longer the head of its generation"), nil
 		}
 	}
@@ -315,11 +337,16 @@ func (s *Scheduler) artifactVerified(ctx context.Context, q store.Querier, plan 
 	}
 	// 8. the relay's latest observation of the pull request (the forge is read at release, judge and accept, never by a reader).
 	if from.Kind == dag.NodeImplementation {
-		observed, st, err := s.recordedEvidence(ctx, q, a)
+		observed, judged, st, err := s.recordedEvidence(ctx, q, a)
 		if err != nil || st != nil {
 			return valueOf(st), err
 		}
-		if observed != "" && observed != a.HeadSHA {
+		if moved, err := s.pullRequestMoved(ctx, q, a, stand, observed, judged); err != nil {
+			return EdgeStatus{}, err
+		} else if moved {
+			if stand.RefreshID != "" {
+				return blocked(BlockedStaleHead, "the pull request head was observed at "+observed+" after base refresh "+stand.RefreshID+" named "+stand.Head), nil
+			}
 			return blocked(BlockedStaleHead, "the pull request head was observed at "+observed+" after "+a.HeadSHA+" was accepted"), nil
 		}
 	}
@@ -422,7 +449,7 @@ func (s *Scheduler) integratedEdge(ctx context.Context, q store.Querier, plan st
 	if st, err := s.consumedStanding(ctx, q, plan, a); err != nil || st != nil {
 		return valueOf(st), err
 	}
-	if _, st, err := s.recordedEvidence(ctx, q, a); err != nil || st != nil {
+	if _, _, st, err := s.recordedEvidence(ctx, q, a); err != nil || st != nil {
 		return valueOf(st), err
 	}
 	at, err := s.integratedAt(ctx, q, plan, a, e.TargetRepository, e.TargetBaseRef)

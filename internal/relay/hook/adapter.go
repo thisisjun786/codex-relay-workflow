@@ -10,6 +10,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/buildinfo"
 )
 
 // VerdictOutput reconstructs only the three host fields, never forwarding guard data.
@@ -194,6 +196,7 @@ func runAdapter(parent context.Context, args []string, input io.Reader, output i
 		return 0
 	}
 	record := Object{{Key: "recordVersion", Value: int64(RecordVersion)}, {Key: "event", Value: "Stop"}, {Key: "at", Value: now()}, {Key: "adapterOutcome", Value: nil}, {Key: "processEnding", Value: nil}, {Key: "stdoutReading", Value: nil}, {Key: "guardState", Value: nil}, {Key: "guardDecision", Value: nil}, {Key: "guardMode", Value: nil}, {Key: "assignmentId", Value: nil}, {Key: "guardRecordedAs", Value: nil}, {Key: "held", Value: false}, {Key: "eventKey", Value: nil}, {Key: "eventIdentity", Value: nil}, {Key: "identityScanMs", Value: nil}, {Key: "acceptance", Value: nil}, {Key: "acceptedAs", Value: nil}, {Key: "guardInvoked", Value: false}, {Key: "configuration", Value: pyvalue.FSDecode(path)}}
+	record = record.Set("runtime", buildinfo.Snapshot())
 	claimed := ""
 	finish := func(outcome string, detail any, answer string) {
 		record = record.Set("adapterOutcome", outcome)
@@ -252,13 +255,23 @@ func runAdapter(parent context.Context, args []string, input io.Reader, output i
 			code = 0
 		}
 	}()
-	raw, err := readInput(work, input, started.Add(100*time.Millisecond))
+	var taken atomic.Int64
+	waitStarted := time.Since(started)
+	raw, err := readInput(work, input, started.Add(100*time.Millisecond), &taken)
+	waitEnded := time.Since(started)
 	if err != nil {
-		finish("stdin_unreadable", "the Stop payload could not be read from stdin", "")
+		cause := StdinReadError
+		var failure *readFailure
+		if errors.As(err, &failure) {
+			cause = failure.cause
+		}
+		record = record.Set("stdinRead", stdinReadRecord(cause, err, taken.Load(), waitStarted, waitEnded))
+		finish("stdin_unreadable", StdinUnreadableDetail, "")
 		return 0
 	}
 	if _, err := pyjson.DecodeUTF8(raw); err != nil {
-		finish("stdin_unreadable", "the Stop payload is not UTF-8: "+err.Error(), "")
+		record = record.Set("stdinRead", stdinReadRecord(StdinInvalidUTF8, err, int64(len(raw)), waitStarted, waitEnded))
+		finish("stdin_unreadable", StdinNotUTF8Prefix+err.Error(), "")
 		return 0
 	}
 	value, err := Decode(raw)

@@ -1,0 +1,57 @@
+{
+  "origin": {
+    "tag": "v0.2.40",
+    "commit": "3c1459acadeb1906d97c00a598e1457327ae372d",
+    "skills_listing_sha256": "79d9580f39ca27221cb9c24337080e3fe4a1e71f76338c7329fca63f76a32e89"
+  },
+  "table_sha256": "25b5d19d9da7e07d474d2b31bc4d4139c68607457f59174a597f17505f7f23eb",
+  "from": "ast-grep",
+  "files": {
+    "LICENSE": {
+      "original": "b083425948376611de9b92b0aeb7377e604505756ea427e541a34d9b030d4dc1"
+    },
+    "SKILL.md": {
+      "original": "6d602e8ca2921d61f77d9b00e5b26a390bb5b385403840c45212f3050a32329c"
+    },
+    "agents/openai.yaml": {
+      "original": "d09b7a5e85bfc2efaa6cb521eb00816f6b3d0c60e6908219b8cfc73a01479b85"
+    },
+    "references/install.md": {
+      "original": "7117fef942e457154a79cb715dbcf57c7c13cedd362aa0ff4abaaa081c6b9c08"
+    },
+    "references/patterns.md": {
+      "original": "7182736c7268756971e42245aac7233ddf189dcbf076c65cd9d2bbddc8bd7459"
+    },
+    "scripts/ast_grep_helper.py": {
+      "original": "2152d79a9aafbc443c4cf063963b51fad08a4f0fef211180de9b2c576b1405df",
+      "exec": true
+    }
+  },
+  "edits": [
+    {
+      "file": "SKILL.md",
+      "reason": "Remove unsupported frontmatter metadata while preserving name, description and the original instruction body.",
+      "hunks": [
+        {
+          "line": 4,
+          "old": [
+            "metadata:\n",
+            "  short-description: \"AST-aware structural search + deterministic codemods (ast-grep/sg) across 25 languages.\"\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "agents/openai.yaml",
+      "reason": "Add the required interface default_prompt naming this CRW skill while preserving the original implicit-invocation policy.",
+      "hunks": [
+        {
+          "line": 4,
+          "new": [
+            "  default_prompt: \"Use $crw-ast-grep to preview this structural code search or rewrite before applying changes.\"\n"
+          ]
+        }
+      ]
+    }
+  ]
+}

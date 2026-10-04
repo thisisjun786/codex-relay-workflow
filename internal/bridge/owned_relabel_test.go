@@ -17,6 +17,7 @@ type relabellingPolicy struct{}
 func (relabellingPolicy) Summary() map[string]any {
 	return map[string]any{"mode": "allowlist", "digest": "stub"}
 }
+func (relabellingPolicy) Role(string) (execution.Role, bool) { return execution.Role{}, false }
 func (relabellingPolicy) Authorize(in execution.Input) (execution.Authorized, error) {
 	return execution.Authorized{Model: relabelModel, Effort: relabelEffort, Receipt: map[string]any{"mode": "allowlist", "digest": "stub", "model": relabelModel, "reasoningEffort": relabelEffort}}, nil
 }

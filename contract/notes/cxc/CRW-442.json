@@ -1,0 +1,29 @@
+{
+  "issue": "CRW-442",
+  "pending": [
+    "cli__config__bare_and_unknown_actions",
+    "cli__config__list_and_get",
+    "cli__config__set_then_unset_with_manifest",
+    "cli__config__set_without_manifest_is_refused",
+    "cli__disable__features_list_unavailable_reverts_from_manifest",
+    "cli__disable__reverts_live_flags_and_key",
+    "cli__disable__round_trip_via_uninstall_alias",
+    "cli__disable__without_manifest_writes_opt_out",
+    "cli__enable__fresh_install_then_status",
+    "cli__enable__hard_flag_failure_aborts",
+    "cli__enable__help_anywhere_writes_nothing",
+    "cli__enable__soft_flag_failure_warns",
+    "cli__status__codex_failure_throws",
+    "hook__session-start-healing-declared-features__all_enabled_writes_cache_silently",
+    "hook__session-start-healing-declared-features__baseline_empty_workspace",
+    "hook__session-start-healing-declared-features__declines_a_key_it_already_healed",
+    "hook__session-start-healing-declared-features__enable_failure_reported_not_cached",
+    "hook__session-start-healing-declared-features__features_list_failure_is_silent",
+    "hook__session-start-healing-declared-features__heal_claims_manifest_ownership",
+    "hook__session-start-healing-declared-features__heals_soft_flag_without_manifest",
+    "hook__session-start-healing-declared-features__mtime_cache_hit_skips_codex",
+    "hook__session-start-healing-declared-features__opted_out_marker_skips_without_codex_call"
+  ],
+  "identical": [],
+  "intentionally-changed": []
+}

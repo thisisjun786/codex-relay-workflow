@@ -26,10 +26,9 @@ the user asked for one, and is not a required section otherwise.
 Read [Integrations](../crw-plan/references/integrations.md) for canonical documents, connector
 access and which operation owns what, and
 [supervisor, parent and child scope](../crw-plan/references/integrations.md#supervisor-parent-and-child-scope)
-for the three roles and the names a Korean report gives them. Reuse the
-evidence-first, short-brief form of installed `catchup` for the writing itself, without inheriting
-its assumption that the reader has been away: the same form serves a routine midpoint check.
-Use `readchk` when the request bundles several questions or its referent is unclear, and resolve
+for the three roles and the names a Korean report gives them. Write the report in an
+evidence-first, short-brief form, without assuming that the reader has been away: the same form serves a routine midpoint check.
+When the request bundles several questions or its referent is unclear, restate it and resolve
 silently when the context settles it. Use `cxc-recall` only for history the current records no
 longer carry; it does not establish current state.
 

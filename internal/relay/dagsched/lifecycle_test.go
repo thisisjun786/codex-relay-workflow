@@ -13,6 +13,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/capacity"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // CRW-281: pause, resume, cancel and archive are typed plan revisions (the changes of the revision document), and the scheduler reads
@@ -20,13 +21,7 @@ import (
 // writes one (dag-plan-put's document), and the reasons are the literals the documentation promises.
 
 // lifeOp is a lifecycle change of the revision document: one node's, or (with no node) the plan's.
-func lifeOp(op, node string) doc {
-	d := doc{"op": op}
-	if node != "" {
-		d["node_id"] = node
-	}
-	return d
-}
+var lifeOp = testsupport.LifeOp
 
 func planOp(op string) doc { return lifeOp(op, "") }
 

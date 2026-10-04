@@ -1,0 +1,34 @@
+[
+  {
+    "id": "unreadable_prior_manifest",
+    "classification": "intentionally-changed",
+    "reason": "Unreadable prior restoration records are refused rather than replaced.",
+    "config": "[memories]\ndedicated_tools = true\n",
+    "oracle": {
+      "error": false,
+      "config": "[memories]\ndedicated_tools = true\n",
+      "priorValue": "true",
+      "setByCodexclaw": false
+    },
+    "go": {
+      "error": true,
+      "config": "[memories]\ndedicated_tools = true\n",
+      "manifestPreserved": true
+    }
+  },
+  {
+    "id": "atomic_config_publication_failure",
+    "classification": "intentionally-changed",
+    "reason": "Config publication uses fsynced temporary-file rename; a failed publication leaves the original config whole.",
+    "config": "# original\n[memories]\ndedicated_tools = false\n",
+    "oracle": {
+      "error": true,
+      "config": "# original\n[memories]\ndedicated_tools = true\n"
+    },
+    "go": {
+      "error": true,
+      "config": "# original\n[memories]\ndedicated_tools = false\n",
+      "manifestPreserved": false
+    }
+  }
+]

@@ -43,7 +43,12 @@ Every command prints JSON. Exit 0 success, 2 a refusal carrying a machine-readab
 
 `doctor` reports `actorReachability`: whether the state directory is writable, whether a socket is
 configured, and what connecting to it actually returned. Read it from the process that will run
-the work. What a given task can do is a property of that task's profile on that host, not a fixed
+the work. By default `doctor` only reads: it creates no probe file, never opens `write-gate.lock` and
+makes no read-write connection, so "writable" is judged from file permissions, the ownership stamp
+and the write gate's own metadata (`writeProbe.judgedBy` is `permission`). `doctor --probe-write` measures it
+by writing a temporary file in the state directory and beginning and rolling back a write
+transaction under the write gate (`judgedBy` is `measured`); only that sees a sandbox that denies
+writes without changing permissions. What a given task can do is a property of that task's profile on that host, not a fixed
 fact about the relay, so discover it rather than assuming it.
 
 Its `offlineCommands` and `hostRequiredCommands` lists are curated capability GUIDANCE, not an
@@ -103,8 +108,8 @@ recorded rather than re-derived from a single lookup.
 
 An unreadable database answers `readable: false` and `holds: null`, never `holds: false`. Those
 are different answers and only one of them is safe to act on. Like the rest of `doctor`, this
-constructs no store: it reads through the probe's own read-only connection, so a diagnosis cannot
-create the database it was asked to look at, and a rename during the read returns no rows rather
+constructs no store and, without `--probe-write`, writes nothing of its own: it reads through the
+probe's own read-only connection, so a diagnosis cannot create the database it was asked to look at, and a rename during the read returns no rows rather
 than rows attributed to the wrong file.
 
 `assignment-find --issue` carries the same provenance under `relay`: `holds`, and a `store`
@@ -301,11 +306,19 @@ facts arrive, and refuses a disagreement as `role_binding_mismatch` rather than 
 the recovery for a mismatch is not re-recording, because that would write one side's answer over
 the other.
 
+A role that lists several pairs accepts a settings record on any one of them: a child recorded from the
+receipt it was created under is current whichever of its role's pairs that is, so the relay cannot tell
+whether it is the pair the issue's child pair line names. That comparison is the parent's, made on the
+creation receipt ([Child pair by issue type](../../crw-plan/references/integrations.md#child-pair-by-issue-type)).
+The request has no field for the issue's classification, bundle or source of the choice, and `managed-start/1` refuses a
+field it does not know, so those values are kept in the parent's coordination record
+([Record the pair choice at release](../SKILL.md#record-the-pair-choice-at-release)), not in the relay.
+
 After a user changes an existing task's model, re-record that task's authorization from a
 user-attributed source before the next send, with `--source user_transition`. The record is what
 a send verifies against, and a value observed on the host is evidence of what the task is running
 rather than a new approval, so nothing adopts a drifting setting on its own. Until it is
-re-recorded the send is refused as `settings_record_stale_for_role`, before any transport call.
+re-recorded the send is refused: as `settings_record_stale_for_role`, before any transport call, when the old record is no longer one of its role's pairs; and, where it still is one (a child moved from one of its role's pairs to the other), as `settings_differ_after_load` after a resume that requests nothing, because the compare then finds the host on another pair than the record.
 A process that cannot read a role policy refuses role-bound sends as `role_policy_unconfigured`
 rather than skipping the check; that hold is retry-safe, so declaring the policy and restarting
 resumes the held deliveries. `doctor` reports the policy digest this process resolved and
@@ -317,24 +330,25 @@ A message to a task states the RECIPIENT's authorized pair, not the sender's. A 
 to its parent states the parent's, and its own settings are unaffected by what the parent runs
 on; copying the recipient's pair into the sender is how a correction to one level spreads to
 another. The pair to state is the one RECORDED as that task's authorization, which is what a send
-verifies against. For most tasks that is the pair its role's policy declares, and it is read at
-the time of the send rather than from a memory of what the role used to run on. It is not always
-that pair: an exception authorizes one specific model and effort for one role and directory, and
-a task created under a currently valid one legitimately differs from the ordinary declared pair.
-Stating the declared pair for such a task would either fail verification or ask the host to
+verifies against. For a task whose role declares one pair that is the pair its role's policy declares, read at the time
+of the send rather than from a memory of what the role used to run on; for a child, whose role lists
+several pairs, it is whichever of them the task was created on, which its creation receipt and the
+relay's record hold. It is not always a pair the role declares: an exception authorizes one specific model and effort for one role and directory, and
+a task created under a currently valid one legitimately differs from the pairs its role declares.
+Stating a declared pair for such a task would either fail verification or ask the host to
 change what the task runs on.
 
 The recipient's runtime state decides the mechanism as well as the settings, and it does not
 decide it alone. An ACTIVE recipient is steered into the turn it is already running, and a steer
 carries no model or effort at all, so there is nothing to state and nothing that could be
-applied. An IDLE recipient whose pair derives from its role's declared pair is resumed and
+applied. An IDLE recipient whose pair derives from its role's declared pair (a role that lists several derives none) is resumed and
 carries its settings, and so is one the host reports as `notLoaded`: a host that applies what it
 was sent while materializing the thread lands it where policy says it belongs. A record-based pair
-— a supervisor's — or an exception-authorized one is never transmitted, loaded or not, because a
+— a supervisor's, or a child's under a role that lists several pairs — or an exception-authorized one is never transmitted, loaded or not, because a
 resume could restore a value the user has since changed. The relay's transport loads such a
 recipient with a resume that requests nothing, compares what the host reports with the record
 before any turn, and refuses a difference as `settings_differ_after_load`, retry-safe with
-nothing started; re-record from a reading the user stands behind rather than retrying.
+nothing started; re-record from a reading the user stands behind rather than retrying. On a child that refusal can mean the host reports another pair than the record, for example because the user moved it, or that another recorded setting has drifted; the refusal names the field that differs, and the recovery follows that field. It is not a transport fault.
 
 The workspace roots are the one setting read differently, on both routes. A resume never changes
 the roots of a thread the host already has loaded: the thread keeps the roots of whichever load
@@ -484,6 +498,10 @@ while a declared required check is not successful at its highest attempt on that
 the pull request is a draft. State every field; an unstated one is refused rather than read as
 zero. If the review is not finished, the turn ends `blocked_needs_input` and says so, which is
 not a lesser outcome than pretending it did.
+A thread that arrives after this record is not in `threadsSeen`. The parent's restatement reports it
+as a late finding unless the parent has recorded its own disposition for it
+([how](merge-readiness.md#a-late-thread-the-parent-dispositions-itself)); that never replaces the
+child's dispositions.
 
 Without `--socket` the receipt is STAGED: recorded and visible, deliverable only once an
 independent observation sees that turn end normally. Staged is real progress; it is not delivery
@@ -495,6 +513,27 @@ revisions in one generation are a fork and neither is current. The FIRST receipt
 generation omits it: a `needs_changes` correction opens the next generation, and naming the
 previous generation's revision there declares a predecessor that generation does not contain, which
 reads `unknown_predecessor` and leaves the whole generation with no current head.
+
+A receipt the relay suppressed is not a revision. The relay suppresses a staged receipt when the
+turn that staged it ends failed or interrupted, and a host or App Server restart does that, so
+after a restart the receipt you emitted before it may or may not still count, and you cannot tell.
+You do not have to: emit the new receipt and name the revision you emitted last, as above. The
+head reads a naming of a suppressed receipt as naming what that receipt itself replaced. When it
+replaced nothing, the new receipt has no predecessor, and with no other revision that counts it is
+the generation's only revision (`sole_revision`); when it replaced a revision that still counts,
+the new receipt replaces that one (`declared_chain`). Emit accepts the naming either way and
+records it as you stated it. That reading resolves the naming and nothing more: the generation is
+judged as always. A naming it cannot resolve still reads `unknown_predecessor` (a revision of
+another generation, a revision nobody emitted, a suppressed receipt whose own predecessor nobody
+holds), and revisions that stand unconnected still read `fork` (two re-emits naming the same
+suppressed receipt, or one naming a suppressed receipt that replaced nothing beside a revision
+that still counts): name the revision that yours replaces.
+
+A receipt is named by its revision, so the same bytes emitted again are the same receipt. If the
+receipt the restart cut off is suppressed and you emit an identical manifest, the answer says
+`"duplicate": true` and `"stage": "suppressed"` and nothing that counts is on record: change
+what the manifest holds (a handoff record carries the checks run since and the time of this emit)
+and emit that. `revision-head` shows what counts.
 
 ## A staged receipt needs a host-capable process
 
@@ -611,6 +650,31 @@ fresh execution generation, which creates a new delivery rather than reviving th
 `holdReason` beside the delivery state before concluding that a quiet assignment is merely slow,
 and where a parent was never woken at all, nothing surfaces this automatically.
 
+## Answering a child that stopped for input
+
+A child that needs something only a person can give records `blocked_needs_input` and ends its turn; [Which children stopped](#which-children-stopped-and-whether-anyone-was-told) is how you find it. A verdict cannot answer it, because the receipt carries no artifact and so is never the head revision: the answer travels in a decision, which the relay records and carries to the child as its own message. Take the question to Jun when it is Jun's to answer, then return the answer on this route, in this order.
+
+1. **Choose the kind.** `answer` and `stop` keep the generation: the child goes on, or ends its work and reports `interrupted`. `split_approval` and `scope_change` change the criteria the child's output is judged against, so they open the next generation of the same child under the set you name.
+2. **For the two kinds that open a generation, register the new set first** (`criteria-register --relationship <rel> --criterion <id=title> ...`; `criteria-show --relationship <rel>` prints its `setDigest`). In a DAG project also revise the plan so the node holds the same set: a plan revision whose `update_node` carries that digest as the node's `criteria_set_digest` and changes nothing else about the node. Any other change to the node after the dispatch is refused at step 5.
+3. **Reply:** `decision-reply --event <the blocked receipt's event id> --decision <kind> --decision-turn <your own turn id> --note <text|@file> [--criteria-digest <digest>]`. The digest is required for the two kinds that open a generation and refused for the other two. A refusal writes nothing and names its reason (docs/relay/README.md, "Replying to a blocked receipt"). A reply is final for its receipt: a change of mind goes to the child with its next receipt.
+4. **Wait until the decision is dispatched:** `decision-show --relationship <rel>` prints each decision with the state of its delivery. The relay binds the new generation's anchor to the turn the message went into; do not `generation-bind` it yourself.
+5. **In a DAG project, record the generation** for `split_approval` and `scope_change`: `dag-correct --plan <plan> --node <node> --actor <you> [--expect-epoch <the epoch your dag-coordinator-claim answered>]`, with no `--prepare` and no `--manifest-digest`. It answers `opened_by: decision_reply`. A refusal names what is missing. The decision is not dispatched yet, or the plan holds other criteria: wait, or revise the plan to the decided set, and call again. The node changed beyond its criteria after the dispatch: restore the node exactly or redefine it. An input the child consumed was superseded or replaced: no retry reaches that, so redefine the node. Record the generation before anything else opens another one, with no second decision and no ruling in between: a gap left there is final and the way out is a redefinition. `answer` and `stop` open no generation, so there is nothing to record.
+6. **Rule and accept the result as any result.** The child continues on the same node and its first receipt in the new generation passes no `--supersedes-revision`. Give the verdict, and in a DAG project `dag-accept` it (with `--supersedes` when the node already had an accepted result): the node reads accepted and not stale.
+
+**The fallback, and what it records.** A parent that sent the child a message over the thread bridge, outside this route, has told the relay nothing: the relay cannot see that message. The one trace it can hold is an admission: `admit-turn --relationship <rel> --generation <n> --turn <the turn that received it> --actor <your own task id> --reason <why>`. An admission by the relationship's registered parent task is recorded as a direct parent intervention, which `intervention-show --relationship <rel>` reads back (generation, turn, anchor, actor, reason, time); any other actor is only an admission. It is a record and not an authorization. A message that is never admitted leaves no trace, the actor is the statement of whoever ran the command, and the bypass opens no generation, so the DAG learns of it only from the plan revision and the re-registered criteria. Use the route above, and name any use of the fallback in the report and in the handoff.
+
+On a bridge send to a child released with an MCP profile, state `role: child` and
+`expected_settings.mcp_profile`: the same profile the child was released with in
+`child.settings.mcpProfile`, not the role's default. The bridge cannot reliably read that record. It
+refuses a profile-less `notLoaded` send before resume when the named role declares profiles, or the
+role is omitted and the host declares child profiles. Correct the send under a NEW request id; the
+existing pair guard still applies, so prefer relay delivery for a role with several pairs. If another
+client already loaded the child under other MCP settings, the relay's `settings_not_preserved` detail
+names recovery: only after a completed durable turn and a confirmed resumable rollout, release all
+subscriptions and observe `notLoaded` (an operator can use `thread/archive` then `thread/unarchive`
+if it remains loaded); the next relay delivery resumes under the recorded profile. Never unload a
+never-run root. This advice performs no automatic recovery.
+
 ## The four readers a candidate pass also uses
 
     codex-session-relay --state "$RELAY_STATE" merge-turn-show --turn <id>
@@ -647,6 +711,13 @@ a restated candidate each issue their own — when the turn is no longer holding
 is not its holder, or when the owning binding is paused. A granted turn that has not
 acknowledged cannot begin a merge. A claim made before grants were recorded has none, needs
 none, and is not held to this.
+
+A restated candidate is `merge-turn-ready --head <a head the turn does not hold>`. It resets
+readiness, so a `--ready` given with it is accepted and not recorded, and on a holding turn it
+issues the grant above. Its answer carries `readinessReset` (`previousHead`, `candidateHead`,
+`readyRequested`, `grantId` and a `detail` naming the next steps); a call that leaves the head as it
+is carries none. The grant wakes nobody: `merge-turn-show` reads it again. The order after a
+refresh is in [merge readiness](merge-readiness.md#refresh-the-base-yourself-when-only-the-base-moved).
 
 `capacity-show` reports the held slots, their total, the count per parent, and any whose recorded
 parent no longer owns the project. `--project`, `--parent-task` and `--initiative` narrow that
@@ -942,7 +1013,7 @@ of fact and the admission records that it was made. A turn admitted once needs n
 that generation, and an admission does not carry into another generation.
 
 Where an operator has to record the admission out of band instead, `admit-turn --relationship
-<rel> --generation <n> --turn <id> --actor <who> --reason <why>` does it.
+<rel> --generation <n> --turn <id> --actor <who> --reason <why>` does it. When the actor is the relationship's registered parent task, the admission is also recorded as a direct parent intervention that `intervention-show --relationship <rel>` reads back ([Answering a child that stopped for input](#answering-a-child-that-stopped-for-input)).
 
 Admission changes which turns may emit and nothing else. Offline, the receipt is still STAGED until
 a host-capable process observes the turn end, as in
@@ -985,7 +1056,9 @@ Read the handoff the report carries rather than collecting its contents again. T
 already paginated the review and enumerated the check runs, and the values are the ones the merge
 turn expects to be restated. What this side adds is currency: re-read the head and the base
 immediately before merging and compare the counts to the record. A disagreement is a fail-closed
-return to the same child, through the needs-changes verdict below, not a repair made here.
+return to the same child, through the needs-changes verdict below, not a repair made here. A late
+review thread on the record's head that the parent has itself dispositioned
+([how](merge-readiness.md#a-late-thread-the-parent-dispositions-itself)) is not a disagreement.
 
 The proof is over the parent's OWN acknowledging turn, which the delivered message cannot carry:
 the child does not know which turn will acknowledge, and quoting the delivered fields back cannot
@@ -1237,7 +1310,10 @@ generation is the way for the first two:
     tries to replace the verified ruling of the old event is refused with `stale_generation` or
     `superseded_revision` saying so;
   - the head is ambiguous: outside a plan, a fresh generation; for a plan node this build records no
-    route, so report it and open none.
+    route, so report it and open none. The reading, not the child's wording, says which case this
+    is: a re-emit that named a suppressed receipt of its own generation may read a head
+    ([the child emits](#the-child-emits)), so read `revision-head` first, rule that head like any
+    other, and treat the head as ambiguous only when it still reads so.
 
 A `needs_changes` verdict opens the generation itself. Open one by hand when nothing ruled it:
 
@@ -1264,6 +1340,8 @@ not registered yet, and the coordinator binds the anchor and recovers the receip
 child. Polling for the binding would be a readiness loop, and this workflow does not have one.
 If the child completes on a later turn than the anchor, that is a
 [continuation turn of the same child](#completing-on-a-later-turn-of-the-same-child).
+
+A generation that was opened by hand and never sent has a way back inside a plan: `dag-generation-withdraw` closes it, if the relay can show it was never bound, never reported in and never recorded as an execution of the node, and the relationship stands on the generation before it again ([a generation opened by hand and never sent](merge-readiness.md#a-generation-opened-by-hand-and-never-sent)). The generation's number stays spent. Outside a plan there is no such command: the generation stays, and the next one is opened after it.
 
 The child then emits under the new generation. Identical artifact bytes are fine: event identity
 includes the generation, so the receipt is a new event, its claim binds the CURRENT criteria set,

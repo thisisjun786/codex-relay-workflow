@@ -209,13 +209,9 @@ func (s *Scheduler) accept(ctx context.Context, plan, node, actor string, in Acc
 	}
 	ruleJSON := dag.Canonical(map[string]any{"skills_digest": rule.SkillsDigest, "model": rule.Model, "effort": rule.Effort})
 	q := s.Store.Q(ctx)
-	snap, _, err := dag.SnapshotAt(ctx, q, plan, 0)
+	snap, n, err := liveNode(ctx, q, plan, node)
 	if err != nil {
 		return out, err
-	}
-	n, ok := nodeOf(snap, node)
-	if !ok {
-		return out, refuse(contract.RefusalUnregisteredScope, "plan %s has no live node %s", plan, node)
 	}
 	// the plan's hold is read before the forge is (a node the plan paused or ended is not accepted); the transaction below reads it again
 	if err := lifecycleRefusal(snap, n, "accepting its result", false); err != nil {
@@ -266,10 +262,10 @@ func (s *Scheduler) accept(ctx context.Context, plan, node, actor string, in Acc
 			return refuse(contract.RefusalUnregisteredRelationship, "node %s has no execution to accept", node)
 		}
 		if rel.Status != "active" || rel.Superseded {
-			return refuse(contract.RefusalRelationshipNotActive, "the relationship %s of %s is %s: a result is accepted while its child's relationship is active", rel.ID, node, map[bool]string{true: "superseded", false: rel.Status}[rel.Superseded])
+			return refuse(contract.RefusalRelationshipNotActive, "the relationship %s of %s is %s: a result is accepted while its child's relationship is active", rel.ID, node, relationshipState(rel))
 		}
 		if rel.ParentTaskID != actor {
-			return refuse(contract.RefusalScopeRoleMismatch, "task %s is not the parent of relationship %s, which is held by %s", actor, rel.ID, rel.ParentTaskID)
+			return notParentHeldBy(actor, rel)
 		}
 		var manifest string
 		bound, err := queryOne(txCtx, tx, "SELECT manifest_digest FROM dag_node_executions WHERE plan_id = ? AND node_id = ? AND relationship_id = ? AND execution_generation = ?", []any{plan, node, rel.ID, rel.Generation}, &manifest)
@@ -283,7 +279,7 @@ func (s *Scheduler) accept(ctx context.Context, plan, node, actor string, in Acc
 				return err
 			}
 			if !carried {
-				return refuse(contract.RefusalStaleGeneration, "generation %d of %s is not recorded as an execution of %s (a correction is recorded with dag-correct before its result is accepted)", rel.Generation, rel.ID, node)
+				return refuse(contract.RefusalStaleGeneration, "generation %d of %s is not recorded as an execution of %s (a correction is recorded with dag-correct before its result is accepted)%s", rel.Generation, rel.ID, node, s.unsentGenerationHint(txCtx, tx, rel))
 			}
 		}
 		head, err := s.verifiedHead(txCtx, tx, rel, in.Event)
@@ -351,7 +347,7 @@ func (s *Scheduler) accept(ctx context.Context, plan, node, actor string, in Acc
 			}
 			seq := last.Int64 + 1
 			if _, err := tx.ExecContext(txCtx, "INSERT INTO dag_acceptance_revalidations (revalidation_id, acceptance_id, criteria_set_digest, event_id, verdict_turn_id, reval_seq, revalidated_by, revalidated_at) VALUES (?,?,?,?,?,?,?,?)",
-				"drv-"+shaOf([]byte(existing + "|" + itoa64(seq)))[:32], existing, head.SetDigest, head.EventID, head.VerdictTurn, seq, actor, s.now()); err != nil {
+				revalidationID(existing, seq), existing, head.SetDigest, head.EventID, head.VerdictTurn, seq, actor, s.now()); err != nil {
 				return err
 			}
 			out.Revalidated = true
@@ -359,7 +355,7 @@ func (s *Scheduler) accept(ctx context.Context, plan, node, actor string, in Acc
 		}
 
 		if !bound {
-			return refuse(contract.RefusalStaleGeneration, "generation %d of %s is not recorded as an execution of %s (a correction is recorded with dag-correct before its result is accepted)", rel.Generation, rel.ID, node)
+			return refuse(contract.RefusalStaleGeneration, "generation %d of %s is not recorded as an execution of %s (a correction is recorded with dag-correct before its result is accepted)%s", rel.Generation, rel.ID, node, s.unsentGenerationHint(txCtx, tx, rel))
 		}
 		// a new output: it supersedes the node's active acceptance only explicitly
 		if implementation && (pr.State != "open" || pr.IsDraft) {
@@ -420,6 +416,18 @@ func (s *Scheduler) accept(ctx context.Context, plan, node, actor string, in Acc
 		return nil
 	})
 	return out, err
+}
+
+// unsentGenerationHint names the way out when the generation the relationship stands on is an anchor nobody bound, which is what a generation opened by hand and never sent to the child looks like: the
+// parent withdraws it (withdraw.go) and accepts the generation before it. It is only a hint, so a failed read gives none.
+func (s *Scheduler) unsentGenerationHint(ctx context.Context, q store.Querier, rel relRow) string {
+	var anchor string
+	var turn sql.NullString
+	has, err := queryOne(ctx, q, "SELECT anchor_state, dispatch_turn_id FROM generations WHERE relationship_id = ? AND execution_generation = ?", []any{rel.ID, rel.Generation}, &anchor, &turn)
+	if err != nil || !has || rel.Generation < 2 || anchor != "anchor_pending" || turn.Valid {
+		return ""
+	}
+	return "; if generation " + itoa64(rel.Generation) + " was opened by hand and never sent to the child, close it with dag-generation-withdraw and accept the generation before it"
 }
 
 // acceptTarget is the repository an implementation node's accepted head is judged against: the single repository its outgoing integrated and code-pinned edges name. A node with none

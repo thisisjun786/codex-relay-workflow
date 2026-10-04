@@ -119,7 +119,7 @@ func Classify(receipt Obj) Facts {
 }
 
 // AttemptRecord is transport.attempt_record: the frozen DeliveryAttempt shape.
-func AttemptRecord(facts Facts, requestID, eventID string, attemptNo int64, recipient, statusBefore, observedAt string, reconciliation Obj) (Obj, error) {
+func AttemptRecord(facts Facts, requestID, eventID string, attemptNo int64, recipient, statusBefore, observedAt string, runtime, reconciliation Obj) (Obj, error) {
 	record := Obj{
 		{Key: "requestId", Value: requestID},
 		{Key: "eventId", Value: eventID},
@@ -134,6 +134,9 @@ func AttemptRecord(facts Facts, requestID, eventID string, attemptNo int64, reci
 		{Key: "transportReceiptStatus", Value: facts.ReceiptStatus},
 		{Key: "failedOperation", Value: facts.FailedOperation},
 		{Key: "turnId", Value: facts.TurnID},
+	}
+	if runtime != nil {
+		record = append(record, F{Key: "runtime", Value: runtime})
 	}
 	if reconciliation != nil {
 		record = append(record, F{Key: "reconciliation", Value: reconciliation})

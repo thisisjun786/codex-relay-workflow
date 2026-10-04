@@ -18,16 +18,23 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/service"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/buildinfo"
 )
 
 const policyVariable = "CODEX_THREAD_BRIDGE_EXECUTION_POLICY"
 
 var doctorCommand = dispatch.Command{Name: "doctor", Exempt: true, ReportsMismatch: true, ReadOnly: true, Run: runDoctor}
 
-// runDoctor is cmd_doctor: what THIS process can actually do here, measured rather than
-// assumed. It constructs no Store.
+// runDoctor is cmd_doctor: what THIS process can actually do here. It constructs no Store and,
+// by default, only reads: no write-gate.lock is opened, no ".probe-" file is created, no
+// read-write connection is made, and the store is read without creating SQLite sidecars wherever
+// SQLite allows (store.WithSidecarFreeReads). What it may write is then judged from permissions,
+// the ownership stamp and the write gate's own metadata. --probe-write measures it by writing instead
+// (store.ProbeOptions); writeProbe in the answer says which one the answer holds.
 func runDoctor(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
-	probed := store.Probe(ctx, services.Selection)
+	ctx = store.WithSidecarFreeReads(ctx)
+	probeWrite := args.Bool("probe-write")
+	probed := store.ProbeWith(ctx, services.Selection, store.ProbeOptions{Write: probeWrite})
 	loc := probeStore(probed)
 	report := contract.OrderedObject{
 		{Key: "stateSelection", Value: selectionRecord(services.Selection)},
@@ -107,8 +114,10 @@ func runDoctor(ctx context.Context, services dispatch.Services, args dispatch.Ar
 	comparison := store.CompareStore(loc, expectations)
 	add("sameStore", string(comparison.SameStore))
 	add("detail", comparison.Detail)
-	// The Python report has no slot a runtime reading could fill without changing a key, so it
-	// is a new trailing top-level key (todo 20): every Python key keeps its place and value.
+	// The Python report has no slot a runtime reading could fill without changing a key, so these
+	// are new trailing top-level keys (todo 20, decision 76): every Python key keeps its place
+	// and value, and runtime stays the last of them.
+	add("writeProbe", writeProbeRecord(probeWrite, probed.Access.Measured))
 	add("runtime", runtimeBlock())
 	// Present only where it has something to say, like issue and workerReadiness (decision 73).
 	served, err := serviceStore(services)
@@ -199,7 +208,7 @@ func ownershipReport(ctx context.Context, services dispatch.Services) contract.O
 	}
 	return append(report,
 		contract.Field{Key: "phase", Value: phase},
-		contract.Field{Key: "runtime_build", Value: runtimeBuild()},
+		contract.Field{Key: "runtime_build", Value: buildinfo.ID()},
 		contract.Field{Key: "detail", Value: detail},
 	)
 }
@@ -247,15 +256,6 @@ func readOwnership(ctx context.Context, dbPath string) (map[string]string, any, 
 	return meta, phase, nil
 }
 
-// runtimeBuild is the build this runtime publishes as its holder identity (takeover.json's
-// holder.build and a candidate's ready): the build cmd/crw stamped, else its version.
-func runtimeBuild() string {
-	if Build != "" {
-		return Build
-	}
-	return Version
-}
-
 func orEmpty(v any) any {
 	if v == nil {
 		return contract.OrderedObject{}
@@ -284,7 +284,7 @@ func nonceRecord(n store.NonceReading) contract.OrderedObject {
 	return record
 }
 
-// reachability is _reachability.
+// reachability is _reachability. stateDirectoryWritable is judged unless writeProbe.ran.
 func reachability(services dispatch.Services, access store.ProbeAccess) contract.OrderedObject {
 	connect := "not configured"
 	if services.SocketPath != "" {
@@ -487,6 +487,23 @@ func socketDigest(canonical string) string {
 	return hex.EncodeToString(sum[:])[:16]
 }
 
+// writeProbeRecord says how the answer's writability readings (access.directoryWritable and
+// dbWritable, actorReachability.stateDirectoryWritable, accessReceipt.observedAccess) were
+// obtained. requested is --probe-write; ran is whether the write probe executed (a requested
+// probe against a missing directory or a store this runtime may not write executes nothing, and
+// those readings are the refusal); judgedBy is "measured" exactly when ran, else "permission":
+// the readings are then judged, and a write gate another process holds or a sandbox that denies
+// writes without changing permissions is not seen.
+func writeProbeRecord(requested, ran bool) contract.OrderedObject {
+	judgedBy := "permission"
+	if ran {
+		judgedBy = "measured"
+	}
+	return contract.OrderedObject{
+		{Key: "requested", Value: requested}, {Key: "ran", Value: ran}, {Key: "judgedBy", Value: judgedBy},
+	}
+}
+
 // runtimeBlock is {language, version, build}: build is the VCS revision the binary was
 // built from, or null when the build recorded none.
 func runtimeBlock() contract.OrderedObject {
@@ -498,5 +515,5 @@ func runtimeBlock() contract.OrderedObject {
 			}
 		}
 	}
-	return contract.OrderedObject{{Key: "language", Value: "go"}, {Key: "version", Value: Version}, {Key: "build", Value: build}}
+	return contract.OrderedObject{{Key: "language", Value: "go"}, {Key: "version", Value: buildinfo.Version}, {Key: "build", Value: build}}
 }

@@ -78,11 +78,11 @@ The release workflow is manual and owner-controlled.
 
 | Evidence | What it establishes |
 | --- | --- |
-| Skill metadata, local links and the absence of Python files | Repository structure, and that no Python enters the repository |
+| Skill metadata, local links and no Python outside skill assets | Repository structure, and that Python sits only in skill assets, so the runtime, installer and CI do not depend on it |
 | Installer and skill-linker tests in temporary destinations (Go) | Idempotence and preservation of conflicting files, directories and links |
 | CI-control negative tests | Missing, malformed, failed, cancelled or skipped prerequisites cannot pass the gate; main-target PRs and invalid release sources are rejected |
 | Go lint, the Go test suite with the contract corpus, static release binaries and the isolated-home install | The Go runtime builds, passes its tests and installs and wires from this checkout |
-| Pinned secret scan of available Git history | No finding under the reviewed scanner configuration in that fetched history |
+| Pinned secret scan: all fetched history on a push to `dev`, the commits a pull request adds on a pull request | No finding under the reviewed scanner configuration in the commits scanned |
 | Owning offline contract checks, when present | Their documented parser, fixture or shape behavior |
 | Independent scenario review | Instruction consistency and consequential edge cases within its scope |
 
@@ -94,10 +94,12 @@ applicable. A structural test does not prove the workflow's meaning, and a fixtu
 replay does not prove an actual Codex hook, relay delivery or Desktop behavior.
 
 The Go checks need only the Go toolchain `go.mod` names and temporary synthetic
-data; CI installs no Python. Pin any
+data. The runtime, installer and CI do not depend on Python: CI installs none and runs
+no skill script, and a helper script in a skill's `scripts/` or `examples/` is an original
+asset an agent runs when it needs it. Pin any
 downloaded tooling by version, commit and checksum, and keep fixtures synthetic
 and local. Ordinary CI does not need a
-contributor's Codex, CXC, Paperthin, Linear account, App Server socket or user
+contributor's Codex, CXC, Linear account, App Server socket or user
 skill installation. `crw-dev skills link` in the development binary links a checkout's skills
 (its Python predecessor, `scripts/install.py`, left in todo 44). Cross-platform
 symlink behavior and actual host compatibility need their own evidence before claiming support.
@@ -111,7 +113,8 @@ runners. Pin downloaded tooling and verify its checksum. CI-control edits
 require review: a PR can edit its own workflow, so a green badge is not an
 immutable trust boundary.
 
-The secret scanner reads all fetched history including merge-parent diffs.
+The secret scanner reads merge-parent diffs. A push to `dev` is scanned over all fetched history; a
+pull request over the commits it adds to its base ([scope](docs/CI.md#secret-scanning)).
 Repository ignore files and inline allow comments must not suppress findings.
 An exception requires an exact synthetic value and exact path with review;
 never baseline away an unexplained finding. Keep private receipts, session
@@ -131,8 +134,7 @@ public-repository linkback settings; repository prose does not enforce them.
 Review public PR comments and their edit history as well as the Git diff before
 publishing an existing private repository.
 
-Keep the skills and their shared references consistent. Paperthin remains an
-external runtime dependency; do not vendor its source. CXC v0.2.40 (lidge-jun/codexclaw,
+Keep the skills and their shared references consistent. CXC v0.2.40 (lidge-jun/codexclaw,
 MIT) is being self-ported into the Go runtime with its MIT notice kept: [NOTICE](NOTICE)
 carries the notices, [provenance](docs/port-cxc/provenance.md) the origin and
 [known defects](docs/port-cxc/known-defects.md) the upstream defects the port records.

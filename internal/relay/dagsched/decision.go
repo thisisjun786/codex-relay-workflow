@@ -46,12 +46,8 @@ func (s *Scheduler) RecordDecision(ctx context.Context, plan, actor string, in D
 		if err != nil {
 			return err
 		}
-		parents, err := projectParents(txCtx, tx, snap.ProjectKey)
-		if err != nil {
+		if err := requireProjectParent(txCtx, tx, snap.ProjectKey, actor); err != nil {
 			return err
-		}
-		if len(parents) != 1 || parents[0] != actor {
-			return refuse(contract.RefusalScopeRoleMismatch, "task %s is not the registered parent of project %s", actor, snap.ProjectKey)
 		}
 		var activeID, digest, disposition, kind, ref string
 		var revision int64
@@ -69,8 +65,7 @@ func (s *Scheduler) RecordDecision(ctx context.Context, plan, actor string, in D
 			return err
 		}
 		out.Revision = last.Int64 + 1
-		out.DecisionID = "dec-" + shaOf([]byte(dag.Canonical(map[string]any{"plan_id": plan, "subject": in.Subject, "digest": in.Digest, "disposition": in.Disposition,
-			"authority_kind": in.AuthorityKind, "authority_ref": in.AuthorityRef, "revision": out.Revision})))[:32]
+		out.DecisionID = decisionID(plan, in.Subject, in.Digest, in.Disposition, in.AuthorityKind, in.AuthorityRef, out.Revision)
 		if active {
 			if _, err := tx.ExecContext(txCtx, "UPDATE dag_decisions SET state = 'superseded' WHERE decision_id = ?", activeID); err != nil {
 				return err
