@@ -187,6 +187,9 @@ type Service struct {
 	// Prepare opens the writable store only after daemon and scope exclusion (Own, for a
 	// daemon; a supervisor opens it in its recovery instead).
 	Prepare func() error
+	// stopWorkerReadTicks lets tests hold the post-pidfd identity-read window open.
+	// The nil production value uses StartTicks.
+	stopWorkerReadTicks func(int) any
 }
 
 func InstallationID(state string) string {

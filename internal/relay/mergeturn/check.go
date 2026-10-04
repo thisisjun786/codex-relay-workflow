@@ -78,6 +78,11 @@ func (s *Service) Check(ctx context.Context, turn, actor, head, base string, che
 	// moved is how the branch got from the last landing's recorded base to the tip, read here
 	// like the tip, before the transaction; nil when there is no landing or nothing moved.
 	var moved *moveReading
+	// A turn bound to a pull request on a forge also has the head restated here compared with that pull request's: the
+	// check is where a head that was declared wrongly (CRW-538) is stopped before it is merged. A reader that cannot read
+	// pull requests leaves the check as it was.
+	pulls, canReadPulls := reader.(PullRequestHeadReader)
+	var pulled *pullRequestRead
 	if err == nil && early.HolderTaskID == actor && early.State == Holding && early.DeclaredReady == 1 && early.CandidateHead == head {
 		tip, unread = readTarget(ctx, reader, early.Repository, early.BaseRef)
 		if tip.SHA != "" && SameCommit(base, tip.SHA) {
@@ -86,12 +91,17 @@ func (s *Service) Check(ctx context.Context, turn, actor, head, base string, che
 				return nil, readErr
 			}
 		}
+		if canReadPulls && early.PRNumber.Valid && forgeRepository(early.Repository) {
+			pulled = readPullRequest(ctx, pulls, early, head)
+		}
 	}
 	at := s.now()
 	var refusal *registry.CoordinationRefusal
 	var verified any
 	var restated map[string]any
+	var decided map[string]any
 	err = s.Store.Transaction(ctx, func(tx context.Context, _ *sql.Conn) error {
+		decided = nil
 		row, e := s.row(tx, turn)
 		if e != nil {
 			return e
@@ -136,6 +146,9 @@ func (s *Service) Check(ctx context.Context, turn, actor, head, base string, che
 		}
 		if refusal == nil && head != row.CandidateHead {
 			refuse(contract.RefusalMergeCandidateMoved, "the candidate head is "+pyvalue.StrRepr(row.CandidateHead)+" and the restated head is "+pyvalue.StrRepr(head)+"; the turn was granted for the first. Restate the head the turn holds, or declare the one you mean with "+restateCommand(turn, actor, head), row.CandidateHead, head)
+		}
+		if refusal == nil && canReadPulls && row.PRNumber.Valid {
+			refusal, decided = pullRequestVerdict(row, actor, "restates", head, pulled)
 		}
 		if refusal == nil && tip.SHA == "" {
 			refusal = unreadableTarget(row, actor, unread, "the restated base cannot be compared with it")
@@ -212,6 +225,9 @@ func (s *Service) Check(ctx context.Context, turn, actor, head, base string, che
 	answer["checkId"] = id
 	answer["requiredDeclared"] = required
 	answer["headVerifiedAgainst"] = verified
+	if decided != nil {
+		answer["pullRequestHead"] = decided
+	}
 	if restated != nil {
 		answer["landingBaseRestated"] = restated
 	}

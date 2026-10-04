@@ -977,10 +977,27 @@ a late thread still has a correction route and after it none has
 compares threads with the record and reads the summary comments for findings, and does not need a restatement of the
 record of P on N, which names another head.
 
-**On the relay's merge lane**, claim the turn with N (`merge-turn-request --head N`). A claim already
-made at P is restated with `merge-turn-ready --head N`. That resets readiness, so a `--ready` given with
+**On the relay's merge lane**, claim the turn with N, naming the pull request and the assignment
+(`merge-turn-request --head N --pr <number> --relationship <rel>`). A claim already made at P is
+restated with `merge-turn-ready --head N`. That resets readiness, so a `--ready` given with
 it is accepted and not recorded, and on a holding turn it issues a new grant. The relay reads no CI when
-readiness is declared, so the order below is yours to keep. Run it in the foreground of the turn, with
+readiness is declared, so the order below is yours to keep. It does read the head of the pull request
+the turn is bound to: `merge-turn-ready --head N` is refused `merge_candidate_moved` when the forge reads
+another head for that pull request, and `merge_target_unreadable` when the forge cannot be read; `merge-turn-check`
+refuses the same two ways. The update that produced N can still be settling on the forge, so after a
+refresh read the pull request again and declare the head it shows; a repeated refusal is not an
+escalation, and no other pull request's head is ever declared on the turn you hold. The answer's
+`pullRequestHead` says whether the forge or the record decided the head.
+
+**A parent holds one live turn per target.** A second `merge-turn-request` for another pull request
+or another relationship is refused `disposition_conflict`, naming the live turn, its pull request and its place
+in the order. That answer is the turn you hold and never a turn for the other pull request: land the held
+turn or return it (`merge-turn-release --disposition returned`; a waiting claim is withdrawn with
+`merge-turn-withdraw`) first, then request the other pull request's turn. Asking again for the same pull request
+returns the same turn (`alreadyClaimed`). A claim made with no pull request and no relationship records
+nothing to compare, so state both on every claim.
+
+Run it in the foreground of the turn, with
 the owner's binding active (`merge-turn-acknowledge` refuses a paused one):
 
 1. The refresh gives N (progress step `base_refresh`).
@@ -1260,7 +1277,9 @@ The verdict `verified` was given, the base moved before `dag-accept`, and the pa
 Parents under one supervision land on the same base ref, so the turn on that target
 is serialized in the coordination record and claimed before integrating, not after
 deciding to merge. Claim with the exact candidate head; a claim with no head cannot
-be checked against one later.
+be checked against one later. A parent holds one turn per target: while one is live, a request for
+another pull request's turn is refused (`disposition_conflict`, naming the live turn), so request it after the
+live one has landed or been returned.
 
 Waiting for your own CI is not the same as merging. While required CI, review, or a
 base update is still outstanding and the merge has not started, a ready peer candidate
