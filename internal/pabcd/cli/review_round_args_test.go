@@ -106,6 +106,14 @@ func reviewRoundArgsEnv(m map[string]string) host.LookupEnv {
 	return func(key string) (string, bool) { v, ok := m[key]; return v, ok }
 }
 
+// reviewRoundArgsRealTemp is a temporary directory whose own path holds no link, for the tests that spell a path by its physical form.
+func reviewRoundArgsRealTemp(t *testing.T) string {
+	t.Helper()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	reviewRoundArgsMust(t, err)
+	return root
+}
+
 func reviewRoundArgsReadable(path string) bool {
 	f, err := os.Open(path)
 	if err == nil {
@@ -551,7 +559,7 @@ func TestReviewRoundArgsReadIsBoundToTheCheckedDirectory(t *testing.T) {
 // stored key climbs out in the oracle, so it is the entry's own spelling relative to the real working directory, which keeps the link
 // of the unit that the round is bound to; pointing the link elsewhere then changes what Recomputed reads.
 func TestReviewRoundArgsKeyKeepsTheLinkOfTheUnit(t *testing.T) {
-	root := t.TempDir()
+	root := reviewRoundArgsRealTemp(t)
 	for _, dir := range []string{"a", "b"} {
 		reviewRoundArgsWrite(t, filepath.Join(root, "ws", dir, "000_plan.md"), "plan "+dir+"\n")
 	}
@@ -572,7 +580,7 @@ func TestReviewRoundArgsKeyKeepsTheLinkOfTheUnit(t *testing.T) {
 // A key that cannot be stored as text is refused: the entry is spelled through an alias of the working directory, so both spellings of
 // its key climb out, and the real path that is left names a directory whose name is not UTF-8.
 func TestReviewRoundArgsKeyThatIsNotTextIsRefused(t *testing.T) {
-	root, bad := t.TempDir(), "d\xff"
+	root, bad := reviewRoundArgsRealTemp(t), "d\xff"
 	if err := os.MkdirAll(filepath.Join(root, "ws", bad), 0o755); err != nil {
 		t.Skip("the file system refuses a name that is not UTF-8")
 	}
@@ -584,5 +592,25 @@ func TestReviewRoundArgsKeyThatIsNotTextIsRefused(t *testing.T) {
 	files, refusal, err := reviewRoundArgsCollectPlanFiles(filepath.Join(root, "wslink"), unit, []string{unit + "/000_plan.md"})
 	if want := "plan path " + unit + "/000_plan.md is not a readable regular file"; err != nil || len(files) != 0 || refusal != want {
 		t.Errorf("%v %q %v, want refusal %q", files, refusal, err, want)
+	}
+}
+
+// A working directory that can be searched but not opened for reading: no entry is read, the collection refuses it as unreadable and
+// Recomputed answers "missing", where a nil handle would otherwise be used.
+func TestReviewRoundArgsWorkingDirectoryThatCannotBeOpened(t *testing.T) {
+	cwd, unit := filepath.Join(t.TempDir(), "ws"), "devlog/_plan/u"
+	doc := unit + "/000_plan.md"
+	reviewRoundArgsWrite(t, filepath.Join(cwd, doc), "# plan\n")
+	reviewRoundArgsMust(t, os.Chmod(cwd, 0o100))
+	t.Cleanup(func() { _ = os.Chmod(cwd, 0o755) })
+	if reviewRoundArgsReadable(cwd) {
+		t.Skip("the directory opens anyway (running as root?)")
+	}
+	files, refusal, err := reviewRoundArgsCollectPlanFiles(cwd, unit, []string{doc})
+	if want := "plan path " + doc + " is not a readable regular file"; err != nil || len(files) != 0 || refusal != want {
+		t.Errorf("collect: %v %q %v, want refusal %q", files, refusal, err, want)
+	}
+	if got := Recomputed(cwd, []goalplan.PlanFileHash{{Path: doc}}); len(got) != 1 || got[0].Sha256 != "missing" {
+		t.Errorf("recomputed: %v", got)
 	}
 }
