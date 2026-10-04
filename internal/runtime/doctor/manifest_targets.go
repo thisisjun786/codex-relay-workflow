@@ -92,10 +92,11 @@ func targetEscapesRoot(root, target string) bool {
 	return p != r && !strings.HasPrefix(p, strings.TrimSuffix(r, string(filepath.Separator))+string(filepath.Separator))
 }
 func targetResolve(root, rel string) string {
+	rel = strings.TrimPrefix(rel, "./")
 	if filepath.IsAbs(rel) {
 		return filepath.Clean(rel)
 	}
-	p, _ := filepath.Abs(filepath.Join(root, strings.TrimPrefix(rel, "./")))
+	p, _ := filepath.Abs(filepath.Join(root, rel))
 	return p
 }
 func targetCheck(issues *[]TargetIssue, kind TargetKind, root, rel, missing string) error {
