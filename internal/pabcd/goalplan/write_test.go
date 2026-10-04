@@ -220,7 +220,10 @@ func TestWriteLedgerConcurrentRows(t *testing.T) {
 		writeTestRequire(t, e)
 	}
 	raw := writeTestFile(t, filepath.Join(cwd, crwdir.DirName, GoalplansSubdir, "concurrent", GoalplanLedgerFile))
-	rows := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	// Without a caller-owned plan lock, a conservative recovery LF can add a
+	// blank separator when an appender observes another write in flight. Every
+	// nonempty row must still be a complete, distinct record.
+	rows := strings.FieldsFunc(string(raw), func(r rune) bool { return r == '\n' })
 	if len(rows) != 16 {
 		t.Fatalf("rows%d", len(rows))
 	}
@@ -247,11 +250,19 @@ func TestWriteRejectsLinkedDirectories(t *testing.T) {
 				link := filepath.Join(cwd, level)
 				writeTestRequire(t, os.MkdirAll(filepath.Dir(link), 0700))
 				writeTestRequire(t, os.Symlink(target, link))
-				if WriteGoalplan(cwd, writeTestPlan()) == nil {
+				err := WriteGoalplan(cwd, writeTestPlan())
+				if err == nil {
 					t.Fatal("linked directory accepted by writer")
 				}
-				if AppendGoalplanLedger(cwd, "hello-world", GoalplanLedgerEntry{Slug: "hello-world", Event: EventCreated}) == nil {
+				if dangling && os.IsNotExist(err) {
+					t.Fatal("existing dangling writer link was treated as an absent path")
+				}
+				err = AppendGoalplanLedger(cwd, "hello-world", GoalplanLedgerEntry{Slug: "hello-world", Event: EventCreated})
+				if err == nil {
 					t.Fatal("linked directory accepted by append")
+				}
+				if dangling && os.IsNotExist(err) {
+					t.Fatal("existing dangling append link was treated as an absent path")
 				}
 				entries, e := os.ReadDir(outside)
 				writeTestRequire(t, e)
