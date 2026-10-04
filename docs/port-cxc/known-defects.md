@@ -771,3 +771,12 @@ The parser feeds a fail-closed memory write gate, so a destination the oracle mi
 - The grounding heuristic accepts a URL port as a file line and unmatched quote types as a quote; it checks spelling, not that the claimed evidence exists (source `plugins/codexclaw/components/pabcd-state/src/minds.ts:107-109`; oracle cases `evidence-8`, `evidence-22`); port: kept.
 - The section-marker regex rejects `see ## Goals` but accepts `x## Goals` because the boundary applies before the first hash (source `plugins/codexclaw/components/pabcd-state/src/minds.ts:108`; oracle cases `evidence-17`, `evidence-18`); port: kept.
 - A JSON level object that shadows `toString` with a noncallable value throws `TypeError: Cannot convert object to primitive value` during rank lookup, even with a NaN selection count; the Go port preserves the failure as a panic with the same message (source `plugins/codexclaw/components/pabcd-state/src/minds.ts:169`; oracle cases `object-normal`, `object-nan`, `nested-normal`, `nested-nan`); port: kept.
+
+## CRW-371 — scan argument parser
+
+- Contradiction counts use decimal `parseInt`, so `12abc`, `1.9`, `1e3` and `0x10` become 12, 1, 1 and 0 instead of being rejected (source `pabcd-state/src/scan-cli.ts:118-123,184-189`); port: kept.
+- Help is recognized only as the first action, so the parser rejects `record --help` as an unknown argument; outer executable help handling is separate (source `pabcd-state/src/scan-cli.ts:86-96,179-180`); port: kept.
+- Value flags consume the next flag as a value, and any nonempty session text, including whitespace or `--derive`, satisfies the session requirement (source `pabcd-state/src/scan-cli.ts:113-116,183`); port: kept.
+- Whitespace-only known/unknown facts pass because only empty text is rejected (source `pabcd-state/src/scan-cli.ts:162-166`); port: kept.
+- Confidence accepts JavaScript radix notation such as `0x1`, `0o1` and `0b1` (source `pabcd-state/src/scan-cli.ts:169-175`); port: kept.
+- The high contradiction count is not constrained by the total count, so a positive high count with total zero parses successfully (source `pabcd-state/src/scan-cli.ts:184-189`); port: kept.
