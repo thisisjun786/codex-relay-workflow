@@ -325,10 +325,18 @@ type memoryGatePath struct{ clean, joined string }
 
 // abs is absolutize: the quotes off the ends, the home prefix expanded, backslashes read as slashes, and the path resolved
 // against cwd. clean is that path, which the lexical test reads and the deny reason names; joined is the same path with its
-// ".." components kept, which the physical test follows. The oracle read a backslash as a separator for Windows; on POSIX it
-// is a character of a name (a directory called `\..` is one component), so the text read as written is a second candidate:
-// kept is tested for the backslash, because a cleaned ".." can remove the component that held it.
+// ".." components kept (cwd's too), which the physical test follows. These readings are the oracle's, made for Windows text:
+// they trim the ends, strip quotes and turn a backslash into a separator. On POSIX the destination the shell parser or the
+// tool hands over is an exact name, whose ends may be a space or a quote and whose backslash is a character (a directory
+// called `\..` is one component), so the text as written is a candidate too, and the oracle's reading stays first.
 func (g memoryGateEnv) abs(raw, cwd string) []memoryGatePath {
+	if !g.homeOK {
+		return nil
+	}
+	base := cwd
+	if cwd != "" && !path.IsAbs(cwd) {
+		base = resolveFrom(cwd, "")
+	}
 	v := text.Trim(raw)
 	head, tail := v != "" && (v[0] == '"' || v[0] == '\''), len(v) > 1 && (v[len(v)-1] == '"' || v[len(v)-1] == '\'')
 	if tail {
@@ -337,23 +345,25 @@ func (g memoryGateEnv) abs(raw, cwd string) []memoryGatePath {
 	if head {
 		v = v[1:]
 	}
-	if v == "" || !g.homeOK {
-		return nil
-	}
-	norm, kept := g.expand(v)
 	var out []memoryGatePath
-	for _, slashes := range [...]bool{true, false} {
-		n, k := norm, kept
-		if slashes {
-			n, k = strings.ReplaceAll(n, "\\", "/"), strings.ReplaceAll(k, "\\", "/")
-		} else if !strings.Contains(k, "\\") {
+	for i, as := range [...]string{v, raw} {
+		if as == "" || (i == 1 && as == v) {
 			continue
 		}
-		switch {
-		case path.IsAbs(n):
-			out = append(out, memoryGatePath{path.Clean(n), k})
-		case cwd != "":
-			out = append(out, memoryGatePath{resolveFrom(cwd, n), resolveFrom(cwd, "") + "/" + k})
+		norm, kept := g.expand(as)
+		for _, slashes := range [...]bool{true, false} {
+			n, k := norm, kept
+			if slashes {
+				n, k = strings.ReplaceAll(n, "\\", "/"), strings.ReplaceAll(k, "\\", "/")
+			} else if !strings.Contains(k, "\\") {
+				continue
+			}
+			switch {
+			case path.IsAbs(n):
+				out = append(out, memoryGatePath{path.Clean(n), k})
+			case cwd != "":
+				out = append(out, memoryGatePath{resolveFrom(cwd, n), base + "/" + k})
+			}
 		}
 	}
 	return out

@@ -419,7 +419,7 @@ func TestMemoryGateAbsolutize(t *testing.T) {
 	}
 	for raw, want := range map[string]string{
 		"~": "/h", "'~/x'": "/h/x", `~\x\y`: "/h/x/y", `%UserProfile%/a`: "/h/a", `$env:USERPROFILE\a`: "/h/a", "$Home/a": "/h/a", "$HOME": "/h",
-		"${home}/a": "/h/a", "\"/a/b/\"": "/a/b", "./x": "/w/x", "../x": "/x", "a/../../x": "/x", "": "", "\"": "", "''": "", "   ": "",
+		"${home}/a": "/h/a", "\"/a/b/\"": "/a/b", "./x": "/w/x", "../x": "/x", "a/../../x": "/x", "": "", "\"": "/w/\"", "''": "/w/''", "   ": "/w/   ",
 		"~user/x": "/w/~user/x", "$HOMEx/a": "/w/$HOMEx/a", "%USERPROFİLE%": "/w/%USERPROFİLE%", "'a": "/w/a", `a\b`: "/w/a/b", "\"'a'\"": "/w/'a'",
 	} {
 		if got := first(raw, "/w"); got != want {
@@ -433,6 +433,9 @@ func TestMemoryGateAbsolutize(t *testing.T) {
 	// form keeps its "..".
 	if got := g.abs(`a\..\b`, "/w"); len(got) != 2 || got[0] != (memoryGatePath{"/w/b", "/w/a/../b"}) || got[1] != (memoryGatePath{"/w/a\\..\\b", "/w/a\\..\\b"}) {
 		t.Errorf("candidates: %+v", got)
+	}
+	if got := g.abs("a ", "/w"); len(got) != 2 || got[0].clean != "/w/a" || got[1].clean != "/w/a " {
+		t.Errorf("trimmed and exact candidates: %+v", got)
 	}
 	if got := g.abs("~/x/../y", "/w"); len(got) != 1 || got[0] != (memoryGatePath{"/h/y", "/h/x/../y"}) {
 		t.Errorf("home prefix: %+v", got)
@@ -457,10 +460,15 @@ func TestMemoryGateFollowsSymlinks(t *testing.T) {
 	link(filepath.Join(cwd, "loop-b"), "loop-a")
 	link(filepath.Join(cwd, "loop-a"), "loop-b")
 	link(cwd, "home-again")
+	link(filepath.Join(root, "new.md"), "tw ") // names that end in a space or a quote are exact names
+	link(filepath.Join(root, "new.md"), "tq'")
 	for command, want := range map[string]bool{
 		"echo hi > alias/n.md":          true,
 		"echo hi > deep/../n.md":        true,
 		"echo hi > ./dangling":          true,
+		"echo hi > \"tw \"":             true,
+		"echo hi > \"tq'\"":             true,
+		"echo hi > ./tw":                false,
 		"cp /w/a.md alias/b.md":         true,
 		"echo hi > home-again/out.md":   false,
 		"echo hi > loop-a/x":            false,
@@ -470,6 +478,10 @@ func TestMemoryGateFollowsSymlinks(t *testing.T) {
 		if got := memoryGateClassify("Bash", map[string]any{"command": command}, cwd, env); (got.Surface == "shell") != want {
 			t.Errorf("%s: %+v, want gated %v", command, got, want)
 		}
+	}
+	// A cwd that holds "link/.." is followed from the place the link led to.
+	if got := memoryGateClassify("Bash", map[string]any{"command": "echo hi > n.md"}, cwd+"/deep/..", env); got.Surface != "shell" {
+		t.Errorf("cwd with link/..: %+v", got)
 	}
 	// The deny names the path as written, cleaned, not the place it leads to.
 	if got := memoryGateClassify("Bash", map[string]any{"command": "echo hi > alias/n.md"}, cwd, env); got.Target != filepath.Join(cwd, "alias", "n.md") {
