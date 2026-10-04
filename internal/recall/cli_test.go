@@ -1,0 +1,450 @@
+package recall
+
+import (
+	"encoding/json"
+	"fmt"
+	"math"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"reflect"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/dev/cxccorpus"
+)
+
+func recallCLIInvoke(t *testing.T, args []string, now time.Time) (int, string, string) {
+	t.Helper()
+	file, err := os.CreateTemp(t.TempDir(), "stderr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	original := os.Stderr
+	os.Stderr = file
+	defer func() { os.Stderr = original }()
+	var out strings.Builder
+	code := Run(args, &out, file, now)
+	os.Stderr = original
+	data, err := os.ReadFile(file.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return code, out.String(), string(data)
+}
+
+func recallCLIHome(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	for _, key := range []string{"HOME", "CODEX_HOME", "CRW_HOME"} {
+		dir := filepath.Join(root, key)
+		if err := os.Mkdir(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv(key, dir)
+	}
+	return os.Getenv("CODEX_HOME")
+}
+
+// Fifteen cliMain scenarios plus the owner-level sixteenth from
+// CXC recall/test/cli-arg-hygiene.test.ts:31-277, with isolated homes.
+func TestRecallCLIHygiene(t *testing.T) {
+	cases := []struct {
+		name       string
+		args       []string
+		code       int
+		diagnostic string
+	}{
+		{"index-help", []string{"chat", "index", "--help"}, 0, ""},
+		{"help-before-rebuild", []string{"chat", "index", "--rebuild", "--help"}, 0, ""},
+		{"memory-search-help", []string{"memory", "search", "--help"}, 0, ""},
+		{"dash-h", []string{"chat", "index", "-h"}, 0, ""},
+		{"index-word-help", []string{"chat", "index", "help"}, 0, ""},
+		{"index-slash-help", []string{"chat", "index", "/?"}, 0, ""},
+		{"memory-help-query", []string{"memory", "search", "help", "--no-chat", "--json"}, 0, ""},
+		{"chat-help-query", []string{"chat", "search", "help", "--scan", "--json"}, 0, ""},
+		{"dash-cwd-only", []string{"memory", "search", "q", "--cwd-only", "--no-chat"}, 1, "cwd-only"},
+		{"equal-cwd-only", []string{"memory", "search", "q", "--cwd-only=--no-chat"}, 1, "path must not start"},
+		{"dash-cwd-home", []string{"chat", "search", "q", "--cwd", "--json", "--scan"}, 1, "cwd"},
+		{"equal-cwd-home", []string{"chat", "search", "q", "--cwd=--json", "--scan"}, 1, "path must not start"},
+		{"missing-cwd-only", []string{"memory", "search", "q", "--cwd-only"}, 1, "cwd-only"},
+		{"unknown", []string{"chat", "index", "--not-a-flag"}, 1, "not-a-flag"},
+		{"missing-home", []string{"memory", "search", "foo", "--home", "<MISSING>", "--no-chat", "--json"}, 1, "--home not found"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			home := recallCLIHome(t)
+			idx := filepath.Join(os.Getenv("CRW_HOME"), "recall", "index.sqlite")
+			args := slices.Clone(c.args)
+			for i, a := range args {
+				if a == "<MISSING>" {
+					args[i] = filepath.Join(home, "missing")
+				}
+			}
+			args = append(args, "--index-path", idx)
+			var before []byte
+			if c.name == "help-before-rebuild" {
+				home = buildRecallCodexHome(t, time.Now())
+				if code, _, e := recallCLIInvoke(t, []string{"chat", "index", "--home", home, "--index-path", idx}, time.Now()); code != 0 {
+					t.Fatal(e)
+				}
+				before, _ = os.ReadFile(idx)
+			}
+			code, out, e := recallCLIInvoke(t, args, time.Now())
+			if code != c.code || !strings.Contains(e, c.diagnostic) {
+				t.Fatalf("code %d, stdout %s, stderr %s", code, out, e)
+			}
+			if c.code != 0 && out != "" {
+				t.Fatal("rejection wrote stdout", out)
+			}
+			if strings.Contains(c.name, "query") {
+				var result map[string]any
+				if err := json.Unmarshal([]byte(out), &result); err != nil {
+					t.Fatal(err)
+				}
+				if _, ok := result["hits"].([]any); !ok {
+					t.Fatal(result)
+				}
+			} else if c.code == 0 && !strings.Contains(out, "crw recall chat search") {
+				t.Fatal(out)
+			}
+			if before != nil {
+				after, _ := os.ReadFile(idx)
+				if string(before) != string(after) {
+					t.Fatal("help changed index")
+				}
+			} else if _, err := os.Stat(idx); err == nil {
+				t.Fatal("help/rejection created index")
+			}
+			if c.name == "dash-cwd-home" || c.name == "equal-cwd-home" {
+				flag := []string{"--home", "--json"}
+				if c.name == "equal-cwd-home" {
+					flag = []string{"--home=--json"}
+				}
+				code, out, e = recallCLIInvoke(t, append([]string{"memory", "search", "q"}, flag...), time.Now())
+				if code != 1 || out != "" || !strings.Contains(e, "home") {
+					t.Fatal(code, out, e)
+				}
+			}
+		})
+	}
+	t.Run("missing-memory-roots-warn-once", func(t *testing.T) {
+		home := recallCLIHome(t)
+		for _, q := range []string{"anything", "foo"} {
+			result, err := SearchMemory(q, MemorySearchOptions{Home: &home})
+			if err != nil || len(result.Hits) != 0 {
+				t.Fatal(result, err)
+			}
+			for _, w := range []string{"memories root not found (file search off)", "memories db not found (stage1 search off)"} {
+				count := 0
+				for _, got := range result.Warnings {
+					if got == w {
+						count++
+					}
+				}
+				if count != 1 {
+					t.Fatal(result.Warnings)
+				}
+			}
+		}
+	})
+}
+
+func TestRecallCLIRecordedOracle(t *testing.T) {
+	data, err := os.ReadFile("testdata/cli/oracle.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rows []struct {
+		Argv           []string
+		Code           int
+		Stdout, Stderr string
+	}
+	if err = json.Unmarshal(data, &rows); err != nil {
+		t.Fatal(err)
+	}
+	for i, row := range rows {
+		t.Run(fmt.Sprint(i), func(t *testing.T) {
+			home := recallCLIHome(t)
+			idx := filepath.Join(home, "index.sqlite")
+			expand := strings.NewReplacer("<HOME>", home, "<INDEX>", idx)
+			args := slices.Clone(row.Argv)
+			for i := range args {
+				args[i] = expand.Replace(args[i])
+			}
+			code, out, e := recallCLIInvoke(t, args, time.Now())
+			norm := strings.NewReplacer(home, "<HOME>", idx, "<INDEX>")
+			out, e = norm.Replace(out), norm.Replace(e)
+			if strings.Contains(out, `"elapsedMs"`) {
+				var a, b map[string]any
+				json.Unmarshal([]byte(out), &a)
+				json.Unmarshal([]byte(row.Stdout), &b)
+				delete(a, "elapsedMs")
+				delete(b, "elapsedMs")
+				if !reflect.DeepEqual(a, b) {
+					t.Fatalf("got %s want %s", out, row.Stdout)
+				}
+			} else if out != row.Stdout {
+				t.Fatalf("got %q want %q", out, row.Stdout)
+			}
+			if code != row.Code || e != row.Stderr {
+				t.Fatal(code, e, row.Code, row.Stderr)
+			}
+		})
+	}
+}
+
+// The real binary replay has no frozen clock or bare-memory help mapping.
+// These cases use the unchanged recorded givens and expectations through Run.
+func TestRecallCLIRecordedCorpus(t *testing.T) {
+	root := filepath.Join("..", "..")
+	sub, err := cxccorpus.LoadSubstitution(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	normal, err := cxccorpus.LoadRules(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	normal, err = normal.Renamed(sub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := filepath.Glob(filepath.Join(root, cxccorpus.FixtureDir, "cli*.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range files {
+		id := strings.TrimSuffix(filepath.Base(path), ".json")
+		if !strings.HasPrefix(id, "cli__chat__") && !strings.HasPrefix(id, "cli__memory__") && !strings.HasPrefix(id, "cli-help__chat__") && !strings.HasPrefix(id, "cli-help__memory__") {
+			continue
+		}
+		if strings.Contains(id, "allow-write") {
+			continue
+		}
+		fixture, err := cxccorpus.LoadFixture(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Run(id, func(t *testing.T) {
+			c, err := cxccorpus.NewCase(t.TempDir(), "CRW_HOME", fixture.Given)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pairs := []string{}
+			for _, b := range c.Bindings() {
+				pairs = append(pairs, b.Placeholder, b.Path)
+			}
+			expand := strings.NewReplacer(pairs...)
+			for _, env := range c.Env {
+				key, v, _ := strings.Cut(env, "=")
+				if key != "PATH" {
+					t.Setenv(key, v)
+				}
+			}
+			t.Chdir(filepath.Join(c.Root, "ws"))
+			write := func(p, body string) { writeRolloutTestFile(t, c.Root, p, expand.Replace(body)) }
+			for p, b := range fixture.Given.Files {
+				write(p, b)
+			}
+			for p, b := range fixture.Given.JSON {
+				write(p, string(b))
+			}
+			for _, p := range fixture.Given.Dirs {
+				if err := os.MkdirAll(filepath.Join(c.Root, p), 0755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for p, sql := range fixture.Given.SQLite {
+				db, err := openDbReadWrite(filepath.Join(c.Root, p))
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, s := range sql {
+					if err = db.Exec(expand.Replace(s)); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err = db.Close(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if fixture.Given.Git != nil {
+				for _, args := range [][]string{{"init", "-q"}, {"remote", "add", "origin", fixture.Given.Git.Origin}} {
+					cmd := exec.Command("git", args...)
+					if out, err := cmd.CombinedOutput(); err != nil {
+						t.Fatal(err, string(out))
+					}
+				}
+			}
+			if err := filepath.Walk(c.Root, func(p string, info os.FileInfo, e error) error {
+				if e != nil {
+					return e
+				}
+				return os.Chtimes(p, cxccorpus.Epoch(), cxccorpus.Epoch())
+			}); err != nil {
+				t.Fatal(err)
+			}
+			session := normal.NewSession(c.Bindings())
+			for i, step := range fixture.Run.Steps {
+				args, ok := sub.MapArgv(step.CLI)
+				if !ok {
+					args = append([]string{"recall"}, step.CLI...)
+				}
+				if len(args) == 0 || args[0] != "recall" {
+					t.Fatal("not recall", args)
+				}
+				args = slices.Clone(args[1:])
+				for j := range args {
+					args[j] = expand.Replace(args[j])
+				}
+				now := cxccorpus.Epoch()
+				if len(args) > 1 && args[0] == "memory" && args[1] == "search" {
+					now = now.Add(time.Millisecond)
+				}
+				code, out, e := recallCLIInvoke(t, args, now)
+				out, e = session.Text(out), session.Stderr(e)
+				want := fixture.Expect.Steps[i]
+				if code != want.Exit || e != sub.Expected(want.Stderr) {
+					t.Errorf("step%d code%d/%d stderr %q/%q", i, code, want.Exit, e, sub.Expected(want.Stderr))
+				}
+				if want.StdoutForm == "empty" {
+					if out != "" {
+						t.Error(out)
+					}
+					continue
+				}
+				if want.Stdout != nil {
+					if out != sub.Expected(*want.Stdout) {
+						t.Errorf("step%d stdout got %q want %q", i, out, sub.Expected(*want.Stdout))
+					}
+					continue
+				}
+				var actual, expected any
+				if err = json.Unmarshal([]byte(out), &actual); err != nil {
+					t.Fatal(err, out)
+				}
+				if err = json.Unmarshal([]byte(sub.Expected(string(want.StdoutJSON))), &expected); err != nil {
+					t.Fatal(err)
+				}
+				if !recallCLICompareJSON(actual, expected) {
+					t.Errorf("step%d got %s want %s", i, out, sub.Expected(string(want.StdoutJSON)))
+				}
+			}
+		})
+	}
+}
+
+func recallCLICompareJSON(actual, expected any) bool {
+	// Only hits[].score absorbs <=1e-8: the oracle ticks Date.now() on each
+	// internal read, whereas existing owners accept one per-call rank timestamp.
+	a, ok := actual.(map[string]any)
+	b, bok := expected.(map[string]any)
+	if ok && bok {
+		ah, _ := a["hits"].([]any)
+		bh, _ := b["hits"].([]any)
+		if len(ah) == len(bh) {
+			for i := range ah {
+				am, ao := ah[i].(map[string]any)
+				bm, bo := bh[i].(map[string]any)
+				if ao && bo {
+					as, an := am["score"].(float64)
+					bs, bn := bm["score"].(float64)
+					if an && bn && math.Abs(as-bs) <= 1e-8 {
+						am["score"] = bs
+					}
+				}
+			}
+		}
+	}
+	return reflect.DeepEqual(actual, expected)
+}
+
+func TestRecallCLINotices(t *testing.T) {
+	home := recallCLIHome(t)
+	idx := filepath.Join(os.Getenv("CRW_HOME"), "index.sqlite")
+	if MemoryPipelineNotice(home) != "" || IndexStatusLine(home, idx) != "" {
+		t.Fatal("missing store not silent")
+	}
+	db, err := openIndex(idx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	if got := IndexStatusLine(home, idx); got != "0 files / 0 messages, 0 source, 0 stale, last ingest never" {
+		t.Fatal(got)
+	}
+	before, _ := os.ReadFile(idx)
+	IndexStatusLine(home, idx)
+	after, _ := os.ReadFile(idx)
+	if string(before) != string(after) {
+		t.Fatal("banner writes")
+	}
+	recallFixtureDB(t, home, "memories_1.sqlite", "CREATE TABLE jobs(kind,status,retry_remaining,last_error,finished_at)", "INSERT INTO jobs VALUES (?, ?, ?, ?, ?)", []any{"stage1", "error", 0, "capacity", nil})
+	if got := MemoryPipelineNotice(home); !strings.Contains(got, "1 job(s) exhausted") {
+		t.Fatal(got)
+	}
+	bad := filepath.Join(home, "bad")
+	os.Mkdir(bad, 0700)
+	os.Mkdir(filepath.Join(bad, "memories_1.sqlite"), 0700)
+	if MemoryPipelineNotice(bad) != "" || IndexStatusLine(home, bad) != "" {
+		t.Fatal("unreadable store not silent")
+	}
+}
+
+func TestRecallCLIManagementAndSearchEdges(t *testing.T) {
+	t.Run("lax-flags-do-not-accidentally-apply", func(t *testing.T) {
+		home := recallCLIHome(t)
+		recallFixtureDB(t, home, "memories_1.sqlite", requeueTestSchema, "INSERT INTO jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?)", []any{"stage1", "job", "error", 0, 999, "capacity", 10, 5})
+		before := requeueTestRows(t, home)
+		for _, flags := range [][]string{{"--apply=false"}, {"--limit", "--apply"}, {"--retries"}} {
+			args := append([]string{"memory", "requeue", "--json"}, flags...)
+			code, out, e := recallCLIInvoke(t, args, time.Now())
+			var r RequeueResult
+			if json.Unmarshal([]byte(out), &r) != nil || code != 0 || e != "" || r.Applied || r.Changed != 0 || len(r.Selected) != 1 {
+				t.Fatal(code, out, e)
+			}
+			if !reflect.DeepEqual(before, requeueTestRows(t, home)) {
+				t.Fatal("dry-run changed jobs")
+			}
+		}
+		code, out, e := recallCLIInvoke(t, []string{"memory", "requeue", "--apply", "--retries=5tail", "--json"}, time.Now())
+		var r RequeueResult
+		json.Unmarshal([]byte(out), &r)
+		if code != 0 || e != "" || !r.Applied || r.Changed != 1 || r.Retries != 5 {
+			t.Fatal(code, out, e)
+		}
+	})
+	t.Run("json-clipping-full-and-flag-defaults", func(t *testing.T) {
+		home := recallCLIHome(t)
+		now := time.Now().UTC()
+		recallFixtureRollout(t, home, now, 0, "01", recallThreadMain, "/example", "", false, false, [][2]string{{"user", "needle " + strings.Repeat("z", 600)}})
+		for _, full := range []bool{false, true} {
+			args := []string{"chat", "search", "needle", "--scan", "--json"}
+			if full {
+				args = append(args, "--full")
+			}
+			code, out, e := recallCLIInvoke(t, args, now)
+			var r struct {
+				Hits    []ChatHit
+				Clipped bool
+			}
+			if err := json.Unmarshal([]byte(out), &r); err != nil {
+				t.Fatal(err)
+			}
+			if code != 0 || e != "" || len(r.Hits) != 1 || r.Clipped == full {
+				t.Fatal(code, out, e)
+			}
+			want := 503
+			if full {
+				want = 607
+			}
+			if len(r.Hits[0].Text) != want {
+				t.Fatal(len(r.Hits[0].Text), want)
+			}
+		}
+	})
+}
