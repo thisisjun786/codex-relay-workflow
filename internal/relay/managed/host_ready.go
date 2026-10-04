@@ -2,10 +2,12 @@ package managed
 
 import (
 	"context"
+
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 )
 
-// hostReady bounds the archived/unarchived search before checking goal and runtime state.
+// hostReady requires a complete archived scan; a listing miss uses thread/read for existence.
 func hostReady(ctx context.Context, rpc HostRPC, task string) (string, error) {
 	found, archived := false, false
 	for _, filter := range []bool{true, false} {
@@ -19,8 +21,15 @@ func hostReady(ctx context.Context, rpc HostRPC, task string) (string, error) {
 			if err != nil {
 				return "", err
 			}
-			if data, ok := page["data"].([]any); ok {
+			data, ok := page["data"].([]any)
+			if filter && !ok {
+				return "archived_listing_incomplete", nil
+			}
+			if ok {
 				for _, item := range data {
+					if filter && !delivery.ValidSegment(pyjson.Map(item)["id"]) {
+						return "archived_listing_incomplete", nil
+					}
 					if pyjson.Map(item)["id"] == task {
 						found, archived = true, filter
 						break
@@ -30,20 +39,38 @@ func hostReady(ctx context.Context, rpc HostRPC, task string) (string, error) {
 			if found {
 				break
 			}
+			if next := page["nextCursor"]; filter && next != nil {
+				if _, ok := next.(string); !ok {
+					return "archived_listing_incomplete", nil
+				}
+			}
 			cursor = pyjson.Text(page["nextCursor"])
 			if cursor == "" {
 				break
 			}
 		}
+		if filter && !found && cursor != "" {
+			return "archived_listing_incomplete", nil
+		}
 		if found {
 			break
 		}
 	}
-	if !found {
-		return "lifecycle_unknown", nil
-	}
 	if archived {
 		return "recipient_archived", nil
+	}
+	var thread map[string]any
+	var err error
+	if !found {
+		// Check existence before asking for a possibly unknown thread's goal. The
+		// final send guard repeats this observation; this is not a reservation.
+		thread, err = readHostThread(ctx, rpc, task)
+		if err != nil {
+			return "", err
+		}
+		if thread == nil {
+			return "lifecycle_unknown", nil
+		}
 	}
 	answer, err := rpc.HostCall(ctx, "thread/goal/get", map[string]any{"threadId": task})
 	if err != nil {
@@ -67,11 +94,15 @@ func hostReady(ctx context.Context, rpc HostRPC, task string) (string, error) {
 			return "recipient_budget_limited", nil
 		}
 	}
-	answer, err = rpc.HostCall(ctx, "thread/read", map[string]any{"threadId": task})
-	if err != nil {
-		return "", err
+	if found {
+		thread, err = readHostThread(ctx, rpc, task)
+		if err != nil {
+			return "", err
+		}
+		if thread == nil {
+			return "lifecycle_unknown", nil
+		}
 	}
-	thread := pyjson.Map(answer["thread"])
 	if thread["canAcceptDirectInput"] == false {
 		return "recipient_cannot_accept_input", nil
 	}
@@ -81,4 +112,19 @@ func hostReady(ctx context.Context, rpc HostRPC, task string) (string, error) {
 	default:
 		return "recipient_not_idle", nil
 	}
+}
+
+// A nil thread is the host's unknown-thread answer or an unreadable thread object.
+func readHostThread(ctx context.Context, rpc HostRPC, task string) (map[string]any, error) {
+	answer, err := rpc.HostCall(ctx, "thread/read", map[string]any{"threadId": task})
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if unreadable(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return pyjson.Map(answer["thread"]), nil
 }

@@ -1,0 +1,6 @@
+interface:
+  display_name: "crw-worktree-guardian"
+  short_description: "Managed-worktree identity safety - adopt/rename in place, never delete/recreate (워크트리 이름/삭제 방지)."
+  default_prompt: "Use $crw-worktree-guardian to preserve this managed worktree identity while naming its branch in place."
+policy:
+  allow_implicit_invocation: false
