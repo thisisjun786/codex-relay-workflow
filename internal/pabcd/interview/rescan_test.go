@@ -148,3 +148,13 @@ func TestRescanDefaultGoalReader(t *testing.T) {
 	}
 	rescanAssert(t, I.HasPendingInterviewWork(cwd, "s", rescanTracker(I.SeverityHigh), deps), []string{}, 0, false)
 }
+
+func TestRescanReaderFailure(t *testing.T) {
+	deps := rescanDeps()
+	deps.ReadQaEvents = func(string, string) []json.RawMessage { panic("QA read failure") }
+	rescanAssert(t, I.HasPendingInterviewWork(t.TempDir(), "s", rescanTracker(I.SeverityHigh), deps), []string{}, 1, true)
+	deps.ReadQaEvents = func(string, string) []json.RawMessage {
+		return []json.RawMessage{json.RawMessage(`null`), json.RawMessage(`[]`), json.RawMessage(`broken`)}
+	}
+	rescanAssert(t, I.HasPendingInterviewWork(t.TempDir(), "s", nil, deps), []string{}, 0, false)
+}
