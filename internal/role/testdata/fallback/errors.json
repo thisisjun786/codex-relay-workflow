@@ -1,0 +1,598 @@
+[
+  {
+    "group": "native",
+    "name": "native-0",
+    "input": "exceeded retry limit, last status: 429 Too Many Requests",
+    "want": {
+      "code": "rate_limit_exceeded",
+      "action": "next"
+    }
+  },
+  {
+    "group": "native",
+    "name": "native-1",
+    "input": "Quota exceeded. Check your plan and billing details.",
+    "want": {
+      "code": "insufficient_quota",
+      "action": "next"
+    }
+  },
+  {
+    "group": "native",
+    "name": "native-2",
+    "input": "rate limit exceeded: Cursor rate limit exceeded: fixture exhausted",
+    "want": {
+      "code": "rate_limit_exceeded",
+      "action": "next"
+    }
+  },
+  {
+    "group": "native",
+    "name": "native-3",
+    "input": "We're currently experiencing high demand, which may cause temporary errors.",
+    "want": {
+      "code": "upstream_server_error",
+      "action": "next"
+    }
+  },
+  {
+    "group": "prefixes",
+    "name": "prefixes-0",
+    "input": "Cursor rate limit exceeded",
+    "want": {
+      "code": "rate_limit_exceeded",
+      "action": "next"
+    }
+  },
+  {
+    "group": "prefixes",
+    "name": "prefixes-1",
+    "input": "cursor RATE LIMIT EXCEEDED: x",
+    "want": {
+      "code": "rate_limit_exceeded",
+      "action": "next"
+    }
+  },
+  {
+    "group": "prefixes",
+    "name": "prefixes-2",
+    "input": "Rate limit reached. x",
+    "want": {
+      "code": "rate_limit_exceeded",
+      "action": "next"
+    }
+  },
+  {
+    "group": "prefixes",
+    "name": "prefixes-3",
+    "input": "Rate limit reached﻿x",
+    "want": {
+      "code": "rate_limit_exceeded",
+      "action": "next"
+    }
+  },
+  {
+    "group": "prefixes",
+    "name": "prefixes-4",
+    "input": "Rate limit reached x",
+    "want": {
+      "code": "rate_limit_exceeded",
+      "action": "next"
+    }
+  },
+  {
+    "group": "prefixes",
+    "name": "prefixes-5",
+    "input": "You've hit your usage limit. Try later",
+    "want": {
+      "code": "insufficient_quota",
+      "action": "next"
+    }
+  },
+  {
+    "group": "prefixes",
+    "name": "prefixes-6",
+    "input": "You have exceeded your current quota: x",
+    "want": {
+      "code": "insufficient_quota",
+      "action": "next"
+    }
+  },
+  {
+    "group": "tokens",
+    "name": "tokens-0",
+    "input": "insufficient_quota",
+    "want": {
+      "code": "insufficient_quota",
+      "action": "next"
+    }
+  },
+  {
+    "group": "tokens",
+    "name": "tokens-1",
+    "input": "rate_limit_exceeded",
+    "want": {
+      "code": "rate_limit_exceeded",
+      "action": "next"
+    }
+  },
+  {
+    "group": "tokens",
+    "name": "tokens-2",
+    "input": "upstream_server_error",
+    "want": {
+      "code": "upstream_server_error",
+      "action": "next"
+    }
+  },
+  {
+    "group": "tokens",
+    "name": "tokens-3",
+    "input": "model_not_found",
+    "want": {
+      "code": "model_not_found",
+      "action": "next"
+    }
+  },
+  {
+    "group": "tokens",
+    "name": "tokens-4",
+    "input": "unsupported_model",
+    "want": {
+      "code": "unsupported_model",
+      "action": "next"
+    }
+  },
+  {
+    "group": "tokens",
+    "name": "tokens-5",
+    "input": "unsupported_reasoning_effort",
+    "want": {
+      "code": "unsupported_reasoning_effort",
+      "action": "next"
+    }
+  },
+  {
+    "group": "tokens",
+    "name": "tokens-6",
+    "input": "input_admission_refused",
+    "want": {
+      "code": "input_admission_refused",
+      "action": "next"
+    }
+  },
+  {
+    "group": "tokens",
+    "name": "tokens-7",
+    "input": "permission_denied",
+    "want": {
+      "code": "permission_denied",
+      "action": "stop"
+    }
+  },
+  {
+    "group": "tokens",
+    "name": "tokens-8",
+    "input": "authentication_error",
+    "want": {
+      "code": "authentication_error",
+      "action": "stop"
+    }
+  },
+  {
+    "group": "tokens",
+    "name": "tokens-9",
+    "input": "cancelled",
+    "want": {
+      "code": "cancelled",
+      "action": "stop"
+    }
+  },
+  {
+    "group": "tokens",
+    "name": "tokens-10",
+    "input": "context_length_exceeded",
+    "want": {
+      "code": "context_length_exceeded",
+      "action": "stop"
+    }
+  },
+  {
+    "group": "tokens",
+    "name": "tokens-11",
+    "input": "unknown_code",
+    "want": {
+      "code": "unknown_code",
+      "action": "stop"
+    }
+  },
+  {
+    "group": "tokens",
+    "name": "tokens-12",
+    "input": "true",
+    "want": {
+      "code": null,
+      "action": "unknown"
+    }
+  },
+  {
+    "group": "tokens",
+    "name": "tokens-13",
+    "input": "null",
+    "want": {
+      "code": null,
+      "action": "unknown"
+    }
+  },
+  {
+    "group": "tokens",
+    "name": "tokens-14",
+    "input": "false",
+    "want": {
+      "code": null,
+      "action": "unknown"
+    }
+  },
+  {
+    "group": "tokens",
+    "name": "tokens-15",
+    "input": "0",
+    "want": {
+      "code": null,
+      "action": "unknown"
+    }
+  },
+  {
+    "group": "envelopes",
+    "name": "envelopes-0",
+    "input": {
+      "code": "permission_denied",
+      "error": {
+        "code": "insufficient_quota"
+      }
+    },
+    "want": {
+      "code": "permission_denied",
+      "action": "stop"
+    }
+  },
+  {
+    "group": "envelopes",
+    "name": "envelopes-1",
+    "input": {
+      "code": "",
+      "error": "insufficient_quota"
+    },
+    "want": {
+      "code": "",
+      "action": "stop"
+    }
+  },
+  {
+    "group": "envelopes",
+    "name": "envelopes-2",
+    "input": {
+      "code": 7,
+      "error": "rate_limit_exceeded"
+    },
+    "want": {
+      "code": "rate_limit_exceeded",
+      "action": "next"
+    }
+  },
+  {
+    "group": "envelopes",
+    "name": "envelopes-3",
+    "input": {
+      "error": null,
+      "last_error": "insufficient_quota"
+    },
+    "want": {
+      "code": null,
+      "action": "unknown"
+    }
+  },
+  {
+    "group": "envelopes",
+    "name": "envelopes-4",
+    "input": {
+      "last_error": {
+        "error": {
+          "code": "model_not_found"
+        }
+      }
+    },
+    "want": {
+      "code": "model_not_found",
+      "action": "next"
+    }
+  },
+  {
+    "group": "envelopes",
+    "name": "envelopes-5",
+    "input": {
+      "response": {
+        "error": {
+          "code": "unsupported_model"
+        }
+      }
+    },
+    "want": {
+      "code": "unsupported_model",
+      "action": "next"
+    }
+  },
+  {
+    "group": "envelopes",
+    "name": "envelopes-6",
+    "input": {
+      "response": {
+        "code": "insufficient_quota"
+      }
+    },
+    "want": {
+      "code": null,
+      "action": "unknown"
+    }
+  },
+  {
+    "group": "envelopes",
+    "name": "envelopes-7",
+    "input": "{\"error\":{\"code\":\"insufficient_quota\"}}",
+    "want": {
+      "code": "insufficient_quota",
+      "action": "next"
+    }
+  },
+  {
+    "group": "envelopes",
+    "name": "envelopes-8",
+    "input": "\"rate_limit_exceeded\"",
+    "want": {
+      "code": "rate_limit_exceeded",
+      "action": "next"
+    }
+  },
+  {
+    "group": "envelopes",
+    "name": "envelopes-9",
+    "input": null,
+    "want": {
+      "code": null,
+      "action": "unknown"
+    }
+  },
+  {
+    "group": "envelopes",
+    "name": "envelopes-10",
+    "input": [],
+    "want": {
+      "code": null,
+      "action": "unknown"
+    }
+  },
+  {
+    "group": "envelopes",
+    "name": "envelopes-11",
+    "input": 1,
+    "want": {
+      "code": null,
+      "action": "unknown"
+    }
+  },
+  {
+    "group": "envelopes",
+    "name": "envelopes-12",
+    "input": true,
+    "want": {
+      "code": null,
+      "action": "unknown"
+    }
+  },
+  {
+    "group": "envelopes",
+    "name": "envelopes-13",
+    "input": {
+      "content": {
+        "error": {
+          "code": "insufficient_quota"
+        }
+      }
+    },
+    "want": {
+      "code": null,
+      "action": "unknown"
+    }
+  },
+  {
+    "group": "negative",
+    "name": "negative-0",
+    "input": "The task says insufficient_quota",
+    "want": {
+      "code": null,
+      "action": "unknown"
+    }
+  },
+  {
+    "group": "negative",
+    "name": "negative-1",
+    "input": "exceeded retry limit, last status: 403 Forbidden",
+    "want": {
+      "code": null,
+      "action": "unknown"
+    }
+  },
+  {
+    "group": "negative",
+    "name": "negative-2",
+    "input": "unexpected status 403 Forbidden: Quota exceeded. Check your plan and billing details.",
+    "want": {
+      "code": null,
+      "action": "unknown"
+    }
+  },
+  {
+    "group": "negative",
+    "name": "negative-3",
+    "input": "Quota exceeded. Check your plan and billing details. Permission denied.",
+    "want": {
+      "code": null,
+      "action": "unknown"
+    }
+  },
+  {
+    "group": "negative",
+    "name": "negative-4",
+    "input": "We're currently experiencing high demand, which may cause temporary errors. Permission denied.",
+    "want": {
+      "code": null,
+      "action": "unknown"
+    }
+  },
+  {
+    "group": "negative",
+    "name": "negative-5",
+    "input": "rate limit exceededness",
+    "want": {
+      "code": null,
+      "action": "unknown"
+    }
+  },
+  {
+    "group": "negative",
+    "name": "negative-6",
+    "input": "Rate limit reachedness",
+    "want": {
+      "code": null,
+      "action": "unknown"
+    }
+  },
+  {
+    "group": "negative",
+    "name": "negative-7",
+    "input": "Rate limit reachedx",
+    "want": {
+      "code": null,
+      "action": "unknown"
+    }
+  },
+  {
+    "group": "negative",
+    "name": "negative-8",
+    "input": "input_admission_refused extra",
+    "want": {
+      "code": null,
+      "action": "unknown"
+    }
+  },
+  {
+    "group": "negative",
+    "name": "negative-9",
+    "input": "Curſor rate limit exceeded",
+    "want": {
+      "code": null,
+      "action": "unknown"
+    }
+  },
+  {
+    "group": "negative",
+    "name": "negative-10",
+    "input": "You have exceeded your current quotax",
+    "want": {
+      "code": null,
+      "action": "unknown"
+    }
+  },
+  {
+    "group": "negative",
+    "name": "negative-11",
+    "input": "Task output: exceeded retry limit, last status: 429 Too Many Requests",
+    "want": {
+      "code": null,
+      "action": "unknown"
+    }
+  },
+  {
+    "group": "negative",
+    "name": "negative-12",
+    "input": "Task output: Quota exceeded. Check your plan and billing details.",
+    "want": {
+      "code": null,
+      "action": "unknown"
+    }
+  },
+  {
+    "group": "negative",
+    "name": "negative-13",
+    "input": "Task output: rate limit exceeded: Cursor rate limit exceeded: fixture exhausted",
+    "want": {
+      "code": null,
+      "action": "unknown"
+    }
+  },
+  {
+    "group": "negative",
+    "name": "negative-14",
+    "input": "Task output: We're currently experiencing high demand, which may cause temporary errors.",
+    "want": {
+      "code": null,
+      "action": "unknown"
+    }
+  },
+  {
+    "group": "negative",
+    "name": "negative-15",
+    "input": {
+      "error": {
+        "code": "permission_denied",
+        "message": "exceeded retry limit, last status: 429 Too Many Requests"
+      }
+    },
+    "want": {
+      "code": "permission_denied",
+      "action": "stop"
+    }
+  },
+  {
+    "group": "negative",
+    "name": "negative-16",
+    "input": {
+      "error": {
+        "code": "permission_denied",
+        "message": "Quota exceeded. Check your plan and billing details."
+      }
+    },
+    "want": {
+      "code": "permission_denied",
+      "action": "stop"
+    }
+  },
+  {
+    "group": "negative",
+    "name": "negative-17",
+    "input": {
+      "error": {
+        "code": "permission_denied",
+        "message": "rate limit exceeded: Cursor rate limit exceeded: fixture exhausted"
+      }
+    },
+    "want": {
+      "code": "permission_denied",
+      "action": "stop"
+    }
+  },
+  {
+    "group": "negative",
+    "name": "negative-18",
+    "input": {
+      "error": {
+        "code": "permission_denied",
+        "message": "We're currently experiencing high demand, which may cause temporary errors."
+      }
+    },
+    "want": {
+      "code": "permission_denied",
+      "action": "stop"
+    }
+  }
+]
