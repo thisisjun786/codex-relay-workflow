@@ -785,3 +785,11 @@ The parser feeds a fail-closed memory write gate, so a destination the oracle mi
 - `list` and `get` silently ignore trailing arguments, so `list --help` lists settings and `get reviewer extra` reads the role (source `subagent-config/src/cli.ts:50,58-60`); port: kept.
 - Verb-level `--help` is treated as a role or registration argument and exits 1 for get/set/reset/register, rather than showing help (source `subagent-config/src/cli.ts:35-39,54-64`); port: kept.
 - Missing `--model` and `--prompt` values become empty strings, and a following flag is consumed as their literal value instead of being parsed as another flag (source `subagent-config/src/cli.ts:75-76,95-96`); port: kept.
+
+## CRW-529 dispatch ledger library
+
+- A linked top-level `.codexclaw` redirects dispatch storage outside the workspace because only its descendants are checked (`subagent-config/src/fallback-dispatch.ts:71-80`); port: fixed, the assignment requires refusing every ledger directory link, including `.crw`.
+- Root discovery trusts a successful git response naming an unrelated workspace (`subagent-config/src/fallback-dispatch.ts:48-50`); port: fixed, the assignment requires canonical cwd containment before storage.
+- A created report is accepted before spawn issuance and can turn a reconciled attempt back into running (`subagent-config/src/fallback-dispatch.ts:171-176`); port: kept, issuance rules belong to the managed-spawn slice.
+- Stored status validation coerces values to strings, admitting singleton arrays while subsequent strict comparisons can return an array action or reconcile a nominally ready attempt (`subagent-config/src/fallback-dispatch.ts:95,100,121,156,158`); port: kept.
+- A process killed between temporary write and rename can leave an orphan temporary dispatch record, with no sweep (`subagent-config/src/fallback-dispatch.ts:110-114`); port: kept.
