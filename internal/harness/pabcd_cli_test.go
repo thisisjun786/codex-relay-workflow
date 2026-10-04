@@ -42,7 +42,7 @@ func TestPabcdCLIArgumentsAndStreams(t *testing.T) {
 		code        int
 		out, errOut string
 	}{
-		{[]string{"--help"}, 0, "usage: crw pabcd [-h] {freeze,plan,receipt,evidence,memory,reset} ...\n", ""},
+		{[]string{"--help"}, 0, "usage: crw pabcd [-h] {freeze,plan,receipt,evidence,memory,reset,config,scan} ...\n", ""},
 		{[]string{"plan", "init"}, 1, "", "plan: plan init requires a <slug> argument\n"},
 		{[]string{"receipt", "test", "--help"}, 1, "", "receipt: unexpected argument '--help' before --\n"},
 		{[]string{"receipt", "test"}, 1, "receipt test: --session <id> is required\n", ""},
