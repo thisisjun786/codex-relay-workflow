@@ -1,31 +1,155 @@
 package command
 
 import (
+	"bytes"
 	"context"
-	"errors"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	"io"
+	"os"
+	"os/exec"
+	"strings"
+	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/review"
 )
 
+// prComment is a general comment of a pull request (an issue comment of the forge, not a comment of a review).
 type prComment struct {
 	ID   int64  `json:"id"`
 	Body string `json:"body"`
 	URL  string `json:"html_url"`
 }
 
+// forge is the access to a pull request that --post-summary needs. It reaches general comments only: it has no way to start or reply to a review thread, because a thread that arrives after the child's
+// receipt would void the handoff.
 type forge interface {
 	List(ctx context.Context, pr int) ([]prComment, error)
 	Create(ctx context.Context, pr int, body string) (prComment, error)
 	Update(ctx context.Context, id int64, body string) (prComment, error)
 }
 
+// forgeFor is the forge --post-summary talks to: the one the environment supplies (tests), else the gh CLI run in the checkout, which resolves {owner}/{repo} from the checkout's remotes (or GH_REPO).
+func (e env) forgeFor(cfg Config) forge {
+	if e.forge != nil {
+		if f := e.forge(cfg); f != nil {
+			return f
+		}
+	}
+	return ghForge{binary: cfg.Gh, dir: cfg.Repo}
+}
+
+// ghForge is forge over "gh api". The body travels on stdin (-F body=@-), so no text of a review reaches a command line.
 type ghForge struct{ binary, dir string }
 
-var errStub = errors.New("not implemented")
+func (g ghForge) api(ctx context.Context, body string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	if body != "" {
+		args = append(args, "-F", "body=@-")
+	}
+	c := exec.CommandContext(ctx, g.binary, append([]string{"api"}, args...)...)
+	c.Dir, c.WaitDelay = g.dir, 5*time.Second
+	if body != "" {
+		c.Stdin = strings.NewReader(body)
+	}
+	var stdout, stderr bytes.Buffer
+	c.Stdout, c.Stderr = &stdout, &stderr
+	if err := c.Run(); err != nil {
+		line, _, _ := strings.Cut(strings.TrimSpace(stderr.String()), "\n")
+		return nil, fmt.Errorf("gh api %s: %w: %s", strings.Join(args, " "), err, line)
+	}
+	return stdout.Bytes(), nil
+}
 
-func (ghForge) List(context.Context, int) ([]prComment, error)           { return nil, errStub }
-func (ghForge) Create(context.Context, int, string) (prComment, error)   { return prComment{}, errStub }
-func (ghForge) Update(context.Context, int64, string) (prComment, error) { return prComment{}, errStub }
+// List returns the comments, oldest first. gh prints the pages one after another, so the output is read as a sequence of arrays.
+func (g ghForge) List(ctx context.Context, pr int) ([]prComment, error) {
+	out, err := g.api(ctx, "", "--method", "GET", "--paginate", fmt.Sprintf("repos/{owner}/{repo}/issues/%d/comments?per_page=100", pr))
+	if err != nil {
+		return nil, err
+	}
+	var all []prComment
+	for dec := json.NewDecoder(bytes.NewReader(out)); ; {
+		var page []prComment
+		if err := dec.Decode(&page); err == io.EOF {
+			return all, nil
+		} else if err != nil {
+			return nil, fmt.Errorf("the comments of pull request %d are not JSON: %w", pr, err)
+		}
+		all = append(all, page...)
+	}
+}
 
+func (g ghForge) one(ctx context.Context, body string, args ...string) (c prComment, err error) {
+	out, err := g.api(ctx, body, args...)
+	if err == nil && (json.Unmarshal(out, &c) != nil || c.ID == 0) {
+		err = fmt.Errorf("gh api %s did not answer with a comment", strings.Join(args, " "))
+	}
+	return c, err
+}
+
+func (g ghForge) Create(ctx context.Context, pr int, body string) (prComment, error) {
+	return g.one(ctx, body, "--method", "POST", fmt.Sprintf("repos/{owner}/{repo}/issues/%d/comments", pr))
+}
+
+func (g ghForge) Update(ctx context.Context, id int64, body string) (prComment, error) {
+	return g.one(ctx, body, "--method", "PATCH", fmt.Sprintf("repos/{owner}/{repo}/issues/comments/%d", id))
+}
+
+// postSummary keeps the one summary comment of pull request cfg.PR: it summarizes the artifact sum names (its bytes must be the recorded ones), then updates the first comment whose body begins with the marker,
+// creates one, or leaves it when the text is the same. The post lock is held from the listing to the write, so two posts of one state directory cannot both find no comment and both create one.
 func postSummary(ctx context.Context, cfg Config, f forge, sum *Summary, stderr io.Writer) error {
-	return errStub
+	data, err := os.ReadFile(sum.Artifact)
+	if err != nil {
+		return fmt.Errorf("the artifact of the review cannot be read: %w", err)
+	}
+	digest := sha256.Sum256(data)
+	if got := hex.EncodeToString(digest[:]); got != sum.SHA256 {
+		return fmt.Errorf("the artifact %s has sha256 %s, not the recorded %s", sum.Artifact, got, sum.SHA256)
+	}
+	head := sum.Head
+	if sum.ReviewedHead != "" {
+		head = sum.ReviewedHead
+	}
+	a, err := review.ParseArtifact(data, head)
+	if err != nil {
+		return fmt.Errorf("the artifact %s is not a valid review: %w", sum.Artifact, err)
+	}
+	body := renderSummary(a, sum.SHA256)
+	unlock, err := (&ledger{dir: cfg.StateDir}).postLock(ctx, cfg.LockWait)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	comments, err := f.List(ctx, cfg.PR)
+	if err != nil {
+		return err
+	}
+	var marked []prComment
+	for _, c := range comments {
+		if strings.HasPrefix(c.Body, markerPrefix) {
+			marked = append(marked, c)
+		}
+	}
+	var c prComment
+	action := "created"
+	switch {
+	case len(marked) == 0:
+		c, err = f.Create(ctx, cfg.PR, body)
+	case marked[0].Body == body:
+		c, action = marked[0], "unchanged"
+	default:
+		c, err = f.Update(ctx, marked[0].ID, body)
+		action = "updated"
+	}
+	if err != nil {
+		return err
+	}
+	if len(marked) > 1 {
+		fmt.Fprintf(stderr, "crw review: warning: %d comments of pull request %d carry the marker; the first was kept up to date and the others were left alone\n", len(marked), cfg.PR)
+	}
+	sum.Comment = &Posted{Action: action, URL: c.URL}
+	return nil
 }

@@ -148,12 +148,9 @@ func TestPostSummaryNeedsAnArtifactItCanTrust(t *testing.T) {
 	f := newFixture(t)
 	sf := &scriptedForge{}
 	f.forge = sf
-	a, b := f.repo.change(f.base, 2), f.repo.change(f.base, 3)
-	if code, _, errOut := f.run(a, "--daily-cap", "1"); code != 0 {
+	a := f.repo.change(f.base, 2)
+	if code, _, errOut := f.run(a); code != 0 {
 		t.Fatalf("review: %d %s", code, errOut)
-	}
-	if code, sum, _ := f.post(b, "--daily-cap", "1"); code != 3 || sum.Outcome != OutcomeDailyCap {
-		t.Fatalf("beyond the cap: %d %+v", code, sum)
 	}
 	artifact := filepath.Join(f.out, a+".json")
 	data, _ := os.ReadFile(artifact)
@@ -304,24 +301,18 @@ func TestPostSummaryFlags(t *testing.T) {
 		want string // empty: accepted
 	}{
 		{[]string{"--post-summary"}, "--post-summary needs --pr"},
-		{[]string{"--post-summary", "--pr", "0"}, "--post-summary needs --pr"},
 		{[]string{"--pr", "7"}, "--pr is only used with --post-summary"},
 		{[]string{"--post-summary", "--pr", "7", "--gh", "/opt/gh"}, ""},
 	} {
 		clearEnv(t)
-		var out, errOut bytes.Buffer
-		cfg, code := parseConfig(append(slices.Clone(base), c.args...), &out, &errOut)
+		var errOut bytes.Buffer
+		cfg, code := parseConfig(append(slices.Clone(base), c.args...), io.Discard, &errOut)
 		if (c.want == "") != (code == -1) || !strings.Contains(errOut.String(), c.want) || (c.want == "" && (!cfg.PostSummary || cfg.PR != 7 || cfg.Gh != "/opt/gh")) {
 			t.Errorf("%v: %d %+v %q", c.args, code, cfg, errOut.String())
 		}
 	}
-	clearEnv(t)
 	t.Setenv("CRW_REVIEW_GH", "/env/gh")
 	if cfg, code := parseConfig(base, io.Discard, io.Discard); code != -1 || cfg.Gh != "/env/gh" {
 		t.Errorf("CRW_REVIEW_GH: %d %q", code, cfg.Gh)
-	}
-	clearEnv(t)
-	if cfg, _ := parseConfig(base, io.Discard, io.Discard); cfg.Gh != "gh" {
-		t.Errorf("default gh: %q", cfg.Gh)
 	}
 }

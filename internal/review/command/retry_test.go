@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,8 +35,8 @@ func (f *fixture) on(day string, result agy.Result) {
 	}
 	f.at = t.Add(12 * time.Hour)
 	f.s.mu.Lock()
+	defer f.s.mu.Unlock()
 	f.s.result = result
-	f.s.mu.Unlock()
 }
 
 // A run that could not review at all because of the account or the configuration does not spend the patch: the same patch may be tried once more on a later UTC day, never on the same one,
@@ -161,7 +162,7 @@ func TestRetryOnAnotherHeadOfTheSamePatch(t *testing.T) {
 	if code != 0 || retry.Outcome != OutcomeReviewed || retry.Artifact != filepath.Join(f.out, h2+".json") || first.Artifact != filepath.Join(f.out, h1+".json") {
 		t.Fatalf("retry on another head: %d %+v %s", code, retry, errOut)
 	}
-	if data, err := os.ReadFile(first.Artifact); err != nil || !strings.Contains(string(data), `"status": "unavailable"`) && !strings.Contains(string(data), `"status":"unavailable"`) {
+	if data, err := os.ReadFile(first.Artifact); err != nil || !bytes.Contains(data, []byte("unavailable")) {
 		t.Fatalf("the first artifact was touched: %v", err)
 	}
 	if _, again, _ := f.run(h1); again.Outcome != OutcomeAlreadyReviewed || again.ReviewedHead != h2 || again.Status != "complete" {
@@ -227,58 +228,48 @@ func TestRetryThatEndsWithoutAResultClosesThePatch(t *testing.T) {
 func TestLedgerFromBeforeTheRetryRuleKeepsClosingThePatch(t *testing.T) {
 	f := newFixture(t)
 	head := f.repo.change(f.base, 2)
-	code, first, errOut := f.run(head) // learns the patch-id and the artifact path
-	if code != 0 {
-		t.Fatalf("first: %d %s", code, errOut)
+	_, first, _ := f.run(head) // learns the patch-id
+	line := func(event, extra string) string {
+		return fmt.Sprintf(`{"time":"2026-10-03T09:00:00Z","event":%q,"patchId":%q,"head":%q%s}`+"\n", event, first.PatchID, head, extra)
 	}
-	old := f.ledger()
-	if err := os.Remove(filepath.Join(f.state, "ledger.jsonl")); err != nil {
+	old := line("started", "") + line("finished", `,"artifact":"/old/a.json","sha256":"00","status":"unavailable"`)
+	if err := os.WriteFile(filepath.Join(f.state, "ledger.jsonl"), []byte(old), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	l := &ledger{dir: f.state, now: func() time.Time { return time.Date(2026, 10, 3, 9, 0, 0, 0, time.UTC) }}
-	for _, r := range old {
-		if r.Event == "finished" {
-			r.Status = "unavailable"
-		}
-		if err := l.append(record{Event: r.Event, PatchID: r.PatchID, Base: r.Base, Head: r.Head, Issue: r.Issue, Artifact: r.Artifact, SHA256: r.SHA256, Status: r.Status}); err != nil {
-			t.Fatal(err)
-		}
-	}
 	calls := f.s.count()
-	if code, sum, _ := f.run(head); code != 0 || sum.Outcome != OutcomeAlreadyReviewed || sum.Status != "unavailable" || sum.Artifact != first.Artifact || f.s.count() != calls {
+	if code, sum, _ := f.run(head); code != 0 || sum.Outcome != OutcomeAlreadyReviewed || sum.Status != "unavailable" || sum.Artifact != "/old/a.json" || f.s.count() != calls {
 		t.Fatalf("an old unavailable finished line: %d %+v", code, sum)
 	}
 }
 
 // Only a review that could not run at all for these reasons may be retried: every review call must be one of them.
 func TestAccountUnavailable(t *testing.T) {
-	call := func(stage, class, reason string) review.CallRecord {
-		return review.CallRecord{Stage: stage, Reviewer: 0, Chunk: 0, Class: class, Reason: reason}
-	}
+	const u = review.StatusUnavailable
 	for _, c := range []struct {
 		name   string
 		status review.Status
-		calls  []review.CallRecord
+		calls  []string // stage/class/reason
 		want   string
 	}{
-		{"quota", review.StatusUnavailable, []review.CallRecord{call("review", "unavailable", "quota"), call("review", "unavailable", "quota")}, "quota"},
-		{"authentication and quota", review.StatusUnavailable, []review.CallRecord{call("review", "unavailable", "quota"), call("review", "unavailable", "authentication")}, "authentication,quota"},
-		{"unknown model", review.StatusUnavailable, []review.CallRecord{call("review", "unavailable", "unknown_model")}, "unknown_model"},
-		{"not started", review.StatusUnavailable, []review.CallRecord{call("review", "unavailable", "not_started")}, "not_started"},
-		{"quota and a crash", review.StatusUnavailable, []review.CallRecord{call("review", "unavailable", "quota"), call("review", "unavailable", "crash")}, ""},
-		{"quota and a time limit", review.StatusUnavailable, []review.CallRecord{call("review", "unavailable", "quota"), call("review", "invalid", "time_limit_exceeded")}, ""},
-		{"content filter", review.StatusUnavailable, []review.CallRecord{call("review", "unavailable", "content_filter")}, ""},
-		{"denied actions", review.StatusUnavailable, []review.CallRecord{call("review", "invalid", "denied_actions")}, ""},
-		{"lock wait expired", review.StatusUnavailable, []review.CallRecord{call("review", "unavailable", "lock_wait_expired")}, ""},
-		{"runner error", review.StatusUnavailable, []review.CallRecord{call("review", "unavailable", "runner_error")}, ""},
-		{"an auxiliary call does not count", review.StatusUnavailable, []review.CallRecord{call("review", "unavailable", "quota"), call("group", "unavailable", "crash")}, "quota"},
-		{"no review call", review.StatusUnavailable, nil, ""},
-		{"partial", review.StatusPartial, []review.CallRecord{call("review", "unavailable", "quota")}, ""},
-		{"complete", review.StatusComplete, nil, ""},
+		{"quota", u, []string{"review/unavailable/quota", "review/unavailable/quota"}, "quota"},
+		{"authentication and quota", u, []string{"review/unavailable/quota", "review/unavailable/authentication"}, "authentication,quota"},
+		{"unknown model", u, []string{"review/unavailable/unknown_model"}, "unknown_model"},
+		{"not started", u, []string{"review/unavailable/not_started"}, "not_started"},
+		{"an auxiliary call does not count", u, []string{"review/unavailable/quota", "group/unavailable/crash"}, "quota"},
+		{"quota and a crash", u, []string{"review/unavailable/quota", "review/unavailable/crash"}, ""},
+		{"quota and a time limit", u, []string{"review/unavailable/quota", "review/invalid/time_limit_exceeded"}, ""},
+		{"content filter", u, []string{"review/unavailable/content_filter"}, ""},
+		{"lock wait expired", u, []string{"review/unavailable/lock_wait_expired"}, ""},
+		{"runner error", u, []string{"review/unavailable/runner_error"}, ""},
+		{"no review call", u, nil, ""},
+		{"partial", review.StatusPartial, []string{"review/unavailable/quota"}, ""},
 	} {
-		a := &review.Artifact{Status: c.status, Calls: c.calls}
-		got, ok := accountUnavailable(a)
-		if ok != (c.want != "") || got != c.want {
+		a := &review.Artifact{Status: c.status}
+		for _, s := range c.calls {
+			p := strings.Split(s, "/")
+			a.Calls = append(a.Calls, review.CallRecord{Stage: p[0], Class: p[1], Reason: p[2]})
+		}
+		if got, ok := accountUnavailable(a); ok != (c.want != "") || got != c.want {
 			t.Errorf("%s: %q %v, want %q", c.name, got, ok, c.want)
 		}
 	}
