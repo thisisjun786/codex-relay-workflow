@@ -2,8 +2,10 @@ package hook
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -71,9 +73,9 @@ type shellVerbGolden struct {
 		Reason           string
 	}
 	Units []struct {
-		Fn     string
-		Args   json.RawMessage
-		Output json.RawMessage
+		Fn, Str, Verb string
+		List          []string
+		Output        json.RawMessage
 	}
 }
 
@@ -87,7 +89,7 @@ func shellVerbLoadGolden(t *testing.T) shellVerbGolden {
 	if err := json.Unmarshal(raw, &golden); err != nil {
 		t.Fatal(err)
 	}
-	if len(golden.Entry) != 247 || len(golden.Units) != 353 {
+	if len(golden.Entry) != 341 || len(golden.Units) != 353 {
 		t.Fatalf("incomplete recording: %d entries, %d units", len(golden.Entry), len(golden.Units))
 	}
 	return golden
@@ -116,5 +118,71 @@ func TestShellVerbRecordedEntries(t *testing.T) {
 	}
 	if changed == 0 {
 		t.Fatal("no intentionally changed case recorded")
+	}
+}
+
+// The recorded answers of each oracle function, replayed against its port (the additions of the hardened reading are not part
+// of these functions).
+func TestShellVerbRecordedUnits(t *testing.T) {
+	for i, c := range shellVerbLoadGolden(t).Units {
+		t.Run(fmt.Sprintf("%s/%d", c.Fn, i), func(t *testing.T) {
+			var got any
+			switch c.Fn {
+			case "basename":
+				got = shellVerbBasename(c.Str)
+			case "normalizeVerb":
+				got = shellVerbNormalize(c.Str)
+			case "stripPrefixes":
+				got = shellVerbStripPrefixes(c.List)
+			case "teeDestinations":
+				got = shellVerbTee(c.List)
+			case "sedInPlaceDestinations":
+				got = shellVerbSed(c.List)
+			case "cpMvDestinations":
+				got = shellVerbCpMv(c.List)
+			case "interpInPlaceDestinations":
+				got = shellVerbInterp(c.List, false)
+			case "pythonNodeWriteDestinations":
+				got = shellVerbPythonNode(c.Verb, c.List, false)
+			case "scriptWriteDestinations":
+				got = shellVerbScriptWrites(c.Str, false)
+			default:
+				t.Fatalf("unknown function %s", c.Fn)
+			}
+			a, _ := json.Marshal(got)
+			if string(a) == "null" {
+				a = []byte("[]")
+			}
+			var expected any
+			if err := json.Unmarshal(c.Output, &expected); err != nil {
+				t.Fatal(err)
+			}
+			if e, _ := json.Marshal(expected); string(a) != string(e) {
+				t.Fatalf("%q %q %q: got %s want %s", c.Str, c.Verb, c.List, a, e)
+			}
+		})
+	}
+}
+
+// A command string quoted into a shell -c, level after level, is read; the work is bounded by a budget of bytes, past which only the
+// oracle's reading stays.
+func TestShellVerbNestedShells(t *testing.T) {
+	command := "tee /m/a"
+	for range 6 {
+		command = "bash -c \"" + strings.NewReplacer("\\", "\\\\", "\"", "\\\"").Replace(command) + "\""
+	}
+	if got := ShellWriteDestinations(command); !slices.Equal(got, []string{"/m/a"}) {
+		t.Fatalf("six levels: %q", got)
+	}
+	spent := 0
+	if got := shellVerbNested("bash -c 'tee /m/a'", &spent); len(got) != 0 {
+		t.Fatalf("budget spent: %q", got)
+	}
+	ample := 1 << 20
+	if got := shellVerbNested("bash -c 'tee /m/a'", &ample); !slices.Equal(got, []string{"/m/a"}) {
+		t.Fatalf("budget left: %q", got)
+	}
+	if got := ShellWriteDestinations("eval builtin " + strings.Repeat("eval builtin ", 3000) + "tee /m/a"); !slices.Equal(got, []string{"/m/a"}) {
+		t.Fatalf("eval chain: %q", got)
 	}
 }

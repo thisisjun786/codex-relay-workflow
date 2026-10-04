@@ -29,7 +29,7 @@ const commands = [
  R`tee "/m/a b" '/m/c d'`, '/usr/bin/tee /m/a', R`\tee /m/a`, R`C:\bin\tee.exe /m/a`, 'TEE /m/a', 'Tee.CMD /m/a', 'tee.bat /m/a',
  '& tee /m/a', '&& tee /m/a', 'env A=1 tee /m/a', 'env A=1 B=2 tee /m/a', 'command tee /m/a',
  'builtin tee /m/a', 'sudo command tee /m/a', '/usr/bin/sudo env X=y sed -i s/a/b/ /m/a', 'sudo /usr/bin/env A=1 tee /m/a', 'env tee /m/a', 'env', 'sudo',
- 'Sudo tee /m/a', 'env =x tee /m/a', 'env 1A=x tee /m/a', 'env _A1=x tee /m/a', 'rg tee /m/a', 'echo tee /m/a', 'cat tee /m/a',
+ 'env =x tee /m/a', 'env 1A=x tee /m/a', 'env _A1=x tee /m/a', 'rg tee /m/a', 'echo tee /m/a', 'cat tee /m/a',
  // sed
  "sed -i 's/a/b/' /m/a /m/b", "sed -i -e 's/a/b/' /m/a", "sed -i -f s.sed /m/a", "sed -e 's/a/b/' -i /m/a", "sed --in-place 's/a/b/' /m/a",
  "sed --in-place=.bak 's/a/b/' /m/a", "sed -i.bak 's/a/b/' /m/a", "sed -ie 's/a/b/' /m/a", "sed -s -i 's/a/b/' /m/a", "sed -E -i 's/a/b/' /m/a",
@@ -42,7 +42,7 @@ const commands = [
  'cp -r /w/dir /m/dir', 'mv -- -x /m/a', 'cp -t /m -t /n /w/a', 'cp --target-directory=/m --target-directory=/n a',
  // perl and ruby
  "perl -pi -e 's/a/b/' /m/a", "perl -pie 's/a/b/' /m/a", "perl -i.bak -pe 's/a/b/' /m/a", "perl -ne 'print' /m/a", 'perl -i /m/a', 'perl /w/s.pl /m/a',
- "perl -Mstrict -i -pe 's/a/b/' /m/a", "perl -wi -pe 's/x/y/' /m/a", "perl -i -e 's/x/y/' -- /m/a", "perl -ie 's/x/y/' /m/a", "perl -nie 's/x/y/' /m/a",
+ "perl -Mstrict -i -pe 's/a/b/' /m/a", "perl -Mstrict script.pl /m/x", "perl -Ilib -i -pe 's/a/b/' /m/a", "perl -wi -pe 's/x/y/' /m/a", "perl -i -e 's/x/y/' -- /m/a", "perl -ie 's/x/y/' /m/a", "perl -nie 's/x/y/' /m/a",
  "perl -i -pe 's/x/y/' /m/a /m/b", "ruby -pi -e 's/x/y/' /m/a", "ruby -e 'puts 1' /m/a", "perl -pe 's/x/y/' /m/a", "perl -i -ne 'print'",
  "perl -I /lib -i -pe 's/a/b/' /m/a",
  // python and node one-line writes
@@ -64,7 +64,7 @@ group('security: a prefix, wrapper option or leading assignment hid the verb the
  ['nohup tee /m/a', ['/m/a']], ['time tee /m/a', ['/m/a']], ['time -p tee /m/a', ['/m/a']], ['exec tee /m/a', ['/m/a']], ['timeout 5 tee /m/a', ['/m/a']],
  ['nice -n 5 tee /m/a', ['/m/a']], ['setsid tee /m/a', ['/m/a']], ['stdbuf -oL tee /m/a', ['/m/a']], ['doas tee /m/a', ['/m/a']], ['command -p tee /m/a', ['/m/a']],
  ['sudo env A=1 nohup tee /m/a', ['/m/a']], ['sudo -u root sed -i s/a/b/ /m/a', ['/m/a']],
- ['sudo -l', []], ['time -p cat /m/a', []], ['sudo -u root', []], ['env -i', []], ['nohup', []], ['timeout 5', []],
+ ['Sudo tee /m/a', ['/m/a']], ['sudo -l', []], ['command -v tee /m/a', []], ['time -p cat /m/a', []], ['sudo -u root', []], ['env -i', []], ['nohup', []], ['timeout 5', []],
 ]);
 group('security: a shell started with -c, or eval, runs a command string whose writes the oracle never inspects', [
  [R`bash -c 'echo hi > /m/a'`, ['/m/a']], [R`sh -c "tee /m/a"`, ['/m/a']], [R`bash -lc 'cp /w/a /m/a'`, ['/m/a']], [R`zsh -c "sed -i s/a/b/ /m/a"`, ['/m/a']],
@@ -74,7 +74,7 @@ group('security: a shell started with -c, or eval, runs a command string whose w
 group('security: sed bundled flags or attached script forms hid the in-place flag or the script, so the file was never named', [
  ["sed -ni 's/a/b/p' /m/a", ['/m/a']], ["sed -Ei 's/a/b/' /m/a", ['/m/a']], ["sed -i --expression='s/a/b/' /m/a", ['/m/a']], ["sed -i -es/a/b/ /m/a", ['/m/a']],
  ["sed -i --file=s.sed /m/a", ['/m/a']], ["sed --in-place --expression=s/a/b/ /m/a", ['/m/a']], ["sed -n -E -i.bak -e 's/a/b/' /m/a", []],
- ["sed -nEi 's/a/b/' /m/a /m/b", ['/m/a', '/m/b']], ["sed -sni 's/a/b/' /m/a", ['/m/a']], ["sed -i -fs.sed /m/a", ['/m/a']],
+ ["sed -nEi 's/a/b/' /m/a /m/b", ['/m/a', '/m/b']], ["sed -I .bak s/a/b/ /m/a", ['/m/a']], ["sed -I '' s/a/b/ /m/a", ['/m/a']], ["sed -nI s/a/b/ /m/a", ['/m/a']], ["sed -sni 's/a/b/' /m/a", ['/m/a']], ['sed -ni -l 5 s/a/b/ /m/a', ['/m/a']], ["sed -i -fs.sed /m/a", ['/m/a']],
 ]);
 group('security: cp and mv take the directory from a -t bundled with other flags or attached to it, which the oracle read as a source', [
  ['cp -rt /m /w/a', ['/m']], ['cp -at /m /w/a /w/b', ['/m']], ['mv -ft /m /w/a', ['/m']], ['cp -t/m /w/a', ['/m']], ['cp -rt/m /w/a', ['/m']],
@@ -88,7 +88,7 @@ group('security: python options bundled with -c, a versioned interpreter name, a
  [R`python3 -Ic "open('/m/a','w')"`, ['/m/a']], [R`python3 -uc "open('/m/a','w')"`, ['/m/a']], [R`python3.11 -c "open('/m/a','w')"`, ['/m/a']],
  [R`python2 -c "open('/m/a','w')"`, ['/m/a']], [R`python3 -c "open('/m/a','r+')"`, ['/m/a']], [R`python3 -c "open('/m/a','rb+')"`, ['/m/a']],
  [R`python3 -c "open('/m/a', mode='w')"`, ['/m/a']], [R`python3 -c "open(file='/m/a', mode='a')"`, ['/m/a']], [R`python3 -c "open(file='/m/a', mode='r')"`, []],
- [R`python3 -m pip install x`, []],
+ [R`python3 -m pip install x`, []], [R`python3 -mc "open('/m/a','w')"`, []], [R`python3 -Xc "open('/m/a','w')"`, []],
 ]);
 group('security: node -p, --print and a template literal path hid the written file', [
  [R`node -p "fs.writeFileSync('/m/a','x')"`, ['/m/a']], [R`node --print "fs.writeFileSync('/m/a','x')"`, ['/m/a']], [R`node -pe "fs.writeFileSync('/m/a','x')"`, ['/m/a']],
@@ -104,6 +104,30 @@ group('security: a double-quoted script keeps its backslash-escaped quotes in th
  [R`python3 -c "open(\"/m/a\",\"w\")"`, ['/m/a']], [R`node -e "fs.writeFileSync(\"/m/a\",\"x\")"`, ['/m/a']],
  [R`python3 -c "Path(\"/m/a\").write_text(\"x\")"`, ['/m/a']], [R`python3 -c "open(\"/m/a\",\"r\")"`, []], [R`node -e "fs.appendFile ( \"/m/a\" , 'x')"`, ['/m/a']],
 ]);
+group('security: long options and bundled options of a wrapper command (and a shell started with -cx, -o or --rcfile) hid the command it runs; commands that only look up or list run nothing', [
+ ['timeout --signal TERM 5 tee /m/a', ['/m/a']], ['timeout --kill-after=1 5 tee /m/a', ['/m/a']], ['timeout -k 1 5 tee /m/a', ['/m/a']], ['nice --adjustment 5 tee /m/a', ['/m/a']],
+ ['sudo --host h tee /m/a', ['/m/a']], ['sudo -nu root tee /m/a', ['/m/a']], ['doas -u root tee /m/a', ['/m/a']], ['ionice -c 2 -n 7 tee /m/a', ['/m/a']],
+ ['stdbuf --output L tee /m/a', ['/m/a']], ['env --unset A tee /m/a', ['/m/a']], ['env --chdir /w tee /m/a', ['/m/a']], ['eval eval eval tee /m/a', ['/m/a']],
+ ['eval '.repeat(40) + 'tee /m/a', ['/m/a']], ['eval builtin '.repeat(34) + 'tee /m/a', ['/m/a']], [R`bash -c 'echo \"; tee /m/a'`, ['/m/a']], [R`bash -c -x 'tee /m/a'`, ['/m/a']], [R`bash -c -- 'tee /m/a'`, ['/m/a']], [R`bash -oc pipefail 'tee /m/a'`, ['/m/a']], [R`bash -c 'echo \"| tee /m/a'`, ['/m/a']], [R`bash -n +n -c 'tee /m/a'`, ['/m/a']], [R`bash +o noexec -c 'tee /m/a'`, ['/m/a']], [R`bash -o noexec -c 'tee /m/a'`, []], [R`bash -c -n 'tee /m/a'`, []],
+ [R`bash -cx "tee /m/a"`, ['/m/a']], [R`bash -xc "tee /m/a"`, ['/m/a']], [R`bash -o pipefail -c "tee /m/a"`, ['/m/a']], [R`bash --norc -c "tee /m/a"`, ['/m/a']],
+ [R`bash --rcfile x -c "tee /m/a"`, ['/m/a']], [R`sudo -u root bash -c "echo x > /m/a"`, ['/m/a']],
+ ['sudo -l tee /m/a', []], ['sudo --list tee /m/a', []], ['sudo -v', []], ['command -pv tee /m/a', []], ['timeout --help', []], ['sudo --version tee /m/a', []], ['nice --version tee /m/a', []],
+ [R`bash /dev/null -c "tee /m/a"`, []], [R`bash -n -c "tee /m/a"`, []], [R`bash -nc "tee /m/a"`, []], [R`bash script.sh -c "tee /m/a"`, []],
+]);
+group('security: python open() keyword arguments in any order, or with other keywords between, hid the written file', [
+ [R`python3 -c "open(mode='w', file='/m/a')"`, ['/m/a']], [R`python3 -c "open(file='/m/a', encoding='utf-8', mode='w')"`, ['/m/a']],
+ [R`python3 -c "open('/m/a', encoding='utf-8', mode='w')"`, ['/m/a']], [R`python3 -c "open('/m/a', mode='r+')"`, ['/m/a']],
+ [R`python3 -c "open(mode=\"w\", file=\"/m/a\")"`, ['/m/a']], [R`python3 -c "open(mode='r', file='/m/a')"`, []], [R`python3 -c 'open(mode="w", file="/m/a\\"b")'`, ['/m/a"b']], [R`python3 -c 'open(mode="w", file="/m/a"+"b")'`, []], [R`python3 -c 'open(mode="w",file=r"/m/a\"b")'`, [R`/m/a\"b`]], [R`python3 -c "open(mode='w',` + ' '.repeat(5000) + R`file='/m/a')"`, ['/m/a']], [R`python3 -c "open(file='/m/a')"`, []],
+ [R`python3 -c "open(path, 'w')"`, []], [R`python3 -c "open('/m/'+'a', 'w')"`, []], [R`python3 -c "open('/m/'+'a', mode='w')"`, []], [R`python3 -c "my_open('/m/a', 'w')"`, []], [R`python3 -c "open('/m/a', mode=str('w', 'x'))"`, []], [R`python3 -c "open(os.path.join('/m','a'), 'w')"`, []], [R`python3 -c "open('/m/a', 'w') ; x == 'w'"`, ['/m/a']],
+]);
+group('security: combinations of the classes above in one command, with the oracle reports that stay first', [
+ ['sudo -u root env -i LC_ALL=C nohup timeout -s KILL 5 nice -n 3 tee /m/a', ['/m/a']], ['cd /w &\ncp -rt /m /w/a & echo done', ['/m']],
+ ['sed -nEi.bak -e p /m/a /m/b', ['/m/a', '/m/b']], ['sed -i -l 5 s/a/b/ /m/a', []], ['cp /w/a /m/b --suffix .bak', ['/m/b']], ['cp /w/a /m/b -S .bak', ['/m/b']],
+ [R`bash -c 'sh -c "tee /m/a"'`, ['/m/a']], ['eval eval eval', []], ['bash -c', []],
+ [R`python3 -c "open('/m/a', 'w'); open(file=\"/m/b\", mode=\"a\")"`, ['/m/b']], [R`python3 -c "open('/m/a', 'r'); open('/m/b')"`, []],
+ [R`python3 -c "open (mode='w', file='/m/a')"`, ['/m/a']], [R`python3 -c "open('/m/a',mode='w',)"`, ['/m/a']], [R`python3 -c "open(file='/m/a',mode='w',)"`, ['/m/a']], [R`python3 -c "# don't skip` + '\n' + R`open(mode='w',file='/m/a')"`, ['/m/a']], [R`python3 -c "open('/m/a', # output file` + '\n' + R`mode='w')"`, ['/m/a']], [R`python3 -c "from pathlib import Path; Path('/m/a',).write_text('x')"`, ['/m/a']], [R`python3 -c "Path(` + '\n' + R`'/m/a', # output file` + '\n' + R`).write_bytes(b'x')"`, ['/m/a']], [R`python3 -c "Path('/m/a',) . write_text ('x')"`, ['/m/a']], [R`python3 -c "Path('/m/a',).read_text()"`, []], [R`python3 -c "f = Path('/m/a',).write_text"`, []], [R`python3 -c "Path('/m/' + 'a',).write_text('x')"`, []], [R`node -p "fs.writeFile(\"/m/a\",1)"`, ['/m/a']],
+ ['echo a >&2; echo b &> /m/c', []], ['echo a 2>&1 | tee /m/b', []], ['echo a |& tee /m/b', []], ["echo 'a & tee /m/a'", []], ['echo a\\&tee /m/a', []],
+]);
 const utf8 = s => Buffer.from(s).toString('utf8');
 const data = { oracle: 'CXC v0.2.40 commit 3c1459ac', source: path, entry: [], units: [] };
 for (const [command, extraCase] of [...new Set(commands)].map(c => [c, additions.get(c)]).concat([...additions.keys()].filter(c => !commands.includes(c)).map(c => [c, additions.get(c)]))) {
@@ -112,7 +136,7 @@ for (const [command, extraCase] of [...new Set(commands)].map(c => [c, additions
  data.entry.push({ input: command, output, expected: [...output, ...extra],
   classification: extra.length ? 'intentionally-changed' : 'identical', ...(extra.length ? { reason: extraCase.reason } : {}) });
 }
-const arr = (fn, args) => ({ fn, args, output: api[fn](...args) });
+const arr = (fn, args) => ({ fn, ...(fn === 'pythonNodeWriteDestinations' ? { verb: args[0], list: args[1] } : typeof args[0] === 'string' ? { str: args[0] } : { list: args[0] }), output: api[fn](...args) });
 const lists = [[], [''], ['-'], ['--'], ['a'], ['-a', 'b', '--', '-c', 'd'], ['-i'], ['-i', ''], ['-i', '.bak', 'x', 'y'], ['-i.bak', 'x'], ['--in-place', 'x', 'y'], ['--in-place=.b', 'x', 'y'], ['-e', 'p', 'f'], ['-f', 's', 'f'], ['--expression', 'p', 'f'], ['--file', 's', 'f'], ['-i', '-e'], ['-n', 'p', 'f'], ['-t', 'd', 's'], ['--target-directory', 'd', 's'], ['--target-directory=d', 's'], ['--target-directory=', 's', 'd'], ['-t'], ['-t', 'a', '-t'], ['s', 'd'], ['s'], ['-r', 's', '--', '-d'], ['-pie', 'p', 'f'], ['-ie', 'p', 'f'], ['-i', 'p', 'f'], ['-nie', 'p', 'f'], ['-pe', 'p', 'f'], ['-e', 'p', 'f'], ['-Mstrict', '-i', 'f'], ['-0pi', 'f'], ['-Ie', 'p', 'f'], ['-i', '--', '-x'], ['x', '-i'], ['-e'], ['-ne'], ['-nI', 'p', 'f']];
 for (const fn of ['teeDestinations', 'sedInPlaceDestinations', 'cpMvDestinations', 'interpInPlaceDestinations']) for (const args of lists) data.units.push(arr(fn, [args]));
 for (const verb of ['python', 'python3', 'py', 'node', 'nodejs', 'perl', 'python2']) for (const args of [[], ['-c'], ['-c', 'open("f","w")'], ['--command', 'open("f","a")'], ['-copen("f","w")'], ['-c', ''], ['-e', 'writeFileSync("f","x")'], ['--eval', 'appendFile("f","x")'], ['--eval=writeFile("f","x")'], ['-ewriteFileSync("f","x")'], ['--evalx'], ['-e'], ['-u', '-c', 'open("f","x")'], ['-p', 'writeFileSync("f","x")'], ['x.py', '-c', 'open("f","w")']]) data.units.push(arr('pythonNodeWriteDestinations', [verb, args]));
