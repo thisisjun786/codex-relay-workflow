@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -58,13 +59,21 @@ func subagentStopRun(t *testing.T, cwd, role, agent, turn, message string, extra
 	if err != nil {
 		t.Fatal(err)
 	}
+	out, err := subagentStopInvoke(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func subagentStopInvoke(raw []byte) (string, error) {
 	var out, stderr bytes.Buffer
 	code := harness.Hook(context.Background(), []string{"subagent-stop", "--leg", "subagent-stop-verifying-evidence"},
-		strings.NewReader(string(raw)), &out, &stderr, os.LookupEnv, harness.Legs())
+		bytes.NewReader(raw), &out, &stderr, os.LookupEnv, harness.Legs())
 	if code != 0 || stderr.Len() != 0 {
-		t.Fatalf("exit=%d stderr=%s", code, &stderr)
+		return out.String(), fmt.Errorf("exit=%d stderr=%s", code, &stderr)
 	}
-	return out.String()
+	return out.String(), nil
 }
 
 func subagentStopBlock(t *testing.T, out string, attempt int) {
@@ -304,10 +313,26 @@ func TestSubagentStopConcurrentTerminalVerdicts(t *testing.T) {
 		}
 	}
 	var wg sync.WaitGroup
+	errors := make(chan error, 2)
 	for _, agent := range []string{"racer-a", "racer-b"} {
-		wg.Go(func() { subagentStopRun(t, cwd, "executor", agent, "", "", nil) })
+		raw, err := json.Marshal(map[string]any{"hook_event_name": "SubagentStop", "cwd": cwd, "session_id": "s1", "agent_type": "executor", "agent_id": agent})
+		if err != nil {
+			t.Fatal(err)
+		}
+		wg.Go(func() {
+			out, err := subagentStopInvoke(raw)
+			if err != nil {
+				errors <- err
+			} else if out != "" {
+				errors <- fmt.Errorf("terminal stop blocked: %s", out)
+			}
+		})
 	}
 	wg.Wait()
+	close(errors)
+	for err := range errors {
+		t.Error(err)
+	}
 	if entries := state.ReadState(cwd, "s1").UnverifiedSubagents; len(entries) != 2 {
 		t.Fatalf("lost verdict: %+v", entries)
 	}
