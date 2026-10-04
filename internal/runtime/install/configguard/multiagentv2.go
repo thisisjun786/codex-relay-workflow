@@ -151,7 +151,7 @@ func multiAgentV2Preserve(pre, post string, enabled bool) (string, bool) {
 					block = strings.TrimSuffix(block, "\r")
 					suffix = "\r"
 				}
-				token := fmt.Sprintf("%s%d", prefix, len(pairs)/2)
+				token := fmt.Sprintf("%s%d_", prefix, len(pairs)/2)
 				pairs = append(pairs, token, block)
 				out = append(out, token+suffix)
 				i = end

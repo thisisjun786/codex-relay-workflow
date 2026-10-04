@@ -352,3 +352,24 @@ func TestMultiAgentV2RepairBoundaries(t *testing.T) {
 		})
 	}
 }
+
+func TestMultiAgentV2ManyStringBlocks(t *testing.T) {
+	home, path := multiAgentHome(t)
+	pre := "[features.multi_agent_v2]\nenabled = false\n"
+	var values []string
+	for i := 0; i < 12; i++ {
+		value := "note" + strings.Repeat("x", i+1) + " = \"\"\"\n payload " + strings.Repeat("y", i+1) + "\n\"\"\""
+		values = append(values, value)
+		pre += value + "\n"
+	}
+	activationWrite(t, path, pre)
+	var calls [][]string
+	if _, err := SetMultiAgentV2State(MultiAgentV2Deps{CodexHome: home, Run: multiAgentFake(t, path, &calls)}, MultiAgentV2); err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range values {
+		if !strings.Contains(activationRead(t, path), value) {
+			t.Fatalf("placeholder collision lost %q", value)
+		}
+	}
+}
