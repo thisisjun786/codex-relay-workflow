@@ -67,6 +67,7 @@ const (
 	registrationAfterBackup
 	registrationBeforeRename
 	registrationRoleDirSync
+	registrationReusedBackupSync
 )
 
 func registrationRegister(role NativeRoleName, homes []string, fail func(registrationStep) error) (RegistrationResult, error) {
@@ -147,6 +148,11 @@ func registrationManaged(value string) bool {
 }
 
 func registrationRead(path string) (raw []byte, err error) {
+	return registrationReadWith(path, nil)
+}
+
+// registrationReadWith keeps the validated descriptor open for a reused backup's Sync.
+func registrationReadWith(path string, afterRead func(*os.File, []byte) error) (raw []byte, err error) {
 	st, err := os.Lstat(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
@@ -172,7 +178,11 @@ func registrationRead(path string) (raw []byte, err error) {
 	if !st.Mode().IsRegular() {
 		return nil, fmt.Errorf("Refusing non-regular role file: %s", path)
 	}
-	return io.ReadAll(f)
+	raw, err = io.ReadAll(f)
+	if err == nil && afterRead != nil {
+		err = afterRead(f, raw)
+	}
+	return raw, err
 }
 func registrationAt(fail func(registrationStep) error, step registrationStep) error {
 	if fail != nil {
@@ -273,7 +283,15 @@ func registrationUpdate(role NativeRoleName, path string, prior, content []byte,
 		if !errors.Is(err, fs.ErrExist) {
 			return RegistrationResult{}, err
 		}
-		got, readErr := registrationRead(backup)
+		got, readErr := registrationReadWith(backup, func(f *os.File, got []byte) error {
+			if !bytes.Equal(got, prior) {
+				return err
+			}
+			if err := registrationAt(fail, registrationReusedBackupSync); err != nil {
+				return err
+			}
+			return f.Sync()
+		})
 		if readErr != nil {
 			return RegistrationResult{}, readErr
 		}

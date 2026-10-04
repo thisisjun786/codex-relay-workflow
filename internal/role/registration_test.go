@@ -100,6 +100,12 @@ func TestRegistrationCreatesCompleteRoleAndPreservesSettings(t *testing.T) {
 			if !ok || string(line) != "# crw-managed: "+registrationTestHash(body) {
 				t.Fatal("invalid managed marker")
 			}
+			template := registrationTestRead(t, filepath.Join("agents", string(role)+".toml"))
+			_, wantPrompt, wantOK := bytes.Cut(template, []byte("developer_instructions = "))
+			_, gotPrompt, gotOK := bytes.Cut(body, []byte("developer_instructions = "))
+			if !wantOK || !gotOK || !bytes.Equal(gotPrompt, wantPrompt) {
+				t.Fatal("complete developer instructions differ from the copied oracle template")
+			}
 			if !bytes.Contains(body, []byte("name = \""+string(role)+"\"\n")) || bytes.Contains(body, []byte("\nmodel =")) {
 				t.Fatal("wrong role or model sentinel")
 			}
@@ -480,4 +486,32 @@ func TestRegistrationModelStripKeepsOracleFirstMatch(t *testing.T) {
 	if got := registrationBody(input); got != want {
 		t.Fatalf("body = %q", got)
 	}
+}
+
+func TestRegistrationSyncsReusedBackupBeforeReplacement(t *testing.T) {
+	home := registrationTestHome(t)
+	path := filepath.Join(home, "agents/architect.toml")
+	prior := registrationTestSigned([]byte("name = \"architect\"\nold\n"))
+	registrationTestWrite(t, path, prior)
+	backup := path + ".backup-" + registrationTestHash(prior)
+	registrationTestWrite(t, backup, prior)
+	fault := errors.New("reused backup sync failed")
+	hit := false
+	_, err := registrationRegister(Architect, []string{home}, func(at registrationStep) error {
+		if at == registrationReusedBackupSync {
+			hit = true
+			return fault
+		}
+		return nil
+	})
+	if !hit || !errors.Is(err, fault) {
+		t.Fatal("reused backup was not synced", err)
+	}
+	if !bytes.Equal(registrationTestRead(t, path), prior) {
+		t.Fatal("replacement preceded reused backup sync")
+	}
+	if !bytes.Equal(registrationTestRead(t, backup), prior) {
+		t.Fatal("reused backup changed")
+	}
+	registrationTestClean(t, home)
 }
