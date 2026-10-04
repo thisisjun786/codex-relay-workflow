@@ -239,7 +239,9 @@ about declared that pull request's head on the live one (2026-10-04). It is refu
 - The other pull request's turn is requested after the earlier one lands or is returned
   (`merge-turn-release --disposition returned`; a waiting claim is withdrawn with
   `merge-turn-withdraw`). A claim made with no pull request and no relationship records nothing to
-  compare, so it answers only requests that state nothing: state both on every claim.
+  compare, so it answers only requests that state nothing or name its own candidate head, and a claim
+  that records one kind only (a relationship but no pull request) answers a request that states the
+  other kind only at that head: state both on every claim.
 - `dag-merge-request` applies a stricter comparison to the turn it is answered with (pull request,
   relationship, head and project) and refuses `disposition_conflict` as before.
 
