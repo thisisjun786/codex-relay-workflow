@@ -269,6 +269,13 @@ func (a *Adapter) guardedSend(ctx context.Context, requestID, thread, message st
 		return a.receipt(ctx, requestID, true)
 	}
 	receipt["threadId"] = thread
+	var watch *appserver.TurnWatch
+	defer func() {
+		if watch != nil {
+			turn, _ := receipt["turnId"].(string)
+			watch.Finish(turn, false)
+		}
+	}()
 	save := func() error { _, err := a.ledger.Save(context.WithoutCancel(ctx), receipt); return err }
 	if err = save(); err != nil {
 		return nil, err
@@ -327,6 +334,13 @@ func (a *Adapter) guardedSend(ctx context.Context, requestID, thread, message st
 			if expectedMCP != nil {
 				params["config"] = expectedMCP.Overrides()
 			}
+		}
+		if client, ok := a.rpc.(*appserver.Client); ok {
+			watch, err = client.WatchTurn(ctx, thread)
+			if err = awaited(err); err != nil {
+				return err
+			}
+			ctx = watch.Context(ctx)
 		}
 		resumed, err := a.callValue(ctx, "thread/resume", params)
 		if err = awaited(err); err != nil {

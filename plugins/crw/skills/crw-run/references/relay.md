@@ -310,6 +310,9 @@ A role that lists several pairs accepts a settings record on any one of them: a 
 receipt it was created under is current whichever of its role's pairs that is, so the relay cannot tell
 whether it is the pair the issue's child pair line names. That comparison is the parent's, made on the
 creation receipt ([Child pair by issue type](../../crw-plan/references/integrations.md#child-pair-by-issue-type)).
+The request has no field for the issue's classification, bundle or source of the choice, and `managed-start/1` refuses a
+field it does not know, so those values are kept in the parent's coordination record
+([Record the pair choice at release](../SKILL.md#record-the-pair-choice-at-release)), not in the relay.
 
 After a user changes an existing task's model, re-record that task's authorization from a
 user-attributed source before the next send, with `--source user_transition`. The record is what
@@ -659,6 +662,18 @@ A child that needs something only a person can give records `blocked_needs_input
 6. **Rule and accept the result as any result.** The child continues on the same node and its first receipt in the new generation passes no `--supersedes-revision`. Give the verdict, and in a DAG project `dag-accept` it (with `--supersedes` when the node already had an accepted result): the node reads accepted and not stale.
 
 **The fallback, and what it records.** A parent that sent the child a message over the thread bridge, outside this route, has told the relay nothing: the relay cannot see that message. The one trace it can hold is an admission: `admit-turn --relationship <rel> --generation <n> --turn <the turn that received it> --actor <your own task id> --reason <why>`. An admission by the relationship's registered parent task is recorded as a direct parent intervention, which `intervention-show --relationship <rel>` reads back (generation, turn, anchor, actor, reason, time); any other actor is only an admission. It is a record and not an authorization. A message that is never admitted leaves no trace, the actor is the statement of whoever ran the command, and the bypass opens no generation, so the DAG learns of it only from the plan revision and the re-registered criteria. Use the route above, and name any use of the fallback in the report and in the handoff.
+
+On a bridge send to a child released with an MCP profile, state `role: child` and
+`expected_settings.mcp_profile`: the same profile the child was released with in
+`child.settings.mcpProfile`, not the role's default. The bridge cannot reliably read that record. It
+refuses a profile-less `notLoaded` send before resume when the named role declares profiles, or the
+role is omitted and the host declares child profiles. Correct the send under a NEW request id; the
+existing pair guard still applies, so prefer relay delivery for a role with several pairs. If another
+client already loaded the child under other MCP settings, the relay's `settings_not_preserved` detail
+names recovery: only after a completed durable turn and a confirmed resumable rollout, release all
+subscriptions and observe `notLoaded` (an operator can use `thread/archive` then `thread/unarchive`
+if it remains loaded); the next relay delivery resumes under the recorded profile. Never unload a
+never-run root. This advice performs no automatic recovery.
 
 ## The four readers a candidate pass also uses
 

@@ -1,0 +1,10 @@
+{"input":"{\"proxy\":{\"running\":true},\"defaultProvider\":\"openai\",\"listen\":{\"port\":10100}}","line":"{\"provider\":\"ocx\",\"mode\":\"provider\",\"ocxPath\":\"/fake/ocx\",\"running\":true,\"defaultProvider\":\"openai\",\"port\":10100}"}
+{"input":"{\"proxy\":{\"running\":false},\"defaultProvider\":3,\"listen\":{\"port\":\"1\"}}","line":"{\"provider\":\"ocx\",\"mode\":\"provider\",\"ocxPath\":\"/fake/ocx\",\"running\":false,\"defaultProvider\":null,\"port\":null}"}
+{"input":"{\"proxy\":{\"running\":true},\"listen\":{\"port\":1e400}}","line":"{\"provider\":\"ocx\",\"mode\":\"provider\",\"ocxPath\":\"/fake/ocx\",\"running\":true,\"defaultProvider\":null,\"port\":null}"}
+{"input":"{\"proxy\":{\"running\":true},\"listen\":{\"port\":-0}}","line":"{\"provider\":\"ocx\",\"mode\":\"provider\",\"ocxPath\":\"/fake/ocx\",\"running\":true,\"defaultProvider\":null,\"port\":0}"}
+{"input":"{\"proxy\":{\"running\":true},\"defaultProvider\":\"<>&\\u2028\",\"listen\":{\"port\":1.5}}","line":"{\"provider\":\"ocx\",\"mode\":\"provider\",\"ocxPath\":\"/fake/ocx\",\"running\":true,\"defaultProvider\":\"<>& \",\"port\":1.5}"}
+{"input":"[]","line":"{\"provider\":\"ocx\",\"mode\":\"error\",\"ocxPath\":\"/fake/ocx\",\"reason\":\"ocx status produced no parseable payload\"}"}
+{"input":"{\"proxy\":{\"running\":\"true\"}}","line":"{\"provider\":\"ocx\",\"mode\":\"error\",\"ocxPath\":\"/fake/ocx\",\"reason\":\"ocx status produced no parseable payload\"}"}
+{"input":"null","line":"{\"provider\":\"ocx\",\"mode\":\"error\",\"ocxPath\":\"/fake/ocx\",\"reason\":\"ocx status produced no parseable payload\"}"}
+{"input":"{}","line":"{\"provider\":\"ocx\",\"mode\":\"error\",\"ocxPath\":\"/fake/ocx\",\"reason\":\"ocx status produced no parseable payload\"}"}
+{"input":"nope","line":"{\"provider\":\"ocx\",\"mode\":\"error\",\"ocxPath\":\"/fake/ocx\",\"reason\":\"ocx status produced no parseable payload\"}"}

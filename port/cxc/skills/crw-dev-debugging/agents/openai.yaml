@@ -1,0 +1,6 @@
+interface:
+  display_name: "crw-dev-debugging"
+  short_description: "Phases 0-4 systematic root-cause debugging method (any language)."
+  default_prompt: "Use $crw-dev-debugging to guide this task and verify its result."
+policy:
+  allow_implicit_invocation: false
