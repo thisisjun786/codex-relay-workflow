@@ -1,0 +1,1753 @@
+{
+  "oracle": "CXC v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "cases": [
+    {
+      "id": "no_arguments",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": []
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 0,
+            "output": "cxc divergence \u2014 record the deliberate divergence mode and its candidates\n\nUsage:\n  cxc divergence mode on --session <id> --collapse P|D --reason <why> [--json]\n  cxc divergence mode off --session <id> --reason <why> [--json]\n  cxc divergence candidate add --session <id> --kind strong-1|add-1|alternative\n      --change-class parameter-tweak|branch-toggle|state-space-redesign|evaluator-change\n      --title <text> --rationale <text> --source <url> [--source <url>]...\n      [--killed-at-phase P|A|B|C|D] [--json]\n  cxc divergence candidate list --session <id> [--json]\n  cxc divergence --help\n\nNotes:\n  Collapse EARLY at P for satisfy-spec work; collapse LATE at D for\n  maximize-metric work where the local metric can deceive (cxc-loop).\n  Turn divergence off once the plateau is broken \u2014 it is a mode, not a state.\n  Every candidate needs at least one --source: an unsourced candidate is a guess."
+          }
+        ],
+        "files": {
+          "cwd0": {},
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "help_word",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": [
+            "help"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 0,
+            "output": "cxc divergence \u2014 record the deliberate divergence mode and its candidates\n\nUsage:\n  cxc divergence mode on --session <id> --collapse P|D --reason <why> [--json]\n  cxc divergence mode off --session <id> --reason <why> [--json]\n  cxc divergence candidate add --session <id> --kind strong-1|add-1|alternative\n      --change-class parameter-tweak|branch-toggle|state-space-redesign|evaluator-change\n      --title <text> --rationale <text> --source <url> [--source <url>]...\n      [--killed-at-phase P|A|B|C|D] [--json]\n  cxc divergence candidate list --session <id> [--json]\n  cxc divergence --help\n\nNotes:\n  Collapse EARLY at P for satisfy-spec work; collapse LATE at D for\n  maximize-metric work where the local metric can deceive (cxc-loop).\n  Turn divergence off once the plateau is broken \u2014 it is a mode, not a state.\n  Every candidate needs at least one --source: an unsourced candidate is a guess."
+          }
+        ],
+        "files": {
+          "cwd0": {},
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "help_dashdash",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": [
+            "--help"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 0,
+            "output": "cxc divergence \u2014 record the deliberate divergence mode and its candidates\n\nUsage:\n  cxc divergence mode on --session <id> --collapse P|D --reason <why> [--json]\n  cxc divergence mode off --session <id> --reason <why> [--json]\n  cxc divergence candidate add --session <id> --kind strong-1|add-1|alternative\n      --change-class parameter-tweak|branch-toggle|state-space-redesign|evaluator-change\n      --title <text> --rationale <text> --source <url> [--source <url>]...\n      [--killed-at-phase P|A|B|C|D] [--json]\n  cxc divergence candidate list --session <id> [--json]\n  cxc divergence --help\n\nNotes:\n  Collapse EARLY at P for satisfy-spec work; collapse LATE at D for\n  maximize-metric work where the local metric can deceive (cxc-loop).\n  Turn divergence off once the plateau is broken \u2014 it is a mode, not a state.\n  Every candidate needs at least one --source: an unsourced candidate is a guess."
+          }
+        ],
+        "files": {
+          "cwd0": {},
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "help_dash_h",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": [
+            "-h"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 0,
+            "output": "cxc divergence \u2014 record the deliberate divergence mode and its candidates\n\nUsage:\n  cxc divergence mode on --session <id> --collapse P|D --reason <why> [--json]\n  cxc divergence mode off --session <id> --reason <why> [--json]\n  cxc divergence candidate add --session <id> --kind strong-1|add-1|alternative\n      --change-class parameter-tweak|branch-toggle|state-space-redesign|evaluator-change\n      --title <text> --rationale <text> --source <url> [--source <url>]...\n      [--killed-at-phase P|A|B|C|D] [--json]\n  cxc divergence candidate list --session <id> [--json]\n  cxc divergence --help\n\nNotes:\n  Collapse EARLY at P for satisfy-spec work; collapse LATE at D for\n  maximize-metric work where the local metric can deceive (cxc-loop).\n  Turn divergence off once the plateau is broken \u2014 it is a mode, not a state.\n  Every candidate needs at least one --source: an unsourced candidate is a guess."
+          }
+        ],
+        "files": {
+          "cwd0": {},
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "help_ignores_rest",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": [
+            "--help",
+            "--session",
+            "s"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 0,
+            "output": "cxc divergence \u2014 record the deliberate divergence mode and its candidates\n\nUsage:\n  cxc divergence mode on --session <id> --collapse P|D --reason <why> [--json]\n  cxc divergence mode off --session <id> --reason <why> [--json]\n  cxc divergence candidate add --session <id> --kind strong-1|add-1|alternative\n      --change-class parameter-tweak|branch-toggle|state-space-redesign|evaluator-change\n      --title <text> --rationale <text> --source <url> [--source <url>]...\n      [--killed-at-phase P|A|B|C|D] [--json]\n  cxc divergence candidate list --session <id> [--json]\n  cxc divergence --help\n\nNotes:\n  Collapse EARLY at P for satisfy-spec work; collapse LATE at D for\n  maximize-metric work where the local metric can deceive (cxc-loop).\n  Turn divergence off once the plateau is broken \u2014 it is a mode, not a state.\n  Every candidate needs at least one --source: an unsourced candidate is a guess."
+          }
+        ],
+        "files": {
+          "cwd0": {},
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "help_topic_wins",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": [
+            "help",
+            "mode",
+            "--session",
+            "s"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 0,
+            "output": "cxc divergence \u2014 record the deliberate divergence mode and its candidates\n\nUsage:\n  cxc divergence mode on --session <id> --collapse P|D --reason <why> [--json]\n  cxc divergence mode off --session <id> --reason <why> [--json]\n  cxc divergence candidate add --session <id> --kind strong-1|add-1|alternative\n      --change-class parameter-tweak|branch-toggle|state-space-redesign|evaluator-change\n      --title <text> --rationale <text> --source <url> [--source <url>]...\n      [--killed-at-phase P|A|B|C|D] [--json]\n  cxc divergence candidate list --session <id> [--json]\n  cxc divergence --help\n\nNotes:\n  Collapse EARLY at P for satisfy-spec work; collapse LATE at D for\n  maximize-metric work where the local metric can deceive (cxc-loop).\n  Turn divergence off once the plateau is broken \u2014 it is a mode, not a state.\n  Every candidate needs at least one --source: an unsourced candidate is a guess."
+          }
+        ],
+        "files": {
+          "cwd0": {},
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "missing_session",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": [
+            "mode",
+            "on"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 1,
+            "output": "divergence: --session <id> is required"
+          }
+        ],
+        "files": {
+          "cwd0": {},
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "short_session_unset",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": [
+            "mode",
+            "-s",
+            "cli"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 0,
+            "output": "divergence mode: unset"
+          }
+        ],
+        "files": {
+          "cwd0": {},
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "session_empty",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": [
+            "mode",
+            "--session",
+            ""
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 1,
+            "output": "divergence: --session <id> is required"
+          }
+        ],
+        "files": {
+          "cwd0": {},
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "session_consumes_flag",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": [
+            "mode",
+            "on",
+            "--session",
+            "--json"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 0,
+            "output": "{\"sessionId\":\"--json\",\"active\":true,\"objectiveKind\":\"maximize\",\"collapsePoint\":\"D\",\"reason\":\"plateau\",\"updatedAt\":\"<TS>\"}"
+          }
+        ],
+        "files": {
+          "cwd0": {
+            "divergence/json.mode.json": "{\n  \"sessionId\": \"--json\",\n  \"active\": true,\n  \"objectiveKind\": \"maximize\",\n  \"collapsePoint\": \"D\",\n  \"reason\": \"plateau\",\n  \"updatedAt\": \"<TS>\"\n}"
+          },
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "session_first_wins",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": [
+            "mode",
+            "--session",
+            "cli",
+            "--session",
+            "other"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 0,
+            "output": "divergence mode: unset"
+          }
+        ],
+        "files": {
+          "cwd0": {},
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "session_beats_short",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": [
+            "mode",
+            "-s",
+            "other",
+            "--session",
+            "cli"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 0,
+            "output": "divergence mode: unset"
+          }
+        ],
+        "files": {
+          "cwd0": {},
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "unknown_topic_usage",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": [
+            "bogus",
+            "--session",
+            "cli"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 1,
+            "output": "divergence: expected one of:\n  divergence mode --session <id> on|off [--cwd <owner-root>] [--collapse P|D] [--reason <text>] [--json]\n  divergence candidate add --session <id> [--cwd <owner-root>] --kind strong-1|add-1|alternative --title <text> --rationale <text> --source <url> [--source <url>...] [--status proposed|built|checked|kept|discarded] [--change-class parameter-tweak|branch-toggle|state-space-redesign|evaluator-change] [--killed-at-phase P|A|B|C|D] [--worktree <path>] [--json]\n  divergence candidate list --session <id> [--cwd <owner-root>] [--json]"
+          }
+        ],
+        "files": {
+          "cwd0": {},
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "unknown_topic_no_session",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": [
+            "bogus"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 1,
+            "output": "divergence: --session <id> is required"
+          }
+        ],
+        "files": {
+          "cwd0": {},
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "unknown_verb_usage",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": [
+            "candidate",
+            "bogus",
+            "--session",
+            "cli"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 1,
+            "output": "divergence: expected one of:\n  divergence mode --session <id> on|off [--cwd <owner-root>] [--collapse P|D] [--reason <text>] [--json]\n  divergence candidate add --session <id> [--cwd <owner-root>] --kind strong-1|add-1|alternative --title <text> --rationale <text> --source <url> [--source <url>...] [--status proposed|built|checked|kept|discarded] [--change-class parameter-tweak|branch-toggle|state-space-redesign|evaluator-change] [--killed-at-phase P|A|B|C|D] [--worktree <path>] [--json]\n  divergence candidate list --session <id> [--cwd <owner-root>] [--json]"
+          }
+        ],
+        "files": {
+          "cwd0": {},
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "mode_read_unset",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": [
+            "mode",
+            "--session",
+            "cli"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 0,
+            "output": "divergence mode: unset"
+          }
+        ],
+        "files": {
+          "cwd0": {},
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "mode_read_unset_json",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": [
+            "mode",
+            "--session",
+            "cli",
+            "--json"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 0,
+            "output": "{\"mode\":null}"
+          }
+        ],
+        "files": {
+          "cwd0": {},
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "mode_read_unknown_verb",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": [
+            "mode",
+            "bogus",
+            "--session",
+            "cli"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 0,
+            "output": "divergence mode: unset"
+          }
+        ],
+        "files": {
+          "cwd0": {},
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "mode_on_text",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": [
+            "mode",
+            "on",
+            "--session",
+            "cli"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 0,
+            "output": "divergence mode: on collapse=D"
+          }
+        ],
+        "files": {
+          "cwd0": {
+            "divergence/cli.mode.json": "{\n  \"sessionId\": \"cli\",\n  \"active\": true,\n  \"objectiveKind\": \"maximize\",\n  \"collapsePoint\": \"D\",\n  \"reason\": \"plateau\",\n  \"updatedAt\": \"<TS>\"\n}"
+          },
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "mode_on_json",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": [
+            "mode",
+            "on",
+            "--session",
+            "cli",
+            "--json"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 0,
+            "output": "{\"sessionId\":\"cli\",\"active\":true,\"objectiveKind\":\"maximize\",\"collapsePoint\":\"D\",\"reason\":\"plateau\",\"updatedAt\":\"<TS>\"}"
+          }
+        ],
+        "files": {
+          "cwd0": {
+            "divergence/cli.mode.json": "{\n  \"sessionId\": \"cli\",\n  \"active\": true,\n  \"objectiveKind\": \"maximize\",\n  \"collapsePoint\": \"D\",\n  \"reason\": \"plateau\",\n  \"updatedAt\": \"<TS>\"\n}"
+          },
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "mode_on_collapse_reason",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": [
+            "mode",
+            "on",
+            "--session",
+            "cli",
+            "--collapse",
+            "P",
+            "--reason",
+            "why",
+            "--json"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 0,
+            "output": "{\"sessionId\":\"cli\",\"active\":true,\"objectiveKind\":\"maximize\",\"collapsePoint\":\"P\",\"reason\":\"why\",\"updatedAt\":\"<TS>\"}"
+          }
+        ],
+        "files": {
+          "cwd0": {
+            "divergence/cli.mode.json": "{\n  \"sessionId\": \"cli\",\n  \"active\": true,\n  \"objectiveKind\": \"maximize\",\n  \"collapsePoint\": \"P\",\n  \"reason\": \"why\",\n  \"updatedAt\": \"<TS>\"\n}"
+          },
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "mode_on_invalid_collapse",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": [
+            "mode",
+            "on",
+            "--session",
+            "cli",
+            "--collapse",
+            "X",
+            "--json"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 0,
+            "output": "{\"sessionId\":\"cli\",\"active\":true,\"objectiveKind\":\"maximize\",\"collapsePoint\":\"D\",\"reason\":\"plateau\",\"updatedAt\":\"<TS>\"}"
+          }
+        ],
+        "files": {
+          "cwd0": {
+            "divergence/cli.mode.json": "{\n  \"sessionId\": \"cli\",\n  \"active\": true,\n  \"objectiveKind\": \"maximize\",\n  \"collapsePoint\": \"D\",\n  \"reason\": \"plateau\",\n  \"updatedAt\": \"<TS>\"\n}"
+          },
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "mode_on_empty_reason",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": [
+            "mode",
+            "on",
+            "--session",
+            "cli",
+            "--reason",
+            "",
+            "--json"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 0,
+            "output": "{\"sessionId\":\"cli\",\"active\":true,\"objectiveKind\":\"maximize\",\"collapsePoint\":\"D\",\"reason\":\"\",\"updatedAt\":\"<TS>\"}"
+          }
+        ],
+        "files": {
+          "cwd0": {
+            "divergence/cli.mode.json": "{\n  \"sessionId\": \"cli\",\n  \"active\": true,\n  \"objectiveKind\": \"maximize\",\n  \"collapsePoint\": \"D\",\n  \"reason\": \"\",\n  \"updatedAt\": \"<TS>\"\n}"
+          },
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "mode_off_json",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": [
+            "mode",
+            "off",
+            "--session",
+            "cli",
+            "--json"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 0,
+            "output": "{\"sessionId\":\"cli\",\"active\":false,\"objectiveKind\":\"maximize\",\"collapsePoint\":\"D\",\"reason\":\"resolved\",\"updatedAt\":\"<TS>\"}"
+          }
+        ],
+        "files": {
+          "cwd0": {
+            "divergence/cli.mode.json": "{\n  \"sessionId\": \"cli\",\n  \"active\": false,\n  \"objectiveKind\": \"maximize\",\n  \"collapsePoint\": \"D\",\n  \"reason\": \"resolved\",\n  \"updatedAt\": \"<TS>\"\n}"
+          },
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "mode_on_then_off",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": [
+            "mode",
+            "on",
+            "--session",
+            "cli",
+            "--json"
+          ]
+        },
+        {
+          "argv": [
+            "mode",
+            "off",
+            "--session",
+            "cli",
+            "--json"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 0,
+            "output": "{\"sessionId\":\"cli\",\"active\":true,\"objectiveKind\":\"maximize\",\"collapsePoint\":\"D\",\"reason\":\"plateau\",\"updatedAt\":\"<TS>\"}"
+          },
+          {
+            "code": 0,
+            "output": "{\"sessionId\":\"cli\",\"active\":false,\"objectiveKind\":\"maximize\",\"collapsePoint\":\"D\",\"reason\":\"resolved\",\"updatedAt\":\"<TS>\"}"
+          }
+        ],
+        "files": {
+          "cwd0": {
+            "divergence/cli.mode.json": "{\n  \"sessionId\": \"cli\",\n  \"active\": false,\n  \"objectiveKind\": \"maximize\",\n  \"collapsePoint\": \"D\",\n  \"reason\": \"resolved\",\n  \"updatedAt\": \"<TS>\"\n}"
+          },
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "mode_write_read_roundtrip",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": [
+            "mode",
+            "on",
+            "--session",
+            "cli",
+            "--collapse",
+            "P",
+            "--reason",
+            "flat",
+            "--json"
+          ]
+        },
+        {
+          "argv": [
+            "mode",
+            "--session",
+            "cli",
+            "--json"
+          ]
+        },
+        {
+          "argv": [
+            "mode",
+            "--session",
+            "cli"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 0,
+            "output": "{\"sessionId\":\"cli\",\"active\":true,\"objectiveKind\":\"maximize\",\"collapsePoint\":\"P\",\"reason\":\"flat\",\"updatedAt\":\"<TS>\"}"
+          },
+          {
+            "code": 0,
+            "output": "{\"mode\":{\"sessionId\":\"cli\",\"active\":true,\"objectiveKind\":\"maximize\",\"collapsePoint\":\"P\",\"reason\":\"flat\",\"updatedAt\":\"<TS>\"}}"
+          },
+          {
+            "code": 0,
+            "output": "divergence mode: on collapse=P"
+          }
+        ],
+        "files": {
+          "cwd0": {
+            "divergence/cli.mode.json": "{\n  \"sessionId\": \"cli\",\n  \"active\": true,\n  \"objectiveKind\": \"maximize\",\n  \"collapsePoint\": \"P\",\n  \"reason\": \"flat\",\n  \"updatedAt\": \"<TS>\"\n}"
+          },
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "mode_trailing_cwd_ignored",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": [
+            "mode",
+            "on",
+            "--session",
+            "cli",
+            "--cwd"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 0,
+            "output": "divergence mode: on collapse=D"
+          }
+        ],
+        "files": {
+          "cwd0": {
+            "divergence/cli.mode.json": "{\n  \"sessionId\": \"cli\",\n  \"active\": true,\n  \"objectiveKind\": \"maximize\",\n  \"collapsePoint\": \"D\",\n  \"reason\": \"plateau\",\n  \"updatedAt\": \"<TS>\"\n}"
+          },
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "mode_second_cwd",
+      "cwds": 2,
+      "steps": [
+        {
+          "argv": [
+            "mode",
+            "on",
+            "--session",
+            "cli",
+            "--cwd",
+            "<CWD1>",
+            "--json"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 0,
+            "output": "{\"sessionId\":\"cli\",\"active\":true,\"objectiveKind\":\"maximize\",\"collapsePoint\":\"D\",\"reason\":\"plateau\",\"updatedAt\":\"<TS>\"}"
+          }
+        ],
+        "files": {
+          "cwd0": {},
+          "cwd1": {
+            "divergence/cli.mode.json": "{\n  \"sessionId\": \"cli\",\n  \"active\": true,\n  \"objectiveKind\": \"maximize\",\n  \"collapsePoint\": \"D\",\n  \"reason\": \"plateau\",\n  \"updatedAt\": \"<TS>\"\n}"
+          }
+        }
+      }
+    },
+    {
+      "id": "mode_read_other_cwd_unset",
+      "cwds": 2,
+      "steps": [
+        {
+          "argv": [
+            "mode",
+            "--session",
+            "cli",
+            "--cwd",
+            "<CWD1>"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 0,
+            "output": "divergence mode: unset"
+          }
+        ],
+        "files": {
+          "cwd0": {},
+          "cwd1": {}
+        }
+      }
+    },
+    {
+      "id": "mode_empty_cwd_writes_relative",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": [
+            "mode",
+            "on",
+            "--session",
+            "cli",
+            "--cwd",
+            "",
+            "--json"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 0,
+            "output": "{\"sessionId\":\"cli\",\"active\":true,\"objectiveKind\":\"maximize\",\"collapsePoint\":\"D\",\"reason\":\"plateau\",\"updatedAt\":\"<TS>\"}"
+          }
+        ],
+        "files": {
+          "cwd0": {
+            "divergence/cli.mode.json": "{\n  \"sessionId\": \"cli\",\n  \"active\": true,\n  \"objectiveKind\": \"maximize\",\n  \"collapsePoint\": \"D\",\n  \"reason\": \"plateau\",\n  \"updatedAt\": \"<TS>\"\n}"
+          },
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "mode_write_blocked_by_file",
+      "cwds": 1,
+      "setup": {
+        ".codexclaw/divergence": "not a directory\n"
+      },
+      "steps": [
+        {
+          "argv": [
+            "mode",
+            "on",
+            "--session",
+            "cli"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "threw": true
+          }
+        ],
+        "files": {
+          "cwd0": {
+            "divergence": "not a directory\n"
+          },
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "mode_write_cwd_is_a_file",
+      "cwds": 1,
+      "setup": {
+        "blocker": "x\n"
+      },
+      "steps": [
+        {
+          "argv": [
+            "mode",
+            "on",
+            "--session",
+            "cli",
+            "--cwd",
+            "<CWD0>/blocker"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "threw": true
+          }
+        ],
+        "files": {
+          "cwd0": {},
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "candidate_add_missing_kind",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": [
+            "candidate",
+            "add",
+            "--session",
+            "cli",
+            "--title",
+            "T",
+            "--rationale",
+            "r",
+            "--source",
+            "https://example.invalid/a"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 1,
+            "output": "divergence candidate add: --kind strong-1|add-1|alternative is required"
+          }
+        ],
+        "files": {
+          "cwd0": {},
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "candidate_add_invalid_kind",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": [
+            "candidate",
+            "add",
+            "--session",
+            "cli",
+            "--kind",
+            "strong-1",
+            "--title",
+            "T",
+            "--rationale",
+            "r",
+            "--kind",
+            "bogus",
+            "--source",
+            "https://example.invalid/a"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 0,
+            "output": "divergence candidate: strong-1-t (strong-1) sources=1"
+          }
+        ],
+        "files": {
+          "cwd0": {
+            "divergence/candidates.jsonl": "{\"ts\":\"<TS>\",\"sessionId\":\"cli\",\"id\":\"strong-1-t\",\"kind\":\"strong-1\",\"title\":\"T\",\"rationale\":\"r\",\"sourceUrls\":[\"https://example.invalid/a\"],\"status\":\"proposed\"}\n"
+          },
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "candidate_add_text",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": [
+            "candidate",
+            "add",
+            "--session",
+            "cli",
+            "--kind",
+            "strong-1",
+            "--title",
+            "T",
+            "--rationale",
+            "r",
+            "--source",
+            "https://example.invalid/a"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 0,
+            "output": "divergence candidate: strong-1-t (strong-1) sources=1"
+          }
+        ],
+        "files": {
+          "cwd0": {
+            "divergence/candidates.jsonl": "{\"ts\":\"<TS>\",\"sessionId\":\"cli\",\"id\":\"strong-1-t\",\"kind\":\"strong-1\",\"title\":\"T\",\"rationale\":\"r\",\"sourceUrls\":[\"https://example.invalid/a\"],\"status\":\"proposed\"}\n"
+          },
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "candidate_add_full_json",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": [
+            "candidate",
+            "add",
+            "--session",
+            "cli",
+            "--kind",
+            "strong-1",
+            "--title",
+            "T",
+            "--rationale",
+            "r",
+            "--source",
+            "https://example.invalid/a",
+            "--status",
+            "built",
+            "--change-class",
+            "state-space-redesign",
+            "--killed-at-phase",
+            "D",
+            "--worktree",
+            "/wt",
+            "--json"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 0,
+            "output": "{\"ts\":\"<TS>\",\"sessionId\":\"cli\",\"id\":\"strong-1-t\",\"kind\":\"strong-1\",\"title\":\"T\",\"rationale\":\"r\",\"sourceUrls\":[\"https://example.invalid/a\"],\"status\":\"built\",\"worktree\":\"/wt\",\"changeClass\":\"state-space-redesign\",\"killedAtPhase\":\"D\"}"
+          }
+        ],
+        "files": {
+          "cwd0": {
+            "divergence/candidates.jsonl": "{\"ts\":\"<TS>\",\"sessionId\":\"cli\",\"id\":\"strong-1-t\",\"kind\":\"strong-1\",\"title\":\"T\",\"rationale\":\"r\",\"sourceUrls\":[\"https://example.invalid/a\"],\"status\":\"built\",\"worktree\":\"/wt\",\"changeClass\":\"state-space-redesign\",\"killedAtPhase\":\"D\"}\n"
+          },
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "candidate_add_status_invalid",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": [
+            "candidate",
+            "add",
+            "--session",
+            "cli",
+            "--kind",
+            "strong-1",
+            "--title",
+            "T",
+            "--rationale",
+            "r",
+            "--status",
+            "bogus",
+            "--source",
+            "https://example.invalid/a",
+            "--json"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 0,
+            "output": "{\"ts\":\"<TS>\",\"sessionId\":\"cli\",\"id\":\"strong-1-t\",\"kind\":\"strong-1\",\"title\":\"T\",\"rationale\":\"r\",\"sourceUrls\":[\"https://example.invalid/a\"],\"status\":\"proposed\"}"
+          }
+        ],
+        "files": {
+          "cwd0": {
+            "divergence/candidates.jsonl": "{\"ts\":\"<TS>\",\"sessionId\":\"cli\",\"id\":\"strong-1-t\",\"kind\":\"strong-1\",\"title\":\"T\",\"rationale\":\"r\",\"sourceUrls\":[\"https://example.invalid/a\"],\"status\":\"proposed\"}\n"
+          },
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "candidate_add_change_class_empty",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": [
+            "candidate",
+            "add",
+            "--session",
+            "cli",
+            "--kind",
+            "strong-1",
+            "--title",
+            "T",
+            "--rationale",
+            "r",
+            "--change-class",
+            "",
+            "--source",
+            "https://example.invalid/a",
+            "--json"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 0,
+            "output": "{\"ts\":\"<TS>\",\"sessionId\":\"cli\",\"id\":\"strong-1-t\",\"kind\":\"strong-1\",\"title\":\"T\",\"rationale\":\"r\",\"sourceUrls\":[\"https://example.invalid/a\"],\"status\":\"proposed\"}"
+          }
+        ],
+        "files": {
+          "cwd0": {
+            "divergence/candidates.jsonl": "{\"ts\":\"<TS>\",\"sessionId\":\"cli\",\"id\":\"strong-1-t\",\"kind\":\"strong-1\",\"title\":\"T\",\"rationale\":\"r\",\"sourceUrls\":[\"https://example.invalid/a\"],\"status\":\"proposed\"}\n"
+          },
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "candidate_add_change_class_invalid",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": [
+            "candidate",
+            "add",
+            "--session",
+            "cli",
+            "--kind",
+            "strong-1",
+            "--title",
+            "T",
+            "--rationale",
+            "r",
+            "--change-class",
+            "bogus",
+            "--source",
+            "https://example.invalid/a"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 1,
+            "output": "divergence candidate add: --change-class parameter-tweak|branch-toggle|state-space-redesign|evaluator-change is required"
+          }
+        ],
+        "files": {
+          "cwd0": {},
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "candidate_add_killed_at_empty",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": [
+            "candidate",
+            "add",
+            "--session",
+            "cli",
+            "--kind",
+            "strong-1",
+            "--title",
+            "T",
+            "--rationale",
+            "r",
+            "--killed-at-phase",
+            "",
+            "--source",
+            "https://example.invalid/a",
+            "--json"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 0,
+            "output": "{\"ts\":\"<TS>\",\"sessionId\":\"cli\",\"id\":\"strong-1-t\",\"kind\":\"strong-1\",\"title\":\"T\",\"rationale\":\"r\",\"sourceUrls\":[\"https://example.invalid/a\"],\"status\":\"proposed\"}"
+          }
+        ],
+        "files": {
+          "cwd0": {
+            "divergence/candidates.jsonl": "{\"ts\":\"<TS>\",\"sessionId\":\"cli\",\"id\":\"strong-1-t\",\"kind\":\"strong-1\",\"title\":\"T\",\"rationale\":\"r\",\"sourceUrls\":[\"https://example.invalid/a\"],\"status\":\"proposed\"}\n"
+          },
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "candidate_add_killed_at_invalid",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": [
+            "candidate",
+            "add",
+            "--session",
+            "cli",
+            "--kind",
+            "strong-1",
+            "--title",
+            "T",
+            "--rationale",
+            "r",
+            "--killed-at-phase",
+            "X",
+            "--source",
+            "https://example.invalid/a"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 1,
+            "output": "divergence candidate add: --killed-at-phase P|A|B|C|D is required"
+          }
+        ],
+        "files": {
+          "cwd0": {},
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "candidate_add_missing_title",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": [
+            "candidate",
+            "add",
+            "--session",
+            "cli",
+            "--kind",
+            "strong-1",
+            "--rationale",
+            "r",
+            "--source",
+            "https://example.invalid/a"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 1,
+            "output": "divergence candidate add: --title <text> is required"
+          }
+        ],
+        "files": {
+          "cwd0": {},
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "candidate_add_missing_rationale",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": [
+            "candidate",
+            "add",
+            "--session",
+            "cli",
+            "--kind",
+            "strong-1",
+            "--title",
+            "T",
+            "--source",
+            "https://example.invalid/a"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 1,
+            "output": "divergence candidate add: --rationale <text> is required"
+          }
+        ],
+        "files": {
+          "cwd0": {},
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "candidate_add_missing_source",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": [
+            "candidate",
+            "add",
+            "--session",
+            "cli",
+            "--kind",
+            "strong-1",
+            "--title",
+            "T",
+            "--rationale",
+            "r"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 1,
+            "output": "divergence candidate add: at least one --source <url> is required"
+          }
+        ],
+        "files": {
+          "cwd0": {},
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "candidate_add_source_empty",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": [
+            "candidate",
+            "add",
+            "--session",
+            "cli",
+            "--kind",
+            "strong-1",
+            "--title",
+            "T",
+            "--rationale",
+            "r",
+            "--source",
+            ""
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 1,
+            "output": "divergence candidate add: at least one --source <url> is required"
+          }
+        ],
+        "files": {
+          "cwd0": {},
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "candidate_add_source_whitespace",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": [
+            "candidate",
+            "add",
+            "--session",
+            "cli",
+            "--kind",
+            "strong-1",
+            "--title",
+            "T",
+            "--rationale",
+            "r",
+            "--source",
+            " "
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 1,
+            "output": "divergence candidate add: divergence candidate requires at least one grounding source URL"
+          }
+        ],
+        "files": {
+          "cwd0": {},
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "candidate_add_source_trailing",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": [
+            "candidate",
+            "add",
+            "--session",
+            "cli",
+            "--kind",
+            "strong-1",
+            "--title",
+            "T",
+            "--rationale",
+            "r",
+            "--source"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 1,
+            "output": "divergence candidate add: at least one --source <url> is required"
+          }
+        ],
+        "files": {
+          "cwd0": {},
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "candidate_add_source_repeated",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": [
+            "candidate",
+            "add",
+            "--session",
+            "cli",
+            "--kind",
+            "strong-1",
+            "--title",
+            "T",
+            "--rationale",
+            "r",
+            "--source",
+            "https://example.invalid/a",
+            "--source",
+            "https://example.invalid/a",
+            "--source",
+            "https://example.invalid/b",
+            "--json"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 0,
+            "output": "{\"ts\":\"<TS>\",\"sessionId\":\"cli\",\"id\":\"strong-1-t\",\"kind\":\"strong-1\",\"title\":\"T\",\"rationale\":\"r\",\"sourceUrls\":[\"https://example.invalid/a\",\"https://example.invalid/b\"],\"status\":\"proposed\"}"
+          }
+        ],
+        "files": {
+          "cwd0": {
+            "divergence/candidates.jsonl": "{\"ts\":\"<TS>\",\"sessionId\":\"cli\",\"id\":\"strong-1-t\",\"kind\":\"strong-1\",\"title\":\"T\",\"rationale\":\"r\",\"sourceUrls\":[\"https://example.invalid/a\",\"https://example.invalid/b\"],\"status\":\"proposed\"}\n"
+          },
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "candidate_list_empty",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": [
+            "candidate",
+            "list",
+            "--session",
+            "cli"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 0,
+            "output": "divergence candidate list: no candidates for session cli"
+          }
+        ],
+        "files": {
+          "cwd0": {},
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "candidate_list_empty_json",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": [
+            "candidate",
+            "list",
+            "--session",
+            "cli",
+            "--json"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 0,
+            "output": "{\"sessionId\":\"cli\",\"candidates\":[]}"
+          }
+        ],
+        "files": {
+          "cwd0": {},
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "candidate_list_nonempty_text",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": [
+            "candidate",
+            "add",
+            "--session",
+            "cli",
+            "--kind",
+            "strong-1",
+            "--title",
+            "T",
+            "--rationale",
+            "r",
+            "--source",
+            "https://example.invalid/a"
+          ]
+        },
+        {
+          "argv": [
+            "candidate",
+            "list",
+            "--session",
+            "cli"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 0,
+            "output": "divergence candidate: strong-1-t (strong-1) sources=1"
+          },
+          {
+            "code": 0,
+            "output": "strong-1-t strong-1 proposed sources=1"
+          }
+        ],
+        "files": {
+          "cwd0": {
+            "divergence/candidates.jsonl": "{\"ts\":\"<TS>\",\"sessionId\":\"cli\",\"id\":\"strong-1-t\",\"kind\":\"strong-1\",\"title\":\"T\",\"rationale\":\"r\",\"sourceUrls\":[\"https://example.invalid/a\"],\"status\":\"proposed\"}\n"
+          },
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "candidate_list_nonempty_json",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": [
+            "candidate",
+            "add",
+            "--session",
+            "cli",
+            "--kind",
+            "strong-1",
+            "--title",
+            "T",
+            "--rationale",
+            "r",
+            "--source",
+            "https://example.invalid/a",
+            "--json"
+          ]
+        },
+        {
+          "argv": [
+            "candidate",
+            "list",
+            "--session",
+            "cli",
+            "--json"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 0,
+            "output": "{\"ts\":\"<TS>\",\"sessionId\":\"cli\",\"id\":\"strong-1-t\",\"kind\":\"strong-1\",\"title\":\"T\",\"rationale\":\"r\",\"sourceUrls\":[\"https://example.invalid/a\"],\"status\":\"proposed\"}"
+          },
+          {
+            "code": 0,
+            "output": "{\"sessionId\":\"cli\",\"candidates\":[{\"ts\":\"<TS>\",\"sessionId\":\"cli\",\"id\":\"strong-1-t\",\"kind\":\"strong-1\",\"title\":\"T\",\"rationale\":\"r\",\"sourceUrls\":[\"https://example.invalid/a\"],\"status\":\"proposed\"}]}"
+          }
+        ],
+        "files": {
+          "cwd0": {
+            "divergence/candidates.jsonl": "{\"ts\":\"<TS>\",\"sessionId\":\"cli\",\"id\":\"strong-1-t\",\"kind\":\"strong-1\",\"title\":\"T\",\"rationale\":\"r\",\"sourceUrls\":[\"https://example.invalid/a\"],\"status\":\"proposed\"}\n"
+          },
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "candidate_list_other_session",
+      "cwds": 1,
+      "steps": [
+        {
+          "argv": [
+            "candidate",
+            "add",
+            "--session",
+            "cli",
+            "--kind",
+            "strong-1",
+            "--title",
+            "T",
+            "--rationale",
+            "r",
+            "--source",
+            "https://example.invalid/a"
+          ]
+        },
+        {
+          "argv": [
+            "candidate",
+            "list",
+            "--session",
+            "cli",
+            "--session",
+            "other"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 0,
+            "output": "divergence candidate: strong-1-t (strong-1) sources=1"
+          },
+          {
+            "code": 0,
+            "output": "strong-1-t strong-1 proposed sources=1"
+          }
+        ],
+        "files": {
+          "cwd0": {
+            "divergence/candidates.jsonl": "{\"ts\":\"<TS>\",\"sessionId\":\"cli\",\"id\":\"strong-1-t\",\"kind\":\"strong-1\",\"title\":\"T\",\"rationale\":\"r\",\"sourceUrls\":[\"https://example.invalid/a\"],\"status\":\"proposed\"}\n"
+          },
+          "cwd1": null
+        }
+      }
+    },
+    {
+      "id": "candidate_add_second_cwd",
+      "cwds": 2,
+      "steps": [
+        {
+          "argv": [
+            "candidate",
+            "add",
+            "--session",
+            "cli",
+            "--kind",
+            "strong-1",
+            "--title",
+            "T",
+            "--rationale",
+            "r",
+            "--cwd",
+            "<CWD1>",
+            "--source",
+            "https://example.invalid/a"
+          ]
+        },
+        {
+          "argv": [
+            "candidate",
+            "list",
+            "--session",
+            "cli"
+          ]
+        },
+        {
+          "argv": [
+            "candidate",
+            "list",
+            "--session",
+            "cli",
+            "--cwd",
+            "<CWD1>"
+          ]
+        }
+      ],
+      "want": {
+        "steps": [
+          {
+            "code": 0,
+            "output": "divergence candidate: strong-1-t (strong-1) sources=1"
+          },
+          {
+            "code": 0,
+            "output": "divergence candidate list: no candidates for session cli"
+          },
+          {
+            "code": 0,
+            "output": "strong-1-t strong-1 proposed sources=1"
+          }
+        ],
+        "files": {
+          "cwd0": {},
+          "cwd1": {
+            "divergence/candidates.jsonl": "{\"ts\":\"<TS>\",\"sessionId\":\"cli\",\"id\":\"strong-1-t\",\"kind\":\"strong-1\",\"title\":\"T\",\"rationale\":\"r\",\"sourceUrls\":[\"https://example.invalid/a\"],\"status\":\"proposed\"}\n"
+          }
+        }
+      }
+    }
+  ]
+}

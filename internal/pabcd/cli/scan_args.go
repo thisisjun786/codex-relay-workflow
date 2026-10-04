@@ -37,6 +37,7 @@ type ScanCliArgs struct {
 	Cwd                    string                                           `json:"cwd"`
 	Derive                 bool                                             `json:"derive,omitempty"`
 	Map                    map[string]interview.Dimension                   `json:"map,omitempty"`
+	MapOrder               []string                                         `json:"-"`
 	Dims                   map[interview.Dimension]interview.DimensionLevel `json:"dims,omitempty"`
 	Known                  []ScanDimensionText                              `json:"known,omitempty"`
 	Unknown                []ScanDimensionText                              `json:"unknown,omitempty"`
@@ -156,6 +157,9 @@ func scanPairFlag(a *ScanCliArgs, flag, raw string) string {
 	case "--map":
 		if a.Map == nil {
 			a.Map = make(map[string]interview.Dimension)
+		}
+		if _, present := a.Map[key]; !present {
+			a.MapOrder = append(a.MapOrder, key)
 		}
 		a.Map[key] = interview.Dimension(value)
 	case "--dim":
