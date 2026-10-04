@@ -81,9 +81,10 @@ func TestStatePublicationSyncsTheFileBeforeAndDirectoryAfter(t *testing.T) {
 				path := f.Name()
 				if info.IsDir() {
 					calls = append(calls, "directory")
-					if path != filepath.Dir(final) || ReadState(cwd, id).SessionID != id {
-						t.Errorf("directory sync before publication or on wrong path: %q", path)
+					if path != filepath.Dir(final) {
+						t.Errorf("directory sync on wrong path: %q", path)
 					}
+					assertPublishedSyncState(t, final, id, ensure)
 				} else {
 					calls = append(calls, "file")
 					if !info.Mode().IsRegular() || !strings.HasPrefix(path, final+".") || !strings.HasSuffix(path, ".tmp") {
@@ -120,6 +121,9 @@ func TestStateDirectorySyncFailureReturnsErrorAndKeepsPublication(t *testing.T) 
 	for _, ensure := range []bool{true, false} {
 		t.Run(map[bool]string{true: "link", false: "rename"}[ensure], func(t *testing.T) {
 			cwd, id, calls := t.TempDir(), "sync-directory", []string{}
+			if !ensure {
+				putIn(t, cwd, id, "previous state must be replaced")
+			}
 			failDirectory := func(f *os.File) error {
 				info, err := f.Stat()
 				if err != nil {
@@ -131,13 +135,30 @@ func TestStateDirectorySyncFailureReturnsErrorAndKeepsPublication(t *testing.T) 
 				return f.Sync()
 			}
 			created, err := runPrimaryPublication(cwd, id, ensure, failDirectory, &calls)
-			if (ensure && !created) || !errors.Is(err, syscall.EIO) || ReadState(cwd, id).SessionID != id {
-				t.Fatalf("created=%v err=%v state=%+v", created, err, ReadState(cwd, id))
+			if (ensure && !created) || !errors.Is(err, syscall.EIO) {
+				t.Fatalf("created=%v err=%v", created, err)
 			}
+			assertPublishedSyncState(t, StatePath(cwd, id), id, ensure)
 			if files := sessionFiles(cwd); !slices.Equal(files, []string{id + ".json"}) {
 				t.Fatalf("files after directory sync failure: %v", files)
 			}
 		})
+	}
+}
+
+// ReadState recovers corrupt files as defaults, so retention is asserted against actual JSON bytes.
+func assertPublishedSyncState(t *testing.T, path, id string, ensure bool) {
+	t.Helper()
+	var got map[string]any
+	if err := json.Unmarshal([]byte(fileText(t, path)), &got); err != nil {
+		t.Fatalf("invalid published state: %v", err)
+	}
+	slug := "next"
+	if ensure {
+		slug = ""
+	}
+	if got["sessionId"] != id || got["phase"] != "IDLE" || got["slug"] != slug || got["updatedAt"] != "2026-01-01T00:00:00.000Z" {
+		t.Fatalf("incomplete or old published state: %v", got)
 	}
 }
 
