@@ -9,8 +9,18 @@ import (
 
 // hostReady requires a complete archived scan; a listing miss uses thread/read for existence.
 func hostReady(ctx context.Context, rpc HostRPC, task string) (string, error) {
+	return businessResendCheckHost(ctx, rpc, task, false)
+}
+
+// A resend already knows its child. A complete archived scan followed by a
+// positive thread/read establishes the same lifecycle facts without scanning
+// the unarchived listing too, leaving budget for the final history check.
+func businessResendCheckHost(ctx context.Context, rpc HostRPC, task string, resend bool) (string, error) {
 	found, archived := false, false
 	for _, filter := range []bool{true, false} {
+		if resend && !filter {
+			break
+		}
 		cursor := ""
 		for range 4 {
 			params := map[string]any{"limit": 50, "archived": filter, "useStateDbOnly": true}

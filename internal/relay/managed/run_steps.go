@@ -373,6 +373,11 @@ func (r *startRun) businessTurn(ctx context.Context) (contract.OrderedObject, er
 			break
 		}
 		if !businessResendSafe(sent, r.task) || r.businessAttempt+1 == maxBusinessResendAttempts {
+			if r.businessAttempt > 0 && sent["status"] == "accepted" {
+				// The retained ID might belong to other arguments. Send's ledger
+				// lookup proves this exact packet before replaying, with no effect.
+				return nil, r.sendBusiness(ctx)
+			}
 			return nil, nil
 		}
 	}

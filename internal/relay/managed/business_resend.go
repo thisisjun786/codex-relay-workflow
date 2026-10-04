@@ -26,21 +26,31 @@ func businessResendTurnPossible(receipt map[string]any) bool {
 	if receipt["turnId"] != nil {
 		return true
 	}
+	_, hasEffects := receipt["attemptedEffects"]
+	if strings.HasPrefix(pyjson.Text(receipt["error"]), "turn/start:") && (receipt["status"] != "not_attempted" || !hasEffects) {
+		return true
+	}
 	if value, present := receipt["delivery"]; present && value != "not_delivered" {
 		return true
 	}
 	if value, present := receipt["attemptedEffects"]; present {
 		switch effects := value.(type) {
 		case []any:
+			if len(effects) > 1 {
+				return true
+			}
 			for _, effect := range effects {
 				text, ok := effect.(string)
-				if !ok || text == "turn/start" {
+				if !ok || text != "thread/resume" {
 					return true
 				}
 			}
 		case []string:
+			if len(effects) > 1 {
+				return true
+			}
 			for _, effect := range effects {
-				if effect == "turn/start" {
+				if effect != "thread/resume" {
 					return true
 				}
 			}

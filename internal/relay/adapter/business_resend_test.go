@@ -3,6 +3,7 @@ package adapter
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/managed"
 )
@@ -18,6 +20,16 @@ import (
 // Production engine, bridge, adapter and durable ledgers against a synthetic
 // socket. The scripted external load loses the profile after the standby.
 func TestBusinessResendProfileFailureOverSocket(t *testing.T) {
+	businessResendSocketScenario(t, "")
+}
+
+func TestBusinessResendSuccessorCollision(t *testing.T) {
+	for _, collision := range []string{"message", "operation"} {
+		t.Run(collision, func(t *testing.T) { businessResendSocketScenario(t, collision) })
+	}
+}
+
+func businessResendSocketScenario(t *testing.T, collision string) {
 	root := t.TempDir()
 	workspace, state := filepath.Join(root, "work"), filepath.Join(root, "state")
 	if err := os.Mkdir(workspace, 0700); err != nil {
@@ -157,6 +169,30 @@ func TestBusinessResendProfileFailureOverSocket(t *testing.T) {
 		t.Fatalf("legacy shape changed: %v", failure["status"])
 	}
 	before, _ := json.Marshal(failure)
+	if collision != "" {
+		// Independently calculated successor ID; a different operation occupies it.
+		retry := "managed-business-6dd026a2283e7d5fea993f289b8300c4288b66ab810eec40a50bc073be506ffa"
+		method := "send_message_to_thread"
+		if collision == "operation" {
+			method = "steer_thread"
+		}
+		_, retained, err := a.ledger.Begin(t.Context(), retry, method, map[string]any{"threadId": "resend-child", "message": "unrelated input"}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		retained["status"], retained["threadId"], retained["turnId"] = "accepted", "resend-child", "unrelated-turn"
+		if _, err := a.ledger.Save(t.Context(), retained); err != nil {
+			t.Fatal(err)
+		}
+		out, err := engine.Run(t.Context(), raw)
+		if !errors.Is(err, ledger.ErrConflict) {
+			t.Fatalf("colliding successor admitted: state=%v err=%v", out.Get("state"), err)
+		}
+		if host.Count("turn/start") != 1 || host.Count("thread/resume") != 1 {
+			t.Fatal("collision made a new host effect")
+		}
+		return
+	}
 	for range 2 {
 		if got := run(); got["reason"] != "recipient_not_idle" {
 			t.Fatalf("loaded retry: %v", got["reason"])

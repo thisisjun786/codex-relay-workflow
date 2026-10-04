@@ -48,7 +48,7 @@ func (r *startRun) businessGuard(ctx context.Context) (map[string]any, error) {
 			return refuse(code)
 		}
 	}
-	code, err := hostReady(ctx, r.m.Adapter, r.task)
+	code, err := businessResendCheckHost(ctx, r.m.Adapter, r.task, r.businessAttempt > 0)
 	if err != nil {
 		if r.businessAttempt > 0 && ctx.Err() == nil {
 			return refuse("lifecycle_unknown")

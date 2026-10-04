@@ -135,11 +135,15 @@ A managed start can retry the same complete request after a recorded business se
 failed before `turn/start`. It retains that failure under its original bridge operation
 ID and derives at most two successor operation IDs from the managed request and attempt.
 The managed request, fingerprint, slot, relationship, generation and routing dispatch ID
-stay unchanged. An accepted successor is replayed to finish admission, never sent again.
+stay unchanged. An accepted successor passes the bridge ledger's fingerprint-aware lookup
+for the exact packet before replaying admission, never starting a turn again; another
+operation or message occupying its ID is refused.
 Unknown outcomes, started or rejected deliveries, attempted `turn/start`, malformed
 effect evidence and failures without affirmative pre-turn evidence remain held. Older
 receipts without effect/delivery fields qualify only for the structured
 `thread/resume` / `settings_not_preserved` refusal.
+An explicit pre-turn effect trace must be empty or contain exactly one `thread/resume`;
+unknown, misspelled, duplicate or contradictory effects do not qualify.
 
 Before a resend, the host must list exactly the recorded standby turn with no continuation
 cursor, then report the same child as `notLoaded`. A loaded child returns incomplete
@@ -147,8 +151,12 @@ cursor, then report the same child as `notLoaded`. A loaded child returns incomp
 `idle` and its profile happens to match: this recovery gate conservatively waits for
 unloading. Empty, missing-rollout or unreadable history stays held as `lifecycle_unknown`;
 another turn refuses as `business_identity_unobserved`. The final business guard repeats
-the standby-only check after the recorded-profile resume. Live-context observation errors
-in that recovery guard withhold as retryable `not_attempted`; cancellation remains unknown.
+the standby-only check after the recorded-profile resume.
+The recovery guard retains the complete archived scan and positive thread/goal reads,
+and skips the unnecessary unarchived listing, so its history check fits the existing
+ten-request deadline budget (at most seven calls).
+Live-context observation errors in that recovery guard withhold as retryable
+`not_attempted`; cancellation remains unknown.
 If another client loads the thread between the precheck and resume, the ordinary settings
 verifier still withholds `turn/start` and retains an honest failure; a later invocation
 can use the next bounded successor. No fourth operation is created. Initial guard failures

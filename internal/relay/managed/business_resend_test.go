@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 )
@@ -36,6 +37,10 @@ func TestBusinessResendNeverRepeatsPossibleDelivery(t *testing.T) {
 		{"no-structured-refusal", func(r map[string]any) { delete(r, "rpcError") }},
 		{"arbitrary-error", func(r map[string]any) { r["error"] = "settings_not_preserved" }},
 		{"malformed-effects", func(r map[string]any) { r["attemptedEffects"] = []any{42} }},
+		{"empty-effect", func(r map[string]any) { r["attemptedEffects"] = []any{""} }},
+		{"misspelled-turn", func(r map[string]any) { r["attemptedEffects"] = []any{"turn/start "} }},
+		{"unknown-effect", func(r map[string]any) { r["attemptedEffects"] = []any{"something/else"} }},
+		{"contradictory-error", func(r map[string]any) { r["attemptedEffects"] = []any{}; r["error"] = "turn/start: host refusal" }},
 		{"null-effects", func(r map[string]any) { r["attemptedEffects"] = nil }},
 		{"label-without-trace", func(r map[string]any) { r["delivery"] = "not_delivered" }},
 	} {
@@ -141,7 +146,7 @@ func TestBusinessResendLoadObservationIsLast(t *testing.T) {
 	if len(k.host.sends) != 0 || k.host.operations[businessResendID("managed-1", business, 1)] != nil {
 		t.Fatal("loaded observation consumed retry")
 	}
-	k.start.Adapter = k.host
+	k.start.Adapter = &businessResendReplayApp{Adapter: k.host, host: k.host}
 	k.host.threads["t-1"].status = "notLoaded"
 	if got := k.run(); got["state"] != "admitted" {
 		t.Fatal("unloaded child did not recover")
@@ -184,7 +189,60 @@ func businessResendKit(t *testing.T) (*reconcileKit, string, map[string]any) {
 	_, business := OperationIDs("managed-1")
 	failure := businessResendLegacyReceipt("t-1")
 	k.host.operations[business] = failure
+	k.start.Adapter = &businessResendReplayApp{Adapter: k.host, host: k.host}
 	return k, business, failure
+}
+
+// Match the production adapter's terminal receipt replay without dispatching
+// again. Argument collisions are exercised against the real ledger/socket.
+type businessResendReplayApp struct {
+	Adapter
+	host *scriptedApp
+}
+
+func (a *businessResendReplayApp) SendMessage(ctx context.Context, in SendRequest) (map[string]any, error) {
+	if retained := a.host.operations[in.RequestID]; retained != nil && retained["status"] == "accepted" {
+		return retained, nil
+	}
+	return a.Adapter.SendMessage(ctx, in)
+}
+
+type businessResendBudgetApp struct {
+	Adapter
+	pages int
+	calls []string
+}
+
+func (a *businessResendBudgetApp) HostCall(ctx context.Context, method string, params map[string]any) (map[string]any, error) {
+	a.calls = append(a.calls, method)
+	if method == "thread/list" {
+		if params["archived"] != true {
+			return nil, errors.New("unnecessary unarchived scan")
+		}
+		a.pages++
+		var cursor any
+		if a.pages < 4 {
+			cursor = fmt.Sprint(a.pages)
+		}
+		return map[string]any{"data": []any{}, "nextCursor": cursor}, nil
+	}
+	return a.Adapter.HostCall(ctx, method, params)
+}
+
+func TestBusinessResendGuardBudget(t *testing.T) {
+	k, _, _ := businessResendKit(t)
+	a := &businessResendBudgetApp{Adapter: k.host}
+	if code, err := businessResendCheckHost(t.Context(), a, "t-1", true); code != "" || err != nil {
+		t.Fatalf("readiness: %s %v", code, err)
+	}
+	k.start.Adapter = a
+	r := &startRun{m: k.start, task: "t-1", standby: "standby"}
+	if code, err := r.businessResendOnlyStandby(t.Context()); code != "" || err != nil {
+		t.Fatalf("history: %s %v", code, err)
+	}
+	if len(a.calls) != 7 || a.pages != 4 {
+		t.Fatalf("guard exceeds its ten-call budget: %v", a.calls)
+	}
 }
 
 func TestBusinessResendLegacySameRequest(t *testing.T) {
