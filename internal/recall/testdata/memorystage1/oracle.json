@@ -1,0 +1,2007 @@
+[
+  {
+    "name": "db-only",
+    "query": "quagga",
+    "rows": [
+      [
+        "db",
+        "quagga migrations",
+        "quagga summary",
+        1783296000
+      ]
+    ],
+    "options": {
+      "nowMs": 1783296000000
+    },
+    "calls": [],
+    "out": {
+      "hits": [
+        {
+          "origin": "stage1",
+          "kind": "stage1",
+          "relpath": "stage1_outputs/db",
+          "threadId": "db",
+          "updatedAt": "2026-07-06T00:00:00.000Z",
+          "excerpt": "quagga migrations\nquagga summary",
+          "startLine": null,
+          "cwd": null,
+          "score": 4.5
+        }
+      ],
+      "warnings": [],
+      "scannedFiles": 0,
+      "elapsedMs": 0
+    }
+  },
+  {
+    "name": "md-dedupe",
+    "query": "trigram",
+    "rows": [
+      [
+        "main",
+        "trigram raw",
+        "",
+        1783296000
+      ]
+    ],
+    "options": {
+      "nowMs": 1783296000000
+    },
+    "files": {
+      "rollout_summaries/a.md": "thread_id: main\n\ntrigram deployment"
+    },
+    "calls": [],
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "rollout",
+          "relpath": "rollout_summaries/a.md",
+          "threadId": "main",
+          "updatedAt": "2026-07-06T00:00:00.000Z",
+          "excerpt": "trigram deployment",
+          "startLine": 3,
+          "cwd": null,
+          "score": 3.5
+        }
+      ],
+      "warnings": [],
+      "scannedFiles": 1,
+      "elapsedMs": 0
+    }
+  },
+  {
+    "name": "rejected-file-retains-db",
+    "query": "Handbook consolidated",
+    "rows": [
+      [
+        "t1",
+        "Handbook consolidated in scoped project",
+        "",
+        1783296000
+      ]
+    ],
+    "options": {
+      "nowMs": 1783296000000,
+      "cwd": "/proj/here",
+      "cwdOnly": true
+    },
+    "files": {
+      "rollout_summaries/a.md": "thread_id: t1\ncwd: /proj/other\n\n# Memory Handbook\n\nNo groups consolidated yet."
+    },
+    "threads": [
+      [
+        "t1",
+        "/proj/here",
+        null
+      ]
+    ],
+    "legacy": true,
+    "calls": [],
+    "out": {
+      "hits": [
+        {
+          "origin": "stage1",
+          "kind": "stage1",
+          "relpath": "stage1_outputs/t1",
+          "threadId": "t1",
+          "updatedAt": "2026-07-06T00:00:00.000Z",
+          "excerpt": "Handbook consolidated in scoped project\n",
+          "startLine": null,
+          "cwd": "/proj/here",
+          "score": 12.5
+        }
+      ],
+      "warnings": [],
+      "scannedFiles": 1,
+      "elapsedMs": 0
+    }
+  },
+  {
+    "name": "retained-file-dedupes-db",
+    "query": "Handbook consolidated",
+    "rows": [
+      [
+        "t1",
+        "Handbook consolidated in scoped project",
+        "",
+        1783296000
+      ]
+    ],
+    "options": {
+      "nowMs": 1783296000000,
+      "cwd": "/proj/here"
+    },
+    "files": {
+      "rollout_summaries/a.md": "thread_id: t1\ncwd: /proj/other\n\n# Memory Handbook\n\nNo groups consolidated yet."
+    },
+    "threads": [
+      [
+        "t1",
+        "/proj/here",
+        null
+      ]
+    ],
+    "legacy": true,
+    "calls": [],
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "rollout",
+          "relpath": "rollout_summaries/a.md",
+          "threadId": "t1",
+          "updatedAt": "2026-07-06T00:00:00.000Z",
+          "excerpt": "thread_id: t1\ncwd: /proj/other\n\n# Memory Handbook\n\nNo groups consolidated yet.",
+          "startLine": 4,
+          "cwd": "/proj/other",
+          "score": 5.5
+        }
+      ],
+      "warnings": [],
+      "scannedFiles": 1,
+      "elapsedMs": 0
+    }
+  },
+  {
+    "name": "row-fields-and",
+    "query": "quagga migration",
+    "rows": [
+      [
+        "both",
+        "quagga",
+        "migration",
+        1783296000
+      ],
+      [
+        "one",
+        "quagga",
+        "",
+        1783296000
+      ]
+    ],
+    "options": {
+      "nowMs": 1783296000000
+    },
+    "calls": [],
+    "out": {
+      "hits": [
+        {
+          "origin": "stage1",
+          "kind": "stage1",
+          "relpath": "stage1_outputs/both",
+          "threadId": "both",
+          "updatedAt": "2026-07-06T00:00:00.000Z",
+          "excerpt": "quagga\nmigration",
+          "startLine": null,
+          "cwd": null,
+          "score": 5.5
+        }
+      ],
+      "warnings": [],
+      "scannedFiles": 0,
+      "elapsedMs": 0
+    }
+  },
+  {
+    "name": "any",
+    "query": "quagga wombat",
+    "rows": [
+      [
+        "one",
+        "quagga",
+        "",
+        1783296000
+      ],
+      [
+        "two",
+        "wombat",
+        "",
+        1783296000
+      ]
+    ],
+    "options": {
+      "nowMs": 1783296000000,
+      "any": true
+    },
+    "calls": [],
+    "out": {
+      "hits": [
+        {
+          "origin": "stage1",
+          "kind": "stage1",
+          "relpath": "stage1_outputs/two",
+          "threadId": "two",
+          "updatedAt": "2026-07-06T00:00:00.000Z",
+          "excerpt": "wombat\n",
+          "startLine": null,
+          "cwd": null,
+          "score": 3.5
+        },
+        {
+          "origin": "stage1",
+          "kind": "stage1",
+          "relpath": "stage1_outputs/one",
+          "threadId": "one",
+          "updatedAt": "2026-07-06T00:00:00.000Z",
+          "excerpt": "quagga\n",
+          "startLine": null,
+          "cwd": null,
+          "score": 3.5
+        }
+      ],
+      "warnings": [],
+      "scannedFiles": 0,
+      "elapsedMs": 0
+    }
+  },
+  {
+    "name": "optional-quorum",
+    "query": "alpha beta gamma delta epsilon zeta theta omega 문제",
+    "rows": [
+      [
+        "four",
+        "alpha beta gamma delta",
+        "",
+        1783296000
+      ],
+      [
+        "two",
+        "alpha beta",
+        "",
+        1783296000
+      ]
+    ],
+    "options": {
+      "nowMs": 1783296000000,
+      "synonyms": false
+    },
+    "calls": [],
+    "out": {
+      "hits": [
+        {
+          "origin": "stage1",
+          "kind": "stage1",
+          "relpath": "stage1_outputs/four",
+          "threadId": "four",
+          "updatedAt": "2026-07-06T00:00:00.000Z",
+          "excerpt": "alpha beta gamma delta\n",
+          "startLine": null,
+          "cwd": null,
+          "score": 9.5
+        }
+      ],
+      "warnings": [],
+      "scannedFiles": 0,
+      "elapsedMs": 0
+    }
+  },
+  {
+    "name": "synonyms-true",
+    "query": "배포",
+    "rows": [
+      [
+        "deploy",
+        "deployment",
+        "",
+        1783296000
+      ]
+    ],
+    "options": {
+      "nowMs": 1783296000000,
+      "synonyms": true
+    },
+    "calls": [],
+    "out": {
+      "hits": [
+        {
+          "origin": "stage1",
+          "kind": "stage1",
+          "relpath": "stage1_outputs/deploy",
+          "threadId": "deploy",
+          "updatedAt": "2026-07-06T00:00:00.000Z",
+          "excerpt": "deployment\n",
+          "startLine": null,
+          "cwd": null,
+          "score": 3.5
+        }
+      ],
+      "warnings": [],
+      "scannedFiles": 0,
+      "elapsedMs": 0
+    }
+  },
+  {
+    "name": "synonyms-false",
+    "query": "배포",
+    "rows": [
+      [
+        "deploy",
+        "deployment",
+        "",
+        1783296000
+      ]
+    ],
+    "options": {
+      "nowMs": 1783296000000,
+      "synonyms": false
+    },
+    "calls": [],
+    "out": {
+      "hits": [],
+      "warnings": [],
+      "scannedFiles": 0,
+      "elapsedMs": 0
+    }
+  },
+  {
+    "name": "required-sql",
+    "query": "LSP quagga",
+    "rows": [
+      [
+        "yes",
+        "LSP quagga",
+        "",
+        1783296000
+      ],
+      [
+        "no",
+        "quagga",
+        "",
+        1783296000
+      ]
+    ],
+    "options": {
+      "nowMs": 1783296000000
+    },
+    "calls": [],
+    "out": {
+      "hits": [
+        {
+          "origin": "stage1",
+          "kind": "stage1",
+          "relpath": "stage1_outputs/yes",
+          "threadId": "yes",
+          "updatedAt": "2026-07-06T00:00:00.000Z",
+          "excerpt": "LSP quagga\n",
+          "startLine": null,
+          "cwd": null,
+          "score": 10.5
+        }
+      ],
+      "warnings": [],
+      "scannedFiles": 0,
+      "elapsedMs": 0
+    }
+  },
+  {
+    "name": "sql-wildcards",
+    "query": "ab_cd",
+    "rows": [
+      [
+        "literal",
+        "ab_cd",
+        "",
+        1783296000
+      ],
+      [
+        "wildcard",
+        "abXcd",
+        "",
+        1783296000
+      ]
+    ],
+    "options": {
+      "nowMs": 1783296000000
+    },
+    "calls": [],
+    "out": {
+      "hits": [
+        {
+          "origin": "stage1",
+          "kind": "stage1",
+          "relpath": "stage1_outputs/literal",
+          "threadId": "literal",
+          "updatedAt": "2026-07-06T00:00:00.000Z",
+          "excerpt": "ab_cd\n",
+          "startLine": null,
+          "cwd": null,
+          "score": 3.5
+        }
+      ],
+      "warnings": [],
+      "scannedFiles": 0,
+      "elapsedMs": 0
+    }
+  },
+  {
+    "name": "sql-quote",
+    "query": "quagga' OR 1=1",
+    "rows": [
+      [
+        "no",
+        "quagga",
+        "",
+        1783296000
+      ]
+    ],
+    "options": {
+      "nowMs": 1783296000000,
+      "synonyms": false
+    },
+    "calls": [],
+    "out": {
+      "hits": [],
+      "warnings": [],
+      "scannedFiles": 0,
+      "elapsedMs": 0
+    }
+  },
+  {
+    "name": "unicode-like-kept",
+    "query": "ü",
+    "rows": [
+      [
+        "upper",
+        "Ü",
+        "",
+        1783296000
+      ]
+    ],
+    "options": {
+      "nowMs": 1783296000000
+    },
+    "calls": [],
+    "out": {
+      "hits": [],
+      "warnings": [],
+      "scannedFiles": 0,
+      "elapsedMs": 0
+    }
+  },
+  {
+    "name": "scalar-body",
+    "query": "123",
+    "rows": [
+      [
+        "number",
+        123,
+        null,
+        null
+      ]
+    ],
+    "options": {
+      "nowMs": 1783296000000
+    },
+    "calls": [],
+    "out": {
+      "hits": [
+        {
+          "origin": "stage1",
+          "kind": "stage1",
+          "relpath": "stage1_outputs/number",
+          "threadId": "number",
+          "updatedAt": null,
+          "excerpt": "123\n",
+          "startLine": null,
+          "cwd": null,
+          "score": 2
+        }
+      ],
+      "warnings": [],
+      "scannedFiles": 0,
+      "elapsedMs": 0
+    }
+  },
+  {
+    "name": "blob-body",
+    "query": "97",
+    "rows": [],
+    "options": {
+      "nowMs": 1783296000000
+    },
+    "schema": "CREATE TABLE stage1_outputs(thread_id,raw_memory,rollout_summary,source_updated_at); INSERT INTO stage1_outputs VALUES ('blob', X'6162',NULL,NULL)",
+    "calls": [],
+    "out": {
+      "hits": [],
+      "warnings": [],
+      "scannedFiles": 0,
+      "elapsedMs": 0
+    }
+  },
+  {
+    "name": "null-empty-id-crlf",
+    "query": "quagga",
+    "rows": [
+      [
+        null,
+        "quagga\r\nnotes",
+        "",
+        null
+      ],
+      [
+        "",
+        "quagga",
+        "",
+        1783296000
+      ]
+    ],
+    "options": {
+      "nowMs": 1783296000000
+    },
+    "calls": [],
+    "out": {
+      "hits": [
+        {
+          "origin": "stage1",
+          "kind": "stage1",
+          "relpath": "stage1_outputs/",
+          "threadId": "",
+          "updatedAt": "2026-07-06T00:00:00.000Z",
+          "excerpt": "quagga\n",
+          "startLine": null,
+          "cwd": null,
+          "score": 3.5
+        },
+        {
+          "origin": "stage1",
+          "kind": "stage1",
+          "relpath": "stage1_outputs/unknown",
+          "threadId": null,
+          "updatedAt": null,
+          "excerpt": "quagga\r\nnotes\n",
+          "startLine": null,
+          "cwd": null,
+          "score": 2
+        }
+      ],
+      "warnings": [],
+      "scannedFiles": 0,
+      "elapsedMs": 0
+    }
+  },
+  {
+    "name": "nonstring-id",
+    "query": "quagga",
+    "rows": [
+      [
+        42,
+        "quagga",
+        "",
+        1783296000
+      ]
+    ],
+    "options": {
+      "nowMs": 1783296000000
+    },
+    "calls": [],
+    "out": {
+      "hits": [
+        {
+          "origin": "stage1",
+          "kind": "stage1",
+          "relpath": "stage1_outputs/unknown",
+          "threadId": null,
+          "updatedAt": "2026-07-06T00:00:00.000Z",
+          "excerpt": "quagga\n",
+          "startLine": null,
+          "cwd": null,
+          "score": 3.5
+        }
+      ],
+      "warnings": [],
+      "scannedFiles": 0,
+      "elapsedMs": 0
+    }
+  },
+  {
+    "name": "invalid-date-partial",
+    "query": "quagga",
+    "rows": [
+      [
+        "fresh",
+        "quagga",
+        "",
+        1783296000
+      ],
+      [
+        "bad",
+        "quagga",
+        "",
+        -10000000000000
+      ]
+    ],
+    "options": {
+      "nowMs": 1783296000000
+    },
+    "calls": [],
+    "out": {
+      "hits": [
+        {
+          "origin": "stage1",
+          "kind": "stage1",
+          "relpath": "stage1_outputs/fresh",
+          "threadId": "fresh",
+          "updatedAt": "2026-07-06T00:00:00.000Z",
+          "excerpt": "quagga\n",
+          "startLine": null,
+          "cwd": null,
+          "score": 3.5
+        }
+      ],
+      "warnings": [
+        "memories db unreadable (Invalid time value)"
+      ],
+      "scannedFiles": 0,
+      "elapsedMs": 0
+    }
+  },
+  {
+    "name": "extended-iso",
+    "query": "quagga",
+    "rows": [
+      [
+        "far",
+        "quagga",
+        "",
+        253402300800
+      ]
+    ],
+    "options": {
+      "nowMs": 1783296000000
+    },
+    "calls": [],
+    "out": {
+      "hits": [
+        {
+          "origin": "stage1",
+          "kind": "stage1",
+          "relpath": "stage1_outputs/far",
+          "threadId": "far",
+          "updatedAt": "+010000-01-01T00:00:00.000Z",
+          "excerpt": "quagga\n",
+          "startLine": null,
+          "cwd": null,
+          "score": 3.5
+        }
+      ],
+      "warnings": [],
+      "scannedFiles": 0,
+      "elapsedMs": 0
+    }
+  },
+  {
+    "name": "fractional-second",
+    "query": "quagga",
+    "rows": [
+      [
+        "fraction",
+        "quagga",
+        "",
+        1.2349
+      ]
+    ],
+    "options": {
+      "nowMs": 1783296000000
+    },
+    "calls": [],
+    "out": {
+      "hits": [
+        {
+          "origin": "stage1",
+          "kind": "stage1",
+          "relpath": "stage1_outputs/fraction",
+          "threadId": "fraction",
+          "updatedAt": "1970-01-01T00:00:01.234Z",
+          "excerpt": "quagga\n",
+          "startLine": null,
+          "cwd": null,
+          "score": 0
+        }
+      ],
+      "warnings": [],
+      "scannedFiles": 0,
+      "elapsedMs": 0
+    }
+  },
+  {
+    "name": "age-cutoff",
+    "query": "quagga",
+    "rows": [
+      [
+        "old",
+        "quagga",
+        "",
+        1783209599.999
+      ],
+      [
+        "equal",
+        "quagga",
+        "",
+        1783209600
+      ],
+      [
+        "null",
+        "quagga",
+        "",
+        null
+      ],
+      [
+        "text",
+        "quagga",
+        "",
+        "0"
+      ]
+    ],
+    "options": {
+      "nowMs": 1783296000000,
+      "days": 1
+    },
+    "calls": [],
+    "out": {
+      "hits": [
+        {
+          "origin": "stage1",
+          "kind": "stage1",
+          "relpath": "stage1_outputs/equal",
+          "threadId": "equal",
+          "updatedAt": "2026-07-05T00:00:00.000Z",
+          "excerpt": "quagga\n",
+          "startLine": null,
+          "cwd": null,
+          "score": 3.35858549639586
+        },
+        {
+          "origin": "stage1",
+          "kind": "stage1",
+          "relpath": "stage1_outputs/null",
+          "threadId": "null",
+          "updatedAt": null,
+          "excerpt": "quagga\n",
+          "startLine": null,
+          "cwd": null,
+          "score": 2
+        },
+        {
+          "origin": "stage1",
+          "kind": "stage1",
+          "relpath": "stage1_outputs/text",
+          "threadId": "text",
+          "updatedAt": null,
+          "excerpt": "quagga\n",
+          "startLine": null,
+          "cwd": null,
+          "score": 2
+        }
+      ],
+      "warnings": [],
+      "scannedFiles": 0,
+      "elapsedMs": 0
+    }
+  },
+  {
+    "name": "zero-cutoff-kept",
+    "query": "quagga",
+    "rows": [
+      [
+        "old",
+        "quagga",
+        "",
+        -86400
+      ]
+    ],
+    "options": {
+      "nowMs": 86400000,
+      "days": 1
+    },
+    "calls": [],
+    "out": {
+      "hits": [
+        {
+          "origin": "stage1",
+          "kind": "stage1",
+          "relpath": "stage1_outputs/old",
+          "threadId": "old",
+          "updatedAt": "1969-12-31T00:00:00.000Z",
+          "excerpt": "quagga\n",
+          "startLine": null,
+          "cwd": null,
+          "score": 3.230503034011457
+        }
+      ],
+      "warnings": [],
+      "scannedFiles": 0,
+      "elapsedMs": 0
+    }
+  },
+  {
+    "name": "boundary-relaxed",
+    "query": "3956",
+    "rows": [
+      [
+        "embedded",
+        "PR3956 shipped",
+        "",
+        1783296000
+      ]
+    ],
+    "options": {
+      "nowMs": 1783296000000
+    },
+    "calls": [],
+    "out": {
+      "hits": [
+        {
+          "origin": "stage1",
+          "kind": "stage1",
+          "relpath": "stage1_outputs/embedded",
+          "threadId": "embedded",
+          "updatedAt": "2026-07-06T00:00:00.000Z",
+          "excerpt": "PR3956 shipped\n",
+          "startLine": null,
+          "cwd": null,
+          "score": 1.5
+        }
+      ],
+      "warnings": [
+        "no word-boundary matches — showing substring matches (lower confidence)"
+      ],
+      "scannedFiles": 0,
+      "elapsedMs": 0
+    }
+  },
+  {
+    "name": "presence-blocks-relax",
+    "query": "3956 LSP",
+    "rows": [
+      [
+        "embedded",
+        "LSP PR3956",
+        "",
+        1783296000
+      ],
+      [
+        "presence",
+        "3956 without the other symbol",
+        "",
+        1783296000
+      ]
+    ],
+    "options": {
+      "nowMs": 1783296000000
+    },
+    "calls": [],
+    "out": {
+      "hits": [],
+      "warnings": [],
+      "scannedFiles": 0,
+      "elapsedMs": 0
+    }
+  },
+  {
+    "name": "old-presence-ignored",
+    "query": "3956 LSP",
+    "rows": [
+      [
+        "embedded",
+        "LSP PR3956",
+        "",
+        1783296000
+      ],
+      [
+        "old",
+        "3956",
+        "",
+        1783123200
+      ]
+    ],
+    "options": {
+      "nowMs": 1783296000000,
+      "days": 1
+    },
+    "calls": [],
+    "out": {
+      "hits": [
+        {
+          "origin": "stage1",
+          "kind": "stage1",
+          "relpath": "stage1_outputs/embedded",
+          "threadId": "embedded",
+          "updatedAt": "2026-07-06T00:00:00.000Z",
+          "excerpt": "LSP PR3956\n",
+          "startLine": null,
+          "cwd": null,
+          "score": 3.5
+        }
+      ],
+      "warnings": [
+        "no word-boundary matches — showing substring matches (lower confidence)"
+      ],
+      "scannedFiles": 0,
+      "elapsedMs": 0
+    }
+  },
+  {
+    "name": "scope-presence-blocks-relax",
+    "query": "3956 LSP",
+    "rows": [
+      [
+        "here",
+        "LSP PR3956",
+        "",
+        1783296000
+      ],
+      [
+        "other",
+        "3956",
+        "",
+        1783296000
+      ]
+    ],
+    "options": {
+      "nowMs": 1783296000000,
+      "cwd": "/proj/here",
+      "cwdOnly": true
+    },
+    "threads": [
+      [
+        "here",
+        "/proj/here",
+        null
+      ],
+      [
+        "other",
+        "/proj/other",
+        null
+      ]
+    ],
+    "calls": [],
+    "out": {
+      "hits": [],
+      "warnings": [
+        "no matches inside --cwd-only /proj/here — retry with --cwd to rank it first instead"
+      ],
+      "scannedFiles": 0,
+      "elapsedMs": 0
+    }
+  },
+  {
+    "name": "db-error-repeated",
+    "query": "3956",
+    "rows": [],
+    "options": {
+      "nowMs": 1783296000000
+    },
+    "schema": "CREATE TABLE other(value)",
+    "calls": [],
+    "out": {
+      "hits": [],
+      "warnings": [
+        "memories db unreadable (no such table: stage1_outputs)",
+        "memories db unreadable (no such table: stage1_outputs)",
+        "memories db unreadable (no such table: stage1_outputs)"
+      ],
+      "scannedFiles": 0,
+      "elapsedMs": 0
+    }
+  },
+  {
+    "name": "db-corrupt",
+    "query": "quagga",
+    "rows": [],
+    "options": {
+      "nowMs": 1783296000000
+    },
+    "corrupt": true,
+    "calls": [],
+    "out": {
+      "hits": [],
+      "warnings": [
+        "memories db unreadable (file is not a database)"
+      ],
+      "scannedFiles": 0,
+      "elapsedMs": 0
+    }
+  },
+  {
+    "name": "scope-origin",
+    "query": "quagga",
+    "rows": [
+      [
+        "same",
+        "quagga",
+        "",
+        1783296000
+      ],
+      [
+        "other",
+        "quagga",
+        "",
+        1783296000
+      ]
+    ],
+    "options": {
+      "nowMs": 1783296000000,
+      "cwd": "/worktrees/task",
+      "cwdOnly": true
+    },
+    "threads": [
+      [
+        "same",
+        "/proj/main",
+        "https://github.com/example/alpha.git"
+      ],
+      [
+        "other",
+        "/proj/other",
+        "https://github.com/example/beta.git"
+      ]
+    ],
+    "origin": "git@github.com:example/alpha.git",
+    "calls": [],
+    "out": {
+      "hits": [
+        {
+          "origin": "stage1",
+          "kind": "stage1",
+          "relpath": "stage1_outputs/same",
+          "threadId": "same",
+          "updatedAt": "2026-07-06T00:00:00.000Z",
+          "excerpt": "quagga\n",
+          "startLine": null,
+          "cwd": "/proj/main",
+          "score": 5.5
+        }
+      ],
+      "warnings": [],
+      "scannedFiles": 0,
+      "elapsedMs": 0
+    }
+  },
+  {
+    "name": "scope-prose",
+    "query": "quagga",
+    "rows": [
+      [
+        "mentioned",
+        "quagga /proj/here-adjacent",
+        "",
+        1783296000
+      ]
+    ],
+    "options": {
+      "nowMs": 1783296000000,
+      "cwd": "/proj/here",
+      "cwdOnly": true
+    },
+    "calls": [],
+    "out": {
+      "hits": [
+        {
+          "origin": "stage1",
+          "kind": "stage1",
+          "relpath": "stage1_outputs/mentioned",
+          "threadId": "mentioned",
+          "updatedAt": "2026-07-06T00:00:00.000Z",
+          "excerpt": "quagga /proj/here-adjacent\n",
+          "startLine": null,
+          "cwd": null,
+          "score": 4.5
+        }
+      ],
+      "warnings": [
+        "state db not found (metadata enrichment off)"
+      ],
+      "scannedFiles": 0,
+      "elapsedMs": 0
+    }
+  },
+  {
+    "name": "scope-empty",
+    "query": "quagga",
+    "rows": [
+      [
+        "unknown",
+        "quagga",
+        "",
+        1783296000
+      ]
+    ],
+    "options": {
+      "nowMs": 1783296000000,
+      "cwd": "/proj/here",
+      "cwdOnly": true
+    },
+    "calls": [],
+    "out": {
+      "hits": [],
+      "warnings": [
+        "state db not found (metadata enrichment off)",
+        "no matches inside --cwd-only /proj/here — retry with --cwd to rank it first instead"
+      ],
+      "scannedFiles": 0,
+      "elapsedMs": 0
+    }
+  },
+  {
+    "name": "fallback-empty",
+    "query": "pangolin",
+    "rows": [],
+    "options": {
+      "nowMs": 1783296000000
+    },
+    "chat": [
+      {
+        "ts": "2026-07-05T00:00:00.000Z",
+        "role": "user",
+        "text": "pangolin migration",
+        "matchField": "content",
+        "threadId": "chat-one",
+        "title": null,
+        "cwd": "/proj/here",
+        "gitBranch": null,
+        "source": "main",
+        "file": "session.jsonl",
+        "context": []
+      }
+    ],
+    "calls": [
+      {
+        "home": "$HOME",
+        "days": 0,
+        "limit": 5,
+        "noRefresh": true,
+        "includeTools": false,
+        "source": "main",
+        "context": 0,
+        "cwd": null,
+        "synonyms": true,
+        "any": false
+      }
+    ],
+    "out": {
+      "hits": [
+        {
+          "origin": "chat",
+          "kind": "chat",
+          "relpath": "session.jsonl",
+          "threadId": "chat-one",
+          "updatedAt": "2026-07-05T00:00:00.000Z",
+          "excerpt": "pangolin migration",
+          "startLine": null,
+          "cwd": "/proj/here",
+          "score": 0.3585854963958601
+        }
+      ],
+      "warnings": [
+        "no memory artifacts matched — 1 raw session message(s) shown instead (tool logs excluded)"
+      ],
+      "scannedFiles": 0,
+      "elapsedMs": 0
+    }
+  },
+  {
+    "name": "fallback-opts",
+    "query": "pangolin",
+    "rows": [],
+    "options": {
+      "nowMs": 1783296000000,
+      "days": 3,
+      "any": true,
+      "synonyms": false,
+      "chatIncludeTools": true
+    },
+    "chat": [
+      {
+        "ts": "2026-07-05T00:00:00.000Z",
+        "role": "user",
+        "text": "pangolin migration",
+        "matchField": "content",
+        "threadId": "chat-one",
+        "title": null,
+        "cwd": "/proj/here",
+        "gitBranch": null,
+        "source": "main",
+        "file": "session.jsonl",
+        "context": []
+      }
+    ],
+    "calls": [
+      {
+        "home": "$HOME",
+        "days": 3,
+        "limit": 5,
+        "noRefresh": true,
+        "includeTools": true,
+        "source": "main",
+        "context": 0,
+        "cwd": null,
+        "synonyms": false,
+        "any": true
+      }
+    ],
+    "out": {
+      "hits": [
+        {
+          "origin": "chat",
+          "kind": "chat",
+          "relpath": "session.jsonl",
+          "threadId": "chat-one",
+          "updatedAt": "2026-07-05T00:00:00.000Z",
+          "excerpt": "pangolin migration",
+          "startLine": null,
+          "cwd": "/proj/here",
+          "score": 0.3585854963958601
+        }
+      ],
+      "warnings": [
+        "no memory artifacts matched — 1 raw session message(s) shown instead (tool logs excluded)"
+      ],
+      "scannedFiles": 0,
+      "elapsedMs": 0
+    }
+  },
+  {
+    "name": "fallback-hard",
+    "query": "pangolin",
+    "rows": [],
+    "options": {
+      "nowMs": 1783296000000,
+      "cwd": "/proj/here",
+      "cwdOnly": true
+    },
+    "chat": [
+      {
+        "ts": "2026-07-05T00:00:00.000Z",
+        "role": "user",
+        "text": "pangolin migration",
+        "matchField": "content",
+        "threadId": "chat-one",
+        "title": null,
+        "cwd": "/proj/here",
+        "gitBranch": null,
+        "source": "main",
+        "file": "session.jsonl",
+        "context": []
+      }
+    ],
+    "calls": [
+      {
+        "home": "$HOME",
+        "days": 0,
+        "limit": 5,
+        "noRefresh": true,
+        "includeTools": false,
+        "source": "main",
+        "context": 0,
+        "cwd": "/proj/here",
+        "synonyms": true,
+        "any": false
+      }
+    ],
+    "out": {
+      "hits": [
+        {
+          "origin": "chat",
+          "kind": "chat",
+          "relpath": "session.jsonl",
+          "threadId": "chat-one",
+          "updatedAt": "2026-07-05T00:00:00.000Z",
+          "excerpt": "pangolin migration",
+          "startLine": null,
+          "cwd": "/proj/here",
+          "score": 0.3585854963958601
+        }
+      ],
+      "warnings": [
+        "state db not found (metadata enrichment off)",
+        "no memory artifacts matched — 1 raw session message(s) shown instead (tool logs excluded)"
+      ],
+      "scannedFiles": 0,
+      "elapsedMs": 0
+    }
+  },
+  {
+    "name": "fallback-soft",
+    "query": "pangolin",
+    "rows": [],
+    "options": {
+      "nowMs": 1783296000000,
+      "cwd": "/proj/here"
+    },
+    "chat": [
+      {
+        "ts": "2026-07-05T00:00:00.000Z",
+        "role": "user",
+        "text": "pangolin migration",
+        "matchField": "content",
+        "threadId": "chat-one",
+        "title": null,
+        "cwd": "/proj/here",
+        "gitBranch": null,
+        "source": "main",
+        "file": "session.jsonl",
+        "context": []
+      }
+    ],
+    "calls": [
+      {
+        "home": "$HOME",
+        "days": 0,
+        "limit": 5,
+        "noRefresh": true,
+        "includeTools": false,
+        "source": "main",
+        "context": 0,
+        "cwd": null,
+        "synonyms": true,
+        "any": false
+      }
+    ],
+    "out": {
+      "hits": [
+        {
+          "origin": "chat",
+          "kind": "chat",
+          "relpath": "session.jsonl",
+          "threadId": "chat-one",
+          "updatedAt": "2026-07-05T00:00:00.000Z",
+          "excerpt": "pangolin migration",
+          "startLine": null,
+          "cwd": "/proj/here",
+          "score": 0.3585854963958601
+        }
+      ],
+      "warnings": [
+        "state db not found (metadata enrichment off)",
+        "no memory artifacts matched — 1 raw session message(s) shown instead (tool logs excluded)"
+      ],
+      "scannedFiles": 0,
+      "elapsedMs": 0
+    }
+  },
+  {
+    "name": "fallback-none",
+    "query": "pangolin",
+    "rows": [],
+    "options": {
+      "nowMs": 1783296000000
+    },
+    "noChat": true,
+    "calls": [],
+    "out": {
+      "hits": [],
+      "warnings": [],
+      "scannedFiles": 0,
+      "elapsedMs": 0
+    }
+  },
+  {
+    "name": "fallback-empty-retains",
+    "query": "pangolin",
+    "rows": [],
+    "options": {
+      "nowMs": 1783296000000,
+      "chatFallbackBelow": 2
+    },
+    "chat": [],
+    "files": {
+      "MEMORY.md": "pangolin thin"
+    },
+    "calls": [
+      {
+        "home": "$HOME",
+        "days": 0,
+        "limit": 5,
+        "noRefresh": true,
+        "includeTools": false,
+        "source": "main",
+        "context": 0,
+        "cwd": null,
+        "synonyms": true,
+        "any": false
+      }
+    ],
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "relpath": "MEMORY.md",
+          "threadId": null,
+          "updatedAt": "2026-07-06T00:00:00.000Z",
+          "excerpt": "pangolin thin",
+          "startLine": 1,
+          "cwd": null,
+          "score": 5
+        }
+      ],
+      "warnings": [],
+      "scannedFiles": 1,
+      "elapsedMs": 0
+    }
+  },
+  {
+    "name": "fallback-sufficient",
+    "query": "pangolin",
+    "rows": [],
+    "options": {
+      "nowMs": 1783296000000
+    },
+    "chat": [
+      {
+        "ts": "2026-07-05T00:00:00.000Z",
+        "role": "user",
+        "text": "pangolin migration",
+        "matchField": "content",
+        "threadId": "chat-one",
+        "title": null,
+        "cwd": "/proj/here",
+        "gitBranch": null,
+        "source": "main",
+        "file": "session.jsonl",
+        "context": []
+      }
+    ],
+    "files": {
+      "MEMORY.md": "pangolin thin"
+    },
+    "calls": [],
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "relpath": "MEMORY.md",
+          "threadId": null,
+          "updatedAt": "2026-07-06T00:00:00.000Z",
+          "excerpt": "pangolin thin",
+          "startLine": 1,
+          "cwd": null,
+          "score": 5
+        }
+      ],
+      "warnings": [],
+      "scannedFiles": 1,
+      "elapsedMs": 0
+    }
+  },
+  {
+    "name": "fallback-threshold-replaces",
+    "query": "pangolin",
+    "rows": [],
+    "options": {
+      "nowMs": 1783296000000,
+      "chatFallbackBelow": 2
+    },
+    "chat": [
+      {
+        "ts": "2026-07-05T00:00:00.000Z",
+        "role": "user",
+        "text": "pangolin migration",
+        "matchField": "content",
+        "threadId": "chat-one",
+        "title": null,
+        "cwd": "/proj/here",
+        "gitBranch": null,
+        "source": "main",
+        "file": "session.jsonl",
+        "context": []
+      }
+    ],
+    "files": {
+      "MEMORY.md": "pangolin thin"
+    },
+    "calls": [
+      {
+        "home": "$HOME",
+        "days": 0,
+        "limit": 5,
+        "noRefresh": true,
+        "includeTools": false,
+        "source": "main",
+        "context": 0,
+        "cwd": null,
+        "synonyms": true,
+        "any": false
+      }
+    ],
+    "out": {
+      "hits": [
+        {
+          "origin": "chat",
+          "kind": "chat",
+          "relpath": "session.jsonl",
+          "threadId": "chat-one",
+          "updatedAt": "2026-07-05T00:00:00.000Z",
+          "excerpt": "pangolin migration",
+          "startLine": null,
+          "cwd": "/proj/here",
+          "score": 0.3585854963958601
+        }
+      ],
+      "warnings": [
+        "no memory artifacts matched — 1 raw session message(s) shown instead (tool logs excluded)"
+      ],
+      "scannedFiles": 1,
+      "elapsedMs": 0
+    }
+  },
+  {
+    "name": "fallback-error-retains",
+    "query": "pangolin",
+    "rows": [],
+    "options": {
+      "nowMs": 1783296000000,
+      "chatFallbackBelow": 2
+    },
+    "chatError": "index unavailable",
+    "files": {
+      "MEMORY.md": "pangolin thin"
+    },
+    "calls": [
+      {
+        "home": "$HOME",
+        "days": 0,
+        "limit": 5,
+        "noRefresh": true,
+        "includeTools": false,
+        "source": "main",
+        "context": 0,
+        "cwd": null,
+        "synonyms": true,
+        "any": false
+      }
+    ],
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "relpath": "MEMORY.md",
+          "threadId": null,
+          "updatedAt": "2026-07-06T00:00:00.000Z",
+          "excerpt": "pangolin thin",
+          "startLine": 1,
+          "cwd": null,
+          "score": 5
+        }
+      ],
+      "warnings": [
+        "chat fallback unavailable (index unavailable)"
+      ],
+      "scannedFiles": 1,
+      "elapsedMs": 0
+    }
+  },
+  {
+    "name": "fallback-cap",
+    "query": "pangolin",
+    "rows": [],
+    "options": {
+      "nowMs": 1783296000000
+    },
+    "chat": [
+      {
+        "ts": "2026-07-05T00:00:00.000Z",
+        "role": "user",
+        "text": "pangolin 0",
+        "matchField": "content",
+        "threadId": "chat-one",
+        "title": null,
+        "cwd": "/proj/here",
+        "gitBranch": null,
+        "source": "main",
+        "file": "session.jsonl",
+        "context": []
+      },
+      {
+        "ts": "2026-07-05T00:00:00.000Z",
+        "role": "user",
+        "text": "pangolin 1",
+        "matchField": "content",
+        "threadId": "chat-one",
+        "title": null,
+        "cwd": "/proj/here",
+        "gitBranch": null,
+        "source": "main",
+        "file": "session.jsonl",
+        "context": []
+      },
+      {
+        "ts": "2026-07-05T00:00:00.000Z",
+        "role": "user",
+        "text": "pangolin 2",
+        "matchField": "content",
+        "threadId": "chat-one",
+        "title": null,
+        "cwd": "/proj/here",
+        "gitBranch": null,
+        "source": "main",
+        "file": "session.jsonl",
+        "context": []
+      },
+      {
+        "ts": "2026-07-05T00:00:00.000Z",
+        "role": "user",
+        "text": "pangolin 3",
+        "matchField": "content",
+        "threadId": "chat-one",
+        "title": null,
+        "cwd": "/proj/here",
+        "gitBranch": null,
+        "source": "main",
+        "file": "session.jsonl",
+        "context": []
+      },
+      {
+        "ts": "2026-07-05T00:00:00.000Z",
+        "role": "user",
+        "text": "pangolin 4",
+        "matchField": "content",
+        "threadId": "chat-one",
+        "title": null,
+        "cwd": "/proj/here",
+        "gitBranch": null,
+        "source": "main",
+        "file": "session.jsonl",
+        "context": []
+      },
+      {
+        "ts": "2026-07-05T00:00:00.000Z",
+        "role": "user",
+        "text": "pangolin 5",
+        "matchField": "content",
+        "threadId": "chat-one",
+        "title": null,
+        "cwd": "/proj/here",
+        "gitBranch": null,
+        "source": "main",
+        "file": "session.jsonl",
+        "context": []
+      },
+      {
+        "ts": "2026-07-05T00:00:00.000Z",
+        "role": "user",
+        "text": "pangolin 6",
+        "matchField": "content",
+        "threadId": "chat-one",
+        "title": null,
+        "cwd": "/proj/here",
+        "gitBranch": null,
+        "source": "main",
+        "file": "session.jsonl",
+        "context": []
+      }
+    ],
+    "calls": [
+      {
+        "home": "$HOME",
+        "days": 0,
+        "limit": 5,
+        "noRefresh": true,
+        "includeTools": false,
+        "source": "main",
+        "context": 0,
+        "cwd": null,
+        "synonyms": true,
+        "any": false
+      }
+    ],
+    "out": {
+      "hits": [
+        {
+          "origin": "chat",
+          "kind": "chat",
+          "relpath": "session.jsonl",
+          "threadId": "chat-one",
+          "updatedAt": "2026-07-05T00:00:00.000Z",
+          "excerpt": "pangolin 0",
+          "startLine": null,
+          "cwd": "/proj/here",
+          "score": 0.3585854963958601
+        },
+        {
+          "origin": "chat",
+          "kind": "chat",
+          "relpath": "session.jsonl",
+          "threadId": "chat-one",
+          "updatedAt": "2026-07-05T00:00:00.000Z",
+          "excerpt": "pangolin 1",
+          "startLine": null,
+          "cwd": "/proj/here",
+          "score": 0.3585854963958601
+        },
+        {
+          "origin": "chat",
+          "kind": "chat",
+          "relpath": "session.jsonl",
+          "threadId": "chat-one",
+          "updatedAt": "2026-07-05T00:00:00.000Z",
+          "excerpt": "pangolin 2",
+          "startLine": null,
+          "cwd": "/proj/here",
+          "score": 0.3585854963958601
+        },
+        {
+          "origin": "chat",
+          "kind": "chat",
+          "relpath": "session.jsonl",
+          "threadId": "chat-one",
+          "updatedAt": "2026-07-05T00:00:00.000Z",
+          "excerpt": "pangolin 3",
+          "startLine": null,
+          "cwd": "/proj/here",
+          "score": 0.3585854963958601
+        },
+        {
+          "origin": "chat",
+          "kind": "chat",
+          "relpath": "session.jsonl",
+          "threadId": "chat-one",
+          "updatedAt": "2026-07-05T00:00:00.000Z",
+          "excerpt": "pangolin 4",
+          "startLine": null,
+          "cwd": "/proj/here",
+          "score": 0.3585854963958601
+        }
+      ],
+      "warnings": [
+        "no memory artifacts matched — 5 raw session message(s) shown instead (tool logs excluded)"
+      ],
+      "scannedFiles": 0,
+      "elapsedMs": 0
+    }
+  },
+  {
+    "name": "fallback-fraction",
+    "query": "pangolin",
+    "rows": [],
+    "options": {
+      "nowMs": 1783296000000,
+      "limit": 1.5
+    },
+    "chat": [
+      {
+        "ts": "2026-07-05T00:00:00.000Z",
+        "role": "user",
+        "text": "one",
+        "matchField": "content",
+        "threadId": "chat-one",
+        "title": null,
+        "cwd": "/proj/here",
+        "gitBranch": null,
+        "source": "main",
+        "file": "session.jsonl",
+        "context": []
+      },
+      {
+        "ts": "2026-07-05T00:00:00.000Z",
+        "role": "user",
+        "text": "two",
+        "matchField": "content",
+        "threadId": "chat-one",
+        "title": null,
+        "cwd": "/proj/here",
+        "gitBranch": null,
+        "source": "main",
+        "file": "session.jsonl",
+        "context": []
+      },
+      {
+        "ts": "2026-07-05T00:00:00.000Z",
+        "role": "user",
+        "text": "three",
+        "matchField": "content",
+        "threadId": "chat-one",
+        "title": null,
+        "cwd": "/proj/here",
+        "gitBranch": null,
+        "source": "main",
+        "file": "session.jsonl",
+        "context": []
+      }
+    ],
+    "calls": [
+      {
+        "home": "$HOME",
+        "days": 0,
+        "limit": 1.5,
+        "noRefresh": true,
+        "includeTools": false,
+        "source": "main",
+        "context": 0,
+        "cwd": null,
+        "synonyms": true,
+        "any": false
+      }
+    ],
+    "out": {
+      "hits": [
+        {
+          "origin": "chat",
+          "kind": "chat",
+          "relpath": "session.jsonl",
+          "threadId": "chat-one",
+          "updatedAt": "2026-07-05T00:00:00.000Z",
+          "excerpt": "one",
+          "startLine": null,
+          "cwd": "/proj/here",
+          "score": 0.3585854963958601
+        }
+      ],
+      "warnings": [
+        "no memory artifacts matched — 1 raw session message(s) shown instead (tool logs excluded)"
+      ],
+      "scannedFiles": 0,
+      "elapsedMs": 0
+    }
+  },
+  {
+    "name": "fallback-clip",
+    "query": "pangolin",
+    "rows": [],
+    "options": {
+      "nowMs": 1783296000000
+    },
+    "chat": [
+      {
+        "ts": "not-a-date",
+        "role": "user",
+        "text": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+        "matchField": "content",
+        "threadId": "chat-one",
+        "title": null,
+        "cwd": "/proj/here",
+        "gitBranch": null,
+        "source": "main",
+        "file": "session.jsonl",
+        "context": []
+      }
+    ],
+    "calls": [
+      {
+        "home": "$HOME",
+        "days": 0,
+        "limit": 5,
+        "noRefresh": true,
+        "includeTools": false,
+        "source": "main",
+        "context": 0,
+        "cwd": null,
+        "synonyms": true,
+        "any": false
+      }
+    ],
+    "out": {
+      "hits": [
+        {
+          "origin": "chat",
+          "kind": "chat",
+          "relpath": "session.jsonl",
+          "threadId": "chat-one",
+          "updatedAt": "not-a-date",
+          "excerpt": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+          "startLine": null,
+          "cwd": "/proj/here",
+          "score": -1
+        }
+      ],
+      "warnings": [
+        "no memory artifacts matched — 1 raw session message(s) shown instead (tool logs excluded)"
+      ],
+      "scannedFiles": 0,
+      "elapsedMs": 0
+    }
+  },
+  {
+    "name": "fallback-ignores-chat-warning",
+    "query": "pangolin",
+    "rows": [],
+    "options": {
+      "nowMs": 1783296000000
+    },
+    "chat": [
+      {
+        "ts": "2026-07-05T00:00:00.000Z",
+        "role": "user",
+        "text": "pangolin migration",
+        "matchField": "content",
+        "threadId": "chat-one",
+        "title": null,
+        "cwd": "/proj/here",
+        "gitBranch": null,
+        "source": "main",
+        "file": "session.jsonl",
+        "context": []
+      }
+    ],
+    "chatWarning": "child warning",
+    "calls": [
+      {
+        "home": "$HOME",
+        "days": 0,
+        "limit": 5,
+        "noRefresh": true,
+        "includeTools": false,
+        "source": "main",
+        "context": 0,
+        "cwd": null,
+        "synonyms": true,
+        "any": false
+      }
+    ],
+    "out": {
+      "hits": [
+        {
+          "origin": "chat",
+          "kind": "chat",
+          "relpath": "session.jsonl",
+          "threadId": "chat-one",
+          "updatedAt": "2026-07-05T00:00:00.000Z",
+          "excerpt": "pangolin migration",
+          "startLine": null,
+          "cwd": "/proj/here",
+          "score": 0.3585854963958601
+        }
+      ],
+      "warnings": [
+        "no memory artifacts matched — 1 raw session message(s) shown instead (tool logs excluded)"
+      ],
+      "scannedFiles": 0,
+      "elapsedMs": 0
+    }
+  },
+  {
+    "name": "empty-query-no-chat",
+    "query": " ﻿\t",
+    "rows": [],
+    "options": {
+      "nowMs": 1783296000000
+    },
+    "chat": [
+      {
+        "ts": "2026-07-05T00:00:00.000Z",
+        "role": "user",
+        "text": "pangolin migration",
+        "matchField": "content",
+        "threadId": "chat-one",
+        "title": null,
+        "cwd": "/proj/here",
+        "gitBranch": null,
+        "source": "main",
+        "file": "session.jsonl",
+        "context": []
+      }
+    ],
+    "calls": [],
+    "out": {
+      "hits": [],
+      "warnings": [
+        "empty query"
+      ],
+      "scannedFiles": 0,
+      "elapsedMs": 0
+    }
+  }
+]
