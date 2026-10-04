@@ -262,3 +262,32 @@ func TestNormalizeFilesystemAndPrefixSemantics(t *testing.T) {
 		t.Errorf("symlink alias: got %q, want %q", got, want)
 	}
 }
+
+func TestNormalizeRecordedCharacterization(t *testing.T) {
+	var fixture struct {
+		Characterization []struct{ Input, Skills, Expected string }
+	}
+	raw, err := os.ReadFile("testdata/normalize/oracle.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	if len(fixture.Characterization) != 8 {
+		t.Fatalf("got %d characterization cases, want 8", len(fixture.Characterization))
+	}
+	root := t.TempDir()
+	skills, angle := filepath.Join(root, "skills"), filepath.Join(root, "angle<skills")
+	spawnNormalizeTestSkills(t, skills)
+	spawnNormalizeTestSkills(t, angle)
+	if err := os.MkdirAll(filepath.Join(skills, "crw-directory", "SKILL.md"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	expand := strings.NewReplacer("${SKILLS}", skills, "${ANGLE}", angle).Replace
+	for i, c := range fixture.Characterization {
+		if got, want := NormalizeSkillMentions(expand(c.Input), expand(c.Skills)), expand(c.Expected); got != want {
+			t.Errorf("case %d: got %q, want %q", i+1, got, want)
+		}
+	}
+}

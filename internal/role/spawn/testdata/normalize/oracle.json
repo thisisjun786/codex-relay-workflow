@@ -475,5 +475,71 @@
         }
       ]
     }
+  ],
+  "characterization": [
+    {
+      "input": "$crw-directory",
+      "skills": "${SKILLS}",
+      "oracle": "[$cxc-directory](skill://${SKILLS}/directory/SKILL.md)",
+      "expected": "[$crw-directory](skill://${SKILLS}/crw-directory/SKILL.md)",
+      "classification": "intentionally-changed",
+      "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+    },
+    {
+      "input": "prefix$crw-dev",
+      "skills": "${SKILLS}",
+      "oracle": "prefix[$cxc-dev](skill://${SKILLS}/dev/SKILL.md)",
+      "expected": "prefix[$crw-dev](skill://${SKILLS}/crw-dev/SKILL.md)",
+      "classification": "intentionally-changed",
+      "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+    },
+    {
+      "input": "\\$crw-dev",
+      "skills": "${SKILLS}",
+      "oracle": "\\[$cxc-dev](skill://${SKILLS}/dev/SKILL.md)",
+      "expected": "\\[$crw-dev](skill://${SKILLS}/crw-dev/SKILL.md)",
+      "classification": "intentionally-changed",
+      "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+    },
+    {
+      "input": "[$crw-dev](${SKILLS}/crw-directory/SKILL.md)",
+      "skills": "${SKILLS}",
+      "oracle": "[$cxc-dev](${SKILLS}/directory/SKILL.md)",
+      "expected": "[$crw-dev](${SKILLS}/crw-directory/SKILL.md)",
+      "classification": "intentionally-changed",
+      "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+    },
+    {
+      "input": "[$crw-dev](${SKILLS}/crw-dev/SKILL.md/)",
+      "skills": "${SKILLS}",
+      "oracle": "[$cxc-dev](skill://${SKILLS}/dev/SKILL.md)",
+      "expected": "[$crw-dev](skill://${SKILLS}/crw-dev/SKILL.md)",
+      "classification": "intentionally-changed",
+      "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+    },
+    {
+      "input": "[$crw-dev](/badtarget)\t\r",
+      "skills": "${SKILLS}",
+      "oracle": "[$cxc-dev](skill://${SKILLS}/dev/SKILL.md)\t\r",
+      "expected": "[$crw-dev](skill://${SKILLS}/crw-dev/SKILL.md)\t\r",
+      "classification": "intentionally-changed",
+      "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+    },
+    {
+      "input": "[$crw-dev](/bad﻿target)",
+      "skills": "${SKILLS}",
+      "oracle": "[$cxc-dev](/bad﻿target)",
+      "expected": "[$crw-dev](/bad﻿target)",
+      "classification": "intentionally-changed",
+      "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+    },
+    {
+      "input": "$crw-dev",
+      "skills": "${ANGLE}",
+      "oracle": "[$cxc-dev](skill://${ANGLE}/dev/SKILL.md)",
+      "expected": "[$crw-dev](skill://${ANGLE}/crw-dev/SKILL.md)",
+      "classification": "intentionally-changed",
+      "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+    }
   ]
 }
