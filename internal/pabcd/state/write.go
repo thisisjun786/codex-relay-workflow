@@ -71,7 +71,7 @@ func failAt(fail func(ensureStep, string) error, step ensureStep, path string) e
 }
 
 // ensureStateWith is ensureState with a hook that is called just before each fallback step and fails it by returning an error.
-func ensureStateWith(cwd, sessionID string, now func() time.Time, link func(existing, created string) error, fail func(ensureStep, string) error) (created bool, err error) {
+func ensureStateWith(cwd, sessionID string, now func() time.Time, link func(existing, created string) error, fail func(ensureStep, string) error, syncFile ...func(*os.File) error) (created bool, err error) {
 	if !IsCanonicalSessionID(sessionID) {
 		return false, ErrNonCanonicalSessionID
 	}
@@ -156,7 +156,7 @@ func WriteState(cwd string, next State) error {
 	return writeState(cwd, next, time.Now(), crwdir.Rename)
 }
 
-func writeState(cwd string, next State, now time.Time, rename func(tmp, finalPath string) error) (err error) {
+func writeState(cwd string, next State, now time.Time, rename func(tmp, finalPath string) error, syncFile ...func(*os.File) error) (err error) {
 	if err = makeSessionsDir(cwd); err != nil {
 		return err
 	}
