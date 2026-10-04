@@ -186,6 +186,8 @@ func TestConfigSetNoopOwnershipAndUnsupportedValues(t *testing.T) {
 	}
 }
 
+// Intentionally-changed: prevent data loss from the oracle's in-place writes by
+// publishing whole files through the existing fsync/rename owner.
 func TestConfigSetAtomicSettingsManifestBackupAndSymlink(t *testing.T) {
 	home, path := configSetHome(t, configSetOriginal, true)
 	manifest := manifestPath(home)
@@ -228,6 +230,8 @@ func TestConfigSetAtomicSettingsManifestBackupAndSymlink(t *testing.T) {
 	}
 }
 
+// Intentionally-changed: the protected writer refuses unreadable/dangling
+// destinations rather than treating them as absent and replacing them.
 func TestConfigSetUnreadableDestinationsAreNotOverwritten(t *testing.T) {
 	for _, name := range []string{"config.toml", InstallManifestName, "config.toml.crw-2026-08-29T01-02-03-456Z.bak"} {
 		t.Run(name, func(t *testing.T) {
