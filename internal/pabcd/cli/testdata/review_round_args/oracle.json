@@ -1,0 +1,2136 @@
+{
+  "oracle": "CXC v0.2.40 3c1459ac",
+  "world": {
+    "dirs": [
+      "ws/devlog/_plan/u/000_dir.md",
+      "ws/devlog/_plan/u/000_sub",
+      "ws/devlog/_plan/other",
+      "out"
+    ],
+    "files": {
+      "ws/package.json": "{}\n",
+      "ws/devlog/_plan/u/000_plan.md": "# plan\n",
+      "ws/devlog/_plan/u/010_second.md": "# second\r\nwith crlf\r\n",
+      "ws/devlog/_plan/u/notes.md": "notes\n",
+      "ws/devlog/_plan/u/000_sub/x.md": "in a subdirectory\n",
+      "ws/devlog/_plan/u/000_a\nb.md": "newline in the name\n",
+      "ws/devlog/_plan/u/000_a\rb.md": "carriage return in the name\n",
+      "ws/devlog/_plan/u/٠٠٠_x.md": "arabic-indic digits\n",
+      "ws/devlog/_plan/u/000_.md": "empty stem\n",
+      "ws/devlog/_plan/u/000_locked.md": "unreadable\n",
+      "ws/devlog/_plan/other/000_other.md": "# other\n",
+      "out/secret.md": "TOP SECRET\n",
+      "out/000_x.md": "outside doc\n"
+    },
+    "symlinks": {
+      "ws/devlog/_plan/u/020_link.md": "../../../../out/secret.md",
+      "ws/devlog/_plan/u/030_inlink.md": "000_plan.md",
+      "ws/devlog/_plan/u/040_dangle.md": "nowhere.md",
+      "ws/devlog/_plan/esc": "${ROOT}/out",
+      "ws/devlog/_plan/lnk": "u",
+      "ws/devlog/_plan/u/000_subdirlink": "../../../../out",
+      "ws/outlink.md": "../out/secret.md",
+      "ws/inlink.md": "package.json",
+      "wslink": "ws"
+    },
+    "modes": {
+      "ws/devlog/_plan/u/000_locked.md": 0
+    }
+  },
+  "parse": [
+    {
+      "id": "no_args",
+      "argv": [],
+      "cwd": "/ws",
+      "want": {
+        "verb": "help",
+        "cwd": "/ws",
+        "planPaths": []
+      }
+    },
+    {
+      "id": "help",
+      "argv": [
+        "help"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "help",
+        "cwd": "/ws",
+        "planPaths": []
+      }
+    },
+    {
+      "id": "dash_help",
+      "argv": [
+        "--help"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "help",
+        "cwd": "/ws",
+        "planPaths": []
+      }
+    },
+    {
+      "id": "short_help",
+      "argv": [
+        "-h"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "help",
+        "cwd": "/ws",
+        "planPaths": []
+      }
+    },
+    {
+      "id": "help_upper",
+      "argv": [
+        "HELP"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "help",
+        "cwd": "/ws",
+        "planPaths": []
+      }
+    },
+    {
+      "id": "short_help_upper",
+      "argv": [
+        "-H"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "help",
+        "cwd": "/ws",
+        "planPaths": []
+      }
+    },
+    {
+      "id": "dash_help_upper",
+      "argv": [
+        "--HELP"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "help",
+        "cwd": "/ws",
+        "planPaths": []
+      }
+    },
+    {
+      "id": "help_ignores_rest",
+      "argv": [
+        "help",
+        "--cwd",
+        "/other",
+        "--nope"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "help",
+        "cwd": "/ws",
+        "planPaths": []
+      }
+    },
+    {
+      "id": "open_help_is_not_help",
+      "argv": [
+        "open",
+        "--help"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "open",
+        "cwd": "/ws",
+        "planPaths": []
+      }
+    },
+    {
+      "id": "empty_verb",
+      "argv": [
+        ""
+      ],
+      "cwd": "/ws",
+      "want": {
+        "error": "unknown review-round verb '' (expected open|show|abort)"
+      }
+    },
+    {
+      "id": "unknown_verb",
+      "argv": [
+        "close"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "error": "unknown review-round verb 'close' (expected open|show|abort)"
+      }
+    },
+    {
+      "id": "unknown_verb_case",
+      "argv": [
+        "Close",
+        "--session",
+        "s"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "error": "unknown review-round verb 'Close' (expected open|show|abort)"
+      }
+    },
+    {
+      "id": "close_all",
+      "argv": [
+        "CLOSE"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "error": "unknown review-round verb 'CLOSE' (expected open|show|abort)"
+      }
+    },
+    {
+      "id": "dotted_i_verb",
+      "argv": [
+        "İ"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "error": "unknown review-round verb 'İ' (expected open|show|abort)"
+      }
+    },
+    {
+      "id": "kelvin_verb",
+      "argv": [
+        "K"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "error": "unknown review-round verb 'K' (expected open|show|abort)"
+      }
+    },
+    {
+      "id": "fullwidth_open",
+      "argv": [
+        "ＯＰＥＮ"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "error": "unknown review-round verb 'ＯＰＥＮ' (expected open|show|abort)"
+      }
+    },
+    {
+      "id": "verb_with_space",
+      "argv": [
+        " open"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "error": "unknown review-round verb ' open' (expected open|show|abort)"
+      }
+    },
+    {
+      "id": "open",
+      "argv": [
+        "open"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "open",
+        "cwd": "/ws",
+        "planPaths": []
+      }
+    },
+    {
+      "id": "show",
+      "argv": [
+        "show"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "show",
+        "cwd": "/ws",
+        "planPaths": []
+      }
+    },
+    {
+      "id": "abort",
+      "argv": [
+        "abort"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "abort",
+        "cwd": "/ws",
+        "planPaths": []
+      }
+    },
+    {
+      "id": "open_upper",
+      "argv": [
+        "OPEN"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "open",
+        "cwd": "/ws",
+        "planPaths": []
+      }
+    },
+    {
+      "id": "show_mixed",
+      "argv": [
+        "ShOw"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "show",
+        "cwd": "/ws",
+        "planPaths": []
+      }
+    },
+    {
+      "id": "abort_upper",
+      "argv": [
+        "ABORT"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "abort",
+        "cwd": "/ws",
+        "planPaths": []
+      }
+    },
+    {
+      "id": "verb_after_flag",
+      "argv": [
+        "--session",
+        "s",
+        "open"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "error": "unknown review-round verb '--session' (expected open|show|abort)"
+      }
+    },
+    {
+      "id": "default_cwd",
+      "argv": [
+        "open",
+        "--session",
+        "s1"
+      ],
+      "cwd": "/some/cwd",
+      "want": {
+        "verb": "open",
+        "cwd": "/some/cwd",
+        "planPaths": [],
+        "session": "s1"
+      }
+    },
+    {
+      "id": "relative_default_cwd",
+      "argv": [
+        "show"
+      ],
+      "cwd": "rel/dir",
+      "want": {
+        "verb": "show",
+        "cwd": "rel/dir",
+        "planPaths": []
+      }
+    },
+    {
+      "id": "empty_default_cwd",
+      "argv": [
+        "show"
+      ],
+      "cwd": "",
+      "want": {
+        "verb": "show",
+        "cwd": "",
+        "planPaths": []
+      }
+    },
+    {
+      "id": "plan_paths_accumulate",
+      "argv": [
+        "open",
+        "--plan-path",
+        "a.md",
+        "--plan-path",
+        "",
+        "--plan-path",
+        "b.md",
+        "--plan-path",
+        "a.md"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "open",
+        "cwd": "/ws",
+        "planPaths": [
+          "a.md",
+          "b.md",
+          "a.md"
+        ]
+      }
+    },
+    {
+      "id": "cwd_missing_resets",
+      "argv": [
+        "open",
+        "--cwd",
+        "/one",
+        "--cwd"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "open",
+        "cwd": "/ws",
+        "planPaths": []
+      }
+    },
+    {
+      "id": "cwd_empty_kept",
+      "argv": [
+        "open",
+        "--cwd",
+        ""
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "open",
+        "cwd": "",
+        "planPaths": []
+      }
+    },
+    {
+      "id": "cwd_last_wins",
+      "argv": [
+        "open",
+        "--cwd",
+        "/one",
+        "--cwd",
+        "/two"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "open",
+        "cwd": "/two",
+        "planPaths": []
+      }
+    },
+    {
+      "id": "session_consumes_flag",
+      "argv": [
+        "open",
+        "--session",
+        "--cwd",
+        "/x"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "open",
+        "cwd": "/ws",
+        "planPaths": [],
+        "session": "--cwd"
+      }
+    },
+    {
+      "id": "reason_text_keeps_names",
+      "argv": [
+        "abort",
+        "--reason",
+        "cxc review-round abort"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "abort",
+        "cwd": "/ws",
+        "planPaths": [],
+        "reason": "cxc review-round abort"
+      }
+    },
+    {
+      "id": "json_flag",
+      "argv": [
+        "show",
+        "--json"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "show",
+        "cwd": "/ws",
+        "planPaths": [],
+        "json": true
+      }
+    },
+    {
+      "id": "json_repeated",
+      "argv": [
+        "show",
+        "--json",
+        "--json"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "show",
+        "cwd": "/ws",
+        "planPaths": [],
+        "json": true
+      }
+    },
+    {
+      "id": "json_value_ignored",
+      "argv": [
+        "show",
+        "--json=false"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "show",
+        "cwd": "/ws",
+        "planPaths": []
+      }
+    },
+    {
+      "id": "equals_forms_ignored",
+      "argv": [
+        "open",
+        "--session=x",
+        "--cwd=/y",
+        "--plan-path=z.md",
+        "--reason=r"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "open",
+        "cwd": "/ws",
+        "planPaths": []
+      }
+    },
+    {
+      "id": "unknown_flag_ignored",
+      "argv": [
+        "open",
+        "--nope",
+        "x",
+        "--session",
+        "s"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "open",
+        "cwd": "/ws",
+        "planPaths": [],
+        "session": "s"
+      }
+    },
+    {
+      "id": "positional_ignored",
+      "argv": [
+        "open",
+        "stray",
+        "--session",
+        "s"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "open",
+        "cwd": "/ws",
+        "planPaths": [],
+        "session": "s"
+      }
+    },
+    {
+      "id": "double_dash_ignored",
+      "argv": [
+        "open",
+        "--",
+        "--session",
+        "s"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "open",
+        "cwd": "/ws",
+        "planPaths": [],
+        "session": "s"
+      }
+    },
+    {
+      "id": "flag_case_sensitive",
+      "argv": [
+        "open",
+        "--SESSION",
+        "s",
+        "--Json"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "open",
+        "cwd": "/ws",
+        "planPaths": []
+      }
+    },
+    {
+      "id": "all_fields",
+      "argv": [
+        "abort",
+        "--session",
+        "s",
+        "--cwd",
+        "/w",
+        "--plan-path",
+        "p.md",
+        "--reason",
+        "why",
+        "--json"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "abort",
+        "cwd": "/w",
+        "planPaths": [
+          "p.md"
+        ],
+        "session": "s",
+        "reason": "why",
+        "json": true
+      }
+    },
+    {
+      "id": "proto_like_values",
+      "argv": [
+        "open",
+        "--session",
+        "__proto__",
+        "--reason",
+        "constructor",
+        "--plan-path",
+        "toString"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "open",
+        "cwd": "/ws",
+        "planPaths": [
+          "toString"
+        ],
+        "session": "__proto__",
+        "reason": "constructor"
+      }
+    },
+    {
+      "id": "unicode_values",
+      "argv": [
+        "open",
+        "--session",
+        "😀",
+        "--plan-path",
+        "é.md"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "open",
+        "cwd": "/ws",
+        "planPaths": [
+          "é.md"
+        ],
+        "session": "😀"
+      }
+    },
+    {
+      "id": "missing_session",
+      "argv": [
+        "open",
+        "--session"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "open",
+        "cwd": "/ws",
+        "planPaths": []
+      }
+    },
+    {
+      "id": "flag_value_session",
+      "argv": [
+        "open",
+        "--session",
+        "--json"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "open",
+        "cwd": "/ws",
+        "planPaths": [],
+        "session": "--json"
+      }
+    },
+    {
+      "id": "empty_session",
+      "argv": [
+        "open",
+        "--session",
+        ""
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "open",
+        "cwd": "/ws",
+        "planPaths": [],
+        "session": ""
+      }
+    },
+    {
+      "id": "repeated_session",
+      "argv": [
+        "open",
+        "--session",
+        "one",
+        "--session",
+        "two"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "open",
+        "cwd": "/ws",
+        "planPaths": [],
+        "session": "two"
+      }
+    },
+    {
+      "id": "repeated_missing_session",
+      "argv": [
+        "open",
+        "--session",
+        "one",
+        "--session"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "open",
+        "cwd": "/ws",
+        "planPaths": []
+      }
+    },
+    {
+      "id": "missing_cwd",
+      "argv": [
+        "open",
+        "--cwd"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "open",
+        "cwd": "/ws",
+        "planPaths": []
+      }
+    },
+    {
+      "id": "flag_value_cwd",
+      "argv": [
+        "open",
+        "--cwd",
+        "--json"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "open",
+        "cwd": "--json",
+        "planPaths": []
+      }
+    },
+    {
+      "id": "empty_cwd",
+      "argv": [
+        "open",
+        "--cwd",
+        ""
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "open",
+        "cwd": "",
+        "planPaths": []
+      }
+    },
+    {
+      "id": "repeated_cwd",
+      "argv": [
+        "open",
+        "--cwd",
+        "one",
+        "--cwd",
+        "two"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "open",
+        "cwd": "two",
+        "planPaths": []
+      }
+    },
+    {
+      "id": "repeated_missing_cwd",
+      "argv": [
+        "open",
+        "--cwd",
+        "one",
+        "--cwd"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "open",
+        "cwd": "/ws",
+        "planPaths": []
+      }
+    },
+    {
+      "id": "missing_plan-path",
+      "argv": [
+        "open",
+        "--plan-path"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "open",
+        "cwd": "/ws",
+        "planPaths": []
+      }
+    },
+    {
+      "id": "flag_value_plan-path",
+      "argv": [
+        "open",
+        "--plan-path",
+        "--json"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "open",
+        "cwd": "/ws",
+        "planPaths": [
+          "--json"
+        ]
+      }
+    },
+    {
+      "id": "empty_plan-path",
+      "argv": [
+        "open",
+        "--plan-path",
+        ""
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "open",
+        "cwd": "/ws",
+        "planPaths": []
+      }
+    },
+    {
+      "id": "repeated_plan-path",
+      "argv": [
+        "open",
+        "--plan-path",
+        "one",
+        "--plan-path",
+        "two"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "open",
+        "cwd": "/ws",
+        "planPaths": [
+          "one",
+          "two"
+        ]
+      }
+    },
+    {
+      "id": "repeated_missing_plan-path",
+      "argv": [
+        "open",
+        "--plan-path",
+        "one",
+        "--plan-path"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "open",
+        "cwd": "/ws",
+        "planPaths": [
+          "one"
+        ]
+      }
+    },
+    {
+      "id": "missing_reason",
+      "argv": [
+        "open",
+        "--reason"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "open",
+        "cwd": "/ws",
+        "planPaths": []
+      }
+    },
+    {
+      "id": "flag_value_reason",
+      "argv": [
+        "open",
+        "--reason",
+        "--json"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "open",
+        "cwd": "/ws",
+        "planPaths": [],
+        "reason": "--json"
+      }
+    },
+    {
+      "id": "empty_reason",
+      "argv": [
+        "open",
+        "--reason",
+        ""
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "open",
+        "cwd": "/ws",
+        "planPaths": [],
+        "reason": ""
+      }
+    },
+    {
+      "id": "repeated_reason",
+      "argv": [
+        "open",
+        "--reason",
+        "one",
+        "--reason",
+        "two"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "open",
+        "cwd": "/ws",
+        "planPaths": [],
+        "reason": "two"
+      }
+    },
+    {
+      "id": "repeated_missing_reason",
+      "argv": [
+        "open",
+        "--reason",
+        "one",
+        "--reason"
+      ],
+      "cwd": "/ws",
+      "want": {
+        "verb": "open",
+        "cwd": "/ws",
+        "planPaths": []
+      }
+    }
+  ],
+  "hash": [
+    {
+      "id": "empty",
+      "files": [],
+      "want": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "one",
+      "files": [
+        {
+          "path": "devlog/_plan/u/000_plan.md",
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "want": "82ba0c5ac9c7640dce8c47573195a4035cbb5edf84570e040ac8709d3e428a74"
+    },
+    {
+      "id": "two_in_order",
+      "files": [
+        {
+          "path": "a.md",
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+        },
+        {
+          "path": "b.md",
+          "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+        }
+      ],
+      "want": "143ba077ab0903210fdc9e53bcec36f25314a7922c575cc6bd18a9968e28d69a"
+    },
+    {
+      "id": "two_reversed_is_not_sorted",
+      "files": [
+        {
+          "path": "b.md",
+          "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+        },
+        {
+          "path": "a.md",
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+        }
+      ],
+      "want": "71e8c040f3f55ffa04fb21863c35c1b4cd79db168c9a8025e01614499cafe054"
+    },
+    {
+      "id": "same_path_twice",
+      "files": [
+        {
+          "path": "a.md",
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+        },
+        {
+          "path": "a.md",
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+        }
+      ],
+      "want": "d394c57e0678a09a6fa692695368b23aa9adaa965ba9f243b0fb1243980bf4d5"
+    },
+    {
+      "id": "nul_free_boundary",
+      "files": [
+        {
+          "path": "a",
+          "sha256": "b\u0000c"
+        },
+        {
+          "path": "d",
+          "sha256": "e"
+        }
+      ],
+      "want": "6cf635c05ee76ff433ba00d3819c2154a81aa910c78ef711fc7a3c14fa5cc38d"
+    },
+    {
+      "id": "non_ascii_path",
+      "files": [
+        {
+          "path": "déjà/000_日本.md",
+          "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        }
+      ],
+      "want": "dc5d513b4067c010c81d51943d81416191a117a0a58c9a57b66b3fe94416d4f6"
+    },
+    {
+      "id": "astral_path",
+      "files": [
+        {
+          "path": "000_😀.md",
+          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      ],
+      "want": "08a697c82276c3520d490f36a77e6b4183e12231fe9f1badd0403d16b70d66d1"
+    },
+    {
+      "id": "lone_surrogate_path",
+      "files": [
+        {
+          "path": "000_\ud800.md",
+          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      ],
+      "want": "5d6ce59e24ff3d7bdc6dd9570cdaa053c23eab3af7e1534bd4d2e9d0b9b341c7"
+    },
+    {
+      "id": "missing_sentinel",
+      "files": [
+        {
+          "path": "a.md",
+          "sha256": "missing"
+        }
+      ],
+      "want": "00299a8d57de296fc47b9f3c7db706946dd52f2265edbdf78fd8f25e6e192801"
+    }
+  ],
+  "collect": [
+    {
+      "id": "no_paths",
+      "cwd": "${ROOT}/ws",
+      "unit": "devlog/_plan/u",
+      "paths": [],
+      "want": {
+        "error": "--plan-path is required at least once: a round with no files audits nothing"
+      }
+    },
+    {
+      "id": "one_ok",
+      "cwd": "${ROOT}/ws",
+      "unit": "devlog/_plan/u",
+      "paths": [
+        "devlog/_plan/u/000_plan.md"
+      ],
+      "want": {
+        "files": [
+          {
+            "path": "devlog/_plan/u/000_plan.md",
+            "sha256": "98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844"
+          }
+        ]
+      }
+    },
+    {
+      "id": "two_reversed_sorted",
+      "cwd": "${ROOT}/ws",
+      "unit": "devlog/_plan/u",
+      "paths": [
+        "devlog/_plan/u/010_second.md",
+        "devlog/_plan/u/000_plan.md"
+      ],
+      "want": {
+        "files": [
+          {
+            "path": "devlog/_plan/u/000_plan.md",
+            "sha256": "98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844"
+          },
+          {
+            "path": "devlog/_plan/u/010_second.md",
+            "sha256": "ed5415aa5e9ef3c632f5d50611c71b9119059eca684f0b5eba6d678d1e75478b"
+          }
+        ]
+      }
+    },
+    {
+      "id": "same_file_three_spellings",
+      "cwd": "${ROOT}/ws",
+      "unit": "devlog/_plan/u",
+      "paths": [
+        "devlog/_plan/u/000_plan.md",
+        "./devlog/_plan/u/../u/000_plan.md",
+        "${ROOT}/ws/devlog/_plan/u/000_plan.md"
+      ],
+      "want": {
+        "files": [
+          {
+            "path": "devlog/_plan/u/000_plan.md",
+            "sha256": "98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844"
+          }
+        ]
+      }
+    },
+    {
+      "id": "absolute_unit",
+      "cwd": "${ROOT}/ws",
+      "unit": "${ROOT}/ws/devlog/_plan/u",
+      "paths": [
+        "devlog/_plan/u/000_plan.md"
+      ],
+      "want": {
+        "files": [
+          {
+            "path": "devlog/_plan/u/000_plan.md",
+            "sha256": "98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844"
+          }
+        ]
+      }
+    },
+    {
+      "id": "relative_unit_trailing_slash",
+      "cwd": "${ROOT}/ws",
+      "unit": "devlog/_plan/u/",
+      "paths": [
+        "devlog/_plan/u/000_plan.md"
+      ],
+      "want": {
+        "files": [
+          {
+            "path": "devlog/_plan/u/000_plan.md",
+            "sha256": "98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844"
+          }
+        ]
+      }
+    },
+    {
+      "id": "package_json_outside_unit",
+      "cwd": "${ROOT}/ws",
+      "unit": "devlog/_plan/u",
+      "paths": [
+        "package.json"
+      ],
+      "want": {
+        "error": "plan path package.json is outside the bound plan unit devlog/_plan/u"
+      }
+    },
+    {
+      "id": "sibling_unit",
+      "cwd": "${ROOT}/ws",
+      "unit": "devlog/_plan/u",
+      "paths": [
+        "devlog/_plan/other/000_other.md"
+      ],
+      "want": {
+        "error": "plan path devlog/_plan/other/000_other.md is outside the bound plan unit devlog/_plan/u"
+      }
+    },
+    {
+      "id": "parent_climb",
+      "cwd": "${ROOT}/ws",
+      "unit": "devlog/_plan/u",
+      "paths": [
+        "../out/secret.md"
+      ],
+      "want": {
+        "error": "plan path ../out/secret.md is outside the bound plan unit devlog/_plan/u"
+      }
+    },
+    {
+      "id": "absolute_outside",
+      "cwd": "${ROOT}/ws",
+      "unit": "devlog/_plan/u",
+      "paths": [
+        "${ROOT}/out/secret.md"
+      ],
+      "want": {
+        "error": "plan path ${ROOT}/out/secret.md is outside the bound plan unit devlog/_plan/u"
+      }
+    },
+    {
+      "id": "first_ok_then_outside",
+      "cwd": "${ROOT}/ws",
+      "unit": "devlog/_plan/u",
+      "paths": [
+        "devlog/_plan/u/000_plan.md",
+        "package.json"
+      ],
+      "want": {
+        "error": "plan path package.json is outside the bound plan unit devlog/_plan/u"
+      }
+    },
+    {
+      "id": "not_numbered",
+      "cwd": "${ROOT}/ws",
+      "unit": "devlog/_plan/u",
+      "paths": [
+        "devlog/_plan/u/notes.md"
+      ],
+      "want": {
+        "error": "plan path devlog/_plan/u/notes.md is not a numbered plan document (000_*.md) directly inside devlog/_plan/u"
+      }
+    },
+    {
+      "id": "empty_stem",
+      "cwd": "${ROOT}/ws",
+      "unit": "devlog/_plan/u",
+      "paths": [
+        "devlog/_plan/u/000_.md"
+      ],
+      "want": {
+        "error": "plan path devlog/_plan/u/000_.md is not a numbered plan document (000_*.md) directly inside devlog/_plan/u"
+      }
+    },
+    {
+      "id": "subdirectory_document",
+      "cwd": "${ROOT}/ws",
+      "unit": "devlog/_plan/u",
+      "paths": [
+        "devlog/_plan/u/000_sub/x.md"
+      ],
+      "want": {
+        "files": [
+          {
+            "path": "devlog/_plan/u/000_sub/x.md",
+            "sha256": "10fef2d5cd55cddc9cadf43f868d0f4b618bb3548c44b412ec8042c12de89b58"
+          }
+        ]
+      }
+    },
+    {
+      "id": "newline_in_name",
+      "cwd": "${ROOT}/ws",
+      "unit": "devlog/_plan/u",
+      "paths": [
+        "devlog/_plan/u/000_a\nb.md"
+      ],
+      "want": {
+        "error": "plan path devlog/_plan/u/000_a\nb.md is not a numbered plan document (000_*.md) directly inside devlog/_plan/u"
+      }
+    },
+    {
+      "id": "carriage_return_in_name",
+      "cwd": "${ROOT}/ws",
+      "unit": "devlog/_plan/u",
+      "paths": [
+        "devlog/_plan/u/000_a\rb.md"
+      ],
+      "want": {
+        "error": "plan path devlog/_plan/u/000_a\rb.md is not a numbered plan document (000_*.md) directly inside devlog/_plan/u"
+      }
+    },
+    {
+      "id": "arabic_indic_digits",
+      "cwd": "${ROOT}/ws",
+      "unit": "devlog/_plan/u",
+      "paths": [
+        "devlog/_plan/u/٠٠٠_x.md"
+      ],
+      "want": {
+        "error": "plan path devlog/_plan/u/٠٠٠_x.md is not a numbered plan document (000_*.md) directly inside devlog/_plan/u"
+      }
+    },
+    {
+      "id": "directory_named_like_a_doc",
+      "cwd": "${ROOT}/ws",
+      "unit": "devlog/_plan/u",
+      "paths": [
+        "devlog/_plan/u/000_dir.md"
+      ],
+      "want": {
+        "error": "plan path devlog/_plan/u/000_dir.md is not a readable regular file"
+      }
+    },
+    {
+      "id": "missing_file",
+      "cwd": "${ROOT}/ws",
+      "unit": "devlog/_plan/u",
+      "paths": [
+        "devlog/_plan/u/050_missing.md"
+      ],
+      "want": {
+        "error": "plan path devlog/_plan/u/050_missing.md is not a readable regular file"
+      }
+    },
+    {
+      "id": "file_symlink_to_outside",
+      "cwd": "${ROOT}/ws",
+      "unit": "devlog/_plan/u",
+      "paths": [
+        "devlog/_plan/u/020_link.md"
+      ],
+      "want": {
+        "error": "plan path devlog/_plan/u/020_link.md is not a readable regular file"
+      }
+    },
+    {
+      "id": "file_symlink_to_inside",
+      "cwd": "${ROOT}/ws",
+      "unit": "devlog/_plan/u",
+      "paths": [
+        "devlog/_plan/u/030_inlink.md"
+      ],
+      "want": {
+        "error": "plan path devlog/_plan/u/030_inlink.md is not a readable regular file"
+      }
+    },
+    {
+      "id": "dangling_symlink",
+      "cwd": "${ROOT}/ws",
+      "unit": "devlog/_plan/u",
+      "paths": [
+        "devlog/_plan/u/040_dangle.md"
+      ],
+      "want": {
+        "error": "plan path devlog/_plan/u/040_dangle.md is not a readable regular file"
+      }
+    },
+    {
+      "id": "unit_itself",
+      "cwd": "${ROOT}/ws",
+      "unit": "devlog/_plan/u",
+      "paths": [
+        "devlog/_plan/u"
+      ],
+      "want": {
+        "error": "plan path devlog/_plan/u is not a numbered plan document (000_*.md) directly inside devlog/_plan/u"
+      }
+    },
+    {
+      "id": "empty_string_path",
+      "cwd": "${ROOT}/ws",
+      "unit": "devlog/_plan/u",
+      "paths": [
+        ""
+      ],
+      "want": {
+        "error": "plan path  is outside the bound plan unit devlog/_plan/u"
+      }
+    },
+    {
+      "id": "unit_symlinked_outside",
+      "cwd": "${ROOT}/ws",
+      "unit": "devlog/_plan/esc",
+      "paths": [
+        "devlog/_plan/esc/000_x.md"
+      ],
+      "want": {
+        "files": [
+          {
+            "path": "devlog/_plan/esc/000_x.md",
+            "sha256": "4982c5edb51fdccf863a732da01785f1f37d272cd4bf741bd107fa30173354a2"
+          }
+        ]
+      }
+    },
+    {
+      "id": "unit_symlinked_inside",
+      "cwd": "${ROOT}/ws",
+      "unit": "devlog/_plan/lnk",
+      "paths": [
+        "devlog/_plan/lnk/000_plan.md"
+      ],
+      "want": {
+        "files": [
+          {
+            "path": "devlog/_plan/lnk/000_plan.md",
+            "sha256": "98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844"
+          }
+        ]
+      }
+    },
+    {
+      "id": "subdirectory_symlinked_outside",
+      "cwd": "${ROOT}/ws",
+      "unit": "devlog/_plan/u",
+      "paths": [
+        "devlog/_plan/u/000_subdirlink/000_x.md"
+      ],
+      "want": {
+        "files": [
+          {
+            "path": "devlog/_plan/u/000_subdirlink/000_x.md",
+            "sha256": "4982c5edb51fdccf863a732da01785f1f37d272cd4bf741bd107fa30173354a2"
+          }
+        ]
+      }
+    },
+    {
+      "id": "cwd_is_a_symlink",
+      "cwd": "${ROOT}/wslink",
+      "unit": "devlog/_plan/u",
+      "paths": [
+        "devlog/_plan/u/000_plan.md",
+        "devlog/_plan/u/010_second.md"
+      ],
+      "want": {
+        "files": [
+          {
+            "path": "devlog/_plan/u/000_plan.md",
+            "sha256": "98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844"
+          },
+          {
+            "path": "devlog/_plan/u/010_second.md",
+            "sha256": "ed5415aa5e9ef3c632f5d50611c71b9119059eca684f0b5eba6d678d1e75478b"
+          }
+        ]
+      }
+    },
+    {
+      "id": "unit_outside_cwd",
+      "cwd": "${ROOT}/ws",
+      "unit": "${ROOT}/out",
+      "paths": [
+        "${ROOT}/out/000_x.md"
+      ],
+      "want": {
+        "files": [
+          {
+            "path": "../out/000_x.md",
+            "sha256": "4982c5edb51fdccf863a732da01785f1f37d272cd4bf741bd107fa30173354a2"
+          }
+        ]
+      }
+    },
+    {
+      "id": "unreadable_file",
+      "cwd": "${ROOT}/ws",
+      "unit": "devlog/_plan/u",
+      "paths": [
+        "devlog/_plan/u/000_locked.md"
+      ],
+      "want": {
+        "throws": "EACCES"
+      }
+    }
+  ],
+  "recomputed": [
+    {
+      "id": "empty",
+      "cwd": "${ROOT}/ws",
+      "paths": [],
+      "want": []
+    },
+    {
+      "id": "present_and_missing",
+      "cwd": "${ROOT}/ws",
+      "paths": [
+        "devlog/_plan/u/000_plan.md",
+        "devlog/_plan/u/050_missing.md"
+      ],
+      "want": [
+        {
+          "path": "devlog/_plan/u/000_plan.md",
+          "sha256": "98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844"
+        },
+        {
+          "path": "devlog/_plan/u/050_missing.md",
+          "sha256": "missing"
+        }
+      ]
+    },
+    {
+      "id": "order_and_duplicates_kept",
+      "cwd": "${ROOT}/ws",
+      "paths": [
+        "devlog/_plan/u/010_second.md",
+        "devlog/_plan/u/000_plan.md",
+        "devlog/_plan/u/010_second.md"
+      ],
+      "want": [
+        {
+          "path": "devlog/_plan/u/010_second.md",
+          "sha256": "ed5415aa5e9ef3c632f5d50611c71b9119059eca684f0b5eba6d678d1e75478b"
+        },
+        {
+          "path": "devlog/_plan/u/000_plan.md",
+          "sha256": "98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844"
+        },
+        {
+          "path": "devlog/_plan/u/010_second.md",
+          "sha256": "ed5415aa5e9ef3c632f5d50611c71b9119059eca684f0b5eba6d678d1e75478b"
+        }
+      ]
+    },
+    {
+      "id": "dot_dot_back_inside",
+      "cwd": "${ROOT}/ws",
+      "paths": [
+        "devlog/../package.json"
+      ],
+      "want": [
+        {
+          "path": "devlog/../package.json",
+          "sha256": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356"
+        }
+      ]
+    },
+    {
+      "id": "directory",
+      "cwd": "${ROOT}/ws",
+      "paths": [
+        "devlog/_plan/u/000_dir.md",
+        "devlog/_plan/u"
+      ],
+      "want": [
+        {
+          "path": "devlog/_plan/u/000_dir.md",
+          "sha256": "missing"
+        },
+        {
+          "path": "devlog/_plan/u",
+          "sha256": "missing"
+        }
+      ]
+    },
+    {
+      "id": "empty_path_is_cwd",
+      "cwd": "${ROOT}/ws",
+      "paths": [
+        ""
+      ],
+      "want": [
+        {
+          "path": "",
+          "sha256": "missing"
+        }
+      ]
+    },
+    {
+      "id": "absolute_inside",
+      "cwd": "${ROOT}/ws",
+      "paths": [
+        "${ROOT}/ws/package.json"
+      ],
+      "want": [
+        {
+          "path": "${ROOT}/ws/package.json",
+          "sha256": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356"
+        }
+      ]
+    },
+    {
+      "id": "absolute_outside",
+      "cwd": "${ROOT}/ws",
+      "paths": [
+        "${ROOT}/out/secret.md"
+      ],
+      "want": [
+        {
+          "path": "${ROOT}/out/secret.md",
+          "sha256": "a3a19526f8e40e76718f2eae107d719ae2b0fbd39443aa8fd64074efd726970e"
+        }
+      ]
+    },
+    {
+      "id": "parent_climb_outside",
+      "cwd": "${ROOT}/ws",
+      "paths": [
+        "../out/secret.md"
+      ],
+      "want": [
+        {
+          "path": "../out/secret.md",
+          "sha256": "a3a19526f8e40e76718f2eae107d719ae2b0fbd39443aa8fd64074efd726970e"
+        }
+      ]
+    },
+    {
+      "id": "symlink_to_inside",
+      "cwd": "${ROOT}/ws",
+      "paths": [
+        "inlink.md"
+      ],
+      "want": [
+        {
+          "path": "inlink.md",
+          "sha256": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356"
+        }
+      ]
+    },
+    {
+      "id": "symlink_to_outside",
+      "cwd": "${ROOT}/ws",
+      "paths": [
+        "outlink.md"
+      ],
+      "want": [
+        {
+          "path": "outlink.md",
+          "sha256": "a3a19526f8e40e76718f2eae107d719ae2b0fbd39443aa8fd64074efd726970e"
+        }
+      ]
+    },
+    {
+      "id": "symlinked_unit_inside",
+      "cwd": "${ROOT}/ws",
+      "paths": [
+        "devlog/_plan/lnk/000_plan.md"
+      ],
+      "want": [
+        {
+          "path": "devlog/_plan/lnk/000_plan.md",
+          "sha256": "98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844"
+        }
+      ]
+    },
+    {
+      "id": "symlinked_unit_outside",
+      "cwd": "${ROOT}/ws",
+      "paths": [
+        "devlog/_plan/esc/000_x.md"
+      ],
+      "want": [
+        {
+          "path": "devlog/_plan/esc/000_x.md",
+          "sha256": "4982c5edb51fdccf863a732da01785f1f37d272cd4bf741bd107fa30173354a2"
+        }
+      ]
+    },
+    {
+      "id": "symlinked_subdirectory_outside",
+      "cwd": "${ROOT}/ws",
+      "paths": [
+        "devlog/_plan/u/000_subdirlink/secret.md"
+      ],
+      "want": [
+        {
+          "path": "devlog/_plan/u/000_subdirlink/secret.md",
+          "sha256": "a3a19526f8e40e76718f2eae107d719ae2b0fbd39443aa8fd64074efd726970e"
+        }
+      ]
+    },
+    {
+      "id": "dangling_symlink",
+      "cwd": "${ROOT}/ws",
+      "paths": [
+        "devlog/_plan/u/040_dangle.md"
+      ],
+      "want": [
+        {
+          "path": "devlog/_plan/u/040_dangle.md",
+          "sha256": "missing"
+        }
+      ]
+    },
+    {
+      "id": "cwd_is_a_symlink",
+      "cwd": "${ROOT}/wslink",
+      "paths": [
+        "package.json",
+        "inlink.md",
+        "outlink.md"
+      ],
+      "want": [
+        {
+          "path": "package.json",
+          "sha256": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356"
+        },
+        {
+          "path": "inlink.md",
+          "sha256": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356"
+        },
+        {
+          "path": "outlink.md",
+          "sha256": "a3a19526f8e40e76718f2eae107d719ae2b0fbd39443aa8fd64074efd726970e"
+        }
+      ]
+    },
+    {
+      "id": "crlf_content_hashed_raw",
+      "cwd": "${ROOT}/ws",
+      "paths": [
+        "devlog/_plan/u/010_second.md"
+      ],
+      "want": [
+        {
+          "path": "devlog/_plan/u/010_second.md",
+          "sha256": "ed5415aa5e9ef3c632f5d50611c71b9119059eca684f0b5eba6d678d1e75478b"
+        }
+      ]
+    },
+    {
+      "id": "unreadable_file",
+      "cwd": "${ROOT}/ws",
+      "paths": [
+        "devlog/_plan/u/000_locked.md"
+      ],
+      "want": [
+        {
+          "path": "devlog/_plan/u/000_locked.md",
+          "sha256": "missing"
+        }
+      ]
+    }
+  ],
+  "toml": [
+    {
+      "id": "absent_config",
+      "config": null,
+      "where": "codex-home",
+      "want": false
+    },
+    {
+      "id": "empty_config",
+      "config": "",
+      "where": "codex-home",
+      "want": false
+    },
+    {
+      "id": "table_true",
+      "config": "[features.multi_agent_v2]\nenabled = true\n",
+      "where": "codex-home",
+      "want": true
+    },
+    {
+      "id": "table_false",
+      "config": "[features.multi_agent_v2]\nenabled = false\n",
+      "where": "codex-home",
+      "want": false
+    },
+    {
+      "id": "table_no_enabled",
+      "config": "[features.multi_agent_v2]\nother = true\n",
+      "where": "codex-home",
+      "want": false
+    },
+    {
+      "id": "table_beats_scalar",
+      "config": "[features.multi_agent_v2]\nenabled = false\n[features]\nmulti_agent_v2 = true\n",
+      "where": "codex-home",
+      "want": false
+    },
+    {
+      "id": "table_absent_falls_to_scalar",
+      "config": "[features]\nmulti_agent_v2 = true\n",
+      "where": "codex-home",
+      "want": true
+    },
+    {
+      "id": "scalar_false",
+      "config": "[features]\nmulti_agent_v2 = false\n",
+      "where": "codex-home",
+      "want": false
+    },
+    {
+      "id": "scalar_with_comment",
+      "config": "[features]\nmulti_agent_v2 = true # on\n",
+      "where": "codex-home",
+      "want": true
+    },
+    {
+      "id": "scalar_indented",
+      "config": "[features]\n    multi_agent_v2   =   true\n",
+      "where": "codex-home",
+      "want": true
+    },
+    {
+      "id": "scalar_quoted_is_unread",
+      "config": "[features]\nmulti_agent_v2 = \"true\"\n",
+      "where": "codex-home",
+      "want": false
+    },
+    {
+      "id": "scalar_other_key",
+      "config": "[features]\nmulti_agent_v2_x = true\n",
+      "where": "codex-home",
+      "want": false
+    },
+    {
+      "id": "scalar_suffix_key",
+      "config": "[features]\nxmulti_agent_v2 = true\n",
+      "where": "codex-home",
+      "want": false
+    },
+    {
+      "id": "inline_enabled",
+      "config": "[features]\nmulti_agent_v2 = { enabled = true }\n",
+      "where": "codex-home",
+      "want": true
+    },
+    {
+      "id": "inline_disabled",
+      "config": "[features]\nmulti_agent_v2 = { enabled = false }\n",
+      "where": "codex-home",
+      "want": false
+    },
+    {
+      "id": "inline_without_enabled",
+      "config": "[features]\nmulti_agent_v2 = { other = 1 }\n",
+      "where": "codex-home",
+      "want": false
+    },
+    {
+      "id": "inline_spans_lines",
+      "config": "[features]\nmulti_agent_v2 = {\n  enabled = true\n}\n",
+      "where": "codex-home",
+      "want": true
+    },
+    {
+      "id": "inline_unanchored_enabled",
+      "config": "[features]\nmulti_agent_v2 = { xenabled = true }\n",
+      "where": "codex-home",
+      "want": true
+    },
+    {
+      "id": "scalar_beats_inline",
+      "config": "[features]\nmulti_agent_v2 = false\nmulti_agent_v2 = { enabled = true }\n",
+      "where": "codex-home",
+      "want": false
+    },
+    {
+      "id": "features_ends_at_next_table",
+      "config": "[features]\nother = 1\n[other]\nmulti_agent_v2 = true\n",
+      "where": "codex-home",
+      "want": false
+    },
+    {
+      "id": "v2_table_ends_at_next_table",
+      "config": "[features.multi_agent_v2]\nother = 1\n[x]\nenabled = true\n",
+      "where": "codex-home",
+      "want": false
+    },
+    {
+      "id": "header_comment",
+      "config": "[features.multi_agent_v2] # note\nenabled = true\n",
+      "where": "codex-home",
+      "want": true
+    },
+    {
+      "id": "header_indented",
+      "config": "  [features.multi_agent_v2]\nenabled = true\n",
+      "where": "codex-home",
+      "want": true
+    },
+    {
+      "id": "header_spaced_inside_is_unread",
+      "config": "[ features.multi_agent_v2 ]\nenabled = true\n",
+      "where": "codex-home",
+      "want": false
+    },
+    {
+      "id": "header_dotted_wildcard",
+      "config": "[featuresXmulti_agent_v2]\nenabled = true\n",
+      "where": "codex-home",
+      "want": false
+    },
+    {
+      "id": "header_array_of_tables",
+      "config": "[[features.multi_agent_v2]]\nenabled = true\n",
+      "where": "codex-home",
+      "want": false
+    },
+    {
+      "id": "header_trailing_junk",
+      "config": "[features.multi_agent_v2] x\nenabled = true\n",
+      "where": "codex-home",
+      "want": false
+    },
+    {
+      "id": "first_header_wins",
+      "config": "[features.multi_agent_v2]\nenabled = false\n[features.multi_agent_v2]\nenabled = true\n",
+      "where": "codex-home",
+      "want": false
+    },
+    {
+      "id": "first_enabled_wins",
+      "config": "[features.multi_agent_v2]\nenabled = false\nenabled = true\n",
+      "where": "codex-home",
+      "want": false
+    },
+    {
+      "id": "commented_header",
+      "config": "# [features.multi_agent_v2]\nenabled = true\n",
+      "where": "codex-home",
+      "want": false
+    },
+    {
+      "id": "commented_key",
+      "config": "[features.multi_agent_v2]\n# enabled = true\n",
+      "where": "codex-home",
+      "want": false
+    },
+    {
+      "id": "key_prefixed_by_text",
+      "config": "[features.multi_agent_v2]\nxenabled = true\n",
+      "where": "codex-home",
+      "want": false
+    },
+    {
+      "id": "value_with_trailing_text",
+      "config": "[features.multi_agent_v2]\nenabled = true x\n",
+      "where": "codex-home",
+      "want": false
+    },
+    {
+      "id": "crlf_table",
+      "config": "[features.multi_agent_v2]\r\nenabled = true\r\n",
+      "where": "codex-home",
+      "want": true
+    },
+    {
+      "id": "crlf_scalar",
+      "config": "[features]\r\nmulti_agent_v2 = true\r\n",
+      "where": "codex-home",
+      "want": true
+    },
+    {
+      "id": "crlf_inline",
+      "config": "[features]\r\nmulti_agent_v2 = { enabled = true }\r\n",
+      "where": "codex-home",
+      "want": true
+    },
+    {
+      "id": "lone_cr_line_break",
+      "config": "[features.multi_agent_v2]\renabled = true\r",
+      "where": "codex-home",
+      "want": false
+    },
+    {
+      "id": "lone_cr_inside_header_line",
+      "config": "[features.multi_agent_v2]\r# x\nenabled = true\n",
+      "where": "codex-home",
+      "want": true
+    },
+    {
+      "id": "lone_cr_in_comment",
+      "config": "[features.multi_agent_v2]\nenabled = true # a\rb\n",
+      "where": "codex-home",
+      "want": true
+    },
+    {
+      "id": "lone_cr_between_keys",
+      "config": "[features.multi_agent_v2]\nother = 1\renabled = true\n",
+      "where": "codex-home",
+      "want": true
+    },
+    {
+      "id": "line_separator_between_keys",
+      "config": "[features.multi_agent_v2]\nother = 1 enabled = true\n",
+      "where": "codex-home",
+      "want": true
+    },
+    {
+      "id": "paragraph_separator_in_comment",
+      "config": "[features.multi_agent_v2]\nenabled = true # a b\n",
+      "where": "codex-home",
+      "want": true
+    },
+    {
+      "id": "line_separator_header",
+      "config": "[features.multi_agent_v2] \nenabled = true\n",
+      "where": "codex-home",
+      "want": true
+    },
+    {
+      "id": "crcr_lf",
+      "config": "[features.multi_agent_v2]\r\r\nenabled = true\r\r\n",
+      "where": "codex-home",
+      "want": true
+    },
+    {
+      "id": "crcr_lf_comment",
+      "config": "[features.multi_agent_v2]\nenabled = true # comment\r\r\n",
+      "where": "codex-home",
+      "want": true
+    },
+    {
+      "id": "crcr_lf_scalar_comment",
+      "config": "[features]\nmulti_agent_v2 = true # comment\r\r\n",
+      "where": "codex-home",
+      "want": true
+    },
+    {
+      "id": "crcr_lf_inline",
+      "config": "[features]\nmulti_agent_v2 = { enabled = true }\r\r\n",
+      "where": "codex-home",
+      "want": true
+    },
+    {
+      "id": "header_comment_crcr_lf",
+      "config": "[features.multi_agent_v2] # note\r\r\nenabled = true\n",
+      "where": "codex-home",
+      "want": false
+    },
+    {
+      "id": "header_comment_cr_only",
+      "config": "[features.multi_agent_v2] # note\renabled = true\n",
+      "where": "codex-home",
+      "want": false
+    },
+    {
+      "id": "vertical_tab_indent",
+      "config": "[features.multi_agent_v2]\n\u000benabled = true\n",
+      "where": "codex-home",
+      "want": true
+    },
+    {
+      "id": "nbsp_indent",
+      "config": "[features.multi_agent_v2]\n enabled = true\n",
+      "where": "codex-home",
+      "want": true
+    },
+    {
+      "id": "ideographic_space",
+      "config": "[features.multi_agent_v2]\n　enabled　=　true　\n",
+      "where": "codex-home",
+      "want": true
+    },
+    {
+      "id": "zero_width_space_is_not_space",
+      "config": "[features.multi_agent_v2]\n​enabled = true\n",
+      "where": "codex-home",
+      "want": false
+    },
+    {
+      "id": "bom_prefix",
+      "config": "﻿[features.multi_agent_v2]\nenabled = true\n",
+      "where": "codex-home",
+      "want": true
+    },
+    {
+      "id": "bom_before_header",
+      "config": "﻿[features.multi_agent_v2]\nenabled = true\n",
+      "where": "codex-home",
+      "want": true
+    },
+    {
+      "id": "value_split_across_lines",
+      "config": "[features.multi_agent_v2]\nenabled =\ntrue\n",
+      "where": "codex-home",
+      "want": true
+    },
+    {
+      "id": "tabs",
+      "config": "[features.multi_agent_v2]\n\tenabled\t=\ttrue\t\n",
+      "where": "codex-home",
+      "want": true
+    },
+    {
+      "id": "replacement_char_in_comment",
+      "config": "[features.multi_agent_v2]\nenabled = true # �\n",
+      "where": "codex-home",
+      "want": true
+    },
+    {
+      "id": "no_trailing_newline",
+      "config": "[features.multi_agent_v2]\nenabled = true",
+      "where": "codex-home",
+      "want": true
+    },
+    {
+      "id": "empty_codex_home_uses_home",
+      "config": "[features.multi_agent_v2]\nenabled = true\n",
+      "where": "home",
+      "want": true
+    },
+    {
+      "id": "empty_codex_home_absent",
+      "config": null,
+      "where": "home",
+      "want": false
+    }
+  ],
+  "packet": [
+    {
+      "id": "v2_on",
+      "config": "[features.multi_agent_v2]\nenabled = true\n",
+      "launchId": "r1-20261004101010",
+      "roundId": "r1",
+      "fileCount": 1,
+      "want": "r1-20261004101010\n\nRound r1 is in flight over 1 file(s).\nDispatch an independent reviewer (agent_type \"reviewer\" if exposed; otherwise agent_type \"explorer\" with CXC-ROLE: reviewer before TASK:; if the host has no agent_type field, omit agent_type and prepend CXC-ROLE: reviewer before TASK:) and require it to end its\nfinal message with exactly these two lines:\n\n  LAUNCH: r1-20261004101010\n  VERDICT: PASS | NEAR-PASS | FAIL\n\nThe verdict is recorded when that reviewer exits. There is no way to write it here."
+    },
+    {
+      "id": "v2_off",
+      "config": "[features.multi_agent_v2]\nenabled = false\n",
+      "launchId": "r1-20261004101010",
+      "roundId": "r1",
+      "fileCount": 1,
+      "want": "r1-20261004101010\n\nRound r1 is in flight over 1 file(s).\nDispatch an independent reviewer (agent_type \"reviewer\" if exposed; otherwise agent_type \"explorer\" with CXC-ROLE: reviewer before TASK:; if the host has no agent_type field, omit agent_type and prepend CXC-ROLE: reviewer before TASK:) and require it to end its\nfinal message with exactly these two lines:\n\n  LAUNCH: r1-20261004101010\n  VERDICT: PASS | NEAR-PASS | FAIL\n\nThe verdict is recorded when that reviewer exits. There is no way to write it here."
+    },
+    {
+      "id": "no_config",
+      "config": null,
+      "launchId": "r12-20261231235959",
+      "roundId": "r12",
+      "fileCount": 3,
+      "want": "r12-20261231235959\n\nRound r12 is in flight over 3 file(s).\nDispatch an independent reviewer (agent_type \"reviewer\" if exposed; otherwise agent_type \"explorer\" with CXC-ROLE: reviewer before TASK:; if the host has no agent_type field, omit agent_type and prepend CXC-ROLE: reviewer before TASK:) and require it to end its\nfinal message with exactly these two lines:\n\n  LAUNCH: r12-20261231235959\n  VERDICT: PASS | NEAR-PASS | FAIL\n\nThe verdict is recorded when that reviewer exits. There is no way to write it here."
+    },
+    {
+      "id": "zero_files",
+      "config": "[features.multi_agent_v2]\nenabled = true\n",
+      "launchId": "r2-20261004101010",
+      "roundId": "r2",
+      "fileCount": 0,
+      "want": "r2-20261004101010\n\nRound r2 is in flight over 0 file(s).\nDispatch an independent reviewer (agent_type \"reviewer\" if exposed; otherwise agent_type \"explorer\" with CXC-ROLE: reviewer before TASK:; if the host has no agent_type field, omit agent_type and prepend CXC-ROLE: reviewer before TASK:) and require it to end its\nfinal message with exactly these two lines:\n\n  LAUNCH: r2-20261004101010\n  VERDICT: PASS | NEAR-PASS | FAIL\n\nThe verdict is recorded when that reviewer exits. There is no way to write it here."
+    },
+    {
+      "id": "empty_ids",
+      "config": null,
+      "launchId": "",
+      "roundId": "",
+      "fileCount": 2,
+      "want": "\n\nRound  is in flight over 2 file(s).\nDispatch an independent reviewer (agent_type \"reviewer\" if exposed; otherwise agent_type \"explorer\" with CXC-ROLE: reviewer before TASK:; if the host has no agent_type field, omit agent_type and prepend CXC-ROLE: reviewer before TASK:) and require it to end its\nfinal message with exactly these two lines:\n\n  LAUNCH: \n  VERDICT: PASS | NEAR-PASS | FAIL\n\nThe verdict is recorded when that reviewer exits. There is no way to write it here."
+    },
+    {
+      "id": "ids_with_text",
+      "config": null,
+      "launchId": "LAUNCH: x",
+      "roundId": "a b",
+      "fileCount": 7,
+      "want": "LAUNCH: x\n\nRound a b is in flight over 7 file(s).\nDispatch an independent reviewer (agent_type \"reviewer\" if exposed; otherwise agent_type \"explorer\" with CXC-ROLE: reviewer before TASK:; if the host has no agent_type field, omit agent_type and prepend CXC-ROLE: reviewer before TASK:) and require it to end its\nfinal message with exactly these two lines:\n\n  LAUNCH: LAUNCH: x\n  VERDICT: PASS | NEAR-PASS | FAIL\n\nThe verdict is recorded when that reviewer exits. There is no way to write it here."
+    }
+  ],
+  "help": "cxc review-round — the opt-in A-gate plan-audit round (LEAN-REVIEW-01)\n\nUsage:\n  cxc review-round open --session <id> [--plan-path <path>]... [--cwd <path>] [--json]\n  cxc review-round show --session <id> [--cwd <path>] [--json]\n  cxc review-round abort --session <id> [--reason <text>] [--cwd <path>]\n  cxc review-round --help\n\nNotes:\n  A round is OPTIONAL. With no round open, A>B advances on the attest alone.\n  With a round whose verdict was RECORDED, that verdict is binding: you cannot\n  attest \"pass\" over a reviewer's \"fail\".\n  open requires the session to be at phase A with a bound goalplan and a plan\n  binding recorded by P>A.\n  abort closes a round that no reviewer will finish, so the cycle is not stuck."
+}
