@@ -779,3 +779,9 @@ The parser feeds a fail-closed memory write gate, so a destination the oracle mi
 ## Found by the CRW-381 recall chat-search entry port
 
 - The entry computes a positive-days cutoff before checking the empty plan or forced-scan flag, so an out-of-range value throws `Invalid time value` even for an empty query and before the origin callback (source `recall/src/chat-search.ts:159-164`, recorded `invalid-days` in `internal/recall/testdata/chatsearch/oracle.json`); port: kept.
+
+## Found by the CRW-441 role helper CLI port
+
+- `list` and `get` silently ignore trailing arguments, so `list --help` lists settings and `get reviewer extra` reads the role (source `subagent-config/src/cli.ts:50,58-60`); port: kept.
+- Verb-level `--help` is treated as a role or registration argument and exits 1 for get/set/reset/register, rather than showing help (source `subagent-config/src/cli.ts:35-39,54-64`); port: kept.
+- Missing `--model` and `--prompt` values become empty strings, and a following flag is consumed as their literal value instead of being parsed as another flag (source `subagent-config/src/cli.ts:75-76,95-96`); port: kept.
