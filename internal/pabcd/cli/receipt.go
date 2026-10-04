@@ -241,7 +241,7 @@ func runReceiptCommand(argv []string, cwd string, o ReceiptRunOptions) error {
 		}
 		shared := false
 		for _, p := range pipes {
-			if reflect.TypeOf(p.destination).Comparable() && p.destination == *slot {
+			if reflect.ValueOf(p.destination).Comparable() && p.destination == *slot {
 				*slot = p.child
 				shared = true
 				break

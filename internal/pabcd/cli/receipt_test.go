@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -661,5 +662,22 @@ func TestReceiptSharedOutputDestination(t *testing.T) {
 	}
 	if bytes.Count(output.Bytes(), []byte("o")) != 1<<20 || bytes.Count(output.Bytes(), []byte("e")) != 1<<20 {
 		t.Fatal("shared output was lost or corrupted")
+	}
+}
+
+type receiptFunctionWriter func([]byte) (int, error)
+
+func (f receiptFunctionWriter) Write(b []byte) (int, error) { return f(b) }
+
+type receiptWrappedWriter struct{ io.Writer }
+
+func TestReceiptWrappedNonComparableWriter(t *testing.T) {
+	root := receiptRepo(t)
+	var count atomic.Int64
+	w := receiptWrappedWriter{receiptFunctionWriter(func(b []byte) (int, error) { count.Add(int64(len(b))); return len(b), nil })}
+	a := ReceiptCLIArgs{Verb: "test", Cwd: root, Session: "s1", Command: receiptCommand(t, "mixed-output")}
+	got := receiptRun(t, a, ReceiptRunOptions{Stdout: w, Stderr: w})
+	if got.Code != 0 || count.Load() != 2<<20 {
+		t.Fatalf("wrapped destination: %#v, bytes %d", got, count.Load())
 	}
 }
