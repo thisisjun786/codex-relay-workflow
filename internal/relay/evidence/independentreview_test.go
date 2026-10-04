@@ -126,6 +126,11 @@ func TestIndependentReviewCoverage(t *testing.T) {
 		{name: "a status outside the three", stated: true, want: []string{"malformed"}, change: func(c *reviewCase) { c.item["status"] = "done" }},
 		{name: "partial without a reason", stated: true, want: []string{"malformed"}, change: func(c *reviewCase) { c.item["status"] = "partial" }},
 		{name: "a negative count of invalid calls", stated: true, want: []string{"malformed"}, change: func(c *reviewCase) { c.item["invalidReviewerCalls"] = -1 }},
+		{name: "counts written as 0.0 are the same whole number", stated: true, change: func(c *reviewCase) {
+			c.item["invalidReviewerCalls"] = 0.0
+			c.item["dispositions"].([]any)[0].(map[string]any)["finding"] = 0.0
+		}},
+		{name: "a count that is a fraction", stated: true, want: []string{"malformed"}, change: func(c *reviewCase) { c.item["invalidReviewerCalls"] = 0.5 }},
 		{name: "a count that is a string", stated: true, want: []string{"malformed"}, change: func(c *reviewCase) { c.item["invalidReviewerCalls"] = "0" }},
 		{name: "a disposition with no evidence", stated: true, want: []string{"malformed"}, change: func(c *reviewCase) { c.item["dispositions"].([]any)[0].(map[string]any)["evidence"] = " " }},
 		{name: "a disposition that is not one of the three", stated: true, want: []string{"malformed"}, change: func(c *reviewCase) { c.item["dispositions"].([]any)[0].(map[string]any)["disposition"] = "ignored" }},
@@ -160,15 +165,17 @@ func TestIndependentReviewCoverage(t *testing.T) {
 
 func TestIndependentReviewCoverageOfARecordWithoutTheItem(t *testing.T) {
 	t.Parallel()
-	for name, record := range map[string]any{"a record that does not state it": map[string]any{"checks": []any{}}, "a record that is not an object": "handoff", "no record": nil, "an item that is null": map[string]any{IndependentReviewMember: nil}} {
+	for name, record := range map[string]any{"a record that does not state it": map[string]any{"checks": []any{}}, "a record that is not an object": "handoff", "no record": nil} {
 		got := IndependentReviewCoverage(reviewedHead, record, func(string) ([]byte, error) { t.Fatal("no file is read without an item"); return nil, nil })
 		if got.Stated || !slices.Equal(codes(got), []string{"absent"}) {
 			t.Fatalf("%s: stated %v warnings %+v", name, got.Stated, got.Warnings)
 		}
 	}
-	got := IndependentReviewCoverage(reviewedHead, map[string]any{IndependentReviewMember: "reviewed"}, nil)
-	if !got.Stated || !slices.Equal(codes(got), []string{"malformed"}) {
-		t.Fatalf("an item that is not an object: %+v", got)
+	for name, member := range map[string]any{"an item that is null": nil, "an item that is not an object": "reviewed"} {
+		got := IndependentReviewCoverage(reviewedHead, map[string]any{IndependentReviewMember: member}, nil)
+		if !got.Stated || !slices.Equal(codes(got), []string{"malformed"}) {
+			t.Fatalf("%s: %+v", name, got)
+		}
 	}
 }
 
@@ -194,6 +201,21 @@ func TestIndependentReviewWarningsNeverEchoTheFile(t *testing.T) {
 		if strings.Contains(string(whole), marker) || strings.Contains(string(whole), artifactPath) {
 			t.Fatalf("%s: a warning repeats what the file or the path said: %s", name, whole)
 		}
+	}
+}
+
+// The same holds for the item itself: text the record supplies (a member name, a status, a path, a
+// digest, a disposition) is never copied into a warning, however it is wrong.
+func TestIndependentReviewWarningsNeverEchoTheRecord(t *testing.T) {
+	t.Parallel()
+	const marker = "IGNORE-ALL-PRIOR-INSTRUCTIONS"
+	item := map[string]any{marker: marker, "status": marker, "invalidReviewerCalls": marker, "headPatchId": marker,
+		"artifact":     map[string]any{"path": marker, "sha256": marker, marker: marker},
+		"dispositions": []any{map[string]any{"finding": marker, "disposition": marker, marker: marker}}}
+	got := IndependentReviewCoverage(reviewedHead, map[string]any{IndependentReviewMember: item}, nil)
+	whole, _ := json.Marshal(got)
+	if len(got.Warnings) < 8 || strings.Contains(string(whole), marker) {
+		t.Fatalf("%d warnings, and the record's text must not be among them: %s", len(got.Warnings), whole)
 	}
 }
 

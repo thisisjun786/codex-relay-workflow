@@ -382,12 +382,10 @@ text, the parent may run the review once more itself before it decides; that is 
 **A head the review did not see is usually a base refresh.** The review runs once per patch-id. A head
 that only merged the base has the patch-id of the head the review covered, so it is not reviewed again
 and no review is awaited for it ([a later head has no review of its own](#the-one-run-of-each-reviewer-awaited-before-the-receipt)).
-The item states the candidate's `headPatchId` when the artifact covers another head. Confirm it, since
-the relay does not compute it:
-
-    git diff $(git merge-base origin/dev <head>) <head> | git patch-id --stable
-
-and compare it with the artifact's `patchId`. A different patch-id means the code changed after the
+The item states the candidate's `headPatchId` when the artifact covers another head. The relay does not
+compute it, so confirm it with the review bundle's diff
+([the command](../../../../docs/relay/coordination.md#an-independent-review-beside-a-restatement), base
+`origin/dev`) and compare it with the artifact's `patchId`. A different patch-id means the code changed after the
 review; the changed part has had no independent look, which the verdict says.
 
 **The warnings.** `merge-evidence --restate <record> --expect-independent-review` adds an

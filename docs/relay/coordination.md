@@ -478,8 +478,14 @@ usage error without `--restate`). Otherwise the payload is exactly what it was.
   every kept P0, P1 or security finding of the artifact against the dispositions. The head matches when
   it is the same commit, or when the item's `headPatchId` equals the artifact's `patchId`: a base refresh
   does not change the patch, and a head whose patch-id is unchanged is not reviewed again. The relay does
-  not compute the patch-id; the parent confirms the stated one with
-  `git diff $(git merge-base <base> <head>) <head> | git patch-id --stable`.
+  not compute the patch-id; the parent confirms the stated one with the diff the review bundle builds
+  (its options are fixed in `internal/review/bundle/gitdiff.go`; a plain `git diff` differs on binary files):
+
+    git diff -z --no-abbrev --full-index --find-renames=50% --no-ext-diff --no-textconv --no-color \
+      --no-relative --diff-algorithm=myers --no-indent-heuristic --inter-hunk-context=0 \
+      --src-prefix=a/ --dst-prefix=b/ --submodule=short --ignore-submodules=none -O/dev/null -U3 -p \
+      $(git merge-base <base> <head>) <head> -- | git patch-id --stable
+
 - **Warning codes**, all prefixed `independent_review_`: `absent` (flag, no member), `malformed`,
   `unreadable`, `sha256_mismatch`, `artifact_invalid`, `status_differs`, `head_differs`,
   `disposition_missing` and `disposition_unknown`. A file that cannot be read or does not hash to the

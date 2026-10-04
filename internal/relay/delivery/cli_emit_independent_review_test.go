@@ -79,7 +79,7 @@ func TestEmitRefusesTheIndependentReviewItemOnAnExecutionOnlyReceipt(t *testing.
 // A file that is not one JSON object is the child's mistake to correct before anything is stored.
 func TestEmitRefusesAnIndependentReviewFileThatIsNotAnObject(t *testing.T) {
 	t.Parallel()
-	for name, body := range map[string]string{"not JSON": "reviewed, nothing found", "a list": "[]", "null": "null"} {
+	for name, body := range map[string]string{"not JSON": "reviewed, nothing found", "a list": "[]", "null": "null", "text after the object": "{} ]garbage"} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			work := filepath.Join(t.TempDir(), "work")

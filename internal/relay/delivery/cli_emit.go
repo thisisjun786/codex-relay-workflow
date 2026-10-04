@@ -177,6 +177,9 @@ func readIndependentReview(path string) (Obj, error) {
 		return nil, usage("the file is larger than " + strconv.Itoa(independentReviewCap) + " bytes, and the item is a short statement that names the artifact rather than holding it")
 	}
 	value, err := loads(string(raw))
+	if err == nil && !json.Valid(raw) {
+		err = errors.New("text follows the value") // loads stops at a closing bracket; the file is one value
+	}
 	if err != nil {
 		return nil, usage("the file is not JSON: " + err.Error())
 	}

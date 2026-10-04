@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"math"
 	"regexp"
 	"slices"
 	"strconv"
@@ -80,10 +81,11 @@ type reviewItem struct {
 // repeated in a warning.
 func IndependentReviewCoverage(head string, record any, read ArtifactReader) ReviewCoverage {
 	var value any
+	var stated bool
 	if o, isObject := Object(record); isObject {
-		value = o.Get(IndependentReviewMember)
+		value, stated = o.Lookup(IndependentReviewMember)
 	}
-	if value == nil {
+	if !stated {
 		return ReviewCoverage{Warnings: []Problem{{Code: ReviewAbsent, Detail: "the record states no " + IndependentReviewMember + " item, so nothing says whether the independent review ran or what became of its findings; the review is a reference opinion and its absence blocks nothing"}}}
 	}
 	coverage := ReviewCoverage{Stated: true}
@@ -163,7 +165,7 @@ func readReviewItem(value any) (reviewItem, []string) {
 	}
 	for _, field := range o {
 		if !slices.Contains(itemMembers, field.Key) {
-			bad = append(bad, "it has no member "+quote.Value(field.Key))
+			bad = append(bad, "it has a member the contract does not define")
 		}
 	}
 	str := func(from func(string) (any, bool), name string) (string, bool) {
@@ -176,18 +178,18 @@ func readReviewItem(value any) (reviewItem, []string) {
 	}
 	status, _ := str(o.Lookup, "status")
 	if !slices.Contains(reviewStatuses, status) {
-		bad = append(bad, "status is one of "+strings.Join(reviewStatuses, ", ")+", not "+quote.Value(o.Get("status")))
+		bad = append(bad, "status is one of "+strings.Join(reviewStatuses, ", "))
 	}
 	item.status = status
 	if reason, _ := str(o.Lookup, "reason"); status != "complete" && slices.Contains(reviewStatuses, status) && strings.TrimSpace(reason) == "" {
 		bad = append(bad, "a status other than complete states its reason")
 	}
-	if n, isWhole := Whole(o.Get("invalidReviewerCalls")); !isWhole || n.Sign() < 0 {
-		bad = append(bad, "invalidReviewerCalls is a count of reviewer calls, not "+quote.Value(o.Get("invalidReviewerCalls")))
+	if n, isCount := count(o.Get("invalidReviewerCalls")); !isCount || n < 0 {
+		bad = append(bad, "invalidReviewerCalls is a count of reviewer calls, a whole number that is not negative")
 	}
 	if id, given := str(o.Lookup, "headPatchId"); given {
 		if !commitDigest.MatchString(id) {
-			bad = append(bad, "headPatchId is 40 or 64 lowercase hex digits, not "+quote.Value(id))
+			bad = append(bad, "headPatchId is 40 or 64 lowercase hex digits")
 		}
 		item.headPatchID = id
 	}
@@ -199,20 +201,20 @@ func readReviewItem(value any) (reviewItem, []string) {
 		}
 		for _, field := range a {
 			if field.Key != "path" && field.Key != "sha256" {
-				bad = append(bad, "artifact has no member "+quote.Value(field.Key))
+				bad = append(bad, "artifact has a member the contract does not define")
 			}
 		}
 		path, _ := str(a.Lookup, "path")
 		sum, _ := str(a.Lookup, "sha256")
 		if isObject && !strings.HasPrefix(path, "/") {
-			bad = append(bad, "artifact.path is an absolute path, not "+quote.Value(path))
+			bad = append(bad, "artifact.path is an absolute path")
 		}
 		if isObject && !digest64.MatchString(sum) {
-			bad = append(bad, "artifact.sha256 is 64 lowercase hex digits, not "+quote.Value(sum))
+			bad = append(bad, "artifact.sha256 is 64 lowercase hex digits")
 		}
 		item.path, item.sha256 = path, sum
 	} else if status != "unavailable" {
-		bad = append(bad, "a review that produced no artifact has the status unavailable; a "+quote.Value(status)+" one names its artifact")
+		bad = append(bad, "an artifact is named unless the status is unavailable")
 	}
 	listed, isList := List(o.Get("dispositions"))
 	if !isList {
@@ -227,27 +229,46 @@ func readReviewItem(value any) (reviewItem, []string) {
 		}
 		for _, field := range entry {
 			if !slices.Contains([]string{"finding", "disposition", "evidence"}, field.Key) {
-				bad = append(bad, where+"has no member "+quote.Value(field.Key))
+				bad = append(bad, where+"has a member the contract does not define")
 			}
 		}
-		n, isWhole := Whole(entry.Get("finding"))
-		if !isWhole || n.Sign() < 0 || !n.IsInt64() {
-			bad = append(bad, where+"names a finding by its position in the artifact, not "+quote.Value(entry.Get("finding")))
+		position, isCount := count(entry.Get("finding"))
+		if !isCount || position < 0 {
+			bad = append(bad, where+"names a finding by its zero-based position in the artifact, a whole number that is not negative")
 			continue
 		}
 		if kind, _ := str(entry.Lookup, "disposition"); !slices.Contains(reviewDispositions, kind) {
-			bad = append(bad, where+"disposition is one of "+strings.Join(reviewDispositions, ", ")+", not "+quote.Value(entry.Get("disposition")))
+			bad = append(bad, where+"disposition is one of "+strings.Join(reviewDispositions, ", "))
 		}
 		if evidence, _ := str(entry.Lookup, "evidence"); strings.TrimSpace(evidence) == "" {
 			bad = append(bad, where+"states its evidence")
 		}
-		if slices.Contains(item.dispositions, int(n.Int64())) {
+		if slices.Contains(item.dispositions, int(position)) {
 			bad = append(bad, where+"repeats the finding of an earlier entry")
 			continue
 		}
-		item.dispositions = append(item.dispositions, int(n.Int64()))
+		item.dispositions = append(item.dispositions, int(position))
 	}
 	return item, bad
+}
+
+// count reads a whole number of the size a count can be. JSON that spells one 1.0 or 1e0 is the same
+// number to the contract's Draft 7 validator, so it is one here; a bool or a fraction is not.
+func count(value any) (int64, bool) {
+	switch v := value.(type) {
+	case json.Number:
+		if n, err := v.Int64(); err == nil {
+			return n, true
+		}
+		f, err := v.Float64()
+		return int64(f), err == nil && f == math.Trunc(f) && math.Abs(f) < 1<<53
+	case float64:
+		return int64(v), v == math.Trunc(v) && math.Abs(v) < 1<<53
+	}
+	if n, isWhole := Whole(value); isWhole && n.IsInt64() {
+		return n.Int64(), true
+	}
+	return 0, false
 }
 
 // unreadableReason is one of four fixed phrases; the error itself can hold paths and system text.
