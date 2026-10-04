@@ -70,7 +70,7 @@ func multiAgentV2ConfigPath(deps MultiAgentV2Deps) string {
 // TomlTableBody's string-aware writer fix must not change this reader's verdicts.
 func multiAgentV2TableBody(content, header string) (string, bool) {
 	lines := text.SplitLines(content)
-	re := regexp.MustCompile("^" + tomlSpace + "*\\[" + regexp.QuoteMeta(header) + "\\]" + tomlSpace + "*(?:#" + tomlNotEOL + "*)?(?:$|" + activationLineEnd + "$)")
+	re := regexp.MustCompile("^" + tomlSpace + "*\\[" + regexp.QuoteMeta(header) + "\\]" + tomlSpace + "*(?:#" + tomlNotEOL + "*)?$")
 	for i, line := range lines {
 		if !re.MatchString(line) {
 			continue

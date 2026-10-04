@@ -97,6 +97,8 @@ func TestMultiAgentV2OracleGrammar(t *testing.T) {
 		{"inside-string", "[features.multi_agent_v2]\nnote = \"\"\"\nenabled = true\n\"\"\"\n", true},
 		{"header-in-string", "note = \"\"\"\n[features.multi_agent_v2]\nenabled = true\n\"\"\"\n", true},
 		{"comment", "[features] # header\nmulti_agent_v2 = true # value\n", true},
+		{"comment-line-separator", "[features] # header\u2028\nmulti_agent_v2 = true\n", false},
+		{"comment-paragraph-separator", "[features] # header\u2029\nmulti_agent_v2 = true\n", false},
 		{"unicode", "[features]\nmulti_agent_v2\u00a0=\u00a0true\n", true},
 		{"line-separator", "[features]\nother = 1\u2028multi_agent_v2 = true\n", true},
 		{"inline-multiline", "[features]\nmulti_agent_v2 = {\n enabled = true\n}\n", true},
