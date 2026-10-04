@@ -81,7 +81,7 @@ func TestLivePullAnotherPullRequestRequestIsRefusedNamingTheLiveTurn(t *testing.
 	if answer != nil {
 		t.Fatalf("the request for another pull request was answered: %v", answer)
 	}
-	livePullRefusedWith(t, err, turn, "pull request 500", "rel-500", "head-500", "holding", "place 1 of 1", "pull request 501", "rel-501")
+	livePullRefusedWith(t, err, turn, "pull request 500", "rel-500", "head-500", "holding", "place 1 of 1", "pull request 501", "rel-501", "is not answered with the turn it already has")
 	if got := livePullCount(w, "SELECT COUNT(*) FROM merge_turns"); got != turns {
 		t.Errorf("a refused request wrote a turn: %d rows, was %d", got, turns)
 	}
@@ -119,49 +119,78 @@ func TestLivePullRefusalNamesThePlaceInTheOrder(t *testing.T) {
 }
 
 // What is another pull request. A request that states no identity is the live turn's replay. One that states some is its
-// replay only when none contradicts what the turn records and at least one agrees; stated identities the turn does not
-// record at all cannot be told from another pull request's, which is how dag-merge-request already reads the answer.
+// replay when none contradicts what the turn records and at least one agrees. Identities the turn does not record at all
+// cannot be told from another pull request's, so they are the replay only when the request names the turn's own head.
 func TestLivePullWhatCountsAsAnotherPullRequest(t *testing.T) {
+	const own = "head-500"
 	for _, tc := range []struct {
 		name             string
 		livePR           int64
 		liveRelationship string
 		askPR            int64
 		askRelationship  string
+		askHead          string
 		refused          bool
 	}{
-		{"another pull request and the same relationship", 500, "rel-500", 501, "rel-500", true},
-		{"another pull request only", 500, "rel-500", 501, "", true},
-		{"another relationship only", 0, "rel-500", 0, "rel-501", true},
-		{"the same pull request and another relationship", 500, "rel-500", 500, "rel-501", true},
-		{"a pull request against a claim recording only a relationship", 0, "rel-500", 501, "", true},
-		{"a relationship against a claim recording only a pull request", 500, "", 0, "rel-500", true},
-		{"identities against a claim recording none", 0, "", 501, "rel-501", true},
-		{"the same pull request and relationship", 500, "rel-500", 500, "rel-500", false},
-		{"the same pull request only", 500, "rel-500", 500, "", false},
-		{"the same relationship only", 500, "rel-500", 0, "rel-500", false},
-		{"nothing stated", 500, "rel-500", 0, "", false},
-		{"nothing stated against a claim recording none", 0, "", 0, "", false},
-		{"a relationship that agrees beside a pull request the claim does not record", 0, "rel-500", 501, "rel-500", false},
-		{"a pull request that agrees beside a relationship the claim does not record", 500, "", 500, "rel-other", false},
+		{"another pull request and the same relationship", 500, "rel-500", 501, "rel-500", "", true},
+		{"another pull request only", 500, "rel-500", 501, "", "", true},
+		{"another relationship only", 0, "rel-500", 0, "rel-501", "", true},
+		{"the same pull request and another relationship", 500, "rel-500", 500, "rel-501", "", true},
+		{"another pull request at the turn's own head", 500, "rel-500", 501, "", own, true},
+		{"a pull request against a claim recording only a relationship", 0, "rel-500", 501, "", "", true},
+		{"a relationship against a claim recording only a pull request", 500, "", 0, "rel-500", "", true},
+		{"identities against a claim recording none", 0, "", 501, "rel-501", "", true},
+		{"the same pull request and relationship", 500, "rel-500", 500, "rel-500", "", false},
+		{"the same pull request only", 500, "rel-500", 500, "", "", false},
+		{"the same relationship only", 500, "rel-500", 0, "rel-500", "", false},
+		{"nothing stated", 500, "rel-500", 0, "", "", false},
+		{"nothing stated against a claim recording none", 0, "", 0, "", "", false},
+		{"a relationship that agrees beside a pull request the claim does not record", 0, "rel-500", 501, "rel-500", "", false},
+		{"a pull request that agrees beside a relationship the claim does not record", 500, "", 500, "rel-other", "", false},
+		{"a pull request against a claim recording only a relationship, at its own head", 0, "rel-500", 500, "", own, false},
+		{"a relationship against a claim recording only a pull request, at its own head", 500, "", 0, "rel-500", own, false},
+		{"identities added to a claim recording none, at its own head", 0, "", 500, "rel-500", own, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newFx(t)
-			turn := w.must(livePullClaim(w, alpha, fxA, "head-500", tc.livePR, tc.liveRelationship))["turnId"].(string)
-			answer, err := livePullClaim(w, alpha, fxA, "head-ask", tc.askPR, tc.askRelationship)
+			turn := w.must(livePullClaim(w, alpha, fxA, own, tc.livePR, tc.liveRelationship))["turnId"].(string)
+			head := tc.askHead
+			if head == "" {
+				head = "head-ask"
+			}
+			answer, err := livePullClaim(w, alpha, fxA, head, tc.askPR, tc.askRelationship)
 			if tc.refused {
 				if reasonOf(err) != "disposition_conflict" || answer != nil {
 					t.Fatalf("not refused: %v %v", answer, err)
 				}
 				return
 			}
-			if err != nil || answer["turnId"] != turn || answer["alreadyClaimed"] != true || answer["candidateHead"] != "head-500" {
+			if err != nil || answer["turnId"] != turn || answer["alreadyClaimed"] != true || answer["candidateHead"] != own {
 				t.Fatalf("the repeated request is not the same turn: %v %v", answer, err)
 			}
 			if got := livePullCount(w, "SELECT COUNT(*) FROM merge_turns"); got != 1 {
 				t.Fatalf("%d turns", got)
 			}
 		})
+	}
+}
+
+// A refusal says which kind it is: a request that contradicts the turn, or one the turn cannot confirm.
+func TestLivePullRefusalSaysWhyTheRequestIsNotTheLiveTurns(t *testing.T) {
+	w := newFx(t)
+	turn := w.must(livePullClaim(w, alpha, fxA, "head-500", 0, ""))["turnId"].(string)
+	_, err := livePullClaim(w, alpha, fxA, "head-501", 501, "")
+	livePullRefusedWith(t, err, turn, "no pull request or relationship", "does not record what this request names", "head-501", "repeat the request with the arguments the claim was made with")
+	if strings.Contains(livePullDetail(err), "is not answered with the turn it already has") {
+		t.Errorf("a request the turn cannot confirm is not a request for another pull request: %s", livePullDetail(err))
+	}
+
+	w2 := newFx(t)
+	w2.must(livePullClaim(w2, alpha, fxA, "head-500", 500, "rel-500"))
+	_, err = livePullClaim(w2, alpha, fxA, "head-501", 501, "rel-501")
+	livePullRefusedWith(t, err, "is not answered with the turn it already has")
+	if strings.Contains(livePullDetail(err), "does not record what this request names") {
+		t.Errorf("a contradiction is not an unconfirmed identity: %s", livePullDetail(err))
 	}
 }
 

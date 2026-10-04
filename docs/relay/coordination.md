@@ -224,12 +224,15 @@ about declared that pull request's head on the live one (2026-10-04). It is refu
 
 - A request that states no pull request and no relationship is the replay of the live turn, as
   before (`alreadyClaimed: true`).
-- A request that states some is the replay only when no stated identity contradicts what the turn
-  records (the same kind, recorded and different) and at least one agrees. Another pull request,
-  another relationship, or identities the turn does not record at all are refused
-  `disposition_conflict`. Nothing is written for the request except the contest the refusal is kept
-  as (`merge-turn-show` lists it). The refusal names the live turn, what it is bound to, its state,
-  its place in the order and the step that frees the target.
+- A request that states some is the replay when no stated identity contradicts what the turn
+  records (the same kind, recorded and different) and at least one agrees. Another pull request or
+  another relationship is refused `disposition_conflict`. So are identities the turn does not record at
+  all, unless the request names the turn's own candidate head: a request for another pull request
+  names its own head, and two pull requests do not share one. A refused request writes nothing to the
+  turns or their ledgers; the refusal is kept as a contest (`merge-turn-show` lists it). It names the
+  live turn, what it is bound to, its state, its place in the order and the step that frees the
+  target, and says whether the request contradicts the turn or only names what the turn does not
+  record.
 - The place is counted among the live claims on the target in the order the lane serves them: the
   claims that hold the target first, then the waiting ones by the time they were made, which is the
   order a released target promotes them in. A claim that closed is not counted.
@@ -265,9 +268,10 @@ the head being a different commit. Both are deliberate: they were written with t
 `merge-turn-ready` with a head that is not the turn's candidate reads the head of the pull request
 the turn records (one GET of `repos/<owner>/<name>/pulls/<n>`, before its transaction) and takes the
 new head only if it is that head. Another pull request's head is refused `merge_candidate_moved`,
-naming the pull request, the head the forge reads and the head declared, and nothing is written but
-the contest; a forge that cannot be read is refused `merge_target_unreadable` and nothing is
-written. The turn records no head for its pull request and no work report is recorded, so nothing
+naming the pull request, the head the forge reads and the head declared; a forge that cannot be
+read is refused `merge_target_unreadable`. Neither refusal changes the turn, its candidate head or its
+ledger; each is kept as a contest like the lane's other refusals, and a refused `merge-turn-check` as a
+check row. The turn records no head for its pull request and no work report is recorded, so nothing
 the relay holds could decide it. Where nothing can be compared no read is made: a head that did not
 move, a turn that records no pull request, a relay with no pull request reader. A turn on a
 local-path repository records a pull request number but not where it lives, so the record decides

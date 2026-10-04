@@ -1,12 +1,15 @@
 package mergeturn
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -66,15 +69,21 @@ func (r TargetReader) PullRequestHead(ctx context.Context, repository string, nu
 		}
 		return PullRequestHeadReading{}, unreadable("the forge could not be read: %v", err)
 	}
+	decoder := json.NewDecoder(bytes.NewReader(output))
+	decoder.UseNumber()
 	var payload any
-	if json.Unmarshal(output, &payload) != nil {
+	if decoder.Decode(&payload) != nil {
+		return PullRequestHeadReading{}, unreadable("reading pull request %d returned something that is not JSON", number)
+	}
+	if _, extra := decoder.Token(); extra != io.EOF {
 		return PullRequestHeadReading{}, unreadable("reading pull request %d returned something that is not JSON", number)
 	}
 	data, ok := payload.(map[string]any)
 	if !ok {
 		return PullRequestHeadReading{}, unreadable("the forge answered with something that is not one pull request")
 	}
-	if named, _ := data["number"].(float64); named != float64(number) {
+	// the number is compared as the integer it is: a float64 would take a neighbouring large number for the one asked
+	if named, _ := data["number"].(json.Number); named.String() != strconv.FormatInt(number, 10) {
 		return PullRequestHeadReading{}, unreadable("the forge's answer does not name pull request %d", number)
 	}
 	head, _ := data["head"].(map[string]any)

@@ -61,3 +61,35 @@ func TestLivePullTargetReaderRefusesAnswersThatDoNotNameThePullRequestHead(t *te
 		t.Fatalf("the forge was asked for a pull request that cannot exist: %v", err)
 	}
 }
+
+// The number the forge answers with is compared as the integer it is: a neighbouring large number, a fraction and
+// anything after the JSON are not the pull request asked for.
+func TestLivePullTargetReaderComparesThePullRequestNumberExactly(t *testing.T) {
+	sha := strings.Repeat("c", 40)
+	for _, tc := range []struct {
+		name   string
+		asked  int64
+		answer string
+	}{
+		{"a neighbouring large number", 9007199254740993, "9007199254740992"},
+		{"a fraction", 500, "500.5"},
+		{"a float spelling", 500, "500.0"},
+		{"an exponent", 500, "5e2"},
+		{"a string", 500, "\"500\""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gh, _ := fakeGH(t, "printf '%s\\n' '{\"number\":"+tc.answer+",\"head\":{\"sha\":\""+sha+"\"}}'")
+			if got, err := (TargetReader{GH: gh}).PullRequestHead(context.Background(), "owner/repo", tc.asked); err == nil || !strings.Contains(err.Error(), "does not name pull request") || got.SHA != "" {
+				t.Fatalf("%+v %v", got, err)
+			}
+		})
+	}
+	gh, _ := fakeGH(t, "printf '%s\\n' '{\"number\":9007199254740993,\"head\":{\"sha\":\""+sha+"\"}}'")
+	if got, err := (TargetReader{GH: gh}).PullRequestHead(context.Background(), "owner/repo", 9007199254740993); err != nil || got.SHA != sha {
+		t.Fatalf("the number that was asked for was refused: %+v %v", got, err)
+	}
+	trailing, _ := fakeGH(t, "printf '%s\\n' '{\"number\":500,\"head\":{\"sha\":\""+sha+"\"}} {}'")
+	if _, err := (TargetReader{GH: trailing}).PullRequestHead(context.Background(), "owner/repo", 500); err == nil || !strings.Contains(err.Error(), "not JSON") {
+		t.Fatalf("data after the answer was accepted: %v", err)
+	}
+}
