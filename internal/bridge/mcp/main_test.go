@@ -14,6 +14,7 @@ import (
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 )
 
@@ -52,13 +53,13 @@ type teeCloser struct {
 
 func (t teeCloser) Close() error { return t.closer.Close() }
 
-func serve(t *testing.T, args []string, env map[string]string) *served {
+func serve(t *testing.T, args []string, env map[string]string, configure ...func(*appserver.Client)) *served {
 	t.Helper()
 	serverIn, clientOut := io.Pipe()
 	clientIn, serverOut := io.Pipe()
 	s := &served{stdout: &lockedBuffer{}, stderr: &lockedBuffer{}, exit: make(chan int, 1)}
 	go func() {
-		s.exit <- Main(context.Background(), args, env, serverIn, teeCloser{io.MultiWriter(serverOut, s.stdout), serverOut}, s.stderr)
+		s.exit <- Main(context.Background(), args, env, serverIn, teeCloser{io.MultiWriter(serverOut, s.stdout), serverOut}, s.stderr, configure...)
 		_ = serverOut.Close()
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -124,6 +125,22 @@ func structured(t *testing.T, result *sdk.CallToolResult) map[string]any {
 func isolated(t *testing.T) (string, map[string]string) {
 	home := t.TempDir()
 	return home, map[string]string{"HOME": home, "CODEX_HOME": filepath.Join(home, "codex"), "XDG_STATE_HOME": filepath.Join(home, "state")}
+}
+
+func TestMainAppliesExecutableClientConfiguration(t *testing.T) {
+	home, env := isolated(t)
+	configured := make(chan *appserver.Client, 1)
+	s := serve(t, []string{"--socket", fakehost.SocketPath(t, "absent.sock"), "--state-dir", filepath.Join(home, "ledger")}, env,
+		func(c *appserver.Client) { configured <- c })
+	select {
+	case c := <-configured:
+		if c == nil {
+			t.Fatal("configuration received no client")
+		}
+	default:
+		t.Fatal("server admitted MCP before applying client configuration")
+	}
+	s.finish(t)
 }
 
 func Test_a_stdio_round_trip_creates_a_thread_on_the_host_and_replays_it(t *testing.T) {

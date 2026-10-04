@@ -1,0 +1,4992 @@
+{
+  "now": 1788912000000,
+  "rrf": [
+    {
+      "rank": null,
+      "weight": 1,
+      "out": 0
+    },
+    {
+      "rank": null,
+      "weight": 0.8,
+      "out": 0
+    },
+    {
+      "rank": null,
+      "weight": 0,
+      "out": 0
+    },
+    {
+      "rank": 0,
+      "weight": 1,
+      "out": 0.01639344262295082
+    },
+    {
+      "rank": 0,
+      "weight": 0.8,
+      "out": 0.013114754098360656
+    },
+    {
+      "rank": 0,
+      "weight": 0,
+      "out": 0
+    },
+    {
+      "rank": 1,
+      "weight": 1,
+      "out": 0.016129032258064516
+    },
+    {
+      "rank": 1,
+      "weight": 0.8,
+      "out": 0.012903225806451613
+    },
+    {
+      "rank": 1,
+      "weight": 0,
+      "out": 0
+    },
+    {
+      "rank": 60,
+      "weight": 1,
+      "out": 0.008264462809917356
+    },
+    {
+      "rank": 60,
+      "weight": 0.8,
+      "out": 0.006611570247933885
+    },
+    {
+      "rank": 60,
+      "weight": 0,
+      "out": 0
+    },
+    {
+      "rank": -1,
+      "weight": 1,
+      "out": 0.016666666666666666
+    },
+    {
+      "rank": -1,
+      "weight": 0.8,
+      "out": 0.013333333333333334
+    },
+    {
+      "rank": -1,
+      "weight": 0,
+      "out": 0
+    }
+  ],
+  "recency": [
+    {
+      "ts": null,
+      "now": 1788912000000,
+      "out": 0
+    },
+    {
+      "ts": 1788912000000,
+      "now": 1788912000000,
+      "out": 0.00026441036488630354
+    },
+    {
+      "ts": 1790712000000,
+      "now": 1788912000000,
+      "out": 0.00026441036488630354
+    },
+    {
+      "ts": 1788307200000,
+      "now": 1788912000000,
+      "out": 0.00013220518244315177
+    },
+    {
+      "ts": 1787702400000,
+      "now": 1788912000000,
+      "out": 0.00006610259122157589
+    }
+  ],
+  "corpora": [
+    {
+      "name": "rank",
+      "files": {
+        "sessions/2026/08/10/rollout-2026-08-10T00-00-00-019f0000-0000-7000-8000-0000000f0001.jsonl": "{\"timestamp\":\"2026-08-10T00:00:00.000Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"019f0000-0000-7000-8000-0000000f0001\",\"timestamp\":\"2026-08-10T00:00:00.000Z\",\"cwd\":\"/proj/rank\",\"originator\":\"codex-tui\"}}\n{\"timestamp\":\"2026-08-10T00:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"quokka deployment plan for the quokka rollout, quokka everywhere\"}]}}\n",
+        "sessions/2026/09/08/rollout-2026-09-08T00-00-00-019f0000-0000-7000-8000-0000000f0002.jsonl": "{\"timestamp\":\"2026-09-08T12:00:00.000Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"019f0000-0000-7000-8000-0000000f0002\",\"timestamp\":\"2026-09-08T12:00:00.000Z\",\"cwd\":\"/proj/rank\",\"originator\":\"codex-tui\"}}\n{\"timestamp\":\"2026-09-08T12:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"unrelated standup notes that happen to name quokka once among many other words here\"}]}}\n",
+        "sessions/2026/09/08/rollout-2026-09-08T00-00-00-019f0000-0000-7000-8000-0000000f0003.jsonl": "{\"timestamp\":\"2026-09-08T23:00:00.000Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"019f0000-0000-7000-8000-0000000f0003\",\"timestamp\":\"2026-09-08T23:00:00.000Z\",\"cwd\":\"/proj/rank\",\"originator\":\"codex-tui\"}}\n{\"timestamp\":\"2026-09-08T23:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"another long unrelated message about pipelines, caches, and a quokka reference at the end\"}]}}\n",
+        "sessions/2026/07/11/rollout-2026-07-11T00-00-00-019f0000-0000-7000-8000-0000000f0004.jsonl": "{\"timestamp\":\"2026-07-11T00:00:00.000Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"019f0000-0000-7000-8000-0000000f0004\",\"timestamp\":\"2026-07-11T00:00:00.000Z\",\"cwd\":\"/proj/rank\",\"originator\":\"codex-tui\"}}\n{\"timestamp\":\"2026-07-11T00:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"wombat wombat\"}]}}\n",
+        "sessions/2026/09/08/rollout-2026-09-08T00-00-00-019f0000-0000-7000-8000-0000000f0005.jsonl": "{\"timestamp\":\"2026-09-08T22:00:00.000Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"019f0000-0000-7000-8000-0000000f0005\",\"timestamp\":\"2026-09-08T22:00:00.000Z\",\"cwd\":\"/proj/rank\",\"originator\":\"codex-tui\"}}\n{\"timestamp\":\"2026-09-08T22:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"wombat wombat\"}]}}\n",
+        "sessions/2026/08/20/rollout-2026-08-20T00-00-00-019f0000-0000-7000-8000-0000000f0006.jsonl": "{\"timestamp\":\"2026-08-20T00:00:00.000Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"019f0000-0000-7000-8000-0000000f0006\",\"timestamp\":\"2026-08-20T00:00:00.000Z\",\"cwd\":\"/proj/rank\",\"originator\":\"codex-tui\"}}\n{\"timestamp\":\"2026-08-20T00:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"트라이그램 색인 트라이그램 재구축 트라이그램 완료\"}]}}\n",
+        "sessions/2026/09/08/rollout-2026-09-08T00-00-00-019f0000-0000-7000-8000-0000000f0007.jsonl": "{\"timestamp\":\"2026-09-08T21:00:00.000Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"019f0000-0000-7000-8000-0000000f0007\",\"timestamp\":\"2026-09-08T21:00:00.000Z\",\"cwd\":\"/proj/rank\",\"originator\":\"codex-tui\"}}\n{\"timestamp\":\"2026-09-08T21:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"한글 문서에서 트라이그램 이야기를 잠깐 언급했다\"}]}}\n"
+      },
+      "cases": [
+        {
+          "name": "quokka",
+          "query": "quokka",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "quokka",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 50,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "relevance"
+          },
+          "sql": [],
+          "special": {},
+          "out": {
+            "hits": [
+              {
+                "ts": "2026-08-10T00:00:00.000Z",
+                "role": "user",
+                "text": "quokka deployment plan for the quokka rollout, quokka everywhere",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-0000000f0001",
+                "title": null,
+                "cwd": "/proj/rank",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/08/10/rollout-2026-08-10T00-00-00-019f0000-0000-7000-8000-0000000f0001.jsonl",
+                "score": 0.029521753294487172,
+                "context": []
+              },
+              {
+                "ts": "2026-09-08T23:00:00.000Z",
+                "role": "user",
+                "text": "another long unrelated message about pipelines, caches, and a quokka reference at the end",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-0000000f0003",
+                "title": null,
+                "cwd": "/proj/rank",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/08/rollout-2026-09-08T00-00-00-019f0000-0000-7000-8000-0000000f0003.jsonl",
+                "score": 0.029090766644382635,
+                "context": []
+              },
+              {
+                "ts": "2026-09-08T12:00:00.000Z",
+                "role": "user",
+                "text": "unrelated standup notes that happen to name quokka once among many other words here",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-0000000f0002",
+                "title": null,
+                "cwd": "/proj/rank",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/08/rollout-2026-09-08T00-00-00-019f0000-0000-7000-8000-0000000f0002.jsonl",
+                "score": 0.029027879742135547,
+                "context": []
+              }
+            ],
+            "warnings": [
+              "state db not found (metadata enrichment off)"
+            ],
+            "scannedFiles": 7,
+            "matchedFiles": 3,
+            "totalFiles": 7,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "quokka",
+          "query": "quokka",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "quokka",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 50,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "recent"
+          },
+          "sql": [],
+          "special": {},
+          "out": {
+            "hits": [
+              {
+                "ts": "2026-09-08T23:00:00.000Z",
+                "role": "user",
+                "text": "another long unrelated message about pipelines, caches, and a quokka reference at the end",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-0000000f0003",
+                "title": null,
+                "cwd": "/proj/rank",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/08/rollout-2026-09-08T00-00-00-019f0000-0000-7000-8000-0000000f0003.jsonl",
+                "context": []
+              },
+              {
+                "ts": "2026-09-08T12:00:00.000Z",
+                "role": "user",
+                "text": "unrelated standup notes that happen to name quokka once among many other words here",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-0000000f0002",
+                "title": null,
+                "cwd": "/proj/rank",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/08/rollout-2026-09-08T00-00-00-019f0000-0000-7000-8000-0000000f0002.jsonl",
+                "context": []
+              },
+              {
+                "ts": "2026-08-10T00:00:00.000Z",
+                "role": "user",
+                "text": "quokka deployment plan for the quokka rollout, quokka everywhere",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-0000000f0001",
+                "title": null,
+                "cwd": "/proj/rank",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/08/10/rollout-2026-08-10T00-00-00-019f0000-0000-7000-8000-0000000f0001.jsonl",
+                "context": []
+              }
+            ],
+            "warnings": [
+              "state db not found (metadata enrichment off)"
+            ],
+            "scannedFiles": 7,
+            "matchedFiles": 3,
+            "totalFiles": 7,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "wombat",
+          "query": "wombat",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "wombat",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 50,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "relevance"
+          },
+          "sql": [],
+          "special": {},
+          "out": {
+            "hits": [
+              {
+                "ts": "2026-09-08T22:00:00.000Z",
+                "role": "user",
+                "text": "wombat wombat",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-0000000f0005",
+                "title": null,
+                "cwd": "/proj/rank",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/08/rollout-2026-09-08T00-00-00-019f0000-0000-7000-8000-0000000f0005.jsonl",
+                "score": 0.029770434214728858,
+                "context": []
+              },
+              {
+                "ts": "2026-07-11T00:00:00.000Z",
+                "role": "user",
+                "text": "wombat wombat",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-0000000f0004",
+                "title": null,
+                "cwd": "/proj/rank",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/07/11/rollout-2026-07-11T00-00-00-019f0000-0000-7000-8000-0000000f0004.jsonl",
+                "score": 0.02903295312303377,
+                "context": []
+              }
+            ],
+            "warnings": [
+              "state db not found (metadata enrichment off)"
+            ],
+            "scannedFiles": 7,
+            "matchedFiles": 2,
+            "totalFiles": 7,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "wombat",
+          "query": "wombat",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "wombat",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 50,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "recent"
+          },
+          "sql": [],
+          "special": {},
+          "out": {
+            "hits": [
+              {
+                "ts": "2026-09-08T22:00:00.000Z",
+                "role": "user",
+                "text": "wombat wombat",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-0000000f0005",
+                "title": null,
+                "cwd": "/proj/rank",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/08/rollout-2026-09-08T00-00-00-019f0000-0000-7000-8000-0000000f0005.jsonl",
+                "context": []
+              },
+              {
+                "ts": "2026-07-11T00:00:00.000Z",
+                "role": "user",
+                "text": "wombat wombat",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-0000000f0004",
+                "title": null,
+                "cwd": "/proj/rank",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/07/11/rollout-2026-07-11T00-00-00-019f0000-0000-7000-8000-0000000f0004.jsonl",
+                "context": []
+              }
+            ],
+            "warnings": [
+              "state db not found (metadata enrichment off)"
+            ],
+            "scannedFiles": 7,
+            "matchedFiles": 2,
+            "totalFiles": 7,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "트라이그램",
+          "query": "트라이그램",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "트라이그램",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 50,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "relevance"
+          },
+          "sql": [],
+          "special": {},
+          "out": {
+            "hits": [
+              {
+                "ts": "2026-08-20T00:00:00.000Z",
+                "role": "user",
+                "text": "트라이그램 색인 트라이그램 재구축 트라이그램 완료",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-0000000f0006",
+                "title": null,
+                "cwd": "/proj/rank",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/08/20/rollout-2026-08-20T00-00-00-019f0000-0000-7000-8000-0000000f0006.jsonl",
+                "score": 0.02954468831020868,
+                "context": []
+              },
+              {
+                "ts": "2026-09-08T21:00:00.000Z",
+                "role": "assistant",
+                "text": "한글 문서에서 트라이그램 이야기를 잠깐 언급했다",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-0000000f0007",
+                "title": null,
+                "cwd": "/proj/rank",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/08/rollout-2026-09-08T00-00-00-019f0000-0000-7000-8000-0000000f0007.jsonl",
+                "score": 0.029293415827482204,
+                "context": []
+              }
+            ],
+            "warnings": [
+              "state db not found (metadata enrichment off)"
+            ],
+            "scannedFiles": 7,
+            "matchedFiles": 2,
+            "totalFiles": 7,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "트라이그램",
+          "query": "트라이그램",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "트라이그램",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 50,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "recent"
+          },
+          "sql": [],
+          "special": {},
+          "out": {
+            "hits": [
+              {
+                "ts": "2026-09-08T21:00:00.000Z",
+                "role": "assistant",
+                "text": "한글 문서에서 트라이그램 이야기를 잠깐 언급했다",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-0000000f0007",
+                "title": null,
+                "cwd": "/proj/rank",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/08/rollout-2026-09-08T00-00-00-019f0000-0000-7000-8000-0000000f0007.jsonl",
+                "context": []
+              },
+              {
+                "ts": "2026-08-20T00:00:00.000Z",
+                "role": "user",
+                "text": "트라이그램 색인 트라이그램 재구축 트라이그램 완료",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-0000000f0006",
+                "title": null,
+                "cwd": "/proj/rank",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/08/20/rollout-2026-08-20T00-00-00-019f0000-0000-7000-8000-0000000f0006.jsonl",
+                "context": []
+              }
+            ],
+            "warnings": [
+              "state db not found (metadata enrichment off)"
+            ],
+            "scannedFiles": 7,
+            "matchedFiles": 2,
+            "totalFiles": 7,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "한글",
+          "query": "한글",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "한글",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 50,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "relevance"
+          },
+          "sql": [],
+          "special": {},
+          "out": {
+            "hits": [
+              {
+                "ts": "2026-09-08T21:00:00.000Z",
+                "role": "assistant",
+                "text": "한글 문서에서 트라이그램 이야기를 잠깐 언급했다",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-0000000f0007",
+                "title": null,
+                "cwd": "/proj/rank",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/08/rollout-2026-09-08T00-00-00-019f0000-0000-7000-8000-0000000f0007.jsonl",
+                "score": 0.016654600385916898,
+                "context": []
+              }
+            ],
+            "warnings": [
+              "state db not found (metadata enrichment off)"
+            ],
+            "scannedFiles": 7,
+            "matchedFiles": 1,
+            "totalFiles": 7,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "한글",
+          "query": "한글",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "한글",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 50,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "recent"
+          },
+          "sql": [],
+          "special": {},
+          "out": {
+            "hits": [
+              {
+                "ts": "2026-09-08T21:00:00.000Z",
+                "role": "assistant",
+                "text": "한글 문서에서 트라이그램 이야기를 잠깐 언급했다",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-0000000f0007",
+                "title": null,
+                "cwd": "/proj/rank",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/08/rollout-2026-09-08T00-00-00-019f0000-0000-7000-8000-0000000f0007.jsonl",
+                "context": []
+              }
+            ],
+            "warnings": [
+              "state db not found (metadata enrichment off)"
+            ],
+            "scannedFiles": 7,
+            "matchedFiles": 1,
+            "totalFiles": 7,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "quokka",
+          "query": "quokka",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "quokka",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 1,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000
+          },
+          "sql": [],
+          "special": {},
+          "out": {
+            "hits": [
+              {
+                "ts": "2026-08-10T00:00:00.000Z",
+                "role": "user",
+                "text": "quokka deployment plan for the quokka rollout, quokka everywhere",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-0000000f0001",
+                "title": null,
+                "cwd": "/proj/rank",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/08/10/rollout-2026-08-10T00-00-00-019f0000-0000-7000-8000-0000000f0001.jsonl",
+                "score": 0.029521753294487172,
+                "context": []
+              }
+            ],
+            "warnings": [
+              "truncated at limit 1 — raise --limit or narrow the query",
+              "state db not found (metadata enrichment off)"
+            ],
+            "scannedFiles": 7,
+            "matchedFiles": 1,
+            "totalFiles": 7,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "quokka",
+          "query": "quokka",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "quokka",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 1.5,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000
+          },
+          "sql": [],
+          "special": {},
+          "out": {
+            "hits": [
+              {
+                "ts": "2026-08-10T00:00:00.000Z",
+                "role": "user",
+                "text": "quokka deployment plan for the quokka rollout, quokka everywhere",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-0000000f0001",
+                "title": null,
+                "cwd": "/proj/rank",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/08/10/rollout-2026-08-10T00-00-00-019f0000-0000-7000-8000-0000000f0001.jsonl",
+                "score": 0.029521753294487172,
+                "context": []
+              }
+            ],
+            "warnings": [
+              "truncated at limit 1.5 — raise --limit or narrow the query",
+              "state db not found (metadata enrichment off)"
+            ],
+            "scannedFiles": 7,
+            "matchedFiles": 1,
+            "totalFiles": 7,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "quokka",
+          "query": "quokka",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "quokka",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 1.5,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "recent"
+          },
+          "sql": [],
+          "special": {},
+          "error": "Invalid array length",
+          "closed": false
+        },
+        {
+          "name": "quokka",
+          "query": "quokka",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "quokka",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 10.25,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000
+          },
+          "sql": [],
+          "special": {},
+          "error": "datatype mismatch",
+          "closed": false
+        }
+      ]
+    },
+    {
+      "name": "dates",
+      "files": {
+        "sessions/2026/09/09/dates.jsonl": "{\"type\":\"session_meta\",\"payload\":{\"id\":\"dates\",\"cwd\":\"/proj/dates\"}}\n{\"timestamp\":\"2026-09-09T00:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"date witness\"}]}}\n{\"timestamp\":\"2026/09/09\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"date witness\"}]}}\n{\"timestamp\":\"2026-09-08T24:00:00Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"date witness\"}]}}\n{\"timestamp\":\"2026-08-32T12:00:00Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"date witness\"}]}}\n{\"timestamp\":\"2026-08-31T24:00:00Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"date witness\"}]}}\n{\"timestamp\":\"2026-09-09t00:00:00z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"date witness\"}]}}\n{\"timestamp\":\"Wed, 09 Sep 2026 00:00:00 GMT\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"date witness\"}]}}\n{\"timestamp\":\"\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"date witness\"}]}}\n{\"timestamp\":\"not a date\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"date witness\"}]}}\n{\"timestamp\":\"2026-02-30T12:00:00Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"date witness\"}]}}\n{\"timestamp\":\"+010000-01-01T00:00:00Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"date witness\"}]}}\n"
+      },
+      "cases": [
+        {
+          "name": "date",
+          "query": "date",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "date",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 50,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000
+          },
+          "sql": [],
+          "special": {},
+          "out": {
+            "hits": [
+              {
+                "ts": "2026-09-09T00:00:00.000Z",
+                "role": "user",
+                "text": "date witness",
+                "matchField": "content",
+                "threadId": "dates",
+                "title": null,
+                "cwd": "/proj/dates",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/dates.jsonl",
+                "score": 0.02977260708619778,
+                "context": []
+              },
+              {
+                "ts": "2026/09/09",
+                "role": "user",
+                "text": "date witness",
+                "matchField": "content",
+                "threadId": "dates",
+                "title": null,
+                "cwd": "/proj/dates",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/dates.jsonl",
+                "score": 0.02929666842940243,
+                "context": []
+              },
+              {
+                "ts": "2026-09-08T24:00:00Z",
+                "role": "user",
+                "text": "date witness",
+                "matchField": "content",
+                "threadId": "dates",
+                "title": null,
+                "cwd": "/proj/dates",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/dates.jsonl",
+                "score": 0.028835838936314875,
+                "context": []
+              },
+              {
+                "ts": "2026-08-32T12:00:00Z",
+                "role": "user",
+                "text": "date witness",
+                "matchField": "content",
+                "threadId": "dates",
+                "title": null,
+                "cwd": "/proj/dates",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/dates.jsonl",
+                "score": 0.028125,
+                "context": []
+              },
+              {
+                "ts": "2026-08-31T24:00:00Z",
+                "role": "user",
+                "text": "date witness",
+                "matchField": "content",
+                "threadId": "dates",
+                "title": null,
+                "cwd": "/proj/dates",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/dates.jsonl",
+                "score": 0.027812049054584783,
+                "context": []
+              },
+              {
+                "ts": "2026-09-09t00:00:00z",
+                "role": "user",
+                "text": "date witness",
+                "matchField": "content",
+                "threadId": "dates",
+                "title": null,
+                "cwd": "/proj/dates",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/dates.jsonl",
+                "score": 0.02753713763761358,
+                "context": []
+              },
+              {
+                "ts": "Wed, 09 Sep 2026 00:00:00 GMT",
+                "role": "user",
+                "text": "date witness",
+                "matchField": "content",
+                "threadId": "dates",
+                "title": null,
+                "cwd": "/proj/dates",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/dates.jsonl",
+                "score": 0.02713008200667735,
+                "context": []
+              },
+              {
+                "ts": "",
+                "role": "user",
+                "text": "date witness",
+                "matchField": "content",
+                "threadId": "dates",
+                "title": null,
+                "cwd": "/proj/dates",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/dates.jsonl",
+                "score": 0.026470588235294117,
+                "context": []
+              },
+              {
+                "ts": "not a date",
+                "role": "user",
+                "text": "date witness",
+                "matchField": "content",
+                "threadId": "dates",
+                "title": null,
+                "cwd": "/proj/dates",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/dates.jsonl",
+                "score": 0.026086956521739132,
+                "context": []
+              },
+              {
+                "ts": "2026-02-30T12:00:00Z",
+                "role": "user",
+                "text": "date witness",
+                "matchField": "content",
+                "threadId": "dates",
+                "title": null,
+                "cwd": "/proj/dates",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/dates.jsonl",
+                "score": 0.02571428571598381,
+                "context": []
+              },
+              {
+                "ts": "+010000-01-01T00:00:00Z",
+                "role": "user",
+                "text": "date witness",
+                "matchField": "content",
+                "threadId": "dates",
+                "title": null,
+                "cwd": "/proj/dates",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/dates.jsonl",
+                "score": 0.025616523040942644,
+                "context": []
+              }
+            ],
+            "warnings": [
+              "state db not found (metadata enrichment off)"
+            ],
+            "scannedFiles": 1,
+            "matchedFiles": 1,
+            "totalFiles": 1,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "date",
+          "query": "date",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "date",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 50,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000
+          },
+          "sql": [],
+          "special": {
+            "nowMs": "NaN"
+          },
+          "out": {
+            "hits": [
+              {
+                "ts": "not a date",
+                "role": "user",
+                "text": "date witness",
+                "matchField": "content",
+                "threadId": "dates",
+                "title": null,
+                "cwd": "/proj/dates",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/dates.jsonl",
+                "score": 0.026086956521739132,
+                "context": []
+              },
+              {
+                "ts": "Wed, 09 Sep 2026 00:00:00 GMT",
+                "role": "user",
+                "text": "date witness",
+                "matchField": "content",
+                "threadId": "dates",
+                "title": null,
+                "cwd": "/proj/dates",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/dates.jsonl",
+                "score": null,
+                "context": []
+              },
+              {
+                "ts": "2026/09/09",
+                "role": "user",
+                "text": "date witness",
+                "matchField": "content",
+                "threadId": "dates",
+                "title": null,
+                "cwd": "/proj/dates",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/dates.jsonl",
+                "score": null,
+                "context": []
+              },
+              {
+                "ts": "2026-09-09t00:00:00z",
+                "role": "user",
+                "text": "date witness",
+                "matchField": "content",
+                "threadId": "dates",
+                "title": null,
+                "cwd": "/proj/dates",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/dates.jsonl",
+                "score": null,
+                "context": []
+              },
+              {
+                "ts": "2026-09-09T00:00:00.000Z",
+                "role": "user",
+                "text": "date witness",
+                "matchField": "content",
+                "threadId": "dates",
+                "title": null,
+                "cwd": "/proj/dates",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/dates.jsonl",
+                "score": null,
+                "context": []
+              },
+              {
+                "ts": "2026-09-08T24:00:00Z",
+                "role": "user",
+                "text": "date witness",
+                "matchField": "content",
+                "threadId": "dates",
+                "title": null,
+                "cwd": "/proj/dates",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/dates.jsonl",
+                "score": null,
+                "context": []
+              },
+              {
+                "ts": "2026-08-32T12:00:00Z",
+                "role": "user",
+                "text": "date witness",
+                "matchField": "content",
+                "threadId": "dates",
+                "title": null,
+                "cwd": "/proj/dates",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/dates.jsonl",
+                "score": 0.028125,
+                "context": []
+              },
+              {
+                "ts": "2026-08-31T24:00:00Z",
+                "role": "user",
+                "text": "date witness",
+                "matchField": "content",
+                "threadId": "dates",
+                "title": null,
+                "cwd": "/proj/dates",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/dates.jsonl",
+                "score": null,
+                "context": []
+              },
+              {
+                "ts": "2026-02-30T12:00:00Z",
+                "role": "user",
+                "text": "date witness",
+                "matchField": "content",
+                "threadId": "dates",
+                "title": null,
+                "cwd": "/proj/dates",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/dates.jsonl",
+                "score": null,
+                "context": []
+              },
+              {
+                "ts": "+010000-01-01T00:00:00Z",
+                "role": "user",
+                "text": "date witness",
+                "matchField": "content",
+                "threadId": "dates",
+                "title": null,
+                "cwd": "/proj/dates",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/dates.jsonl",
+                "score": null,
+                "context": []
+              },
+              {
+                "ts": "",
+                "role": "user",
+                "text": "date witness",
+                "matchField": "content",
+                "threadId": "dates",
+                "title": null,
+                "cwd": "/proj/dates",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/dates.jsonl",
+                "score": 0.026470588235294117,
+                "context": []
+              }
+            ],
+            "warnings": [
+              "state db not found (metadata enrichment off)"
+            ],
+            "scannedFiles": 1,
+            "matchedFiles": 1,
+            "totalFiles": 1,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "date",
+          "query": "date",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "date",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 50,
+            "contextN": 1,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "recent"
+          },
+          "sql": [],
+          "special": {},
+          "out": {
+            "hits": [
+              {
+                "ts": "not a date",
+                "role": "user",
+                "text": "date witness",
+                "matchField": "content",
+                "threadId": "dates",
+                "title": null,
+                "cwd": "/proj/dates",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/dates.jsonl",
+                "context": [
+                  {
+                    "ts": "",
+                    "role": "user",
+                    "text": "date witness",
+                    "isMatch": false
+                  },
+                  {
+                    "ts": "not a date",
+                    "role": "user",
+                    "text": "date witness",
+                    "isMatch": true
+                  },
+                  {
+                    "ts": "2026-02-30T12:00:00Z",
+                    "role": "user",
+                    "text": "date witness",
+                    "isMatch": false
+                  }
+                ]
+              },
+              {
+                "ts": "Wed, 09 Sep 2026 00:00:00 GMT",
+                "role": "user",
+                "text": "date witness",
+                "matchField": "content",
+                "threadId": "dates",
+                "title": null,
+                "cwd": "/proj/dates",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/dates.jsonl",
+                "context": [
+                  {
+                    "ts": "2026-09-09t00:00:00z",
+                    "role": "user",
+                    "text": "date witness",
+                    "isMatch": false
+                  },
+                  {
+                    "ts": "Wed, 09 Sep 2026 00:00:00 GMT",
+                    "role": "user",
+                    "text": "date witness",
+                    "isMatch": true
+                  },
+                  {
+                    "ts": "",
+                    "role": "user",
+                    "text": "date witness",
+                    "isMatch": false
+                  }
+                ]
+              },
+              {
+                "ts": "2026/09/09",
+                "role": "user",
+                "text": "date witness",
+                "matchField": "content",
+                "threadId": "dates",
+                "title": null,
+                "cwd": "/proj/dates",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/dates.jsonl",
+                "context": [
+                  {
+                    "ts": "2026-09-09T00:00:00.000Z",
+                    "role": "user",
+                    "text": "date witness",
+                    "isMatch": false
+                  },
+                  {
+                    "ts": "2026/09/09",
+                    "role": "user",
+                    "text": "date witness",
+                    "isMatch": true
+                  },
+                  {
+                    "ts": "2026-09-08T24:00:00Z",
+                    "role": "user",
+                    "text": "date witness",
+                    "isMatch": false
+                  }
+                ]
+              },
+              {
+                "ts": "2026-09-09t00:00:00z",
+                "role": "user",
+                "text": "date witness",
+                "matchField": "content",
+                "threadId": "dates",
+                "title": null,
+                "cwd": "/proj/dates",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/dates.jsonl",
+                "context": [
+                  {
+                    "ts": "2026-08-31T24:00:00Z",
+                    "role": "user",
+                    "text": "date witness",
+                    "isMatch": false
+                  },
+                  {
+                    "ts": "2026-09-09t00:00:00z",
+                    "role": "user",
+                    "text": "date witness",
+                    "isMatch": true
+                  },
+                  {
+                    "ts": "Wed, 09 Sep 2026 00:00:00 GMT",
+                    "role": "user",
+                    "text": "date witness",
+                    "isMatch": false
+                  }
+                ]
+              },
+              {
+                "ts": "2026-09-09T00:00:00.000Z",
+                "role": "user",
+                "text": "date witness",
+                "matchField": "content",
+                "threadId": "dates",
+                "title": null,
+                "cwd": "/proj/dates",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/dates.jsonl",
+                "context": [
+                  {
+                    "ts": "2026-09-09T00:00:00.000Z",
+                    "role": "user",
+                    "text": "date witness",
+                    "isMatch": true
+                  },
+                  {
+                    "ts": "2026/09/09",
+                    "role": "user",
+                    "text": "date witness",
+                    "isMatch": false
+                  }
+                ]
+              },
+              {
+                "ts": "2026-09-08T24:00:00Z",
+                "role": "user",
+                "text": "date witness",
+                "matchField": "content",
+                "threadId": "dates",
+                "title": null,
+                "cwd": "/proj/dates",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/dates.jsonl",
+                "context": [
+                  {
+                    "ts": "2026/09/09",
+                    "role": "user",
+                    "text": "date witness",
+                    "isMatch": false
+                  },
+                  {
+                    "ts": "2026-09-08T24:00:00Z",
+                    "role": "user",
+                    "text": "date witness",
+                    "isMatch": true
+                  },
+                  {
+                    "ts": "2026-08-32T12:00:00Z",
+                    "role": "user",
+                    "text": "date witness",
+                    "isMatch": false
+                  }
+                ]
+              },
+              {
+                "ts": "2026-08-32T12:00:00Z",
+                "role": "user",
+                "text": "date witness",
+                "matchField": "content",
+                "threadId": "dates",
+                "title": null,
+                "cwd": "/proj/dates",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/dates.jsonl",
+                "context": [
+                  {
+                    "ts": "2026-09-08T24:00:00Z",
+                    "role": "user",
+                    "text": "date witness",
+                    "isMatch": false
+                  },
+                  {
+                    "ts": "2026-08-32T12:00:00Z",
+                    "role": "user",
+                    "text": "date witness",
+                    "isMatch": true
+                  },
+                  {
+                    "ts": "2026-08-31T24:00:00Z",
+                    "role": "user",
+                    "text": "date witness",
+                    "isMatch": false
+                  }
+                ]
+              },
+              {
+                "ts": "2026-08-31T24:00:00Z",
+                "role": "user",
+                "text": "date witness",
+                "matchField": "content",
+                "threadId": "dates",
+                "title": null,
+                "cwd": "/proj/dates",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/dates.jsonl",
+                "context": [
+                  {
+                    "ts": "2026-08-32T12:00:00Z",
+                    "role": "user",
+                    "text": "date witness",
+                    "isMatch": false
+                  },
+                  {
+                    "ts": "2026-08-31T24:00:00Z",
+                    "role": "user",
+                    "text": "date witness",
+                    "isMatch": true
+                  },
+                  {
+                    "ts": "2026-09-09t00:00:00z",
+                    "role": "user",
+                    "text": "date witness",
+                    "isMatch": false
+                  }
+                ]
+              },
+              {
+                "ts": "2026-02-30T12:00:00Z",
+                "role": "user",
+                "text": "date witness",
+                "matchField": "content",
+                "threadId": "dates",
+                "title": null,
+                "cwd": "/proj/dates",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/dates.jsonl",
+                "context": [
+                  {
+                    "ts": "not a date",
+                    "role": "user",
+                    "text": "date witness",
+                    "isMatch": false
+                  },
+                  {
+                    "ts": "2026-02-30T12:00:00Z",
+                    "role": "user",
+                    "text": "date witness",
+                    "isMatch": true
+                  },
+                  {
+                    "ts": "+010000-01-01T00:00:00Z",
+                    "role": "user",
+                    "text": "date witness",
+                    "isMatch": false
+                  }
+                ]
+              },
+              {
+                "ts": "+010000-01-01T00:00:00Z",
+                "role": "user",
+                "text": "date witness",
+                "matchField": "content",
+                "threadId": "dates",
+                "title": null,
+                "cwd": "/proj/dates",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/dates.jsonl",
+                "context": [
+                  {
+                    "ts": "2026-02-30T12:00:00Z",
+                    "role": "user",
+                    "text": "date witness",
+                    "isMatch": false
+                  },
+                  {
+                    "ts": "+010000-01-01T00:00:00Z",
+                    "role": "user",
+                    "text": "date witness",
+                    "isMatch": true
+                  }
+                ]
+              },
+              {
+                "ts": "",
+                "role": "user",
+                "text": "date witness",
+                "matchField": "content",
+                "threadId": "dates",
+                "title": null,
+                "cwd": "/proj/dates",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/dates.jsonl",
+                "context": [
+                  {
+                    "ts": "Wed, 09 Sep 2026 00:00:00 GMT",
+                    "role": "user",
+                    "text": "date witness",
+                    "isMatch": false
+                  },
+                  {
+                    "ts": "",
+                    "role": "user",
+                    "text": "date witness",
+                    "isMatch": true
+                  },
+                  {
+                    "ts": "not a date",
+                    "role": "user",
+                    "text": "date witness",
+                    "isMatch": false
+                  }
+                ]
+              }
+            ],
+            "warnings": [
+              "state db not found (metadata enrichment off)"
+            ],
+            "scannedFiles": 1,
+            "matchedFiles": 1,
+            "totalFiles": 1,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        }
+      ]
+    },
+    {
+      "name": "edge",
+      "files": {
+        "sessions/2026/09/09/edge.jsonl": "{\"type\":\"session_meta\",\"payload\":{\"id\":\"edge\",\"cwd\":\"/proj/edge\"}}\n{\"timestamp\":\"2026-09-08T23:59:57.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"before context\"}]}}\n{\"timestamp\":\"2026-09-08T23:59:58.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"# AGENTS.md instructions injected\"}]}}\n{\"timestamp\":\"2026-09-08T23:59:59.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"function_call_output\",\"output\":\"tool neighbor\"}}\n{\"timestamp\":\"2026-09-09T00:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"한글문서 needle needle\"}]}}\n{\"timestamp\":\"2026-09-09T00:00:01.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"after context\"}]}}\n{\"timestamp\":\"2026-09-09T00:00:02.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"needle\"}]}}\n"
+      },
+      "cases": [
+        {
+          "name": "empty-lanes",
+          "query": "한글",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "한글",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 50,
+            "contextN": 2,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": false,
+            "home": "$R",
+            "nowMs": 1788912000000
+          },
+          "sql": [],
+          "special": {},
+          "out": {
+            "hits": [
+              {
+                "ts": "2026-09-09T00:00:00.000Z",
+                "role": "user",
+                "text": "한글문서 needle needle",
+                "matchField": "content",
+                "threadId": "edge",
+                "title": null,
+                "cwd": "/proj/edge",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/edge.jsonl",
+                "score": 0.00026441036488630354,
+                "context": [
+                  {
+                    "ts": "2026-09-08T23:59:57.000Z",
+                    "role": "user",
+                    "text": "before context",
+                    "isMatch": false
+                  },
+                  {
+                    "ts": "2026-09-08T23:59:59.000Z",
+                    "role": "tool",
+                    "text": "tool neighbor",
+                    "isMatch": false
+                  },
+                  {
+                    "ts": "2026-09-09T00:00:00.000Z",
+                    "role": "user",
+                    "text": "한글문서 needle needle",
+                    "isMatch": true
+                  },
+                  {
+                    "ts": "2026-09-09T00:00:01.000Z",
+                    "role": "user",
+                    "text": "after context",
+                    "isMatch": false
+                  },
+                  {
+                    "ts": "2026-09-09T00:00:02.000Z",
+                    "role": "user",
+                    "text": "needle",
+                    "isMatch": false
+                  }
+                ]
+              }
+            ],
+            "warnings": [
+              "state db not found (metadata enrichment off)"
+            ],
+            "scannedFiles": 1,
+            "matchedFiles": 1,
+            "totalFiles": 1,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "missing-fts",
+          "query": "needle",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "needle",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 50,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000
+          },
+          "sql": [
+            "DROP TABLE msgs_fts"
+          ],
+          "special": {},
+          "out": {
+            "hits": [
+              {
+                "ts": "2026-09-09T00:00:02.000Z",
+                "role": "user",
+                "text": "needle",
+                "matchField": "content",
+                "threadId": "edge",
+                "title": null,
+                "cwd": "/proj/edge",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/edge.jsonl",
+                "score": 0.013379164463246959,
+                "context": []
+              },
+              {
+                "ts": "2026-09-09T00:00:00.000Z",
+                "role": "user",
+                "text": "한글문서 needle needle",
+                "matchField": "content",
+                "threadId": "edge",
+                "title": null,
+                "cwd": "/proj/edge",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/edge.jsonl",
+                "score": 0.013167636171337916,
+                "context": []
+              }
+            ],
+            "warnings": [
+              "state db not found (metadata enrichment off)"
+            ],
+            "scannedFiles": 1,
+            "matchedFiles": 1,
+            "totalFiles": 1,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "missing-both",
+          "query": "한글",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "한글",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 50,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000
+          },
+          "sql": [
+            "DROP TABLE msgs_fts",
+            "DROP TABLE msgs_tri"
+          ],
+          "special": {},
+          "out": {
+            "hits": [
+              {
+                "ts": "2026-09-09T00:00:00.000Z",
+                "role": "user",
+                "text": "한글문서 needle needle",
+                "matchField": "content",
+                "threadId": "edge",
+                "title": null,
+                "cwd": "/proj/edge",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/edge.jsonl",
+                "score": 0.00026441036488630354,
+                "context": []
+              }
+            ],
+            "warnings": [
+              "state db not found (metadata enrichment off)"
+            ],
+            "scannedFiles": 1,
+            "matchedFiles": 1,
+            "totalFiles": 1,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "needle",
+          "query": "needle",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "needle",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 50,
+            "contextN": 1,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": true,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000
+          },
+          "sql": [],
+          "special": {},
+          "out": {
+            "hits": [
+              {
+                "ts": "2026-09-09T00:00:02.000Z",
+                "role": "user",
+                "text": "needle",
+                "matchField": "content",
+                "threadId": "edge",
+                "title": null,
+                "cwd": "/proj/edge",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/edge.jsonl",
+                "score": 0.02977260708619778,
+                "context": [
+                  {
+                    "ts": "2026-09-09T00:00:01.000Z",
+                    "role": "user",
+                    "text": "after context",
+                    "isMatch": false
+                  },
+                  {
+                    "ts": "2026-09-09T00:00:02.000Z",
+                    "role": "user",
+                    "text": "needle",
+                    "isMatch": true
+                  }
+                ]
+              },
+              {
+                "ts": "2026-09-09T00:00:00.000Z",
+                "role": "user",
+                "text": "한글문서 needle needle",
+                "matchField": "content",
+                "threadId": "edge",
+                "title": null,
+                "cwd": "/proj/edge",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/edge.jsonl",
+                "score": 0.02929666842940243,
+                "context": [
+                  {
+                    "ts": "2026-09-08T23:59:59.000Z",
+                    "role": "tool",
+                    "text": "tool neighbor",
+                    "isMatch": false
+                  },
+                  {
+                    "ts": "2026-09-09T00:00:00.000Z",
+                    "role": "user",
+                    "text": "한글문서 needle needle",
+                    "isMatch": true
+                  },
+                  {
+                    "ts": "2026-09-09T00:00:01.000Z",
+                    "role": "user",
+                    "text": "after context",
+                    "isMatch": false
+                  }
+                ]
+              }
+            ],
+            "warnings": [
+              "state db not found (metadata enrichment off)"
+            ],
+            "scannedFiles": 1,
+            "matchedFiles": 1,
+            "totalFiles": 1,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "needle",
+          "query": "needle",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "needle",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 50,
+            "contextN": 0.5,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000
+          },
+          "sql": [],
+          "special": {},
+          "error": "datatype mismatch",
+          "closed": false
+        },
+        {
+          "name": "needle",
+          "query": "needle",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "needle",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 50,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000
+          },
+          "sql": [],
+          "special": {},
+          "error": "database is not open",
+          "closed": true
+        },
+        {
+          "name": "needle",
+          "query": "needle",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "needle",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 50,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000
+          },
+          "sql": [
+            "DROP TABLE msgs"
+          ],
+          "special": {},
+          "error": "no such table: msgs",
+          "closed": false
+        },
+        {
+          "name": "needle",
+          "query": "needle",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "needle",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": -2,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "relevance"
+          },
+          "sql": [],
+          "special": {},
+          "out": {
+            "hits": [],
+            "warnings": [
+              "truncated at limit -2 — raise --limit or narrow the query",
+              "state db not found (metadata enrichment off)"
+            ],
+            "scannedFiles": 1,
+            "matchedFiles": 0,
+            "totalFiles": 1,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "needle",
+          "query": "needle",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "needle",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": -1,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "relevance"
+          },
+          "sql": [],
+          "special": {},
+          "out": {
+            "hits": [
+              {
+                "ts": "2026-09-09T00:00:02.000Z",
+                "role": "user",
+                "text": "needle",
+                "matchField": "content",
+                "threadId": "edge",
+                "title": null,
+                "cwd": "/proj/edge",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/edge.jsonl",
+                "score": 0.02977260708619778,
+                "context": []
+              }
+            ],
+            "warnings": [
+              "truncated at limit -1 — raise --limit or narrow the query",
+              "state db not found (metadata enrichment off)"
+            ],
+            "scannedFiles": 1,
+            "matchedFiles": 1,
+            "totalFiles": 1,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "needle",
+          "query": "needle",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "needle",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 0,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "relevance"
+          },
+          "sql": [],
+          "special": {},
+          "out": {
+            "hits": [],
+            "warnings": [
+              "truncated at limit 0 — raise --limit or narrow the query",
+              "state db not found (metadata enrichment off)"
+            ],
+            "scannedFiles": 1,
+            "matchedFiles": 0,
+            "totalFiles": 1,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "needle",
+          "query": "needle",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "needle",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 0.5,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "relevance"
+          },
+          "sql": [],
+          "special": {},
+          "out": {
+            "hits": [],
+            "warnings": [
+              "truncated at limit 0.5 — raise --limit or narrow the query",
+              "state db not found (metadata enrichment off)"
+            ],
+            "scannedFiles": 1,
+            "matchedFiles": 0,
+            "totalFiles": 1,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "needle",
+          "query": "needle",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "needle",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 1.5,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "relevance"
+          },
+          "sql": [],
+          "special": {},
+          "out": {
+            "hits": [
+              {
+                "ts": "2026-09-09T00:00:02.000Z",
+                "role": "user",
+                "text": "needle",
+                "matchField": "content",
+                "threadId": "edge",
+                "title": null,
+                "cwd": "/proj/edge",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/edge.jsonl",
+                "score": 0.02977260708619778,
+                "context": []
+              }
+            ],
+            "warnings": [
+              "truncated at limit 1.5 — raise --limit or narrow the query",
+              "state db not found (metadata enrichment off)"
+            ],
+            "scannedFiles": 1,
+            "matchedFiles": 1,
+            "totalFiles": 1,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "needle",
+          "query": "needle",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "needle",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 10.25,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "relevance"
+          },
+          "sql": [],
+          "special": {},
+          "error": "datatype mismatch",
+          "closed": false
+        },
+        {
+          "name": "needle",
+          "query": "needle",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "needle",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": -2,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "recent"
+          },
+          "sql": [],
+          "special": {},
+          "error": "Invalid array length",
+          "closed": false
+        },
+        {
+          "name": "needle",
+          "query": "needle",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "needle",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": -1,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "recent"
+          },
+          "sql": [],
+          "special": {},
+          "error": "Invalid array length",
+          "closed": false
+        },
+        {
+          "name": "needle",
+          "query": "needle",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "needle",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 0,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "recent"
+          },
+          "sql": [],
+          "special": {},
+          "out": {
+            "hits": [],
+            "warnings": [
+              "truncated at limit 0 — raise --limit or narrow the query",
+              "state db not found (metadata enrichment off)"
+            ],
+            "scannedFiles": 1,
+            "matchedFiles": 0,
+            "totalFiles": 1,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "needle",
+          "query": "needle",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "needle",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 0.5,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "recent"
+          },
+          "sql": [],
+          "special": {},
+          "error": "Invalid array length",
+          "closed": false
+        },
+        {
+          "name": "needle",
+          "query": "needle",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "needle",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 1.5,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "recent"
+          },
+          "sql": [],
+          "special": {},
+          "error": "Invalid array length",
+          "closed": false
+        },
+        {
+          "name": "needle",
+          "query": "needle",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "needle",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 10.25,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "recent"
+          },
+          "sql": [],
+          "special": {},
+          "error": "datatype mismatch",
+          "closed": false
+        },
+        {
+          "name": "needle",
+          "query": "needle",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "needle",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 50,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "relevance"
+          },
+          "sql": [],
+          "special": {
+            "limit": "NaN"
+          },
+          "out": {
+            "hits": [],
+            "warnings": [
+              "state db not found (metadata enrichment off)"
+            ],
+            "scannedFiles": 1,
+            "matchedFiles": 0,
+            "totalFiles": 1,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "needle",
+          "query": "needle",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "needle",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 50,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "relevance"
+          },
+          "sql": [],
+          "special": {
+            "limit": "Infinity"
+          },
+          "out": {
+            "hits": [
+              {
+                "ts": "2026-09-09T00:00:02.000Z",
+                "role": "user",
+                "text": "needle",
+                "matchField": "content",
+                "threadId": "edge",
+                "title": null,
+                "cwd": "/proj/edge",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/edge.jsonl",
+                "score": 0.02977260708619778,
+                "context": []
+              },
+              {
+                "ts": "2026-09-09T00:00:00.000Z",
+                "role": "user",
+                "text": "한글문서 needle needle",
+                "matchField": "content",
+                "threadId": "edge",
+                "title": null,
+                "cwd": "/proj/edge",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/edge.jsonl",
+                "score": 0.02929666842940243,
+                "context": []
+              }
+            ],
+            "warnings": [
+              "state db not found (metadata enrichment off)"
+            ],
+            "scannedFiles": 1,
+            "matchedFiles": 1,
+            "totalFiles": 1,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "needle",
+          "query": "needle",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "needle",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 50,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "recent"
+          },
+          "sql": [],
+          "special": {
+            "limit": "NaN"
+          },
+          "error": "datatype mismatch",
+          "closed": false
+        },
+        {
+          "name": "needle",
+          "query": "needle",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "needle",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 50,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "recent"
+          },
+          "sql": [],
+          "special": {
+            "limit": "Infinity"
+          },
+          "out": {
+            "hits": [
+              {
+                "ts": "2026-09-09T00:00:02.000Z",
+                "role": "user",
+                "text": "needle",
+                "matchField": "content",
+                "threadId": "edge",
+                "title": null,
+                "cwd": "/proj/edge",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/edge.jsonl",
+                "context": []
+              },
+              {
+                "ts": "2026-09-09T00:00:00.000Z",
+                "role": "user",
+                "text": "한글문서 needle needle",
+                "matchField": "content",
+                "threadId": "edge",
+                "title": null,
+                "cwd": "/proj/edge",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/edge.jsonl",
+                "context": []
+              }
+            ],
+            "warnings": [
+              "state db not found (metadata enrichment off)"
+            ],
+            "scannedFiles": 1,
+            "matchedFiles": 1,
+            "totalFiles": 1,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        }
+      ]
+    },
+    {
+      "name": "fixture",
+      "files": {},
+      "cases": [
+        {
+          "name": "trigram korean",
+          "query": "trigram korean",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "trigram",
+                    "boundary": false
+                  }
+                ],
+                [
+                  {
+                    "text": "korean",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 50,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "all",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "recent"
+          },
+          "sql": [],
+          "special": {},
+          "out": {
+            "hits": [
+              {
+                "ts": "2026-09-09T00:00:00.000Z",
+                "role": "user",
+                "text": "please deploy the trigram index for korean search",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-00000000aaaa",
+                "title": "deploy trigram index",
+                "cwd": "/proj/alpha",
+                "gitBranch": "main",
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/rollout-2026-09-09T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl",
+                "context": []
+              },
+              {
+                "ts": "2026-09-09T00:00:00.000Z",
+                "role": "assistant",
+                "text": "deployed the trigram index; korean 한글 검색 works now",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-00000000aaaa",
+                "title": "deploy trigram index",
+                "cwd": "/proj/alpha",
+                "gitBranch": "main",
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/rollout-2026-09-09T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl",
+                "context": []
+              }
+            ],
+            "warnings": [],
+            "scannedFiles": 4,
+            "matchedFiles": 1,
+            "totalFiles": 4,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "trigram korean",
+          "query": "trigram korean",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "trigram",
+                    "boundary": false
+                  }
+                ],
+                [
+                  {
+                    "text": "korean",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 50,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "all",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "relevance"
+          },
+          "sql": [],
+          "special": {},
+          "out": {
+            "hits": [
+              {
+                "ts": "2026-09-09T00:00:00.000Z",
+                "role": "user",
+                "text": "please deploy the trigram index for korean search",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-00000000aaaa",
+                "title": "deploy trigram index",
+                "cwd": "/proj/alpha",
+                "gitBranch": "main",
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/rollout-2026-09-09T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl",
+                "score": 0.02977260708619778,
+                "context": []
+              },
+              {
+                "ts": "2026-09-09T00:00:00.000Z",
+                "role": "assistant",
+                "text": "deployed the trigram index; korean 한글 검색 works now",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-00000000aaaa",
+                "title": "deploy trigram index",
+                "cwd": "/proj/alpha",
+                "gitBranch": "main",
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/rollout-2026-09-09T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl",
+                "score": 0.02929666842940243,
+                "context": []
+              }
+            ],
+            "warnings": [],
+            "scannedFiles": 4,
+            "matchedFiles": 1,
+            "totalFiles": 4,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "trigram korean",
+          "query": "trigram korean",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "trigram",
+                    "boundary": false
+                  }
+                ],
+                [
+                  {
+                    "text": "korean",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": true
+            },
+            "limit": 50,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "all",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "recent"
+          },
+          "sql": [],
+          "special": {},
+          "out": {
+            "hits": [
+              {
+                "ts": "2026-09-09T00:00:00.000Z",
+                "role": "user",
+                "text": "subagent task about the trigram index",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-00000000bbbb",
+                "title": "subagent lane",
+                "cwd": "/proj/alpha/sub",
+                "gitBranch": null,
+                "source": "subagent",
+                "file": "$R/sessions/2026/09/09/rollout-2026-09-09T02-00-00-019f0000-0000-7000-8000-00000000bbbb.jsonl",
+                "context": []
+              },
+              {
+                "ts": "2026-09-09T00:00:00.000Z",
+                "role": "user",
+                "text": "please deploy the trigram index for korean search",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-00000000aaaa",
+                "title": "deploy trigram index",
+                "cwd": "/proj/alpha",
+                "gitBranch": "main",
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/rollout-2026-09-09T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl",
+                "context": []
+              },
+              {
+                "ts": "2026-09-09T00:00:00.000Z",
+                "role": "assistant",
+                "text": "deployed the trigram index; korean 한글 검색 works now",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-00000000aaaa",
+                "title": "deploy trigram index",
+                "cwd": "/proj/alpha",
+                "gitBranch": "main",
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/rollout-2026-09-09T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl",
+                "context": []
+              },
+              {
+                "ts": "2026-08-30T00:00:00.000Z",
+                "role": "user",
+                "text": "archived aardwolf question about the trigram index",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-00000000eeee",
+                "title": null,
+                "cwd": "/proj/alpha",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/archived_sessions/rollout-2026-08-30T05-00-00-019f0000-0000-7000-8000-00000000eeee.jsonl",
+                "context": []
+              },
+              {
+                "ts": "2026-07-31T00:00:00.000Z",
+                "role": "user",
+                "text": "ancient question about the trigram index",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-00000000cccc",
+                "title": null,
+                "cwd": "/proj/beta",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/07/31/rollout-2026-07-31T01-00-00-019f0000-0000-7000-8000-00000000cccc.jsonl",
+                "context": []
+              }
+            ],
+            "warnings": [],
+            "scannedFiles": 4,
+            "matchedFiles": 4,
+            "totalFiles": 4,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "trigram korean",
+          "query": "trigram korean",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "trigram",
+                    "boundary": false
+                  }
+                ],
+                [
+                  {
+                    "text": "korean",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": true
+            },
+            "limit": 50,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "all",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "relevance"
+          },
+          "sql": [],
+          "special": {},
+          "out": {
+            "hits": [
+              {
+                "ts": "2026-09-09T00:00:00.000Z",
+                "role": "user",
+                "text": "please deploy the trigram index for korean search",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-00000000aaaa",
+                "title": "deploy trigram index",
+                "cwd": "/proj/alpha",
+                "gitBranch": "main",
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/rollout-2026-09-09T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl",
+                "score": 0.02977260708619778,
+                "context": []
+              },
+              {
+                "ts": "2026-09-09T00:00:00.000Z",
+                "role": "assistant",
+                "text": "deployed the trigram index; korean 한글 검색 works now",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-00000000aaaa",
+                "title": "deploy trigram index",
+                "cwd": "/proj/alpha",
+                "gitBranch": "main",
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/rollout-2026-09-09T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl",
+                "score": 0.02929666842940243,
+                "context": []
+              },
+              {
+                "ts": "2026-09-09T00:00:00.000Z",
+                "role": "user",
+                "text": "subagent task about the trigram index",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-00000000bbbb",
+                "title": "subagent lane",
+                "cwd": "/proj/alpha/sub",
+                "gitBranch": null,
+                "source": "subagent",
+                "file": "$R/sessions/2026/09/09/rollout-2026-09-09T02-00-00-019f0000-0000-7000-8000-00000000bbbb.jsonl",
+                "score": 0.028835838936314875,
+                "context": []
+              },
+              {
+                "ts": "2026-07-31T00:00:00.000Z",
+                "role": "user",
+                "text": "ancient question about the trigram index",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-00000000cccc",
+                "title": null,
+                "cwd": "/proj/beta",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/07/31/rollout-2026-07-31T01-00-00-019f0000-0000-7000-8000-00000000cccc.jsonl",
+                "score": 0.02813003624757984,
+                "context": []
+              },
+              {
+                "ts": "2026-08-30T00:00:00.000Z",
+                "role": "user",
+                "text": "archived aardwolf question about the trigram index",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-00000000eeee",
+                "title": null,
+                "cwd": "/proj/alpha",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/archived_sessions/rollout-2026-08-30T05-00-00-019f0000-0000-7000-8000-00000000eeee.jsonl",
+                "score": 0.02779053576536011,
+                "context": []
+              }
+            ],
+            "warnings": [],
+            "scannedFiles": 4,
+            "matchedFiles": 4,
+            "totalFiles": 4,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "trigram",
+          "query": "trigram",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "trigram",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 50,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "recent"
+          },
+          "sql": [],
+          "special": {},
+          "out": {
+            "hits": [
+              {
+                "ts": "2026-09-09T00:00:00.000Z",
+                "role": "user",
+                "text": "please deploy the trigram index for korean search",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-00000000aaaa",
+                "title": "deploy trigram index",
+                "cwd": "/proj/alpha",
+                "gitBranch": "main",
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/rollout-2026-09-09T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl",
+                "context": []
+              },
+              {
+                "ts": "2026-09-09T00:00:00.000Z",
+                "role": "assistant",
+                "text": "deployed the trigram index; korean 한글 검색 works now",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-00000000aaaa",
+                "title": "deploy trigram index",
+                "cwd": "/proj/alpha",
+                "gitBranch": "main",
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/rollout-2026-09-09T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl",
+                "context": []
+              },
+              {
+                "ts": "2026-08-30T00:00:00.000Z",
+                "role": "user",
+                "text": "archived aardwolf question about the trigram index",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-00000000eeee",
+                "title": null,
+                "cwd": "/proj/alpha",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/archived_sessions/rollout-2026-08-30T05-00-00-019f0000-0000-7000-8000-00000000eeee.jsonl",
+                "context": []
+              },
+              {
+                "ts": "2026-07-31T00:00:00.000Z",
+                "role": "user",
+                "text": "ancient question about the trigram index",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-00000000cccc",
+                "title": null,
+                "cwd": "/proj/beta",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/07/31/rollout-2026-07-31T01-00-00-019f0000-0000-7000-8000-00000000cccc.jsonl",
+                "context": []
+              }
+            ],
+            "warnings": [],
+            "scannedFiles": 4,
+            "matchedFiles": 3,
+            "totalFiles": 4,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "trigram",
+          "query": "trigram",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "trigram",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 50,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "relevance"
+          },
+          "sql": [],
+          "special": {},
+          "out": {
+            "hits": [
+              {
+                "ts": "2026-07-31T00:00:00.000Z",
+                "role": "user",
+                "text": "ancient question about the trigram index",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-00000000cccc",
+                "title": null,
+                "cwd": "/proj/beta",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/07/31/rollout-2026-07-31T01-00-00-019f0000-0000-7000-8000-00000000cccc.jsonl",
+                "score": 0.029037294312095965,
+                "context": []
+              },
+              {
+                "ts": "2026-09-09T00:00:00.000Z",
+                "role": "user",
+                "text": "please deploy the trigram index for korean search",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-00000000aaaa",
+                "title": "deploy trigram index",
+                "cwd": "/proj/alpha",
+                "gitBranch": "main",
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/rollout-2026-09-09T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl",
+                "score": 0.028587823063299003,
+                "context": []
+              },
+              {
+                "ts": "2026-08-30T00:00:00.000Z",
+                "role": "user",
+                "text": "archived aardwolf question about the trigram index",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-00000000eeee",
+                "title": null,
+                "cwd": "/proj/alpha",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/archived_sessions/rollout-2026-08-30T05-00-00-019f0000-0000-7000-8000-00000000eeee.jsonl",
+                "score": 0.028278936253760597,
+                "context": []
+              },
+              {
+                "ts": "2026-09-09T00:00:00.000Z",
+                "role": "assistant",
+                "text": "deployed the trigram index; korean 한글 검색 works now",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-00000000aaaa",
+                "title": "deploy trigram index",
+                "cwd": "/proj/alpha",
+                "gitBranch": "main",
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/rollout-2026-09-09T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl",
+                "score": 0.02814902574950169,
+                "context": []
+              }
+            ],
+            "warnings": [],
+            "scannedFiles": 4,
+            "matchedFiles": 3,
+            "totalFiles": 4,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "trigram",
+          "query": "trigram",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "trigram",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 50,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "subagent",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "recent"
+          },
+          "sql": [],
+          "special": {},
+          "out": {
+            "hits": [
+              {
+                "ts": "2026-09-09T00:00:00.000Z",
+                "role": "user",
+                "text": "subagent task about the trigram index",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-00000000bbbb",
+                "title": "subagent lane",
+                "cwd": "/proj/alpha/sub",
+                "gitBranch": null,
+                "source": "subagent",
+                "file": "$R/sessions/2026/09/09/rollout-2026-09-09T02-00-00-019f0000-0000-7000-8000-00000000bbbb.jsonl",
+                "context": []
+              }
+            ],
+            "warnings": [],
+            "scannedFiles": 4,
+            "matchedFiles": 1,
+            "totalFiles": 4,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "trigram",
+          "query": "trigram",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "trigram",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 50,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "subagent",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "relevance"
+          },
+          "sql": [],
+          "special": {},
+          "out": {
+            "hits": [
+              {
+                "ts": "2026-09-09T00:00:00.000Z",
+                "role": "user",
+                "text": "subagent task about the trigram index",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-00000000bbbb",
+                "title": "subagent lane",
+                "cwd": "/proj/alpha/sub",
+                "gitBranch": null,
+                "source": "subagent",
+                "file": "$R/sessions/2026/09/09/rollout-2026-09-09T02-00-00-019f0000-0000-7000-8000-00000000bbbb.jsonl",
+                "score": 0.02977260708619778,
+                "context": []
+              }
+            ],
+            "warnings": [],
+            "scannedFiles": 4,
+            "matchedFiles": 1,
+            "totalFiles": 4,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "트라이그램",
+          "query": "트라이그램",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "트라이그램",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 50,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "recent"
+          },
+          "sql": [],
+          "special": {},
+          "out": {
+            "hits": [
+              {
+                "ts": "2026-09-09T00:00:00.000Z",
+                "role": "user",
+                "text": "한글 트라이그램 결과 확인해줘",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-00000000aaaa",
+                "title": "deploy trigram index",
+                "cwd": "/proj/alpha",
+                "gitBranch": "main",
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/rollout-2026-09-09T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl",
+                "context": []
+              },
+              {
+                "ts": "2026-09-09T00:00:00.000Z",
+                "role": "assistant",
+                "text": "확인 완료: 트라이그램 인덱스 정상",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-00000000aaaa",
+                "title": "deploy trigram index",
+                "cwd": "/proj/alpha",
+                "gitBranch": "main",
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/rollout-2026-09-09T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl",
+                "context": []
+              }
+            ],
+            "warnings": [],
+            "scannedFiles": 4,
+            "matchedFiles": 1,
+            "totalFiles": 4,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "트라이그램",
+          "query": "트라이그램",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "트라이그램",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 50,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "relevance"
+          },
+          "sql": [],
+          "special": {},
+          "out": {
+            "hits": [
+              {
+                "ts": "2026-09-09T00:00:00.000Z",
+                "role": "user",
+                "text": "한글 트라이그램 결과 확인해줘",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-00000000aaaa",
+                "title": "deploy trigram index",
+                "cwd": "/proj/alpha",
+                "gitBranch": "main",
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/rollout-2026-09-09T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl",
+                "score": 0.02977260708619778,
+                "context": []
+              },
+              {
+                "ts": "2026-09-09T00:00:00.000Z",
+                "role": "assistant",
+                "text": "확인 완료: 트라이그램 인덱스 정상",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-00000000aaaa",
+                "title": "deploy trigram index",
+                "cwd": "/proj/alpha",
+                "gitBranch": "main",
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/rollout-2026-09-09T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl",
+                "score": 0.02929666842940243,
+                "context": []
+              }
+            ],
+            "warnings": [],
+            "scannedFiles": 4,
+            "matchedFiles": 1,
+            "totalFiles": 4,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "zebra",
+          "query": "zebra",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "zebra",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 50,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": "user",
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "recent"
+          },
+          "sql": [],
+          "special": {},
+          "out": {
+            "hits": [],
+            "warnings": [],
+            "scannedFiles": 4,
+            "matchedFiles": 0,
+            "totalFiles": 4,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "zebra",
+          "query": "zebra",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "zebra",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 50,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": "user",
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "relevance"
+          },
+          "sql": [],
+          "special": {},
+          "out": {
+            "hits": [],
+            "warnings": [],
+            "scannedFiles": 4,
+            "matchedFiles": 0,
+            "totalFiles": 4,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "zebra",
+          "query": "zebra",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "zebra",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 50,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": "user",
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": true,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "recent"
+          },
+          "sql": [],
+          "special": {},
+          "out": {
+            "hits": [
+              {
+                "ts": "2026-09-09T00:00:00.000Z",
+                "role": "user",
+                "text": "# AGENTS.md instructions injected preamble mentioning zebra",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-00000000aaaa",
+                "title": "deploy trigram index",
+                "cwd": "/proj/alpha",
+                "gitBranch": "main",
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/rollout-2026-09-09T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl",
+                "context": []
+              }
+            ],
+            "warnings": [],
+            "scannedFiles": 4,
+            "matchedFiles": 1,
+            "totalFiles": 4,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "zebra",
+          "query": "zebra",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "zebra",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 50,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": "user",
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": true,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "relevance"
+          },
+          "sql": [],
+          "special": {},
+          "out": {
+            "hits": [
+              {
+                "ts": "2026-09-09T00:00:00.000Z",
+                "role": "user",
+                "text": "# AGENTS.md instructions injected preamble mentioning zebra",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-00000000aaaa",
+                "title": "deploy trigram index",
+                "cwd": "/proj/alpha",
+                "gitBranch": "main",
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/rollout-2026-09-09T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl",
+                "score": 0.028637426237902178,
+                "context": []
+              }
+            ],
+            "warnings": [],
+            "scannedFiles": 4,
+            "matchedFiles": 1,
+            "totalFiles": 4,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "zebra-in-tool-output",
+          "query": "zebra-in-tool-output",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "zebra-in-tool-output",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 50,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "recent"
+          },
+          "sql": [],
+          "special": {},
+          "out": {
+            "hits": [
+              {
+                "ts": "2026-09-09T00:00:00.000Z",
+                "role": "tool",
+                "text": "tool output: zebra-in-tool-output",
+                "matchField": "tool_log",
+                "threadId": "019f0000-0000-7000-8000-00000000aaaa",
+                "title": "deploy trigram index",
+                "cwd": "/proj/alpha",
+                "gitBranch": "main",
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/rollout-2026-09-09T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl",
+                "context": []
+              }
+            ],
+            "warnings": [],
+            "scannedFiles": 4,
+            "matchedFiles": 1,
+            "totalFiles": 4,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "zebra-in-tool-output",
+          "query": "zebra-in-tool-output",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "zebra-in-tool-output",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 50,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "relevance"
+          },
+          "sql": [],
+          "special": {},
+          "out": {
+            "hits": [
+              {
+                "ts": "2026-09-09T00:00:00.000Z",
+                "role": "tool",
+                "text": "tool output: zebra-in-tool-output",
+                "matchField": "tool_log",
+                "threadId": "019f0000-0000-7000-8000-00000000aaaa",
+                "title": "deploy trigram index",
+                "cwd": "/proj/alpha",
+                "gitBranch": "main",
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/rollout-2026-09-09T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl",
+                "score": 0.02977260708619778,
+                "context": []
+              }
+            ],
+            "warnings": [],
+            "scannedFiles": 4,
+            "matchedFiles": 1,
+            "totalFiles": 4,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "zebra-in-tool-output",
+          "query": "zebra-in-tool-output",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "zebra-in-tool-output",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 50,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": false,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "recent"
+          },
+          "sql": [],
+          "special": {},
+          "out": {
+            "hits": [],
+            "warnings": [],
+            "scannedFiles": 4,
+            "matchedFiles": 0,
+            "totalFiles": 4,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "zebra-in-tool-output",
+          "query": "zebra-in-tool-output",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "zebra-in-tool-output",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 50,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": false,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "relevance"
+          },
+          "sql": [],
+          "special": {},
+          "out": {
+            "hits": [],
+            "warnings": [],
+            "scannedFiles": 4,
+            "matchedFiles": 0,
+            "totalFiles": 4,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "ancient question",
+          "query": "ancient question",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "ancient",
+                    "boundary": false
+                  }
+                ],
+                [
+                  {
+                    "text": "question",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 50,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "recent"
+          },
+          "sql": [],
+          "special": {},
+          "out": {
+            "hits": [
+              {
+                "ts": "2026-07-31T00:00:00.000Z",
+                "role": "user",
+                "text": "ancient question about the trigram index",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-00000000cccc",
+                "title": null,
+                "cwd": "/proj/beta",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/07/31/rollout-2026-07-31T01-00-00-019f0000-0000-7000-8000-00000000cccc.jsonl",
+                "context": []
+              }
+            ],
+            "warnings": [],
+            "scannedFiles": 4,
+            "matchedFiles": 1,
+            "totalFiles": 4,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "ancient question",
+          "query": "ancient question",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "ancient",
+                    "boundary": false
+                  }
+                ],
+                [
+                  {
+                    "text": "question",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 50,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "relevance"
+          },
+          "sql": [],
+          "special": {},
+          "out": {
+            "hits": [
+              {
+                "ts": "2026-07-31T00:00:00.000Z",
+                "role": "user",
+                "text": "ancient question about the trigram index",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-00000000cccc",
+                "title": null,
+                "cwd": "/proj/beta",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/sessions/2026/07/31/rollout-2026-07-31T01-00-00-019f0000-0000-7000-8000-00000000cccc.jsonl",
+                "score": 0.029513232968891315,
+                "context": []
+              }
+            ],
+            "warnings": [],
+            "scannedFiles": 4,
+            "matchedFiles": 1,
+            "totalFiles": 4,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "trigram",
+          "query": "trigram",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "trigram",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 50,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": "/proj/alpha",
+            "source": "all",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "recent"
+          },
+          "sql": [],
+          "special": {},
+          "out": {
+            "hits": [
+              {
+                "ts": "2026-09-09T00:00:00.000Z",
+                "role": "user",
+                "text": "subagent task about the trigram index",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-00000000bbbb",
+                "title": "subagent lane",
+                "cwd": "/proj/alpha/sub",
+                "gitBranch": null,
+                "source": "subagent",
+                "file": "$R/sessions/2026/09/09/rollout-2026-09-09T02-00-00-019f0000-0000-7000-8000-00000000bbbb.jsonl",
+                "context": []
+              },
+              {
+                "ts": "2026-09-09T00:00:00.000Z",
+                "role": "user",
+                "text": "please deploy the trigram index for korean search",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-00000000aaaa",
+                "title": "deploy trigram index",
+                "cwd": "/proj/alpha",
+                "gitBranch": "main",
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/rollout-2026-09-09T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl",
+                "context": []
+              },
+              {
+                "ts": "2026-09-09T00:00:00.000Z",
+                "role": "assistant",
+                "text": "deployed the trigram index; korean 한글 검색 works now",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-00000000aaaa",
+                "title": "deploy trigram index",
+                "cwd": "/proj/alpha",
+                "gitBranch": "main",
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/rollout-2026-09-09T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl",
+                "context": []
+              },
+              {
+                "ts": "2026-08-30T00:00:00.000Z",
+                "role": "user",
+                "text": "archived aardwolf question about the trigram index",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-00000000eeee",
+                "title": null,
+                "cwd": "/proj/alpha",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/archived_sessions/rollout-2026-08-30T05-00-00-019f0000-0000-7000-8000-00000000eeee.jsonl",
+                "context": []
+              }
+            ],
+            "warnings": [],
+            "scannedFiles": 4,
+            "matchedFiles": 3,
+            "totalFiles": 4,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "trigram",
+          "query": "trigram",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "trigram",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 50,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": "/proj/alpha",
+            "source": "all",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "relevance"
+          },
+          "sql": [],
+          "special": {},
+          "out": {
+            "hits": [
+              {
+                "ts": "2026-09-09T00:00:00.000Z",
+                "role": "user",
+                "text": "subagent task about the trigram index",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-00000000bbbb",
+                "title": "subagent lane",
+                "cwd": "/proj/alpha/sub",
+                "gitBranch": null,
+                "source": "subagent",
+                "file": "$R/sessions/2026/09/09/rollout-2026-09-09T02-00-00-019f0000-0000-7000-8000-00000000bbbb.jsonl",
+                "score": 0.02977260708619778,
+                "context": []
+              },
+              {
+                "ts": "2026-09-09T00:00:00.000Z",
+                "role": "user",
+                "text": "please deploy the trigram index for korean search",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-00000000aaaa",
+                "title": "deploy trigram index",
+                "cwd": "/proj/alpha",
+                "gitBranch": "main",
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/rollout-2026-09-09T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl",
+                "score": 0.028587823063299003,
+                "context": []
+              },
+              {
+                "ts": "2026-08-30T00:00:00.000Z",
+                "role": "user",
+                "text": "archived aardwolf question about the trigram index",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-00000000eeee",
+                "title": null,
+                "cwd": "/proj/alpha",
+                "gitBranch": null,
+                "source": "main",
+                "file": "$R/archived_sessions/rollout-2026-08-30T05-00-00-019f0000-0000-7000-8000-00000000eeee.jsonl",
+                "score": 0.028278936253760597,
+                "context": []
+              },
+              {
+                "ts": "2026-09-09T00:00:00.000Z",
+                "role": "assistant",
+                "text": "deployed the trigram index; korean 한글 검색 works now",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-00000000aaaa",
+                "title": "deploy trigram index",
+                "cwd": "/proj/alpha",
+                "gitBranch": "main",
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/rollout-2026-09-09T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl",
+                "score": 0.02814902574950169,
+                "context": []
+              }
+            ],
+            "warnings": [],
+            "scannedFiles": 4,
+            "matchedFiles": 3,
+            "totalFiles": 4,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "한글 트라이그램 결과",
+          "query": "한글 트라이그램 결과",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "한글",
+                    "boundary": false
+                  }
+                ],
+                [
+                  {
+                    "text": "트라이그램",
+                    "boundary": false
+                  }
+                ],
+                [
+                  {
+                    "text": "결과",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 50,
+            "contextN": 1,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "recent"
+          },
+          "sql": [],
+          "special": {},
+          "out": {
+            "hits": [
+              {
+                "ts": "2026-09-09T00:00:00.000Z",
+                "role": "user",
+                "text": "한글 트라이그램 결과 확인해줘",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-00000000aaaa",
+                "title": "deploy trigram index",
+                "cwd": "/proj/alpha",
+                "gitBranch": "main",
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/rollout-2026-09-09T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl",
+                "context": [
+                  {
+                    "ts": "2026-09-09T00:00:00.000Z",
+                    "role": "tool",
+                    "text": "tool output: zebra-in-tool-output",
+                    "isMatch": false
+                  },
+                  {
+                    "ts": "2026-09-09T00:00:00.000Z",
+                    "role": "user",
+                    "text": "한글 트라이그램 결과 확인해줘",
+                    "isMatch": true
+                  },
+                  {
+                    "ts": "2026-09-09T00:00:00.000Z",
+                    "role": "assistant",
+                    "text": "확인 완료: 트라이그램 인덱스 정상",
+                    "isMatch": false
+                  }
+                ]
+              }
+            ],
+            "warnings": [],
+            "scannedFiles": 4,
+            "matchedFiles": 1,
+            "totalFiles": 4,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "한글 트라이그램 결과",
+          "query": "한글 트라이그램 결과",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "한글",
+                    "boundary": false
+                  }
+                ],
+                [
+                  {
+                    "text": "트라이그램",
+                    "boundary": false
+                  }
+                ],
+                [
+                  {
+                    "text": "결과",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [],
+              "minOptional": 0,
+              "anyMode": false
+            },
+            "limit": 50,
+            "contextN": 1,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "main",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "relevance"
+          },
+          "sql": [],
+          "special": {},
+          "out": {
+            "hits": [
+              {
+                "ts": "2026-09-09T00:00:00.000Z",
+                "role": "user",
+                "text": "한글 트라이그램 결과 확인해줘",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-00000000aaaa",
+                "title": "deploy trigram index",
+                "cwd": "/proj/alpha",
+                "gitBranch": "main",
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/rollout-2026-09-09T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl",
+                "score": 0.02977260708619778,
+                "context": [
+                  {
+                    "ts": "2026-09-09T00:00:00.000Z",
+                    "role": "tool",
+                    "text": "tool output: zebra-in-tool-output",
+                    "isMatch": false
+                  },
+                  {
+                    "ts": "2026-09-09T00:00:00.000Z",
+                    "role": "user",
+                    "text": "한글 트라이그램 결과 확인해줘",
+                    "isMatch": true
+                  },
+                  {
+                    "ts": "2026-09-09T00:00:00.000Z",
+                    "role": "assistant",
+                    "text": "확인 완료: 트라이그램 인덱스 정상",
+                    "isMatch": false
+                  }
+                ]
+              }
+            ],
+            "warnings": [],
+            "scannedFiles": 4,
+            "matchedFiles": 1,
+            "totalFiles": 4,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "please deploy the trigram index for korean search extra",
+          "query": "please deploy the trigram index for korean search extra",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "the",
+                    "boundary": false
+                  }
+                ],
+                [
+                  {
+                    "text": "for",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [
+                [
+                  {
+                    "text": "please",
+                    "boundary": false
+                  }
+                ],
+                [
+                  {
+                    "text": "deploy",
+                    "boundary": false
+                  }
+                ],
+                [
+                  {
+                    "text": "trigram",
+                    "boundary": false
+                  }
+                ],
+                [
+                  {
+                    "text": "index",
+                    "boundary": false
+                  }
+                ],
+                [
+                  {
+                    "text": "korean",
+                    "boundary": false
+                  }
+                ],
+                [
+                  {
+                    "text": "search",
+                    "boundary": false
+                  }
+                ],
+                [
+                  {
+                    "text": "extra",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "minOptional": 4,
+              "anyMode": false
+            },
+            "limit": 50,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "all",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "recent"
+          },
+          "sql": [],
+          "special": {},
+          "out": {
+            "hits": [
+              {
+                "ts": "2026-09-09T00:00:00.000Z",
+                "role": "user",
+                "text": "please deploy the trigram index for korean search",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-00000000aaaa",
+                "title": "deploy trigram index",
+                "cwd": "/proj/alpha",
+                "gitBranch": "main",
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/rollout-2026-09-09T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl",
+                "context": []
+              }
+            ],
+            "warnings": [],
+            "scannedFiles": 4,
+            "matchedFiles": 1,
+            "totalFiles": 4,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "please deploy the trigram index for korean search extra",
+          "query": "please deploy the trigram index for korean search extra",
+          "options": {
+            "plan": {
+              "required": [
+                [
+                  {
+                    "text": "the",
+                    "boundary": false
+                  }
+                ],
+                [
+                  {
+                    "text": "for",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "optional": [
+                [
+                  {
+                    "text": "please",
+                    "boundary": false
+                  }
+                ],
+                [
+                  {
+                    "text": "deploy",
+                    "boundary": false
+                  }
+                ],
+                [
+                  {
+                    "text": "trigram",
+                    "boundary": false
+                  }
+                ],
+                [
+                  {
+                    "text": "index",
+                    "boundary": false
+                  }
+                ],
+                [
+                  {
+                    "text": "korean",
+                    "boundary": false
+                  }
+                ],
+                [
+                  {
+                    "text": "search",
+                    "boundary": false
+                  }
+                ],
+                [
+                  {
+                    "text": "extra",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "minOptional": 4,
+              "anyMode": false
+            },
+            "limit": 50,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "all",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "relevance"
+          },
+          "sql": [],
+          "special": {},
+          "out": {
+            "hits": [
+              {
+                "ts": "2026-09-09T00:00:00.000Z",
+                "role": "user",
+                "text": "please deploy the trigram index for korean search",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-00000000aaaa",
+                "title": "deploy trigram index",
+                "cwd": "/proj/alpha",
+                "gitBranch": "main",
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/rollout-2026-09-09T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl",
+                "score": 0.02977260708619778,
+                "context": []
+              }
+            ],
+            "warnings": [],
+            "scannedFiles": 4,
+            "matchedFiles": 1,
+            "totalFiles": 4,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "please deploy trigram index korean search 확인 완료 없는단어",
+          "query": "please deploy trigram index korean search 확인 완료 없는단어",
+          "options": {
+            "plan": {
+              "required": [],
+              "optional": [
+                [
+                  {
+                    "text": "please",
+                    "boundary": false
+                  }
+                ],
+                [
+                  {
+                    "text": "deploy",
+                    "boundary": false
+                  }
+                ],
+                [
+                  {
+                    "text": "trigram",
+                    "boundary": false
+                  }
+                ],
+                [
+                  {
+                    "text": "index",
+                    "boundary": false
+                  }
+                ],
+                [
+                  {
+                    "text": "korean",
+                    "boundary": false
+                  }
+                ],
+                [
+                  {
+                    "text": "search",
+                    "boundary": false
+                  }
+                ],
+                [
+                  {
+                    "text": "확인",
+                    "boundary": false
+                  }
+                ],
+                [
+                  {
+                    "text": "완료",
+                    "boundary": false
+                  }
+                ],
+                [
+                  {
+                    "text": "없는단어",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "minOptional": 5,
+              "anyMode": false
+            },
+            "limit": 50,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "all",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "recent"
+          },
+          "sql": [],
+          "special": {},
+          "out": {
+            "hits": [
+              {
+                "ts": "2026-09-09T00:00:00.000Z",
+                "role": "user",
+                "text": "please deploy the trigram index for korean search",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-00000000aaaa",
+                "title": "deploy trigram index",
+                "cwd": "/proj/alpha",
+                "gitBranch": "main",
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/rollout-2026-09-09T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl",
+                "context": []
+              }
+            ],
+            "warnings": [],
+            "scannedFiles": 4,
+            "matchedFiles": 1,
+            "totalFiles": 4,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        },
+        {
+          "name": "please deploy trigram index korean search 확인 완료 없는단어",
+          "query": "please deploy trigram index korean search 확인 완료 없는단어",
+          "options": {
+            "plan": {
+              "required": [],
+              "optional": [
+                [
+                  {
+                    "text": "please",
+                    "boundary": false
+                  }
+                ],
+                [
+                  {
+                    "text": "deploy",
+                    "boundary": false
+                  }
+                ],
+                [
+                  {
+                    "text": "trigram",
+                    "boundary": false
+                  }
+                ],
+                [
+                  {
+                    "text": "index",
+                    "boundary": false
+                  }
+                ],
+                [
+                  {
+                    "text": "korean",
+                    "boundary": false
+                  }
+                ],
+                [
+                  {
+                    "text": "search",
+                    "boundary": false
+                  }
+                ],
+                [
+                  {
+                    "text": "확인",
+                    "boundary": false
+                  }
+                ],
+                [
+                  {
+                    "text": "완료",
+                    "boundary": false
+                  }
+                ],
+                [
+                  {
+                    "text": "없는단어",
+                    "boundary": false
+                  }
+                ]
+              ],
+              "minOptional": 5,
+              "anyMode": false
+            },
+            "limit": 50,
+            "contextN": 0,
+            "cutoffIso": null,
+            "role": null,
+            "cwd": null,
+            "source": "all",
+            "includeSynthetic": false,
+            "includeTools": true,
+            "home": "$R",
+            "nowMs": 1788912000000,
+            "order": "relevance"
+          },
+          "sql": [],
+          "special": {},
+          "out": {
+            "hits": [
+              {
+                "ts": "2026-09-09T00:00:00.000Z",
+                "role": "user",
+                "text": "please deploy the trigram index for korean search",
+                "matchField": "content",
+                "threadId": "019f0000-0000-7000-8000-00000000aaaa",
+                "title": "deploy trigram index",
+                "cwd": "/proj/alpha",
+                "gitBranch": "main",
+                "source": "main",
+                "file": "$R/sessions/2026/09/09/rollout-2026-09-09T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl",
+                "score": 0.02977260708619778,
+                "context": []
+              }
+            ],
+            "warnings": [],
+            "scannedFiles": 4,
+            "matchedFiles": 1,
+            "totalFiles": 4,
+            "elapsedMs": 0,
+            "mode": "index"
+          },
+          "closed": false
+        }
+      ]
+    }
+  ]
+}

@@ -70,6 +70,8 @@ Every setting comes from one place, `Config` in [config.go](../../internal/revie
 
 The artifact's `agyVersion` is `unknown`: reading it would start an agy process outside the runner's host-wide lock. A `SIGKILL` of `crw` cannot be caught: agy, which holds no lock descriptor and whose time limit lives in the parent, may then run on, unbounded, while the locks are free; closing that gap belongs to the runner. The receipt field and the parent's reading of the artifact belong to the wiring around this command. The summary comment has only been exercised against a scripted forge and a fake `gh`, never against a live pull request.
 
+The parent can combine saved findings with Devin/Codex observations in the separate [adjudication ledger](adjudication.md) and compare requested models over the same explicit PR heads. That append-only file convention and report do not change this command's artifact, execution ledger or merge rules.
+
 ## Tests
 
 `go test ./internal/review/command` uses temporary Git repositories, a scripted runner, a scripted forge, a fake `gh` and one shell-script fake agy driven through the real runner; it never starts the real agy and never posts to a real pull request. `go test -tags agysmoke -run TestSmokeRealAgy -v ./internal/review/command` runs one small diff through the real agy once; run it by hand, since it uses the account agy is logged in with.

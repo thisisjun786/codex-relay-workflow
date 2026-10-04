@@ -1,9 +1,8 @@
-// Package childcleanup releases a finished child thread, and the sub-threads it started, from the shared Codex App Server so that their MCP helper processes stop (CRW-429).
-//
-// Every loaded thread keeps its own MCP helpers, and a thread stays loaded while a connection is subscribed to it. thread/start subscribes the connection that created the thread and thread/resume the
-// connection that resumed it; the bridge and the relay's delivery adapter do both and never call thread/unsubscribe, so a finished child stays loaded as long as the parent's bridge process or the relay
-// daemon lives. A sub-thread is attached to the connection subscribed to its parent, and unsubscribing from the parent does not detach it. thread/archive releases a loaded thread at once whoever is
-// subscribed (a loaded parent takes its sub-threads with it); codex unarchive undoes it. The measurements are in the pull request that added this package.
+// Package childcleanup releases finished child threads and their sub-threads so
+// their MCP helpers stop. Automatic descendant-only cleanup retains the root;
+// the subscription manager then unsubscribes it on the original connection.
+// Archival restores visibility through thread/unarchive but cannot restore an
+// interrupted turn. See docs/relay/subscriptions.md for guarantees and evidence.
 package childcleanup
 
 import (
@@ -43,7 +42,8 @@ const noRollout = "no rollout found"
 
 // Options of one cleanup.
 type Options struct {
-	DryRun bool // plan only: nothing that changes the host is called
+	DryRun          bool // plan only: nothing that changes the host is called
+	DescendantsOnly bool // retain the root as a hold anchor, never archive it
 	// Recheck runs once, after the subtree is known and before the first archive; an error stops the cleanup with nothing archived.
 	Recheck func(context.Context) error
 }
@@ -102,22 +102,36 @@ type reading struct{ parent, status string }
 
 // discovery is one reading of the App Server: scan resets its caches.
 type discovery struct {
-	host  Host
-	cache map[string]reading
-	fail  map[string]bool
-	reads int
+	host   Host
+	cache  map[string]reading
+	fail   map[string]bool
+	reads  int
+	strict bool // Automatic cleanup preserves transport failures for bounded retries.
 }
 
 // Clean releases the loaded threads of child's subtree, the child included when it is loaded: it reads thread/loaded/list, walks every loaded thread's parentThreadId up to the child and archives the
 // members deepest first with the child last. Threads that are not loaded hold no helpers and are never touched. Any member that is running, and any loaded thread whose ancestry cannot be established,
 // holds the whole subtree: nothing is archived. The subtree is read a second time and Recheck judges the relationship right after it, immediately before the first archive; the App Server has no fence
-// against a thread starting to run after that, so the archive is undone with codex unarchive. A repeat finds nothing loaded and changes nothing. The caller decides whether the child may be cleaned up (Judge).
+// against another client's turn starting after the final read. Unarchive restores visibility, not interrupted work. DescendantsOnly also requires idle/completed observations and never archives the root.
+// A repeat finds nothing loaded and changes nothing. The caller decides whether the child may be cleaned up (Judge).
 func Clean(ctx context.Context, host Host, child string, opts Options) (Report, error) {
 	report := Report{Child: child, DryRun: opts.DryRun}
-	d := &discovery{host: host}
+	d := &discovery{host: host, strict: opts.DescendantsOnly, cache: map[string]reading{}, fail: map[string]bool{}}
 	stop := func(err error) (Report, error) {
 		report.Stopped = err.Error()
 		return report, err
+	}
+	var rootHold, rootDetail string
+	if opts.DescendantsOnly {
+		hold, detail, err := d.completedIdle(ctx, child)
+		if err != nil {
+			return stop(err)
+		}
+		if hold == OutcomeHeldActive {
+			report.Items = append(report.Items, Item{ThreadID: child, Outcome: hold, Detail: detail})
+			return report, nil
+		}
+		rootHold, rootDetail = hold, detail
 	}
 	members, hold, detail, err := d.scan(ctx, child, &report)
 	if err == nil && hold == "" && !opts.DryRun && len(members) > 0 {
@@ -128,7 +142,36 @@ func Clean(ctx context.Context, host Host, child string, opts Options) (Report, 
 	if err != nil {
 		return stop(err)
 	}
+	if opts.DescendantsOnly && hold != OutcomeHeldActive {
+		if hold == "" {
+			hold, detail = rootHold, rootDetail
+		}
+		for _, m := range members {
+			nextHold, nextDetail, err := d.completedIdle(ctx, m.id)
+			if err != nil {
+				return stop(err)
+			}
+			if hold == "" || nextHold == OutcomeHeldActive {
+				hold, detail = nextHold, nextDetail
+			}
+			if hold == OutcomeHeldActive {
+				break
+			}
+		}
+	}
 	for _, m := range members {
+		if opts.DescendantsOnly && hold == "" && m.depth > 0 {
+			hold, detail, err = d.completedIdle(ctx, child)
+			if err == nil && hold == "" {
+				hold, detail, err = d.completedIdle(ctx, m.id)
+			}
+			if err != nil {
+				return stop(err)
+			}
+		}
+		if opts.DescendantsOnly && m.depth == 0 && hold == "" {
+			continue
+		}
 		switch {
 		case hold != "":
 			report.Items = append(report.Items, Item{ThreadID: m.id, ParentID: m.parent, Outcome: hold, Detail: detail})
@@ -140,7 +183,13 @@ func Clean(ctx context.Context, host Host, child string, opts Options) (Report, 
 				return stop(err)
 			}
 			report.Items = append(report.Items, Item{ThreadID: m.id, ParentID: m.parent, Outcome: outcome, Detail: detail})
+			if opts.DescendantsOnly && (outcome == OutcomeFailed || outcome == OutcomeNoRolloutLeftLoaded) {
+				return stop(fmt.Errorf("descendant archive: %s: %s", m.id, detail))
+			}
 		}
+	}
+	if opts.DescendantsOnly && hold != "" && !slices.ContainsFunc(members, func(m member) bool { return m.id == child }) {
+		report.Items = append(report.Items, Item{ThreadID: child, Outcome: hold, Detail: detail})
 	}
 	// a never-run thread left loaded may have been taken by the archive of an ancestor that followed
 	if ids, err := d.loadedIDs(ctx); err == nil && slices.ContainsFunc(report.Items, func(it Item) bool { return it.Outcome == OutcomeNoRolloutLeftLoaded }) {
@@ -250,6 +299,7 @@ func (d *discovery) read(ctx context.Context, id string) (r reading, ok bool, er
 		return r, false, fmt.Errorf("more than %d thread/read calls", maxReads)
 	}
 	raw, err := d.host.Call(ctx, "thread/read", map[string]any{"threadId": id, "includeTurns": false})
+	hostErr := err
 	var out struct {
 		Thread struct {
 			ID     string  `json:"id"`
@@ -268,6 +318,10 @@ func (d *discovery) read(ctx context.Context, id string) (r reading, ok bool, er
 	}
 	if err != nil {
 		d.fail[id] = true
+		var refusal *appserver.RPCError
+		if d.strict && hostErr != nil && !errors.As(hostErr, &refusal) {
+			return r, false, hostErr
+		}
 		return r, false, ctx.Err()
 	}
 	r = reading{status: out.Thread.Status.Type}
