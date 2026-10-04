@@ -62,5 +62,7 @@ const hits=[hit('foreign','2026-09-10','foreign','/other'),hit('a','2026-09-09T0
 for(const store of [undefined,'ok','bumpError'])build({direct:null,hits,store,counts:{'thread:a':13}});
 build({direct:all,summaryError:'summary unavailable',store:'ok'});
 build({direct:[{path:'a',threadId:'a',date:'z',excerpt:' '}],budget:{chars:1400,topN:5,snippet:0}});
+// Preserve the original UTF-16 date comparison when the ten-unit slice splits a pair.
+build({direct:null,hits:[hit('a','xxxxxxxxx😀','astral'),hit('b','xxxxxxxxx\uE000','bmp')]});
 writeFileSync(output,JSON.stringify({oracle:'CXC v0.2.40 3c1459ac hook.ts:221-596',rows},null,2)+'\n');
 console.log(`${rows.length} cases recorded`);

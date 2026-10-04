@@ -349,15 +349,22 @@ func BuildCwdContextResult(cwd string, deps RecallContextDeps, budget RecallBudg
 	chosen := hookContextDemote(hits, budget.TopN, func(h ChatHit) string { return hitCountRef(scanString(h.ThreadID), h.File) }, deps)
 	entries := [][]string{}
 	latest := ""
+	var latestUnits []uint16
 	for _, hit := range chosen {
-		date := memorySlice(hit.TS, 0, 10)
+		dateUnits := hookContextUnits(hit.TS, nil)
+		dateUnits = dateUnits[:min(10, len(dateUnits))]
+		date := string(utf16.Decode(dateUnits))
 		raw := hit.Text
 		if hit.Title != nil {
 			raw = *hit.Title
 		}
 		raw = text.Trim(strings.ReplaceAll(raw, "\n", " "))
 		entries = append(entries, []string{"  • [" + date + "] " + hookContextQuote(hookContextClip(hookContextUnits(raw, nil), 60))})
-		latest = hookContextLatest(latest, date)
+		// Compare before the UTF-8 presentation boundary can replace a sliced
+		// lone surrogate; that replacement must not change the winning date.
+		if slices.Compare(dateUnits, latestUnits) > 0 {
+			latestUnits, latest = dateUnits, date
+		}
 	}
 	return hookContextRendered(name, entries, budget.Chars, latest, deps.Invocation)
 }
