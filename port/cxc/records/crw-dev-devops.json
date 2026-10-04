@@ -1,0 +1,190 @@
+{
+  "origin": {
+    "tag": "v0.2.40",
+    "commit": "3c1459acadeb1906d97c00a598e1457327ae372d",
+    "skills_listing_sha256": "79d9580f39ca27221cb9c24337080e3fe4a1e71f76338c7329fca63f76a32e89"
+  },
+  "table_sha256": "25b5d19d9da7e07d474d2b31bc4d4139c68607457f59174a597f17505f7f23eb",
+  "from": "dev-devops",
+  "files": {
+    "SKILL.md": {
+      "original": "caa8dc9d416bc55759fcf5ee7c2b6ac8dabeed1f0e05afb183e66bea12f933f3"
+    },
+    "agents/openai.yaml": {
+      "original": "e1d394d5e3b2f794eafc8ba3ae39ad110b86ead26ab3caf5c19c52d4d6ed1e23"
+    },
+    "references/agent-infra-safety.md": {
+      "original": "82db11df3b6fe5cf6be8b6a0620d8f907024ed435febe0cf1ca7922bcba7379a"
+    },
+    "references/agent-pr-intake.md": {
+      "original": "3df1ed1c334643e5ae300c6cd0e70b317e677d4ee3050d087f132d24a631b675"
+    },
+    "references/branch-lifecycle.md": {
+      "original": "8f19014069ee1b056c272989e0619cd563880185208a1554be6d6e14d63293a9"
+    },
+    "references/ci-cd-deploy.md": {
+      "original": "fe6f3006e13f60e493b946bb087c958056dc3b4df7fabb7903d23fcd5e6518ca"
+    },
+    "references/cross-platform-release.md": {
+      "original": "518dfa7cbc7e7840c36a076be100987dc19785db5c3997d62b9228a052cf35e6"
+    },
+    "references/docker.md": {
+      "original": "a232b5b4c8553783b78d7b210526e471fb78efcce22565fd7f03c79c8017fce5"
+    },
+    "references/edge-serverless.md": {
+      "original": "33b8b81eb270d7bbc09a5cd2ad6e410d065dc2eba0ad93b0b6bbe888f5c9c2a1"
+    },
+    "references/homebrew.md": {
+      "original": "9ff502cbb32caabaad600fee88d3487b473818f6f240a6bd390e137146c03314"
+    },
+    "references/iac.md": {
+      "original": "36b50542d94d0f1580eda693e05bbcee88d4c83103d5978df423722288b8f487"
+    },
+    "references/kubernetes.md": {
+      "original": "5db8a8194a31edf7e792fbaa5ffa6889457db117a9d46c8019999de20a1699dc"
+    },
+    "references/local-gc.md": {
+      "original": "f4255521929131db478d9b2304302ee272e972b1149ab5b62509f8519170c04b"
+    },
+    "references/macos-system-approvals.md": {
+      "original": "36d790be4962d8269047de1e0318d38d99c6bf1d570ea5cb21e753d833068ae3"
+    },
+    "references/ml-infra.md": {
+      "original": "b56ed2bda150fc2981cc6032bc90edb716dd3f3a5464921fd48aea3497c3c9f6"
+    },
+    "references/native-desktop-acceptance.md": {
+      "original": "b9f39939d90eddefcef928ab67b0ce9d85ae5767bc2e2f3f84cf0afb52269092"
+    },
+    "references/package-release.md": {
+      "original": "ed33c9049040a7398060c5cabb044487cb998216f6e3190010e19b4d5744c06b"
+    },
+    "references/platform-engineering.md": {
+      "original": "5bd9d6fea756910b10980fca2bad15bd644a896830bf0b117003460c41e65e06"
+    },
+    "references/repo-bootstrap.md": {
+      "original": "00ee3655714a23f0467f3242b3df7b692c53dbcceb040a1e1d7918de70405a36"
+    },
+    "references/sre-foundations.md": {
+      "original": "5d24088b57a6671e4949b743272e1127f74b5c284e4f84d6c9aa8da4b92f7c88"
+    },
+    "scripts/verify-lipo-command.mjs": {
+      "original": "f6d3f0b6fd64dca795fd6ab2b4bfaf51be52bc4d58d1e0f8ecfe9a675e4d41a9"
+    }
+  },
+  "edits": [
+    {
+      "file": "SKILL.md",
+      "reason": "Normalize frontmatter to the repository-supported name and description fields; preserve the invocation description and record the removed oracle metadata. Redirect the relative hub reference to the staged crw-dev directory. Adapt backticked cross-skill relative paths to the staged crw-* directory names; preserve the referenced guidance.",
+      "hunks": [
+        {
+          "line": 4,
+          "old": [
+            "metadata:\n",
+            "  last-verified: \"2026-09-09\"\n",
+            "  short-description: \"Container, deploy, Kubernetes, IaC, SRE, and branch-lifecycle guidance for production delivery.\"\n"
+          ]
+        },
+        {
+          "line": 42,
+          "old": [
+            "| `../dev/references/stacked-prs.md` | Stacked/dependent PRs or unexpected CI runs | `DEV-STACK-03/06/07`: native membership preflight and CI diagnosis; also reached globally through `dev` |\n"
+          ],
+          "new": [
+            "| `../crw-dev/references/stacked-prs.md` | Stacked/dependent PRs or unexpected CI runs | `DEV-STACK-03/06/07`: native membership preflight and CI diagnosis; also reached globally through `dev` |\n"
+          ]
+        },
+        {
+          "line": 88,
+          "old": [
+            "`../dev-security/references/supply-chain-sbom.md` for deeper SBOM/signing\n"
+          ],
+          "new": [
+            "`../crw-dev-security/references/supply-chain-sbom.md` for deeper SBOM/signing\n"
+          ]
+        },
+        {
+          "line": 115,
+          "old": [
+            "[`crw-dev`'s canonical stack reference](../dev/references/stacked-prs.md).\n"
+          ],
+          "new": [
+            "[`crw-dev`'s canonical stack reference](../crw-dev/references/stacked-prs.md).\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "agents/openai.yaml",
+      "reason": "Add the required interface default prompt naming the staged CRW skill; preserve the oracle display text and implicit-invocation policy.",
+      "hunks": [
+        {
+          "line": 4,
+          "new": [
+            "  default_prompt: \"Use $crw-dev-devops to guide this task and verify its result.\"\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/docker.md",
+      "reason": "Adapt backticked cross-skill relative paths to the staged crw-* directory names; preserve the referenced guidance.",
+      "hunks": [
+        {
+          "line": 10,
+          "old": [
+            "`../../dev-security/references/supply-chain-sbom.md` for SBOM/signing depth.\n"
+          ],
+          "new": [
+            "`../../crw-dev-security/references/supply-chain-sbom.md` for SBOM/signing depth.\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/native-desktop-acceptance.md",
+      "reason": "Resolve the QA and DevOps helper paths from their loaded skill directories so the unchanged examples work in staging and in the final plugin layout.",
+      "hunks": [
+        {
+          "line": 120,
+          "new": [
+            "Resolve each skill directory from its loaded SKILL.md before running a helper.\n",
+            "\n"
+          ]
+        },
+        {
+          "line": 135,
+          "old": [
+            "  `node plugins/crw/skills/qa/scripts/validate-evidence.mjs --bundle-digest <path.app>`.\n"
+          ],
+          "new": [
+            "  `node \"<crw-qa skill directory>/scripts/validate-evidence.mjs\" --bundle-digest <path.app>`.\n"
+          ]
+        },
+        {
+          "line": 203,
+          "old": [
+            "  `node plugins/crw/skills/dev-devops/scripts/verify-lipo-command.mjs --artifact <file> --arch <a> --arch <b> --candidate-json '<argv-json>'`.\n"
+          ],
+          "new": [
+            "  `node \"<crw-dev-devops skill directory>/scripts/verify-lipo-command.mjs\" --artifact <file> --arch <a> --arch <b> --candidate-json '<argv-json>'`.\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/package-release.md",
+      "reason": "Adapt backticked cross-skill relative paths to the staged crw-* directory names; preserve the referenced guidance.",
+      "hunks": [
+        {
+          "line": 8,
+          "old": [
+            "Cross-ref: read `../../dev-security/references/supply-chain-sbom.md` for SBOM/signing depth.\n"
+          ],
+          "new": [
+            "Cross-ref: read `../../crw-dev-security/references/supply-chain-sbom.md` for SBOM/signing depth.\n"
+          ]
+        }
+      ]
+    }
+  ]
+}
