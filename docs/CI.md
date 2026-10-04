@@ -218,10 +218,11 @@ run, a manual dispatch) judges the blob again. The list is part of the change, s
 a file and its own entry; review the entry's reason as the gate itself is reviewed.
 
 Limits. The size is the object's uncompressed size. On a push to `dev` the blob is already public when
-the check runs; the failure is the report, and the repair is a follow-up (shrink the file, or name it)
-because `dev`'s history cannot be rewritten. `base.sha` is the base tip at the time of the event, so
-commits that reached `dev` between that moment and the run count as the pull request's own, as in the
-secrets scan. Files no commit holds yet are not judged.
+the check runs; the failure is the report. `dev`'s history cannot be rewritten, so shrinking the file
+in a follow-up changes only its later versions: the old blob stays reachable, and a run that judges the
+whole history keeps seeing it until the allow list names it with a reason. `base.sha` is the base tip at
+the time of the event, so commits that reached `dev` between that moment and the run count as the pull
+request's own, as in the secrets scan. Files no commit holds yet are not judged.
 
 
 ## Activation

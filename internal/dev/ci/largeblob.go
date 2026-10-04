@@ -262,13 +262,15 @@ func largeBlobOffenders(root, base string) ([]largeBlob, error) {
 }
 
 // largeBlobIntroducer fills in the first commit of span that brought blob, its subject and the
-// paths the blob has in it. git log lists the commits oldest first and, with -m, once per parent
-// of a merge; with -z --raw it writes NUL separated tokens: a commit's hash, then per changed path
-// a record (": modes ids status", after one newline) and the path itself. The token after a record
-// is always a path, kept byte for byte, never read as a hash or a record.
+// paths the blob has in it. git log lists the commits oldest first and, with separate merge diffs,
+// once per parent of a merge; with -z --raw it writes NUL separated tokens: a commit's hash, then
+// per changed path a record (": modes ids status", after one newline) and the path itself. The
+// token after a record is always a path, kept byte for byte, never read as a hash or a record.
+// The options pin what the repository's own configuration (log.showRoot, log.diffMerges,
+// diff.renames, color.ui, log.showSignature) would otherwise change in that output.
 func largeBlobIntroducer(root, span string, blob *largeBlob) error {
-	out, err := runGit(root, "log", "--topo-order", "--reverse", "-m", "--no-renames", "--no-abbrev", "-z", "--raw",
-		"--format=%H", "--find-object="+blob.oid, span)
+	out, err := runGit(root, "log", "--topo-order", "--reverse", "--root", "--diff-merges=separate", "--no-renames", "--no-abbrev",
+		"--no-color", "--no-show-signature", "-z", "--raw", "--format=%H", "--find-object="+blob.oid, span)
 	if err != nil {
 		return err
 	}
@@ -297,7 +299,7 @@ func largeBlobIntroducer(root, span string, blob *largeBlob) error {
 	if blob.commit == "" {
 		return nil
 	}
-	subject, err := runGit(root, "log", "-1", "--format=%h %s", blob.commit)
+	subject, err := runGit(root, "log", "-1", "--no-color", "--no-show-signature", "--format=%h %s", blob.commit)
 	if err != nil {
 		return err
 	}

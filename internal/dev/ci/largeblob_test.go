@@ -365,7 +365,64 @@ func TestLargeBlob_this_repository_is_within_the_limit(t *testing.T) {
 	if len(errs) != 0 {
 		t.Fatalf("the repository's history holds a blob over the limit:\n%s", strings.Join(errs, "\n"))
 	}
-	expectEqual(t, "summary", summary+"\n", largeBlobTestFull)
+	// An allow-listed exception may be committed later; the pass then says how many it admitted.
+	if want := strings.TrimSuffix(largeBlobTestFull, ".\n"); !strings.HasPrefix(summary, want) {
+		t.Errorf("summary = %q, want it to start with %q", summary, want)
+	}
+}
+
+// What the repository's own git configuration says about log output does not change the verdict:
+// a root commit and a merge-only blob are still found, and so still matched by the allow list.
+func TestLargeBlob_git_display_configuration_does_not_change_the_verdict(t *testing.T) {
+	for _, setting := range [][2]string{
+		{"log.showRoot", "false"},
+		{"log.diffMerges", "combined"},
+		{"log.diffMerges", "dense-combined"},
+		{"log.diffMerges", "off"},
+		{"diff.renames", "copies"},
+		{"color.ui", "always"},
+	} {
+		name := setting[0] + "=" + setting[1]
+		list := func(r *fixtureRepo, path string) {
+			largeBlobTestWrite(t, r, largeBlobTestList, []byte(fmt.Sprintf(
+				`{"entries": [{"path": %q, "max_bytes": 3145728, "reason": "needed"}]}`+"\n", path)))
+			largeBlobTestCommit(r, "allow list")
+		}
+
+		// The blob is in the root commit, so only a run that judges the whole history sees it.
+		root := validateRepo(t)
+		root.git("config", setting[0], setting[1])
+		largeBlobTestWrite(t, root, "testdata/root.bin", largeBlobTestPayload(largeBlobTestLimit+1, 'j'))
+		largeBlobTestCommit(root, "root with a big file")
+		got := largeBlobTestValidate(t, root.root, "", "")
+		expectEqual(t, name+": root blob refused: exit", got.code, 1)
+		largeBlobTestContains(t, name+": root blob", got.stderr, "testdata/root.bin: 2097153 bytes",
+			"brought in by commit "+largeBlobTestShort(root, "HEAD")+` "root with a big file"`)
+		list(root, "testdata/root.bin")
+		got = largeBlobTestValidate(t, root.root, "", "")
+		expectEqual(t, name+": root blob allow-listed", got.code, 0)
+
+		// The blob is only in a merge commit.
+		m, base := largeBlobTestRepo(t)
+		m.git("config", setting[0], setting[1])
+		trunk := strings.TrimSpace(m.git("branch", "--show-current"))
+		m.git("switch", "-q", "-c", "side")
+		largeBlobTestWrite(t, m, "side.txt", []byte("side\n"))
+		largeBlobTestCommit(m, "side work")
+		m.git("switch", "-q", trunk)
+		largeBlobTestWrite(t, m, "trunk.txt", []byte("trunk\n"))
+		largeBlobTestCommit(m, "trunk work")
+		m.git("merge", "-q", "--no-commit", "--no-ff", "side")
+		largeBlobTestWrite(t, m, "resolved.bin", largeBlobTestPayload(largeBlobTestLimit+1, 'k'))
+		merge := largeBlobTestCommit(m, "merge with a big resolution")
+		got = largeBlobTestValidate(t, m.root, "push", base)
+		expectEqual(t, name+": merge-only blob refused: exit", got.code, 1)
+		largeBlobTestContains(t, name+": merge-only blob", got.stderr, "resolved.bin: 2097153 bytes",
+			"brought in by commit "+largeBlobTestShort(m, merge)+` "merge with a big resolution"`)
+		list(m, "resolved.bin")
+		got = largeBlobTestValidate(t, m.root, "push", base)
+		expectEqual(t, name+": merge-only blob allow-listed", got.code, 0)
+	}
 }
 
 // The validate job fetches every commit and hands the check the pull request's base (or the push's
