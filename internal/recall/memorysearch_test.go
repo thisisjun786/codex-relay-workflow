@@ -240,3 +240,22 @@ func TestMemorySearchRetainedThreadSeam(t *testing.T) {
 		t.Fatalf("presence must precede scope filtering: %v", s.present)
 	}
 }
+
+func TestMemorySearchFractionalMtime(t *testing.T) {
+	home := t.TempDir()
+	for _, row := range []struct {
+		name string
+		ns   int64
+	}{{"above.md", 750_000}, {"below.md", 250_000}} {
+		p := writeRolloutTestFile(t, home, "memories/"+row.name, "zebra")
+		if err := os.Chtimes(p, time.Unix(0, row.ns), time.Unix(0, row.ns)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// CXC statSync keeps fractional milliseconds for the cutoff comparison,
+	// while Date.toISOString clips them. A UnixMilli-only reader drops both.
+	r, err := SearchMemory("zebra", MemorySearchOptions{Home: &home, Days: memoryPtr(1.0), NowMs: memoryPtr(86_400_000.5)})
+	if err != nil || len(r.Hits) != 1 || r.ScannedFiles != 1 || r.Hits[0].Relpath != "above.md" || r.Hits[0].UpdatedAt == nil || *r.Hits[0].UpdatedAt != "1970-01-01T00:00:00.000Z" {
+		t.Fatalf("fractional mtime/ISO clipping: %+v, %v", r, err)
+	}
+}
