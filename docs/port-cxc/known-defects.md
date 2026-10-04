@@ -808,3 +808,12 @@ The parser feeds a fail-closed memory write gate, so a destination the oracle mi
 - Whitespace-only known/unknown facts pass because only empty text is rejected (source `pabcd-state/src/scan-cli.ts:165-170`); port: kept.
 - Confidence accepts JavaScript radix notation such as `0x1`, `0o1` and `0b1` (source `pabcd-state/src/scan-cli.ts:172-180`); port: kept.
 - The high contradiction count is not constrained by the total count, so a positive high count with total zero parses successfully (source `pabcd-state/src/scan-cli.ts:187-191`); port: kept.
+
+## CRW-387 — stage1 memory search and chat fallback
+
+- The stage1 LIKE prefilter uses SQLite's ASCII-only case folding, so a query for `ü` misses a row containing `Ü` despite the final Unicode predicate accepting it (CXC v0.2.40 `recall/src/memory-search.ts:739,764`; recorded `unicode-like-kept` case); port: kept.
+- Stage1 excerpts retain CRLF bytes, unlike the normalized markdown file-span excerpts (CXC v0.2.40 `recall/src/memory-search.ts:760,778`; recorded `null-empty-id-crlf` case); port: kept.
+- A string thread ID that is empty bypasses deduplication and produces `stage1_outputs/` rather than the unknown-thread label (CXC v0.2.40 `recall/src/memory-search.ts:756-757,775`; recorded `null-empty-id-crlf` case); port: kept.
+- Stage1 presence is tallied outside cwd scope and across incomplete rows, so an out-of-scope symbol can prevent the scoped boundary relaxation (CXC v0.2.40 `recall/src/memory-search.ts:690-698`; recorded `scope-presence-blocks-relax` case); port: kept.
+- A raised chat fallback threshold replaces existing memory hits and still announces that no memory artifacts matched; the warning still says tool logs are excluded when `chatIncludeTools` is true, and chat warnings are discarded (CXC v0.2.40 `recall/src/memory-search.ts:624-625,639,651-669`; recorded `fallback-threshold-replaces`, `fallback-opts` and `fallback-ignores-chat-warning` cases); port: kept.
+- A zero age cutoff disables stage1 age filtering, and independent search/presence/retry failures repeat the database warning (CXC v0.2.40 `recall/src/memory-search.ts:695,701,759,785`; recorded `zero-cutoff-kept` and `db-error-repeated` cases); port: kept.
