@@ -122,3 +122,33 @@ Compared on 2026-10-04 by reading the pinned sources and the adapted files.
 The comparison identifies retained concepts, not behavioral equivalence. CRW's
 fake-runner tests verify serial execution, failure states, support, head-code
 verification and schema-v1 assembly. NOTICE and LICENSE remain unchanged.
+
+### internal/review/adjudication
+
+Three Go files carry the pinned Apache-2.0 adaptation header. doc.go, validate.go,
+reader.go and all tests were written for CRW. No upstream implementation is copied
+verbatim; the retained concepts and changes are listed here.
+
+| Go file | Upstream | Kept | Changed |
+| --- | --- | --- | --- |
+| record.go | internal/store/adjudication.go | A finding reference, deciding actor, rationale, evidence and the resolution of later judgments. | Parent correct/false_positive/minor verdicts, explicit problem correlation, PR/head identity, canonical severity and later-change evidence replace upstream dispositions, timestamps and supersession relations. File order resolves effective judgments. |
+| store.go | internal/store/adjudicationstore.go | Validate before storage, refuse duplicate identities, and read stored adjudication records. | A private JSONL event file with a nonblocking writer lock and validated correction batches replaces one file per adjudication. Corrupt/torn records fail closed; no existing history is overwritten. |
+| report.go | internal/store/economics.go | Reviewer/model call accounting, elapsed duration, token totals and explicit unknown measurement. | A fixed PR cohort with source/model rows, parent-only precision and observed catch rates, unique correct problems, failure/missing coverage and independent accounting-presence counts. No price inference or reviewer-derived ground truth. |
+
+Reproducible read-only comparisons, with the pinned `<ACR>` checkout and `<repo>`:
+
+```sh
+git -C <ACR> rev-parse HEAD # a3e438e2bd1f0824c1eab88db738aa3c82c69e99
+git -C <ACR> show a3e438e2bd1f0824c1eab88db738aa3c82c69e99:internal/store/adjudication.go
+git -C <ACR> show a3e438e2bd1f0824c1eab88db738aa3c82c69e99:internal/store/adjudicationstore.go
+git -C <ACR> show a3e438e2bd1f0824c1eab88db738aa3c82c69e99:internal/store/economics.go
+git -C <repo> show HEAD:internal/review/adjudication/record.go
+git -C <repo> show HEAD:internal/review/adjudication/store.go
+git -C <repo> show HEAD:internal/review/adjudication/report.go
+git -C <ACR> show a3e438e2bd1f0824c1eab88db738aa3c82c69e99:LICENSE | cmp - <repo>/docs/port-acr/LICENSE
+```
+
+Compared on 2026-10-04 by reading the pinned files and the adapted Go files.
+The comparison establishes conceptual origin, not behavioral equivalence.
+The synthetic ledger/import/report tests fix CRW's behavior. NOTICE and LICENSE
+remain unchanged.

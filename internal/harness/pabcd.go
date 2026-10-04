@@ -12,8 +12,16 @@ type Verb struct {
 	Run  func(args []string, in io.Reader, stdout, stderr io.Writer) int
 }
 
-// Verbs is the table of crw pabcd's commands; none is ported yet.
-func Verbs() []Verb { return nil }
+// Verbs is the table of crw pabcd's commands, a row for each verb that is ported.
+func Verbs() []Verb {
+	return []Verb{
+		{Name: "freeze", Run: freezeVerb},
+		{Name: "plan", Run: planVerb},
+		{Name: "receipt", Run: receiptVerb},
+		{Name: "evidence", Run: evidenceVerb},
+		{Name: "memory", Run: memoryVerb},
+	}
+}
 
 // Pabcd is crw pabcd <verb> [args]: it hands the arguments after the verb to its row, and answers an
 // absent or unknown verb as the other crw modes do, with the usage and exit status 2.

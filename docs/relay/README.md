@@ -911,6 +911,13 @@ way. `service status` reports the declaration as the input to the NEXT launch, b
 the running worker actually published, so a declaration made while the service runs reads as the
 pending change it is.
 
+`service stop` holds a worker's pidfd while it reads its start ticks. If the identity
+read gives no answer, or the recorded ticks are missing, a readable pidfd confirms
+exit: stop reports the worker as `exited` and clears its recorded identity, so restart
+can proceed past the stop. A running worker whose identity cannot be established stays
+`unverifiable` and receives no signal. The stop deadline, 100 ms termination cadence
+and launch-readiness snapshot remain unchanged (port decisions 27 and 40).
+
 ## How invocation actually becomes automatic
 
 By POLLING, not by notification. The transport exposes no delivery-notification seam,
