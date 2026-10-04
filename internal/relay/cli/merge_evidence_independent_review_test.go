@@ -110,7 +110,7 @@ func TestMergeEvidenceIndependentReview(t *testing.T) {
 	t.Run("the flag grades a restated record and needs one", func(t *testing.T) {
 		var out, stderr bytes.Buffer
 		code := Execute(context.Background(), []string{"merge-evidence", "--repository", "owner/repo", "--pull-request", "7", "--expect-independent-review"}, &out, &stderr)
-		if code != 4 || !strings.Contains(stderr.String(), "--restate") {
+		if code != 4 || !strings.Contains(out.String(), "pass --restate too") {
 			t.Fatal(code, out.String(), stderr.String())
 		}
 	})

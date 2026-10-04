@@ -10,7 +10,9 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/review"
 )
@@ -133,7 +135,7 @@ func TestIndependentReviewCoverage(t *testing.T) {
 		{name: "dispositions that are not a list", stated: true, want: []string{"malformed"}, change: func(c *reviewCase) { c.item["dispositions"] = "all fixed" }},
 		{name: "a patch-id that is not hex", head: candidateHead, stated: true, want: []string{"malformed"}, change: func(c *reviewCase) { c.item["headPatchId"] = "same" }},
 		{name: "a member the item does not have", stated: true, want: []string{"malformed"}, change: func(c *reviewCase) { c.item["verdict"] = "good" }},
-		{name: "several warnings keep the order of the checks", head: candidateHead, stated: true, want: []string{"status_differs", "head_differs", "disposition_missing"}, change: func(c *reviewCase) {
+		{name: "several warnings keep the order of the checks", head: candidateHead, stated: true, want: []string{"status_differs", "head_differs", "disposition_missing", "disposition_missing"}, change: func(c *reviewCase) {
 			c.item["status"], c.item["reason"] = "partial", "one reviewer failed"
 			c.item["dispositions"] = []any{disposition(0, "fixed")}
 		}},
@@ -210,7 +212,7 @@ func TestReadArtifactFile(t *testing.T) {
 	}{
 		{name: "a regular file", path: good, cap: 5},
 		{name: "a file one byte over the cap", path: good, cap: 4, wantErr: errArtifactTooLarge},
-		{name: "a directory", path: dir, cap: 5, wantErr: errArtifactNotRegular},
+		{name: "a directory", path: dir, cap: 5, wantErr: syscall.EINVAL},
 		{name: "a path that is not there", path: filepath.Join(dir, "gone.json"), cap: 5, wantErr: fs.ErrNotExist},
 	} {
 		reviewArtifactCap = row.cap
@@ -218,5 +220,24 @@ func TestReadArtifactFile(t *testing.T) {
 		if !errors.Is(err, row.wantErr) || (row.wantErr == nil && string(data) != "12345") {
 			t.Fatalf("%s: %q, %v", row.name, data, err)
 		}
+	}
+}
+
+// A file swapped for a FIFO between the parent choosing to read it and the open would otherwise
+// block the whole merge-evidence run until someone writes to it.
+func TestOpenRegularDoesNotWaitOnAFIFO(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "swapped.json")
+	if err := syscall.Mkfifo(path, 0o600); err != nil {
+		t.Skip("no FIFO here:", err)
+	}
+	done := make(chan error, 1)
+	go func() { _, err := readArtifactFile(path); done <- err }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("a FIFO was read as an artifact")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the open of a FIFO is still waiting after five seconds")
 	}
 }

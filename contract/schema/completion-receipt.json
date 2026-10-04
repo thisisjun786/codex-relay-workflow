@@ -150,6 +150,49 @@
         "null"
       ],
       "description": "Resolvable path to a frozen copy of the manifest and its bytes, when the live files may move on. Used when the receipt must stay verifiable after a later revision."
+    },
+    "independentReview": {
+      "$ref": "#/definitions/IndependentReview"
+    }
+  },
+  "definitions": {
+    "IndependentReview": {
+      "description": "What the child states about its independent code review of the deliverable: a reference opinion for the parent, never a merge gate. artifact names the review command's output file (schema crw-independent-review/1) by absolute path and the sha256 of its bytes; status and reason repeat the artifact's own so a reader sees them without opening it; invalidReviewerCalls counts reviewer calls that produced no usable result (they are not 'no findings'); headPatchId is the patch-id of the candidate head's diff, stated when the artifact reviewed another head, so a base refresh can be told from changed code; each disposition answers the artifact's finding at that zero-based position. Only a ready_for_review receipt carries it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "invalidReviewerCalls", "dispositions"],
+      "properties": {
+        "artifact": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "sha256"],
+          "properties": {
+            "path": {"type": "string", "pattern": "^/"},
+            "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+          }
+        },
+        "status": {"enum": ["complete", "partial", "unavailable"]},
+        "reason": {"type": "string", "minLength": 1},
+        "invalidReviewerCalls": {"type": "integer", "minimum": 0},
+        "headPatchId": {"type": "string", "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"},
+        "dispositions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["finding", "disposition", "evidence"],
+            "properties": {
+              "finding": {"type": "integer", "minimum": 0},
+              "disposition": {"enum": ["fixed", "refuted", "recorded"]},
+              "evidence": {"type": "string", "minLength": 1}
+            }
+          }
+        }
+      },
+      "allOf": [
+        {"if": {"required": ["status"], "properties": {"status": {"const": "complete"}}}, "else": {"required": ["reason"]}},
+        {"if": {"required": ["status"], "properties": {"status": {"const": "unavailable"}}}, "else": {"required": ["artifact"]}}
+      ]
     }
   },
   "allOf": [
@@ -296,6 +339,10 @@
           }
         }
       }
+    },
+    {
+      "if": {"required": ["outcome"], "properties": {"outcome": {"enum": ["failed", "interrupted", "blocked_needs_input"]}}},
+      "then": {"not": {"required": ["independentReview"]}}
     }
   ]
 }

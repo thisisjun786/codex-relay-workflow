@@ -87,9 +87,9 @@ func TestEmitRefusesAnIndependentReviewFileThatIsNotAnObject(t *testing.T) {
 			handoff := filepath.Join(work, "handoff.json")
 			mustDo(t, os.WriteFile(handoff, []byte("{}"), 0o644))
 			rid := strings.Trim(sqliteDump(t, side, "SELECT relationship_id FROM relationships"), "[]\"\n ")
-			_, code := runJSON(t, side, "emit", "--relationship", rid, "--generation", "1", "--outcome", "ready_for_review", "--turn-thread", child, "--turn-id", dispatchTurn, "--artifact", handoff, "--independent-review", reviewItemFile(t, work, body))
-			if code == 0 {
-				t.Fatal("an item file that is not an object was accepted")
+			refused, code := runJSON(t, side, "emit", "--relationship", rid, "--generation", "1", "--outcome", "ready_for_review", "--turn-thread", child, "--turn-id", dispatchTurn, "--artifact", handoff, "--independent-review", reviewItemFile(t, work, body))
+			if detail, _ := refused["detail"].(string); code != 4 || !strings.Contains(detail, "--independent-review") {
+				t.Fatalf("an item file that is not an object: %d %v", code, refused)
 			}
 			if got := sqliteDump(t, side, "SELECT count(*) FROM events"); got != "[[0]]\n" {
 				t.Fatalf("a refused emit stored %s receipt events", got)
