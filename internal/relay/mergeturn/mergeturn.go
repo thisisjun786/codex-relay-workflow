@@ -34,6 +34,8 @@ type Service struct {
 	// Delivery is MergeTurn's delivery: absent, a grant carries no wake key at all, as in
 	// Python; the relay CLI always supplies one.
 	Delivery Delivery
+	// Pulls reads the head of a pull request. Absent, a turn's record alone decides which head is its own.
+	Pulls PullRequestHeadReader
 }
 
 // Delivery is what a promotion hands its grant to (delivery.py grant_channel_in and
