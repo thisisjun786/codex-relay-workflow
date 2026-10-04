@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -178,7 +179,7 @@ func TestCreatedCheckCloseRefusesActiveAndKeepsLock(t *testing.T) {
 // real native child. Every DB is created in a temporary CODEX_HOME.
 func createdCheckSeed(t *testing.T, native, id, parent string) {
 	t.Helper()
-	db := must(sql.Open("sqlite", filepath.Join(native, "state_5.sqlite")))
+	db := must(sql.Open("sqlite", (&url.URL{Scheme: "file", Path: filepath.Join(native, "state_5.sqlite")}).String()))
 	defer db.Close()
 	_, err := db.Exec("CREATE TABLE IF NOT EXISTS threads (id TEXT PRIMARY KEY, source TEXT, archived INTEGER)")
 	check(t, err)
@@ -272,5 +273,36 @@ func TestCreatedCheckNativeDatabaseRefusalsAndOrdering(t *testing.T) {
 				t.Fatal("invalid host witness accepted or older DB used")
 			}
 		})
+	}
+}
+
+func TestCreatedCheckNativeWALAndEncodedPath(t *testing.T) {
+	ws, env, start, _ := dispatchTestFixture(t)
+	native := filepath.Join(t.TempDir(), "host ?#%")
+	check(t, os.Mkdir(native, 0700))
+	createdCheckSeed(t, native, "old", "other")
+	file := filepath.Join(native, "state_5.sqlite")
+	db := must(sql.Open("sqlite", (&url.URL{Scheme: "file", Path: file}).String()))
+	defer db.Close()
+	_, err := db.Exec("PRAGMA journal_mode=WAL")
+	check(t, err)
+	source := `{"subagent":{"thread_spawn":{"parent_thread_id":"session-test","depth":1}}}`
+	_, err = db.Exec("INSERT INTO threads VALUES (?,?,0)", "child-a", source)
+	check(t, err)
+	// Keep the writer open: the new child exists in WAL, not a closed DB checkpoint.
+	before := must(os.ReadFile(file))
+	wal := must(os.ReadFile(file + "-wal"))
+	old := env
+	env = func(k string) (string, bool) {
+		if k == "CODEX_HOME" {
+			return native, true
+		}
+		return old(k)
+	}
+	dispatchTestCall(t, ws, env, map[string]any{"action": "claim", "attemptId": start.AttemptID})
+	out, err := CheckedDispatch(context.Background(), ws, createdCheckInput(start.AttemptID, "created"), env, nil)
+	check(t, err)
+	if out.Action != "wait" || string(before) != string(must(os.ReadFile(file))) || string(wal) != string(must(os.ReadFile(file+"-wal"))) {
+		t.Fatal("WAL witness missing or host records changed")
 	}
 }
