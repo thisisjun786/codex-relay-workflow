@@ -577,3 +577,10 @@ The pinned oracle already publishes through an exclusive 0600 temporary file and
 - Positive days outside JavaScript's Date range throw `Invalid time value` after metadata loading; an empty direct-scan plan returns before that cutoff is evaluated (source `recall/src/chat-search.ts:296-307`; recorded infinite-days and empty-query cases); port: kept.
 - A NaN limit defeats both limit comparisons and the truncation warning, allowing more hits than the maximum advertised cap (source `recall/src/chat-search.ts:313,342,370`; recorded 250-hit dense case); port: kept.
 - The raw JSON file prefilter can miss decoded text containing escaped query characters, even though the per-message matcher would find it (source `recall/src/chat-search.ts:334,349`; recorded escaped `CI` case); port: kept.
+
+## CRW-528 — Helper role MCP tool library
+
+- `catalog_list` does not catch a catalog read rejection, so the stdio queue swallows it without a tool reply (source `subagent-config/src/mcp.ts:148-152,198`); port: kept, the library returns that error to its caller; home-resolution failure is source-reviewed only under the required isolated-home tests.
+- A non-object tool argument is accepted by `subagents_get` as having no scope, while `subagents_set` refuses the same value as a missing body (source `subagent-config/src/mcp.ts:130,134,141`); port: kept; the existing global-only settings API defaults absent scope to global, an inherited decision 7 difference explicitly applied only to the recorded argument-shape get expectations.
+- The five-second get probe does not cancel a late catalog read, which can still publish its cache after the timeout answer (source `subagent-config/src/mcp.ts:135-139`); port: kept.
+- The retained tool descriptions and schemas advertise project scope although the absorbed settings API supports global scope only (source `subagent-config/src/mcp.ts:38-39,48`); port: kept as metadata; project calls are refused by the existing settings API and no project store is restored.
