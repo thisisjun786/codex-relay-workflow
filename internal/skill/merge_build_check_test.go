@@ -456,3 +456,68 @@ func TestMergeBuildEnvKeepsTheCallersGoSettingsFile(t *testing.T) {
 		}
 	}
 }
+
+// The go tool on darwin reads the directory it keeps telemetry in from HOME, not from
+// XDG_CONFIG_HOME, so the darwin environment moves HOME into the directory the run owns and names
+// the three cache locations the caller's go environment holds before that, so the tool still builds
+// against the caller's caches. Linux keeps the caller's HOME (CRW-562).
+func TestMergeBuildEnvMovesOnlyTheDarwinHome(t *testing.T) {
+	caller := os.Environ()
+	caches := mbcCallerGoEnv(t, caller)
+	owned := t.TempDir()
+	darwinEnv, err := mergeBuildEnv(caller, owned, "darwin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := mbcLastEnv(darwinEnv)
+	home := filepath.Join(owned, "home")
+	if got["HOME"] != home {
+		t.Errorf("darwin: HOME=%q, want the owned %q", got["HOME"], home)
+	}
+	if info, err := os.Stat(home); err != nil || !info.IsDir() {
+		t.Errorf("darwin: the owned home is not a directory: %v", err)
+	}
+	for key, want := range map[string]string{"GOCACHE": caches[0], "GOMODCACHE": caches[1], "GOPATH": caches[2]} {
+		if got[key] != want {
+			t.Errorf("darwin: %s=%q, want the caller's %q", key, got[key], want)
+		}
+	}
+	linuxEnv, err := mergeBuildEnv(caller, t.TempDir(), "linux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := mbcLastEnv(linuxEnv)["HOME"], mbcLastEnv(caller)["HOME"]; got != want {
+		t.Errorf("linux: HOME=%q, want the caller's %q", got, want)
+	}
+}
+
+// mbcCallerGoEnv reads the three cache locations a go env names for the caller's environment.
+func mbcCallerGoEnv(t *testing.T, base []string) [3]string {
+	t.Helper()
+	goTool, err := exec.LookPath("go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(goTool, "env", "GOCACHE", "GOMODCACHE", "GOPATH")
+	cmd.Env = base
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("go env GOCACHE GOMODCACHE GOPATH answered %q", out)
+	}
+	return [3]string{strings.TrimSpace(lines[0]), strings.TrimSpace(lines[1]), strings.TrimSpace(lines[2])}
+}
+
+// mbcLastEnv folds an environment the way exec uses it: of duplicated keys the last value wins.
+func mbcLastEnv(env []string) map[string]string {
+	last := map[string]string{}
+	for _, kv := range env {
+		if key, value, ok := strings.Cut(kv, "="); ok {
+			last[key] = value
+		}
+	}
+	return last
+}

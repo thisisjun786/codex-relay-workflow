@@ -12,6 +12,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -77,10 +78,20 @@ type mergeBuild struct {
 // the build cache goes into a directory this run owns and removes: its temporary files (TMPDIR,
 // GOTMPDIR) and, where the user config directory follows XDG_CONFIG_HOME, its telemetry counters. The
 // owned config directory says telemetry is off, so no uploader the tool starts can write there after
-// the command ended and the directory is gone. HOME, the build cache, the module cache and every
-// setting stay as the caller has them, and GOENV is pinned to the caller's file first, so the settings
-// of go env -w keep their place between the environment and the defaults. The module workspace is off.
-func mergeBuildEnv(base []string, owned string) ([]string, error) {
+// the command ended and the directory is gone. On darwin os.UserConfigDir reads
+// $HOME/Library/Application Support and ignores XDG_CONFIG_HOME, so HOME moves into the owned
+// directory there as well, and the caches the caller's go environment names (GOCACHE, GOMODCACHE,
+// GOPATH) are read with the caller's environment before that and named again, so builds still share
+// the caller's caches. Elsewhere HOME, the build cache, the module cache and every setting stay as
+// the caller has them, and GOENV is pinned to the caller's file first, so the settings of go env -w
+// keep their place between the environment and the defaults. The module workspace is off. targetOS
+// names the platform the go tool targets and defaults to runtime.GOOS; a test names darwin and linux
+// to exercise both on any host.
+func mergeBuildEnv(base []string, owned string, targetOS ...string) ([]string, error) {
+	goos := runtime.GOOS
+	if len(targetOS) > 0 {
+		goos = targetOS[0]
+	}
 	env := append([]string{}, base...)
 	switch goenv := os.Getenv("GOENV"); goenv {
 	case "off":
@@ -105,7 +116,54 @@ func mergeBuildEnv(base []string, owned string) ([]string, error) {
 	if err := os.WriteFile(filepath.Join(telemetry, "mode"), []byte("off "+time.Now().UTC().Format("2006-01-02")), 0o600); err != nil {
 		return nil, err
 	}
-	return append(env, "GOWORK=off", "XDG_CONFIG_HOME="+config, "TMPDIR="+tmp, "GOTMPDIR="+tmp), nil
+	env = append(env, "GOWORK=off", "XDG_CONFIG_HOME="+config, "TMPDIR="+tmp, "GOTMPDIR="+tmp)
+	if goos == "darwin" {
+		caches, err := mergeBuildCallerCaches(base)
+		if err != nil {
+			return nil, err
+		}
+		home := filepath.Join(owned, "home")
+		if err := os.MkdirAll(home, 0o700); err != nil {
+			return nil, err
+		}
+		env = append(env, "HOME="+home, "GOCACHE="+caches[0], "GOMODCACHE="+caches[1], "GOPATH="+caches[2])
+	}
+	return env, nil
+}
+
+// mergeBuildCallerCaches reads the build cache, the module cache and GOPATH the caller's go
+// environment names, so that moving HOME on darwin does not move the caches away from the caller.
+func mergeBuildCallerCaches(base []string) ([3]string, error) {
+	var caches [3]string
+	goTool, err := exec.LookPath("go")
+	if err != nil {
+		return caches, err
+	}
+	cmd := exec.Command(goTool, "env", "GOCACHE", "GOMODCACHE", "GOPATH")
+	cmd.Env = append([]string{}, base...)
+	out, err := cmd.Output()
+	if err != nil {
+		return caches, err
+	}
+	lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+	if len(lines) != 3 {
+		return caches, fmt.Errorf("go env GOCACHE GOMODCACHE GOPATH answered %d lines, want 3", len(lines))
+	}
+	for i, line := range lines {
+		caches[i] = strings.TrimSpace(line)
+	}
+	return caches, nil
+}
+
+// mergeBuildTagFlag is how a command line names a tag set. A command-line flag wins over GOFLAGS and
+// over the pinned GOENV file, so the untagged pass names the empty set explicitly: without -tags= a
+// -tags the caller carries would run the untagged pass tagged and it would miss what only an
+// untagged build of the merge has (CRW-562).
+func mergeBuildTagFlag(tags string) []string {
+	if tags == "" {
+		return []string{"-tags="}
+	}
+	return []string{"-tags", tags}
 }
 
 // run classifies the changed directories for both targets, runs the steps and reports. It returns the
@@ -279,9 +337,7 @@ func (b *mergeBuild) classify(ctx context.Context, darwin bool, dirs []string) (
 
 func (b *mergeBuild) list(ctx context.Context, darwin bool, tags string, dirs []string) ([]mergeBuildListed, string, bool, error) {
 	args := []string{"list", "-e", "-p=" + strconv.Itoa(b.parallel), "-json=Match,ImportPath,GoFiles,CgoFiles,TestGoFiles,XTestGoFiles,IgnoredGoFiles,Error"}
-	if tags != "" {
-		args = append(args, "-tags", tags)
-	}
+	args = append(args, mergeBuildTagFlag(tags)...)
 	for _, dir := range dirs {
 		args = append(args, mergeBuildPattern(dir))
 	}
@@ -316,9 +372,7 @@ func (b *mergeBuild) argv(step, tags string, patterns []string) []string {
 	default:
 		args = []string{"vet", p}
 	}
-	if tags != "" {
-		args = append(args, "-tags", tags)
-	}
+	args = append(args, mergeBuildTagFlag(tags)...)
 	return append(args, patterns...)
 }
 
