@@ -1,0 +1,54 @@
+{
+  "origin": {
+    "tag": "v0.2.40",
+    "commit": "3c1459acadeb1906d97c00a598e1457327ae372d",
+    "skills_listing_sha256": "79d9580f39ca27221cb9c24337080e3fe4a1e71f76338c7329fca63f76a32e89"
+  },
+  "table_sha256": "25b5d19d9da7e07d474d2b31bc4d4139c68607457f59174a597f17505f7f23eb",
+  "from": "dev-architecture",
+  "files": {
+    "SKILL.md": {
+      "original": "e0b47a2cfa101af151ca439f1ba8260631648baa0abd6ad06c45fa07def2e275"
+    },
+    "agents/openai.yaml": {
+      "original": "962fd255c4d0288f070fe1ec19d1813501b493d5dacab06f3ad2019712a53b96"
+    },
+    "references/barrel-discipline.md": {
+      "original": "ce6742f7b9548596333fb385111e254c1648bec98cab48afcb3cdd479f04bdb0"
+    },
+    "references/circular-dependencies.md": {
+      "original": "140ec48d10f0cc13e8e6d445f7db516be3456068fe98121b4181d628b0e86e7b"
+    },
+    "references/coupling-taxonomy.md": {
+      "original": "307cef40aab8f94f19dba69870dcf7a9119001f62544854ba5ec58f2d906f242"
+    }
+  },
+  "edits": [
+    {
+      "file": "SKILL.md",
+      "reason": "Normalize frontmatter to the repository-supported name and description fields; preserve the invocation description and record the removed oracle metadata.",
+      "hunks": [
+        {
+          "line": 4,
+          "old": [
+            "metadata:\n",
+            "  last-verified: \"2026-07-02\"\n",
+            "  short-description: \"Module boundaries, circular deps, coupling taxonomy, and boundary-only defensive programming.\"\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "agents/openai.yaml",
+      "reason": "Add the required interface default prompt naming the staged CRW skill; preserve the oracle display text and implicit-invocation policy.",
+      "hunks": [
+        {
+          "line": 4,
+          "new": [
+            "  default_prompt: \"Use $crw-dev-architecture to guide this task and verify its result.\"\n"
+          ]
+        }
+      ]
+    }
+  ]
+}

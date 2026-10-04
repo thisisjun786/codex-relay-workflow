@@ -24,6 +24,9 @@ type CreateThread struct {
 }
 
 func (b *Bridge) CreateThread(ctx context.Context, in CreateThread) (ledger.Receipt, error) {
+	var watch *appserver.TurnWatch
+	var result ledger.Receipt
+	defer func() { finishSubscription(watch, result, true) }()
 	if err := nonempty(in.CWD, "cwd", 100000); err != nil {
 		return nil, err
 	}
@@ -103,7 +106,7 @@ func (b *Bridge) CreateThread(ctx context.Context, in CreateThread) (ledger.Rece
 		}
 		return nil
 	}
-	return b.mutate(ctx, mutation{requestID: in.RequestID, method: "create_thread", params: params, validate: validate, action: func(ctx context.Context, receipt ledger.Receipt, effects *[]string) error {
+	result, err := b.mutate(ctx, mutation{requestID: in.RequestID, method: "create_thread", params: params, validate: validate, action: func(ctx context.Context, receipt ledger.Receipt, effects *[]string) error {
 		receipt["executionPolicy"] = authorized.Receipt
 		if _, err := b.Ledger.Save(ctx, receipt); err != nil {
 			return err
@@ -129,6 +132,9 @@ func (b *Bridge) CreateThread(ctx context.Context, in CreateThread) (ledger.Rece
 		threadID := id(created, "thread")
 		receipt["threadId"] = threadID
 		receipt["creation"] = created
+		if watch, err = b.watchSubscription(ctx, threadID, true); err != nil {
+			return err
+		}
 		if _, err = b.Ledger.Save(ctx, receipt); err != nil {
 			return err
 		}
@@ -172,4 +178,5 @@ func (b *Bridge) CreateThread(ctx context.Context, in CreateThread) (ledger.Rece
 		}
 		return old
 	}})
+	return result, err
 }
