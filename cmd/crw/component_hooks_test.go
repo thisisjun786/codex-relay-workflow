@@ -82,6 +82,7 @@ func TestComponentHookTableExtendsWithoutChangingDispatch(t *testing.T) {
 }
 
 func TestFallbackComponentHookRoutesSessionStart(t *testing.T) {
+	t.Setenv("CRW_SPAWN_V1", "")
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("CODEX_HOME", t.TempDir())
 	t.Setenv("CRW_HOME", t.TempDir())
@@ -109,7 +110,7 @@ func fallbackComponentFixture(t *testing.T, name string, target any) {
 func fallbackComponentEnv(t *testing.T) map[string]string {
 	t.Helper()
 	root := t.TempDir()
-	m := map[string]string{"HOME": filepath.Join(root, "home"), "CODEX_HOME": filepath.Join(root, "codex"), "CRW_HOME": filepath.Join(root, "global"), "CODEX_MODELS_CACHE_PATH": filepath.Join(root, "absent.json"), "PLUGIN_ROOT": ""}
+	m := map[string]string{"HOME": filepath.Join(root, "home"), "CODEX_HOME": filepath.Join(root, "codex"), "CRW_HOME": filepath.Join(root, "global"), "CODEX_MODELS_CACHE_PATH": filepath.Join(root, "absent.json"), "PLUGIN_ROOT": "", "CRW_SPAWN_V1": ""}
 	for k, v := range m {
 		t.Setenv(k, v)
 	}
