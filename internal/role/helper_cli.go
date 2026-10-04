@@ -251,6 +251,7 @@ func helperCLIFailure(message string) HelperResult {
 
 func HelperCommands() []HelperCommand {
 	return []HelperCommand{
+		{Name: "dispatch", Run: DispatchCommand},
 		helperCLIRow("list"), helperCLIRow("get"), helperCLIRow("set"), helperCLIRow("reset"),
 		helperCLIRow("register"), helperCLIRow("help"), helperCLIRow("--help"), helperCLIRow("-h"),
 	}

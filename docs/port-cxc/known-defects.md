@@ -884,3 +884,10 @@ Source: `plugins/codexclaw/components/pabcd-state/src/memory-write-gate.ts` at v
 ## Found by the goalplan DAG query port (CRW-368)
 
 - With duplicate work-phase IDs, `nextOpenTask` can return the first phase's record paired with a pending task from a later phase because it re-finds the phase by ID after selecting the task (source `plugins/codexclaw/components/pabcd-state/src/goalplan.ts:1090-1094`; recorded case `first phase match and mismatched next pair` in `internal/pabcd/goalplan/testdata/query/oracle.json`); port: kept (the structural validator rejects the duplicate plan, while these selection queries remain direct derived views).
+
+## CRW-530 managed spawn and checked dispatch
+
+- Created accepts an arbitrary syntactically valid agent ID without a native subagent or parent witness (`subagent-config/src/fallback-dispatch.ts:171-176`); port: fixed, intentionally-changed by the assignment: the product dispatch boundary reads the native host thread_spawn marker from the read-only thread database and checks child identity and parent before publishing the report.
+- A mistaken created ID cannot be corrected and no honest terminal close exists (`subagent-config/src/fallback-dispatch.ts:173,183-184`); port: fixed, intentionally-changed by the assignment: a stopped report requires caller-asserted stopped execution and reconciliation, preserves the recorded ID and permanently closes without another spawn.
+- A managed marker can occur after an arbitrary earlier line, rather than only at the start of the message (`subagent-config/src/fallback-dispatch.ts:239,252`); port: kept, including JavaScript CR, LF, LS and PS line boundaries.
+- Dispatch ignores trailing command arguments, so dispatch --help still reads stdin and errors on empty input (`subagent-config/src/fallback-dispatch-cli.ts:23-40`; `plugins/codexclaw/bin/cxc.mjs:176-179`); port: kept. JSON and filesystem error wording is intentionally-changed to the Go library's wording; exit 1 and the JSON error-object shape are preserved.

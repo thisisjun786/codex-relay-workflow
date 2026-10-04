@@ -285,7 +285,7 @@ func TestHelperCLIStreamsAndTable(t *testing.T) {
 		{[]string{"--help"}, 0, "usage: crw role", ""},
 		{[]string{"helper", "--help"}, 0, "crw role helper", ""},
 		{[]string{"helper", "get", "unknown"}, 1, "subagents: unknown role", ""},
-		{[]string{"helper", "dispatch"}, 1, "subagents: unknown subcommand 'dispatch'", ""},
+		{[]string{"helper", "dispatch"}, 1, `{"error":"invalid character 'u' looking for beginning of value"}`, ""},
 	} {
 		var out, errOut bytes.Buffer
 		code := CLI(tc.args, strings.NewReader("unread input"), &out, &errOut, env)
@@ -312,7 +312,7 @@ func TestHelperCLIStreamsAndTable(t *testing.T) {
 		}
 		names = append(names, c.Name)
 	}
-	if !reflect.DeepEqual(names, []string{"list", "get", "set", "reset", "register", "help", "--help", "-h"}) {
+	if !reflect.DeepEqual(names, []string{"dispatch", "list", "get", "set", "reset", "register", "help", "--help", "-h"}) {
 		t.Fatalf("command table = %v", names)
 	}
 	// The CLI accepts arbitrary data as a prompt, including markup and CJK text.
