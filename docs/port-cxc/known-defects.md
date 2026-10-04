@@ -771,3 +771,7 @@ The parser feeds a fail-closed memory write gate, so a destination the oracle mi
 - The grounding heuristic accepts a URL port as a file line and unmatched quote types as a quote; it checks spelling, not that the claimed evidence exists (source `plugins/codexclaw/components/pabcd-state/src/minds.ts:107-109`; oracle cases `evidence-8`, `evidence-22`); port: kept.
 - The section-marker regex rejects `see ## Goals` but accepts `x## Goals` because the boundary applies before the first hash (source `plugins/codexclaw/components/pabcd-state/src/minds.ts:108`; oracle cases `evidence-17`, `evidence-18`); port: kept.
 - A JSON level object that shadows `toString` with a noncallable value throws `TypeError: Cannot convert object to primitive value` during rank lookup, even with a NaN selection count; the Go port preserves the failure as a panic with the same message (source `plugins/codexclaw/components/pabcd-state/src/minds.ts:169`; oracle cases `object-normal`, `object-nan`, `nested-normal`, `nested-nan`); port: kept.
+
+## CRW-523 — PABCD CLI verb adapters
+
+- Evidence has no help branch: `evidence help`, `-h` and `--help` are unknown-verb errors, and `evidence resolve --help` reports missing required arguments instead of displaying usage (source `plugins/codexclaw/components/pabcd-state/src/cli.ts:276-285`, `evidence-cli.ts:35-62`; four `cli-help__evidence__*` fixtures); port: kept.
