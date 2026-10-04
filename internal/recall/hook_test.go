@@ -65,12 +65,16 @@ func TestRecallHookOracle(t *testing.T) {
 				json.Unmarshal(c.Input, &p)
 				got = HandleUserPromptSubmit(p, "crw")
 			case "extract":
-				var p struct {
-					Prompt string
-					Cap    int
+				p, err := pyjson.Loads(string(c.Input), pyjson.LoadOptions{Map: true, Surrogates: true})
+				if err != nil {
+					t.Fatal(err)
 				}
-				json.Unmarshal(c.Input, &p)
-				got = ExtractRecallTargets(p.Prompt, p.Cap)
+				o := p.(map[string]any)
+				cap, err := o["cap"].(json.Number).Int64()
+				if err != nil {
+					t.Fatal(err)
+				}
+				got = ExtractRecallTargets(o["prompt"].(string), int(cap))
 			case "session":
 				var p struct {
 					Source, Status, Notice string
@@ -117,11 +121,15 @@ func TestRecallHookOracle(t *testing.T) {
 			default:
 				t.Fatalf("unknown oracle unit %s", c.Kind)
 			}
-			var want any
-			if err := json.Unmarshal(c.Out, &want); err != nil {
+			want, err := pyjson.Loads(string(c.Out), pyjson.LoadOptions{Map: true, Surrogates: true, Deep: true})
+			if err != nil {
 				t.Fatal(err)
 			}
-			if !reflect.DeepEqual(canon(t, got), want) {
+			actual, err := pyjson.Loads(pyjson.Dumps(got, pyjson.Options{Compact: true, Unicode: true}), pyjson.LoadOptions{Map: true, Surrogates: true, Deep: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(actual, want) {
 				t.Fatalf("got %#v\nwant %#v", got, want)
 			}
 		})

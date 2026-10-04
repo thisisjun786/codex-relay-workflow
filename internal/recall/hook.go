@@ -111,13 +111,37 @@ func recallHookString(u []uint16) string {
 	}
 	return b.String()
 }
+
+// A lone surrogate is an uncased boundary, but its identity must survive lowering.
+func recallHookLower(s string) string {
+	var b strings.Builder
+	start := 0
+	for i := 0; i < len(s); {
+		r, n := pyjson.CodePoint(s, i)
+		if pyjson.IsSurrogate(r) {
+			b.WriteString(Lower(s[start:i]))
+			b.WriteString(s[i : i+n])
+			start = i + n
+		}
+		i += n
+	}
+	b.WriteString(Lower(s[start:]))
+	return b.String()
+}
+func recallHookTargetStop(key string) bool {
+	switch key {
+	case "그때", "지난번", "지난", "저번", "예전", "세션", "작업", "기억", "뭐였지", "last", "time", "session", "previous", "previously", "remember":
+		return true
+	}
+	return false
+}
 func ExtractRecallTargets(prompt string, caps ...int) []string {
 	out, seen := []string{}, map[string]bool{}
 	push := func(raw string) {
 		term := text.Trim(raw)
 		n := len(recallHookUnits(term))
-		key := Lower(term)
-		if n < 2 || n > 60 || seen[key] || strings.Contains("|그때|지난번|지난|저번|예전|세션|작업|기억|뭐였지|last|time|session|previous|previously|remember|", "|"+key+"|") {
+		key := recallHookLower(term)
+		if n < 2 || n > 60 || seen[key] || recallHookTargetStop(key) {
 			return
 		}
 		seen[key] = true

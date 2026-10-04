@@ -1300,6 +1300,81 @@
       ]
     },
     {
+      "kind": "extract",
+      "input": {
+        "prompt": "지난번 \"last|time\"",
+        "cap": 0
+      },
+      "out": []
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "지난번 \"last|time\"",
+        "cap": 1
+      },
+      "out": [
+        "last|time"
+      ]
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "지난번 \"last|time\"",
+        "cap": 4
+      },
+      "out": [
+        "last|time"
+      ]
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "지난번 \"last|time\"",
+        "cap": -1
+      },
+      "out": []
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "지난번 \"x\ud800y\" \"x\ud801y\"",
+        "cap": 0
+      },
+      "out": []
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "지난번 \"x\ud800y\" \"x\ud801y\"",
+        "cap": 1
+      },
+      "out": [
+        "x\ud800y"
+      ]
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "지난번 \"x\ud800y\" \"x\ud801y\"",
+        "cap": 4
+      },
+      "out": [
+        "x\ud800y",
+        "x\ud801y"
+      ]
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "지난번 \"x\ud800y\" \"x\ud801y\"",
+        "cap": -1
+      },
+      "out": [
+        "x\ud800y"
+      ]
+    },
+    {
       "kind": "session",
       "input": {
         "source": "",
