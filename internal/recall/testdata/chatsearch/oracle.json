@@ -1,0 +1,376 @@
+[
+  {
+    "name": "cold",
+    "query": "trigram",
+    "options": {
+      "nowMs": 1791115200000
+    },
+    "out": {
+      "hits": [
+        {
+          "ts": "2026-10-04T12:00:00.000Z",
+          "role": "user",
+          "text": "please deploy the trigram index for korean search",
+          "matchField": "content",
+          "threadId": "019f0000-0000-7000-8000-00000000aaaa",
+          "title": "deploy trigram index",
+          "cwd": "/proj/alpha",
+          "gitBranch": "main",
+          "source": "main",
+          "file": "<HOME>/sessions/2026/10/04/rollout-2026-10-04T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl",
+          "score": 0.028587823063299003,
+          "context": []
+        },
+        {
+          "ts": "2026-10-04T12:00:00.000Z",
+          "role": "assistant",
+          "text": "deployed the trigram index; korean 한글 검색 works now",
+          "matchField": "content",
+          "threadId": "019f0000-0000-7000-8000-00000000aaaa",
+          "title": "deploy trigram index",
+          "cwd": "/proj/alpha",
+          "gitBranch": "main",
+          "source": "main",
+          "file": "<HOME>/sessions/2026/10/04/rollout-2026-10-04T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl",
+          "score": 0.02814902574950169,
+          "context": []
+        }
+      ],
+      "warnings": [],
+      "scannedFiles": 4,
+      "matchedFiles": 1,
+      "totalFiles": 4,
+      "elapsedMs": 0,
+      "mode": "index",
+      "index": {
+        "lastIngestAt": "<INGEST>",
+        "files": 4,
+        "sourceFiles": 4,
+        "staleFiles": 0,
+        "readOnly": false
+      }
+    }
+  },
+  {
+    "name": "warm",
+    "query": "trigram",
+    "options": {
+      "nowMs": 1791115200000
+    },
+    "out": {
+      "hits": [
+        {
+          "ts": "2026-10-04T12:00:00.000Z",
+          "role": "user",
+          "text": "please deploy the trigram index for korean search",
+          "matchField": "content",
+          "threadId": "019f0000-0000-7000-8000-00000000aaaa",
+          "title": "deploy trigram index",
+          "cwd": "/proj/alpha",
+          "gitBranch": "main",
+          "source": "main",
+          "file": "<HOME>/sessions/2026/10/04/rollout-2026-10-04T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl",
+          "score": 0.028587823063299003,
+          "context": []
+        },
+        {
+          "ts": "2026-10-04T12:00:00.000Z",
+          "role": "assistant",
+          "text": "deployed the trigram index; korean 한글 검색 works now",
+          "matchField": "content",
+          "threadId": "019f0000-0000-7000-8000-00000000aaaa",
+          "title": "deploy trigram index",
+          "cwd": "/proj/alpha",
+          "gitBranch": "main",
+          "source": "main",
+          "file": "<HOME>/sessions/2026/10/04/rollout-2026-10-04T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl",
+          "score": 0.02814902574950169,
+          "context": []
+        }
+      ],
+      "warnings": [],
+      "scannedFiles": 0,
+      "matchedFiles": 1,
+      "totalFiles": 4,
+      "elapsedMs": 0,
+      "mode": "index",
+      "index": {
+        "lastIngestAt": "<INGEST>",
+        "files": 4,
+        "sourceFiles": 4,
+        "staleFiles": 0,
+        "readOnly": false
+      }
+    }
+  },
+  {
+    "name": "read-only",
+    "query": "trigram",
+    "options": {
+      "noRefresh": true,
+      "nowMs": 1791115200000
+    },
+    "out": {
+      "hits": [
+        {
+          "ts": "2026-10-04T12:00:00.000Z",
+          "role": "user",
+          "text": "please deploy the trigram index for korean search",
+          "matchField": "content",
+          "threadId": "019f0000-0000-7000-8000-00000000aaaa",
+          "title": "deploy trigram index",
+          "cwd": "/proj/alpha",
+          "gitBranch": "main",
+          "source": "main",
+          "file": "<HOME>/sessions/2026/10/04/rollout-2026-10-04T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl",
+          "score": 0.028587823063299003,
+          "context": []
+        },
+        {
+          "ts": "2026-10-04T12:00:00.000Z",
+          "role": "assistant",
+          "text": "deployed the trigram index; korean 한글 검색 works now",
+          "matchField": "content",
+          "threadId": "019f0000-0000-7000-8000-00000000aaaa",
+          "title": "deploy trigram index",
+          "cwd": "/proj/alpha",
+          "gitBranch": "main",
+          "source": "main",
+          "file": "<HOME>/sessions/2026/10/04/rollout-2026-10-04T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl",
+          "score": 0.02814902574950169,
+          "context": []
+        }
+      ],
+      "warnings": [],
+      "scannedFiles": 0,
+      "matchedFiles": 1,
+      "totalFiles": 4,
+      "elapsedMs": 0,
+      "mode": "index",
+      "index": {
+        "lastIngestAt": "<INGEST>",
+        "files": 4,
+        "sourceFiles": 4,
+        "staleFiles": 0,
+        "readOnly": true
+      }
+    }
+  },
+  {
+    "name": "scan",
+    "query": "trigram",
+    "options": {
+      "scan": true,
+      "nowMs": 1791115200000
+    },
+    "out": {
+      "hits": [
+        {
+          "ts": "2026-10-04T12:00:00.000Z",
+          "role": "user",
+          "text": "please deploy the trigram index for korean search",
+          "matchField": "content",
+          "threadId": "019f0000-0000-7000-8000-00000000aaaa",
+          "title": "deploy trigram index",
+          "cwd": "/proj/alpha",
+          "gitBranch": "main",
+          "source": "main",
+          "file": "<HOME>/sessions/2026/10/04/rollout-2026-10-04T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl",
+          "context": []
+        },
+        {
+          "ts": "2026-10-04T12:00:00.000Z",
+          "role": "assistant",
+          "text": "deployed the trigram index; korean 한글 검색 works now",
+          "matchField": "content",
+          "threadId": "019f0000-0000-7000-8000-00000000aaaa",
+          "title": "deploy trigram index",
+          "cwd": "/proj/alpha",
+          "gitBranch": "main",
+          "source": "main",
+          "file": "<HOME>/sessions/2026/10/04/rollout-2026-10-04T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl",
+          "context": []
+        }
+      ],
+      "warnings": [],
+      "scannedFiles": 1,
+      "matchedFiles": 1,
+      "totalFiles": 2,
+      "elapsedMs": 0,
+      "mode": "scan"
+    }
+  },
+  {
+    "name": "empty",
+    "query": "",
+    "options": {
+      "nowMs": 1791115200000
+    },
+    "out": {
+      "hits": [],
+      "warnings": [
+        "empty query"
+      ],
+      "scannedFiles": 0,
+      "matchedFiles": 0,
+      "totalFiles": 0,
+      "elapsedMs": 0,
+      "mode": "scan"
+    }
+  },
+  {
+    "name": "missing",
+    "query": "trigram",
+    "options": {
+      "noRefresh": true,
+      "nowMs": 1791115200000
+    },
+    "out": {
+      "hits": [
+        {
+          "ts": "2026-10-04T12:00:00.000Z",
+          "role": "user",
+          "text": "please deploy the trigram index for korean search",
+          "matchField": "content",
+          "threadId": "019f0000-0000-7000-8000-00000000aaaa",
+          "title": "deploy trigram index",
+          "cwd": "/proj/alpha",
+          "gitBranch": "main",
+          "source": "main",
+          "file": "<HOME>/sessions/2026/10/04/rollout-2026-10-04T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl",
+          "context": []
+        },
+        {
+          "ts": "2026-10-04T12:00:00.000Z",
+          "role": "assistant",
+          "text": "deployed the trigram index; korean 한글 검색 works now",
+          "matchField": "content",
+          "threadId": "019f0000-0000-7000-8000-00000000aaaa",
+          "title": "deploy trigram index",
+          "cwd": "/proj/alpha",
+          "gitBranch": "main",
+          "source": "main",
+          "file": "<HOME>/sessions/2026/10/04/rollout-2026-10-04T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl",
+          "context": []
+        }
+      ],
+      "warnings": [
+        "index unavailable (no index at <HOME>/missing.sqlite) — served by scan"
+      ],
+      "scannedFiles": 1,
+      "matchedFiles": 1,
+      "totalFiles": 2,
+      "elapsedMs": 0,
+      "mode": "scan"
+    }
+  },
+  {
+    "name": "invalid-days",
+    "query": "",
+    "options": {
+      "days": null,
+      "nowMs": 1791115200000
+    },
+    "error": "Invalid time value"
+  },
+  {
+    "name": "query-failure",
+    "query": "trigram",
+    "options": {
+      "noRefresh": true,
+      "nowMs": 1791115200000
+    },
+    "out": {
+      "hits": [
+        {
+          "ts": "2026-10-04T12:00:00.000Z",
+          "role": "user",
+          "text": "please deploy the trigram index for korean search",
+          "matchField": "content",
+          "threadId": "019f0000-0000-7000-8000-00000000aaaa",
+          "title": "deploy trigram index",
+          "cwd": "/proj/alpha",
+          "gitBranch": "main",
+          "source": "main",
+          "file": "<HOME>/sessions/2026/10/04/rollout-2026-10-04T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl",
+          "context": []
+        },
+        {
+          "ts": "2026-10-04T12:00:00.000Z",
+          "role": "assistant",
+          "text": "deployed the trigram index; korean 한글 검색 works now",
+          "matchField": "content",
+          "threadId": "019f0000-0000-7000-8000-00000000aaaa",
+          "title": "deploy trigram index",
+          "cwd": "/proj/alpha",
+          "gitBranch": "main",
+          "source": "main",
+          "file": "<HOME>/sessions/2026/10/04/rollout-2026-10-04T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl",
+          "context": []
+        }
+      ],
+      "warnings": [
+        "index unavailable (no such table: msgs) — served by scan"
+      ],
+      "scannedFiles": 1,
+      "matchedFiles": 1,
+      "totalFiles": 2,
+      "elapsedMs": 0,
+      "mode": "scan"
+    }
+  },
+  {
+    "name": "read-only-open",
+    "query": "trigram",
+    "options": {
+      "nowMs": 1791115200000
+    },
+    "out": {
+      "hits": [
+        {
+          "ts": "2026-10-04T12:00:00.000Z",
+          "role": "user",
+          "text": "please deploy the trigram index for korean search",
+          "matchField": "content",
+          "threadId": "019f0000-0000-7000-8000-00000000aaaa",
+          "title": "deploy trigram index",
+          "cwd": "/proj/alpha",
+          "gitBranch": "main",
+          "source": "main",
+          "file": "<HOME>/sessions/2026/10/04/rollout-2026-10-04T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl",
+          "score": 0.028587823063299003,
+          "context": []
+        },
+        {
+          "ts": "2026-10-04T12:00:00.000Z",
+          "role": "assistant",
+          "text": "deployed the trigram index; korean 한글 검색 works now",
+          "matchField": "content",
+          "threadId": "019f0000-0000-7000-8000-00000000aaaa",
+          "title": "deploy trigram index",
+          "cwd": "/proj/alpha",
+          "gitBranch": "main",
+          "source": "main",
+          "file": "<HOME>/sessions/2026/10/04/rollout-2026-10-04T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl",
+          "score": 0.02814902574950169,
+          "context": []
+        }
+      ],
+      "warnings": [
+        "index opened read-only (attempt to write a readonly database) — refresh skipped"
+      ],
+      "scannedFiles": 0,
+      "matchedFiles": 1,
+      "totalFiles": 4,
+      "elapsedMs": 0,
+      "mode": "index",
+      "index": {
+        "lastIngestAt": "<INGEST>",
+        "files": 4,
+        "sourceFiles": 4,
+        "staleFiles": 0,
+        "readOnly": true
+      }
+    }
+  }
+]

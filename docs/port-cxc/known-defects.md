@@ -775,3 +775,7 @@ The parser feeds a fail-closed memory write gate, so a destination the oracle mi
 ## CRW-523 — PABCD CLI verb adapters
 
 - Evidence has no help branch: `evidence help`, `-h` and `--help` are unknown-verb errors, and `evidence resolve --help` reports missing required arguments instead of displaying usage (source `plugins/codexclaw/components/pabcd-state/src/cli.ts:276-285`, `evidence-cli.ts:35-62`; four `cli-help__evidence__*` fixtures); port: kept.
+
+## Found by the CRW-381 recall chat-search entry port
+
+- The entry computes a positive-days cutoff before checking the empty plan or forced-scan flag, so an out-of-range value throws `Invalid time value` even for an empty query and before the origin callback (source `recall/src/chat-search.ts:159-164`, recorded `invalid-days` in `internal/recall/testdata/chatsearch/oracle.json`); port: kept.
