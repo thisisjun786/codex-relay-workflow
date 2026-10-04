@@ -863,3 +863,7 @@ Source: `plugins/codexclaw/components/pabcd-state/src/memory-write-gate.ts` at v
 - Round ordering accepts signed decimal prefixes with trailing junk and maps malformed or infinite ids to zero; beyond safe integer precision the next id can repeat the previous id (source `plugins/codexclaw/components/pabcd-state/src/review-round.ts:61-63` and `:98-99`); port: kept.
 - The CLI omits the required workspace argument when marking a round launching, so its lane has no stored workspaceRoot (source `plugins/codexclaw/components/pabcd-state/src/review-round-cli.ts:259`); port: kept.
 - Verdict normalization accepts non-ASCII spellings such as `paß`, `paſſ` and `GO-WITH-ﬁXES` because JavaScript uppercasing expands them into accepted verdict words (source `plugins/codexclaw/components/pabcd-state/src/review-round.ts:382-386`); port: kept.
+
+## Found by the SubagentStop evidence gate port
+
+- An internal gate error records `MAX_ATTEMPTS` in its terminal verdict regardless of the persisted counter, so an error before the first block looks like an exhausted budget (source `plugins/codexclaw/components/pabcd-state/src/subagent-evidence.ts:521-529`; `TestSubagentStopInternalErrorAndDirectPolicy` injects a failing environment read and observes attempts 3 with counter 0); port: kept.

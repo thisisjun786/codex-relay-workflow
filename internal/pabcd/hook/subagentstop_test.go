@@ -12,6 +12,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 )
 
@@ -309,5 +310,44 @@ func TestSubagentStopConcurrentTerminalVerdicts(t *testing.T) {
 	wg.Wait()
 	if entries := state.ReadState(cwd, "s1").UnverifiedSubagents; len(entries) != 2 {
 		t.Fatalf("lost verdict: %+v", entries)
+	}
+}
+
+func TestSubagentStopInternalErrorAndDirectPolicy(t *testing.T) {
+	cwd := subagentStopWorkspace(t)
+	p := hook.SubagentStopPayload{Cwd: cwd, SessionID: "s1", AgentType: "executor", AgentID: "a1"}
+	if out := hook.RunSubagentStopGate(p, func(string) string { return "off" }); out != "" {
+		t.Fatal(out)
+	}
+	if evidence.ReadAttempts(cwd, "s1", "a1", "") != 0 {
+		t.Fatal("disabled direct gate spent an attempt")
+	}
+	if out := hook.RunSubagentStopGate(p, func(string) string { panic("environment read failed") }); out != "" {
+		t.Fatal(out)
+	}
+	entries := state.ReadState(cwd, "s1").UnverifiedSubagents
+	if len(entries) != 1 || entries[0].Attempts != 3 || evidence.ReadAttempts(cwd, "s1", "a1", "") != 0 {
+		t.Fatalf("internal-error verdict: %+v", entries)
+	}
+	// The nested catch also releases when no record can be written (oracle :526-528).
+	p.Cwd = "\x00"
+	if out := hook.RunSubagentStopGate(p, nil); out != "" {
+		t.Fatal(out)
+	}
+}
+
+func TestSubagentStopOmittedFieldsAndObserverIsolation(t *testing.T) {
+	cwd := subagentStopWorkspace(t)
+	raw, _ := json.Marshal(map[string]any{"hook_event_name": "SubagentStop", "session_id": "s1", "cwd": cwd, "agent_type": "executor"})
+	var out, stderr bytes.Buffer
+	args := []string{"subagent-stop", "--leg", "subagent-stop-verifying-evidence"}
+	if code := harness.Hook(context.Background(), args, strings.NewReader(string(raw)), &out, &stderr, os.LookupEnv, harness.Legs()); code != 0 {
+		t.Fatal(code)
+	}
+	subagentStopBlock(t, out.String(), 1)
+	for _, leg := range harness.Legs() {
+		if leg.ID == "subagent-stop-observing-review" && leg.Handle != nil {
+			t.Fatal("observer was activated")
+		}
 	}
 }
