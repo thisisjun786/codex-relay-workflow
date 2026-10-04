@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"database/sql/driver"
 	"encoding/json"
+	"modernc.org/sqlite"
 	"os"
 	"path/filepath"
 	"strings"
@@ -92,5 +94,55 @@ func TestRecallHookComponentObservation(t *testing.T) {
 	})
 	if err != nil || found != 1 {
 		t.Fatalf("observations=%d err=%v", found, err)
+	}
+}
+
+func TestRecallHookSessionStartProduction(t *testing.T) {
+	for _, store := range []string{"available", "missing", "unreadable"} {
+		t.Run(store, func(t *testing.T) {
+			home := recallHookComponentHome(t)
+			if store == "available" {
+				var output, errs bytes.Buffer
+				if code := recall.Run([]string{"chat", "index", "--json"}, &output, &errs, time.Now()); code != 0 {
+					t.Fatalf("seed index %d %s", code, errs.String())
+				}
+				// The ingress must read a real store, not a precomputed test notice.
+				db, err := (&sqlite.Driver{}).Open(filepath.Join(home, "memories_1.sqlite"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, err = db.(driver.ExecerContext).ExecContext(context.Background(), "CREATE TABLE jobs(kind,status,retry_remaining,last_error,finished_at); INSERT INTO jobs VALUES ('stage1','error',0,'capacity',NULL)", nil)
+				closeErr := db.Close()
+				if err != nil || closeErr != nil {
+					t.Fatalf("seed memory %v %v", err, closeErr)
+				}
+			}
+			if store == "unreadable" {
+				if err := os.Mkdir(filepath.Join(home, "memories_1.sqlite"), 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.MkdirAll(filepath.Join(home, "recall", "index.sqlite"), 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var out bytes.Buffer
+			raw := `{"hook_event_name":"SessionStart","cwd":"","source":"resume"}`
+			claimed, code := runComponentHook(invocation{ctx: context.Background(), args: []string{"session-start", "--leg", "session-start-injecting-recall-context"}, stdout: &out}, strings.NewReader(raw), componentHooks())
+			if !claimed || code != 0 || !strings.Contains(out.String(), "resumed after a pause") {
+				t.Fatalf("%s %v %d %q", store, claimed, code, out.String())
+			}
+			if (strings.Contains(out.String(), "Index: 0 files")) != (store == "available") {
+				t.Fatal(out.String())
+			}
+			if (strings.Contains(out.String(), "1 job(s) exhausted")) != (store == "available") {
+				t.Fatal(out.String())
+			}
+			if store == "available" && strings.Index(out.String(), "1 job(s) exhausted") > strings.Index(out.String(), "recall is available") {
+				t.Fatal("notice order")
+			}
+			if err := recall.AssertLegalHookResult(recall.HookResult{Stdout: out.String(), Code: code}); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
