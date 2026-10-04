@@ -183,7 +183,14 @@ profiles for the child role admits a child only when its request states one of t
 and `mcp_profile_unknown` refuse at the preflight, before any thread exists, so such a child's record always
 states its profile. A request that states a profile for a role that declares none is refused as
 `mcp_profile_unknown`; a request that states none is unchanged. `send_message_to_thread` applies a
-profile only when `expected_settings.mcp_profile` names one, and a send that names none resumes as before.
+profile only when `expected_settings.mcp_profile` names one. A `notLoaded` send that names none is refused
+before resume as `execution_setting_missing` when the stated role declares profiles, or the role is
+omitted and the child role declares profiles. The bridge cannot read the relay record, so it neither
+guesses the released profile nor applies a default. State the actual recipient role and its released
+`child.settings.mcpProfile` in a NEW request id, or use relay delivery; the existing pair guard still
+applies, including for roles with several pairs. This conservative guard also refuses unnamed non-child
+threads on a child-profile host. A declared role without profiles, or an `idle` send naming none, keeps
+the previous behavior. A caller's wrong but declared profile cannot be checked against the relay record.
 Sub-agents inherit the overrides of the thread that spawns them, so one profile covers a child and its
 sub-threads.
 
@@ -197,10 +204,16 @@ message as `settings_not_preserved` on the field `mcpServers` (the code a settin
 because something was sent) and an unreadable list is `setting_unobservable`. A profile the host cannot
 resolve, or whose reads are lost, is refused before anything is sent, as `not_attempted` and retry-safe. A later
 record of the child's settings that states no profile keeps the recorded one. A resume of a thread the host
-already has loaded ignores the overrides.
+already has loaded ignores the overrides. An `idle` recipient's `settings_not_preserved` finding on
+`mcpServers` includes recovery under its record, even when another mismatch appears first. Only after a
+completed durable turn and confirmation of a resumable rollout, release all subscriptions and observe
+`thread/read` reporting `notLoaded`; another client's subscription can retain it, and the host decides
+when it unloads. An operator can use `thread/archive` then `thread/unarchive` if it remains loaded. The
+next relay delivery sends the recorded profile again. Never unload a never-run root. This is advice in
+the relay's detail, not automatic recovery; the bridge's own loaded-settings refusal remains generic.
 
 Not covered yet. `create_worktree_thread` sends no overrides, and `create_thread` has no input to name a
-profile. A thread created outside managed start, or before a policy declared profiles, resumes under what
+profile. A thread created outside managed start, or before a policy declared profiles, is resumed by the relay under what
 its record states: no default is applied on a resume, so a record with no profile keeps the whole bundle.
 A server added to config.toml between the host's `config/read` and `thread/start` is neither switched off
 nor flagged.
@@ -317,6 +330,7 @@ That is the habit the incident was made of.
 | Code | What happened | What to do |
 | --- | --- | --- |
 | `execution_setting_missing` / `execution_setting_invalid` | the model or the effort was absent or blank | state both; no host default is ever inherited |
+| `execution_setting_missing` in a failed send receipt | a `notLoaded` recipient has no stated MCP profile and its declared role has profiles, or an unnamed recipient could be a profiled child | use a NEW request id with the actual role and released `expected_settings.mcp_profile`, or relay delivery; no resume or turn was sent |
 | `execution_role_unknown` | a role was cited that this host's policy does not declare | declare it in the host's execution policy; there is no fallback pair |
 | `execution_role_mismatch` | the stated pair is not one of that role's pairs | state a pair the policy declares for the role; a role with several lists them all in the refusal |
 | `execution_exception_out_of_scope` | the exception does not cover this directory, or its role and the cited role disagree | cite an exception written for this role and directory |
@@ -325,8 +339,9 @@ That is the habit the incident was made of.
 | `settings_record_stale_for_role` | the recorded authorization is not one of the role's current pairs | re-record it from a user-attributed source |
 
 Every refusal above is decided before any call that costs inference. A creation or resume refused
-for one of the first four reasons issues no RPC at all, leaves no ledger row, and for the worktree
-path leaves no worktree.
+for a missing/invalid pair, unknown/mismatched role or out-of-scope exception issues no RPC at all,
+leaves no ledger row, and for the worktree path leaves no worktree. The missing-profile send guard
+instead reads the thread and records a failed receipt with `delivery: not_delivered`, before any resume.
 
 ## Activation
 
@@ -453,10 +468,11 @@ reads no binding and does not load a thread without transmitting.
 
 This guard is only as good as what the sender says, and the bridge is explicit about where that
 stops. It reads no scope binding, so on a send that names no role it cannot tell an unnamed
-supervisor from a task that has no role at all, and refusing both would stop unrelated work on
-every host that declared a role for something else. The relay resolves the recipient's role from
-its binding and owns that refusal. A send through the bridge naming no role is therefore not
-covered by this guard, and that is a boundary rather than an oversight.
+supervisor from a task that has no role at all. The relay resolves the recipient's role from
+its binding and owns that pair refusal. A send through the bridge naming no role is therefore not
+covered by this pair guard. The separate missing-MCP-profile guard conservatively refuses that
+unnamed `notLoaded` send when the child role declares profiles, since it could load a profiled child
+under other servers. Identify a non-child's actual declared role; the bridge still verifies no binding.
 
 An unsupported transition is recorded as what it is — the host reported the old pair, no turn was
 started, applying it needs the UI action — and no guard is bypassed to make it look applied.
