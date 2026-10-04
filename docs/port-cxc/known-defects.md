@@ -673,3 +673,10 @@ The pinned oracle already publishes through an exclusive 0600 temporary file and
 
 - Plain session output coerces the bound source identity to `[object Object]`, hiding its fields (pabcd-state/src/session-cli.ts:118 at v0.2.40); port: kept.
 - Native-database read failures still suggest checking Node SQLite support, even though the port uses Go SQLite and needs no Node at runtime (pabcd-state/src/session-binding.ts:108 at v0.2.40); port: kept.
+
+## CRW-528 — Helper role MCP tool library
+
+- `catalog_list` does not catch a catalog read rejection, so the stdio queue swallows it without a tool reply (source `subagent-config/src/mcp.ts:148-152,198`); port: kept, the library returns that error to its caller; home-resolution failure is source-reviewed only under the required isolated-home tests.
+- A non-object tool argument is accepted by `subagents_get` as having no scope, while `subagents_set` refuses the same value as a missing body (source `subagent-config/src/mcp.ts:130,134,141`); port: kept; the existing global-only settings API defaults absent scope to global, an inherited decision 7 difference explicitly applied only to the recorded argument-shape get expectations.
+- The five-second get probe does not cancel a late catalog read, which can still publish its cache after the timeout answer (source `subagent-config/src/mcp.ts:135-139`); port: kept.
+- The retained tool descriptions and schemas advertise project scope although the absorbed settings API supports global scope only (source `subagent-config/src/mcp.ts:38-39,48`); port: kept as metadata; project calls are refused by the existing settings API and no project store is restored.

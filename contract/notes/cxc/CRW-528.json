@@ -1,0 +1,20 @@
+{
+  "issue": "CRW-528",
+  "pending": [
+    "mcp__subagent-config__catalog_list_native_unavailable",
+    "mcp__subagent-config__catalog_list_native_when_ocx_absent",
+    "mcp__subagent-config__catalog_list_ocx_failure_unavailable",
+    "mcp__subagent-config__catalog_list_ocx_scripted",
+    "mcp__subagent-config__catalog_list_reads_codex_models_cache_path",
+    "mcp__subagent-config__initialize_and_tools_list",
+    "mcp__subagent-config__ping_unknown_method_and_garbage",
+    "mcp__subagent-config__subagents_get_native_catalog_stale_model",
+    "mcp__subagent-config__subagents_get_native_catalog_too_old",
+    "mcp__subagent-config__subagents_get_ocx_catalog_stale_model",
+    "mcp__subagent-config__subagents_set_get_roundtrip_global",
+    "mcp__subagent-config__subagents_set_inherit_resets_role",
+    "mcp__subagent-config__subagents_set_refusals"
+  ],
+  "identical": [],
+  "intentionally-changed": []
+}
