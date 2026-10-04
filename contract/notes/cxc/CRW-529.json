@@ -1,0 +1,18 @@
+{
+  "issue": "CRW-529",
+  "pending": [
+    "cli__subagents__dispatch_claim_fail_handoff",
+    "cli__subagents__dispatch_created_complete",
+    "cli__subagents__dispatch_failure_outcomes",
+    "cli__subagents__dispatch_held_lock_fails_closed",
+    "cli__subagents__dispatch_reconciled_then_task_failure",
+    "cli__subagents__dispatch_refusals",
+    "cli__subagents__dispatch_start_and_status",
+    "cli__subagents__dispatch_task_failed_to_main_direct",
+    "hook__pre-tool-use-attaching-skills__managed_dispatch_marker_issues_once",
+    "hook__pre-tool-use-attaching-skills__managed_dispatch_refusals",
+    "hook__pre-tool-use-attaching-skills__managed_fallback_candidate_null_effort"
+  ],
+  "identical": [],
+  "intentionally-changed": []
+}

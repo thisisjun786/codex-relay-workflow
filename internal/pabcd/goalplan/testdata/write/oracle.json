@@ -1,0 +1,278 @@
+{
+  "directoryMode": {
+    "mode": "0300",
+    "accepted": true,
+    "files": [
+      "goalplan.json",
+      "ledger.jsonl"
+    ]
+  },
+  "oracle": "CXC v0.2.40, commit 3c1459ac",
+  "builds": [
+    {
+      "id": "default",
+      "oracle": {
+        "objective": "Hello, World!!",
+        "slug": "hello-world",
+        "schemaVersion": 1,
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        }
+      }
+    },
+    {
+      "id": "zero",
+      "oracle": {
+        "objective": "Hello, World!!",
+        "slug": "hello-world",
+        "schemaVersion": 1,
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        }
+      }
+    },
+    {
+      "id": "negative",
+      "oracle": {
+        "objective": "Hello, World!!",
+        "slug": "hello-world",
+        "schemaVersion": 1,
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        }
+      }
+    },
+    {
+      "id": "nan",
+      "oracle": {
+        "objective": "Hello, World!!",
+        "slug": "hello-world",
+        "schemaVersion": 1,
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        }
+      }
+    },
+    {
+      "id": "inf",
+      "oracle": {
+        "objective": "Hello, World!!",
+        "slug": "hello-world",
+        "schemaVersion": 1,
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        }
+      }
+    },
+    {
+      "id": "negative-inf",
+      "oracle": {
+        "objective": "Hello, World!!",
+        "slug": "hello-world",
+        "schemaVersion": 1,
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        }
+      }
+    },
+    {
+      "id": "two",
+      "oracle": {
+        "objective": "Hello, World!!",
+        "slug": "hello-world",
+        "schemaVersion": 2,
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        }
+      }
+    },
+    {
+      "id": "fraction",
+      "oracle": {
+        "objective": "Hello, World!!",
+        "slug": "hello-world",
+        "schemaVersion": 2,
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        }
+      }
+    },
+    {
+      "id": "three",
+      "oracle": {
+        "objective": "Hello, World!!",
+        "slug": "hello-world",
+        "schemaVersion": 3,
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        }
+      }
+    },
+    {
+      "id": "future",
+      "oracle": {
+        "objective": "Hello, World!!",
+        "slug": "hello-world",
+        "schemaVersion": 3,
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        }
+      }
+    },
+    {
+      "id": "criteria-host",
+      "oracle": {
+        "objective": "Ship & <export>  \\u2028",
+        "slug": "ship-export-u2028",
+        "schemaVersion": 1,
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [
+          {
+            "id": "c-1",
+            "scenario": "CSV export works",
+            "surface": "logic",
+            "expectedEvidence": "",
+            "capturedEvidence": null,
+            "status": "open"
+          },
+          {
+            "id": "c-2",
+            "scenario": "Native shell",
+            "surface": "desktop",
+            "presented": "native",
+            "expectedEvidence": "screen",
+            "capturedEvidence": null,
+            "status": "open"
+          },
+          {
+            "id": "c-3",
+            "scenario": "empty surface",
+            "surface": "",
+            "expectedEvidence": "",
+            "capturedEvidence": null,
+            "status": "open"
+          }
+        ],
+        "host": {
+          "armed": true,
+          "armedAt": "2025-12-31T00:00:00.000Z",
+          "source": "freeze"
+        }
+      }
+    }
+  ],
+  "unterminated": {
+    "first": {
+      "ts": "t1",
+      "slug": "led",
+      "event": "created",
+      "detail": "a"
+    },
+    "second": {
+      "ts": "t2",
+      "slug": "led",
+      "event": "task_done",
+      "detail": "b"
+    },
+    "oracle": "{\"ts\":\"t1\",\"slug\":\"led\",\"event\":\"created\",\"detail\":\"a\"}{\"ts\":\"t2\",\"slug\":\"led\",\"event\":\"task_done\",\"detail\":\"b\"}\n",
+    "classification": "intentionally-changed",
+    "reason": "The appended record fuses with the unterminated final record; both become invalid JSONL and are lost."
+  },
+  "security": [
+    {
+      "id": "after-check-write",
+      "accepted": true,
+      "error": "",
+      "outside": [
+        "safe",
+        "safe/goalplan.json"
+      ],
+      "classification": "intentionally-changed",
+      "reason": "Security: path replacement after the check directs the oracle write outside the workspace; descriptor-bound no-follow writes refuse it."
+    },
+    {
+      "id": "after-check-append",
+      "accepted": true,
+      "error": "",
+      "outside": [
+        "safe",
+        "safe/ledger.jsonl"
+      ],
+      "classification": "intentionally-changed",
+      "reason": "Security: path replacement after the check directs the oracle write outside the workspace; descriptor-bound no-follow writes refuse it."
+    }
+  ]
+}
