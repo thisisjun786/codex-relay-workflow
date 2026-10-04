@@ -60,6 +60,7 @@ func TestMemoryGateRefusesToRewriteARecordTheReaderChanged(t *testing.T) {
 		"a long receipt after a short one":      append(memoryRecordsOf(1, nil), memoryRecordsOf(1, long)...),
 		"attempts as text":                      memoryRecordsOf(1, func(i int, m map[string]any) { m["attempts"] = "3" }),
 		"attempts a float64 cannot hold":        memoryRecordsOf(1, func(i int, m map[string]any) { m["attempts"] = json.Number("9007199254740993") }),
+		"attempts printed as another number":    memoryRecordsOf(1, func(i int, m map[string]any) { m["attempts"] = json.Number("1000000000000000128") }),
 		"one record more than the reader keeps": memoryRecordsOf(state.MaxUnverifiedSubagents+1, nil),
 		"an entry the reader drops":             append(memoryRecordsOf(1, nil), "not a record"),
 		"a record without its recorded time":    []any{map[string]any{"agentId": "a"}},
@@ -89,11 +90,12 @@ func TestMemoryGateSpendsOverRecordsTheReaderKeepsWhole(t *testing.T) {
 		m["attempts"] = json.Number("3.0")
 	}
 	for name, list := range map[string]any{
-		"records with every field":    memoryRecordsOf(2, nil),
-		"a receipt of 256 characters": memoryRecordsOf(1, edge),
-		"the most records kept":       memoryRecordsOf(state.MaxUnverifiedSubagents, nil),
-		"records with a field absent": []any{map[string]any{"agentId": "a", "recordedAt": "t"}},
-		"no records":                  []any{},
+		"records with every field":                  memoryRecordsOf(2, nil),
+		"a receipt of 256 characters":               memoryRecordsOf(1, edge),
+		"attempts as the writer prints a large one": memoryRecordsOf(1, func(i int, m map[string]any) { m["attempts"] = json.Number("1000000000000000100") }),
+		"the most records kept":                     memoryRecordsOf(state.MaxUnverifiedSubagents, nil),
+		"records with a field absent":               []any{map[string]any{"agentId": "a", "recordedAt": "t"}},
+		"no records":                                []any{},
 	} {
 		for _, kind := range []string{"grant", "marker"} {
 			t.Run(name+"/"+kind, func(t *testing.T) {

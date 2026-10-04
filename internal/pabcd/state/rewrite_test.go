@@ -1,6 +1,7 @@
 package state
 
 import (
+	"math"
 	"strconv"
 	"strings"
 	"testing"
@@ -62,6 +63,12 @@ func TestRewriteKeepsUnverifiedJudgesEveryHandledField(t *testing.T) {
 		{"attempts a float64 cannot hold", rewriteFile("[" + rewriteRecord(`,"attempts":9007199254740993`) + "]"), false},
 		{"attempts below a float64", rewriteFile("[" + rewriteRecord(`,"attempts":1e-400`) + "]"), false},
 		{"attempts as a very long token", rewriteFile("[" + rewriteRecord(`,"attempts":0.`+strings.Repeat("0", 70)) + "]"), false},
+		{"attempts printed in the shortest form", rewriteFile("[" + rewriteRecord(`,"attempts":1000000000000000100`) + "]"), true},
+		{"attempts printed with an exponent", rewriteFile("[" + rewriteRecord(`,"attempts":1e+23`) + "]"), true},
+		{"the largest attempts a double holds", rewriteFile("[" + rewriteRecord(`,"attempts":1.7976931348623157e+308`) + "]"), true},
+		{"attempts the writer prints as another number", rewriteFile("[" + rewriteRecord(`,"attempts":1000000000000000128`) + "]"), false},
+		{"attempts the writer prints with an exponent", rewriteFile("[" + rewriteRecord(`,"attempts":99999999999999991611392`) + "]"), false},
+		{"attempts with a very large exponent", rewriteFile("[" + rewriteRecord(`,"attempts":1e1000000`) + "]"), false},
 		{"resolvable false", rewriteFile("[" + rewriteRecord(`,"resolvable":false`) + "]"), true},
 		{"null resolvable", rewriteFile("[" + rewriteRecord(`,"resolvable":null`) + "]"), true},
 		{"resolvable as text", rewriteFile("[" + rewriteRecord(`,"resolvable":"no"`) + "]"), false},
@@ -106,5 +113,22 @@ func TestRewriteKeepsUnverifiedAgainstWhatTheCallerHolds(t *testing.T) {
 				t.Errorf("RewriteKeepsUnverified = %v, want %v", got, c.keeps)
 			}
 		})
+	}
+}
+
+// What WriteState prints for any attempts the reader can hold is kept: the guard never refuses the writer's own output.
+func TestRewriteKeepsWhatTheWriterWrites(t *testing.T) {
+	for _, attempts := range []float64{0, 3, 1e15, 9007199254740992, 1000000000000000128, 1e23, math.MaxFloat64} {
+		s := DefaultState("s1", "")
+		s.Phase = PhaseB
+		s.UnverifiedSubagents = []UnverifiedSubagent{{AgentID: "a", RecordedAt: "t", Attempts: attempts, Resolvable: true}}
+		raw, err := Encode(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		back, unreadable := restore("s1", raw, time.Now())
+		if unreadable || !RewriteKeepsUnverified(raw, back.UnverifiedSubagents) || back.UnverifiedSubagents[0].Attempts != attempts {
+			t.Errorf("attempts %v: the writer's own record is refused or changed: %s", attempts, raw)
+		}
 	}
 }

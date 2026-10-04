@@ -35,6 +35,7 @@ var cliRecordsTheReaderChanges = map[string]func(m map[string]any){
 	"a receipt cut inside an astral char": func(m map[string]any) { m["receiptClaimed"] = strings.Repeat("r", 255) + "\U0001F600b" },
 	"attempts as text":                    func(m map[string]any) { m["attempts"] = "3" },
 	"attempts a float64 cannot hold":      func(m map[string]any) { m["attempts"] = json.Number("9007199254740993") },
+	"attempts printed as another number":  func(m map[string]any) { m["attempts"] = json.Number("1000000000000000128") },
 }
 
 // The three commands that write a rebuilt state back share cliVerdictsIntact, so a stored record the reader would cut or
