@@ -1,0 +1,6 @@
+interface:
+  display_name: "crw-dev-security"
+  short_description: "Security router for auth, validation, secrets, supply chain, and hardening."
+  default_prompt: "Use $crw-dev-security to guide this task and verify its result."
+policy:
+  allow_implicit_invocation: false

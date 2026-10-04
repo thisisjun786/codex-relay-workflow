@@ -4,6 +4,7 @@ import (
 	"context"
 	"slices"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
@@ -17,6 +18,9 @@ type CreateWorktree struct {
 }
 
 func (b *Bridge) CreateWorktreeThread(ctx context.Context, in CreateWorktree) (ledger.Receipt, error) {
+	var watch *appserver.TurnWatch
+	var result ledger.Receipt
+	defer func() { finishSubscription(watch, result, true) }()
 	if in.Mode != "bridge-managed-retained" {
 		return nil, &Invalid{"Explicit bridge-managed-retained worktree ownership is required"}
 	}
@@ -71,7 +75,7 @@ func (b *Bridge) CreateWorktreeThread(ctx context.Context, in CreateWorktree) (l
 		contract = settings.Contract{Sandbox: in.Sandbox, ExpectedPolicy: in.Policy, Model: auth.Model, ReasoningEffort: auth.Effort}
 		return contract.Validate()
 	}
-	return b.mutate(ctx, mutation{in.RequestID, "create_worktree_thread", params, validate, func(ctx context.Context, receipt ledger.Receipt, effects *[]string) error {
+	result, err := b.mutate(ctx, mutation{in.RequestID, "create_worktree_thread", params, validate, func(ctx context.Context, receipt ledger.Receipt, effects *[]string) error {
 		checkpoint := func(phase string) error {
 			receipt["phase"] = phase
 			_, err := b.Ledger.Save(context.WithoutCancel(ctx), receipt)
@@ -158,6 +162,9 @@ func (b *Bridge) CreateWorktreeThread(ctx context.Context, in CreateWorktree) (l
 			return err
 		}
 		threadID := id(created, "thread")
+		if watch, err = b.watchSubscription(ctx, threadID, true); err != nil {
+			return err
+		}
 		placed := settings.Contract{CWD: w.Destination, Sandbox: in.Sandbox, ExpectedPolicy: in.Policy, Model: auth.Model, ReasoningEffort: auth.Effort, Roots: []string{w.Destination}}
 		receipt["threadId"] = threadID
 		receipt["permissionReceipt"] = map[string]any{"approvalPolicy": created["approvalPolicy"], "sandbox": created["sandbox"], "activePermissionProfile": created["activePermissionProfile"], "runtimeWorkspaceRoots": created["runtimeWorkspaceRoots"]}
@@ -229,6 +236,7 @@ func (b *Bridge) CreateWorktreeThread(ctx context.Context, in CreateWorktree) (l
 			receipt["initialPrompt"] = map[string]any{"state": "rejected"}
 		}
 	}})
+	return result, err
 }
 
 const worktreeRecovery = "Inspect this receipt, the destination and Git worktree list, and backend/Desktop tasks before manual recovery. Retain all artifacts; do not retry with a new request ID. Unknown thread/turn outcomes need reconciliation."

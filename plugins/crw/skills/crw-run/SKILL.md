@@ -559,16 +559,26 @@ owns what the row holds and why it lives here and not in the relay; this is the 
 2. Take the tags and the bundle from the line, and quote the line, with its own source, in the row. The row's
    source is the step that decided at release: `issue body` where the line already stated the pair and you
    follow it, `user choice` for a choice written onto the line now, `table` for an issue you routed because it
-   had no line or for a move under When SOL fails that you apply at this release, `quota` reserved. A line in the older form states no tags: classify the issue by the
+   had no line or for a provider-failure table move applied at this release, `quota` when a readable snapshot
+   decided the pair. A line in the older form states no tags: classify the issue by the
    [tags](../crw-plan/references/integrations.md#classify-the-issue-by-its-kind-of-work), take the bundle from
    the [Bundles rows](../crw-plan/references/integrations.md#bundles), mark the row `derived at release` and
    leave the line as it is. The pair the line names stands (precedence): where the derived bundle names the
    other family, the row says so and the issue is released on the line's pair. A tag the issue does not settle
    is left blank in the row with the reason, and a blank tag never holds the release.
-3. For a flexible issue whose line the parent writes itself, choose the pair by the count rule under
-   [Bundles](../crw-plan/references/integrations.md#bundles) and put the counts in the row. A flexible issue
-   whose line already names a pair keeps it; nothing here re-chooses it from quota, which is
-   [a later rule](../crw-plan/references/integrations.md#the-place-for-a-quota-rule).
+3. Run `crw skill pair-choice choose [--snapshot quota.json] [request.json]` using the bundle, line
+   pair/source, `as_of`, working/project counts, tie pick, and one release row per flexible issue in the
+   routing window, as [The place for a quota rule](../crw-plan/references/integrations.md#the-place-for-a-quota-rule)
+   defines. No snapshot producer is approved: until a cache-only OCX projection exists, omit `--snapshot`
+   and record the table default with `quota.readable: false` and reason `no_snapshot_producer`. Never run
+   a live OCX quota command or rebuild membership from operating files for this step. A supplied approved
+   `crw-pair-quota/1` snapshot enables the quota rule; the command itself only reads the supplied inputs.
+   Read its JSON `pair`, `source`, `rule`, `default_pair`, `quota`, `window`, `limits` and any cause/date or
+   classification reason. Exit 1 holds release; correct a request/output failure before dispatch. Record
+   the full report beside the row, including read values or unreadable reason. Serialize choice and row
+   recording so counts stay current. Extended flexible table/quota lines can change: write the result
+   and read it back before the packet, retaining tags/bundle and using source quota only when quota
+   decided. Legacy/user choices keep their precedence; fixed-provider failures keep cause/date evidence.
 4. Decide the pair (steps 1 to 3) before the first packet is written, and write the row once the request id
    exists: the fields of [The record at release](../crw-plan/references/integrations.md#the-record-at-release),
    naming the family while the model and the effort stay in the launch record's settings entry, read from the
