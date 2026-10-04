@@ -673,3 +673,24 @@ The pinned oracle already publishes through an exclusive 0600 temporary file and
 
 - Plain session output coerces the bound source identity to `[object Object]`, hiding its fields (pabcd-state/src/session-cli.ts:118 at v0.2.40); port: kept.
 - Native-database read failures still suggest checking Node SQLite support, even though the port uses Go SQLite and needs no Node at runtime (pabcd-state/src/session-binding.ts:108 at v0.2.40); port: kept.
+
+## CRW-528 — Helper role MCP tool library
+
+- `catalog_list` does not catch a catalog read rejection, so the stdio queue swallows it without a tool reply (source `subagent-config/src/mcp.ts:148-152,198`); port: kept, the library returns that error to its caller; home-resolution failure is source-reviewed only under the required isolated-home tests.
+- A non-object tool argument is accepted by `subagents_get` as having no scope, while `subagents_set` refuses the same value as a missing body (source `subagent-config/src/mcp.ts:130,134,141`); port: kept; the existing global-only settings API defaults absent scope to global, an inherited decision 7 difference explicitly applied only to the recorded argument-shape get expectations.
+- The five-second get probe does not cancel a late catalog read, which can still publish its cache after the timeout answer (source `subagent-config/src/mcp.ts:135-139`); port: kept.
+- The retained tool descriptions and schemas advertise project scope although the absorbed settings API supports global scope only (source `subagent-config/src/mcp.ts:38-39,48`); port: kept as metadata; project calls are refused by the existing settings API and no project store is restored.
+
+## CRW-531 — multi_agent_v2 settings library
+
+- Inline detection matches `not_enabled = true` and the prefix `enabled = trueish`, while table/scalar forms require a complete boolean (source `config-guard/src/multi-agent-v2.ts:55-58,77-80`; `TestMultiAgentV2OracleGrammar`); port: kept.
+- Read-only detection treats headers and enabled-like lines inside multiline strings as configuration, and a nested table without `enabled` shadows a scalar flag (source `config-guard/src/toml-edit.ts:52-69`, `multi-agent-v2.ts:68-71`; `TestMultiAgentV2OracleGrammar`); port: kept.
+- A successful runner call reports `changed: true` even when the resulting config is absent or the flag stayed disabled (source `config-guard/src/multi-agent-v2.ts:100-118`; `TestMultiAgentV2RunnerOutcomes`); port: kept.
+- Read failures are swallowed before mutation, so the runner can replace settings without a readable pre-image; repair writes truncate in place (source `config-guard/src/multi-agent-v2.ts:46-53,94-109`; `TestMultiAgentV2UnreadableRefused`, `TestMultiAgentV2AtomicRepair`); port: fixed (data loss: intentionally-changed mutation cases refuse unreadable pre/post images and reuse fsynced temporary-file/rename publication; pure status reads retain the oracle's v1 fallback).
+- Tuning-table repair trims multiline string payloads, removes comment/enabled-like payload lines and compresses blank lines in post-file strings (source `config-guard/src/activate.ts:173-192`, `multi-agent-v2.ts:108-109`; `TestMultiAgentV2MultilineSettingsPreserved`); port: fixed (data loss: intentionally-changed repair shields whole pre/post multiline blocks and restores their exact value bytes before publication).
+
+## Found by the CRW-526 recall memory trim port
+
+- Equal score/date hits compare as -1 in both directions, so the ranking depends on V8's comparison schedule rather than a consistent ordering (source recall/src/memory-search.ts:222-225; tie grids in TestRankAndTrimNodeOracle); port: kept.
+- NaN scores compare unequal even to themselves and produce NaN differences, which V8 treats as zero; mixing these with the nonzero tie comparator makes ranking implementation-dependent (source recall/src/memory-search.ts:223-225; mixed grids in TestRankAndTrimNodeOracle); port: kept.
+- The limit is checked after appending, so a nonpositive limit returns one hit from nonempty candidates rather than none (source recall/src/memory-search.ts:232-233; cap-limit grids in TestRankAndTrimNodeOracle); port: kept.
