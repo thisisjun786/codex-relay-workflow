@@ -1,0 +1,2096 @@
+{
+  "transient": [
+    "capacity",
+    "incomplete-response",
+    "stream-closed",
+    "unknown",
+    "other"
+  ],
+  "cases": [
+    {
+      "id": "dry",
+      "sql": [
+        "CREATE TABLE jobs (kind TEXT, job_key TEXT, status TEXT, retry_remaining INTEGER, retry_at INTEGER, last_error TEXT, input_watermark INTEGER, last_success_watermark INTEGER)",
+        "INSERT INTO jobs VALUES ('memory_stage1','a','error',0,999,'stream closed early',10,5)",
+        "INSERT INTO jobs VALUES ('memory_stage1','b','error',0,999,'context window exceeded',10,5)"
+      ],
+      "result": {
+        "state": "ok",
+        "detail": "",
+        "storePath": "<HOME>/memories_1.sqlite",
+        "applied": false,
+        "selected": [
+          {
+            "kind": "memory_stage1",
+            "jobKey": "a",
+            "cause": "stream-closed"
+          }
+        ],
+        "skippedByCause": {
+          "context-window": 1
+        },
+        "changed": 0,
+        "retries": 3
+      },
+      "text": "memory requeue: <HOME>/memories_1.sqlite\n  selected: 1 [stream-closed=1]\n  left alone: context-window=1\n    context-window failures repeat unless the extraction input changes; --include-context-window overrides\n  dry run — nothing written (pass --apply)\n",
+      "snapshotSQL": "SELECT *, typeof(retry_remaining) AS retry_type FROM jobs ORDER BY rowid",
+      "rows": [
+        {
+          "kind": "memory_stage1",
+          "job_key": "a",
+          "status": "error",
+          "retry_remaining": 0,
+          "retry_at": 999,
+          "last_error": "stream closed early",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        },
+        {
+          "kind": "memory_stage1",
+          "job_key": "b",
+          "status": "error",
+          "retry_remaining": 0,
+          "retry_at": 999,
+          "last_error": "context window exceeded",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        }
+      ]
+    },
+    {
+      "id": "apply",
+      "sql": [
+        "CREATE TABLE jobs (kind TEXT, job_key TEXT, status TEXT, retry_remaining INTEGER, retry_at INTEGER, last_error TEXT, input_watermark INTEGER, last_success_watermark INTEGER)",
+        "INSERT INTO jobs VALUES ('memory_stage1','a','error',0,999,'429 rate limit',10,5)"
+      ],
+      "options": {
+        "apply": true,
+        "retries": 2
+      },
+      "result": {
+        "state": "ok",
+        "detail": "",
+        "storePath": "<HOME>/memories_1.sqlite",
+        "applied": true,
+        "selected": [
+          {
+            "kind": "memory_stage1",
+            "jobKey": "a",
+            "cause": "capacity"
+          }
+        ],
+        "skippedByCause": {},
+        "changed": 1,
+        "retries": 2
+      },
+      "text": "memory requeue: <HOME>/memories_1.sqlite\n  selected: 1 [capacity=1]\n  applied: 1 row(s) given 2 retries\n",
+      "snapshotSQL": "SELECT *, typeof(retry_remaining) AS retry_type FROM jobs ORDER BY rowid",
+      "rows": [
+        {
+          "kind": "memory_stage1",
+          "job_key": "a",
+          "status": "error",
+          "retry_remaining": 2,
+          "retry_at": null,
+          "last_error": "429 rate limit",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        }
+      ]
+    },
+    {
+      "id": "context-default",
+      "sql": [
+        "CREATE TABLE jobs (kind TEXT, job_key TEXT, status TEXT, retry_remaining INTEGER, retry_at INTEGER, last_error TEXT, input_watermark INTEGER, last_success_watermark INTEGER)",
+        "INSERT INTO jobs VALUES ('memory_stage1','a','error',0,999,'context window exceeded',10,5)"
+      ],
+      "result": {
+        "state": "ok",
+        "detail": "",
+        "storePath": "<HOME>/memories_1.sqlite",
+        "applied": false,
+        "selected": [],
+        "skippedByCause": {
+          "context-window": 1
+        },
+        "changed": 0,
+        "retries": 3
+      },
+      "text": "memory requeue: <HOME>/memories_1.sqlite\n  selected: 0\n  left alone: context-window=1\n    context-window failures repeat unless the extraction input changes; --include-context-window overrides\n  dry run — nothing written (pass --apply)\n",
+      "snapshotSQL": "SELECT *, typeof(retry_remaining) AS retry_type FROM jobs ORDER BY rowid",
+      "rows": [
+        {
+          "kind": "memory_stage1",
+          "job_key": "a",
+          "status": "error",
+          "retry_remaining": 0,
+          "retry_at": 999,
+          "last_error": "context window exceeded",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        }
+      ]
+    },
+    {
+      "id": "context-opt-in",
+      "sql": [
+        "CREATE TABLE jobs (kind TEXT, job_key TEXT, status TEXT, retry_remaining INTEGER, retry_at INTEGER, last_error TEXT, input_watermark INTEGER, last_success_watermark INTEGER)",
+        "INSERT INTO jobs VALUES ('memory_stage1','a','error',0,999,'stream closed early',10,5)",
+        "INSERT INTO jobs VALUES ('memory_stage1','b','error',0,999,'context window exceeded',10,5)"
+      ],
+      "options": {
+        "includeContextWindow": true
+      },
+      "result": {
+        "state": "ok",
+        "detail": "",
+        "storePath": "<HOME>/memories_1.sqlite",
+        "applied": false,
+        "selected": [
+          {
+            "kind": "memory_stage1",
+            "jobKey": "a",
+            "cause": "stream-closed"
+          },
+          {
+            "kind": "memory_stage1",
+            "jobKey": "b",
+            "cause": "context-window"
+          }
+        ],
+        "skippedByCause": {},
+        "changed": 0,
+        "retries": 3
+      },
+      "text": "memory requeue: <HOME>/memories_1.sqlite\n  selected: 2 [stream-closed=1, context-window=1]\n  dry run — nothing written (pass --apply)\n",
+      "snapshotSQL": "SELECT *, typeof(retry_remaining) AS retry_type FROM jobs ORDER BY rowid",
+      "rows": [
+        {
+          "kind": "memory_stage1",
+          "job_key": "a",
+          "status": "error",
+          "retry_remaining": 0,
+          "retry_at": 999,
+          "last_error": "stream closed early",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        },
+        {
+          "kind": "memory_stage1",
+          "job_key": "b",
+          "status": "error",
+          "retry_remaining": 0,
+          "retry_at": 999,
+          "last_error": "context window exceeded",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        }
+      ]
+    },
+    {
+      "id": "non-exhausted",
+      "sql": [
+        "CREATE TABLE jobs (kind TEXT, job_key TEXT, status TEXT, retry_remaining INTEGER, retry_at INTEGER, last_error TEXT, input_watermark INTEGER, last_success_watermark INTEGER)",
+        "INSERT INTO jobs VALUES ('memory_stage1','done','done',0,999,NULL,10,5)",
+        "INSERT INTO jobs VALUES ('memory_stage1','running','running',0,999,NULL,10,5)",
+        "INSERT INTO jobs VALUES ('memory_stage1','retryable','error',2,999,'capacity',10,5)",
+        "INSERT INTO jobs VALUES ('memory_stage1','target','error',0,999,'capacity',10,5)"
+      ],
+      "options": {
+        "apply": true
+      },
+      "result": {
+        "state": "ok",
+        "detail": "",
+        "storePath": "<HOME>/memories_1.sqlite",
+        "applied": true,
+        "selected": [
+          {
+            "kind": "memory_stage1",
+            "jobKey": "target",
+            "cause": "capacity"
+          }
+        ],
+        "skippedByCause": {},
+        "changed": 1,
+        "retries": 3
+      },
+      "text": "memory requeue: <HOME>/memories_1.sqlite\n  selected: 1 [capacity=1]\n  applied: 1 row(s) given 3 retries\n",
+      "snapshotSQL": "SELECT *, typeof(retry_remaining) AS retry_type FROM jobs ORDER BY rowid",
+      "rows": [
+        {
+          "kind": "memory_stage1",
+          "job_key": "done",
+          "status": "done",
+          "retry_remaining": 0,
+          "retry_at": 999,
+          "last_error": null,
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        },
+        {
+          "kind": "memory_stage1",
+          "job_key": "running",
+          "status": "running",
+          "retry_remaining": 0,
+          "retry_at": 999,
+          "last_error": null,
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        },
+        {
+          "kind": "memory_stage1",
+          "job_key": "retryable",
+          "status": "error",
+          "retry_remaining": 2,
+          "retry_at": 999,
+          "last_error": "capacity",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        },
+        {
+          "kind": "memory_stage1",
+          "job_key": "target",
+          "status": "error",
+          "retry_remaining": 3,
+          "retry_at": null,
+          "last_error": "capacity",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        }
+      ]
+    },
+    {
+      "id": "kind",
+      "sql": [
+        "CREATE TABLE jobs (kind TEXT, job_key TEXT, status TEXT, retry_remaining INTEGER, retry_at INTEGER, last_error TEXT, input_watermark INTEGER, last_success_watermark INTEGER)",
+        "INSERT INTO jobs VALUES ('memory_stage1','a','error',0,999,'capacity',10,5)",
+        "INSERT INTO jobs VALUES ('memory_stage1','b','error',0,999,'capacity',10,5)",
+        "INSERT INTO jobs VALUES ('memory_consolidate_global','c','error',0,999,'capacity',10,5)"
+      ],
+      "options": {
+        "kind": "memory_stage1"
+      },
+      "result": {
+        "state": "ok",
+        "detail": "",
+        "storePath": "<HOME>/memories_1.sqlite",
+        "applied": false,
+        "selected": [
+          {
+            "kind": "memory_stage1",
+            "jobKey": "a",
+            "cause": "capacity"
+          },
+          {
+            "kind": "memory_stage1",
+            "jobKey": "b",
+            "cause": "capacity"
+          }
+        ],
+        "skippedByCause": {
+          "capacity": 1
+        },
+        "changed": 0,
+        "retries": 3
+      },
+      "text": "memory requeue: <HOME>/memories_1.sqlite\n  selected: 2 [capacity=2]\n  left alone: capacity=1\n  dry run — nothing written (pass --apply)\n",
+      "snapshotSQL": "SELECT *, typeof(retry_remaining) AS retry_type FROM jobs ORDER BY rowid",
+      "rows": [
+        {
+          "kind": "memory_stage1",
+          "job_key": "a",
+          "status": "error",
+          "retry_remaining": 0,
+          "retry_at": 999,
+          "last_error": "capacity",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        },
+        {
+          "kind": "memory_stage1",
+          "job_key": "b",
+          "status": "error",
+          "retry_remaining": 0,
+          "retry_at": 999,
+          "last_error": "capacity",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        },
+        {
+          "kind": "memory_consolidate_global",
+          "job_key": "c",
+          "status": "error",
+          "retry_remaining": 0,
+          "retry_at": 999,
+          "last_error": "capacity",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        }
+      ]
+    },
+    {
+      "id": "consolidation-default",
+      "sql": [
+        "CREATE TABLE jobs (kind TEXT, job_key TEXT, status TEXT, retry_remaining INTEGER, retry_at INTEGER, last_error TEXT, input_watermark INTEGER, last_success_watermark INTEGER)",
+        "INSERT INTO jobs VALUES ('memory_consolidate_global','a','error',0,999,'capacity',10,5)"
+      ],
+      "options": {
+        "apply": true
+      },
+      "result": {
+        "state": "ok",
+        "detail": "",
+        "storePath": "<HOME>/memories_1.sqlite",
+        "applied": true,
+        "selected": [
+          {
+            "kind": "memory_consolidate_global",
+            "jobKey": "a",
+            "cause": "capacity"
+          }
+        ],
+        "skippedByCause": {},
+        "changed": 1,
+        "retries": 3
+      },
+      "text": "memory requeue: <HOME>/memories_1.sqlite\n  selected: 1 [capacity=1]\n  applied: 1 row(s) given 3 retries\n",
+      "snapshotSQL": "SELECT *, typeof(retry_remaining) AS retry_type FROM jobs ORDER BY rowid",
+      "rows": [
+        {
+          "kind": "memory_consolidate_global",
+          "job_key": "a",
+          "status": "error",
+          "retry_remaining": 3,
+          "retry_at": null,
+          "last_error": "capacity",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        }
+      ]
+    },
+    {
+      "id": "unsupported",
+      "sql": [
+        "CREATE TABLE jobs (kind, status)"
+      ],
+      "options": {
+        "apply": true
+      },
+      "result": {
+        "state": "unsupported",
+        "detail": "jobs table is missing column(s): job_key, retry_remaining, last_error",
+        "storePath": "<HOME>/memories_1.sqlite",
+        "applied": false,
+        "selected": [],
+        "skippedByCause": {},
+        "changed": 0,
+        "retries": 3
+      },
+      "text": "memory requeue: unsupported — jobs table is missing column(s): job_key, retry_remaining, last_error\n",
+      "snapshotSQL": "SELECT * FROM jobs ORDER BY rowid",
+      "rows": []
+    },
+    {
+      "id": "missing",
+      "options": {
+        "apply": true
+      },
+      "result": {
+        "state": "unavailable",
+        "detail": "no memories store found under <HOME>",
+        "storePath": null,
+        "applied": false,
+        "selected": [],
+        "skippedByCause": {},
+        "changed": 0,
+        "retries": 3
+      },
+      "text": "memory requeue: unavailable — no memories store found under <HOME>\n",
+      "snapshotSQL": "",
+      "rows": []
+    },
+    {
+      "id": "empty",
+      "sql": [
+        "CREATE TABLE jobs (kind TEXT, job_key TEXT, status TEXT, retry_remaining INTEGER, retry_at INTEGER, last_error TEXT, input_watermark INTEGER, last_success_watermark INTEGER)"
+      ],
+      "options": {
+        "apply": true
+      },
+      "result": {
+        "state": "ok",
+        "detail": "",
+        "storePath": "<HOME>/memories_1.sqlite",
+        "applied": false,
+        "selected": [],
+        "skippedByCause": {},
+        "changed": 0,
+        "retries": 3
+      },
+      "text": "memory requeue: <HOME>/memories_1.sqlite\n  selected: 0\n  dry run — nothing written (pass --apply)\n",
+      "snapshotSQL": "SELECT *, typeof(retry_remaining) AS retry_type FROM jobs ORDER BY rowid",
+      "rows": []
+    },
+    {
+      "id": "no-jobs",
+      "sql": [
+        "CREATE TABLE other (x)"
+      ],
+      "options": {
+        "apply": true
+      },
+      "result": {
+        "state": "unsupported",
+        "detail": "no jobs table in this store",
+        "storePath": "<HOME>/memories_1.sqlite",
+        "applied": false,
+        "selected": [],
+        "skippedByCause": {},
+        "changed": 0,
+        "retries": 3
+      },
+      "text": "memory requeue: unsupported — no jobs table in this store\n",
+      "snapshotSQL": "",
+      "rows": []
+    },
+    {
+      "id": "corrupt",
+      "mode": "corrupt",
+      "options": {
+        "apply": true
+      },
+      "result": {
+        "state": "unsupported",
+        "detail": "could not read the jobs table: file is not a database",
+        "storePath": "<HOME>/memories_1.sqlite",
+        "applied": false,
+        "selected": [],
+        "skippedByCause": {},
+        "changed": 0,
+        "retries": 3
+      },
+      "text": "memory requeue: unsupported — could not read the jobs table: file is not a database\n",
+      "snapshotSQL": "",
+      "rows": []
+    },
+    {
+      "id": "directory",
+      "mode": "directory",
+      "options": {
+        "apply": true
+      },
+      "result": {
+        "state": "unavailable",
+        "detail": "could not open <HOME>/memories_1.sqlite: disk I/O error",
+        "storePath": "<HOME>/memories_1.sqlite",
+        "applied": false,
+        "selected": [],
+        "skippedByCause": {},
+        "changed": 0,
+        "retries": 3
+      },
+      "text": "memory requeue: unavailable — could not open <HOME>/memories_1.sqlite: disk I/O error\n",
+      "snapshotSQL": "",
+      "rows": []
+    },
+    {
+      "id": "newest",
+      "sql": [
+        "CREATE TABLE jobs (kind TEXT, job_key TEXT, status TEXT, retry_remaining INTEGER, retry_at INTEGER, last_error TEXT, input_watermark INTEGER, last_success_watermark INTEGER)",
+        "INSERT INTO jobs VALUES ('memory_stage1','old','error',0,999,'capacity',10,5)"
+      ],
+      "newer": [
+        "CREATE TABLE jobs (kind TEXT, job_key TEXT, status TEXT, retry_remaining INTEGER, retry_at INTEGER, last_error TEXT, input_watermark INTEGER, last_success_watermark INTEGER)",
+        "INSERT INTO jobs VALUES ('memory_stage1','new','error',0,999,'incomplete response',10,5)"
+      ],
+      "options": {
+        "apply": true
+      },
+      "result": {
+        "state": "ok",
+        "detail": "",
+        "storePath": "<HOME>/memories_2.sqlite",
+        "applied": true,
+        "selected": [
+          {
+            "kind": "memory_stage1",
+            "jobKey": "new",
+            "cause": "incomplete-response"
+          }
+        ],
+        "skippedByCause": {},
+        "changed": 1,
+        "retries": 3
+      },
+      "text": "memory requeue: <HOME>/memories_2.sqlite\n  selected: 1 [incomplete-response=1]\n  applied: 1 row(s) given 3 retries\n",
+      "snapshotSQL": "SELECT *, typeof(retry_remaining) AS retry_type FROM jobs ORDER BY rowid",
+      "rows": [
+        {
+          "kind": "memory_stage1",
+          "job_key": "new",
+          "status": "error",
+          "retry_remaining": 3,
+          "retry_at": null,
+          "last_error": "incomplete response",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        }
+      ]
+    },
+    {
+      "id": "untyped",
+      "sql": [
+        "CREATE TABLE jobs (kind, job_key, status, retry_remaining, retry_at, last_error, input_watermark, last_success_watermark)",
+        "INSERT INTO jobs VALUES ('memory_stage1','a','error',0,999,'capacity',10,5)"
+      ],
+      "options": {
+        "apply": true
+      },
+      "result": {
+        "state": "ok",
+        "detail": "",
+        "storePath": "<HOME>/memories_1.sqlite",
+        "applied": true,
+        "selected": [
+          {
+            "kind": "memory_stage1",
+            "jobKey": "a",
+            "cause": "capacity"
+          }
+        ],
+        "skippedByCause": {},
+        "changed": 1,
+        "retries": 3
+      },
+      "text": "memory requeue: <HOME>/memories_1.sqlite\n  selected: 1 [capacity=1]\n  applied: 1 row(s) given 3 retries\n",
+      "snapshotSQL": "SELECT *, typeof(retry_remaining) AS retry_type FROM jobs ORDER BY rowid",
+      "rows": [
+        {
+          "kind": "memory_stage1",
+          "job_key": "a",
+          "status": "error",
+          "retry_remaining": 3,
+          "retry_at": null,
+          "last_error": "capacity",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "real"
+        }
+      ]
+    },
+    {
+      "id": "coercion",
+      "sql": [
+        "CREATE TABLE jobs (kind, job_key, status, retry_remaining, retry_at, last_error, input_watermark, last_success_watermark)",
+        "INSERT INTO jobs VALUES (NULL,NULL,'error',0,999,'capacity',10,5)",
+        "INSERT INTO jobs VALUES (12,12,'error',0,999,429,10,5)",
+        "INSERT INTO jobs VALUES (x'61',x'62','error',0,999,x'6363',10,5)"
+      ],
+      "options": {
+        "apply": true
+      },
+      "result": {
+        "state": "ok",
+        "detail": "",
+        "storePath": "<HOME>/memories_1.sqlite",
+        "applied": true,
+        "selected": [
+          {
+            "kind": "null",
+            "jobKey": "null",
+            "cause": "capacity"
+          },
+          {
+            "kind": "12",
+            "jobKey": "12",
+            "cause": "capacity"
+          },
+          {
+            "kind": "97",
+            "jobKey": "98",
+            "cause": "other"
+          }
+        ],
+        "skippedByCause": {},
+        "changed": 0,
+        "retries": 3
+      },
+      "text": "memory requeue: <HOME>/memories_1.sqlite\n  selected: 3 [capacity=2, other=1]\n  applied: 0 row(s) given 3 retries\n",
+      "snapshotSQL": "SELECT *, typeof(retry_remaining) AS retry_type FROM jobs ORDER BY rowid",
+      "rows": [
+        {
+          "kind": null,
+          "job_key": null,
+          "status": "error",
+          "retry_remaining": 0,
+          "retry_at": 999,
+          "last_error": "capacity",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        },
+        {
+          "kind": 12,
+          "job_key": 12,
+          "status": "error",
+          "retry_remaining": 0,
+          "retry_at": 999,
+          "last_error": 429,
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        },
+        {
+          "kind": {
+            "0": 97
+          },
+          "job_key": {
+            "0": 98
+          },
+          "status": "error",
+          "retry_remaining": 0,
+          "retry_at": 999,
+          "last_error": {
+            "0": 99,
+            "1": 99
+          },
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        }
+      ]
+    },
+    {
+      "id": "null-kind",
+      "sql": [
+        "CREATE TABLE jobs (kind, job_key, status, retry_remaining, retry_at, last_error, input_watermark, last_success_watermark)",
+        "INSERT INTO jobs VALUES (NULL,'a','error',0,999,'capacity',10,5)"
+      ],
+      "options": {
+        "apply": true,
+        "kind": "null"
+      },
+      "result": {
+        "state": "ok",
+        "detail": "",
+        "storePath": "<HOME>/memories_1.sqlite",
+        "applied": true,
+        "selected": [
+          {
+            "kind": "null",
+            "jobKey": "a",
+            "cause": "capacity"
+          }
+        ],
+        "skippedByCause": {},
+        "changed": 0,
+        "retries": 3
+      },
+      "text": "memory requeue: <HOME>/memories_1.sqlite\n  selected: 1 [capacity=1]\n  applied: 0 row(s) given 3 retries\n",
+      "snapshotSQL": "SELECT *, typeof(retry_remaining) AS retry_type FROM jobs ORDER BY rowid",
+      "rows": [
+        {
+          "kind": null,
+          "job_key": "a",
+          "status": "error",
+          "retry_remaining": 0,
+          "retry_at": 999,
+          "last_error": "capacity",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        }
+      ]
+    },
+    {
+      "id": "all-causes",
+      "sql": [
+        "CREATE TABLE jobs (kind TEXT, job_key TEXT, status TEXT, retry_remaining INTEGER, retry_at INTEGER, last_error TEXT, input_watermark INTEGER, last_success_watermark INTEGER)",
+        "INSERT INTO jobs VALUES ('memory_stage1','0','error',0,999,'capacity',10,5)",
+        "INSERT INTO jobs VALUES ('memory_stage1','1','error',0,999,'incomplete response',10,5)",
+        "INSERT INTO jobs VALUES ('memory_stage1','2','error',0,999,'stream closed',10,5)",
+        "INSERT INTO jobs VALUES ('memory_stage1','3','error',0,999,NULL,10,5)",
+        "INSERT INTO jobs VALUES ('memory_stage1','4','error',0,999,'other',10,5)",
+        "INSERT INTO jobs VALUES ('memory_stage1','5','error',0,999,'context window exceeded',10,5)",
+        "INSERT INTO jobs VALUES ('memory_stage1','6','error',0,999,'capacity',10,5)"
+      ],
+      "result": {
+        "state": "ok",
+        "detail": "",
+        "storePath": "<HOME>/memories_1.sqlite",
+        "applied": false,
+        "selected": [
+          {
+            "kind": "memory_stage1",
+            "jobKey": "0",
+            "cause": "capacity"
+          },
+          {
+            "kind": "memory_stage1",
+            "jobKey": "1",
+            "cause": "incomplete-response"
+          },
+          {
+            "kind": "memory_stage1",
+            "jobKey": "2",
+            "cause": "stream-closed"
+          },
+          {
+            "kind": "memory_stage1",
+            "jobKey": "3",
+            "cause": "unknown"
+          },
+          {
+            "kind": "memory_stage1",
+            "jobKey": "4",
+            "cause": "other"
+          },
+          {
+            "kind": "memory_stage1",
+            "jobKey": "6",
+            "cause": "capacity"
+          }
+        ],
+        "skippedByCause": {
+          "context-window": 1
+        },
+        "changed": 0,
+        "retries": 3
+      },
+      "text": "memory requeue: <HOME>/memories_1.sqlite\n  selected: 6 [capacity=2, incomplete-response=1, stream-closed=1, unknown=1, other=1]\n  left alone: context-window=1\n    context-window failures repeat unless the extraction input changes; --include-context-window overrides\n  dry run — nothing written (pass --apply)\n",
+      "snapshotSQL": "SELECT *, typeof(retry_remaining) AS retry_type FROM jobs ORDER BY rowid",
+      "rows": [
+        {
+          "kind": "memory_stage1",
+          "job_key": "0",
+          "status": "error",
+          "retry_remaining": 0,
+          "retry_at": 999,
+          "last_error": "capacity",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        },
+        {
+          "kind": "memory_stage1",
+          "job_key": "1",
+          "status": "error",
+          "retry_remaining": 0,
+          "retry_at": 999,
+          "last_error": "incomplete response",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        },
+        {
+          "kind": "memory_stage1",
+          "job_key": "2",
+          "status": "error",
+          "retry_remaining": 0,
+          "retry_at": 999,
+          "last_error": "stream closed",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        },
+        {
+          "kind": "memory_stage1",
+          "job_key": "3",
+          "status": "error",
+          "retry_remaining": 0,
+          "retry_at": 999,
+          "last_error": null,
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        },
+        {
+          "kind": "memory_stage1",
+          "job_key": "4",
+          "status": "error",
+          "retry_remaining": 0,
+          "retry_at": 999,
+          "last_error": "other",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        },
+        {
+          "kind": "memory_stage1",
+          "job_key": "5",
+          "status": "error",
+          "retry_remaining": 0,
+          "retry_at": 999,
+          "last_error": "context window exceeded",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        },
+        {
+          "kind": "memory_stage1",
+          "job_key": "6",
+          "status": "error",
+          "retry_remaining": 0,
+          "retry_at": 999,
+          "last_error": "capacity",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        }
+      ]
+    },
+    {
+      "id": "missing-backoff",
+      "sql": [
+        "CREATE TABLE jobs (kind, job_key, status, retry_remaining, last_error)",
+        "INSERT INTO jobs VALUES ('stage','a','error',0,'capacity')"
+      ],
+      "options": {
+        "apply": true
+      },
+      "result": {
+        "state": "unavailable",
+        "detail": "requeue failed and was rolled back: no such column: retry_at",
+        "storePath": "<HOME>/memories_1.sqlite",
+        "applied": false,
+        "selected": [
+          {
+            "kind": "stage",
+            "jobKey": "a",
+            "cause": "capacity"
+          }
+        ],
+        "skippedByCause": {},
+        "changed": 0,
+        "retries": 3
+      },
+      "text": "memory requeue: unavailable — requeue failed and was rolled back: no such column: retry_at\n",
+      "snapshotSQL": "SELECT *, typeof(retry_remaining) AS retry_type FROM jobs ORDER BY rowid",
+      "rows": [
+        {
+          "kind": "stage",
+          "job_key": "a",
+          "status": "error",
+          "retry_remaining": 0,
+          "last_error": "capacity",
+          "retry_type": "integer"
+        }
+      ]
+    },
+    {
+      "id": "duplicate-zero-retry",
+      "sql": [
+        "CREATE TABLE jobs (kind TEXT, job_key TEXT, status TEXT, retry_remaining INTEGER, retry_at INTEGER, last_error TEXT, input_watermark INTEGER, last_success_watermark INTEGER)",
+        "INSERT INTO jobs VALUES ('memory_stage1','a','error',0,999,'capacity',10,5)",
+        "INSERT INTO jobs VALUES ('memory_stage1','a','error',0,999,'capacity',10,5)"
+      ],
+      "options": {
+        "apply": true,
+        "retries": 0.5
+      },
+      "result": {
+        "state": "ok",
+        "detail": "",
+        "storePath": "<HOME>/memories_1.sqlite",
+        "applied": true,
+        "selected": [
+          {
+            "kind": "memory_stage1",
+            "jobKey": "a",
+            "cause": "capacity"
+          },
+          {
+            "kind": "memory_stage1",
+            "jobKey": "a",
+            "cause": "capacity"
+          }
+        ],
+        "skippedByCause": {},
+        "changed": 4,
+        "retries": 0
+      },
+      "text": "memory requeue: <HOME>/memories_1.sqlite\n  selected: 2 [capacity=2]\n  applied: 4 row(s) given 0 retries\n",
+      "snapshotSQL": "SELECT *, typeof(retry_remaining) AS retry_type FROM jobs ORDER BY rowid",
+      "rows": [
+        {
+          "kind": "memory_stage1",
+          "job_key": "a",
+          "status": "error",
+          "retry_remaining": 0,
+          "retry_at": null,
+          "last_error": "capacity",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        },
+        {
+          "kind": "memory_stage1",
+          "job_key": "a",
+          "status": "error",
+          "retry_remaining": 0,
+          "retry_at": null,
+          "last_error": "capacity",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        }
+      ]
+    },
+    {
+      "id": "update-rollback",
+      "sql": [
+        "CREATE TABLE jobs (kind TEXT, job_key TEXT, status TEXT, retry_remaining INTEGER, retry_at INTEGER, last_error TEXT, input_watermark INTEGER, last_success_watermark INTEGER)",
+        "INSERT INTO jobs VALUES ('memory_stage1','a','error',0,999,'capacity',10,5)",
+        "INSERT INTO jobs VALUES ('memory_stage1','b','error',0,999,'capacity',10,5)",
+        "CREATE TRIGGER abort_second BEFORE UPDATE ON jobs WHEN old.job_key='b' BEGIN SELECT RAISE(ABORT,'second update refused'); END"
+      ],
+      "options": {
+        "apply": true
+      },
+      "result": {
+        "state": "unavailable",
+        "detail": "requeue failed and was rolled back: second update refused",
+        "storePath": "<HOME>/memories_1.sqlite",
+        "applied": false,
+        "selected": [
+          {
+            "kind": "memory_stage1",
+            "jobKey": "a",
+            "cause": "capacity"
+          },
+          {
+            "kind": "memory_stage1",
+            "jobKey": "b",
+            "cause": "capacity"
+          }
+        ],
+        "skippedByCause": {},
+        "changed": 0,
+        "retries": 3
+      },
+      "text": "memory requeue: unavailable — requeue failed and was rolled back: second update refused\n",
+      "snapshotSQL": "SELECT *, typeof(retry_remaining) AS retry_type FROM jobs ORDER BY rowid",
+      "rows": [
+        {
+          "kind": "memory_stage1",
+          "job_key": "a",
+          "status": "error",
+          "retry_remaining": 0,
+          "retry_at": 999,
+          "last_error": "capacity",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        },
+        {
+          "kind": "memory_stage1",
+          "job_key": "b",
+          "status": "error",
+          "retry_remaining": 0,
+          "retry_at": 999,
+          "last_error": "capacity",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        }
+      ]
+    },
+    {
+      "id": "running-predicate",
+      "sql": [
+        "CREATE TABLE jobs (kind TEXT, job_key TEXT, status TEXT, retry_remaining INTEGER, retry_at INTEGER, last_error TEXT, input_watermark INTEGER, last_success_watermark INTEGER)",
+        "INSERT INTO jobs VALUES ('memory_stage1','a','error',0,999,'capacity',10,5)",
+        "INSERT INTO jobs VALUES ('memory_stage1','b','error',0,999,'capacity',10,5)",
+        "CREATE TRIGGER pick_up AFTER UPDATE ON jobs WHEN old.job_key='a' BEGIN UPDATE jobs SET status='running' WHERE job_key='b'; END"
+      ],
+      "options": {
+        "apply": true
+      },
+      "result": {
+        "state": "ok",
+        "detail": "",
+        "storePath": "<HOME>/memories_1.sqlite",
+        "applied": true,
+        "selected": [
+          {
+            "kind": "memory_stage1",
+            "jobKey": "a",
+            "cause": "capacity"
+          },
+          {
+            "kind": "memory_stage1",
+            "jobKey": "b",
+            "cause": "capacity"
+          }
+        ],
+        "skippedByCause": {},
+        "changed": 1,
+        "retries": 3
+      },
+      "text": "memory requeue: <HOME>/memories_1.sqlite\n  selected: 2 [capacity=2]\n  applied: 1 row(s) given 3 retries\n",
+      "snapshotSQL": "SELECT *, typeof(retry_remaining) AS retry_type FROM jobs ORDER BY rowid",
+      "rows": [
+        {
+          "kind": "memory_stage1",
+          "job_key": "a",
+          "status": "error",
+          "retry_remaining": 3,
+          "retry_at": null,
+          "last_error": "capacity",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        },
+        {
+          "kind": "memory_stage1",
+          "job_key": "b",
+          "status": "running",
+          "retry_remaining": 0,
+          "retry_at": 999,
+          "last_error": "capacity",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        }
+      ]
+    },
+    {
+      "id": "commit-rollback",
+      "sql": [
+        "CREATE TABLE jobs (kind TEXT, job_key TEXT, status TEXT, retry_remaining INTEGER, retry_at INTEGER, last_error TEXT, input_watermark INTEGER, last_success_watermark INTEGER)",
+        "INSERT INTO jobs VALUES ('memory_stage1','a','error',0,999,'capacity',10,5)",
+        "CREATE TABLE parent (id PRIMARY KEY)",
+        "CREATE TABLE child (id REFERENCES parent(id) DEFERRABLE INITIALLY DEFERRED)",
+        "CREATE TRIGGER deferred_error AFTER UPDATE ON jobs BEGIN INSERT INTO child VALUES (99); END"
+      ],
+      "options": {
+        "apply": true
+      },
+      "result": {
+        "state": "unavailable",
+        "detail": "requeue failed and was rolled back: FOREIGN KEY constraint failed",
+        "storePath": "<HOME>/memories_1.sqlite",
+        "applied": false,
+        "selected": [
+          {
+            "kind": "memory_stage1",
+            "jobKey": "a",
+            "cause": "capacity"
+          }
+        ],
+        "skippedByCause": {},
+        "changed": 0,
+        "retries": 3
+      },
+      "text": "memory requeue: unavailable — requeue failed and was rolled back: FOREIGN KEY constraint failed\n",
+      "snapshotSQL": "SELECT *, typeof(retry_remaining) AS retry_type FROM jobs ORDER BY rowid",
+      "rows": [
+        {
+          "kind": "memory_stage1",
+          "job_key": "a",
+          "status": "error",
+          "retry_remaining": 0,
+          "retry_at": 999,
+          "last_error": "capacity",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        }
+      ]
+    },
+    {
+      "id": "retries-0",
+      "sql": [
+        "CREATE TABLE jobs (kind TEXT, job_key TEXT, status TEXT, retry_remaining INTEGER, retry_at INTEGER, last_error TEXT, input_watermark INTEGER, last_success_watermark INTEGER)",
+        "INSERT INTO jobs VALUES ('memory_stage1','a','error',0,999,'capacity',10,5)"
+      ],
+      "options": {
+        "apply": true,
+        "retries": 0
+      },
+      "result": {
+        "state": "ok",
+        "detail": "",
+        "storePath": "<HOME>/memories_1.sqlite",
+        "applied": true,
+        "selected": [
+          {
+            "kind": "memory_stage1",
+            "jobKey": "a",
+            "cause": "capacity"
+          }
+        ],
+        "skippedByCause": {},
+        "changed": 1,
+        "retries": 3
+      },
+      "text": "memory requeue: <HOME>/memories_1.sqlite\n  selected: 1 [capacity=1]\n  applied: 1 row(s) given 3 retries\n",
+      "snapshotSQL": "SELECT *, typeof(retry_remaining) AS retry_type FROM jobs ORDER BY rowid",
+      "rows": [
+        {
+          "kind": "memory_stage1",
+          "job_key": "a",
+          "status": "error",
+          "retry_remaining": 3,
+          "retry_at": null,
+          "last_error": "capacity",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        }
+      ]
+    },
+    {
+      "id": "retries--1",
+      "sql": [
+        "CREATE TABLE jobs (kind TEXT, job_key TEXT, status TEXT, retry_remaining INTEGER, retry_at INTEGER, last_error TEXT, input_watermark INTEGER, last_success_watermark INTEGER)",
+        "INSERT INTO jobs VALUES ('memory_stage1','a','error',0,999,'capacity',10,5)"
+      ],
+      "options": {
+        "apply": true,
+        "retries": -1
+      },
+      "result": {
+        "state": "ok",
+        "detail": "",
+        "storePath": "<HOME>/memories_1.sqlite",
+        "applied": true,
+        "selected": [
+          {
+            "kind": "memory_stage1",
+            "jobKey": "a",
+            "cause": "capacity"
+          }
+        ],
+        "skippedByCause": {},
+        "changed": 1,
+        "retries": 3
+      },
+      "text": "memory requeue: <HOME>/memories_1.sqlite\n  selected: 1 [capacity=1]\n  applied: 1 row(s) given 3 retries\n",
+      "snapshotSQL": "SELECT *, typeof(retry_remaining) AS retry_type FROM jobs ORDER BY rowid",
+      "rows": [
+        {
+          "kind": "memory_stage1",
+          "job_key": "a",
+          "status": "error",
+          "retry_remaining": 3,
+          "retry_at": null,
+          "last_error": "capacity",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        }
+      ]
+    },
+    {
+      "id": "retries-0.5",
+      "sql": [
+        "CREATE TABLE jobs (kind TEXT, job_key TEXT, status TEXT, retry_remaining INTEGER, retry_at INTEGER, last_error TEXT, input_watermark INTEGER, last_success_watermark INTEGER)",
+        "INSERT INTO jobs VALUES ('memory_stage1','a','error',0,999,'capacity',10,5)"
+      ],
+      "options": {
+        "apply": true,
+        "retries": 0.5
+      },
+      "result": {
+        "state": "ok",
+        "detail": "",
+        "storePath": "<HOME>/memories_1.sqlite",
+        "applied": true,
+        "selected": [
+          {
+            "kind": "memory_stage1",
+            "jobKey": "a",
+            "cause": "capacity"
+          }
+        ],
+        "skippedByCause": {},
+        "changed": 1,
+        "retries": 0
+      },
+      "text": "memory requeue: <HOME>/memories_1.sqlite\n  selected: 1 [capacity=1]\n  applied: 1 row(s) given 0 retries\n",
+      "snapshotSQL": "SELECT *, typeof(retry_remaining) AS retry_type FROM jobs ORDER BY rowid",
+      "rows": [
+        {
+          "kind": "memory_stage1",
+          "job_key": "a",
+          "status": "error",
+          "retry_remaining": 0,
+          "retry_at": null,
+          "last_error": "capacity",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        }
+      ]
+    },
+    {
+      "id": "retries-2.7",
+      "sql": [
+        "CREATE TABLE jobs (kind TEXT, job_key TEXT, status TEXT, retry_remaining INTEGER, retry_at INTEGER, last_error TEXT, input_watermark INTEGER, last_success_watermark INTEGER)",
+        "INSERT INTO jobs VALUES ('memory_stage1','a','error',0,999,'capacity',10,5)"
+      ],
+      "options": {
+        "apply": true,
+        "retries": 2.7
+      },
+      "result": {
+        "state": "ok",
+        "detail": "",
+        "storePath": "<HOME>/memories_1.sqlite",
+        "applied": true,
+        "selected": [
+          {
+            "kind": "memory_stage1",
+            "jobKey": "a",
+            "cause": "capacity"
+          }
+        ],
+        "skippedByCause": {},
+        "changed": 1,
+        "retries": 2
+      },
+      "text": "memory requeue: <HOME>/memories_1.sqlite\n  selected: 1 [capacity=1]\n  applied: 1 row(s) given 2 retries\n",
+      "snapshotSQL": "SELECT *, typeof(retry_remaining) AS retry_type FROM jobs ORDER BY rowid",
+      "rows": [
+        {
+          "kind": "memory_stage1",
+          "job_key": "a",
+          "status": "error",
+          "retry_remaining": 2,
+          "retry_at": null,
+          "last_error": "capacity",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        }
+      ]
+    },
+    {
+      "id": "retries-NaN",
+      "sql": [
+        "CREATE TABLE jobs (kind TEXT, job_key TEXT, status TEXT, retry_remaining INTEGER, retry_at INTEGER, last_error TEXT, input_watermark INTEGER, last_success_watermark INTEGER)",
+        "INSERT INTO jobs VALUES ('memory_stage1','a','error',0,999,'capacity',10,5)"
+      ],
+      "options": {
+        "apply": true,
+        "retries": "NaN"
+      },
+      "result": {
+        "state": "ok",
+        "detail": "",
+        "storePath": "<HOME>/memories_1.sqlite",
+        "applied": true,
+        "selected": [
+          {
+            "kind": "memory_stage1",
+            "jobKey": "a",
+            "cause": "capacity"
+          }
+        ],
+        "skippedByCause": {},
+        "changed": 1,
+        "retries": 3
+      },
+      "text": "memory requeue: <HOME>/memories_1.sqlite\n  selected: 1 [capacity=1]\n  applied: 1 row(s) given 3 retries\n",
+      "snapshotSQL": "SELECT *, typeof(retry_remaining) AS retry_type FROM jobs ORDER BY rowid",
+      "rows": [
+        {
+          "kind": "memory_stage1",
+          "job_key": "a",
+          "status": "error",
+          "retry_remaining": 3,
+          "retry_at": null,
+          "last_error": "capacity",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        }
+      ]
+    },
+    {
+      "id": "retries-Infinity",
+      "sql": [
+        "CREATE TABLE jobs (kind TEXT, job_key TEXT, status TEXT, retry_remaining INTEGER, retry_at INTEGER, last_error TEXT, input_watermark INTEGER, last_success_watermark INTEGER)",
+        "INSERT INTO jobs VALUES ('memory_stage1','a','error',0,999,'capacity',10,5)"
+      ],
+      "options": {
+        "apply": true,
+        "retries": "Infinity"
+      },
+      "result": {
+        "state": "ok",
+        "detail": "",
+        "storePath": "<HOME>/memories_1.sqlite",
+        "applied": true,
+        "selected": [
+          {
+            "kind": "memory_stage1",
+            "jobKey": "a",
+            "cause": "capacity"
+          }
+        ],
+        "skippedByCause": {},
+        "changed": 1,
+        "retries": 3
+      },
+      "text": "memory requeue: <HOME>/memories_1.sqlite\n  selected: 1 [capacity=1]\n  applied: 1 row(s) given 3 retries\n",
+      "snapshotSQL": "SELECT *, typeof(retry_remaining) AS retry_type FROM jobs ORDER BY rowid",
+      "rows": [
+        {
+          "kind": "memory_stage1",
+          "job_key": "a",
+          "status": "error",
+          "retry_remaining": 3,
+          "retry_at": null,
+          "last_error": "capacity",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        }
+      ]
+    },
+    {
+      "id": "retries--Infinity",
+      "sql": [
+        "CREATE TABLE jobs (kind TEXT, job_key TEXT, status TEXT, retry_remaining INTEGER, retry_at INTEGER, last_error TEXT, input_watermark INTEGER, last_success_watermark INTEGER)",
+        "INSERT INTO jobs VALUES ('memory_stage1','a','error',0,999,'capacity',10,5)"
+      ],
+      "options": {
+        "apply": true,
+        "retries": "-Infinity"
+      },
+      "result": {
+        "state": "ok",
+        "detail": "",
+        "storePath": "<HOME>/memories_1.sqlite",
+        "applied": true,
+        "selected": [
+          {
+            "kind": "memory_stage1",
+            "jobKey": "a",
+            "cause": "capacity"
+          }
+        ],
+        "skippedByCause": {},
+        "changed": 1,
+        "retries": 3
+      },
+      "text": "memory requeue: <HOME>/memories_1.sqlite\n  selected: 1 [capacity=1]\n  applied: 1 row(s) given 3 retries\n",
+      "snapshotSQL": "SELECT *, typeof(retry_remaining) AS retry_type FROM jobs ORDER BY rowid",
+      "rows": [
+        {
+          "kind": "memory_stage1",
+          "job_key": "a",
+          "status": "error",
+          "retry_remaining": 3,
+          "retry_at": null,
+          "last_error": "capacity",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        }
+      ]
+    },
+    {
+      "id": "retries-100000000000000000000",
+      "sql": [
+        "CREATE TABLE jobs (kind TEXT, job_key TEXT, status TEXT, retry_remaining INTEGER, retry_at INTEGER, last_error TEXT, input_watermark INTEGER, last_success_watermark INTEGER)",
+        "INSERT INTO jobs VALUES ('memory_stage1','a','error',0,999,'capacity',10,5)"
+      ],
+      "options": {
+        "apply": true,
+        "retries": 100000000000000000000
+      },
+      "result": {
+        "state": "ok",
+        "detail": "",
+        "storePath": "<HOME>/memories_1.sqlite",
+        "applied": true,
+        "selected": [
+          {
+            "kind": "memory_stage1",
+            "jobKey": "a",
+            "cause": "capacity"
+          }
+        ],
+        "skippedByCause": {},
+        "changed": 1,
+        "retries": 100000000000000000000
+      },
+      "text": "memory requeue: <HOME>/memories_1.sqlite\n  selected: 1 [capacity=1]\n  applied: 1 row(s) given 100000000000000000000 retries\n",
+      "snapshotSQL": "SELECT *, typeof(retry_remaining) AS retry_type FROM jobs ORDER BY rowid",
+      "rows": [
+        {
+          "kind": "memory_stage1",
+          "job_key": "a",
+          "status": "error",
+          "retry_remaining": 100000000000000000000,
+          "retry_at": null,
+          "last_error": "capacity",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "real"
+        }
+      ]
+    },
+    {
+      "id": "retries-1e+21",
+      "sql": [
+        "CREATE TABLE jobs (kind TEXT, job_key TEXT, status TEXT, retry_remaining INTEGER, retry_at INTEGER, last_error TEXT, input_watermark INTEGER, last_success_watermark INTEGER)",
+        "INSERT INTO jobs VALUES ('memory_stage1','a','error',0,999,'capacity',10,5)"
+      ],
+      "options": {
+        "apply": true,
+        "retries": 1e+21
+      },
+      "result": {
+        "state": "ok",
+        "detail": "",
+        "storePath": "<HOME>/memories_1.sqlite",
+        "applied": true,
+        "selected": [
+          {
+            "kind": "memory_stage1",
+            "jobKey": "a",
+            "cause": "capacity"
+          }
+        ],
+        "skippedByCause": {},
+        "changed": 1,
+        "retries": 1e+21
+      },
+      "text": "memory requeue: <HOME>/memories_1.sqlite\n  selected: 1 [capacity=1]\n  applied: 1 row(s) given 1e+21 retries\n",
+      "snapshotSQL": "SELECT *, typeof(retry_remaining) AS retry_type FROM jobs ORDER BY rowid",
+      "rows": [
+        {
+          "kind": "memory_stage1",
+          "job_key": "a",
+          "status": "error",
+          "retry_remaining": 1e+21,
+          "retry_at": null,
+          "last_error": "capacity",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "real"
+        }
+      ]
+    },
+    {
+      "id": "limit-0",
+      "sql": [
+        "CREATE TABLE jobs (kind TEXT, job_key TEXT, status TEXT, retry_remaining INTEGER, retry_at INTEGER, last_error TEXT, input_watermark INTEGER, last_success_watermark INTEGER)",
+        "INSERT INTO jobs VALUES ('memory_stage1','a','error',0,999,'capacity',10,5)",
+        "INSERT INTO jobs VALUES ('memory_stage1','b','error',0,999,'other',10,5)",
+        "INSERT INTO jobs VALUES ('memory_stage1','c','error',0,999,'context window exceeded',10,5)"
+      ],
+      "options": {
+        "apply": true,
+        "limit": 0
+      },
+      "result": {
+        "state": "ok",
+        "detail": "",
+        "storePath": "<HOME>/memories_1.sqlite",
+        "applied": false,
+        "selected": [],
+        "skippedByCause": {
+          "context-window": 1
+        },
+        "changed": 0,
+        "retries": 3
+      },
+      "text": "memory requeue: <HOME>/memories_1.sqlite\n  selected: 0\n  left alone: context-window=1\n    context-window failures repeat unless the extraction input changes; --include-context-window overrides\n  dry run — nothing written (pass --apply)\n",
+      "snapshotSQL": "SELECT *, typeof(retry_remaining) AS retry_type FROM jobs ORDER BY rowid",
+      "rows": [
+        {
+          "kind": "memory_stage1",
+          "job_key": "a",
+          "status": "error",
+          "retry_remaining": 0,
+          "retry_at": 999,
+          "last_error": "capacity",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        },
+        {
+          "kind": "memory_stage1",
+          "job_key": "b",
+          "status": "error",
+          "retry_remaining": 0,
+          "retry_at": 999,
+          "last_error": "other",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        },
+        {
+          "kind": "memory_stage1",
+          "job_key": "c",
+          "status": "error",
+          "retry_remaining": 0,
+          "retry_at": 999,
+          "last_error": "context window exceeded",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        }
+      ]
+    },
+    {
+      "id": "limit--1",
+      "sql": [
+        "CREATE TABLE jobs (kind TEXT, job_key TEXT, status TEXT, retry_remaining INTEGER, retry_at INTEGER, last_error TEXT, input_watermark INTEGER, last_success_watermark INTEGER)",
+        "INSERT INTO jobs VALUES ('memory_stage1','a','error',0,999,'capacity',10,5)",
+        "INSERT INTO jobs VALUES ('memory_stage1','b','error',0,999,'other',10,5)",
+        "INSERT INTO jobs VALUES ('memory_stage1','c','error',0,999,'context window exceeded',10,5)"
+      ],
+      "options": {
+        "apply": true,
+        "limit": -1
+      },
+      "result": {
+        "state": "ok",
+        "detail": "",
+        "storePath": "<HOME>/memories_1.sqlite",
+        "applied": true,
+        "selected": [
+          {
+            "kind": "memory_stage1",
+            "jobKey": "a",
+            "cause": "capacity"
+          },
+          {
+            "kind": "memory_stage1",
+            "jobKey": "b",
+            "cause": "other"
+          }
+        ],
+        "skippedByCause": {
+          "context-window": 1
+        },
+        "changed": 2,
+        "retries": 3
+      },
+      "text": "memory requeue: <HOME>/memories_1.sqlite\n  selected: 2 [capacity=1, other=1]\n  left alone: context-window=1\n    context-window failures repeat unless the extraction input changes; --include-context-window overrides\n  applied: 2 row(s) given 3 retries\n",
+      "snapshotSQL": "SELECT *, typeof(retry_remaining) AS retry_type FROM jobs ORDER BY rowid",
+      "rows": [
+        {
+          "kind": "memory_stage1",
+          "job_key": "a",
+          "status": "error",
+          "retry_remaining": 3,
+          "retry_at": null,
+          "last_error": "capacity",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        },
+        {
+          "kind": "memory_stage1",
+          "job_key": "b",
+          "status": "error",
+          "retry_remaining": 3,
+          "retry_at": null,
+          "last_error": "other",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        },
+        {
+          "kind": "memory_stage1",
+          "job_key": "c",
+          "status": "error",
+          "retry_remaining": 0,
+          "retry_at": 999,
+          "last_error": "context window exceeded",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        }
+      ]
+    },
+    {
+      "id": "limit-1",
+      "sql": [
+        "CREATE TABLE jobs (kind TEXT, job_key TEXT, status TEXT, retry_remaining INTEGER, retry_at INTEGER, last_error TEXT, input_watermark INTEGER, last_success_watermark INTEGER)",
+        "INSERT INTO jobs VALUES ('memory_stage1','a','error',0,999,'capacity',10,5)",
+        "INSERT INTO jobs VALUES ('memory_stage1','b','error',0,999,'other',10,5)",
+        "INSERT INTO jobs VALUES ('memory_stage1','c','error',0,999,'context window exceeded',10,5)"
+      ],
+      "options": {
+        "apply": true,
+        "limit": 1
+      },
+      "result": {
+        "state": "ok",
+        "detail": "",
+        "storePath": "<HOME>/memories_1.sqlite",
+        "applied": true,
+        "selected": [
+          {
+            "kind": "memory_stage1",
+            "jobKey": "a",
+            "cause": "capacity"
+          }
+        ],
+        "skippedByCause": {
+          "context-window": 1
+        },
+        "changed": 1,
+        "retries": 3
+      },
+      "text": "memory requeue: <HOME>/memories_1.sqlite\n  selected: 1 [capacity=1]\n  left alone: context-window=1\n    context-window failures repeat unless the extraction input changes; --include-context-window overrides\n  applied: 1 row(s) given 3 retries\n",
+      "snapshotSQL": "SELECT *, typeof(retry_remaining) AS retry_type FROM jobs ORDER BY rowid",
+      "rows": [
+        {
+          "kind": "memory_stage1",
+          "job_key": "a",
+          "status": "error",
+          "retry_remaining": 3,
+          "retry_at": null,
+          "last_error": "capacity",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        },
+        {
+          "kind": "memory_stage1",
+          "job_key": "b",
+          "status": "error",
+          "retry_remaining": 0,
+          "retry_at": 999,
+          "last_error": "other",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        },
+        {
+          "kind": "memory_stage1",
+          "job_key": "c",
+          "status": "error",
+          "retry_remaining": 0,
+          "retry_at": 999,
+          "last_error": "context window exceeded",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        }
+      ]
+    },
+    {
+      "id": "limit-1.7",
+      "sql": [
+        "CREATE TABLE jobs (kind TEXT, job_key TEXT, status TEXT, retry_remaining INTEGER, retry_at INTEGER, last_error TEXT, input_watermark INTEGER, last_success_watermark INTEGER)",
+        "INSERT INTO jobs VALUES ('memory_stage1','a','error',0,999,'capacity',10,5)",
+        "INSERT INTO jobs VALUES ('memory_stage1','b','error',0,999,'other',10,5)",
+        "INSERT INTO jobs VALUES ('memory_stage1','c','error',0,999,'context window exceeded',10,5)"
+      ],
+      "options": {
+        "apply": true,
+        "limit": 1.7
+      },
+      "result": {
+        "state": "ok",
+        "detail": "",
+        "storePath": "<HOME>/memories_1.sqlite",
+        "applied": true,
+        "selected": [
+          {
+            "kind": "memory_stage1",
+            "jobKey": "a",
+            "cause": "capacity"
+          }
+        ],
+        "skippedByCause": {
+          "context-window": 1
+        },
+        "changed": 1,
+        "retries": 3
+      },
+      "text": "memory requeue: <HOME>/memories_1.sqlite\n  selected: 1 [capacity=1]\n  left alone: context-window=1\n    context-window failures repeat unless the extraction input changes; --include-context-window overrides\n  applied: 1 row(s) given 3 retries\n",
+      "snapshotSQL": "SELECT *, typeof(retry_remaining) AS retry_type FROM jobs ORDER BY rowid",
+      "rows": [
+        {
+          "kind": "memory_stage1",
+          "job_key": "a",
+          "status": "error",
+          "retry_remaining": 3,
+          "retry_at": null,
+          "last_error": "capacity",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        },
+        {
+          "kind": "memory_stage1",
+          "job_key": "b",
+          "status": "error",
+          "retry_remaining": 0,
+          "retry_at": 999,
+          "last_error": "other",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        },
+        {
+          "kind": "memory_stage1",
+          "job_key": "c",
+          "status": "error",
+          "retry_remaining": 0,
+          "retry_at": 999,
+          "last_error": "context window exceeded",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        }
+      ]
+    },
+    {
+      "id": "limit-NaN",
+      "sql": [
+        "CREATE TABLE jobs (kind TEXT, job_key TEXT, status TEXT, retry_remaining INTEGER, retry_at INTEGER, last_error TEXT, input_watermark INTEGER, last_success_watermark INTEGER)",
+        "INSERT INTO jobs VALUES ('memory_stage1','a','error',0,999,'capacity',10,5)",
+        "INSERT INTO jobs VALUES ('memory_stage1','b','error',0,999,'other',10,5)",
+        "INSERT INTO jobs VALUES ('memory_stage1','c','error',0,999,'context window exceeded',10,5)"
+      ],
+      "options": {
+        "apply": true,
+        "limit": "NaN"
+      },
+      "result": {
+        "state": "ok",
+        "detail": "",
+        "storePath": "<HOME>/memories_1.sqlite",
+        "applied": true,
+        "selected": [
+          {
+            "kind": "memory_stage1",
+            "jobKey": "a",
+            "cause": "capacity"
+          },
+          {
+            "kind": "memory_stage1",
+            "jobKey": "b",
+            "cause": "other"
+          }
+        ],
+        "skippedByCause": {
+          "context-window": 1
+        },
+        "changed": 2,
+        "retries": 3
+      },
+      "text": "memory requeue: <HOME>/memories_1.sqlite\n  selected: 2 [capacity=1, other=1]\n  left alone: context-window=1\n    context-window failures repeat unless the extraction input changes; --include-context-window overrides\n  applied: 2 row(s) given 3 retries\n",
+      "snapshotSQL": "SELECT *, typeof(retry_remaining) AS retry_type FROM jobs ORDER BY rowid",
+      "rows": [
+        {
+          "kind": "memory_stage1",
+          "job_key": "a",
+          "status": "error",
+          "retry_remaining": 3,
+          "retry_at": null,
+          "last_error": "capacity",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        },
+        {
+          "kind": "memory_stage1",
+          "job_key": "b",
+          "status": "error",
+          "retry_remaining": 3,
+          "retry_at": null,
+          "last_error": "other",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        },
+        {
+          "kind": "memory_stage1",
+          "job_key": "c",
+          "status": "error",
+          "retry_remaining": 0,
+          "retry_at": 999,
+          "last_error": "context window exceeded",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        }
+      ]
+    },
+    {
+      "id": "limit-Infinity",
+      "sql": [
+        "CREATE TABLE jobs (kind TEXT, job_key TEXT, status TEXT, retry_remaining INTEGER, retry_at INTEGER, last_error TEXT, input_watermark INTEGER, last_success_watermark INTEGER)",
+        "INSERT INTO jobs VALUES ('memory_stage1','a','error',0,999,'capacity',10,5)",
+        "INSERT INTO jobs VALUES ('memory_stage1','b','error',0,999,'other',10,5)",
+        "INSERT INTO jobs VALUES ('memory_stage1','c','error',0,999,'context window exceeded',10,5)"
+      ],
+      "options": {
+        "apply": true,
+        "limit": "Infinity"
+      },
+      "result": {
+        "state": "ok",
+        "detail": "",
+        "storePath": "<HOME>/memories_1.sqlite",
+        "applied": true,
+        "selected": [
+          {
+            "kind": "memory_stage1",
+            "jobKey": "a",
+            "cause": "capacity"
+          },
+          {
+            "kind": "memory_stage1",
+            "jobKey": "b",
+            "cause": "other"
+          }
+        ],
+        "skippedByCause": {
+          "context-window": 1
+        },
+        "changed": 2,
+        "retries": 3
+      },
+      "text": "memory requeue: <HOME>/memories_1.sqlite\n  selected: 2 [capacity=1, other=1]\n  left alone: context-window=1\n    context-window failures repeat unless the extraction input changes; --include-context-window overrides\n  applied: 2 row(s) given 3 retries\n",
+      "snapshotSQL": "SELECT *, typeof(retry_remaining) AS retry_type FROM jobs ORDER BY rowid",
+      "rows": [
+        {
+          "kind": "memory_stage1",
+          "job_key": "a",
+          "status": "error",
+          "retry_remaining": 3,
+          "retry_at": null,
+          "last_error": "capacity",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        },
+        {
+          "kind": "memory_stage1",
+          "job_key": "b",
+          "status": "error",
+          "retry_remaining": 3,
+          "retry_at": null,
+          "last_error": "other",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        },
+        {
+          "kind": "memory_stage1",
+          "job_key": "c",
+          "status": "error",
+          "retry_remaining": 0,
+          "retry_at": 999,
+          "last_error": "context window exceeded",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        }
+      ]
+    },
+    {
+      "id": "limit-1e+300",
+      "sql": [
+        "CREATE TABLE jobs (kind TEXT, job_key TEXT, status TEXT, retry_remaining INTEGER, retry_at INTEGER, last_error TEXT, input_watermark INTEGER, last_success_watermark INTEGER)",
+        "INSERT INTO jobs VALUES ('memory_stage1','a','error',0,999,'capacity',10,5)",
+        "INSERT INTO jobs VALUES ('memory_stage1','b','error',0,999,'other',10,5)",
+        "INSERT INTO jobs VALUES ('memory_stage1','c','error',0,999,'context window exceeded',10,5)"
+      ],
+      "options": {
+        "apply": true,
+        "limit": 1e+300
+      },
+      "result": {
+        "state": "ok",
+        "detail": "",
+        "storePath": "<HOME>/memories_1.sqlite",
+        "applied": true,
+        "selected": [
+          {
+            "kind": "memory_stage1",
+            "jobKey": "a",
+            "cause": "capacity"
+          },
+          {
+            "kind": "memory_stage1",
+            "jobKey": "b",
+            "cause": "other"
+          }
+        ],
+        "skippedByCause": {
+          "context-window": 1
+        },
+        "changed": 2,
+        "retries": 3
+      },
+      "text": "memory requeue: <HOME>/memories_1.sqlite\n  selected: 2 [capacity=1, other=1]\n  left alone: context-window=1\n    context-window failures repeat unless the extraction input changes; --include-context-window overrides\n  applied: 2 row(s) given 3 retries\n",
+      "snapshotSQL": "SELECT *, typeof(retry_remaining) AS retry_type FROM jobs ORDER BY rowid",
+      "rows": [
+        {
+          "kind": "memory_stage1",
+          "job_key": "a",
+          "status": "error",
+          "retry_remaining": 3,
+          "retry_at": null,
+          "last_error": "capacity",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        },
+        {
+          "kind": "memory_stage1",
+          "job_key": "b",
+          "status": "error",
+          "retry_remaining": 3,
+          "retry_at": null,
+          "last_error": "other",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        },
+        {
+          "kind": "memory_stage1",
+          "job_key": "c",
+          "status": "error",
+          "retry_remaining": 0,
+          "retry_at": 999,
+          "last_error": "context window exceeded",
+          "input_watermark": 10,
+          "last_success_watermark": 5,
+          "retry_type": "integer"
+        }
+      ]
+    },
+    {
+      "id": "missing-kind",
+      "sql": [
+        "CREATE TABLE jobs (job_key,status,retry_remaining,last_error)"
+      ],
+      "options": {
+        "apply": true
+      },
+      "result": {
+        "state": "unsupported",
+        "detail": "jobs table is missing column(s): kind",
+        "storePath": "<HOME>/memories_1.sqlite",
+        "applied": false,
+        "selected": [],
+        "skippedByCause": {},
+        "changed": 0,
+        "retries": 3
+      },
+      "text": "memory requeue: unsupported — jobs table is missing column(s): kind\n",
+      "snapshotSQL": "SELECT *, typeof(retry_remaining) AS retry_type FROM jobs ORDER BY rowid",
+      "rows": []
+    },
+    {
+      "id": "missing-job_key",
+      "sql": [
+        "CREATE TABLE jobs (kind,status,retry_remaining,last_error)"
+      ],
+      "options": {
+        "apply": true
+      },
+      "result": {
+        "state": "unsupported",
+        "detail": "jobs table is missing column(s): job_key",
+        "storePath": "<HOME>/memories_1.sqlite",
+        "applied": false,
+        "selected": [],
+        "skippedByCause": {},
+        "changed": 0,
+        "retries": 3
+      },
+      "text": "memory requeue: unsupported — jobs table is missing column(s): job_key\n",
+      "snapshotSQL": "SELECT *, typeof(retry_remaining) AS retry_type FROM jobs ORDER BY rowid",
+      "rows": []
+    },
+    {
+      "id": "missing-status",
+      "sql": [
+        "CREATE TABLE jobs (kind,job_key,retry_remaining,last_error)"
+      ],
+      "options": {
+        "apply": true
+      },
+      "result": {
+        "state": "unsupported",
+        "detail": "jobs table is missing column(s): status",
+        "storePath": "<HOME>/memories_1.sqlite",
+        "applied": false,
+        "selected": [],
+        "skippedByCause": {},
+        "changed": 0,
+        "retries": 3
+      },
+      "text": "memory requeue: unsupported — jobs table is missing column(s): status\n",
+      "snapshotSQL": "SELECT *, typeof(retry_remaining) AS retry_type FROM jobs ORDER BY rowid",
+      "rows": []
+    },
+    {
+      "id": "missing-retry_remaining",
+      "sql": [
+        "CREATE TABLE jobs (kind,job_key,status,last_error)"
+      ],
+      "options": {
+        "apply": true
+      },
+      "result": {
+        "state": "unsupported",
+        "detail": "jobs table is missing column(s): retry_remaining",
+        "storePath": "<HOME>/memories_1.sqlite",
+        "applied": false,
+        "selected": [],
+        "skippedByCause": {},
+        "changed": 0,
+        "retries": 3
+      },
+      "text": "memory requeue: unsupported — jobs table is missing column(s): retry_remaining\n",
+      "snapshotSQL": "SELECT * FROM jobs ORDER BY rowid",
+      "rows": []
+    },
+    {
+      "id": "missing-last_error",
+      "sql": [
+        "CREATE TABLE jobs (kind,job_key,status,retry_remaining)"
+      ],
+      "options": {
+        "apply": true
+      },
+      "result": {
+        "state": "unsupported",
+        "detail": "jobs table is missing column(s): last_error",
+        "storePath": "<HOME>/memories_1.sqlite",
+        "applied": false,
+        "selected": [],
+        "skippedByCause": {},
+        "changed": 0,
+        "retries": 3
+      },
+      "text": "memory requeue: unsupported — jobs table is missing column(s): last_error\n",
+      "snapshotSQL": "SELECT *, typeof(retry_remaining) AS retry_type FROM jobs ORDER BY rowid",
+      "rows": []
+    }
+  ]
+}
