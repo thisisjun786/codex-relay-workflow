@@ -167,7 +167,9 @@ func TestMultiAgentV2RunnerOutcomes(t *testing.T) {
 					t.Fatalf("failure = %v", err)
 				}
 			} else if mode == "unreadable" {
-				if err == nil { t.Fatal("post read failure swallowed") }
+				if err == nil {
+					t.Fatal("post read failure swallowed")
+				}
 			} else if err != nil || !got.Changed || got.Version != MultiAgentV1 || got.V2Enabled {
 				t.Fatalf("observed state = %+v, %v", got, err)
 			}
@@ -181,14 +183,26 @@ func TestMultiAgentV2UnreadableRefused(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			home, path := multiAgentHome(t)
 			var err error
-			if kind == "directory" { err = os.Mkdir(path, 0700) } else { err = os.Symlink("missing-target", path) }
-			if err != nil { t.Fatal(err) }
+			if kind == "directory" {
+				err = os.Mkdir(path, 0700)
+			} else {
+				err = os.Symlink("missing-target", path)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
 			for _, version := range []MultiAgentVersion{MultiAgentV1, MultiAgentV2} {
 				_, err := SetMultiAgentV2State(MultiAgentV2Deps{CodexHome: home, Run: func([]string) CodexRunResult { t.Fatal("runner reached unreadable config"); return CodexRunResult{} }}, version)
-				if err == nil { t.Fatal("unreadable pre-image accepted") }
+				if err == nil {
+					t.Fatal("unreadable pre-image accepted")
+				}
 			}
-			if IsMultiAgentV2Enabled(path) { t.Fatal("forgiving reader must mean v1") }
-			if _, err := os.Lstat(path); err != nil { t.Fatal("unreadable path changed", err) }
+			if IsMultiAgentV2Enabled(path) {
+				t.Fatal("forgiving reader must mean v1")
+			}
+			if _, err := os.Lstat(path); err != nil {
+				t.Fatal("unreadable path changed", err)
+			}
 		})
 	}
 }
@@ -197,24 +211,34 @@ func TestMultiAgentV2UnreadableRefused(t *testing.T) {
 func TestMultiAgentV2AtomicRepair(t *testing.T) {
 	home, path := multiAgentHome(t)
 	activationWrite(t, path, "[features.multi_agent_v2]\nenabled = false\nmax = 7\n")
-	alias := path+".hardlink"
+	alias := path + ".hardlink"
 	var prior os.FileInfo
 	deps := MultiAgentV2Deps{CodexHome: home, Run: func([]string) CodexRunResult {
 		activationWrite(t, path, "[features]\nmulti_agent_v2 = true\n")
-		if err := os.Link(path, alias); err != nil { t.Fatal(err) }
+		if err := os.Link(path, alias); err != nil {
+			t.Fatal(err)
+		}
 		var err error
 		prior, err = os.Stat(path)
-		if err != nil { t.Fatal(err) }
+		if err != nil {
+			t.Fatal(err)
+		}
 		return CodexRunResult{}
 	}}
-	if _, err := SetMultiAgentV2State(deps, MultiAgentV2); err != nil { t.Fatal(err) }
+	if _, err := SetMultiAgentV2State(deps, MultiAgentV2); err != nil {
+		t.Fatal(err)
+	}
 	after, err := os.Stat(path)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if os.SameFile(prior, after) || after.Mode().Perm() != 0600 || activationRead(t, alias) != "[features]\nmulti_agent_v2 = true\n" {
 		t.Fatal("repair rewrote the old inode or changed mode")
 	}
 	entries, err := os.ReadDir(home)
-	if err != nil || len(entries) != 2 { t.Fatalf("temporary debris: %v, %v", entries, err) }
+	if err != nil || len(entries) != 2 {
+		t.Fatalf("temporary debris: %v, %v", entries, err)
+	}
 }
 
 func TestMultiAgentV2SymlinkAndRepairFailure(t *testing.T) {
@@ -223,17 +247,32 @@ func TestMultiAgentV2SymlinkAndRepairFailure(t *testing.T) {
 			home, path := multiAgentHome(t)
 			target := filepath.Join(home, "target.toml")
 			activationWrite(t, target, "[features.multi_agent_v2]\nenabled = false\nmax = 7\n")
-			if err := os.Symlink("target.toml", path); err != nil { t.Fatal(err) }
+			if err := os.Symlink("target.toml", path); err != nil {
+				t.Fatal(err)
+			}
 			deps := MultiAgentV2Deps{CodexHome: home, Run: func([]string) CodexRunResult {
 				activationWrite(t, target, "[features]\nmulti_agent_v2 = true\n")
-				if fail { if err := os.Chmod(target, 0400); err != nil { t.Fatal(err) }; t.Cleanup(func(){ _ = os.Chmod(target,0600) }) }
+				if fail {
+					if err := os.Chmod(target, 0400); err != nil {
+						t.Fatal(err)
+					}
+					t.Cleanup(func() { _ = os.Chmod(target, 0600) })
+				}
 				return CodexRunResult{}
 			}}
 			_, err := SetMultiAgentV2State(deps, MultiAgentV2)
-			if fail && os.Geteuid() == 0 { t.Skip("root bypasses read-only permissions") }
-			if (err != nil) != fail { t.Fatalf("repair error = %v", err) }
-			if link, err := os.Readlink(path); err != nil || link != "target.toml" { t.Fatal("symlink replaced", err) }
-			if fail && activationRead(t, target) != "[features]\nmulti_agent_v2 = true\n" { t.Fatal("failed repair changed runner bytes") }
+			if fail && os.Geteuid() == 0 {
+				t.Skip("root bypasses read-only permissions")
+			}
+			if (err != nil) != fail {
+				t.Fatalf("repair error = %v", err)
+			}
+			if link, err := os.Readlink(path); err != nil || link != "target.toml" {
+				t.Fatal("symlink replaced", err)
+			}
+			if fail && activationRead(t, target) != "[features]\nmulti_agent_v2 = true\n" {
+				t.Fatal("failed repair changed runner bytes")
+			}
 		})
 	}
 }
@@ -244,15 +283,72 @@ func TestMultiAgentV2MultilineSettingsPreserved(t *testing.T) {
 		for _, postOnly := range []bool{false, true} {
 			t.Run(quote+strconvBool(postOnly), func(t *testing.T) {
 				home, path := multiAgentHome(t)
-				value := "note = "+quote+"  \r\n  indented\n\r\n\r\nenabled = text\n# string text\n[fake]\n"+quote
+				value := "note = " + quote + "  \r\n  indented\n\r\n\r\nenabled = text\n# string text\n[fake]\n" + quote
 				pre := "[features.multi_agent_v2]\nenabled = false\nmax = 7\n"
 				post := "# CRW_MULTI_AGENT_STRING_ collision\n[features]\nmulti_agent_v2 = true\n"
-				if postOnly { post += "[other]\n"+value+"\n" } else { pre += value+"\n" }
-				activationWrite(t,path,pre)
-				deps := MultiAgentV2Deps{CodexHome:home,Run:func([]string)CodexRunResult{activationWrite(t,path,post);return CodexRunResult{}}}
-				state,err := SetMultiAgentV2State(deps,MultiAgentV2)
-				if err != nil || !state.V2Enabled || !strings.Contains(activationRead(t,path),value) {t.Fatalf("string lost: %q, %v",activationRead(t,path),err)}
+				if postOnly {
+					post += "[other]\n" + value + "\n"
+				} else {
+					pre += value + "\n"
+				}
+				activationWrite(t, path, pre)
+				deps := MultiAgentV2Deps{CodexHome: home, Run: func([]string) CodexRunResult { activationWrite(t, path, post); return CodexRunResult{} }}
+				state, err := SetMultiAgentV2State(deps, MultiAgentV2)
+				if err != nil || !state.V2Enabled || !strings.Contains(activationRead(t, path), value) {
+					t.Fatalf("string lost: %q, %v", activationRead(t, path), err)
+				}
 			})
 		}
+	}
+}
+
+func TestMultiAgentV2RepairBoundaries(t *testing.T) {
+	for _, mode := range []string{"post-table", "opener-eof", "crlf-only-in-string"} {
+		t.Run(mode, func(t *testing.T) {
+			home, path := multiAgentHome(t)
+			pre := "[features.multi_agent_v2]\nenabled = false\nmax = 7\n"
+			post := "[features]\nmulti_agent_v2 = true\n"
+			value := "note = \"\"\"  "
+			switch mode {
+			case "post-table":
+				post = "[features.multi_agent_v2]\nenabled = true\nnote = \"\"\"\n\n\n# preserve\n\"\"\"\n"
+			case "opener-eof":
+				pre += value
+			case "crlf-only-in-string":
+				value = "note = \"\"\"\r\n text\r\n\"\"\""
+				pre += value
+			}
+			activationWrite(t, path, pre)
+			var inode os.FileInfo
+			deps := MultiAgentV2Deps{CodexHome: home, Run: func([]string) CodexRunResult {
+				activationWrite(t, path, post)
+				var err error
+				inode, err = os.Stat(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return CodexRunResult{}
+			}}
+			got, err := SetMultiAgentV2State(deps, MultiAgentV2)
+			if err != nil || !got.V2Enabled {
+				t.Fatalf("state = %+v, %v", got, err)
+			}
+			content := activationRead(t, path)
+			if mode == "post-table" {
+				after, err := os.Stat(path)
+				if err != nil || !os.SameFile(inode, after) || content != post {
+					t.Fatal("no-repair branch rewrote post", err)
+				}
+			} else if !strings.Contains(content, value) {
+				t.Fatalf("value lost = %q", content)
+			}
+			if mode == "crlf-only-in-string" && !strings.Contains(content, "[features.multi_agent_v2]\r\nenabled = true\r\n") {
+				t.Fatal("helper EOL choice changed")
+			}
+			raw, err := json.Marshal(got)
+			if err != nil || !strings.HasPrefix(string(raw), `{"version":"v2","v2Enabled":true,"changed":true,"appliesTo":`) {
+				t.Fatalf("change JSON = %s, %v", raw, err)
+			}
+		})
 	}
 }
