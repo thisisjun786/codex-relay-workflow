@@ -209,6 +209,7 @@
   {"flag":"--turn-status","choices":["completed","failed","interrupted","inProgress"]},
   {"flag":"--artifact","kind":"append"},
   {"flag":"--manifest-ref"},
+  {"flag":"--independent-review","help":"a file holding the independentReview item, one JSON object stating what you did with your independent code review: artifact {path, sha256}, status, reason, invalidReviewerCalls, headPatchId and dispositions. Only a ready_for_review receipt carries it. The relay stores it as stated and never reads the artifact it names"},
   {"flag":"--continues-anchor"},
   {"flag":"--continuation-actor"},
   {"flag":"--continuation-reason"},
@@ -770,6 +771,7 @@
   {"flag":"--pull-request","type":"int","required":true},
   {"flag":"--restate","help":"a handoff record or an earlier snapshot to grade against a fresh reading; '-' reads it from stdin"},
   {"flag":"--restate-head","help":"the head the restated record is about, when the record itself does not name one"},
+  {"flag":"--expect-independent-review","kind":"true","help":"with --restate: warn when the record states no independentReview item. A record that states one is graded either way, beside the restatement and never in it; its warnings change neither current, the problems, the verdict nor the exit code, and without the flag a record that states none leaves the payload as it was"},
   {"flag":"--late-dispositions","help":"with --restate: a file holding the coordinator's dispositions of review threads that arrived after the record, a JSON object {\"lateDispositions\": [{threadId, disposition (answered, backlog, resolved or refuted), evidenceUrl, head, grade}]}. A thread with an entry for the head under restatement is not a late finding; the grade is recorded as given and never read"},
   {"flag":"--page-size","type":"int"},
   {"flag":"--page-budget","type":"int","help":"how many pages one connection may take before the read is reported unfinished rather than answered"},
@@ -970,5 +972,9 @@
 {"name":"job on"},
 {"name":"job status"},
 {"name":"job drain","options":[{"flag":"--session","required":true},{"flag":"--json","kind":"true"}]},
-{"name":"job removal"}
+{"name":"job removal"},
+{"name":"session","commands":true,"summary":"native session identity and source binding"},
+{"name":"session current","options":[{"flag":"--json","kind":"true"}]},
+{"name":"session bind","options":[{"flag":"--json","kind":"true"}]},
+{"name":"session source","summary":"source <absolute-worktree> [--json]","options":[{"flag":"--json","kind":"true"}]}
 ]

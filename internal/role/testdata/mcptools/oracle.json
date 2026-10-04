@@ -1,0 +1,1430 @@
+{
+  "oracle": "CXC v0.2.40 3c1459ac",
+  "tools": [
+    {
+      "name": "subagents_get",
+      "description": "Read the per-role subagent config (explorer/reviewer/executor/architect): mode, model, effort, promptOverride, source and scope. Project defaults to global, then original session.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string",
+            "enum": [
+              "project",
+              "global"
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "subagents_set",
+      "description": "Update one role's subagent config. mode is 'default' (main model) or 'model' (requires a model id); effort is a reasoning-effort override (null inherits the parent session's effort).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string",
+            "enum": [
+              "project",
+              "global"
+            ]
+          },
+          "inherit": {
+            "type": "boolean",
+            "description": "Remove this entire role override and inherit the next scope; do not combine with role settings."
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "explorer",
+              "reviewer",
+              "executor",
+              "architect"
+            ]
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "default",
+              "model"
+            ]
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "effort": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              null
+            ]
+          },
+          "fallback": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Optional first fallback. Null clears; omitted nested effort inherits existing fallback effort or session effort.",
+            "properties": {
+              "model": {
+                "type": "string",
+                "minLength": 1
+              },
+              "effort": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "enum": [
+                  "low",
+                  "medium",
+                  "high",
+                  "xhigh",
+                  null
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          "promptOverride": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "role"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "catalog_list",
+      "description": "List selectable models: Codex-native entries first, then ocx-backed entries when ocx is active.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    }
+  ],
+  "cases": [
+    {
+      "id": "role_roundtrip",
+      "catalog": {
+        "state": "ocx-active",
+        "entries": [
+          {
+            "id": "provider/present",
+            "source": "ocx",
+            "label": "provider/present"
+          }
+        ],
+        "status": "fresh",
+        "source": "ocx",
+        "fetchedAt": "2026-01-01T12:00:00.000Z"
+      },
+      "nativeAge": null,
+      "initialStore": null,
+      "answers": [
+        {
+          "params": {
+            "name": "subagents_set",
+            "arguments": {
+              "scope": "global",
+              "role": "reviewer",
+              "mode": "model",
+              "model": "provider/present",
+              "effort": "low",
+              "promptOverride": "<prompt> "
+            }
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"model\",\"model\":\"provider/present\",\"effort\":\"low\",\"promptOverride\":\"<prompt> \",\"fallback\":null},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}},\"scope\":\"global\",\"sources\":{\"explorer\":\"session\",\"reviewer\":\"global\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":false,\"reviewer\":true,\"executor\":false,\"architect\":false}}"
+              }
+            ]
+          },
+          "error": null,
+          "store": "{\n  \"roles\": {\n    \"reviewer\": {\n      \"mode\": \"model\",\n      \"model\": \"provider/present\",\n      \"effort\": \"low\",\n      \"promptOverride\": \"<prompt> \",\n      \"fallback\": null\n    }\n  }\n}\n"
+        },
+        {
+          "params": {
+            "name": "subagents_get",
+            "arguments": {
+              "scope": "global"
+            }
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"reviewer\":{\"mode\":\"model\",\"model\":\"provider/present\",\"effort\":\"low\",\"promptOverride\":\"<prompt> \",\"fallback\":null,\"spawnArgs\":{\"model\":\"provider/present\",\"reasoning_effort\":\"low\"},\"staleModel\":false},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"}},\"scope\":\"global\",\"sources\":{\"explorer\":\"session\",\"reviewer\":\"global\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":false,\"reviewer\":true,\"executor\":false,\"architect\":false}}"
+              }
+            ]
+          },
+          "error": null,
+          "store": "{\n  \"roles\": {\n    \"reviewer\": {\n      \"mode\": \"model\",\n      \"model\": \"provider/present\",\n      \"effort\": \"low\",\n      \"promptOverride\": \"<prompt> \",\n      \"fallback\": null\n    }\n  }\n}\n"
+        }
+      ]
+    },
+    {
+      "id": "four_roles_fallback",
+      "catalog": {
+        "state": "ocx-active",
+        "entries": [
+          {
+            "id": "provider/present",
+            "source": "ocx",
+            "label": "provider/present"
+          }
+        ],
+        "status": "fresh",
+        "source": "ocx",
+        "fetchedAt": "2026-01-01T12:00:00.000Z"
+      },
+      "nativeAge": null,
+      "initialStore": null,
+      "answers": [
+        {
+          "params": {
+            "name": "subagents_set",
+            "arguments": {
+              "scope": "global",
+              "role": "explorer",
+              "fallback": {
+                "model": "backup/model",
+                "effort": "low"
+              }
+            }
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":{\"model\":\"backup/model\",\"effort\":\"low\"}},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}},\"scope\":\"global\",\"sources\":{\"explorer\":\"global\",\"reviewer\":\"session\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":true,\"reviewer\":false,\"executor\":false,\"architect\":false}}"
+              }
+            ]
+          },
+          "error": null,
+          "store": "{\n  \"roles\": {\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": {\n        \"model\": \"backup/model\",\n        \"effort\": \"low\"\n      }\n    }\n  }\n}\n"
+        },
+        {
+          "params": {
+            "name": "subagents_get",
+            "arguments": {
+              "scope": "global"
+            }
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":{\"model\":\"backup/model\",\"effort\":\"low\"},\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"}},\"scope\":\"global\",\"sources\":{\"explorer\":\"global\",\"reviewer\":\"session\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":true,\"reviewer\":false,\"executor\":false,\"architect\":false}}"
+              }
+            ]
+          },
+          "error": null,
+          "store": "{\n  \"roles\": {\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": {\n        \"model\": \"backup/model\",\n        \"effort\": \"low\"\n      }\n    }\n  }\n}\n"
+        },
+        {
+          "params": {
+            "name": "subagents_set",
+            "arguments": {
+              "scope": "global",
+              "role": "reviewer",
+              "fallback": {
+                "model": "backup/model",
+                "effort": "low"
+              }
+            }
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":{\"model\":\"backup/model\",\"effort\":\"low\"}},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":{\"model\":\"backup/model\",\"effort\":\"low\"}},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}},\"scope\":\"global\",\"sources\":{\"explorer\":\"global\",\"reviewer\":\"global\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":true,\"reviewer\":true,\"executor\":false,\"architect\":false}}"
+              }
+            ]
+          },
+          "error": null,
+          "store": "{\n  \"roles\": {\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": {\n        \"model\": \"backup/model\",\n        \"effort\": \"low\"\n      }\n    },\n    \"reviewer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": {\n        \"model\": \"backup/model\",\n        \"effort\": \"low\"\n      }\n    }\n  }\n}\n"
+        },
+        {
+          "params": {
+            "name": "subagents_get",
+            "arguments": {
+              "scope": "global"
+            }
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":{\"model\":\"backup/model\",\"effort\":\"low\"},\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":{\"model\":\"backup/model\",\"effort\":\"low\"},\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"}},\"scope\":\"global\",\"sources\":{\"explorer\":\"global\",\"reviewer\":\"global\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":true,\"reviewer\":true,\"executor\":false,\"architect\":false}}"
+              }
+            ]
+          },
+          "error": null,
+          "store": "{\n  \"roles\": {\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": {\n        \"model\": \"backup/model\",\n        \"effort\": \"low\"\n      }\n    },\n    \"reviewer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": {\n        \"model\": \"backup/model\",\n        \"effort\": \"low\"\n      }\n    }\n  }\n}\n"
+        },
+        {
+          "params": {
+            "name": "subagents_set",
+            "arguments": {
+              "scope": "global",
+              "role": "executor",
+              "fallback": {
+                "model": "backup/model",
+                "effort": "low"
+              }
+            }
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":{\"model\":\"backup/model\",\"effort\":\"low\"}},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":{\"model\":\"backup/model\",\"effort\":\"low\"}},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":{\"model\":\"backup/model\",\"effort\":\"low\"}},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}},\"scope\":\"global\",\"sources\":{\"explorer\":\"global\",\"reviewer\":\"global\",\"executor\":\"global\",\"architect\":\"session\"},\"overrides\":{\"explorer\":true,\"reviewer\":true,\"executor\":true,\"architect\":false}}"
+              }
+            ]
+          },
+          "error": null,
+          "store": "{\n  \"roles\": {\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": {\n        \"model\": \"backup/model\",\n        \"effort\": \"low\"\n      }\n    },\n    \"reviewer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": {\n        \"model\": \"backup/model\",\n        \"effort\": \"low\"\n      }\n    },\n    \"executor\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": {\n        \"model\": \"backup/model\",\n        \"effort\": \"low\"\n      }\n    }\n  }\n}\n"
+        },
+        {
+          "params": {
+            "name": "subagents_get",
+            "arguments": {
+              "scope": "global"
+            }
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":{\"model\":\"backup/model\",\"effort\":\"low\"},\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":{\"model\":\"backup/model\",\"effort\":\"low\"},\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":{\"model\":\"backup/model\",\"effort\":\"low\"},\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"}},\"scope\":\"global\",\"sources\":{\"explorer\":\"global\",\"reviewer\":\"global\",\"executor\":\"global\",\"architect\":\"session\"},\"overrides\":{\"explorer\":true,\"reviewer\":true,\"executor\":true,\"architect\":false}}"
+              }
+            ]
+          },
+          "error": null,
+          "store": "{\n  \"roles\": {\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": {\n        \"model\": \"backup/model\",\n        \"effort\": \"low\"\n      }\n    },\n    \"reviewer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": {\n        \"model\": \"backup/model\",\n        \"effort\": \"low\"\n      }\n    },\n    \"executor\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": {\n        \"model\": \"backup/model\",\n        \"effort\": \"low\"\n      }\n    }\n  }\n}\n"
+        },
+        {
+          "params": {
+            "name": "subagents_set",
+            "arguments": {
+              "scope": "global",
+              "role": "architect",
+              "fallback": {
+                "model": "backup/model",
+                "effort": "low"
+              }
+            }
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":{\"model\":\"backup/model\",\"effort\":\"low\"}},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":{\"model\":\"backup/model\",\"effort\":\"low\"}},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":{\"model\":\"backup/model\",\"effort\":\"low\"}},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":{\"model\":\"backup/model\",\"effort\":\"low\"}}},\"scope\":\"global\",\"sources\":{\"explorer\":\"global\",\"reviewer\":\"global\",\"executor\":\"global\",\"architect\":\"global\"},\"overrides\":{\"explorer\":true,\"reviewer\":true,\"executor\":true,\"architect\":true}}"
+              }
+            ]
+          },
+          "error": null,
+          "store": "{\n  \"roles\": {\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": {\n        \"model\": \"backup/model\",\n        \"effort\": \"low\"\n      }\n    },\n    \"reviewer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": {\n        \"model\": \"backup/model\",\n        \"effort\": \"low\"\n      }\n    },\n    \"executor\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": {\n        \"model\": \"backup/model\",\n        \"effort\": \"low\"\n      }\n    },\n    \"architect\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": {\n        \"model\": \"backup/model\",\n        \"effort\": \"low\"\n      }\n    }\n  }\n}\n"
+        },
+        {
+          "params": {
+            "name": "subagents_get",
+            "arguments": {
+              "scope": "global"
+            }
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":{\"model\":\"backup/model\",\"effort\":\"low\"},\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":{\"model\":\"backup/model\",\"effort\":\"low\"},\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":{\"model\":\"backup/model\",\"effort\":\"low\"},\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":{\"model\":\"backup/model\",\"effort\":\"low\"},\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"}},\"scope\":\"global\",\"sources\":{\"explorer\":\"global\",\"reviewer\":\"global\",\"executor\":\"global\",\"architect\":\"global\"},\"overrides\":{\"explorer\":true,\"reviewer\":true,\"executor\":true,\"architect\":true}}"
+              }
+            ]
+          },
+          "error": null,
+          "store": "{\n  \"roles\": {\n    \"explorer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": {\n        \"model\": \"backup/model\",\n        \"effort\": \"low\"\n      }\n    },\n    \"reviewer\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": {\n        \"model\": \"backup/model\",\n        \"effort\": \"low\"\n      }\n    },\n    \"executor\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": {\n        \"model\": \"backup/model\",\n        \"effort\": \"low\"\n      }\n    },\n    \"architect\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": {\n        \"model\": \"backup/model\",\n        \"effort\": \"low\"\n      }\n    }\n  }\n}\n"
+        }
+      ]
+    },
+    {
+      "id": "architect_independent",
+      "catalog": {
+        "state": "ocx-active",
+        "entries": [
+          {
+            "id": "provider/present",
+            "source": "ocx",
+            "label": "provider/present"
+          }
+        ],
+        "status": "fresh",
+        "source": "ocx",
+        "fetchedAt": "2026-01-01T12:00:00.000Z"
+      },
+      "nativeAge": null,
+      "initialStore": null,
+      "answers": [
+        {
+          "params": {
+            "name": "subagents_set",
+            "arguments": {
+              "scope": "global",
+              "role": "architect",
+              "mode": "model",
+              "model": "design-fixture",
+              "effort": "high"
+            }
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"model\",\"model\":\"design-fixture\",\"effort\":\"high\",\"promptOverride\":null,\"fallback\":null}},\"scope\":\"global\",\"sources\":{\"explorer\":\"session\",\"reviewer\":\"session\",\"executor\":\"session\",\"architect\":\"global\"},\"overrides\":{\"explorer\":false,\"reviewer\":false,\"executor\":false,\"architect\":true}}"
+              }
+            ]
+          },
+          "error": null,
+          "store": "{\n  \"roles\": {\n    \"architect\": {\n      \"mode\": \"model\",\n      \"model\": \"design-fixture\",\n      \"effort\": \"high\",\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+        },
+        {
+          "params": {
+            "name": "subagents_get",
+            "arguments": {
+              "scope": "global"
+            }
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"architect\":{\"mode\":\"model\",\"model\":\"design-fixture\",\"effort\":\"high\",\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{\"model\":\"design-fixture\",\"reasoning_effort\":\"high\"},\"staleModel\":true}},\"scope\":\"global\",\"sources\":{\"explorer\":\"session\",\"reviewer\":\"session\",\"executor\":\"session\",\"architect\":\"global\"},\"overrides\":{\"explorer\":false,\"reviewer\":false,\"executor\":false,\"architect\":true}}"
+              }
+            ]
+          },
+          "error": null,
+          "store": "{\n  \"roles\": {\n    \"architect\": {\n      \"mode\": \"model\",\n      \"model\": \"design-fixture\",\n      \"effort\": \"high\",\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+        }
+      ]
+    },
+    {
+      "id": "invalid_settings",
+      "catalog": {
+        "state": "ocx-active",
+        "entries": [
+          {
+            "id": "provider/present",
+            "source": "ocx",
+            "label": "provider/present"
+          }
+        ],
+        "status": "fresh",
+        "source": "ocx",
+        "fetchedAt": "2026-01-01T12:00:00.000Z"
+      },
+      "nativeAge": null,
+      "initialStore": null,
+      "answers": [
+        {
+          "params": {
+            "name": "subagents_set",
+            "arguments": {
+              "scope": "global",
+              "role": "reviewer",
+              "mode": "turbo"
+            }
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"error\":\"invalid mode \\\"turbo\\\" (must be \\\"default\\\" or \\\"model\\\")\"}"
+              }
+            ],
+            "isError": true
+          },
+          "error": null,
+          "store": null
+        },
+        {
+          "params": {
+            "name": "subagents_set",
+            "arguments": {
+              "scope": "global",
+              "role": "executor",
+              "effort": "turbo"
+            }
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"error\":\"invalid effort \\\"turbo\\\" (must be one of low/medium/high/xhigh or null)\"}"
+              }
+            ],
+            "isError": true
+          },
+          "error": null,
+          "store": null
+        },
+        {
+          "params": {
+            "name": "subagents_set",
+            "arguments": {
+              "scope": "global",
+              "role": "executor",
+              "fallback": {
+                "effort": "invalid"
+              }
+            }
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"error\":\"invalid fallback effort \\\"invalid\\\" (must be one of low/medium/high/xhigh or null)\"}"
+              }
+            ],
+            "isError": true
+          },
+          "error": null,
+          "store": null
+        },
+        {
+          "params": {
+            "name": "subagents_set",
+            "arguments": {
+              "scope": "global",
+              "role": "nobody",
+              "mode": "default"
+            }
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"error\":\"unknown role \\\"nobody\\\"\"}"
+              }
+            ],
+            "isError": true
+          },
+          "error": null,
+          "store": null
+        },
+        {
+          "params": {
+            "name": "subagents_set",
+            "arguments": {
+              "scope": "global",
+              "role": "explorer",
+              "inherit": true,
+              "mode": "default"
+            }
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"error\":\"inherit cannot be combined with role settings\"}"
+              }
+            ],
+            "isError": true
+          },
+          "error": null,
+          "store": null
+        },
+        {
+          "params": {
+            "name": "subagents_set",
+            "arguments": {
+              "scope": "global",
+              "role": "explorer",
+              "inherit": "yes"
+            }
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"error\":\"inherit must be a boolean\"}"
+              }
+            ],
+            "isError": true
+          },
+          "error": null,
+          "store": null
+        },
+        {
+          "params": {
+            "name": "subagents_get",
+            "arguments": {
+              "scope": "galaxy"
+            }
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"error\":\"invalid scope \\\"galaxy\\\"\"}"
+              }
+            ],
+            "isError": true
+          },
+          "error": null,
+          "store": null
+        }
+      ]
+    },
+    {
+      "id": "inherit_reset",
+      "catalog": {
+        "state": "ocx-active",
+        "entries": [
+          {
+            "id": "provider/present",
+            "source": "ocx",
+            "label": "provider/present"
+          }
+        ],
+        "status": "fresh",
+        "source": "ocx",
+        "fetchedAt": "2026-01-01T12:00:00.000Z"
+      },
+      "nativeAge": null,
+      "initialStore": null,
+      "answers": [
+        {
+          "params": {
+            "name": "subagents_set",
+            "arguments": {
+              "scope": "global",
+              "role": "explorer",
+              "mode": "model",
+              "model": "provider/present",
+              "effort": "xhigh"
+            }
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"roles\":{\"explorer\":{\"mode\":\"model\",\"model\":\"provider/present\",\"effort\":\"xhigh\",\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}},\"scope\":\"global\",\"sources\":{\"explorer\":\"global\",\"reviewer\":\"session\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":true,\"reviewer\":false,\"executor\":false,\"architect\":false}}"
+              }
+            ]
+          },
+          "error": null,
+          "store": "{\n  \"roles\": {\n    \"explorer\": {\n      \"mode\": \"model\",\n      \"model\": \"provider/present\",\n      \"effort\": \"xhigh\",\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+        },
+        {
+          "params": {
+            "name": "subagents_set",
+            "arguments": {
+              "scope": "global",
+              "role": "explorer",
+              "inherit": true
+            }
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}},\"scope\":\"global\",\"sources\":{\"explorer\":\"session\",\"reviewer\":\"session\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":false,\"reviewer\":false,\"executor\":false,\"architect\":false}}"
+              }
+            ]
+          },
+          "error": null,
+          "store": "{\n  \"roles\": {}\n}\n"
+        },
+        {
+          "params": {
+            "name": "subagents_get",
+            "arguments": {
+              "scope": "global"
+            }
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"}},\"scope\":\"global\",\"sources\":{\"explorer\":\"session\",\"reviewer\":\"session\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":false,\"reviewer\":false,\"executor\":false,\"architect\":false}}"
+              }
+            ]
+          },
+          "error": null,
+          "store": "{\n  \"roles\": {}\n}\n"
+        }
+      ]
+    },
+    {
+      "id": "decorated_roles",
+      "catalog": {
+        "state": "ocx-active",
+        "entries": [
+          {
+            "id": "provider/present",
+            "source": "ocx",
+            "label": "provider/present"
+          }
+        ],
+        "status": "fresh",
+        "source": "ocx",
+        "fetchedAt": "2026-01-01T12:00:00.000Z"
+      },
+      "nativeAge": null,
+      "initialStore": null,
+      "answers": [
+        {
+          "params": {
+            "name": "subagents_set",
+            "arguments": {
+              "scope": "global",
+              "role": "explorer",
+              "mode": "model",
+              "model": "provider/present",
+              "effort": "low"
+            }
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"roles\":{\"explorer\":{\"mode\":\"model\",\"model\":\"provider/present\",\"effort\":\"low\",\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}},\"scope\":\"global\",\"sources\":{\"explorer\":\"global\",\"reviewer\":\"session\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":true,\"reviewer\":false,\"executor\":false,\"architect\":false}}"
+              }
+            ]
+          },
+          "error": null,
+          "store": "{\n  \"roles\": {\n    \"explorer\": {\n      \"mode\": \"model\",\n      \"model\": \"provider/present\",\n      \"effort\": \"low\",\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+        },
+        {
+          "params": {
+            "name": "subagents_set",
+            "arguments": {
+              "scope": "global",
+              "role": "reviewer",
+              "mode": "model",
+              "model": "provider/missing"
+            }
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"roles\":{\"explorer\":{\"mode\":\"model\",\"model\":\"provider/present\",\"effort\":\"low\",\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"model\",\"model\":\"provider/missing\",\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}},\"scope\":\"global\",\"sources\":{\"explorer\":\"global\",\"reviewer\":\"global\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":true,\"reviewer\":true,\"executor\":false,\"architect\":false}}"
+              }
+            ]
+          },
+          "error": null,
+          "store": "{\n  \"roles\": {\n    \"explorer\": {\n      \"mode\": \"model\",\n      \"model\": \"provider/present\",\n      \"effort\": \"low\",\n      \"promptOverride\": null,\n      \"fallback\": null\n    },\n    \"reviewer\": {\n      \"mode\": \"model\",\n      \"model\": \"provider/missing\",\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+        },
+        {
+          "params": {
+            "name": "subagents_set",
+            "arguments": {
+              "scope": "global",
+              "role": "architect",
+              "effort": "high"
+            }
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"roles\":{\"explorer\":{\"mode\":\"model\",\"model\":\"provider/present\",\"effort\":\"low\",\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"model\",\"model\":\"provider/missing\",\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":\"high\",\"promptOverride\":null,\"fallback\":null}},\"scope\":\"global\",\"sources\":{\"explorer\":\"global\",\"reviewer\":\"global\",\"executor\":\"session\",\"architect\":\"global\"},\"overrides\":{\"explorer\":true,\"reviewer\":true,\"executor\":false,\"architect\":true}}"
+              }
+            ]
+          },
+          "error": null,
+          "store": "{\n  \"roles\": {\n    \"explorer\": {\n      \"mode\": \"model\",\n      \"model\": \"provider/present\",\n      \"effort\": \"low\",\n      \"promptOverride\": null,\n      \"fallback\": null\n    },\n    \"reviewer\": {\n      \"mode\": \"model\",\n      \"model\": \"provider/missing\",\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    },\n    \"architect\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": \"high\",\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+        },
+        {
+          "params": {
+            "name": "subagents_get",
+            "arguments": {
+              "scope": "global"
+            }
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"roles\":{\"explorer\":{\"mode\":\"model\",\"model\":\"provider/present\",\"effort\":\"low\",\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{\"model\":\"provider/present\",\"reasoning_effort\":\"low\"},\"staleModel\":false},\"reviewer\":{\"mode\":\"model\",\"model\":\"provider/missing\",\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{\"model\":\"provider/missing\"},\"staleModel\":true},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":\"high\",\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{\"reasoning_effort\":\"high\"},\"staleModel\":null,\"staleReason\":\"role uses the default model\"}},\"scope\":\"global\",\"sources\":{\"explorer\":\"global\",\"reviewer\":\"global\",\"executor\":\"session\",\"architect\":\"global\"},\"overrides\":{\"explorer\":true,\"reviewer\":true,\"executor\":false,\"architect\":true}}"
+              }
+            ]
+          },
+          "error": null,
+          "store": "{\n  \"roles\": {\n    \"explorer\": {\n      \"mode\": \"model\",\n      \"model\": \"provider/present\",\n      \"effort\": \"low\",\n      \"promptOverride\": null,\n      \"fallback\": null\n    },\n    \"reviewer\": {\n      \"mode\": \"model\",\n      \"model\": \"provider/missing\",\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    },\n    \"architect\": {\n      \"mode\": \"default\",\n      \"model\": null,\n      \"effort\": \"high\",\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+        }
+      ]
+    },
+    {
+      "id": "catalog_stale",
+      "catalog": {
+        "state": "ocx-active",
+        "entries": [
+          {
+            "id": "provider/present",
+            "source": "ocx",
+            "label": "provider/present"
+          }
+        ],
+        "status": "stale",
+        "source": "ocx",
+        "fetchedAt": "2026-01-01T12:00:00.000Z"
+      },
+      "nativeAge": null,
+      "initialStore": null,
+      "answers": [
+        {
+          "params": {
+            "name": "subagents_set",
+            "arguments": {
+              "scope": "global",
+              "role": "reviewer",
+              "mode": "model",
+              "model": "provider/missing"
+            }
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"model\",\"model\":\"provider/missing\",\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}},\"scope\":\"global\",\"sources\":{\"explorer\":\"session\",\"reviewer\":\"global\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":false,\"reviewer\":true,\"executor\":false,\"architect\":false}}"
+              }
+            ]
+          },
+          "error": null,
+          "store": "{\n  \"roles\": {\n    \"reviewer\": {\n      \"mode\": \"model\",\n      \"model\": \"provider/missing\",\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+        },
+        {
+          "params": {
+            "name": "subagents_get",
+            "arguments": {
+              "scope": "global"
+            }
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"reviewer\":{\"mode\":\"model\",\"model\":\"provider/missing\",\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{\"model\":\"provider/missing\"},\"staleModel\":null,\"staleReason\":\"catalog is last-success cache\"},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"}},\"scope\":\"global\",\"sources\":{\"explorer\":\"session\",\"reviewer\":\"global\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":false,\"reviewer\":true,\"executor\":false,\"architect\":false}}"
+              }
+            ]
+          },
+          "error": null,
+          "store": "{\n  \"roles\": {\n    \"reviewer\": {\n      \"mode\": \"model\",\n      \"model\": \"provider/missing\",\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+        }
+      ]
+    },
+    {
+      "id": "catalog_unavailable",
+      "catalog": {
+        "state": "ocx-active",
+        "entries": [
+          {
+            "id": "provider/present",
+            "source": "ocx",
+            "label": "provider/present"
+          }
+        ],
+        "status": "unavailable",
+        "source": "ocx",
+        "fetchedAt": "2026-01-01T12:00:00.000Z"
+      },
+      "nativeAge": null,
+      "initialStore": null,
+      "answers": [
+        {
+          "params": {
+            "name": "subagents_set",
+            "arguments": {
+              "scope": "global",
+              "role": "reviewer",
+              "mode": "model",
+              "model": "provider/missing"
+            }
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"model\",\"model\":\"provider/missing\",\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}},\"scope\":\"global\",\"sources\":{\"explorer\":\"session\",\"reviewer\":\"global\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":false,\"reviewer\":true,\"executor\":false,\"architect\":false}}"
+              }
+            ]
+          },
+          "error": null,
+          "store": "{\n  \"roles\": {\n    \"reviewer\": {\n      \"mode\": \"model\",\n      \"model\": \"provider/missing\",\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+        },
+        {
+          "params": {
+            "name": "subagents_get",
+            "arguments": {
+              "scope": "global"
+            }
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"reviewer\":{\"mode\":\"model\",\"model\":\"provider/missing\",\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{\"model\":\"provider/missing\"},\"staleModel\":null,\"staleReason\":\"catalog unavailable\"},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"}},\"scope\":\"global\",\"sources\":{\"explorer\":\"session\",\"reviewer\":\"global\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":false,\"reviewer\":true,\"executor\":false,\"architect\":false}}"
+              }
+            ]
+          },
+          "error": null,
+          "store": "{\n  \"roles\": {\n    \"reviewer\": {\n      \"mode\": \"model\",\n      \"model\": \"provider/missing\",\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+        }
+      ]
+    },
+    {
+      "id": "catalog_rejected",
+      "catalog": "reject",
+      "nativeAge": null,
+      "initialStore": null,
+      "answers": [
+        {
+          "params": {
+            "name": "subagents_set",
+            "arguments": {
+              "scope": "global",
+              "role": "reviewer",
+              "mode": "model",
+              "model": "provider/missing"
+            }
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"model\",\"model\":\"provider/missing\",\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}},\"scope\":\"global\",\"sources\":{\"explorer\":\"session\",\"reviewer\":\"global\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":false,\"reviewer\":true,\"executor\":false,\"architect\":false}}"
+              }
+            ]
+          },
+          "error": null,
+          "store": "{\n  \"roles\": {\n    \"reviewer\": {\n      \"mode\": \"model\",\n      \"model\": \"provider/missing\",\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+        },
+        {
+          "params": {
+            "name": "subagents_get",
+            "arguments": {
+              "scope": "global"
+            }
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"reviewer\":{\"mode\":\"model\",\"model\":\"provider/missing\",\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{\"model\":\"provider/missing\"},\"staleModel\":null,\"staleReason\":\"catalog unavailable\"},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"}},\"scope\":\"global\",\"sources\":{\"explorer\":\"session\",\"reviewer\":\"global\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":false,\"reviewer\":true,\"executor\":false,\"architect\":false}}"
+              }
+            ]
+          },
+          "error": null,
+          "store": "{\n  \"roles\": {\n    \"reviewer\": {\n      \"mode\": \"model\",\n      \"model\": \"provider/missing\",\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+        }
+      ]
+    },
+    {
+      "id": "native_fresh",
+      "catalog": {
+        "state": "native-catalog",
+        "entries": [
+          {
+            "id": "provider/present",
+            "source": "native",
+            "label": "provider/present"
+          }
+        ],
+        "status": "fresh",
+        "source": "native",
+        "fetchedAt": "2026-01-01T12:00:00.000Z"
+      },
+      "nativeAge": 0,
+      "initialStore": null,
+      "answers": [
+        {
+          "params": {
+            "name": "subagents_set",
+            "arguments": {
+              "scope": "global",
+              "role": "reviewer",
+              "mode": "model",
+              "model": "provider/missing"
+            }
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"model\",\"model\":\"provider/missing\",\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}},\"scope\":\"global\",\"sources\":{\"explorer\":\"session\",\"reviewer\":\"global\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":false,\"reviewer\":true,\"executor\":false,\"architect\":false}}"
+              }
+            ]
+          },
+          "error": null,
+          "store": "{\n  \"roles\": {\n    \"reviewer\": {\n      \"mode\": \"model\",\n      \"model\": \"provider/missing\",\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+        },
+        {
+          "params": {
+            "name": "subagents_get",
+            "arguments": {
+              "scope": "global"
+            }
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"reviewer\":{\"mode\":\"model\",\"model\":\"provider/missing\",\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{\"model\":\"provider/missing\"},\"staleModel\":true},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"}},\"scope\":\"global\",\"sources\":{\"explorer\":\"session\",\"reviewer\":\"global\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":false,\"reviewer\":true,\"executor\":false,\"architect\":false}}"
+              }
+            ]
+          },
+          "error": null,
+          "store": "{\n  \"roles\": {\n    \"reviewer\": {\n      \"mode\": \"model\",\n      \"model\": \"provider/missing\",\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+        }
+      ]
+    },
+    {
+      "id": "native_old",
+      "catalog": {
+        "state": "native-catalog",
+        "entries": [
+          {
+            "id": "provider/present",
+            "source": "native",
+            "label": "provider/present"
+          }
+        ],
+        "status": "fresh",
+        "source": "native",
+        "fetchedAt": "2026-01-01T12:00:00.000Z"
+      },
+      "nativeAge": 90000000,
+      "initialStore": null,
+      "answers": [
+        {
+          "params": {
+            "name": "subagents_set",
+            "arguments": {
+              "scope": "global",
+              "role": "reviewer",
+              "mode": "model",
+              "model": "provider/missing"
+            }
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"model\",\"model\":\"provider/missing\",\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}},\"scope\":\"global\",\"sources\":{\"explorer\":\"session\",\"reviewer\":\"global\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":false,\"reviewer\":true,\"executor\":false,\"architect\":false}}"
+              }
+            ]
+          },
+          "error": null,
+          "store": "{\n  \"roles\": {\n    \"reviewer\": {\n      \"mode\": \"model\",\n      \"model\": \"provider/missing\",\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+        },
+        {
+          "params": {
+            "name": "subagents_get",
+            "arguments": {
+              "scope": "global"
+            }
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"reviewer\":{\"mode\":\"model\",\"model\":\"provider/missing\",\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{\"model\":\"provider/missing\"},\"staleModel\":null,\"staleReason\":\"catalog unavailable\"},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"}},\"scope\":\"global\",\"sources\":{\"explorer\":\"session\",\"reviewer\":\"global\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":false,\"reviewer\":true,\"executor\":false,\"architect\":false}}"
+              }
+            ]
+          },
+          "error": null,
+          "store": "{\n  \"roles\": {\n    \"reviewer\": {\n      \"mode\": \"model\",\n      \"model\": \"provider/missing\",\n      \"effort\": null,\n      \"promptOverride\": null,\n      \"fallback\": null\n    }\n  }\n}\n"
+        }
+      ]
+    },
+    {
+      "id": "argument_shapes",
+      "catalog": {
+        "state": "ocx-active",
+        "entries": [
+          {
+            "id": "provider/present",
+            "source": "ocx",
+            "label": "provider/present"
+          }
+        ],
+        "status": "fresh",
+        "source": "ocx",
+        "fetchedAt": "2026-01-01T12:00:00.000Z"
+      },
+      "nativeAge": null,
+      "initialStore": null,
+      "answers": [
+        {
+          "params": {
+            "name": "subagents_set"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"error\":\"unknown role \\\"undefined\\\"\"}"
+              }
+            ],
+            "isError": true
+          },
+          "error": null,
+          "store": null
+        },
+        {
+          "params": {
+            "name": "subagents_set",
+            "arguments": null
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"error\":\"unknown role \\\"undefined\\\"\"}"
+              }
+            ],
+            "isError": true
+          },
+          "error": null,
+          "store": null
+        },
+        {
+          "params": {
+            "name": "subagents_set",
+            "arguments": 5
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"error\":\"missing body\"}"
+              }
+            ],
+            "isError": true
+          },
+          "error": null,
+          "store": null
+        },
+        {
+          "params": {
+            "name": "subagents_set",
+            "arguments": "x"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"error\":\"missing body\"}"
+              }
+            ],
+            "isError": true
+          },
+          "error": null,
+          "store": null
+        },
+        {
+          "params": {
+            "name": "subagents_set",
+            "arguments": []
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"error\":\"missing body\"}"
+              }
+            ],
+            "isError": true
+          },
+          "error": null,
+          "store": null
+        },
+        {
+          "params": {
+            "name": "subagents_set",
+            "arguments": true
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"error\":\"missing body\"}"
+              }
+            ],
+            "isError": true
+          },
+          "error": null,
+          "store": null
+        },
+        {
+          "params": {
+            "name": "subagents_get",
+            "arguments": null
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"}},\"scope\":\"project\",\"sources\":{\"explorer\":\"session\",\"reviewer\":\"session\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":false,\"reviewer\":false,\"executor\":false,\"architect\":false}}"
+              }
+            ]
+          },
+          "error": null,
+          "store": null
+        },
+        {
+          "params": {
+            "name": "subagents_get",
+            "arguments": 5
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"}},\"scope\":\"project\",\"sources\":{\"explorer\":\"session\",\"reviewer\":\"session\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":false,\"reviewer\":false,\"executor\":false,\"architect\":false}}"
+              }
+            ]
+          },
+          "error": null,
+          "store": null
+        },
+        {
+          "params": {
+            "name": "subagents_get",
+            "arguments": "x"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"}},\"scope\":\"project\",\"sources\":{\"explorer\":\"session\",\"reviewer\":\"session\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":false,\"reviewer\":false,\"executor\":false,\"architect\":false}}"
+              }
+            ]
+          },
+          "error": null,
+          "store": null
+        },
+        {
+          "params": {
+            "name": "subagents_get",
+            "arguments": []
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"}},\"scope\":\"project\",\"sources\":{\"explorer\":\"session\",\"reviewer\":\"session\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":false,\"reviewer\":false,\"executor\":false,\"architect\":false}}"
+              }
+            ]
+          },
+          "error": null,
+          "store": null
+        },
+        {
+          "params": {
+            "name": "subagents_get",
+            "arguments": true
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"}},\"scope\":\"project\",\"sources\":{\"explorer\":\"session\",\"reviewer\":\"session\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":false,\"reviewer\":false,\"executor\":false,\"architect\":false}}"
+              }
+            ]
+          },
+          "error": null,
+          "store": null
+        }
+      ]
+    },
+    {
+      "id": "unknown_names",
+      "catalog": {
+        "state": "ocx-active",
+        "entries": [
+          {
+            "id": "provider/present",
+            "source": "ocx",
+            "label": "provider/present"
+          }
+        ],
+        "status": "fresh",
+        "source": "ocx",
+        "fetchedAt": "2026-01-01T12:00:00.000Z"
+      },
+      "nativeAge": null,
+      "initialStore": null,
+      "answers": [
+        {
+          "params": {},
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"error\":\"unknown tool: undefined\"}"
+              }
+            ],
+            "isError": true
+          },
+          "error": null,
+          "store": null
+        },
+        {
+          "params": {
+            "name": null
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"error\":\"unknown tool: null\"}"
+              }
+            ],
+            "isError": true
+          },
+          "error": null,
+          "store": null
+        },
+        {
+          "params": {
+            "name": 3
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"error\":\"unknown tool: 3\"}"
+              }
+            ],
+            "isError": true
+          },
+          "error": null,
+          "store": null
+        },
+        {
+          "params": {
+            "name": []
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"error\":\"unknown tool: \"}"
+              }
+            ],
+            "isError": true
+          },
+          "error": null,
+          "store": null
+        },
+        {
+          "params": {
+            "name": {
+              "toString": 1
+            }
+          },
+          "result": null,
+          "error": "Cannot convert object to primitive value",
+          "store": null
+        },
+        {
+          "params": {
+            "name": "unknown"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"error\":\"unknown tool: unknown\"}"
+              }
+            ],
+            "isError": true
+          },
+          "error": null,
+          "store": null
+        }
+      ]
+    }
+  ],
+  "timeout": {
+    "roles": {
+      "explorer": {
+        "mode": "default",
+        "model": null,
+        "effort": null,
+        "promptOverride": null,
+        "fallback": null,
+        "spawnArgs": {},
+        "staleModel": null,
+        "staleReason": "role uses the default model"
+      },
+      "reviewer": {
+        "mode": "model",
+        "model": "provider/model",
+        "effort": null,
+        "promptOverride": null,
+        "fallback": null,
+        "spawnArgs": {
+          "model": "provider/model"
+        },
+        "staleModel": null,
+        "staleReason": "catalog read timed out after 5000 ms"
+      },
+      "executor": {
+        "mode": "default",
+        "model": null,
+        "effort": null,
+        "promptOverride": null,
+        "fallback": null,
+        "spawnArgs": {},
+        "staleModel": null,
+        "staleReason": "role uses the default model"
+      },
+      "architect": {
+        "mode": "default",
+        "model": null,
+        "effort": null,
+        "promptOverride": null,
+        "fallback": null,
+        "spawnArgs": {},
+        "staleModel": null,
+        "staleReason": "role uses the default model"
+      }
+    },
+    "scope": "global",
+    "sources": {
+      "explorer": "session",
+      "reviewer": "global",
+      "executor": "session",
+      "architect": "session"
+    },
+    "overrides": {
+      "explorer": false,
+      "reviewer": true,
+      "executor": false,
+      "architect": false
+    }
+  }
+}

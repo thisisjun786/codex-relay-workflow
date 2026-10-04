@@ -559,6 +559,158 @@ The pinned oracle already publishes through an exclusive 0600 temporary file and
 - `readHitCounts` suppresses every read error as empty history, whereas `bumpHitCounts` throws for a missing table and commits earlier refs before a later ref fails despite the shared tolerance comment (source `plugins/codexclaw/components/recall/src/index-db.ts:172-174`, `:182-205`); port: kept.
 - INTEGER affinity permits nonnumeric text in `hit_count`; its Number conversion can return NaN or Infinity to the penalty consumer (source `plugins/codexclaw/components/recall/src/index-db.ts:190`); port: kept.
 
+## Found by CRW-360 plan init library port
+
+- The seeded plan `--date` observation remains physically unchanged under this append-only port: unknown flags are ignored and their bare values can become the positional slug, including `--date` before `--slug`; this section records its disposition (source `plugins/codexclaw/components/pabcd-state/src/plan-cli.ts:83-101`); port: kept.
+- `plan init -h` treats `-h` as the slug `h`, while `plan init --help` rejects the missing slug instead of displaying help (source `plugins/codexclaw/components/pabcd-state/src/plan-cli.ts:76-94`); port: kept.
+- A six-digit date prefix is accepted without checking the calendar, so `999999_name` creates a unit bearing that prefix (source `plugins/codexclaw/components/pabcd-state/src/plan-cli.ts:51-55`); port: kept.
+- A failed document write leaves the partially created plan unit and blocks a later init of that name; the scaffold is not fsynced (source `plugins/codexclaw/components/pabcd-state/src/plan-cli.ts:183-192`); port: kept.
+- A symlinked plan parent is followed and can redirect creation outside the workspace, and a direct caller's date or slug can escape the workspace (source `plugins/codexclaw/components/pabcd-state/src/plan-cli.ts:177-185`); port: fixed by the explicit containment and symlink-parent refusal requirement; recorded safety cases are intentionally-changed.
+- The exists-then-recursive-mkdir and non-exclusive document writes can overwrite a concurrent creator's files or truncate a record reached by a document symlink (source `plugins/codexclaw/components/pabcd-state/src/plan-cli.ts:179-190`); port: fixed as a record data-loss defect using exclusive unit and document creation; the recorded raced-file case is intentionally-changed.
+- A direct library caller can bypass the nine-phase parser cap: phase 10 has file `100_phase10.md` but heading `0100`, because the document template interpolates `0${n}0` rather than padding the decade (source `plugins/codexclaw/components/pabcd-state/src/plan-cli.ts:137` and `:189`); port: kept.
+
+## Found by the CRW-508 recall chat scan port
+
+- Scan limits are applied in file/entry iteration order before the stable global timestamp sort, so a newer matching message can be excluded by an earlier message in the same rollout (source `recall/src/chat-search.ts:313-315,342-344,373`; recorded `chronology` case in `testdata/chatscan/oracle.json`); port: kept.
+- Reaching the limit can report truncation merely because another entry/file remains, before its source, role or match filters run; reaching it on the final entry of the final file reports no warning (source `recall/src/chat-search.ts:313-319,342-349`; recorded limit cases); port: kept.
+- A fractional context window throws when its clamped start is a positive noninteger; windows starting at zero can succeed, and infinite context includes every visible entry (source `recall/src/chat-search.ts:383-387`; recorded context cases); port: kept.
+- Positive days outside JavaScript's Date range throw `Invalid time value` after metadata loading; an empty direct-scan plan returns before that cutoff is evaluated (source `recall/src/chat-search.ts:296-307`; recorded infinite-days and empty-query cases); port: kept.
+- A NaN limit defeats both limit comparisons and the truncation warning, allowing more hits than the maximum advertised cap (source `recall/src/chat-search.ts:313,342,370`; recorded 250-hit dense case); port: kept.
+- The raw JSON file prefilter can miss decoded text containing escaped query characters, even though the per-message matcher would find it (source `recall/src/chat-search.ts:334,349`; recorded escaped `CI` case); port: kept.
+
+## CRW-499 — install features commands
+
+- Enable, disable and status ignore trailing arguments except position-independent help, so an unknown option can still run a mutation (source `config-guard/src/cli.ts:159-167,197-262` at v0.2.40; `TestFeaturesHelpUsageAndStatus`); port: kept.
+- Explicit enable clears the self-heal opt-out even after a soft flag failure, and marker read/write errors are swallowed (source `config-guard/src/cli.ts:199-204,223-227` at v0.2.40; `TestFeaturesSoftAndHardFailures`, `TestFeaturesUnreadableSettingsAndManifest`); port: kept.
+- Disable prints success and exits 0 when individual feature-disable calls fail; failed flags are omitted without a diagnostic (source `config-guard/src/deactivate.ts:184-185`, `src/cli.ts:230-258` at v0.2.40; `TestFeaturesDisableBranches`); port: kept.
+- Repeated enable records the now-enabled flags as pre-existing, losing the earlier feature ownership, while managed-key ownership survives (source `config-guard/src/activate.ts:225-231,269-286` at v0.2.40; `TestFeaturesManagedKeyRoundTrips`); port: kept.
+- Settings and manifest writes can truncate a file when interrupted, and marker read failures can replace unread consent data (source `config-guard/src/activate.ts:278,299`, `src/deactivate.ts:58-65,155`, `src/self-heal.ts:258-269,276-277` at v0.2.40); port: fixed (data loss: command glue reuses the already ported read-refusing, fsynced temporary-file/rename owners; intentionally-changed unreadable-settings command cases preserve dangling links).
+
+## Found by the CRW-509 recall memory helper port
+
+- The thread-id reader scans anywhere in the first 2,000 UTF-16 units, and its whitespace match can cross a newline to capture a heading or another key as the id (source recall/src/memory-search.ts:260-262; recorded threadId cases and TestMemoryMarkdownTreeAndFrontmatter); port: kept.
+- The cwd reader captures only the first non-whitespace token, truncating paths containing spaces and retaining quote characters (source recall/src/memory-search.ts:276-284; recorded cwd cases and TestMemoryMarkdownTreeAndFrontmatter); port: kept.
+- Excerpt offsets are found in lowercased text but applied to the original, so U+0130 lowercase expansion shifts the excerpt after that character (source recall/src/memory-search.ts:418-424; recorded excerpt cases and TestMemoryParagraphsAndExcerpts); port: kept.
+- UTF-16 prefix/excerpt slices can leave a lone surrogate; Go strings encode that boundary as U+FFFD instead of JavaScript's lone-surrogate JSON escape (source recall/src/memory-search.ts:261,277,421-423; explicitly intentionally-changed representation cases with a reason in testdata/memoryrank/oracle.json and TestMemoryOracle); port: kept as a platform-boundary difference outside the well-formed UTF-8 output domain.
+
+## CRW-522 — evidence resolve and memory allow-write libraries
+
+- Evidence argument lookup ignores unknown tokens, accepts a following flag as a value, uses the first duplicate and does not recognize equals syntax; `--override` is ignored when a receipt is present, rather than rejected (`pabcd-state/src/evidence-cli.ts:36-62`, recorded parser cases); port: kept.
+- Memory help anywhere masks unknown arguments and missing values; repeated session flags use the last value (`pabcd-state/src/memory-cli.ts:46-70`, recorded parser cases); port: kept.
+- Memory allow-write replaces unreadable/corrupt session bytes with default IDLE plus a grant (`pabcd-state/src/memory-cli.ts:80-82`, `TestMemoryDataLossPreservesUnreadableBytes` and recorded intentionally-changed data-loss case); port: fixed, refusing publication and preserving the original bytes.
+- Both writes publish a reconstructed verdict list that drops malformed entries or caps the list at 64 (`pabcd-state/src/evidence-cli.ts:100-101`, `memory-cli.ts:81-82`, `state.ts:57-90,587-589`; recorded intentionally-changed overflow/malformed cases and `TestCLIDataLossPreservesVerdictBytes`); port: fixed, refusing publication when the raw record count/shape cannot be retained.
+- Filesystem error diagnostics other than the stale-lock EEXIST case use the Go state owner's native error text instead of Node/libuv wording (`pabcd-state/src/evidence-cli.ts:132`, `memory-cli.ts:86`; `TestEvidenceAuditFailureAndUnresolvable`, `TestMemoryStateDirectoryFailure`); port: kept as a runtime diagnostic limitation, with exit/failure preservation unchanged.
+
+## Found by the receipt test library port
+
+- The parser drops empty command arguments, so `-- cmd "" arg` executes `cmd arg`, although an empty argument is meaningful to a command (source `plugins/codexclaw/components/pabcd-state/src/receipt-cli.ts:63`; recorded parser case 10); port: kept.
+- Missing `--session` and `--cwd` values are accepted, and a following flag can be consumed as their value; only `--generated` checks for an empty or absent value (source `plugins/codexclaw/components/pabcd-state/src/receipt-cli.ts:52-58`; recorded parser cases 7-9); port: kept.
+- `--generated` accepts absolute and parent paths, consumes `--` as a value, strips only one leading `./` and keeps a trailing slash, which makes a directory exclusion such as `build/` match no children (source `plugins/codexclaw/components/pabcd-state/src/receipt-cli.ts:55-59` and `source-identity.ts:215-218`; tests `TestReceiptParserOracle` and `TestReceiptFailuresClearPrior/trailing-generated`); port: kept.
+- `receipt test --help` is a parser error instead of help (source `plugins/codexclaw/components/pabcd-state/src/receipt-cli.ts:41` and `:61`; fixture `cli-help__receipt__test_dashdash_help`); port: kept.
+- `receiptPathFor` accepts the sanitized key `..`, which places the receipt directly under the state directory instead of its evidence root, where the receipt reader then refuses it (source `plugins/codexclaw/components/pabcd-state/src/receipt-cli.ts:70`; test `TestReceiptHelpAndPath`); port: kept.
+- The recorded command joins argv with spaces and loses argument boundaries, so distinct invocations can record the same command text (source `plugins/codexclaw/components/pabcd-state/src/receipt-cli.ts:174`; test `TestReceiptArgvNoShellAndEncoding`); port: kept.
+- The first source capture is outside the runner's catch, while the second is caught, so a binding broken between the initial resolution and first capture throws instead of returning the runner's SOURCE-ROOT refusal (source `plugins/codexclaw/components/pabcd-state/src/receipt-cli.ts:120-127` and `:145-147`); port: kept.
+- The receipt is written in place, so a failed write leaves a truncated record (source `plugins/codexclaw/components/pabcd-state/src/receipt-cli.ts:184`; intentionally-changed recorded case `internal/pabcd/cli/testdata/atomic-change.json`, test `TestReceiptAtomicPublicationFailure`); port: fixed (record-file data loss: fsynced temporary-file publication and rename, with failed publication removing its partial temporary file).
+
+## CRW-352 memory requeue
+
+- A positive retry allowance below one is floored to zero, clearing backoff without restoring eligibility (`recall/src/memory-requeue.ts:73` at v0.2.40); port: kept.
+- The schema guard omits `retry_at`, so a selected store lacking it passes selection but apply fails and rolls back (`recall/src/memory-requeue.ts:66,94-98,137` at v0.2.40); port: kept.
+- NULL, numeric and BLOB kind/key values are coerced to strings for selection and binding, so an untyped jobs table can report selected candidates with zero rows changed (`recall/src/memory-requeue.ts:105-109,137-143` at v0.2.40); port: kept.
+- With no kind filter, exhausted consolidation jobs are selected despite the module's safety prose claiming otherwise (`recall/src/memory-requeue.ts:17-18,107` at v0.2.40); port: kept.
+- Candidates removed by the limit appear in neither the selected list nor skipped cause counts (`recall/src/memory-requeue.ts:107-112` at v0.2.40); port: kept.
+- A failed BEGIN reports that requeue was rolled back even when no transaction began (`recall/src/memory-requeue.ts:133,146-152` at v0.2.40); port: kept.
+- Reopening for apply uses a create-capable SQLite open, so external removal between selection and reopening can leave a new empty store (`recall/src/memory-requeue.ts:128` and `recall/src/sqlite.ts:34-36` at v0.2.40); port: kept.
+- Duplicate kind/key rows with a retry allowance floored to zero remain eligible across repeated updates, counting the same rows more than once (`recall/src/memory-requeue.ts:73,137-143` at v0.2.40); port: kept.
+
+## Found by the orchestrate session/status library port (CRW-519)
+
+- Session discovery accepts any stat-able name ending in `.json`, including a directory, and raw existence then permits status to report that unreadable directory as IDLE (source `orchestrate-cli.ts:301-316,328-330,509-516`; recorded directory case); port: kept.
+- Status uses advisory `readState`, so an existing corrupt session file reports default IDLE with exit zero rather than distinguishing unreadable state (source `orchestrate-cli.ts:509-516`; recorded corrupt-state case); port: kept.
+- The CLI checks the raw session path but reads a sanitized path, so an explicit id containing spaces or punctuation can pass existence for one file and report another file's phase (source `orchestrate-cli.ts:328-330,414-418,509-516`, `state.ts:327-329`; recorded raw/sanitized case); port: kept.
+- With no resolved session, status prints plain `no active session` even under `--json`, making that success response a different output form (source `orchestrate-cli.ts:500-501`; recorded empty JSON case); port: kept.
+- A sessions directory that exists but cannot be listed escapes the CLI's advertised never-throws behavior; the Go library propagates that IO error instead of turning it into success or a missing-session refusal (source `orchestrate-cli.ts:306,423,498`; deterministic non-directory listing test); port: kept.
+
+## Found by the recall ingest port (CRW-363)
+
+- A larger rewrite is assumed to be an append, leaving the previous prefix indexed and reporting fresh after the new fingerprint is stored (source `plugins/codexclaw/components/recall/src/ingest.ts:222-246`; recorded growth-rewrite case); port: kept.
+- A rewrite preserving size and integer-millisecond mtime is skipped, so its old text remains indexed and freshness reports no change (source `plugins/codexclaw/components/recall/src/ingest.ts:68-73,215`; recorded same-fingerprint case); port: kept.
+
+## Found by the shell write destination lexer port (CRW-361)
+
+- The destination token reads through adjacent operators, ends after the first quoted fragment, and retains shell escapes, missing actual files for `> a>b`, `>"a"x` and `> a\ b` (source `pabcd-state/src/shell-write-destinations.ts:173-184,234-235`); port: fixed (security: the exported result retains the oracle reports and adds the actual literal targets; helper tokenization kept).
+- Stderr `2>`, read/write `<>`, an unquoted arrow's `>`, and file-valued `>&` are skipped despite opening or writing files (source `shell-write-destinations.ts:209-235`); port: fixed (security: add literal file destinations, including the deliberately changed arrow test; numeric descriptor duplication, close and `/dev/null` remain excluded).
+- Heredoc delimiters stop at punctuation, ignore escaped spelling and compare `<<-` terminators without removing tabs, so later real redirects can be swallowed (source `shell-write-destinations.ts:52-77,87-99`); port: fixed (security: the exported scanner reads the raw command, recognizes literal delimiter words and tab-stripped terminators; the recorded helpers remain unchanged).
+- Only the first heredoc on a header has its body stripped; text in a later queued body can be returned as a destination (`leaked` in the recorded two-body case; source `shell-write-destinations.ts:58-77`); port: kept (legacy reports are retained, although the additive scanner suppresses all queued bodies).
+- Unterminated quoted tokens lose their last UTF-16 unit and double-quoted escapes remain encoded in the token (source `shell-write-destinations.ts:141-152,176-180`); port: kept (completed literal redirect words are additionally decoded; malformed quotes retain truncation, and a lone surrogate becomes U+FFFD at the Go string boundary, as in Node UTF-8 encoding).
+- JavaScript Unicode whitespace is treated as a shell token separator although POSIX shell blanks are ASCII (source `shell-write-destinations.ts:174-184`); port: fixed (security: add literal targets retaining a leading BOM or non-breaking space while preserving the oracle token).
+- Quoted command substitutions, variable/tilde/glob expansion and arbitrary executable behavior are not evaluated by the lexical parser (source `shell-write-destinations.ts:46-50,173-184,192-194`); port: kept (the library is not a shell evaluator; consumer policy must account for dynamic destinations).
+- Escaped blanks before `#` and backslash-newline joins are not lexed as shell word/operator boundaries, which can conceal stderr or clobber destinations (source `shell-write-destinations.ts:102-137,173-184,235`); port: fixed (security: the additive scanner tracks word boundaries and joins complete headers before operator recognition).
+- Empty quoted and dollar-bearing heredoc delimiters are not recognized, letting a quote in the body conceal a following real redirect (source `shell-write-destinations.ts:54-57,87-99`); port: fixed (security: delimiter parsing removes quotes without expansion, accepts a present empty word, and strips the body independently of its contents).
+- CR is JavaScript whitespace but is part of a POSIX filename, so `>a\rb` reports only `a` (source `shell-write-destinations.ts:174-184`); port: fixed (security: add the full CR-containing filename while retaining the oracle target).
+- An unquoted heredoc terminator continued with backslash-newline is not joined by the oracle, hiding following Bash redirects (source `shell-write-destinations.ts:64-75`); port: fixed (security: the additive scanner also recognizes Bash's continued terminator; this intentionally conservative addition covers that shell-specific behavior).
+
+## CRW-364 — current-directory session context
+
+- Only the first four nonsynthetic user rows are inspected, so four read-time harness blocks hide a later human opener (recall/src/cwd-context.ts:143-157 at v0.2.40); port: kept.
+- Excerpt limits below three use a negative slice end and can produce an excerpt longer than the requested limit (recall/src/cwd-context.ts:156 at v0.2.40); port: kept.
+- Heading whitespace can span line breaks, so a bare heading marker can take the next body line as its summary title (recall/src/cwd-context.ts:231-233 at v0.2.40); port: kept.
+
+## Found by the CRW-507 recall query-condition port
+
+- Short words use SQLite's ASCII-only `lower()` and LIKE folding, so a query for `ü` misses an indexed `Ü` even though the final Unicode text predicate accepts it (source `recall/src/index-search.ts:185-191,268-270`; Node-recorded candidate cases in `internal/recall/testdata/indexquery/oracle.json`); port: kept.
+- With cwd case folding enabled, SQL's ASCII-only `lower()` misses a non-ASCII case variant in a child path (`/Ü/child` for `/ü`) that the explicitly folded scan predicate accepts (source `recall/src/index-search.ts:243-246`; darwin-recorded candidate cases); port: kept.
+- An embedded NUL in a word of at least three code points survives FTS quoting and makes MATCH raise `unterminated string`, although the final text predicate can match that word (source `recall/src/index-search.ts:156-158,185-188`; Node-recorded NUL candidate case); port: kept.
+
+## Found by the recall format and flag port
+
+- Help detection scans every argument before parsing, so a literal --help or -h query after the -- terminator prints usage instead of searching (source recall/src/cli.ts:70-71,418-421; recorded help cases and TestRecallReadFlagsAndHelpPrecedence); port: kept.
+- Explicit home validation checks existence only, so an existing regular file is accepted as a home and later readers must handle it (source recall/src/cli.ts:97-103; TestRecallExplicitHome); port: kept.
+- Date.parse accepts calendar rollover and zone-less legacy stamps, so February 30 normalizes and an age/newer label for a local-time stamp depends on host timezone (source recall/src/format.ts:61-65,89-105; recorded age cases across UTC, Seoul and New York, including DST transitions); port: kept.
+- UTF-16 clipping can split an astral pair; the Go UTF-8 result represents that lone surrogate as U+FFFD instead of JavaScript's lone-surrogate JSON escape, matching the existing recall string boundary (source recall/src/format.ts:18,143; explicitly classified representation case in testdata/format/oracle.json and TestFormatOracle); port: kept as a platform-boundary difference outside well-formed UTF-8 output.
+
+## CRW-520: session CLI diagnostics
+
+- Plain session output coerces the bound source identity to `[object Object]`, hiding its fields (pabcd-state/src/session-cli.ts:118 at v0.2.40); port: kept.
+- Native-database read failures still suggest checking Node SQLite support, even though the port uses Go SQLite and needs no Node at runtime (pabcd-state/src/session-binding.ts:108 at v0.2.40); port: kept.
+
+## CRW-528 — Helper role MCP tool library
+
+- `catalog_list` does not catch a catalog read rejection, so the stdio queue swallows it without a tool reply (source `subagent-config/src/mcp.ts:148-152,198`); port: kept, the library returns that error to its caller; home-resolution failure is source-reviewed only under the required isolated-home tests.
+- A non-object tool argument is accepted by `subagents_get` as having no scope, while `subagents_set` refuses the same value as a missing body (source `subagent-config/src/mcp.ts:130,134,141`); port: kept; the existing global-only settings API defaults absent scope to global, an inherited decision 7 difference explicitly applied only to the recorded argument-shape get expectations.
+- The five-second get probe does not cancel a late catalog read, which can still publish its cache after the timeout answer (source `subagent-config/src/mcp.ts:135-139`); port: kept.
+- The retained tool descriptions and schemas advertise project scope although the absorbed settings API supports global scope only (source `subagent-config/src/mcp.ts:38-39,48`); port: kept as metadata; project calls are refused by the existing settings API and no project store is restored.
+
+## CRW-531 — multi_agent_v2 settings library
+
+- Inline detection matches `not_enabled = true` and the prefix `enabled = trueish`, while table/scalar forms require a complete boolean (source `config-guard/src/multi-agent-v2.ts:55-58,77-80`; `TestMultiAgentV2OracleGrammar`); port: kept.
+- Read-only detection treats headers and enabled-like lines inside multiline strings as configuration, and a nested table without `enabled` shadows a scalar flag (source `config-guard/src/toml-edit.ts:52-69`, `multi-agent-v2.ts:68-71`; `TestMultiAgentV2OracleGrammar`); port: kept.
+- A successful runner call reports `changed: true` even when the resulting config is absent or the flag stayed disabled (source `config-guard/src/multi-agent-v2.ts:100-118`; `TestMultiAgentV2RunnerOutcomes`); port: kept.
+- Read failures are swallowed before mutation, so the runner can replace settings without a readable pre-image; repair writes truncate in place (source `config-guard/src/multi-agent-v2.ts:46-53,94-109`; `TestMultiAgentV2UnreadableRefused`, `TestMultiAgentV2AtomicRepair`); port: fixed (data loss: intentionally-changed mutation cases refuse unreadable pre/post images and reuse fsynced temporary-file/rename publication; pure status reads retain the oracle's v1 fallback).
+- Tuning-table repair trims multiline string payloads, removes comment/enabled-like payload lines and compresses blank lines in post-file strings (source `config-guard/src/activate.ts:173-192`, `multi-agent-v2.ts:108-109`; `TestMultiAgentV2MultilineSettingsPreserved`); port: fixed (data loss: intentionally-changed repair shields whole pre/post multiline blocks and restores their exact value bytes before publication).
+
+## Found by the CRW-526 recall memory trim port
+
+- Equal score/date hits compare as -1 in both directions, so the ranking depends on V8's comparison schedule rather than a consistent ordering (source recall/src/memory-search.ts:222-225; tie grids in TestRankAndTrimNodeOracle); port: kept.
+- NaN scores compare unequal even to themselves and produce NaN differences, which V8 treats as zero; mixing these with the nonzero tie comparator makes ranking implementation-dependent (source recall/src/memory-search.ts:223-225; mixed grids in TestRankAndTrimNodeOracle); port: kept.
+- The limit is checked after appending, so a nonpositive limit returns one hit from nonempty candidates rather than none (source recall/src/memory-search.ts:232-233; cap-limit grids in TestRankAndTrimNodeOracle); port: kept.
+
+## CRW-348 — managed config command port
+
+- Config, manifest and backup writes can truncate files if interrupted (source `config-guard/src/config-set.ts:43-45,99-103,129-136`); port: fixed (data loss: reuse the read-refusing, fsynced temporary-file/rename owners; intentionally-changed atomic-publication cases keep old inodes whole and dangling destinations unchanged).
+- Key resolution trims an id, but `get` searches the live state using the original untrimmed id and prints `(unset)` even when that key is set (source `config-guard/src/cli.ts:71-79`, recorded padded-id oracle case, `TestConfigCommandArgumentsAndReads`); port: kept.
+- Config help is recognized only as the first action: `list --help` lists keys, `get --help` treats help as an id, and trailing help after a valid set does not prevent the write; extra arguments are ignored (source `config-guard/src/cli.ts:52-58,60-96`, `TestConfigCommandArgumentsAndReads`, `TestConfigCommandSetRepeatUnset`); port: kept.
+- Unknown keys exit 2 for get/set but 1 for unset, whose refusal is returned by the apply layer (source `config-guard/src/cli.ts:71-105`, `TestConfigCommandArgumentsAndReads`); port: kept.
+- Unset restores the recorded prior value without checking whether a supported live scalar belongs to another writer, and its no-op suffix still says `already set; recorded` after clearing the record (source `config-guard/src/config-set.ts:90-119`, `src/cli.ts:107-111`); port: kept.
+- Per-file writes are atomic but the config and ownership manifest are not one transaction and have no concurrent-writer lock; a later manifest-save failure can leave a prior config write without its updated record (source `config-guard/src/config-set.ts:102,109-113,136,143-156`); port: kept (original bytes remain in the backup; this port claims per-file publication only).
+- Filesystem failures use Go-native diagnostics instead of Node exception stacks; the failure exit remains 1, and unreadable settings remain untouched (source `config-guard/src/config-set.ts:87,123,163`, `TestConfigCommandRefusalsAndHome`); port: kept as a runtime diagnostic difference.
+- Help retains the mapped interview reference even though that command is outside this port and unavailable on its base; reused whitelist caution still names the generic disable verb (source `config-guard/src/cli.ts:28`, `src/managed-keys.ts`, `internal/runtime/install/configguard/managed.go`); port: kept.
+
+## Found by the CRW-366 fallback notice port
+
+- A startup payload stamped only with `agent_type`, without a nonempty string `agent_id`, receives the root dispatch notice (source `plugins/codexclaw/components/subagent-config/src/fallback-dispatch-cli.ts:36-38`; recorded `agent-type` case); port: kept.
+- Non-null JSON primitives and arrays receive a SessionStart dispatch card despite carrying no hook event or session identity; only null and malformed JSON are silent (source `plugins/codexclaw/components/subagent-config/src/fallback-dispatch-cli.ts:36-38`; recorded `array`, `boolean`, `string` and `null` cases); port: kept.
+
 ## Found by the freeze manifest and freeze command port
 
 - `runFreeze` writes `.codexclaw/interview/freeze.json` in place with `writeFileSync`, so a crash or a concurrent reader can see a truncated manifest and the earlier frozen hash is lost (source `plugins/codexclaw/components/pabcd-state/src/freeze-cli.ts:121`, against the rename helper at `atomic-write.ts:31`; read from the source, a kill is not exercised); port: fixed by CRW-437 (a record-file data-loss defect, fixed by decision: `RunFreeze` publishes through `crwdir.Publish`; no recorded case observes the write, so none is tagged intentionally-changed, and `TestFreezePublishesTheManifestAtomically` pins the rename; `Publish` also refuses a manifest path that is a link leading nowhere, where the oracle creates the link's target, and keeps neither the owner nor the hard links of an existing manifest, as it does for the settings file).

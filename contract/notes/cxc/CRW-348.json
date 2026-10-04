@@ -1,0 +1,80 @@
+{
+  "issue": "CRW-348",
+  "pending": [
+    "cli__config__set_then_unset_with_manifest",
+    "cli-help__config__interview_dashdash_help"
+  ],
+  "identical": [
+    "cli-help__config__set_dashdash_help"
+  ],
+  "intentionally-changed": [
+    {
+      "id": "cli-help__config__dash_h",
+      "reason": "Approved CLI absorption: help and refusal guidance name crw install config/features and the mapped crw pabcd config interview reference; oracle behavior and stream/exit status are unchanged.",
+      "set": {
+        "steps/0/stdout": "Usage:\n  crw install config list                          managed keys, their live values and side effects\n  crw install config get <table.key>\n  crw install config set <table.key> <true|false>\n  crw install config unset <table.key>             restore the value from before crw set it\n  crw pabcd config interview [off|new-unit|always]\n\nOnly whitelisted keys can be set; 'config list' shows them. Installation writes just the\nones marked auto-enable in managed-keys.ts, records the pre-install value, and 'crw install features\ndisable' restores it; the rest stay an explicit choice. (Separate vocabulary: the\n[features] flags crw needs to run ARE turned on by install and by SessionStart\nself-heal; see crw doctor's `features` check.)\n"
+      }
+    },
+    {
+      "id": "cli-help__config__dashdash_help",
+      "reason": "Approved CLI absorption: help and refusal guidance name crw install config/features and the mapped crw pabcd config interview reference; oracle behavior and stream/exit status are unchanged.",
+      "set": {
+        "steps/0/stdout": "Usage:\n  crw install config list                          managed keys, their live values and side effects\n  crw install config get <table.key>\n  crw install config set <table.key> <true|false>\n  crw install config unset <table.key>             restore the value from before crw set it\n  crw pabcd config interview [off|new-unit|always]\n\nOnly whitelisted keys can be set; 'config list' shows them. Installation writes just the\nones marked auto-enable in managed-keys.ts, records the pre-install value, and 'crw install features\ndisable' restores it; the rest stay an explicit choice. (Separate vocabulary: the\n[features] flags crw needs to run ARE turned on by install and by SessionStart\nself-heal; see crw doctor's `features` check.)\n"
+      }
+    },
+    {
+      "id": "cli-help__config__word_help",
+      "reason": "Approved CLI absorption: help and refusal guidance name crw install config/features and the mapped crw pabcd config interview reference; oracle behavior and stream/exit status are unchanged.",
+      "set": {
+        "steps/0/stdout": "Usage:\n  crw install config list                          managed keys, their live values and side effects\n  crw install config get <table.key>\n  crw install config set <table.key> <true|false>\n  crw install config unset <table.key>             restore the value from before crw set it\n  crw pabcd config interview [off|new-unit|always]\n\nOnly whitelisted keys can be set; 'config list' shows them. Installation writes just the\nones marked auto-enable in managed-keys.ts, records the pre-install value, and 'crw install features\ndisable' restores it; the rest stay an explicit choice. (Separate vocabulary: the\n[features] flags crw needs to run ARE turned on by install and by SessionStart\nself-heal; see crw doctor's `features` check.)\n"
+      }
+    },
+    {
+      "id": "cli-help__config__get_dashdash_help",
+      "reason": "Approved CLI absorption: help and refusal guidance name crw install config/features and the mapped crw pabcd config interview reference; oracle behavior and stream/exit status are unchanged.",
+      "set": {
+        "steps/0/stderr": "'--help' is not a crw-managed key. Run 'crw install config list' to see what can be set. crw edits only whitelisted keys, so it never becomes a general TOML editor.\n"
+      }
+    },
+    {
+      "id": "cli-help__config__unset_dashdash_help",
+      "reason": "Approved CLI absorption: help and refusal guidance name crw install config/features and the mapped crw pabcd config interview reference; oracle behavior and stream/exit status are unchanged.",
+      "set": {
+        "steps/0/stderr": "config unset: '--help' is not a crw-managed key. Run 'crw install config list' to see what can be set. crw edits only whitelisted keys, so it never becomes a general TOML editor.\n"
+      }
+    },
+    {
+      "id": "cli__config__bare_and_unknown_actions",
+      "reason": "Approved CLI absorption: help and refusal guidance name crw install config/features and the mapped crw pabcd config interview reference; oracle behavior and stream/exit status are unchanged.",
+      "set": {
+        "steps/0/stdout": "Usage:\n  crw install config list                          managed keys, their live values and side effects\n  crw install config get <table.key>\n  crw install config set <table.key> <true|false>\n  crw install config unset <table.key>             restore the value from before crw set it\n  crw pabcd config interview [off|new-unit|always]\n\nOnly whitelisted keys can be set; 'config list' shows them. Installation writes just the\nones marked auto-enable in managed-keys.ts, records the pre-install value, and 'crw install features\ndisable' restores it; the rest stay an explicit choice. (Separate vocabulary: the\n[features] flags crw needs to run ARE turned on by install and by SessionStart\nself-heal; see crw doctor's `features` check.)\n",
+        "steps/1/stdout": "Usage:\n  crw install config list                          managed keys, their live values and side effects\n  crw install config get <table.key>\n  crw install config set <table.key> <true|false>\n  crw install config unset <table.key>             restore the value from before crw set it\n  crw pabcd config interview [off|new-unit|always]\n\nOnly whitelisted keys can be set; 'config list' shows them. Installation writes just the\nones marked auto-enable in managed-keys.ts, records the pre-install value, and 'crw install features\ndisable' restores it; the rest stay an explicit choice. (Separate vocabulary: the\n[features] flags crw needs to run ARE turned on by install and by SessionStart\nself-heal; see crw doctor's `features` check.)\n",
+        "steps/2/stderr": "config frob: a <table.key> argument is required\nUsage:\n  crw install config list                          managed keys, their live values and side effects\n  crw install config get <table.key>\n  crw install config set <table.key> <true|false>\n  crw install config unset <table.key>             restore the value from before crw set it\n  crw pabcd config interview [off|new-unit|always]\n\nOnly whitelisted keys can be set; 'config list' shows them. Installation writes just the\nones marked auto-enable in managed-keys.ts, records the pre-install value, and 'crw install features\ndisable' restores it; the rest stay an explicit choice. (Separate vocabulary: the\n[features] flags crw needs to run ARE turned on by install and by SessionStart\nself-heal; see crw doctor's `features` check.)\n",
+        "steps/3/stderr": "config get: a <table.key> argument is required\nUsage:\n  crw install config list                          managed keys, their live values and side effects\n  crw install config get <table.key>\n  crw install config set <table.key> <true|false>\n  crw install config unset <table.key>             restore the value from before crw set it\n  crw pabcd config interview [off|new-unit|always]\n\nOnly whitelisted keys can be set; 'config list' shows them. Installation writes just the\nones marked auto-enable in managed-keys.ts, records the pre-install value, and 'crw install features\ndisable' restores it; the rest stay an explicit choice. (Separate vocabulary: the\n[features] flags crw needs to run ARE turned on by install and by SessionStart\nself-heal; see crw doctor's `features` check.)\n"
+      }
+    },
+    {
+      "id": "cli__config__list_and_get",
+      "reason": "Approved CLI absorption: help and refusal guidance name crw install config/features and the mapped crw pabcd config interview reference; oracle behavior and stream/exit status are unchanged. Reused whitelist caution preserves its pre-existing generic disable guidance.",
+      "set": {
+        "steps/2/stderr": "'features.hooks' is not a crw-managed key. Run 'crw install config list' to see what can be set. crw edits only whitelisted keys, so it never becomes a general TOML editor.\n",
+        "steps/0/stdout": "memories.dedicated_tools = false\n  memories/{list,read,search,add_ad_hoc_note} 네 도구가 열립니다. add_ad_hoc_note는 메모리에 새 노트를 만드는 쓰기 경로이지만, crw 의 PreToolUse 메모리 쓰기 게이트가 명시 요청 없는 쓰기를 거부합니다. 설치가 이 키를 켜고, 'crw disable' 이 설치 이전 값으로 되돌립니다.\n"
+      }
+    },
+    {
+      "id": "cli__config__set_without_manifest_is_refused",
+      "reason": "Approved CLI absorption: help and refusal guidance name crw install config/features and the mapped crw pabcd config interview reference; oracle behavior and stream/exit status are unchanged. Reused whitelist caution preserves its pre-existing generic disable guidance.",
+      "set": {
+        "steps/0/stderr": "config set: no readable install manifest under this codex home; run 'crw install features enable' first. Without it there is nowhere to record the previous value, and 'crw install features disable' could not revert this key.\n",
+        "steps/0/stdout": "주의: memories/{list,read,search,add_ad_hoc_note} 네 도구가 열립니다. add_ad_hoc_note는 메모리에 새 노트를 만드는 쓰기 경로이지만, crw 의 PreToolUse 메모리 쓰기 게이트가 명시 요청 없는 쓰기를 거부합니다. 설치가 이 키를 켜고, 'crw disable' 이 설치 이전 값으로 되돌립니다.\n"
+      }
+    },
+    {
+      "id": "cli-help__config__list_dashdash_help",
+      "reason": "Reuse the already ported whitelist caution verbatim: its generic crw disable guidance is outside this issue scope; recorded behavior, stream and exit remain unchanged.",
+      "set": {
+        "steps/0/stdout": "memories.dedicated_tools = (unset)\n  memories/{list,read,search,add_ad_hoc_note} 네 도구가 열립니다. add_ad_hoc_note는 메모리에 새 노트를 만드는 쓰기 경로이지만, crw 의 PreToolUse 메모리 쓰기 게이트가 명시 요청 없는 쓰기를 거부합니다. 설치가 이 키를 켜고, 'crw disable' 이 설치 이전 값으로 되돌립니다.\n"
+      }
+    }
+  ]
+}
