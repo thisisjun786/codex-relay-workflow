@@ -140,10 +140,10 @@ func TestManifestTargetsExactEscapeAndShapes(t *testing.T) {
 }
 
 func TestManifestTargetRelativeRootAndJSSpace(t *testing.T) {
-	root := targetTestRoot(t, `"${PLUGIN_ROOT}/x.js\u00a0tail"`, `null`, `[]`)
+	root := targetTestRoot(t, `"${PLUGIN_ROOT}/x.js\u00a0${PLUGIN_ROOT}/y.js"`, `null`, `[]`)
 	targetTestWrite(t, root, "x.js", "target")
 	t.Chdir(root)
-	targetTestWant(t, ".", []TargetIssue{})
+	targetTestWant(t, ".", []TargetIssue{{TargetHook, "hook references missing dist: y.js"}})
 	targetTestWrite(t, root, "hooks/a.json", `null`)
 	if _, err := ValidateManifestTargets("."); err == nil {
 		t.Fatal("null hook document accepted")

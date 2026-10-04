@@ -59,15 +59,15 @@ func targetCommands(command any) []string {
 	if !ok {
 		return nil
 	}
+	s = strings.Map(func(r rune) rune {
+		if text.Trim(string(r)) == "" {
+			return ' '
+		}
+		return r
+	}, s)
 	out := []string{}
 	for _, m := range regexp.MustCompile(pluginRootTarget).FindAllStringSubmatch(s, -1) {
 		rel := m[1]
-		for i, r := range rel {
-			if text.Trim(string(r)) == "" {
-				rel = rel[:i]
-				break
-			}
-		}
 		parts := strings.FieldsFunc(rel, func(r rune) bool { return r == '/' || r == '\\' })
 		if len(parts) > 0 {
 			out = append(out, strings.Join(parts, "/"))
