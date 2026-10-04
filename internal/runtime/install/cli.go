@@ -28,10 +28,17 @@ const DefaultIssue = "CRW-158"
 const backupHelp = "the directory the whole relay state directory is copied to (copy only, byte for byte, recorded) before a swap that brings the additive DAG zone, or ordinary indexes on tables the store already holds, to a store that lacks them; the acknowledgement that route needs"
 
 // Commands are `crw install`'s subcommands.
-var Commands = []string{"install", "update", "rollback", "remove", "status", "register-mcp", "hook", "register-service"}
+var Commands = []string{"install", "update", "rollback", "remove", "status", "register-mcp", "hook", "register-service", "features"}
 
 func usage(w io.Writer) {
-	fmt.Fprintln(w, "usage: crw install {"+strings.Join(Commands, ",")+"} ...")
+	// The installer help is a frozen contract; features has its own help surface.
+	var legacy []string
+	for _, command := range Commands {
+		if command != "features" {
+			legacy = append(legacy, command)
+		}
+	}
+	fmt.Fprintln(w, "usage: crw install {"+strings.Join(legacy, ",")+"} ...")
 }
 
 // Run is `crw install ...` over this process's environment.
@@ -77,6 +84,9 @@ func Main(ctx context.Context, args []string, env scope.Env, stdout, stderr io.W
 		return Usage
 	}
 	command, rest := args[0], args[1:]
+	if command == "features" {
+		return runFeatures(ctx, rest, env, stdout, stderr)
+	}
 	flags := flag.NewFlagSet("crw install "+command, flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	codexHome := flags.String("codex-home", "", "the Codex home (default $CODEX_HOME or ~/.codex)")

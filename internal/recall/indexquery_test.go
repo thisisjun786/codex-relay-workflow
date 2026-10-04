@@ -59,7 +59,7 @@ func TestIndexQueryOracle(t *testing.T) {
 		var got any
 		switch c.Fn {
 		case "constants":
-			got = []any{maxRepoThreadIDs, RRFK, LaneWeightFTS, LaneWeightTri, float64(RecencyWeight), RecencyHalfLifeHours, relaxedPool, maxOptionalLaneWords}
+			got = []any{indexMaxRepoThreadIDs, RRFK, LaneWeightFTS, LaneWeightTri, float64(RecencyWeight), RecencyHalfLifeHours, relaxedPool, maxOptionalLaneWords}
 		case "pool", "planPool":
 			n := 0.0
 			if c.Fn == "pool" {
@@ -112,7 +112,7 @@ func TestIndexQueryOracle(t *testing.T) {
 				meta.IDs = append(meta.IDs, id)
 				meta.ByID[id] = ThreadMeta{GitOriginURL: v.GitOriginURL}
 			}
-			got = sameOriginThreadIDs(meta, arg[string](t, c, 1))
+			got = indexSameOriginThreadIDs(meta, arg[string](t, c, 1))
 		case "originCap":
 			origin := "git@example.test:org/repo.git"
 			meta := ThreadMetaResult{ByID: map[string]ThreadMeta{}}
@@ -121,7 +121,7 @@ func TestIndexQueryOracle(t *testing.T) {
 				meta.IDs = append(meta.IDs, id)
 				meta.ByID[id] = ThreadMeta{GitOriginURL: &origin}
 			}
-			ids := sameOriginThreadIDs(meta, "example.test/org/repo")
+			ids := indexSameOriginThreadIDs(meta, "example.test/org/repo")
 			got = []any{len(ids), ids[0], ids[len(ids)-1]}
 		default:
 			t.Fatalf("unknown oracle function %q", c.Fn)

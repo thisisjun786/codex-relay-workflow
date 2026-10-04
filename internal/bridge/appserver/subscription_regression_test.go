@@ -7,8 +7,60 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 )
+
+// Host reception does not prove Write returned and disarmed its cancellation
+// callback. Observe that boundary before cancelling a still-unanswered call.
+func subscriptionTransmitted(c *Client, method string) <-chan struct{} {
+	sent := make(chan struct{}, 1)
+	write := c.writeFrame
+	if write == nil {
+		write = (*websocket.Conn).Write
+	}
+	c.writeFrame = func(ws *websocket.Conn, ctx context.Context, typ websocket.MessageType, raw []byte) error {
+		if err := write(ws, ctx, typ, raw); err != nil {
+			return err
+		}
+		var frame struct{ Method string }
+		_ = json.Unmarshal(raw, &frame)
+		if frame.Method == method {
+			select {
+			case sent <- struct{}{}:
+			default:
+			}
+		}
+		return nil
+	}
+	return sent
+}
+
+func singleSubscriptionRelease(t *testing.T, c *Client, host *fakehost.Server) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := host.WaitCount(ctx, "thread/unsubscribe", 1); err != nil {
+		t.Fatal(err)
+	}
+	// Wait for the successful release to retire its proof before counting attempts.
+	for {
+		c.subscriptions.mu.Lock()
+		n := len(c.subscriptions.roots)
+		c.subscriptions.mu.Unlock()
+		if n == 0 {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("release left %d roots", n)
+		case <-time.After(time.Millisecond):
+		}
+	}
+	if host.Count("initialize") != 1 || host.Count("thread/unsubscribe") != 1 {
+		t.Fatalf("release reconnected or retried: %v", host.Requests())
+	}
+}
 
 func noRelease(t *testing.T, host *fakehost.Server) {
 	t.Helper()
@@ -87,6 +139,7 @@ func TestAcknowledgedCreationSurvivesOutcomeCancellation(t *testing.T) {
 	for _, late := range []bool{false, true} {
 		t.Run(map[bool]string{false: "before-hook", true: "late-ack"}[late], func(t *testing.T) {
 			c, host := subscriptionClient(t)
+			sent := subscriptionTransmitted(c, "thread/start")
 			entered, release := make(chan struct{}, 1), make(chan struct{})
 			reply := fakehost.Reply{Result: map[string]any{"thread": map[string]any{"id": "root"}}}
 			if late {
@@ -104,6 +157,7 @@ func TestAcknowledgedCreationSurvivesOutcomeCancellation(t *testing.T) {
 			go func() { _, err := c.Call(ctx, "thread/start", nil); done <- err }()
 			if late {
 				subscriptionSignal(t, entered)
+				subscriptionSignal(t, sent)
 				cancel()
 			}
 			if err := <-done; !errors.Is(err, context.Canceled) {
@@ -119,11 +173,7 @@ func TestAcknowledgedCreationSurvivesOutcomeCancellation(t *testing.T) {
 			refused.Finish("", false)
 			noRelease(t, host)
 			announceEnd(t, c, host, "first-durable-turn")
-			ctx, cancel = context.WithTimeout(context.Background(), time.Second)
-			defer cancel()
-			if err := host.WaitCount(ctx, "thread/unsubscribe", 1); err != nil {
-				t.Fatal(err)
-			}
+			singleSubscriptionRelease(t, c, host)
 		})
 	}
 }
@@ -136,6 +186,7 @@ func TestUncertainTurnKeepsItsProofUntilItsOwnTerminal(t *testing.T) {
 		ack := scenario.ack
 		t.Run(scenario.name, func(t *testing.T) {
 			c, host := subscriptionClient(t)
+			sent := subscriptionTransmitted(c, "turn/start")
 			old := rootWatch(t, c)
 			old.Finish("older", false)
 			w := rootWatch(t, c)
@@ -163,6 +214,7 @@ func TestUncertainTurnKeepsItsProofUntilItsOwnTerminal(t *testing.T) {
 			go func() { _, err := c.Call(ctx, "turn/start", map[string]any{"threadId": "root"}); done <- err }()
 			if !ack {
 				subscriptionSignal(t, entered)
+				subscriptionSignal(t, sent)
 				cancel()
 			}
 			if err := <-done; !errors.Is(err, context.Canceled) {
@@ -177,11 +229,7 @@ func TestUncertainTurnKeepsItsProofUntilItsOwnTerminal(t *testing.T) {
 				noRelease(t, host)
 				announceEnd(t, c, host, "uncertain")
 			}
-			ctx, stop := context.WithTimeout(context.Background(), time.Second)
-			defer stop()
-			if err := host.WaitCount(ctx, "thread/unsubscribe", 1); err != nil {
-				t.Fatal(err)
-			}
+			singleSubscriptionRelease(t, c, host)
 		})
 	}
 }

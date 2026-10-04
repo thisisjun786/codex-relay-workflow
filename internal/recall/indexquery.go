@@ -8,22 +8,15 @@ import (
 	"unicode/utf8"
 )
 
-// ChatOrder selects recent ordering; other values, including empty, mean relevance.
-type ChatOrder string
-
 const (
-	OrderRelevance ChatOrder = "relevance"
-	OrderRecent    ChatOrder = "recent"
-	// IndexSourceAll is a query sentinel, not a recorded rollout source.
-	IndexSourceAll       RolloutSource = "all"
-	maxRepoThreadIDs                   = 5000
-	RRFK                               = 60
-	LaneWeightFTS                      = 1.0
-	LaneWeightTri                      = 0.8
-	RecencyWeight                      = LaneWeightFTS / ((RRFK + 1) * (RRFK + 2))
-	RecencyHalfLifeHours               = 24 * 7
-	relaxedPool                        = 2000
-	maxOptionalLaneWords               = 6
+	indexMaxRepoThreadIDs = 5000
+	RRFK                  = 60
+	LaneWeightFTS         = 1.0
+	LaneWeightTri         = 0.8
+	RecencyWeight         = LaneWeightFTS / ((RRFK + 1) * (RRFK + 2))
+	RecencyHalfLifeHours  = 24 * 7
+	relaxedPool           = 2000
+	maxOptionalLaneWords  = 6
 )
 
 // IndexQueryOptions carries the upstream query contract. Empty strings represent
@@ -40,9 +33,10 @@ type IndexQueryOptions struct {
 	IncludeSynthetic bool          `json:"includeSynthetic"`
 	IncludeTools     bool          `json:"includeTools"`
 	Home             string        `json:"home"`
-	Order            ChatOrder     `json:"order,omitempty"`
-	RepoKey          string        `json:"repoKey"`
-	NowMs            *float64      `json:"nowMs,omitempty"`
+	// ChatRecent selects recency; empty or other order values mean ChatRelevance.
+	Order   ChatOrder `json:"order,omitempty"`
+	RepoKey string    `json:"repoKey"`
+	NowMs   *float64  `json:"nowMs,omitempty"`
 }
 
 // resolvedQuery adds facts resolved by the caller against the open index/state DB.
@@ -101,7 +95,7 @@ func escapeLike(word string) string {
 	return strings.ReplaceAll(word, `_`, `\_`)
 }
 
-func sameOriginThreadIDs(meta ThreadMetaResult, repoKey string) []string {
+func indexSameOriginThreadIDs(meta ThreadMetaResult, repoKey string) []string {
 	ids := []string{}
 	if repoKey == "" {
 		return ids
@@ -113,7 +107,7 @@ func sameOriginThreadIDs(meta ThreadMetaResult, repoKey string) []string {
 		}
 		if repoKeysEqual(repoKey, normalizeRepoKey(origin)) {
 			ids = append(ids, id)
-			if len(ids) >= maxRepoThreadIDs {
+			if len(ids) >= indexMaxRepoThreadIDs {
 				break
 			}
 		}
@@ -176,7 +170,7 @@ func candidateFilterFor(opts resolvedQuery, withWords, fold bool) (string, []any
 		conditions = append(conditions, "m.ts >= ?")
 		params = append(params, opts.CutoffISO)
 	}
-	if opts.Source != IndexSourceAll {
+	if opts.Source != RolloutAll {
 		conditions = append(conditions, "f.source = ?")
 		params = append(params, string(opts.Source))
 	}

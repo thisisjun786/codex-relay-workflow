@@ -27,6 +27,7 @@ const (
 	OutcomeReviewed        = "reviewed"
 	OutcomeAlreadyReviewed = "already_reviewed"
 	OutcomeDailyCap        = "daily_cap_reached"
+	OutcomeRetryDeferred   = "retry_deferred"
 )
 
 // Exit statuses besides usageExit.
@@ -50,9 +51,17 @@ type Summary struct {
 	DailyCap  int    `json:"dailyCap,omitempty"`
 	RunsToday int    `json:"runsToday,omitempty"`
 	// already_reviewed only: the head of the earlier review, and whether its artifact file is there now.
-	ReviewedHead    string `json:"reviewedHead,omitempty"`
-	ArtifactPresent *bool  `json:"artifactPresent,omitempty"`
-	*Counts                // a review that ran
+	ReviewedHead    string  `json:"reviewedHead,omitempty"`
+	ArtifactPresent *bool   `json:"artifactPresent,omitempty"`
+	RetryNotBefore  string  `json:"retryNotBefore,omitempty"` // the first UTC day (2006-01-02) on which the one more attempt of a review that could not run is allowed
+	Comment         *Posted `json:"summaryComment,omitempty"`
+	*Counts                 // a review that ran
+}
+
+// Posted says what --post-summary did to the pull request: created, updated or unchanged the one summary comment.
+type Posted struct {
+	Action string `json:"action"`
+	URL    string `json:"url,omitempty"`
 }
 
 type Counts struct {
@@ -65,6 +74,7 @@ type Counts struct {
 type env struct {
 	runner pipeline.Runner
 	now    func() time.Time
+	forge  func(Config) forge // nil: the gh CLI of the checkout
 }
 
 // Run is crw review.
@@ -73,7 +83,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// agy running with both locks released. Cancelling the context makes the runner kill agy's group first.
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
-	return run(ctx, args, stdout, stderr, env{agy.Run, time.Now})
+	return run(ctx, args, stdout, stderr, env{runner: agy.Run, now: time.Now})
 }
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) int {
@@ -93,9 +103,23 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		fmt.Fprintf(stderr, "crw review: error: %v\n", err)
 		return exitError
 	}
+	var postErr error
+	if cfg.PostSummary && sum.Artifact != "" { // an artifact is named by a review that ran, an already reviewed answer and a deferred retry; the daily cap names none
+		postErr = postSummary(ctx, cfg, e.forgeFor(cfg), sum, stderr)
+	}
 	out, _ := json.Marshal(sum)
 	fmt.Fprintf(stdout, "%s\n", out)
-	if sum.Outcome == OutcomeDailyCap {
+	switch {
+	case postErr != nil && ctx.Err() != nil:
+		fmt.Fprintln(stderr, "crw review: interrupted")
+		return exitInterrupted
+	case errors.Is(postErr, errBusy):
+		fmt.Fprintf(stderr, "crw review: busy: another post holds the post lock in %s; the summary comment was not posted, try again later\n", cfg.StateDir)
+		return exitRefused
+	case postErr != nil:
+		fmt.Fprintf(stderr, "crw review: error: the summary comment was not posted: %v\n", postErr)
+		return exitError
+	case sum.Outcome == OutcomeDailyCap || sum.Outcome == OutcomeRetryDeferred:
 		return exitRefused
 	}
 	return 0
@@ -116,20 +140,26 @@ func execute(ctx context.Context, cfg Config, e env) (*Summary, error) {
 	entry := func(event string) record {
 		return record{Event: event, PatchID: m.PatchID, Base: m.Base, Head: m.Head, Issue: cfg.Issue}
 	}
-	// already reads the ledger and, if this patch was reviewed, turns sum into the answer that says so.
-	already := func() (recs []record, done bool, err error) {
+	// recorded puts the artifact an earlier attempt recorded into sum.
+	recorded := func(r record) {
+		info, statErr := os.Stat(r.Artifact)
+		present := statErr == nil && info.Mode().IsRegular()
+		sum.Artifact, sum.SHA256, sum.Status, sum.ReviewedHead, sum.ArtifactPresent = r.Artifact, r.SHA256, r.Status, r.Head, &present
+	}
+	// already reads the ledger and, if this patch is closed, turns sum into the answer that says so. Without the run lock only a finished record closes it (an attempt that runs now may still finish).
+	already := func(locked bool) (recs []record, done bool, err error) {
 		if recs, err = l.read(); err != nil {
 			return nil, false, err
 		}
-		r, done := reviewed(recs, m.PatchID)
-		if done {
-			info, statErr := os.Stat(r.Artifact)
-			present := statErr == nil && info.Mode().IsRegular()
-			sum.Outcome, sum.Artifact, sum.SHA256, sum.Status, sum.ReviewedHead, sum.ArtifactPresent = OutcomeAlreadyReviewed, r.Artifact, r.SHA256, r.Status, r.Head, &present
+		st := standingOf(recs, m.PatchID)
+		if r, closed := st.closer(); closed && (locked || st.finished != nil) {
+			sum.Outcome = OutcomeAlreadyReviewed
+			recorded(r)
+			return recs, true, nil
 		}
-		return recs, done, nil
+		return recs, false, nil
 	}
-	if _, done, err := already(); done || err != nil { // without the lock: a finished record never goes away, and waiting behind another review would only delay this answer
+	if _, done, err := already(false); done || err != nil { // without the lock: a finished record never goes away, and waiting behind another review would only delay this answer
 		return sum, err
 	}
 	unlock, err := l.lock(ctx, cfg.LockWait)
@@ -137,11 +167,22 @@ func execute(ctx context.Context, cfg Config, e env) (*Summary, error) {
 		return nil, err
 	}
 	defer unlock()
-	recs, done, err := already()
+	recs, done, err := already(true)
 	if done || err != nil {
 		return sum, err
 	}
+	st := standingOf(recs, m.PatchID)
 	day := e.now().UTC().Format(time.DateOnly)
+	if st.open() { // the one more attempt of an unavailable review: on a later UTC day than the last attempt's, never in the same window
+		if last := dayOf(st.unavailable.Time); day <= last {
+			sum.Outcome, sum.RetryNotBefore = OutcomeRetryDeferred, nextDay(last)
+			sum.Reason = fmt.Sprintf("the review of this patch could not run on %s (UTC): %s; one more attempt is allowed from %s (UTC)", last, st.unavailable.Reason, sum.RetryNotBefore)
+			recorded(*st.unavailable)
+			refused := entry("refused")
+			refused.Reason = sum.Reason
+			return sum, l.append(refused)
+		}
+	}
 	if n := runsOn(recs, day); n >= cfg.DailyCap {
 		sum.Outcome, sum.DailyCap, sum.RunsToday = OutcomeDailyCap, cfg.DailyCap, n
 		sum.Reason = fmt.Sprintf("daily cap reached: %d of %d reviews started on %s (UTC)", n, cfg.DailyCap, day)
@@ -150,7 +191,7 @@ func execute(ctx context.Context, cfg Config, e env) (*Summary, error) {
 		return sum, l.append(refused)
 	}
 	artifact := filepath.Join(cfg.Out, m.Head+".json")
-	if _, err = os.Lstat(artifact); err == nil { // the file name is the head's, the ledger key the patch's: the same head reviewed against another base lands here
+	if _, err = os.Lstat(artifact); err == nil && !replaces(st.unavailable, artifact) { // the file name is the head's, the ledger key the patch's: the same head reviewed against another base lands here
 		return nil, fmt.Errorf("%s already exists but is no review of this patch (the same head, reviewed against another base?); use another --out", artifact)
 	}
 	if err = os.MkdirAll(cfg.Out, 0o755); err != nil {
@@ -178,21 +219,41 @@ func execute(ctx context.Context, cfg Config, e env) (*Summary, error) {
 		return fail(err)
 	}
 	digest := sha256.Sum256(data)
-	finished := entry("finished")
-	finished.Artifact, finished.SHA256, finished.Status = artifact, hex.EncodeToString(digest[:]), string(a.Status)
+	result := entry("finished")
+	result.Time = e.now().UTC().Format(time.RFC3339) // the day the attempt ended, maybe after the one it began on: the ledger line and retryNotBefore must agree on it
+	result.Artifact, result.SHA256, result.Status = artifact, hex.EncodeToString(digest[:]), string(a.Status)
+	if reasons, ok := accountUnavailable(a); ok {
+		result.Reason = reasons
+		if st.unavailable == nil { // the first attempt that could not run: the patch stays open for one more, on a later day
+			result.Event, sum.RetryNotBefore = "unavailable", nextDay(dayOf(result.Time))
+		}
+	}
 	// The review is recorded before its files are written, so that nothing after this point can let the patch be reviewed again.
-	if err = l.append(finished); err != nil {
+	if err = l.append(result); err != nil {
 		return nil, err
 	}
 	for _, f := range []struct {
 		path string
 		data []byte
-	}{{artifact, data}, {artifact + ".sha256", []byte(finished.SHA256 + "  " + m.Head + ".json\n")}} {
+	}{{artifact, data}, {artifact + ".sha256", []byte(result.SHA256 + "  " + m.Head + ".json\n")}} {
 		if err = crwdir.Publish(f.path, f.data); err != nil {
 			return nil, fmt.Errorf("the review is recorded as finished but %s could not be written: %w", f.path, err)
 		}
 	}
-	sum.Artifact, sum.SHA256, sum.Status, sum.Reason = artifact, finished.SHA256, finished.Status, a.Reason
+	sum.Artifact, sum.SHA256, sum.Status, sum.Reason = artifact, result.SHA256, result.Status, a.Reason
 	sum.Counts = &Counts{Reviewers: a.Reviewers, Findings: len(a.Findings), Dropped: len(a.Dropped), Calls: len(a.Calls)}
 	return sum, nil
+}
+
+// replaces reports whether the file at path is the artifact the unavailable attempt r recorded (the same path with the bytes it recorded), which the one more attempt may replace.
+func replaces(r *record, path string) bool {
+	if r == nil || r.Artifact != path {
+		return false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	digest := sha256.Sum256(data)
+	return hex.EncodeToString(digest[:]) == r.SHA256
 }

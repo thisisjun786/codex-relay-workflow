@@ -1,0 +1,29 @@
+[
+  {
+    "part": "workspace",
+    "classification": "identical",
+    "result": {
+      "output": "plan init: scaffolded devlog/_plan/260821_unit (000_plan.md + 1 phase doc(s)).\nWrite every doc to diff-level BEFORE P -> A; the P>A gate requires planUnit to carry numbered docs.",
+      "code": 0
+    },
+    "document": "# 000 — unit: Plan\n\n> DIFFLEVEL-ROADMAP-01: write this doc to full diff-level precision (exact paths,\n> NEW/MODIFY/DELETE, before/after diffs) BEFORE P -> A. An empty scaffold does not\n> satisfy the rule; the A-phase reviewer FAILS outline-only phase docs.\n\n## Objective\n\n(fill in: the concrete outcome, the observed failure, the evidence base)\n\n## Loop-spec\n\n- Loop archetype: (verifier-defined | judged)\n- Write scope / out-of-scope:\n- Budget / bounds:\n\n## Work-phase map (one phase = one full PABCD cycle)\n\n| WP | Doc | Slice | Depends on |\n|----|-----|-------|------------|\n\n## Accept criteria\n\n- (mirror into the goalplan criteria[])\n"
+  },
+  {
+    "part": "devlog",
+    "classification": "identical",
+    "result": {
+      "output": "plan init: scaffolded devlog/_plan/260821_unit (000_plan.md + 1 phase doc(s)).\nWrite every doc to diff-level BEFORE P -> A; the P>A gate requires planUnit to carry numbered docs.",
+      "code": 0
+    },
+    "document": "# 000 — unit: Plan\n\n> DIFFLEVEL-ROADMAP-01: write this doc to full diff-level precision (exact paths,\n> NEW/MODIFY/DELETE, before/after diffs) BEFORE P -> A. An empty scaffold does not\n> satisfy the rule; the A-phase reviewer FAILS outline-only phase docs.\n\n## Objective\n\n(fill in: the concrete outcome, the observed failure, the evidence base)\n\n## Loop-spec\n\n- Loop archetype: (verifier-defined | judged)\n- Write scope / out-of-scope:\n- Budget / bounds:\n\n## Work-phase map (one phase = one full PABCD cycle)\n\n| WP | Doc | Slice | Depends on |\n|----|-----|-------|------------|\n\n## Accept criteria\n\n- (mirror into the goalplan criteria[])\n"
+  },
+  {
+    "part": "_plan",
+    "classification": "identical",
+    "result": {
+      "output": "plan init: scaffolded devlog/_plan/260821_unit (000_plan.md + 1 phase doc(s)).\nWrite every doc to diff-level BEFORE P -> A; the P>A gate requires planUnit to carry numbered docs.",
+      "code": 0
+    },
+    "document": "# 000 — unit: Plan\n\n> DIFFLEVEL-ROADMAP-01: write this doc to full diff-level precision (exact paths,\n> NEW/MODIFY/DELETE, before/after diffs) BEFORE P -> A. An empty scaffold does not\n> satisfy the rule; the A-phase reviewer FAILS outline-only phase docs.\n\n## Objective\n\n(fill in: the concrete outcome, the observed failure, the evidence base)\n\n## Loop-spec\n\n- Loop archetype: (verifier-defined | judged)\n- Write scope / out-of-scope:\n- Budget / bounds:\n\n## Work-phase map (one phase = one full PABCD cycle)\n\n| WP | Doc | Slice | Depends on |\n|----|-----|-------|------------|\n\n## Accept criteria\n\n- (mirror into the goalplan criteria[])\n"
+  }
+]
