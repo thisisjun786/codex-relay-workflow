@@ -79,6 +79,10 @@ duplicating verification. Execution-level for the rest, because there is no revi
 and two interrupted turns in one generation are two facts. Canonical rendering: fields joined by a
 pipe, integers unpadded, a null attempt as the literal `null`.
 
+A `ready_for_review` receipt may carry an optional `independentReview` item (`definitions.IndependentReview`
+in the schema): what the child states about its independent code review, a reference opinion that never
+gates a merge. An execution-only receipt does not carry it, and a receipt without it is as valid as before.
+
 An execution-only receipt carries `manifest: null` and the `NO_DELIVERABLE` sentinel of 64 zeros,
 for any producer. The JSON schema only enforces that for daemon observations; the runtime enforces
 it for the child too, because the contract prose is the stronger rule.
