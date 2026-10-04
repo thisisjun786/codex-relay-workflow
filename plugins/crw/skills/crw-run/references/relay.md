@@ -663,6 +663,18 @@ A child that needs something only a person can give records `blocked_needs_input
 
 **The fallback, and what it records.** A parent that sent the child a message over the thread bridge, outside this route, has told the relay nothing: the relay cannot see that message. The one trace it can hold is an admission: `admit-turn --relationship <rel> --generation <n> --turn <the turn that received it> --actor <your own task id> --reason <why>`. An admission by the relationship's registered parent task is recorded as a direct parent intervention, which `intervention-show --relationship <rel>` reads back (generation, turn, anchor, actor, reason, time); any other actor is only an admission. It is a record and not an authorization. A message that is never admitted leaves no trace, the actor is the statement of whoever ran the command, and the bypass opens no generation, so the DAG learns of it only from the plan revision and the re-registered criteria. Use the route above, and name any use of the fallback in the report and in the handoff.
 
+On a bridge send to a child released with an MCP profile, state `role: child` and
+`expected_settings.mcp_profile`: the same profile the child was released with in
+`child.settings.mcpProfile`, not the role's default. The bridge cannot reliably read that record. It
+refuses a profile-less `notLoaded` send before resume when the named role declares profiles, or the
+role is omitted and the host declares child profiles. Correct the send under a NEW request id; the
+existing pair guard still applies, so prefer relay delivery for a role with several pairs. If another
+client already loaded the child under other MCP settings, the relay's `settings_not_preserved` detail
+names recovery: only after a completed durable turn and a confirmed resumable rollout, release all
+subscriptions and observe `notLoaded` (an operator can use `thread/archive` then `thread/unarchive`
+if it remains loaded); the next relay delivery resumes under the recorded profile. Never unload a
+never-run root. This advice performs no automatic recovery.
+
 ## The four readers a candidate pass also uses
 
     codex-session-relay --state "$RELAY_STATE" merge-turn-show --turn <id>

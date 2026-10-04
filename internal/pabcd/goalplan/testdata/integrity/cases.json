@@ -1,0 +1,1062 @@
+{
+  "oracle": "CXC v0.2.40 3c1459ac",
+  "cases": [
+    {
+      "id": "empty",
+      "plan": {
+        "objective": "synthetic integrity",
+        "slug": "integrity",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "schemaVersion": 3,
+        "workPhases": [],
+        "criteria": []
+      },
+      "marker": false,
+      "definition": [],
+      "completion": [],
+      "superseded": [],
+      "version": 3,
+      "qa": false
+    },
+    {
+      "id": "duplicates_utf16",
+      "plan": {
+        "objective": "synthetic integrity",
+        "slug": "integrity",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "schemaVersion": 3,
+        "workPhases": [
+          {
+            "id": "",
+            "title": "",
+            "status": "pending",
+            "tasks": [],
+            "criteriaIds": []
+          },
+          {
+            "id": "𐀀",
+            "title": "𐀀",
+            "status": "pending",
+            "tasks": [],
+            "criteriaIds": []
+          },
+          {
+            "id": "",
+            "title": "",
+            "status": "pending",
+            "tasks": [],
+            "criteriaIds": []
+          },
+          {
+            "id": "𐀀",
+            "title": "𐀀",
+            "status": "pending",
+            "tasks": [],
+            "criteriaIds": []
+          }
+        ],
+        "criteria": []
+      },
+      "marker": false,
+      "definition": [
+        "duplicate work phase id '𐀀' makes dependency references ambiguous",
+        "duplicate work phase id '' makes dependency references ambiguous"
+      ],
+      "completion": [],
+      "superseded": [],
+      "version": 3,
+      "qa": false
+    },
+    {
+      "id": "cycle_roots_utf16",
+      "plan": {
+        "objective": "synthetic integrity",
+        "slug": "integrity",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "schemaVersion": 3,
+        "workPhases": [
+          {
+            "id": "",
+            "title": "",
+            "status": "pending",
+            "tasks": [],
+            "criteriaIds": [],
+            "dependsOn": [
+              "z"
+            ]
+          },
+          {
+            "id": "z",
+            "title": "z",
+            "status": "pending",
+            "tasks": [],
+            "criteriaIds": [],
+            "dependsOn": [
+              ""
+            ]
+          },
+          {
+            "id": "𐀀",
+            "title": "𐀀",
+            "status": "pending",
+            "tasks": [],
+            "criteriaIds": [],
+            "dependsOn": [
+              "x"
+            ]
+          },
+          {
+            "id": "x",
+            "title": "x",
+            "status": "pending",
+            "tasks": [],
+            "criteriaIds": [],
+            "dependsOn": [
+              "𐀀"
+            ]
+          }
+        ],
+        "criteria": []
+      },
+      "marker": false,
+      "definition": [
+        "work phase dependency cycle: x -> 𐀀 -> x"
+      ],
+      "completion": [],
+      "superseded": [],
+      "version": 3,
+      "qa": false
+    },
+    {
+      "id": "cycle_edges_utf16",
+      "plan": {
+        "objective": "synthetic integrity",
+        "slug": "integrity",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "schemaVersion": 3,
+        "workPhases": [
+          {
+            "id": "a",
+            "title": "a",
+            "status": "pending",
+            "tasks": [],
+            "criteriaIds": [],
+            "dependsOn": [
+              "",
+              "𐀀"
+            ]
+          },
+          {
+            "id": "",
+            "title": "",
+            "status": "pending",
+            "tasks": [],
+            "criteriaIds": [],
+            "dependsOn": [
+              "a"
+            ]
+          },
+          {
+            "id": "𐀀",
+            "title": "𐀀",
+            "status": "pending",
+            "tasks": [],
+            "criteriaIds": [],
+            "dependsOn": [
+              "a"
+            ]
+          }
+        ],
+        "criteria": []
+      },
+      "marker": false,
+      "definition": [
+        "work phase dependency cycle: a -> 𐀀 -> a"
+      ],
+      "completion": [],
+      "superseded": [],
+      "version": 3,
+      "qa": false
+    },
+    {
+      "id": "last_phase_wins",
+      "plan": {
+        "objective": "synthetic integrity",
+        "slug": "integrity",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "schemaVersion": 3,
+        "workPhases": [
+          {
+            "id": "base",
+            "title": "base",
+            "status": "pending",
+            "tasks": [],
+            "criteriaIds": []
+          },
+          {
+            "id": "base",
+            "title": "base",
+            "status": "done",
+            "tasks": [],
+            "criteriaIds": []
+          },
+          {
+            "id": "leaf",
+            "title": "leaf",
+            "status": "done",
+            "tasks": [],
+            "criteriaIds": [],
+            "dependsOn": [
+              "ghost",
+              "base",
+              "ghost"
+            ]
+          }
+        ],
+        "criteria": []
+      },
+      "marker": false,
+      "definition": [
+        "duplicate work phase id 'base' makes dependency references ambiguous",
+        "work phase leaf depends on unknown work phase 'ghost'"
+      ],
+      "completion": [
+        "work phase leaf is done while dependency work phase(s) are not done: ghost"
+      ],
+      "superseded": [],
+      "version": 3,
+      "qa": false
+    },
+    {
+      "id": "last_task_wins",
+      "plan": {
+        "objective": "synthetic integrity",
+        "slug": "integrity",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "schemaVersion": 3,
+        "workPhases": [
+          {
+            "id": "p",
+            "title": "p",
+            "status": "pending",
+            "tasks": [
+              {
+                "id": "base",
+                "title": "base",
+                "status": "pending"
+              },
+              {
+                "id": "base",
+                "title": "base",
+                "status": "done",
+                "outcome": "proof"
+              },
+              {
+                "id": "leaf",
+                "title": "leaf",
+                "status": "done",
+                "outcome": "proof",
+                "dependsOn": [
+                  "base"
+                ]
+              }
+            ],
+            "criteriaIds": []
+          }
+        ],
+        "criteria": []
+      },
+      "marker": false,
+      "definition": [
+        "work phase p has duplicate task id 'base', so task dependency references are ambiguous"
+      ],
+      "completion": [],
+      "superseded": [],
+      "version": 3,
+      "qa": false
+    },
+    {
+      "id": "last_decision_wins",
+      "plan": {
+        "objective": "synthetic integrity",
+        "slug": "integrity",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "schemaVersion": 3,
+        "workPhases": [
+          {
+            "id": "p",
+            "title": "p",
+            "status": "done",
+            "tasks": [],
+            "criteriaIds": [],
+            "awaitsDecision": [
+              "d"
+            ]
+          }
+        ],
+        "criteria": [],
+        "decisions": [
+          {
+            "id": "d",
+            "status": "open"
+          },
+          {
+            "id": "d",
+            "status": "decided"
+          }
+        ]
+      },
+      "marker": false,
+      "definition": [
+        "duplicate decision id 'd' makes awaitsDecision references ambiguous"
+      ],
+      "completion": [],
+      "superseded": [],
+      "version": 3,
+      "qa": false
+    },
+    {
+      "id": "decision_order",
+      "plan": {
+        "objective": "synthetic integrity",
+        "slug": "integrity",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "schemaVersion": 3,
+        "workPhases": [
+          {
+            "id": "p",
+            "title": "p",
+            "status": "done",
+            "tasks": [],
+            "criteriaIds": [],
+            "awaitsDecision": [
+              "z",
+              "z",
+              "open",
+              "a",
+              "a"
+            ]
+          }
+        ],
+        "criteria": [],
+        "decisions": [
+          {
+            "id": "open",
+            "status": "open"
+          }
+        ]
+      },
+      "marker": false,
+      "definition": [
+        "work phase p awaits decision 'a' more than once",
+        "work phase p awaits decision 'z' more than once",
+        "work phase p awaits unknown decision 'z'",
+        "work phase p is done while decision open is open",
+        "work phase p awaits unknown decision 'a'"
+      ],
+      "completion": [],
+      "superseded": [],
+      "version": 3,
+      "qa": false
+    },
+    {
+      "id": "cross_phase_reason_order",
+      "plan": {
+        "objective": "synthetic integrity",
+        "slug": "integrity",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "schemaVersion": 3,
+        "workPhases": [
+          {
+            "id": "first",
+            "title": "first",
+            "status": "pending",
+            "tasks": [],
+            "criteriaIds": [],
+            "dependsOn": [
+              "missing"
+            ]
+          },
+          {
+            "id": "second",
+            "title": "second",
+            "status": "pending",
+            "tasks": [],
+            "criteriaIds": [],
+            "awaitsDecision": [
+              "unknown"
+            ]
+          }
+        ],
+        "criteria": []
+      },
+      "marker": false,
+      "definition": [
+        "work phase second awaits unknown decision 'unknown'",
+        "work phase first depends on unknown work phase 'missing'"
+      ],
+      "completion": [],
+      "superseded": [],
+      "version": 3,
+      "qa": false
+    },
+    {
+      "id": "task_cycle_before_outcome",
+      "plan": {
+        "objective": "synthetic integrity",
+        "slug": "integrity",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "schemaVersion": 3,
+        "workPhases": [
+          {
+            "id": "p",
+            "title": "p",
+            "status": "pending",
+            "tasks": [
+              {
+                "id": "a",
+                "title": "a",
+                "status": "done",
+                "dependsOn": [
+                  "b"
+                ]
+              },
+              {
+                "id": "b",
+                "title": "b",
+                "status": "pending",
+                "dependsOn": [
+                  "a"
+                ]
+              }
+            ],
+            "criteriaIds": []
+          }
+        ],
+        "criteria": []
+      },
+      "marker": false,
+      "definition": [
+        "task dependency cycle in work phase p: a -> b -> a",
+        "task p/a is done but has no non-empty outcome"
+      ],
+      "completion": [
+        "task p/a is done while dependency task(s) are not done: b"
+      ],
+      "superseded": [],
+      "version": 3,
+      "qa": false
+    },
+    {
+      "id": "criteria_repeats_kept",
+      "plan": {
+        "objective": "synthetic integrity",
+        "slug": "integrity",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "schemaVersion": 3,
+        "workPhases": [
+          {
+            "id": "p",
+            "title": "p",
+            "status": "pending",
+            "tasks": [],
+            "criteriaIds": [
+              "ghost",
+              "ghost",
+              "ghost",
+              "ghost",
+              "other"
+            ]
+          }
+        ],
+        "criteria": []
+      },
+      "marker": false,
+      "definition": [
+        "work phase p references unknown criterion 'ghost'",
+        "work phase p references unknown criterion 'ghost'",
+        "work phase p references unknown criterion 'ghost'",
+        "work phase p references unknown criterion 'ghost'",
+        "work phase p references unknown criterion 'other'"
+      ],
+      "completion": [],
+      "superseded": [],
+      "version": 3,
+      "qa": false
+    },
+    {
+      "id": "self_and_missing",
+      "plan": {
+        "objective": "synthetic integrity",
+        "slug": "integrity",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "schemaVersion": 3,
+        "workPhases": [
+          {
+            "id": "p",
+            "title": "p",
+            "status": "pending",
+            "tasks": [
+              {
+                "id": "t",
+                "title": "t",
+                "status": "pending",
+                "dependsOn": [
+                  "t",
+                  "missing",
+                  "missing"
+                ]
+              }
+            ],
+            "criteriaIds": [],
+            "dependsOn": [
+              "p",
+              "gone",
+              "gone"
+            ]
+          }
+        ],
+        "criteria": []
+      },
+      "marker": false,
+      "definition": [
+        "work phase p depends on itself",
+        "work phase p depends on unknown work phase 'gone'",
+        "task p/t depends on itself",
+        "task p/t depends on unknown task 'missing' in the same work phase"
+      ],
+      "completion": [],
+      "superseded": [],
+      "version": 3,
+      "qa": false
+    },
+    {
+      "id": "blank_outcomes",
+      "plan": {
+        "objective": "synthetic integrity",
+        "slug": "integrity",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "schemaVersion": 3,
+        "workPhases": [
+          {
+            "id": "p",
+            "title": "p",
+            "status": "pending",
+            "tasks": [
+              {
+                "id": "done",
+                "title": "done",
+                "status": "done",
+                "outcome": "﻿"
+              },
+              {
+                "id": "pending",
+                "title": "pending",
+                "status": "pending",
+                "outcome": " "
+              },
+              {
+                "id": "nel",
+                "title": "nel",
+                "status": "done",
+                "outcome": ""
+              }
+            ],
+            "criteriaIds": []
+          }
+        ],
+        "criteria": []
+      },
+      "marker": false,
+      "definition": [
+        "task p/done is done but has no non-empty outcome",
+        "task p/pending is pending but has outcome"
+      ],
+      "completion": [],
+      "superseded": [],
+      "version": 3,
+      "qa": false
+    },
+    {
+      "id": "superseded_reasons",
+      "plan": {
+        "objective": "synthetic integrity",
+        "slug": "integrity",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "schemaVersion": 3,
+        "workPhases": [
+          {
+            "id": "missing",
+            "title": "missing",
+            "status": "superseded",
+            "tasks": [],
+            "criteriaIds": []
+          },
+          {
+            "id": "blank",
+            "title": "blank",
+            "status": "superseded",
+            "tasks": [],
+            "criteriaIds": [],
+            "supersededBy": "﻿"
+          },
+          {
+            "id": "self",
+            "title": "self",
+            "status": "superseded",
+            "tasks": [],
+            "criteriaIds": [],
+            "supersededBy": "self"
+          },
+          {
+            "id": "unknown",
+            "title": "unknown",
+            "status": "superseded",
+            "tasks": [],
+            "criteriaIds": [],
+            "supersededBy": "ghost"
+          },
+          {
+            "id": "chain",
+            "title": "chain",
+            "status": "superseded",
+            "tasks": [],
+            "criteriaIds": [],
+            "supersededBy": "self"
+          }
+        ],
+        "criteria": []
+      },
+      "marker": false,
+      "definition": [],
+      "completion": [],
+      "superseded": [
+        "work phase missing is superseded but does not name what replaced it (supersededBy)",
+        "work phase blank is superseded but does not name what replaced it (supersededBy)",
+        "work phase self claims to supersede itself, which would drop it from the remaining work for free",
+        "work phase unknown is superseded by 'ghost', which is not in this plan",
+        "work phase chain is superseded by 'self', which is itself superseded — the work would vanish"
+      ],
+      "version": 3,
+      "qa": false
+    },
+    {
+      "id": "superseded_first_target",
+      "plan": {
+        "objective": "synthetic integrity",
+        "slug": "integrity",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "schemaVersion": 3,
+        "workPhases": [
+          {
+            "id": "old",
+            "title": "old",
+            "status": "superseded",
+            "tasks": [],
+            "criteriaIds": [],
+            "supersededBy": "target"
+          },
+          {
+            "id": "target",
+            "title": "target",
+            "status": "done",
+            "tasks": [],
+            "criteriaIds": []
+          },
+          {
+            "id": "target",
+            "title": "target",
+            "status": "superseded",
+            "tasks": [],
+            "criteriaIds": [],
+            "supersededBy": "old"
+          }
+        ],
+        "criteria": []
+      },
+      "marker": false,
+      "definition": [
+        "duplicate work phase id 'target' makes dependency references ambiguous"
+      ],
+      "completion": [],
+      "superseded": [
+        "work phase target is superseded by 'old', which is itself superseded — the work would vanish"
+      ],
+      "version": 3,
+      "qa": false
+    },
+    {
+      "id": "absent_schema",
+      "plan": {
+        "objective": "synthetic integrity",
+        "slug": "integrity",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "workPhases": [],
+        "criteria": []
+      },
+      "marker": false,
+      "definition": [],
+      "completion": [],
+      "superseded": [],
+      "version": 1,
+      "qa": false
+    },
+    {
+      "id": "marker_promotes",
+      "plan": {
+        "objective": "synthetic integrity",
+        "slug": "integrity",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "workPhases": [],
+        "criteria": []
+      },
+      "marker": true,
+      "definition": [],
+      "completion": [],
+      "superseded": [],
+      "version": 2,
+      "qa": false
+    },
+    {
+      "id": "marker_keeps_three",
+      "plan": {
+        "objective": "synthetic integrity",
+        "slug": "integrity",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "schemaVersion": 3,
+        "workPhases": [],
+        "criteria": []
+      },
+      "marker": true,
+      "definition": [],
+      "completion": [],
+      "superseded": [],
+      "version": 3,
+      "qa": false
+    },
+    {
+      "id": "fractional_schema",
+      "plan": {
+        "objective": "synthetic integrity",
+        "slug": "integrity",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "schemaVersion": 2.5,
+        "workPhases": [],
+        "criteria": []
+      },
+      "marker": true,
+      "definition": [],
+      "completion": [],
+      "superseded": [],
+      "version": 2.5,
+      "qa": false
+    },
+    {
+      "id": "qa_absent",
+      "plan": {
+        "objective": "synthetic integrity",
+        "slug": "integrity",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "schemaVersion": 3,
+        "workPhases": [],
+        "criteria": [
+          {
+            "id": "c"
+          }
+        ]
+      },
+      "marker": false,
+      "definition": [],
+      "completion": [],
+      "superseded": [],
+      "version": 3,
+      "qa": false
+    },
+    {
+      "id": "qa_logic",
+      "plan": {
+        "objective": "synthetic integrity",
+        "slug": "integrity",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "schemaVersion": 3,
+        "workPhases": [],
+        "criteria": [
+          {
+            "id": "c",
+            "surface": "logic"
+          }
+        ]
+      },
+      "marker": false,
+      "definition": [],
+      "completion": [],
+      "superseded": [],
+      "version": 3,
+      "qa": false
+    },
+    {
+      "id": "qa_web",
+      "plan": {
+        "objective": "synthetic integrity",
+        "slug": "integrity",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "schemaVersion": 3,
+        "workPhases": [],
+        "criteria": [
+          {
+            "id": "c",
+            "surface": "web"
+          }
+        ]
+      },
+      "marker": false,
+      "definition": [],
+      "completion": [],
+      "superseded": [],
+      "version": 3,
+      "qa": true
+    },
+    {
+      "id": "qa_tui",
+      "plan": {
+        "objective": "synthetic integrity",
+        "slug": "integrity",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "schemaVersion": 3,
+        "workPhases": [],
+        "criteria": [
+          {
+            "id": "c",
+            "surface": "tui"
+          }
+        ]
+      },
+      "marker": false,
+      "definition": [],
+      "completion": [],
+      "superseded": [],
+      "version": 3,
+      "qa": true
+    },
+    {
+      "id": "qa_desktop",
+      "plan": {
+        "objective": "synthetic integrity",
+        "slug": "integrity",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "schemaVersion": 3,
+        "workPhases": [],
+        "criteria": [
+          {
+            "id": "c",
+            "surface": "desktop"
+          }
+        ]
+      },
+      "marker": false,
+      "definition": [],
+      "completion": [],
+      "superseded": [],
+      "version": 3,
+      "qa": true
+    },
+    {
+      "id": "qa_other",
+      "plan": {
+        "objective": "synthetic integrity",
+        "slug": "integrity",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "schemaVersion": 3,
+        "workPhases": [],
+        "criteria": [
+          {
+            "id": "c",
+            "surface": "other"
+          }
+        ]
+      },
+      "marker": false,
+      "definition": [],
+      "completion": [],
+      "superseded": [],
+      "version": 3,
+      "qa": false
+    }
+  ],
+  "marker": "/synthetic/.codexclaw/goalplans/integrity/schema-v2.marker"
+}

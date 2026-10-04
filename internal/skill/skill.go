@@ -22,6 +22,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return search.Run(args, nil, stdout, stderr)
 	case "hook-probe":
 		return runHookProbe(args[1:], stdout, stderr)
+	case "pair-choice":
+		return runPairChoice(args[1:], stdin, stdout, stderr)
 	case "issue-size":
 		return runIssueSize(args[1:], stdin, stdout, stderr)
 	case "parent-title":

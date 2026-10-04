@@ -117,6 +117,11 @@ func Lookup(name string) (Command, bool) {
 				return local, true
 			}
 		}
+		for _, local := range sessionCommands() {
+			if local.Name == name {
+				return local, true
+			}
+		}
 		return Command{}, false
 	}
 	return *command, true
@@ -129,6 +134,9 @@ func Names() []string {
 		names[i] = command.Name
 	}
 	for _, local := range jobCommands() {
+		names = append(names, local.Name)
+	}
+	for _, local := range sessionCommands() {
 		names = append(names, local.Name)
 	}
 	return names
@@ -167,7 +175,7 @@ func Execute(ctx context.Context, argv0 string, argv []string, stdout, stderr io
 	name, line := root.Remaining[0], root.Remaining[1:]
 	var positionals []string
 	parentName := name
-	if name == "service" || name == "job" {
+	if name == "service" || name == "job" || name == "session" {
 		parent := argparse.Parse(name, line)
 		if code, done := parsedLine(stdout, stderr, prog, name, parent); done {
 			return code
@@ -190,6 +198,11 @@ func Execute(ctx context.Context, argv0 string, argv []string, stdout, stderr io
 	if jobCommand(name) {
 		var operands []string
 		line, operands, missing = jobOperands(name, line)
+		positionals = append(positionals, operands...)
+	}
+	if sessionCommand(name) {
+		var operands []string
+		line, operands, missing = sessionOperands(name, line)
 		positionals = append(positionals, operands...)
 	}
 	parsed := argparse.Parse(name, line)

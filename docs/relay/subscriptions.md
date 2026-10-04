@@ -33,6 +33,13 @@ the same socket with delays from five seconds up to five minutes, logging the
 first error. Socket loss abandons only that socket's work. Shutdown cancels and
 drains release work before closing the transport.
 
+The late-cancellation regressions observe successful client transmission before
+cancelling the caller while the reply is still withheld. Fake-host reception
+alone does not establish that boundary: cancellation during an unfinished write
+can end the socket, and an unscoped test probe can reconnect. These tests retain
+their terminal and premature-release assertions, then wait for release proof to
+retire and check exactly one handshake and one unsubscribe attempt.
+
 ## Never-run roots and sub-threads
 
 A newly acknowledged root without a first durable turn retains its subscription:
@@ -113,3 +120,19 @@ finished roots and stopping their helpers after the last subscription ends is a
 host behavior, with an approximately sixty-second delay on this version, rather
 than an API timing guarantee. Another client's subscription can keep a root
 loaded after this connection releases it.
+
+## Recovery from other loaded MCP settings
+
+An idle child already loaded under other MCP settings ignores overrides on subsequent resumes.
+The relay keeps `settings_not_preserved` on `mcpServers` and names the recovery in its detail. Only
+after a completed durable turn and confirmation that its rollout is resumable, release all root
+subscriptions and observe `thread/read` reporting `notLoaded`. Other clients may retain subscriptions,
+and unloading is the host's decision. If it remains loaded, an operator can use `thread/archive` then
+`thread/unarchive`; the next relay delivery resumes under the recorded MCP profile. Never unload a
+never-run root. The relay performs no automatic archive or recovery operation.
+
+A thread-bridge fallback to an unloaded child must state its actual role and released
+`expected_settings.mcp_profile`. Without one the bridge refuses before resume when that role declares
+profiles, or the role is omitted on a host that declares child profiles. It cannot reliably read the
+relay's record or choose a default on behalf of the caller. An unnamed non-child is also refused in
+that case; state its actual declared role. The existing pair guard still applies. Prefer relay delivery.

@@ -1,0 +1,74 @@
+[
+  {
+    "input": "deepseek",
+    "want": {
+      "id": "command-code/deepseek-deepseek-v4.1-flash",
+      "verified": true,
+      "mapDate": "2026-09-24"
+    }
+  },
+  {
+    "input": "swe2",
+    "want": {
+      "id": "devin/swe-2",
+      "verified": false,
+      "mapDate": "2026-09-24"
+    }
+  },
+  {
+    "input": "kimi",
+    "want": {
+      "id": "kimi/kimi-for-coding-highspeed",
+      "verified": false,
+      "mapDate": "2026-09-24"
+    }
+  },
+  {
+    "input": "sol",
+    "want": {
+      "id": "gpt-6-sol",
+      "verified": false,
+      "mapDate": "2026-09-24"
+    }
+  },
+  {
+    "input": "luna",
+    "want": {
+      "id": "gpt-6-luna",
+      "verified": false,
+      "mapDate": "2026-09-24"
+    }
+  },
+  {
+    "input": "provider/explicit",
+    "want": {
+      "id": "provider/explicit",
+      "verified": false,
+      "mapDate": "2026-09-24"
+    }
+  },
+  {
+    "input": "gpt-6-sol",
+    "want": {
+      "id": "gpt-6-sol",
+      "verified": false,
+      "mapDate": "2026-09-24"
+    }
+  },
+  {
+    "input": "__proto__",
+    "want": {
+      "id": "__proto__",
+      "verified": false,
+      "mapDate": "2026-09-24"
+    }
+  },
+  {
+    "input": "constructor",
+    "want": {
+      "id": "constructor",
+      "verified": false,
+      "mapDate": "2026-09-24"
+    }
+  }
+]
