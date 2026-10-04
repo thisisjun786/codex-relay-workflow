@@ -884,9 +884,10 @@ Headroom is 100 minus the highest utilization among windows whose reset is after
 windows do not constrain it. Both sides must be complete, with an active window; `exhausted` must agree
 with zero headroom and `available` with positive headroom. A missing/unknown side, malformed or partial
 snapshot, unknown field, invalid window, future observation, or observation older than 30 minutes makes
-the whole snapshot unreadable. Thirty minutes matches R0's retained-quota freshness bound, not the older
-ordering-cache age. The parser accepts at most 1 MiB of UTF-8 JSON per input. A failed snapshot-file read
-also takes the table default and records its reason. Token consumption never becomes remaining quota.
+the whole snapshot unreadable. Thirty minutes matches OCX's retained last-good report bound found in the source comparison, not its
+older ordering-cache age. The parser accepts at most 1 MiB of UTF-8 JSON per input. A failed snapshot-file read
+also takes the table default and records its reason. Token consumption never becomes remaining quota. Decimal utilization is compared exactly; numeric
+literals are bounded to 128 characters and exponent magnitude 128.
 
 **Decision and guards.** Start with the ordered count default under Bundles. With readable quota, switch
 away from it only when the other side has strictly more than 10 percentage points of headroom. The

@@ -107,7 +107,7 @@ func choosePair(r pairRequest, q pairQuota) pairReport {
 		return result
 	}
 	result.Source = "quota"
-	if q.Headroom.room(otherPair(p))-q.Headroom.room(p) > pairHysteresisPoints {
+	if q.shouldSwitch(p) {
 		p = otherPair(p)
 		result.Rule = append(result.Rule, "headroom_switch")
 	} else {

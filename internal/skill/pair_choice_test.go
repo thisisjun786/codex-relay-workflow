@@ -282,3 +282,38 @@ func TestPairChoiceWindowRounding(t *testing.T) {
 		}
 	}
 }
+
+func TestPairChoiceDecimalDeadband(t *testing.T) {
+	for _, c := range []struct {
+		claude, openai float64
+		tie, want      string
+	}{
+		{36.1, 26.1, "Sonnet", "Sonnet"}, {36.1, 26.099999999, "Sonnet", "SOL"},
+		{26.1, 36.1, "SOL", "SOL"}, {26.099999999, 36.1, "SOL", "Sonnet"},
+		{16.1, 6.1, "Sonnet", "Sonnet"}, {6.1, 16.1, "SOL", "SOL"},
+	} {
+		r := pairTestRequest()
+		r["tie"] = c.tie
+		g, code := pairTestRun(t, r, pairTestSnapshot(c.claude, c.openai))
+		if code != 0 || g["pair"] != c.want {
+			t.Errorf("used=%v/%v tie=%s want=%s exit=%d got=%v", c.claude, c.openai, c.tie, c.want, code, g)
+		}
+	}
+}
+
+func TestPairChoiceDecimalInputBounds(t *testing.T) {
+	for _, value := range []any{"36.1", json.Number("1e-1000000000"), json.Number("1e129"), json.Number("-1"), json.Number("101"), json.Number("0." + strings.Repeat("0", 129)), nil} {
+		s := pairTestSnapshot(36.1, 26.1)
+		s["claude"].(map[string]any)["windows"].([]any)[0].(map[string]any)["utilization"] = value
+		g, code := pairTestRun(t, pairTestRequest(), s)
+		if code != 0 || g["source"] != "table" || g["quota"].(map[string]any)["readable"] != false {
+			t.Fatal(value, code, g)
+		}
+	}
+	s := pairTestSnapshot(36.1, 26.1)
+	s["claude"].(map[string]any)["windows"].([]any)[0].(map[string]any)["utilization"] = json.Number("3.61e1")
+	g, code := pairTestRun(t, pairTestRequest(), s)
+	if code != 0 || g["pair"] != "Sonnet" || g["source"] != "quota" {
+		t.Fatal(code, g)
+	}
+}
