@@ -128,7 +128,7 @@ func runMergeBuildCheck(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return cannot("extract the merged tree "+tree, err)
 	}
-	env, err := mergeBuildEnv(g.env, filepath.Join(g.dir, "go"))
+	env, err := mergeBuildEnv(ctx, g.env, filepath.Join(g.dir, "go"))
 	if err != nil {
 		return cannot("prepare the go environment", err)
 	}

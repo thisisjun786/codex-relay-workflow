@@ -1,0 +1,69 @@
+{
+  "oracle": "CXC v0.2.40 (3c1459ac)",
+  "cases": [
+    {
+      "input": "skill:///x/crw-dev-testİng/SKILL.md",
+      "expected": [
+        "crw-dev-testi̇ng"
+      ],
+      "classification": "identical",
+      "reason": "Link folder lowercasing is unchanged by brand substitution."
+    },
+    {
+      "input": "skill:///x/crw-ΟΣ/SKILL.md",
+      "expected": [
+        "crw-ος"
+      ],
+      "classification": "identical",
+      "reason": "Link folder lowercasing is unchanged by brand substitution."
+    },
+    {
+      "input": "skill:///x/crw-ΟΣΑ/SKILL.md",
+      "expected": [
+        "crw-οσα"
+      ],
+      "classification": "identical",
+      "reason": "Link folder lowercasing is unchanged by brand substitution."
+    },
+    {
+      "input": "skill:///x/crw-ΟΣ.Α/SKILL.md",
+      "expected": [
+        "crw-οσ.α"
+      ],
+      "classification": "identical",
+      "reason": "Link folder lowercasing is unchanged by brand substitution."
+    },
+    {
+      "input": "skill:///x/crw-ΟΣ́/SKILL.md",
+      "expected": [
+        "crw-ος́"
+      ],
+      "classification": "identical",
+      "reason": "Link folder lowercasing is unchanged by brand substitution."
+    },
+    {
+      "input": "skill:///x/crw-ΟΣ:Α/SKILL.md",
+      "expected": [
+        "crw-οσ:α"
+      ],
+      "classification": "identical",
+      "reason": "Link folder lowercasing is unchanged by brand substitution."
+    },
+    {
+      "input": "skill:///x/crw-ΟΣ‍/SKILL.md",
+      "expected": [
+        "crw-ος‍"
+      ],
+      "classification": "identical",
+      "reason": "Link folder lowercasing is unchanged by brand substitution."
+    },
+    {
+      "input": "skill:///x/crw-ΟΣ;Α/SKILL.md",
+      "expected": [
+        "crw-ος;α"
+      ],
+      "classification": "identical",
+      "reason": "Link folder lowercasing is unchanged by brand substitution."
+    }
+  ]
+}
