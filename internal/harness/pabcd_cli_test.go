@@ -223,3 +223,33 @@ func TestPabcdCLIReceiptStreamsAndResult(t *testing.T) {
 		t.Fatalf("thrown failure: %d %q %q", code, out, errOut)
 	}
 }
+
+func TestPabcdCLIPhysicalAndMissingCwd(t *testing.T) {
+	root := pabcdCLITestHome(t)
+	alias := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(root, alias); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PWD", alias)
+	code, out, errOut := pabcdCLITestRun([]string{"memory", "allow-write", "--session", "physical"}, "")
+	if code != 0 || errOut != "" || !strings.Contains(out, "cwd "+root+";") || strings.Contains(out, alias) {
+		t.Fatalf("physical cwd: %d %q %q", code, out, errOut)
+	}
+	missing := filepath.Join(root, "removed")
+	if err := os.Mkdir(missing, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(missing)
+	if err := os.Remove(missing); err != nil {
+		t.Fatal(err)
+	}
+	if code, out, errOut := pabcdCLITestRun([]string{"memory"}, ""); code != 0 || out != cli.MemoryUsage+"\n" || errOut != "" {
+		t.Fatalf("memory usage needs no cwd: %d %q %q", code, out, errOut)
+	}
+	for _, verb := range []string{"plan", "receipt", "evidence", "memory"} {
+		code, out, errOut := pabcdCLITestRun([]string{verb, "--help"}, "")
+		if code != 1 || out != "" || !strings.HasPrefix(errOut, "crw cli failed: ") || !strings.HasSuffix(errOut, "\n") {
+			t.Errorf("%s missing cwd: %d %q %q", verb, code, out, errOut)
+		}
+	}
+}
