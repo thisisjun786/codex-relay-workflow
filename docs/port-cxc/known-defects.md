@@ -600,3 +600,38 @@ The pinned oracle already publishes through an exclusive 0600 temporary file and
 - Memory allow-write replaces unreadable/corrupt session bytes with default IDLE plus a grant (`pabcd-state/src/memory-cli.ts:80-82`, `TestMemoryDataLossPreservesUnreadableBytes` and recorded intentionally-changed data-loss case); port: fixed, refusing publication and preserving the original bytes.
 - Both writes publish a reconstructed verdict list that drops malformed entries or caps the list at 64 (`pabcd-state/src/evidence-cli.ts:100-101`, `memory-cli.ts:81-82`, `state.ts:57-90,587-589`; recorded intentionally-changed overflow/malformed cases and `TestCLIDataLossPreservesVerdictBytes`); port: fixed, refusing publication when the raw record count/shape cannot be retained.
 - Filesystem error diagnostics other than the stale-lock EEXIST case use the Go state owner's native error text instead of Node/libuv wording (`pabcd-state/src/evidence-cli.ts:132`, `memory-cli.ts:86`; `TestEvidenceAuditFailureAndUnresolvable`, `TestMemoryStateDirectoryFailure`); port: kept as a runtime diagnostic limitation, with exit/failure preservation unchanged.
+
+## Found by the receipt test library port
+
+- The parser drops empty command arguments, so `-- cmd "" arg` executes `cmd arg`, although an empty argument is meaningful to a command (source `plugins/codexclaw/components/pabcd-state/src/receipt-cli.ts:63`; recorded parser case 10); port: kept.
+- Missing `--session` and `--cwd` values are accepted, and a following flag can be consumed as their value; only `--generated` checks for an empty or absent value (source `plugins/codexclaw/components/pabcd-state/src/receipt-cli.ts:52-58`; recorded parser cases 7-9); port: kept.
+- `--generated` accepts absolute and parent paths, consumes `--` as a value, strips only one leading `./` and keeps a trailing slash, which makes a directory exclusion such as `build/` match no children (source `plugins/codexclaw/components/pabcd-state/src/receipt-cli.ts:55-59` and `source-identity.ts:215-218`; tests `TestReceiptParserOracle` and `TestReceiptFailuresClearPrior/trailing-generated`); port: kept.
+- `receipt test --help` is a parser error instead of help (source `plugins/codexclaw/components/pabcd-state/src/receipt-cli.ts:41` and `:61`; fixture `cli-help__receipt__test_dashdash_help`); port: kept.
+- `receiptPathFor` accepts the sanitized key `..`, which places the receipt directly under the state directory instead of its evidence root, where the receipt reader then refuses it (source `plugins/codexclaw/components/pabcd-state/src/receipt-cli.ts:70`; test `TestReceiptHelpAndPath`); port: kept.
+- The recorded command joins argv with spaces and loses argument boundaries, so distinct invocations can record the same command text (source `plugins/codexclaw/components/pabcd-state/src/receipt-cli.ts:174`; test `TestReceiptArgvNoShellAndEncoding`); port: kept.
+- The first source capture is outside the runner's catch, while the second is caught, so a binding broken between the initial resolution and first capture throws instead of returning the runner's SOURCE-ROOT refusal (source `plugins/codexclaw/components/pabcd-state/src/receipt-cli.ts:120-127` and `:145-147`); port: kept.
+- The receipt is written in place, so a failed write leaves a truncated record (source `plugins/codexclaw/components/pabcd-state/src/receipt-cli.ts:184`; intentionally-changed recorded case `internal/pabcd/cli/testdata/atomic-change.json`, test `TestReceiptAtomicPublicationFailure`); port: fixed (record-file data loss: fsynced temporary-file publication and rename, with failed publication removing its partial temporary file).
+
+## CRW-352 memory requeue
+
+- A positive retry allowance below one is floored to zero, clearing backoff without restoring eligibility (`recall/src/memory-requeue.ts:73` at v0.2.40); port: kept.
+- The schema guard omits `retry_at`, so a selected store lacking it passes selection but apply fails and rolls back (`recall/src/memory-requeue.ts:66,94-98,137` at v0.2.40); port: kept.
+- NULL, numeric and BLOB kind/key values are coerced to strings for selection and binding, so an untyped jobs table can report selected candidates with zero rows changed (`recall/src/memory-requeue.ts:105-109,137-143` at v0.2.40); port: kept.
+- With no kind filter, exhausted consolidation jobs are selected despite the module's safety prose claiming otherwise (`recall/src/memory-requeue.ts:17-18,107` at v0.2.40); port: kept.
+- Candidates removed by the limit appear in neither the selected list nor skipped cause counts (`recall/src/memory-requeue.ts:107-112` at v0.2.40); port: kept.
+- A failed BEGIN reports that requeue was rolled back even when no transaction began (`recall/src/memory-requeue.ts:133,146-152` at v0.2.40); port: kept.
+- Reopening for apply uses a create-capable SQLite open, so external removal between selection and reopening can leave a new empty store (`recall/src/memory-requeue.ts:128` and `recall/src/sqlite.ts:34-36` at v0.2.40); port: kept.
+- Duplicate kind/key rows with a retry allowance floored to zero remain eligible across repeated updates, counting the same rows more than once (`recall/src/memory-requeue.ts:73,137-143` at v0.2.40); port: kept.
+
+## Found by the orchestrate session/status library port (CRW-519)
+
+- Session discovery accepts any stat-able name ending in `.json`, including a directory, and raw existence then permits status to report that unreadable directory as IDLE (source `orchestrate-cli.ts:301-316,328-330,509-516`; recorded directory case); port: kept.
+- Status uses advisory `readState`, so an existing corrupt session file reports default IDLE with exit zero rather than distinguishing unreadable state (source `orchestrate-cli.ts:509-516`; recorded corrupt-state case); port: kept.
+- The CLI checks the raw session path but reads a sanitized path, so an explicit id containing spaces or punctuation can pass existence for one file and report another file's phase (source `orchestrate-cli.ts:328-330,414-418,509-516`, `state.ts:327-329`; recorded raw/sanitized case); port: kept.
+- With no resolved session, status prints plain `no active session` even under `--json`, making that success response a different output form (source `orchestrate-cli.ts:500-501`; recorded empty JSON case); port: kept.
+- A sessions directory that exists but cannot be listed escapes the CLI's advertised never-throws behavior; the Go library propagates that IO error instead of turning it into success or a missing-session refusal (source `orchestrate-cli.ts:306,423,498`; deterministic non-directory listing test); port: kept.
+
+## Found by the recall ingest port (CRW-363)
+
+- A larger rewrite is assumed to be an append, leaving the previous prefix indexed and reporting fresh after the new fingerprint is stored (source `plugins/codexclaw/components/recall/src/ingest.ts:222-246`; recorded growth-rewrite case); port: kept.
+- A rewrite preserving size and integer-millisecond mtime is skipped, so its old text remains indexed and freshness reports no change (source `plugins/codexclaw/components/recall/src/ingest.ts:68-73,215`; recorded same-fingerprint case); port: kept.
