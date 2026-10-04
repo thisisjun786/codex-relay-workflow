@@ -970,5 +970,9 @@
 {"name":"job on"},
 {"name":"job status"},
 {"name":"job drain","options":[{"flag":"--session","required":true},{"flag":"--json","kind":"true"}]},
-{"name":"job removal"}
+{"name":"job removal"},
+{"name":"session","commands":true,"summary":"native session identity and source binding"},
+{"name":"session current","options":[{"flag":"--json","kind":"true"}]},
+{"name":"session bind","options":[{"flag":"--json","kind":"true"}]},
+{"name":"session source","summary":"source <absolute-worktree> [--json]","options":[{"flag":"--json","kind":"true"}]}
 ]

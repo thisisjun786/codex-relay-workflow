@@ -523,3 +523,8 @@ The pinned oracle already publishes through an exclusive 0600 temporary file and
 - The oracle describes worktree GC/list as a future contract rather than an implemented command; staging the renamed examples does not provide that implementation (CXC:plugins/codexclaw/skills/dev-devops/references/local-gc.md:87-105); port: kept.
 - Historical oracle references name a source-only search-policy test, repository-bootstrap workflow and CodexClaw issue; name substitution preserves the references without importing those upstream artifacts or proving their CRW counterparts exist (CXC:plugins/codexclaw/skills/dev-code-reviewer/SKILL.md:380-384; CXC:plugins/codexclaw/skills/dev-devops/references/repo-bootstrap.md:23; CXC:plugins/codexclaw/skills/dev-devops/references/native-desktop-acceptance.md:188-189,267); port: kept.
 - Four upstream references have an extra blank line at EOF; staging preserves it, so the full-range whitespace check reports four additional locations (CXC:plugins/codexclaw/skills/dev-frontend/references/core/product-density.md:53; CXC:plugins/codexclaw/skills/dev-frontend/references/core/soft-3d-asset-gates.md:70; CXC:plugins/codexclaw/skills/dev-frontend/references/core/ux-writing-ko.md:62; CXC:plugins/codexclaw/skills/dev-uiux-design/references/design-system-bootstrap.md:133); port: kept.
+
+## CRW-520: session CLI diagnostics
+
+- Plain session output coerces the bound source identity to `[object Object]`, hiding its fields (pabcd-state/src/session-cli.ts:118 at v0.2.40); port: kept.
+- Native-database read failures still suggest checking Node SQLite support, even though the port uses Go SQLite and needs no Node at runtime (pabcd-state/src/session-binding.ts:108 at v0.2.40); port: kept.
