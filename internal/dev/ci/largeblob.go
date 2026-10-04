@@ -56,10 +56,14 @@ type largeBlob struct {
 }
 
 // largeBlobCheck judges root's history. It returns the refusals, one per blob plus a closing
-// explanation, or the one line a pass is reported with; both are empty when there is no commit to judge.
+// explanation, or the one line a pass is reported with; both are empty when the branch is unborn.
 func largeBlobCheck(root string, getenv func(string) string) (errs []string, summary string) {
-	if _, err := runGit(root, "rev-parse", "--verify", "--quiet", "HEAD^{commit}"); err != nil {
-		return nil, "" // no commit yet: nothing has come into any history
+	if _, err := largeBlobCommit(root, "HEAD"); err != nil {
+		unborn, cause := largeBlobUnbornHead(root)
+		if !unborn {
+			return []string{"validate: HEAD cannot be read as a commit: " + cause}, ""
+		}
+		return nil, "" // the branch is unborn: nothing has come into any history
 	}
 	shallow, err := runGit(root, "rev-parse", "--is-shallow-repository")
 	if err != nil {
@@ -100,6 +104,52 @@ func largeBlobCheck(root string, getenv func(string) string) (errs []string, sum
 		summary += fmt.Sprintf(" beyond %d allow-listed in %s", allowed, largeBlobAllowListPath)
 	}
 	return nil, summary + "."
+}
+
+// largeBlobUnbornHead tells an unborn branch from a HEAD that cannot be read as a commit. A branch
+// is unborn when HEAD is a symbolic ref to a branch whose ref does not resolve yet: the first
+// commit has not been made, so no history exists to judge. Every other state names its cause, and
+// that cause is what the refusal reports - a HEAD this checkout does not hold as a commit, or a
+// ref store git itself could not read.
+func largeBlobUnbornHead(root string) (unborn bool, cause string) {
+	ref, err := runGit(root, "symbolic-ref", "-q", "HEAD")
+	if err != nil {
+		// HEAD is not a symbolic ref: a detached HEAD, or one git cannot read at all.
+		id, idErr := runGit(root, "rev-parse", "--verify", "--quiet", "HEAD")
+		if idErr != nil {
+			return false, largeBlobOneLine(idErr.Error())
+		}
+		return false, fmt.Sprintf("HEAD is detached at %s, which this checkout does not hold as a commit", strings.TrimSpace(string(id)))
+	}
+	name := strings.TrimSpace(string(ref))
+	id, err := runGit(root, "rev-parse", "--verify", "--quiet", name)
+	switch {
+	case err == nil:
+		return false, fmt.Sprintf("HEAD names %s at %s, which this checkout does not hold as a commit", name, strings.TrimSpace(string(id)))
+	case !strings.HasPrefix(name, "refs/heads/"):
+		return false, fmt.Sprintf("HEAD is a symbolic ref to %s, which is not a branch and does not resolve", name)
+	case largeBlobExitCode(err) == 1:
+		return true, "" // the branch ref does not resolve: nothing has come into any history
+	default:
+		return false, largeBlobOneLine(err.Error())
+	}
+}
+
+// largeBlobExitCode is the status a runGit failure ended with, or 0 when the failure carries none.
+// rev-parse --verify --quiet answers 1 for a revision that does not exist and a different status
+// (128 for a fatal error) for a ref store it cannot read; only the first is an unborn branch.
+func largeBlobExitCode(err error) int {
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		return exit.ExitCode()
+	}
+	return 0
+}
+
+// largeBlobOneLine is text as one line: git's own message can carry newlines (a path inside it, a
+// multi-line fatal), and a refusal is one line.
+func largeBlobOneLine(text string) string {
+	return strings.Join(strings.Fields(text), " ")
 }
 
 // largeBlobRange is the base commit of the range to judge, or "" for every commit reachable from
