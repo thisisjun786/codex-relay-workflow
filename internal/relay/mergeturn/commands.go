@@ -14,7 +14,7 @@ import (
 // MergeTurn(target_reader=TargetReader()).
 
 func service(r *registry.Registry) *Service {
-	return &Service{Store: r.Store, Registry: r, Now: r.Now, Delivery: StoreDelivery{Store: r.Store}}
+	return &Service{Store: r.Store, Registry: r, Now: r.Now, Delivery: StoreDelivery{Store: r.Store}, Pulls: TargetReader{}}
 }
 
 func answer(v map[string]any, err error) (any, error) {

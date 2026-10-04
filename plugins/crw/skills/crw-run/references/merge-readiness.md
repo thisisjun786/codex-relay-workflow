@@ -722,6 +722,78 @@ task](../SKILL.md#return-corrections-to-the-existing-task)).
    carries the landing and the expected conflicts in its [restoration
    block](task-packet.md#restoration-block).
 
+### Build and vet the merged tree before the verdict
+
+Each sibling pull request is green on its own base, and the forge and `git merge-tree` report no
+conflict when they add different files, yet two of them can declare one identifier in one Go
+package (on 2026-10-04 two pairs did: `tokenize` in one package, `ChatOrder` in another). Only a
+build of the merge shows it, and found in the merge lane it costs a whole lane turn. So building the
+merge is a step of judging a receipt: it comes after the comparisons above and before the verdict is
+`verified`, for every receipt that changes Go code.
+
+    crw skill merge-build-check --repo <a checkout that has fetched the head and the base> --head <head> --base origin/dev
+
+It merges the two with `git merge-tree --write-tree`, extracts the merged tree into a scratch
+directory under `TMPDIR` that it removes whatever happens, and in the Go packages the merge changes
+it runs `go build`, `go vet`, `go vet` for `darwin/arm64` and a test compile that runs no test, each
+package with and without the build tag `--tags` names (default `dev`) and for each target that has
+files of it, stopping at the first step that fails. It only reads the checkout: no branch, commit or
+worktree is written. It takes the build cache and the Go settings from the environment, keeps the go
+tool's temporary files in its scratch directory (and, except on macOS, where Go keeps them under
+`HOME`, the tool's telemetry counters) and passes `-p=4`, so it runs under the same
+[`Go build resources:`](task-packet.md#launch-packet) line as any other local run of the parent, in
+the packages the change touches and never as a full test run. The hosted CI of the head stays the
+test suite.
+
+Read the answer by its first line and its exit status:
+
+- Exit 0, `ok:`: the merge builds and vets. The `evidence:` line (`head`, `base`, `merge_tree`, the
+  package count, the steps that ran, `rule=merged_tree_build`) goes into the verdict's record, as
+  the base-refresh check's does. It holds for the head and the base tip it names: a base that moved
+  since needs the check again. The one exception is the refresh of that head onto that same tip,
+  once the [base-refresh check](#refresh-the-base-yourself-when-only-the-base-moved) has proved it
+  `clean`: its tree is the merge tree the check built.
+- Exit 1, `refused: <code>:`. `build_failed`, `vet_failed`, `vet_darwin_failed`,
+  `test_compile_failed` and `list_failed` mean the merge does not build or vet: a needs-changes
+  finding, the first one of the verdict, with the restoration block. It names the package and quotes
+  the first lines of the output (for a redeclared identifier, both declarations), and the candidate
+  returns to the same child, which merges the base and renames
+  ([Return corrections to the existing task](../SKILL.md#return-corrections-to-the-existing-task)).
+  `merge_conflict` is git's, not a build finding: nothing was built, and the candidate is handled as
+  a base conflict is, below. `head_on_base` means the head has already landed or the wrong base was
+  named: read the tip of the base again.
+- Exit 2 and 3 are no answer and not a pass. Exit 2 is an input git could not read (an unknown
+  revision, a checkout that has not fetched the head, git older than 2.41, a `TMPDIR` git cannot
+  write); exit 3 is a go tool that is not on PATH, a run that outran `--timeout`, or an interrupt.
+  Fix the cause and run it again; the verdict waits.
+
+What it does not look at is stated so that a pass is not read for more: the packages that import a
+changed package, the files a package embeds or compiles besides its `.go` files, a dependency change
+in `go.mod` or `go.sum` (it prints a note), a build tag other than `--tags`, and every test. Where the
+installed `crw` does not have the command yet (`crw skill` answers `invalid command
+"merge-build-check"`), run the same steps by hand, in a scratch worktree of the parent's own checkout,
+under the same `Go build resources:`, in bash (zsh does not split `$pkgs` into words):
+
+    scratch=$(mktemp -d) && git worktree add --detach "$scratch/wt" <head> && (
+      set -e
+      cd "$scratch/wt"
+      git merge --no-commit --no-ff <base>    # a conflict stops here: it is not a build finding
+      pkgs=$(git diff --name-only <base>...<head> -- '*.go' | xargs -n1 dirname | sort -u | sed 's|^|./|')
+      for tags in "" dev; do
+        go build -p=4 -tags "$tags" -o /dev/null $pkgs
+        go vet -p=4 -tags "$tags" $pkgs
+        go test -p=4 -tags "$tags" -count=1 -run '^$' -vet=off -exec true $pkgs
+        GOOS=darwin GOARCH=arm64 go vet -p=4 -tags "$tags" $pkgs
+      done
+    ); rc=$?
+    git worktree remove --force "$scratch/wt"; rmdir "$scratch"; [ "$rc" -eq 0 ]
+
+Leave out of `$pkgs` the directories that are gone from the merge, `testdata` directories and the
+ones no file of builds for a target, which the helper lists as skipped. A hand run leaves the go
+tool's temporary files and telemetry counters where they always are; the helper redirects them. The
+planning side of the same failure is the naming rule in
+[issue boundaries](../../crw-plan/references/issue-boundaries.md#decide-the-boundary).
+
 ### Refresh the base yourself when only the base moved
 
 The dev ruleset is strict: a pull request has to contain the tip of its base, so each landing leaves
@@ -905,10 +977,27 @@ a late thread still has a correction route and after it none has
 compares threads with the record and reads the summary comments for findings, and does not need a restatement of the
 record of P on N, which names another head.
 
-**On the relay's merge lane**, claim the turn with N (`merge-turn-request --head N`). A claim already
-made at P is restated with `merge-turn-ready --head N`. That resets readiness, so a `--ready` given with
+**On the relay's merge lane**, claim the turn with N, naming the pull request and the assignment
+(`merge-turn-request --head N --pr <number> --relationship <rel>`). A claim already made at P is
+restated with `merge-turn-ready --head N`. That resets readiness, so a `--ready` given with
 it is accepted and not recorded, and on a holding turn it issues a new grant. The relay reads no CI when
-readiness is declared, so the order below is yours to keep. Run it in the foreground of the turn, with
+readiness is declared, so the order below is yours to keep. It does read the head of the pull request
+the turn is bound to: `merge-turn-ready --head N` is refused `merge_candidate_moved` when the forge reads
+another head for that pull request, and `merge_target_unreadable` when the forge cannot be read; `merge-turn-check`
+refuses the same two ways. The update that produced N can still be settling on the forge, so after a
+refresh read the pull request again and declare the head it shows; a repeated refusal is not an
+escalation, and no other pull request's head is ever declared on the turn you hold. The answer's
+`pullRequestHead` says whether the forge or the record decided the head.
+
+**A parent holds one live turn per target.** A second `merge-turn-request` for another pull request
+or another relationship is refused `disposition_conflict`, naming the live turn, its pull request and its place
+in the order. That answer is the turn you hold and never a turn for the other pull request: land the held
+turn or return it (`merge-turn-release --disposition returned`; a waiting claim is withdrawn with
+`merge-turn-withdraw`) first, then request the other pull request's turn. Asking again for the same pull request
+returns the same turn (`alreadyClaimed`). A claim made with no pull request and no relationship records
+nothing to compare, so state both on every claim.
+
+Run it in the foreground of the turn, with
 the owner's binding active (`merge-turn-acknowledge` refuses a paused one):
 
 1. The refresh gives N (progress step `base_refresh`).
@@ -1188,7 +1277,9 @@ The verdict `verified` was given, the base moved before `dag-accept`, and the pa
 Parents under one supervision land on the same base ref, so the turn on that target
 is serialized in the coordination record and claimed before integrating, not after
 deciding to merge. Claim with the exact candidate head; a claim with no head cannot
-be checked against one later.
+be checked against one later. A parent holds one turn per target: while one is live, a request for
+another pull request's turn is refused (`disposition_conflict`, naming the live turn), so request it after the
+live one has landed or been returned.
 
 Waiting for your own CI is not the same as merging. While required CI, review, or a
 base update is still outstanding and the merge has not started, a ready peer candidate

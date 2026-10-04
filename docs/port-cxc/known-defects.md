@@ -227,7 +227,7 @@ Behavior of CXC v0.2.40 that looks unintended and that the recorded corpus ([con
 
 ## Found by the goalplan slug validation and plan revival port
 
-- `assertNotSymlink` asks `existsSync` before `lstatSync`, and `existsSync` follows the link, so a symbolic link whose target does not exist is not refused at the state root, the plans root or the slug directory, and a link swapped in between the check and the later use of the path is not defended; the writers fail while the link is dangling, but one made to point at an existing directory after the check is followed (source `plugins/codexclaw/components/pabcd-state/src/goalplan.ts:309-313`, `:320-331`; test `TestGoalplanDirDanglingSymlinkIsNotRefused`); port: fixed by CRW-340 for reads and locks with non-following opens, fstat and descriptor-path binding; the lexical GoalplanDir helper remains unchanged.
+- `assertNotSymlink` asks `existsSync` before `lstatSync`, and `existsSync` follows the link, so a symbolic link whose target does not exist is not refused at the state root, the plans root or the slug directory, and a link swapped in between the check and the later use of the path is not defended; the writers fail while the link is dangling, but one made to point at an existing directory after the check is followed (source `plugins/codexclaw/components/pabcd-state/src/goalplan.ts:309-313`, `:320-331`; test `TestGoalplanDirDanglingSymlinkIsNotRefused`); port: fixed by CRW-340 for reads and locks with non-following opens, fstat and descriptor-path binding, and port: fixed by CRW-357 for plan writes and ledger appends with descriptor-relative creation, open and rename; the lexical GoalplanDir helper remains unchanged.
 - `goalplanDir` tests `dir.startsWith(plansRoot + sep)` and `validateGoalplanSlug` tests `"."` and `".."`, but both can never fire once the slug pattern holds (the pattern needs an alphanumeric first character); the port keeps the first test and omits the second (source `goalplan.ts:300-302`, `:326`); port: kept.
 - `reviveGoalplan` skips a task that is not an object or lacks a text `id` or `title`, and drops the non-text entries of `criteriaIds`, without a diagnostic, although a bad `dependsOn` on the same task fails the whole plan, so a damaged plan reads as a smaller one and the next write persists the loss (source `goalplan.ts:597-600`, `:610-612`; cases `task_entry_*` and `phase_criteriaIds_mixed` of `oracle-plan.json`); port: kept.
 - Only the keys the revival knows survive a read: an unknown key at the top of a plan, of a work phase, a task, a criterion or a decision is dropped, so a field written by another tool, or by a newer build of the same `schemaVersion`, is lost on the next write; the version refusal protects only against a declared newer version (source `goalplan.ts:583-675`; case `extra_keys_dropped`); port: kept.
@@ -756,6 +756,78 @@ The parser feeds a fail-closed memory write gate, so a destination the oracle mi
 - perl and ruby option bundles that start with a digit option (`-0pi`, `-0777pi`) do not match the in-place pattern (source `shell-write-destinations.ts:388`); port: fixed (security: digits are allowed in the bundle).
 - python is recognized only as python, python3 and py, and only as a separate `-c` or `-cPROGRAM`: `python3.11`, `python2`, `-Ic`, `-uc` are missed; `open(path, "r+")`, `open(path, mode="w")`, `open(file=path, mode="w")` are missed because only a mode that starts with w, a or x counts; `open(mode="w", file=path)` (keywords in either order or with others between) is missed; node `-p`, `--print`, `-pe` and a template literal path are missed (source `shell-write-destinations.ts:303,505-549`); port: fixed (security: versioned names, bundles with -c, update modes, an argument reader for open() calls, node print forms and backtick paths are added).
 - A double-quoted program keeps its backslash-escaped quotes in the token, so `python3 -c "open(\"/m/a\",\"w\")"` never matches the call patterns (source `shell-write-destinations.ts:141-152,505-549`); port: fixed (security: the program is also read with the shell's escapes removed).
+
+## CRW-351 — markdown memory search and cwd scope
+
+- Prose cwd matching uses substring containment, so a mention of an adjacent path such as `/proj/here-adjacent` earns the half boost and survives a `/proj/here` hard filter (CXC v0.2.40 `recall/src/memory-search.ts:357-358`); port: kept.
+- A computed date cutoff of exactly zero disables file age filtering because the cutoff check uses JavaScript truthiness (CXC v0.2.40 `recall/src/memory-search.ts:484`); port: kept.
+
+## Found by the rescan and Mind port (CRW-356)
+
+- An `answer_recorded` row clears its question pair even with empty or missing answers, so a captured non-answer can remove pending work (source `plugins/codexclaw/components/pabcd-state/src/rescan-coordinator.ts:84`; oracle case `emptyAnswer`); port: kept.
+- NUL-separated pair keys collide when either id contains NUL: `(t\u0000q, r)` and `(t, q\u0000r)` share a key (source `plugins/codexclaw/components/pabcd-state/src/rescan-coordinator.ts:39-40`; oracle case `nulCollision`); port: kept.
+- A NaN selection count returns no Minds despite the documented minimum of one (source `plugins/codexclaw/components/pabcd-state/src/minds.ts:163-165`; oracle case `count-nan`); port: kept.
+- The rank lookup inherits Object prototype properties, so a level such as `constructor` causes rank subtraction to fall through to canonical id order and mixed ranks form a nontransitive comparator (source `plugins/codexclaw/components/pabcd-state/src/minds.ts:169-173`; oracle cases `constraint-constructor`, `ontology-constructor`); port: kept.
+- The grounding heuristic accepts a URL port as a file line and unmatched quote types as a quote; it checks spelling, not that the claimed evidence exists (source `plugins/codexclaw/components/pabcd-state/src/minds.ts:107-109`; oracle cases `evidence-8`, `evidence-22`); port: kept.
+- The section-marker regex rejects `see ## Goals` but accepts `x## Goals` because the boundary applies before the first hash (source `plugins/codexclaw/components/pabcd-state/src/minds.ts:108`; oracle cases `evidence-17`, `evidence-18`); port: kept.
+- A JSON level object that shadows `toString` with a noncallable value throws `TypeError: Cannot convert object to primitive value` during rank lookup, even with a NaN selection count; the Go port preserves the failure as a panic with the same message (source `plugins/codexclaw/components/pabcd-state/src/minds.ts:169`; oracle cases `object-normal`, `object-nan`, `nested-normal`, `nested-nan`); port: kept.
+
+## CRW-523 — PABCD CLI verb adapters
+
+- Evidence has no help branch: `evidence help`, `-h` and `--help` are unknown-verb errors, and `evidence resolve --help` reports missing required arguments instead of displaying usage (source `plugins/codexclaw/components/pabcd-state/src/cli.ts:276-285`, `evidence-cli.ts:35-62`; four `cli-help__evidence__*` fixtures); port: kept.
+
+## Found by the CRW-381 recall chat-search entry port
+
+- The entry computes a positive-days cutoff before checking the empty plan or forced-scan flag, so an out-of-range value throws `Invalid time value` even for an empty query and before the origin callback (source `recall/src/chat-search.ts:159-164`, recorded `invalid-days` in `internal/recall/testdata/chatsearch/oracle.json`); port: kept.
+
+## Found by the CRW-441 role helper CLI port
+
+- `list` and `get` silently ignore trailing arguments, so `list --help` lists settings and `get reviewer extra` reads the role (source `subagent-config/src/cli.ts:50,58-60`); port: kept.
+- Verb-level `--help` is treated as a role or registration argument and exits 1 for get/set/reset/register, rather than showing help (source `subagent-config/src/cli.ts:35-39,54-64`); port: kept.
+- Missing `--model` and `--prompt` values become empty strings, and a following flag is consumed as their literal value instead of being parsed as another flag (source `subagent-config/src/cli.ts:75-76,95-96`); port: kept.
+
+## CRW-529 dispatch ledger library
+
+- A linked top-level `.codexclaw` redirects dispatch storage outside the workspace because only its descendants are checked (`subagent-config/src/fallback-dispatch.ts:71-80`); port: fixed, the assignment requires refusing every ledger directory link, including `.crw`.
+- Root discovery trusts a successful git response naming an unrelated workspace (`subagent-config/src/fallback-dispatch.ts:48-50`); port: fixed, the assignment requires canonical cwd containment before storage.
+- A created report is accepted before spawn issuance and can turn a reconciled attempt back into running (`subagent-config/src/fallback-dispatch.ts:171-176`); port: kept, issuance rules belong to the managed-spawn slice.
+- Stored status validation coerces values to strings, admitting singleton arrays while subsequent strict comparisons can return an array action or reconcile a nominally ready attempt (`subagent-config/src/fallback-dispatch.ts:95,100,121,156,158`); port: kept.
+- A process killed between temporary write and rename can leave an orphan temporary dispatch record, with no sweep (`subagent-config/src/fallback-dispatch.ts:110-114`); port: kept.
+
+## Found by the goalplan write, ledger and builder port (CRW-357)
+
+- The directory checks in `writeGoalplan` and `appendGoalplanLedger` do not bind the subsequent IO: replacing the checked plans root with a link before the file open makes both write outside the workspace (source `plugins/codexclaw/components/pabcd-state/src/goalplan.ts:920-933`, `:951-962`; recorded cases `after-check-write` and `after-check-append`, intentionally-changed in `internal/pabcd/goalplan/testdata/write/oracle.json`); port: fixed (security: no-follow directory/file handles, fstat and descriptor-path checks, descriptor-relative mkdir and atomic rename refuse linked or relocated directories, including dangling slug links).
+- Appending after a final JSONL record without its newline joins two objects on one line, losing both records on JSONL read (source `goalplan.ts:960-962`; recorded `unterminated`, intentionally-changed in `internal/pabcd/goalplan/testdata/write/oracle.json`); port: fixed (data loss: keep all existing bytes and separate the new row with LF when the nonempty tail is not LF or cannot be read safely; existing-plan callers hold the write lock).
+- Explicitly opting into schema 2 or 3 builds a plan without the final gate those versions require, although no shipped verb can satisfy it (source `goalplan.ts:972-976`, `:1015`; recorded builder cases `two`, `fraction`, `three` and `future`); port: kept (default remains schema 1 and explicit versions are floored and clamped as in the oracle).
+
+## CRW-371 — scan argument parser
+
+- Contradiction counts use decimal `parseInt`, so `12abc`, `1.9`, `1e3` and `0x10` become 12, 1, 1 and 0 instead of being rejected (source `pabcd-state/src/scan-cli.ts:125-128,187-191`); port: kept.
+- Help is recognized only as the first action, so the parser rejects `record --help` as an unknown argument; outer executable help handling is separate (source `pabcd-state/src/scan-cli.ts:86-100,183`); port: kept.
+- Value flags consume the next flag as a value, and any nonempty session text, including whitespace or `--derive`, satisfies the session requirement (source `pabcd-state/src/scan-cli.ts:116-123,186`); port: kept.
+- Whitespace-only known/unknown facts pass because only empty text is rejected (source `pabcd-state/src/scan-cli.ts:165-170`); port: kept.
+- Confidence accepts JavaScript radix notation such as `0x1`, `0o1` and `0b1` (source `pabcd-state/src/scan-cli.ts:172-180`); port: kept.
+- The high contradiction count is not constrained by the total count, so a positive high count with total zero parses successfully (source `pabcd-state/src/scan-cli.ts:187-191`); port: kept.
+
+## CRW-387 — stage1 memory search and chat fallback
+
+- The stage1 LIKE prefilter uses SQLite's ASCII-only case folding, so a query for `ü` misses a row containing `Ü` despite the final Unicode predicate accepting it (CXC v0.2.40 `recall/src/memory-search.ts:739,764`; recorded `unicode-like-kept` case); port: kept.
+- Stage1 excerpts retain CRLF bytes, unlike the normalized markdown file-span excerpts (CXC v0.2.40 `recall/src/memory-search.ts:760,778`; recorded `null-empty-id-crlf` case); port: kept.
+- A string thread ID that is empty bypasses deduplication and produces `stage1_outputs/` rather than the unknown-thread label (CXC v0.2.40 `recall/src/memory-search.ts:756-757,775`; recorded `null-empty-id-crlf` case); port: kept.
+- Stage1 presence is tallied outside cwd scope and across incomplete rows, so an out-of-scope symbol can prevent the scoped boundary relaxation (CXC v0.2.40 `recall/src/memory-search.ts:690-698`; recorded `scope-presence-blocks-relax` case); port: kept.
+- A raised chat fallback threshold replaces existing memory hits and still announces that no memory artifacts matched; the warning still says tool logs are excluded when `chatIncludeTools` is true, and chat warnings are discarded (CXC v0.2.40 `recall/src/memory-search.ts:624-625,639,651-669`; recorded `fallback-threshold-replaces`, `fallback-opts` and `fallback-ignores-chat-warning` cases); port: kept.
+- A zero age cutoff disables stage1 age filtering, and independent search/presence/retry failures repeat the database warning (CXC v0.2.40 `recall/src/memory-search.ts:695,701,759,785`; recorded `zero-cutoff-kept` and `db-error-repeated` cases); port: kept.
+
+## CRW-512 — cwd recall hook context
+
+- A character budget that fits no entry still reports `hits` with empty text (source `recall/src/hook.ts:382,534,586`; recorded tiny-budget builder); port: kept.
+- History is bumped before rendering, so entries dropped by the character budget or a subsequent summary-load failure are counted without injection (source `recall/src/hook.ts:433,518,534`; recorded tiny-budget and summary-error builders); port: kept.
+- A bump failure returns the neutral selection even after earlier refs were written, without rolling those counts back (source `recall/src/hook.ts:433-438`; recorded bump-error selection); port: kept.
+- The candidate pool doubles whenever a history opener is configured, including when it returns null (source `recall/src/hook.ts:449-451`; recorded null-store builder); port: kept.
+- A present empty thread id is one deduplication key while its history ref falls back to the file (source `recall/src/hook.ts:563,572`; recorded empty-id fallback hits); port: kept.
+- Dates are compared lexically and fallback timestamps are sliced to ten UTF-16 units, without calendar validation (source `recall/src/hook.ts:529,579,582`; recorded non-ISO date label); port: kept.
+- Clipping below three units uses a negative slice end, potentially keeping most of the input and exceeding the requested snippet size (source `recall/src/hook.ts:325-327`; recorded negative and tiny clip budgets); port: kept.
+- A non-ISO fallback timestamp can be sliced through an astral pair in its unquoted date label (source `recall/src/hook.ts:579-582`; recorded two-hit surrogate-date case); port: kept (comparison retains the original units; the unquoted Go UTF-8 presentation uses U+FFFD for the sliced lone unit).
 
 ## Found by the CRW-518 memory write gate port
 
