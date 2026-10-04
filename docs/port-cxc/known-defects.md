@@ -817,3 +817,14 @@ The parser feeds a fail-closed memory write gate, so a destination the oracle mi
 - Stage1 presence is tallied outside cwd scope and across incomplete rows, so an out-of-scope symbol can prevent the scoped boundary relaxation (CXC v0.2.40 `recall/src/memory-search.ts:690-698`; recorded `scope-presence-blocks-relax` case); port: kept.
 - A raised chat fallback threshold replaces existing memory hits and still announces that no memory artifacts matched; the warning still says tool logs are excluded when `chatIncludeTools` is true, and chat warnings are discarded (CXC v0.2.40 `recall/src/memory-search.ts:624-625,639,651-669`; recorded `fallback-threshold-replaces`, `fallback-opts` and `fallback-ignores-chat-warning` cases); port: kept.
 - A zero age cutoff disables stage1 age filtering, and independent search/presence/retry failures repeat the database warning (CXC v0.2.40 `recall/src/memory-search.ts:695,701,759,785`; recorded `zero-cutoff-kept` and `db-error-repeated` cases); port: kept.
+
+## CRW-512 — cwd recall hook context
+
+- A character budget that fits no entry still reports `hits` with empty text (source `recall/src/hook.ts:382,534,586`; recorded tiny-budget builder); port: kept.
+- History is bumped before rendering, so entries dropped by the character budget or a subsequent summary-load failure are counted without injection (source `recall/src/hook.ts:433,518,534`; recorded tiny-budget and summary-error builders); port: kept.
+- A bump failure returns the neutral selection even after earlier refs were written, without rolling those counts back (source `recall/src/hook.ts:433-438`; recorded bump-error selection); port: kept.
+- The candidate pool doubles whenever a history opener is configured, including when it returns null (source `recall/src/hook.ts:449-451`; recorded null-store builder); port: kept.
+- A present empty thread id is one deduplication key while its history ref falls back to the file (source `recall/src/hook.ts:563,572`; recorded empty-id fallback hits); port: kept.
+- Dates are compared lexically and fallback timestamps are sliced to ten UTF-16 units, without calendar validation (source `recall/src/hook.ts:529,579,582`; recorded non-ISO date label); port: kept.
+- Clipping below three units uses a negative slice end, potentially keeping most of the input and exceeding the requested snippet size (source `recall/src/hook.ts:325-327`; recorded negative and tiny clip budgets); port: kept.
+- A non-ISO fallback timestamp can be sliced through an astral pair in its unquoted date label (source `recall/src/hook.ts:579-582`; recorded two-hit surrogate-date case); port: kept (comparison retains the original units; the unquoted Go UTF-8 presentation uses U+FFFD for the sliced lone unit).
