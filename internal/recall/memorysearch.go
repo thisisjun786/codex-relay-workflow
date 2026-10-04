@@ -53,11 +53,18 @@ func memorySearchBuildCwdScope(home string, opts MemorySearchOptions, warnings *
 	}
 	prefix := *opts.Cwd
 	if !memorySearchIsAbsolute(prefix) {
-		var err error
-		prefix, err = filepath.Abs(prefix)
+		cwd, err := os.Getwd()
 		if err != nil {
 			return nil, err
 		}
+		// os.Getwd may honor a symlink spelling in PWD. Node's process.cwd
+		// supplies the physical directory to path.resolve; resolve only that
+		// base, not the caller's path (which may not exist).
+		cwd, err = filepath.EvalSymlinks(cwd)
+		if err != nil {
+			return nil, err
+		}
+		prefix = filepath.Join(cwd, prefix)
 	}
 	prefix = NormalizeCwd(prefix)
 	path, err := stateDbPath(home)
