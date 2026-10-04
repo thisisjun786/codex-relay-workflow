@@ -9,8 +9,9 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 )
 
-// CRW-283: what a summary says, and how the relay reads a document for it. The block and the container are plain text the connector keeps byte for byte (HTML comment markers and a
-// fenced body, the grammar the relationship outbox already relies on); the relay judges a document only by parsing these markers, never by looking for words.
+// CRW-283: what a summary says, and how the relay reads a document for it. The block and the container are plain text the connector keeps as written (HTML comment markers and a
+// fenced body, the grammar the relationship outbox already relies on; the one change a Linear save makes is tested in outbox_readback_blank_test.go); the relay judges a document only by
+// parsing these markers, never by looking for words.
 
 func claimedEntry(t *testing.T, f *fixture, document string) (SummaryEntry, SummaryOperation, string) {
 	t.Helper()

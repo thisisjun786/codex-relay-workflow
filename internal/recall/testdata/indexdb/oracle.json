@@ -1,0 +1,241 @@
+{
+  "version": "2",
+  "schema": [
+    {
+      "type": "table",
+      "name": "files",
+      "sql": "CREATE TABLE files (\n  path TEXT PRIMARY KEY,\n  mtime_ms INTEGER NOT NULL,\n  size INTEGER NOT NULL,\n  thread_id TEXT,\n  cwd TEXT,\n  source TEXT NOT NULL,\n  date TEXT NOT NULL,\n  bytes_ingested INTEGER NOT NULL DEFAULT 0,\n  last_ord INTEGER NOT NULL DEFAULT 0,\n  repo_key TEXT\n)"
+    },
+    {
+      "type": "index",
+      "name": "idx_files_repo_key",
+      "sql": "CREATE INDEX idx_files_repo_key ON files(repo_key)"
+    },
+    {
+      "type": "index",
+      "name": "idx_msgs_path",
+      "sql": "CREATE INDEX idx_msgs_path ON msgs(path)"
+    },
+    {
+      "type": "index",
+      "name": "idx_msgs_ts",
+      "sql": "CREATE INDEX idx_msgs_ts ON msgs(ts DESC)"
+    },
+    {
+      "type": "table",
+      "name": "meta",
+      "sql": "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+    },
+    {
+      "type": "table",
+      "name": "msgs",
+      "sql": "CREATE TABLE msgs (\n  id INTEGER PRIMARY KEY,\n  path TEXT NOT NULL,\n  ord INTEGER NOT NULL,\n  ts TEXT NOT NULL,\n  role TEXT NOT NULL,\n  match_field TEXT NOT NULL,\n  synthetic INTEGER NOT NULL,\n  text TEXT NOT NULL\n)"
+    },
+    {
+      "type": "trigger",
+      "name": "msgs_ad",
+      "sql": "CREATE TRIGGER msgs_ad AFTER DELETE ON msgs BEGIN\n  INSERT INTO msgs_fts(msgs_fts, rowid, text) VALUES ('delete', old.id, old.text);\n  INSERT INTO msgs_tri(msgs_tri, rowid, text) VALUES ('delete', old.id, old.text);\nEND"
+    },
+    {
+      "type": "trigger",
+      "name": "msgs_ai",
+      "sql": "CREATE TRIGGER msgs_ai AFTER INSERT ON msgs BEGIN\n  INSERT INTO msgs_fts(rowid, text) VALUES (new.id, new.text);\n  INSERT INTO msgs_tri(rowid, text) VALUES (new.id, new.text);\nEND"
+    },
+    {
+      "type": "table",
+      "name": "msgs_fts",
+      "sql": "CREATE VIRTUAL TABLE msgs_fts USING fts5(\n  text, content='msgs', content_rowid='id', tokenize='unicode61'\n)"
+    },
+    {
+      "type": "table",
+      "name": "msgs_tri",
+      "sql": "CREATE VIRTUAL TABLE msgs_tri USING fts5(\n  text, content='msgs', content_rowid='id', tokenize='trigram'\n)"
+    },
+    {
+      "type": "table",
+      "name": "recall_hit_counts",
+      "sql": "CREATE TABLE recall_hit_counts (\n  ref TEXT PRIMARY KEY,\n  hit_count INTEGER NOT NULL DEFAULT 0,\n  last_hit_at TEXT NOT NULL\n)"
+    }
+  ],
+  "fresh": {
+    "path": "fixture-index",
+    "files": 0,
+    "msgs": 0,
+    "lastIngestAt": null
+  },
+  "pragmas": [
+    "wal",
+    5000
+  ],
+  "modes": [
+    448,
+    384,
+    384,
+    384
+  ],
+  "refs": [
+    "thread:abc",
+    "file:x.jsonl",
+    "file:x.jsonl"
+  ],
+  "empty": [],
+  "counts": {
+    "thread:a": 2,
+    "thread:b": 1
+  },
+  "stamp": "2026-01-02T03:04:05.000Z",
+  "status": {
+    "path": "fixture-index",
+    "files": 1,
+    "msgs": 1,
+    "lastIngestAt": "stamp"
+  },
+  "inserted": [
+    1,
+    1
+  ],
+  "deleted": [
+    0,
+    0
+  ],
+  "legacy": false,
+  "migrated": true,
+  "rowSurvives": [
+    {
+      "path": "seed",
+      "repo_key": null
+    }
+  ],
+  "absent": {},
+  "missingWrite": "no such table: recall_hit_counts",
+  "recreated": {},
+  "inputs": [
+    "oops",
+    "0x10",
+    "0b11",
+    "0o10",
+    "﻿ 0x10 ",
+    "+0x10",
+    "Infinity",
+    "-Infinity",
+    "0x1p2",
+    "",
+    "inf",
+    "1_0",
+    "0x10000000000000000"
+  ],
+  "blobInputs": [
+    [],
+    [
+      16
+    ],
+    [
+      49,
+      50
+    ]
+  ],
+  "coercions": [
+    {
+      "ref": "blob:0",
+      "number": "0"
+    },
+    {
+      "ref": "blob:1",
+      "number": "16"
+    },
+    {
+      "ref": "blob:2",
+      "number": "NaN"
+    },
+    {
+      "ref": "text:0",
+      "number": "NaN"
+    },
+    {
+      "ref": "text:1",
+      "number": "16"
+    },
+    {
+      "ref": "text:10",
+      "number": "NaN"
+    },
+    {
+      "ref": "text:11",
+      "number": "NaN"
+    },
+    {
+      "ref": "text:12",
+      "number": "18446744073709552000"
+    },
+    {
+      "ref": "text:2",
+      "number": "3"
+    },
+    {
+      "ref": "text:3",
+      "number": "8"
+    },
+    {
+      "ref": "text:4",
+      "number": "16"
+    },
+    {
+      "ref": "text:5",
+      "number": "NaN"
+    },
+    {
+      "ref": "text:6",
+      "number": "Infinity"
+    },
+    {
+      "ref": "text:7",
+      "number": "-Infinity"
+    },
+    {
+      "ref": "text:8",
+      "number": "NaN"
+    },
+    {
+      "ref": "text:9",
+      "number": "0"
+    }
+  ],
+  "updateDesync": [
+    1,
+    0
+  ],
+  "readonlyWrite": "attempt to write a readonly database",
+  "missingOpen": "no index at $R/missing/index.sqlite",
+  "defects": [
+    {
+      "id": "version-reset-history",
+      "classification": "intentionally-changed",
+      "reason": "Preserve injection history during derived-cache reset.",
+      "oracle": {},
+      "port": {
+        "thread:kept": 1
+      }
+    },
+    {
+      "id": "failed-reset-data-loss",
+      "classification": "intentionally-changed",
+      "reason": "Transactional schema/reset rolls back destructive DDL on failure.",
+      "oracle": {
+        "error": "use DROP VIEW to delete view meta",
+        "tables": [
+          "meta",
+          "recall_hit_counts"
+        ]
+      },
+      "port": {
+        "error": "use DROP VIEW to delete view meta",
+        "tables": [
+          "files",
+          "meta",
+          "msgs",
+          "recall_hit_counts"
+        ]
+      }
+    }
+  ]
+}
