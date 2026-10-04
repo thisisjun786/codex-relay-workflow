@@ -298,6 +298,7 @@ type Goalplan struct {
 	SchemaVersion          *float64            `json:"schemaVersion,omitempty"`
 	FinalGate              *FinalGateState     `json:"finalGate,omitempty"`
 	SteeringLog            []SteeringEntry     `json:"steeringLog,omitzero"`
+	goalplanBuiltFresh     bool
 }
 
 // GoalplanLedgerEvent is the kind of a ledger row. A dependency_registered row says when an edge appeared on a phase or task,

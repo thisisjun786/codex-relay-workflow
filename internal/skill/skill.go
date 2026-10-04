@@ -32,6 +32,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runStartPolicy(args[1:], stdin, stdout, stderr)
 	case "base-refresh":
 		return runBaseRefresh(args[1:], stdout, stderr)
+	case "merge-build-check":
+		return runMergeBuildCheck(args[1:], stdout, stderr)
 	case "-h", "--help":
 		fmt.Fprintln(stdout, skillUsage)
 		fmt.Fprintln(stdout, search.Usage)

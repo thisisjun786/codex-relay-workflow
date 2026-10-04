@@ -13,7 +13,15 @@ type Verb struct {
 }
 
 // Verbs is the table of crw pabcd's commands, a row for each verb that is ported.
-func Verbs() []Verb { return []Verb{{Name: "freeze", Run: freezeVerb}} }
+func Verbs() []Verb {
+	return []Verb{
+		{Name: "freeze", Run: freezeVerb},
+		{Name: "plan", Run: planVerb},
+		{Name: "receipt", Run: receiptVerb},
+		{Name: "evidence", Run: evidenceVerb},
+		{Name: "memory", Run: memoryVerb},
+	}
+}
 
 // Pabcd is crw pabcd <verb> [args]: it hands the arguments after the verb to its row, and answers an
 // absent or unknown verb as the other crw modes do, with the usage and exit status 2.
