@@ -900,3 +900,10 @@ Source: `plugins/codexclaw/components/pabcd-state/src/memory-write-gate.ts` at v
 - Derivation detects changes by array lengths only; at the keep-first cap it can report zero derived dimensions and the nothing-matched warning even with matched answers, preserving a prior explicit level (pabcd-state/src/scan-cli.ts:342-351,395-405 at v0.2.40); port: kept.
 - A malformed ledger's truthy non-string question or non-string answers can grant a level before write normalization drops those values, leaving high/mid with empty arrays (pabcd-state/src/scan-cli.ts:249-279,366-369; interview.ts:348-360 at v0.2.40); port: kept.
 - A question id whose object cannot convert to a property key throws after the scan row was appended, leaving that row without its tracker write (pabcd-state/src/scan-cli.ts:255,325-336,391,412-415 at v0.2.40); port: kept.
+
+## CRW-388 — recall hooks
+
+- The recovery pointer is sliced at 160 UTF-16 units and can end inside a long command invocation, leaving an unusable command (source `recall/src/hook.ts:646-653`; recorded long-invocation recovery rows); port: kept.
+- Version target extraction matches date and IP address fragments without distinguishing them from software versions (source `recall/src/hook.ts:131`; recorded `2026.10.04 1.2.3.4` target rows); port: kept.
+- The unavailable-project diagnostic hardcodes the bare command instead of the resolved invocation, so it can be unusable when that command is absent from PATH (source `recall/src/hook.ts:718`; Devin yellow bug finding and `TestRecallHookUnavailableAdviceParity`); port: kept.
+- The cwd basename is interpolated into the header outside the historical-data delimiter without quoting, so a locally chosen directory name containing newlines can insert extra prompt lines (source `recall/src/hook.ts:348-351`; Codex Code Review P2 and Node-rendered newline basename); port: kept (the hook payload supplies cwd; historical records do not supply this label; retained under the assigned as-is parity rule).
