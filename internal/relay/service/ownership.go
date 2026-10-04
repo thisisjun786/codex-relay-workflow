@@ -194,7 +194,11 @@ func (s *Service) stopWorker(r Object, timeout time.Duration) string {
 	if h.FD < 0 {
 		return "unverifiable"
 	}
-	current := StartTicks(pid)
+	readTicks := s.stopWorkerReadTicks
+	if readTicks == nil {
+		readTicks = StartTicks
+	}
+	current := readTicks(pid)
 	if r.Get("workerStartTicks") == nil || current == nil {
 		return "unverifiable"
 	}
