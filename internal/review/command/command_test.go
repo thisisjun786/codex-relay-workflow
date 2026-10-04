@@ -31,7 +31,7 @@ type repo struct {
 // clearEnv blanks the settings a developer's environment may carry, which the command reads.
 func clearEnv(t *testing.T) {
 	t.Helper()
-	for _, name := range []string{"STATE_DIR", "DAILY_CAP", "MODEL", "AGY", "LOCK", "LOCK_WAIT", "TIME_LIMIT_FLOOR", "TIME_LIMIT_CEILING"} {
+	for _, name := range []string{"STATE_DIR", "DAILY_CAP", "MODEL", "AGY", "GH", "LOCK", "LOCK_WAIT", "TIME_LIMIT_FLOOR", "TIME_LIMIT_CEILING"} {
 		t.Setenv("CRW_REVIEW_"+name, "")
 	}
 }
@@ -117,6 +117,7 @@ type fixture struct {
 	state, out, lock string
 	s                *script
 	at               time.Time // the fake clock
+	forge            forge     // when set, --post-summary talks to it instead of the gh CLI
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -137,7 +138,7 @@ func (f *fixture) args(head string, extra ...string) []string {
 // run is the command with the scripted runner; it is safe to call from a goroutine.
 func (f *fixture) run(head string, extra ...string) (int, Summary, string) {
 	var out, errOut bytes.Buffer
-	code := run(context.Background(), f.args(head, extra...), &out, &errOut, env{f.s.run, func() time.Time { return f.at }})
+	code := run(context.Background(), f.args(head, extra...), &out, &errOut, env{runner: f.s.run, now: func() time.Time { return f.at }, forge: func(Config) forge { return f.forge }})
 	var sum Summary
 	if out.Len() > 0 {
 		if err := json.Unmarshal(out.Bytes(), &sum); err != nil {
@@ -183,9 +184,10 @@ func TestSamePatchIDIsReviewedOnce(t *testing.T) {
 	}
 }
 
-func TestUnavailableArtifactStillCountsAsReviewed(t *testing.T) {
+// An unavailable artifact whose reason is not a problem of the account or the configuration is a result: it closes the patch (TestRetryRule has the rest).
+func TestUnavailableArtifactOfAnotherReasonStillCountsAsReviewed(t *testing.T) {
 	f := newFixture(t)
-	f.s.result = agy.Result{Class: agy.ClassUnavailable, Reason: agy.ReasonQuota}
+	f.s.result = agy.Result{Class: agy.ClassUnavailable, Reason: agy.ReasonCrash}
 	h := f.repo.change(f.base, 2)
 	if code, first, errOut := f.run(h); code != 0 || first.Status != string(review.StatusUnavailable) {
 		t.Fatalf("unavailable review: %d %+v %s", code, first, errOut)
@@ -387,6 +389,8 @@ func TestUsageErrorsAndHelp(t *testing.T) {
 		{[]string{"--base", "a", "--head", "b", "--issue", "crw 1", "--out", "o"}, "", "is not an issue id"},
 		{[]string{"--base", "a", "--head", "b", "--issue", "CRW-1", "--out", "o", "--daily-cap", "0"}, "", "the daily cap must be at least 1"},
 		{[]string{"--base", "a", "--head", "b", "--issue", "CRW-1", "--out", "o", "extra"}, "", `unrecognized argument "extra"`},
+		{[]string{"--base", "a", "--head", "b", "--issue", "CRW-1", "--out", "o", "--post-summary"}, "", "--post-summary needs --pr"},
+		{[]string{"--base", "a", "--head", "b", "--issue", "CRW-1", "--out", "o", "--pr", "7"}, "", "--pr is only used with --post-summary"},
 		{[]string{"--base", "a", "--head", "b", "--issue", "CRW-1", "--out", "o"}, "soon", "CRW_REVIEW_DAILY_CAP"},
 	} {
 		clearEnv(t)
@@ -415,13 +419,14 @@ func TestConfigFlagBeatsEnvironmentBeatsDefault(t *testing.T) {
 	}
 	clearEnv(t)
 	t.Setenv("XDG_STATE_HOME", "/xdg")
-	if c := parse(); c.DailyCap != 20 || c.Model != agy.DefaultModel || c.StateDir != "/xdg/crw/review" || c.LockWait != 30*time.Minute {
+	if c := parse(); c.DailyCap != 20 || c.Model != agy.DefaultModel || c.StateDir != "/xdg/crw/review" || c.LockWait != 30*time.Minute || c.Gh != "gh" {
 		t.Errorf("defaults: %+v", c)
 	}
 	t.Setenv("CRW_REVIEW_DAILY_CAP", "7")
 	t.Setenv("CRW_REVIEW_MODEL", "from-env")
 	t.Setenv("CRW_REVIEW_LOCK_WAIT", "90s")
-	if c := parse(); c.DailyCap != 7 || c.Model != "from-env" || c.LockWait != 90*time.Second {
+	t.Setenv("CRW_REVIEW_GH", "/env/gh")
+	if c := parse(); c.DailyCap != 7 || c.Model != "from-env" || c.LockWait != 90*time.Second || c.Gh != "/env/gh" {
 		t.Errorf("environment: %+v", c)
 	}
 	if c := parse("--daily-cap", "3", "--model", "from-flag"); c.DailyCap != 3 || c.Model != "from-flag" || c.LockWait != 90*time.Second {
