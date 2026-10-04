@@ -121,7 +121,9 @@ func largeBlobUnbornHead(root string) (unborn bool, cause string) {
 		}
 		return false, fmt.Sprintf("HEAD is detached at %s, which this checkout does not hold as a commit", strings.TrimSpace(string(id)))
 	}
-	name := strings.TrimSpace(string(ref))
+	// The command ends its output with a newline; a ref name may itself end in whitespace, so only
+	// the newline is removed.
+	name := strings.TrimRight(string(ref), "\r\n")
 	id, err := runGit(root, "rev-parse", "--verify", "--quiet", name)
 	switch {
 	case err == nil:

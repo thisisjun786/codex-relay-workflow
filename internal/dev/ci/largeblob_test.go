@@ -344,6 +344,21 @@ func TestLargeBlob_a_multiline_git_error_still_refuses_in_one_line(t *testing.T)
 	}
 }
 
+// A branch name may end in Unicode whitespace, which is not the newline the command adds: the
+// exact ref has to be probed. Trimming the name would ask about a different branch and could call
+// a repository whose commit is missing an unborn branch.
+func TestLargeBlob_a_branch_name_ending_in_unicode_whitespace_is_refused_exactly(t *testing.T) {
+	r, head := largeBlobTestRepo(t)
+	r.git("branch", "-m", "topic\u00a0")
+	branch := "refs/heads/topic\u00a0"
+	largeBlobTestRemoveObject(t, r, head)
+	for _, event := range []string{"", "pull_request"} {
+		expectEqual(t, "event "+event, largeBlobTestValidate(t, r.root, event, ""), result{1, "",
+			"validate: HEAD cannot be read as a commit: HEAD names " + branch + " at " + head +
+				", which this checkout does not hold as a commit\n"})
+	}
+}
+
 // largeBlobTestRemoveObject removes the loose object file of the commit id: the shape of an
 // incomplete copy whose HEAD cannot be read as a commit.
 func largeBlobTestRemoveObject(t *testing.T, r *fixtureRepo, id string) {
