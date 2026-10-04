@@ -120,19 +120,14 @@ func TestFreezeDeriveSlug(t *testing.T) {
 	}
 }
 
-// freeze.test.ts "OPEN ASSUMPTIONS is hash-covered via plan file content".
-func TestFreezeOpenAssumptionsAreHashCovered(t *testing.T) {
+// freeze.test.ts "checkStale catches changed/missing/new files AND planHash mismatch" and "OPEN ASSUMPTIONS is hash-covered via plan file
+// content", then the recorded verdicts and reasons, with changedFiles in UTF-16 order.
+func TestFreezeCheckStale(t *testing.T) {
 	v1 := []PlanFileHash{{"plan.md", Sha256("# Plan\n## OPEN ASSUMPTIONS\n- A1")}}
-	v2 := []PlanFileHash{{"plan.md", Sha256("# Plan\n## OPEN ASSUMPTIONS\n- A1\n- A2")}}
-	m := BuildFreezeManifest(BuildManifestInput{Objective: "o", PlanFiles: v1, EvidenceBundle: freezeBundle()})
-	if CheckStale(m, v1).Stale || !CheckStale(m, v2).Stale {
+	m1 := BuildFreezeManifest(BuildManifestInput{Objective: "o", PlanFiles: v1, EvidenceBundle: freezeBundle()})
+	if CheckStale(m1, v1).Stale || !CheckStale(m1, []PlanFileHash{{"plan.md", Sha256("# Plan\n## OPEN ASSUMPTIONS\n- A1\n- A2")}}).Stale {
 		t.Error("a changed assumption must change the plan hash and make the manifest stale")
 	}
-}
-
-// freeze.test.ts "checkStale catches changed/missing/new files AND planHash mismatch", then the recorded verdicts and reasons, with
-// changedFiles in UTF-16 order.
-func TestFreezeCheckStale(t *testing.T) {
 	files := []PlanFileHash{{"plan.md", Sha256("v1")}}
 	m := BuildFreezeManifest(BuildManifestInput{Objective: "o", PlanFiles: files})
 	added := CheckStale(m, []PlanFileHash{{"plan.md", Sha256("v1")}, {"x.md", Sha256("e")}})

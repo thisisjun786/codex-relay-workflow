@@ -13,6 +13,7 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"unicode/utf8"
@@ -41,9 +42,8 @@ type FreezeCliArgs struct {
 	Help      bool
 }
 
-// ParseFreezeArgs reads the first occurrence of a flag and the next element as its value, even when that is another flag; help is an
-// empty argv or any element help, --help or -h. Without --cwd the working directory is the kernel's, read here, so a help request in
-// a deleted directory fails as it does under Node.
+// ParseFreezeArgs takes the element after a flag's first occurrence as its value, even another flag; help is an empty argv or any element
+// help, --help or -h. Without --cwd the kernel's working directory is read here, so help fails in a deleted directory as under Node.
 func ParseFreezeArgs(argv []string) (FreezeCliArgs, error) {
 	value := func(flag string) (string, bool) {
 		if i := slices.Index(argv, flag); i >= 0 && i+1 < len(argv) {
@@ -164,11 +164,12 @@ func jsOf(obj map[string]any, key string, id int) jsVal {
 		return jsString(x)
 	case bool:
 		return jsVal{kind: 'b', s: fmt.Sprint(x)}
-	case float64:
-		if x == 0 {
-			x = 0 // -0 and 0 are one Map key
+	case json.Number: // beyond float64's range ParseFloat answers an infinity, as JSON.parse does
+		n, _ := strconv.ParseFloat(string(x), 64)
+		if n == 0 {
+			n = 0 // -0 and 0 are one Map key
 		}
-		return jsVal{kind: 'n', n: x}
+		return jsVal{kind: 'n', n: n}
 	}
 	return jsVal{kind: 'o', id: id, bad: throwsToString(v)}
 }
@@ -189,7 +190,12 @@ func throwsToString(v any) bool {
 func readPrior(file string) (frozen []frozenEntry, planHash jsVal, ok bool) {
 	var root map[string]any
 	raw, err := os.ReadFile(file)
-	if err != nil || json.Unmarshal(raw, &root) != nil {
+	dec := json.NewDecoder(strings.NewReader(decodeUTF8(raw))) // readFileSync decodes the bytes, JSON.parse then reads one whole value
+	dec.UseNumber()
+	if err != nil || dec.Decode(&root) != nil {
+		return nil, jsVal{}, false
+	}
+	if _, err := dec.Token(); err != io.EOF {
 		return nil, jsVal{}, false
 	}
 	entries, isArray := root["planFiles"].([]any)

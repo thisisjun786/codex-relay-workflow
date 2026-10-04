@@ -112,6 +112,11 @@ const scenarios = {
   prior_tostring_nested_array: tostring([{ path: [[{ toString: 1 }]], sha256: "x" }, { path: "new.md", sha256: "q" }]),
   prior_tostring_plain_and_throwing: tostring([{ path: { a: 1 }, sha256: "x" }, { path: { toString: "s" }, sha256: "x" }]),
   prior_plain_objects_only: tostring([{ path: { a: 1 }, sha256: "x" }, { path: [1, null], sha256: "x" }]),
+  // JSON.parse turns a number beyond double range into Infinity (a map key like any number); readFileSync decodes the manifest's bytes first
+  prior_big_number: { files: [...plan, session("s1", { interview: null }), t("interview/freeze.json", JSON.stringify(good).slice(0, -1) + ',"extra":1e400}')], steps: [{ session: "s1", dryRun: true }] },
+  prior_infinity_keys: { files: [...plan, session("s1", { interview: null }), t("interview/freeze.json", '{"planFiles":[{"path":1e400,"sha256":"x"},{"path":1e999,"sha256":"y"},{"path":-1e400,"sha256":"z"}],"planHash":"' + good.planHash + '"}')], steps: [{ session: "s1", dryRun: true }] },
+  prior_invalid_utf8_path: { files: [t("plan/default/a\ufffd.md", "x"), b("interview/freeze.json", Buffer.concat([Buffer.from('{"planFiles":[{"path":"a'), Buffer.from([0xe2, 0x82]), Buffer.from('.md","sha256":"' + freeze.sha256("x") + '"}],"planHash":"' + freeze.computePlanHash([{ path: "a\ufffd.md", sha256: freeze.sha256("x") }]) + '"}')]))], steps: [{ dryRun: true }] },
+  prior_trailing_garbage: prior(JSON.stringify(good) + "}"),
   plan_is_file: { files: [t("plan/default", "not a directory")], steps: [{ dryRun: false }] },
   prior_garbage_rewrite: { files: [...plan, session("s1", { interview: null }), t("interview/freeze.json", "{not json")], steps: [{ session: "s1", dryRun: true }, { session: "s1", dryRun: false }, { session: "s1", dryRun: true }] },
   prior_missing_sha_gone: { files: [t("interview/freeze.json", JSON.stringify({ planFiles: [{ path: "gone.md" }], planHash: freeze.computePlanHash([]) }))], steps: [{ dryRun: true }] },

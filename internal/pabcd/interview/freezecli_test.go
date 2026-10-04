@@ -74,8 +74,8 @@ func freezeTree(t *testing.T, ws, rel string) (list []string) {
 	return list
 }
 
-// freezeFileReader is the session read of these tests: the slug and tracker of .crw/sessions/<id>.json, a default session when the
-// file is absent or has no valid phase (state.ReadState, which this package cannot import: state imports it).
+// freezeFileReader is state.ReadState for these tests (this package cannot import state): the slug and tracker of the session file, or
+// a default session when it is absent or has no valid phase.
 func freezeFileReader(cwd, id string) (string, *Tracker) {
 	var m map[string]any
 	raw, err := os.ReadFile(filepath.Join(cwd, ".crw", "sessions", id+".json"))
@@ -117,7 +117,7 @@ func TestFreezeRunsLikeTheRecordedOracle(t *testing.T) {
 					}
 				}
 				manifest, err := os.ReadFile(filepath.Join(ws, ".crw", "interview", "freeze.json"))
-				if got := ts.ReplaceAllString(string(manifest), "\"frozenAt\": \"<TS>\""); (err == nil) != (step.Manifest != nil) || (step.Manifest != nil && got != *step.Manifest) {
+				if got := ts.ReplaceAllString(decodeUTF8(manifest), "\"frozenAt\": \"<TS>\""); (err == nil) != (step.Manifest != nil) || (step.Manifest != nil && got != *step.Manifest) {
 					t.Errorf("step %d manifest (%v)\n got %q\nwant %v", i, err, got, step.Manifest)
 				}
 				tree := freezeTree(t, ws, "")
@@ -170,8 +170,7 @@ func TestFreezeParseArgsFailsInADeletedWorkingDirectory(t *testing.T) {
 	}
 }
 
-// ListPlanFiles reads a plan directory that exists with readdirSync: one that cannot be read is an error, not an empty plan (the
-// absent and file cases are recorded scenarios).
+// A plan directory that exists and cannot be read is an error, not an empty plan (the absent and file cases are recorded scenarios).
 func TestFreezeAnUnreadablePlanDirectoryFails(t *testing.T) {
 	closed := filepath.Join(t.TempDir(), "closed")
 	if err := os.Mkdir(closed, 0o000); err != nil {
