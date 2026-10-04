@@ -229,7 +229,8 @@ func recallCLIChatIndex(args []string, stdout, stderr io.Writer) (code int) {
 		}
 	}()
 	if recallCLIBool(v, "rebuild") {
-		if err = db.Exec("DELETE FROM msgs; DELETE FROM files;"); err != nil {
+		// One transaction: a failed delete must not leave an empty msgs table beside the files fingerprints.
+		if err = ingestTransaction(db, func() error { return db.Exec("DELETE FROM msgs; DELETE FROM files;") }); err != nil {
 			return fail(err)
 		}
 	}
