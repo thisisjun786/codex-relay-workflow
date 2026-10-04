@@ -1,0 +1,6 @@
+interface:
+  display_name: "crw-dev-testing"
+  short_description: "Testing and QA router: strategy, harness choice, CI gates, TDD, and coverage."
+  default_prompt: "Use $crw-dev-testing to guide this task and verify its result."
+policy:
+  allow_implicit_invocation: false
