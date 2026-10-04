@@ -1,13 +1,27 @@
-// Package review ports CXC v0.2.40 review-round.ts (3c1459ac): pure review
-// lifecycle operations over existing goalplan records. Callers own IO and identity.
+// Package review ports CXC v0.2.40 review-round.ts:1-397 (commit 3c1459ac).
+// Operations copy plans without IO; callers persist them and bind reviewer identity.
+// Binding parity uses the existing revived goalplan representation and nonempty
+// session identities. It cannot distinguish a raw JS absent owner from an empty
+// owner, which revival drops. JSON comparisons use values: JS spread preserves
+// history-dependent key order, while Go uses goalplan's existing stored order.
 package review
 
 import (
+	"fmt"
+	"math"
+	"strconv"
+	"strings"
+	"time"
+
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
 
+// ReviewVerdict reuses the goalplan's stored verdict vocabulary.
 type ReviewVerdict = goalplan.Verdict
+
+// ResultKind discriminates a transition outcome.
 type ResultKind string
 
 const (
@@ -18,6 +32,7 @@ const (
 	InvalidInput ResultKind = "invalid_input"
 )
 
+// ReviewRoundResult carries a new plan/round only on success, and Actual on CAS failure.
 type ReviewRoundResult struct {
 	Kind   ResultKind                 `json:"kind"`
 	Plan   *goalplan.Goalplan         `json:"plan,omitempty"`
@@ -25,6 +40,8 @@ type ReviewRoundResult struct {
 	Reason string                     `json:"reason,omitempty"`
 	Actual goalplan.ReviewRoundStatus `json:"actual,omitempty"`
 }
+
+// Staleness separates an unjudged round from freshness of a terminal round.
 type Staleness string
 
 const (
@@ -33,11 +50,15 @@ const (
 	Open      Staleness = "open"
 )
 
+// OpenRoundInput names the document and its caller-computed hash.
 type OpenRoundInput struct {
 	Purpose              goalplan.ReviewPurpose
 	PlanPath, PlanSha256 string
 	Now                  func() string
 }
+
+// VerdictInput names the launch being judged. Nil metadata keeps earlier values;
+// pointers to empty strings record empty strings, as the oracle does.
 type VerdictInput struct {
 	Purpose                         goalplan.ReviewPurpose
 	RoundID, LaunchID               string
@@ -47,32 +68,298 @@ type VerdictInput struct {
 	Now                             func() string
 }
 
+func reviewTimestamp(now func() string) string {
+	if now != nil {
+		return now()
+	}
+	return time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
+}
+func reviewTerminal(s goalplan.ReviewRoundStatus) bool {
+	return s == goalplan.ReviewApproved || s == goalplan.ReviewChangesRequested || s == goalplan.ReviewInconclusive
+}
+func reviewCursor(p *goalplan.Goalplan, purpose goalplan.ReviewPurpose) **string {
+	if purpose == goalplan.PurposePlanAudit {
+		return &p.ActivePlanAuditRoundID
+	}
+	return &p.ActiveFinalGateRoundID
+}
+
+// Numeric prefix, not validation: malformed and infinite ids order as zero.
+func reviewRoundOrder(id string) float64 {
+	s := text.Trim(strings.TrimPrefix(id, "r"))
+	end := 0
+	if len(s) > 0 && (s[0] == '+' || s[0] == '-') {
+		end++
+	}
+	start := end
+	for end < len(s) && s[end] >= '0' && s[end] <= '9' {
+		end++
+	}
+	if end == start {
+		return 0
+	}
+	n, _ := strconv.ParseFloat(s[:end], 64)
+	if math.IsInf(n, 0) || math.IsNaN(n) {
+		return 0
+	}
+	return n
+}
+func reviewNextRoundID(p *goalplan.Goalplan) string {
+	highest := 0.0
+	for _, r := range p.ReviewRounds {
+		highest = math.Max(highest, reviewRoundOrder(r.RoundID))
+	}
+	n := highest + 1
+	format := byte('f')
+	if n >= 1e21 {
+		format = 'e'
+	}
+	return "r" + strconv.FormatFloat(n, format, -1, 64)
+}
+func reviewMintLaunchID(id, now string) string {
+	var digits strings.Builder
+	for _, r := range now {
+		if r >= '0' && r <= '9' {
+			digits.WriteRune(r)
+			if digits.Len() == 14 {
+				break
+			}
+		}
+	}
+	return id + "-" + digits.String()
+}
+func reviewWithRounds(p *goalplan.Goalplan, list []goalplan.ReviewRoundState, purpose goalplan.ReviewPurpose, cursor *string) *goalplan.Goalplan {
+	out := *p
+	out.ReviewRounds = list
+	*reviewCursor(&out, purpose) = cursor
+	return &out
+}
+func reviewReplaceRound(list []goalplan.ReviewRoundState, updated goalplan.ReviewRoundState) []goalplan.ReviewRoundState {
+	out := make([]goalplan.ReviewRoundState, len(list))
+	for i, r := range list {
+		if r.RoundID == updated.RoundID {
+			out[i] = updated
+		} else {
+			out[i] = r
+		}
+	}
+	return out
+}
+
+// EffectiveRound trusts a usable cursor, otherwise recovers the highest open id.
 func EffectiveRound(p *goalplan.Goalplan, purpose goalplan.ReviewPurpose) *goalplan.ReviewRoundState {
-	return nil
+	cursor := *reviewCursor(p, purpose)
+	if cursor != nil && *cursor != "" {
+		for i := range p.ReviewRounds {
+			r := &p.ReviewRounds[i]
+			if r.RoundID == *cursor {
+				if r.Purpose == purpose && !reviewTerminal(r.Status) {
+					return r
+				}
+				break
+			}
+		}
+	}
+	var best *goalplan.ReviewRoundState
+	for i := range p.ReviewRounds {
+		r := &p.ReviewRounds[i]
+		if r.Purpose == purpose && !reviewTerminal(r.Status) && (best == nil || reviewRoundOrder(r.RoundID) > reviewRoundOrder(best.RoundID)) {
+			best = r
+		}
+	}
+	return best
 }
+
+// LatestRound includes terminal rounds and keeps the first on numeric ties.
 func LatestRound(p *goalplan.Goalplan, purpose goalplan.ReviewPurpose) *goalplan.ReviewRoundState {
-	return nil
+	var best *goalplan.ReviewRoundState
+	for i := range p.ReviewRounds {
+		r := &p.ReviewRounds[i]
+		if r.Purpose == purpose && (best == nil || reviewRoundOrder(r.RoundID) > reviewRoundOrder(best.RoundID)) {
+			best = r
+		}
+	}
+	return best
 }
+
+// RoundByLaunchID finds the launch independently of the cursor.
 func RoundByLaunchID(p *goalplan.Goalplan, purpose goalplan.ReviewPurpose, launch string) *goalplan.ReviewRoundState {
+	if launch == "" {
+		return nil
+	}
+	for i := range p.ReviewRounds {
+		r := &p.ReviewRounds[i]
+		if r.Purpose == purpose && r.Lane.LaunchID == launch {
+			return r
+		}
+	}
 	return nil
 }
+
+// OpenRound refreshes a pending audit of the same document, otherwise retires
+// every open round of that purpose and appends a new pending round.
 func OpenRound(p *goalplan.Goalplan, in OpenRoundInput) ReviewRoundResult {
-	return ReviewRoundResult{Kind: NotFound}
+	if in.PlanSha256 == "" {
+		return ReviewRoundResult{Kind: InvalidInput, Reason: "planSha256 is required: a round without a plan hash cannot be judged fresh or stale"}
+	}
+	if in.PlanPath == "" {
+		return ReviewRoundResult{Kind: InvalidInput, Reason: "planPath is required"}
+	}
+	now := reviewTimestamp(in.Now)
+	if live := EffectiveRound(p, in.Purpose); live != nil && live.Status == goalplan.ReviewPending && live.PlanPath == in.PlanPath {
+		r := *live
+		r.PlanSha256 = in.PlanSha256
+		return ReviewRoundResult{Kind: OK, Plan: reviewWithRounds(p, reviewReplaceRound(p.ReviewRounds, r), in.Purpose, &r.RoundID), Round: &r}
+	}
+	list := make([]goalplan.ReviewRoundState, len(p.ReviewRounds), len(p.ReviewRounds)+1)
+	for i, r := range p.ReviewRounds {
+		if r.Purpose == in.Purpose && !reviewTerminal(r.Status) {
+			r.Status = goalplan.ReviewInconclusive
+			r.ClosedAt = &now
+		}
+		list[i] = r
+	}
+	id := reviewNextRoundID(p)
+	r := goalplan.ReviewRoundState{RoundID: id, Purpose: in.Purpose, PlanPath: in.PlanPath, PlanSha256: in.PlanSha256, Status: goalplan.ReviewPending, Lane: goalplan.ReviewLane{LaunchID: reviewMintLaunchID(id, now)}, OpenedAt: now}
+	list = append(list, r)
+	return ReviewRoundResult{Kind: OK, Plan: reviewWithRounds(p, list, in.Purpose, &r.RoundID), Round: &r}
 }
+func reviewRequireRound(p *goalplan.Goalplan, purpose goalplan.ReviewPurpose, id, launch string) (*goalplan.ReviewRoundState, ReviewRoundResult) {
+	if hit := RoundByLaunchID(p, purpose, launch); hit != nil && hit.RoundID == id {
+		for _, r := range p.ReviewRounds {
+			if r.Purpose == purpose && reviewRoundOrder(r.RoundID) > reviewRoundOrder(hit.RoundID) {
+				return nil, ReviewRoundResult{Kind: Stale, Reason: fmt.Sprintf("round %s was superseded before this verdict arrived", id)}
+			}
+		}
+		return hit, ReviewRoundResult{}
+	}
+	for _, r := range p.ReviewRounds {
+		if r.Purpose == purpose && r.RoundID == id {
+			return nil, ReviewRoundResult{Kind: Stale, Reason: fmt.Sprintf("launch %s was superseded by %s", launch, r.Lane.LaunchID)}
+		}
+	}
+	return nil, ReviewRoundResult{Kind: NotFound, Reason: fmt.Sprintf("no %s round for launch %s", purpose, launch)}
+}
+func reviewAdvance(p *goalplan.Goalplan, purpose goalplan.ReviewPurpose, id, launch string, expect goalplan.ReviewRoundStatus, mutate func(goalplan.ReviewRoundState) goalplan.ReviewRoundState, clear bool) ReviewRoundResult {
+	r, result := reviewRequireRound(p, purpose, id, launch)
+	if r == nil {
+		return result
+	}
+	if r.Status != expect {
+		return ReviewRoundResult{Kind: CASFailed, Reason: fmt.Sprintf("round %s is %s, expected %s", id, r.Status, expect), Actual: r.Status}
+	}
+	updated := mutate(*r)
+	cursor := &id
+	if clear {
+		cursor = nil
+	}
+	return ReviewRoundResult{Kind: OK, Plan: reviewWithRounds(p, reviewReplaceRound(p.ReviewRounds, updated), purpose, cursor), Round: &updated}
+}
+
+// MarkLaunching requires pending. Nil workspace preserves the CLI's omitted argument.
 func MarkLaunching(p *goalplan.Goalplan, purpose goalplan.ReviewPurpose, id, launch string, workspace *string) ReviewRoundResult {
-	return ReviewRoundResult{Kind: NotFound}
+	return reviewAdvance(p, purpose, id, launch, goalplan.ReviewPending, func(r goalplan.ReviewRoundState) goalplan.ReviewRoundState {
+		r.Status = goalplan.ReviewLaunching
+		r.Lane.WorkspaceRoot = workspace
+		return r
+	}, false)
 }
+
+// MarkInFlight cannot skip launching.
 func MarkInFlight(p *goalplan.Goalplan, purpose goalplan.ReviewPurpose, id, launch string) ReviewRoundResult {
-	return ReviewRoundResult{Kind: NotFound}
+	return reviewAdvance(p, purpose, id, launch, goalplan.ReviewLaunching, func(r goalplan.ReviewRoundState) goalplan.ReviewRoundState {
+		r.Status = goalplan.ReviewInFlight
+		return r
+	}, false)
 }
+
+// RecordVerdict checks launch supersession before CAS and clears only its purpose's cursor.
 func RecordVerdict(p *goalplan.Goalplan, in VerdictInput) ReviewRoundResult {
-	return ReviewRoundResult{Kind: NotFound}
+	now := reviewTimestamp(in.Now)
+	return reviewAdvance(p, in.Purpose, in.RoundID, in.LaunchID, goalplan.ReviewInFlight, func(r goalplan.ReviewRoundState) goalplan.ReviewRoundState {
+		r.Lane.Verdict = in.Verdict
+		if in.ArtifactSha256 != nil {
+			r.Lane.ArtifactSha256 = in.ArtifactSha256
+		}
+		if in.ReviewerSession != nil {
+			r.Lane.ReviewerSession = in.ReviewerSession
+		}
+		if in.SourceIdentity != nil {
+			r.Lane.SourceIdentity = in.SourceIdentity
+		}
+		switch in.Verdict {
+		case goalplan.VerdictPass, goalplan.VerdictNearPass:
+			r.Status = goalplan.ReviewApproved
+		case goalplan.VerdictFail:
+			r.Status = goalplan.ReviewChangesRequested
+		}
+		r.ClosedAt = &now
+		return r
+	}, true)
 }
+
+// SupersedeStaleRounds closes only open rounds owned by session in the earlier epoch.
+// With no matching round the original plan pointer is returned.
 func SupersedeStaleRounds(p *goalplan.Goalplan, purpose goalplan.ReviewPurpose, session, epoch string) (*goalplan.Goalplan, []string) {
-	return p, []string{}
+	closed := []string{}
+	if epoch == "" {
+		return p, closed
+	}
+	now := reviewTimestamp(nil)
+	list := make([]goalplan.ReviewRoundState, len(p.ReviewRounds))
+	for i, r := range p.ReviewRounds {
+		if r.Purpose == purpose && !reviewTerminal(r.Status) && r.OwnerSessionID != "" && r.OwnerSessionID == session && r.PlanEpoch == epoch {
+			closed = append(closed, r.RoundID)
+			r.Status = goalplan.ReviewInconclusive
+			r.ClosedAt = &now
+		}
+		list[i] = r
+	}
+	if len(closed) == 0 {
+		return p, closed
+	}
+	return reviewWithRounds(p, list, purpose, nil), closed
 }
+
+// AbortRound abandons the selected live round without approving it.
 func AbortRound(p *goalplan.Goalplan, purpose goalplan.ReviewPurpose, reason string) ReviewRoundResult {
-	return ReviewRoundResult{Kind: NotFound}
+	live := EffectiveRound(p, purpose)
+	if live == nil {
+		return ReviewRoundResult{Kind: NotFound, Reason: fmt.Sprintf("no open %s round", purpose)}
+	}
+	r := *live
+	now := reviewTimestamp(nil)
+	r.Status = goalplan.ReviewInconclusive
+	r.ClosedAt = &now
+	if r.Lane.ReviewerSession == nil {
+		s := "aborted: " + reason
+		r.Lane.ReviewerSession = &s
+	}
+	return ReviewRoundResult{Kind: OK, Plan: reviewWithRounds(p, reviewReplaceRound(p.ReviewRounds, r), purpose, nil), Round: &r}
 }
-func StalenessOf(p *goalplan.Goalplan, id, sha string) Staleness { return Open }
-func StoredIdentity(id source.Identity) goalplan.SourceIdentity  { return goalplan.SourceIdentity{} }
+
+// StalenessOf compares hashes only once the round is terminal, regardless of purpose.
+func StalenessOf(p *goalplan.Goalplan, id, sha string) Staleness {
+	for _, r := range p.ReviewRounds {
+		if r.RoundID == id {
+			if !reviewTerminal(r.Status) {
+				return Open
+			}
+			if r.PlanSha256 == sha {
+				return Fresh
+			}
+			return StalePlan
+		}
+	}
+	return Open
+}
+
+// StoredIdentity converts a capture to the existing stored form. Captures omit
+// empty tree hashes; callers with explicit empty metadata use the stored type directly.
+func StoredIdentity(id source.Identity) goalplan.SourceIdentity {
+	out := goalplan.SourceIdentity{Kind: id.Kind, CommitSha: id.CommitSha, Dirty: id.Dirty, CapturedAt: id.CapturedAt, SourceRoot: id.SourceRoot}
+	if id.TreeHash != "" {
+		out.TreeHash = &id.TreeHash
+	}
+	return out
+}
