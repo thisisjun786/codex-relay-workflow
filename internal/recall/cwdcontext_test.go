@@ -36,9 +36,9 @@ func TestCwdContextOracle(t *testing.T) {
 		t.Fatal(err)
 	}
 	var cases []struct {
-		Kind    string
-		In, Out json.RawMessage
-		Wire    []string
+		Kind               string
+		In, Out, FoldedOut json.RawMessage
+		Wire               []string
 	}
 	if err := json.Unmarshal(data, &cases); err != nil {
 		t.Fatal(err)
@@ -51,6 +51,21 @@ func TestCwdContextOracle(t *testing.T) {
 			home := cwdTestHome(t)
 			var got any
 			switch c.Kind {
+			case "sqliteStrings":
+				var in struct{ SQL []string }
+				if err := json.Unmarshal(c.In, &in); err != nil {
+					t.Fatal(err)
+				}
+				idx := filepath.Join(home, "index.sqlite")
+				db, err := openIndex(idx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, statement := range in.SQL {
+					recallSQL(t, db, statement)
+				}
+				db.Close()
+				got = ListCwdSessions("/repo", 5, CwdSessionOptions{IndexPath: idx, Home: home, ReadOriginUrl: func(string) string { return "" }})
 			case "summary":
 				var in struct {
 					Files       map[string]string
@@ -188,7 +203,11 @@ func TestCwdContextOracle(t *testing.T) {
 				t.Fatal("unknown oracle kind", c.Kind)
 			}
 			var want any
-			if err := json.Unmarshal(c.Out, &want); err != nil {
+			expected := c.Out
+			if FoldCwdCase() && len(c.FoldedOut) != 0 {
+				expected = c.FoldedOut
+			}
+			if err := json.Unmarshal(expected, &want); err != nil {
 				t.Fatal(err)
 			}
 			if actual := canon(t, got); !reflect.DeepEqual(actual, want) {

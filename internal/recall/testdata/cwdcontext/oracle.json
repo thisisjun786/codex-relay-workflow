@@ -2658,6 +2658,7 @@
     "kind": "list",
     "in": {
       "cwd": "C:\\proj\\here",
+      "platformCase": false,
       "files": [
         {
           "path": "p",
@@ -2686,6 +2687,7 @@
     "kind": "list",
     "in": {
       "cwd": "//server/share",
+      "platformCase": false,
       "files": [
         {
           "path": "p",
@@ -2714,6 +2716,7 @@
     "kind": "list",
     "in": {
       "cwd": "c:\\proj\\HERE",
+      "platformCase": true,
       "files": [
         {
           "path": "p",
@@ -2727,12 +2730,21 @@
       ]
     },
     "out": [],
-    "wire": []
+    "wire": [],
+    "foldedOut": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "path opener"
+      }
+    ]
   },
   {
     "kind": "list",
     "in": {
       "cwd": "/repo",
+      "platformCase": false,
       "files": [
         {
           "path": "p",
@@ -2761,6 +2773,7 @@
     "kind": "list",
     "in": {
       "cwd": "/repo2",
+      "platformCase": false,
       "files": [
         {
           "path": "p",
@@ -2780,6 +2793,7 @@
     "kind": "list",
     "in": {
       "cwd": "/repo/a'b",
+      "platformCase": false,
       "files": [
         {
           "path": "p",
@@ -3477,5 +3491,38 @@
         "title": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx�"
       }
     }
+  },
+  {
+    "kind": "sqliteStrings",
+    "in": {
+      "sql": [
+        "INSERT INTO files(path,mtime_ms,size,cwd,source,date) VALUES(NULL,0,0,'/repo','main','2026-01-02')",
+        "INSERT INTO files(path,mtime_ms,size,cwd,source,date) VALUES('blob',0,0,'/repo','main',x'4344')",
+        "INSERT INTO files(path,mtime_ms,size,cwd,source,date) VALUES(x'6566',0,0,'/repo','main','2026-01-02')",
+        "INSERT INTO msgs(path,ord,ts,role,match_field,synthetic,text) VALUES('null',0,'ts','user','content',0,x'4142')",
+        "INSERT INTO msgs(path,ord,ts,role,match_field,synthetic,text) VALUES('blob',0,'ts','user','content',0,x'0100410042')",
+        "INSERT INTO msgs(path,ord,ts,role,match_field,synthetic,text) VALUES('101,102',0,'ts','user','content',0,'blob path message')"
+      ]
+    },
+    "out": [
+      {
+        "path": "blob",
+        "threadId": null,
+        "date": "67,68",
+        "excerpt": "1,0,65,0,66"
+      },
+      {
+        "path": "101,102",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "blob path message"
+      },
+      {
+        "path": "null",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "65,66"
+      }
+    ]
   }
 ]

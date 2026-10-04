@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode/utf16"
 )
@@ -82,6 +83,23 @@ func isHarnessText(s string) bool {
 }
 
 func flatten(s string) string { return strings.Join(strings.FieldsFunc(s, isJSSpace), " ") }
+
+// Adapt SQLite scalars to the landed JS String helper; Node returns BLOBs as Uint8Array.
+func cwdRowString(value any) string {
+	switch v := value.(type) {
+	case float64:
+		value = json.Number(strconv.FormatFloat(v, 'g', -1, 64))
+	case []byte:
+		items := make([]any, len(v))
+		for i, b := range v {
+			items[i] = json.Number(strconv.Itoa(int(b)))
+		}
+		value = items
+	}
+	// SQLite yields only nil, string, number or byte array; these coercions cannot throw.
+	s, _ := rolloutString(value)
+	return s
+}
 
 func cwdExcerpt(s string, limit int) (string, *cwdExcerptClip) {
 	u := utf16.Encode([]rune(s))
@@ -170,7 +188,7 @@ func ListCwdSessions(cwd string, topN int, options ...CwdSessionOptions) []CwdSe
 		if len(sessions) >= topN {
 			break
 		}
-		path, _ := row["path"].(string) // files.path is TEXT PRIMARY KEY.
+		path := cwdRowString(row["path"])
 		stmt, err := db.Prepare("SELECT text FROM msgs WHERE path = ? AND role = 'user' AND synthetic = 0 ORDER BY ord LIMIT 4")
 		if err != nil {
 			return nil
@@ -180,9 +198,9 @@ func ListCwdSessions(cwd string, topN int, options ...CwdSessionOptions) []CwdSe
 			return nil
 		} // The oracle discards the whole list on a row failure.
 		session := CwdSession{Path: path, ThreadID: rolloutStringPointer(row["thread_id"])}
-		session.Date, _ = row["date"].(string)
+		session.Date = cwdRowString(rolloutDefault(row["date"], ""))
 		for _, message := range messages {
-			s, _ := message["text"].(string)
+			s := cwdRowString(rolloutDefault(message["text"], ""))
 			if isHarnessText(s) {
 				continue
 			}

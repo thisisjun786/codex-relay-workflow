@@ -3,6 +3,7 @@
 import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { execFileSync } from 'node:child_process';
 const cwd = await import(process.argv[2] + '/cwd-context.js');
 const index = await import(process.argv[2] + '/index-db.js');
 const root = mkdtempSync(join(process.argv[3], 'cwd-oracle-'));
@@ -35,7 +36,12 @@ function list(input) {
  const opts = { indexPath: path, home, readOriginUrl: () => input.origin ?? null };
  if ('limit' in input) opts.excerptChars = input.limit;
  const out = cwd.listCwdSessions(input.cwd ?? '/repo', input.n ?? 5, opts);
- cases.push({ kind: 'list', in: input, out, wire: out?.map(s => JSON.stringify(s.excerpt)) ?? null });
+ const row = { kind: 'list', in: input, out, wire: out?.map(s => JSON.stringify(s.excerpt)) ?? null };
+ if (input.platformCase) {
+  const code = "Object.defineProperty(process,'platform',{value:'darwin'}); const {listCwdSessions}=await import("+JSON.stringify(process.argv[2]+'/cwd-context.js')+"); process.stdout.write(JSON.stringify(listCwdSessions("+JSON.stringify(input.cwd)+",5,{indexPath:"+JSON.stringify(path)+",home:"+JSON.stringify(home)+",readOriginUrl:()=>null})));";
+  row.foldedOut = JSON.parse(execFileSync(process.execPath,['--input-type=module','-e',code],{encoding:'utf8'}));
+ }
+ cases.push(row);
 }
 const common = [
  { path: 'b', threadId: 'one', msgs: [{text:'<recommended_plugins> harness'}, {text:'human opener'}] },
@@ -56,7 +62,7 @@ for (const text of ['', ' \t\ufeff', '\u0085<recommended_plugins> human', '<RECO
 for (const limit of [-10,-1,0,1,2,3,4,5,6,7,10,100,1000]) list({limit,files:[{path:'p',msgs:[{text:'😀abc def'}]}]});
 for (const count of [3,4,5]) list({files:[{path:'p',msgs:[...Array.from({length:count},()=>({text:'<hook_prompt harness'})),{text:'later human'}]}]});
 list({files:[{path:'p', msgs:[{text:'assistant',role:'assistant'}, {text:'flagged',synthetic:1}, {text:'user'}]}]});
-for (const [recorded, query] of [['\\\\?\\C:\\proj\\here','C:\\proj\\here'],['//?/UNC/server/share/','//server/share'],['C:\\proj\\here','c:\\proj\\HERE'],['/repo/','/repo'],['/repo','/repo2'],["/repo/a'b","/repo/a'b"]]) list({cwd:query,files:[{path:'p',cwd:recorded,msgs:[{text:'path opener'}]}]});
+for (const [recorded, query] of [['\\\\?\\C:\\proj\\here','C:\\proj\\here'],['//?/UNC/server/share/','//server/share'],['C:\\proj\\here','c:\\proj\\HERE'],['/repo/','/repo'],['/repo','/repo2'],["/repo/a'b","/repo/a'b"]]) list({cwd:query,platformCase:recorded==='C:\\proj\\here' && query==='c:\\proj\\HERE',files:[{path:'p',cwd:recorded,msgs:[{text:'path opener'}]}]});
 function summary(files, dirs=[], links=[]) {
  const home=join(root,String(cases.length)), dir=join(home,'memories','rollout_summaries'); mkdirSync(dir,{recursive:true});
  for(const [name, content] of Object.entries(files)) writeFileSync(join(dir,name),content);
@@ -68,4 +74,16 @@ summary({});
 summary({'z.md':'thread_id: duplicate\n# Z wins\n','a.md':'thread_id: duplicate\n# A\n','bare.md':'# no id\n','headless.md':'thread_id: absent\n','ignore.txt':'thread_id: no\n# no\n'},['dir.md'],['broken.md']);
 for(const sep of ['\n','\r','\r\n','\u2028','\u2029']) for(const heading of ['# first', '# ', '#  ', '#\nnext line', '# \u0085heading', '#\ufeffheading', '## not h1']) summary({'s.md':'thread_id:\n token'+sep+heading+sep+'# second'});
 for(const content of ['thread_id: a extra\n# invalid id\n','thread_id: first\nthread_id: second\n# first heading\n# later heading\n',' '.repeat(1200)+'thread_id: late\n# late\n','thread_id: a\n'+'x'.repeat(1200)+'\n# too late\n','thread_id: a\n# '+'x'.repeat(1190)+'😀', 'thread_id: a\n# '+'x'.repeat(1184)+'😀']) summary({'s.md':content});
+const sql = [
+ "INSERT INTO files(path,mtime_ms,size,cwd,source,date) VALUES(NULL,0,0,'/repo','main','2026-01-02')",
+ "INSERT INTO files(path,mtime_ms,size,cwd,source,date) VALUES('blob',0,0,'/repo','main',x'4344')",
+ "INSERT INTO files(path,mtime_ms,size,cwd,source,date) VALUES(x'6566',0,0,'/repo','main','2026-01-02')",
+ "INSERT INTO msgs(path,ord,ts,role,match_field,synthetic,text) VALUES('null',0,'ts','user','content',0,x'4142')",
+ "INSERT INTO msgs(path,ord,ts,role,match_field,synthetic,text) VALUES('blob',0,'ts','user','content',0,x'0100410042')",
+ "INSERT INTO msgs(path,ord,ts,role,match_field,synthetic,text) VALUES('101,102',0,'ts','user','content',0,'blob path message')",
+];
+const sqlHome=join(root,'sql-strings'); mkdirSync(sqlHome);
+const sqlPath=join(sqlHome,'index.sqlite'), sqlDb=index.openIndex(sqlPath);
+for(const statement of sql) sqlDb.exec(statement); sqlDb.close();
+cases.push({kind:'sqliteStrings',in:{sql},out:cwd.listCwdSessions('/repo',5,{indexPath:sqlPath,home:sqlHome,readOriginUrl:()=>null})});
 process.stdout.write(JSON.stringify(cases,null,2)+'\n');
