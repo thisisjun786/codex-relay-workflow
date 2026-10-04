@@ -774,9 +774,9 @@ The parser feeds a fail-closed memory write gate, so a destination the oracle mi
 
 ## CRW-371 — scan argument parser
 
-- Contradiction counts use decimal `parseInt`, so `12abc`, `1.9`, `1e3` and `0x10` become 12, 1, 1 and 0 instead of being rejected (source `pabcd-state/src/scan-cli.ts:118-123,184-189`); port: kept.
-- Help is recognized only as the first action, so the parser rejects `record --help` as an unknown argument; outer executable help handling is separate (source `pabcd-state/src/scan-cli.ts:86-96,179-180`); port: kept.
-- Value flags consume the next flag as a value, and any nonempty session text, including whitespace or `--derive`, satisfies the session requirement (source `pabcd-state/src/scan-cli.ts:113-116,183`); port: kept.
-- Whitespace-only known/unknown facts pass because only empty text is rejected (source `pabcd-state/src/scan-cli.ts:162-166`); port: kept.
-- Confidence accepts JavaScript radix notation such as `0x1`, `0o1` and `0b1` (source `pabcd-state/src/scan-cli.ts:169-175`); port: kept.
-- The high contradiction count is not constrained by the total count, so a positive high count with total zero parses successfully (source `pabcd-state/src/scan-cli.ts:184-189`); port: kept.
+- Contradiction counts use decimal `parseInt`, so `12abc`, `1.9`, `1e3` and `0x10` become 12, 1, 1 and 0 instead of being rejected (source `pabcd-state/src/scan-cli.ts:125-128,187-191`); port: kept.
+- Help is recognized only as the first action, so the parser rejects `record --help` as an unknown argument; outer executable help handling is separate (source `pabcd-state/src/scan-cli.ts:86-100,183`); port: kept.
+- Value flags consume the next flag as a value, and any nonempty session text, including whitespace or `--derive`, satisfies the session requirement (source `pabcd-state/src/scan-cli.ts:116-123,186`); port: kept.
+- Whitespace-only known/unknown facts pass because only empty text is rejected (source `pabcd-state/src/scan-cli.ts:165-170`); port: kept.
+- Confidence accepts JavaScript radix notation such as `0x1`, `0o1` and `0b1` (source `pabcd-state/src/scan-cli.ts:172-180`); port: kept.
+- The high contradiction count is not constrained by the total count, so a positive high count with total zero parses successfully (source `pabcd-state/src/scan-cli.ts:187-191`); port: kept.
