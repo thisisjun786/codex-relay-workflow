@@ -731,3 +731,9 @@ The pinned oracle already publishes through an exclusive 0600 temporary file and
 - Reading role files as UTF-8 and writing that decoded text into backups replaces invalid byte sequences; decoded-text rechecks can also miss byte changes that decode alike (source `subagent-config/src/role-registration.ts:36,62-63,70-78`); port: fixed as a settings data-loss defect: ownership and backup-name digests retain Node decoding, while backups and rechecks preserve exact raw bytes; the invalid-byte and raced-byte cases are intentionally-changed.
 - Backup writes can leave partial files under their final names, and backup/new-role content and directory entries are not fsynced before reporting publication (source `subagent-config/src/role-registration.ts:71-79,86-95`); port: fixed as a settings data-loss defect with synced temporary files, exclusive backup/create publication, reused-backup fsync through the validated nofollow descriptor, and directory fsync before replacement and after publication; the interrupted-write and sync-failure cases are intentionally-changed.
 - The first model-sentinel regex match is removed even when it occurs inside a multiline developer prompt, and additional matches remain (source `subagent-config/src/role-registration.ts:49`); port: kept.
+
+## Found by the CRW-441 role helper CLI port
+
+- `list` and `get` silently ignore trailing arguments, so `list --help` lists settings and `get reviewer extra` reads the role (source `subagent-config/src/cli.ts:50,58-60`); port: kept.
+- Verb-level `--help` is treated as a role or registration argument and exits 1 for get/set/reset/register, rather than showing help (source `subagent-config/src/cli.ts:35-39,54-64`); port: kept.
+- Missing `--model` and `--prompt` values become empty strings, and a following flag is consumed as their literal value instead of being parsed as another flag (source `subagent-config/src/cli.ts:75-76,95-96`); port: kept.
