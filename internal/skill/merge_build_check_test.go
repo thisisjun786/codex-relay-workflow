@@ -294,6 +294,48 @@ func TestMergeBuildCheckVetsADarwinOnlyPackageAndBuildsAMainPackage(t *testing.T
 		"refused: vet_darwin_failed:", "undefinedName", "skipped: example.test/m/dn steps=build,vet,test_compile reason=not_built_on_host")
 }
 
+// A -tags the caller carries must not decide the untagged pass: a tag named by GOFLAGS, and again a
+// tag named by the caller's go settings file, must leave the two //go:build !dev files of the merge
+// in the untagged pass and turn their clash into a build_failed refusal. Without an explicit empty
+// tag set both passes run tagged and the check answers ok (CRW-562).
+func TestMergeBuildCheckIgnoresATagTheCallerCarries(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		use  func(t *testing.T)
+	}{
+		{"GOFLAGS", func(t *testing.T) { t.Setenv("GOFLAGS", "-tags=dev") }},
+		{"the go settings file", func(t *testing.T) {
+			mbcNoGoFlags(t)
+			settings := filepath.Join(t.TempDir(), "goenv")
+			if err := os.WriteFile(settings, []byte("GOFLAGS=-tags=dev\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("GOENV", settings)
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			m := newMbcRepo(t)
+			clash := "//go:build !dev\n\npackage p\n\nfunc Clash() {}\n"
+			m.sibling("s1", map[string]string{"p/b.go": clash})
+			head := m.sibling("s2", map[string]string{"p/c.go": clash})
+			m.land("s1")
+			c.use(t)
+			mbcExpect(t, m.check(t, "--head", head, "--base", "dev"), 1,
+				"refused: build_failed:", "Clash redeclared in this block", "example.test/m/p", "step=build")
+		})
+	}
+}
+
+// mbcNoGoFlags takes GOFLAGS out of this process's environment, where it would mask the value the
+// caller's go settings file names.
+func mbcNoGoFlags(t *testing.T) {
+	t.Helper()
+	if value, ok := os.LookupEnv("GOFLAGS"); ok {
+		os.Unsetenv("GOFLAGS")
+		t.Cleanup(func() { os.Setenv("GOFLAGS", value) })
+	}
+}
+
 // The go tool runs with a home, a temporary directory and a telemetry setting of its own, below the
 // directory the check removes, and with the caller's caches. A check that outran its time is cut off:
 // the go process is gone, exit 3, and nothing is left, not even the go tool's own temporary files.
