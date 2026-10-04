@@ -320,6 +320,21 @@ Execution:
   reach you: once your result is accepted the coordinator holds the candidate instead, and after the merge it is
   new work ([Late review threads](merge-readiness.md#late-review-threads)). See
   [Publish for review when the work is reviewable](../../crw-plan/references/integrations.md#publish-for-review-when-the-work-is-reviewable).
+- Where the assignment names the independent code review, run it once per pull request: `crw review --base <the pull request's base commit> --head <the head you hand off> --issue <this issue> --out <a directory of the task's evidence> --post-summary --pr <number>`,
+  after every CI job is green on that head and before you emit. The command keeps the run rules itself: the same
+  patch-id is never reviewed again (a repeat answers `already_reviewed` and calls no model), one review runs at a time on the host
+  (concurrency 1), and a daily cap bounds the starts, which you do not raise. A review that could not run at all
+  because of the account or the configuration (quota, authentication, an unknown model) is `unavailable`: it does not use up
+  the patch, and one more attempt is allowed on a later UTC day only (`retryNotBefore`; a call the same day answers
+  `retry_deferred`; a second unavailable run closes the patch), while a content filter, an invalid answer or the time
+  limit counts as a result at once. `--post-summary` creates or updates the one general summary comment of the pull request,
+  never a review thread, so the relay's `threadsSeen` and late-finding rules are not touched; a failed post is repaired by
+  running the same command again. The result is a reference opinion and not a merge gate
+  ([Devin and Codex reviews are references, not merge gates](merge-readiness.md#devin-and-codex-reviews-are-references-not-merge-gates)
+  keeps the gates): fix a P0, P1 or security finding or answer it from the code, without blocking the merge, and
+  record the rest. A `partial`, `invalid` or `unavailable` run is not "no findings": say what the command reported
+  (outcome, status, `retryNotBefore` if any, the comment link) in the handoff. [crw review](../../../../../docs/review/crw-review.md)
+  has the rules.
 - Finishing the review is part of finishing the work. Read every applicable review to the
   end of its pagination on the CURRENT head, judge each finding against the code, fix what
   needs fixing, reply where a finding does not apply and say why, and recheck. Then state
@@ -866,7 +881,7 @@ host values filled in.
 5. **Reviews.** Where you open a pull request (with no pull request there is no review to wait for), Devin and GitHub Codex each review it once (Codex when it is opened, Devin when it becomes ready for
    review) and neither is a merge gate; you never request or re-request one. Wait for that one run of each to end before you emit: a
    notice that a review was skipped (no credits, a usage limit) means skipped, and with no signal of any kind 30 minutes after the pull
-   request is open and ready you record "review unavailable (no signal)" and go on. A Devin red, a Codex P0 or P1 and any security
+   request is open and ready you record "review unavailable (no signal)" and go on. The independent code review (`crw review`, run once after CI, a reference opinion) is a separate step with its own bullet under `Execution:`. A Devin red, a Codex P0 or P1 and any security
    finding is fixed, or refuted from the code in a reply, and checked again on the new head. Devin yellow and Codex P2 and P3 get your
    reply with your judgment and are resolved or listed for the backlog where SCOPE says; a finding you would leave unfixed is proposed
    to the parent, not accepted by you, unless SCOPE grants that standing decision. Your own independent review, where your workflow runs
