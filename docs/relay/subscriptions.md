@@ -131,6 +131,36 @@ and unloading is the host's decision. If it remains loaded, an operator can use 
 `thread/unarchive`; the next relay delivery resumes under the recorded MCP profile. Never unload a
 never-run root. The relay performs no automatic archive or recovery operation.
 
+A managed start can retry the same complete request after a recorded business send
+failed before `turn/start`. It retains that failure under its original bridge operation
+ID and derives at most two successor operation IDs from the managed request and attempt.
+The managed request, fingerprint, slot, relationship, generation and routing dispatch ID
+stay unchanged. An accepted successor is replayed to finish admission, never sent again.
+Unknown outcomes, started or rejected deliveries, attempted `turn/start`, malformed
+effect evidence and failures without affirmative pre-turn evidence remain held. Older
+receipts without effect/delivery fields qualify only for the structured
+`thread/resume` / `settings_not_preserved` refusal.
+
+Before a resend, the host must list exactly the recorded standby turn with no continuation
+cursor, then report the same child as `notLoaded`. A loaded child returns incomplete
+`recipient_not_idle` without consuming a successor operation, even if its status is
+`idle` and its profile happens to match: this recovery gate conservatively waits for
+unloading. Empty, missing-rollout or unreadable history stays held as `lifecycle_unknown`;
+another turn refuses as `business_identity_unobserved`. The final business guard repeats
+the standby-only check after the recorded-profile resume. Live-context observation errors
+in that recovery guard withhold as retryable `not_attempted`; cancellation remains unknown.
+If another client loads the thread between the precheck and resume, the ordinary settings
+verifier still withholds `turn/start` and retains an honest failure; a later invocation
+can use the next bounded successor. No fourth operation is created. Initial guard failures
+recorded as `outcome_unknown` are not recovered by this path.
+
+The inspected bridge and relay resume paths transmit the profile; subscription retirement
+only unsubscribes, and their read paths do not issue an unprofiled resume. The copied
+incident receipts show profiled creation followed by an idle, unprofiled MCP status at
+business resume, with overrides transmitted and a settings refusal. They do not attribute
+the intervening load to a client. An external client's identity and the live same-request
+DAG recovery after runtime replacement remain separate operational verification.
+
 A thread-bridge fallback to an unloaded child must state its actual role and released
 `expected_settings.mcp_profile`. Without one the bridge refuses before resume when that role declares
 profiles, or the role is omitted on a host that declares child profiles. It cannot reliably read the
