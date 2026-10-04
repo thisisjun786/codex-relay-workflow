@@ -211,7 +211,7 @@ func ClipChatResultForJson(r ChatSearchResult) ClippedChatResult {
 func formatDateMs(s string) (float64, bool) {
 	re := regexp.MustCompile(`^([+-]\d{6}|\d{4})(?:-(\d{2})(?:-(\d{2}))?)?(?:[Tt](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?([Zz]|[+-]\d{2}:?\d{2})?)?$`)
 	if m := re.FindStringSubmatch(s); m != nil {
-		if m[1] == "-000000" || m[4] != "" && m[3] == "" {
+		if m[1] == "-000000" {
 			return 0, false
 		}
 		number := func(i, fallback int) int {
@@ -248,10 +248,42 @@ func formatDateMs(s string) (float64, bool) {
 			}
 			loc = time.FixedZone("", offset)
 		}
-		return formatTimeClip(time.Date(year, time.Month(month), day, hour, minute, second, millis*1_000_000, loc))
+		return formatTimeClip(formatInLocation(time.Date(year, time.Month(month), day, hour, minute, second, millis*1_000_000, time.UTC), loc))
 	}
 	return formatLegacyDate(s)
 }
+
+// JavaScript picks the earlier occurrence at an overlap and advances a gap.
+// Compare possible offsets around the civil date instead of time.Date's choice.
+func formatInLocation(civil time.Time, loc *time.Location) time.Time {
+	guess := time.Date(civil.Year(), civil.Month(), civil.Day(), civil.Hour(), civil.Minute(), civil.Second(), civil.Nanosecond(), loc)
+	var match, after time.Time
+	offsets := map[int]bool{}
+	for _, delta := range []time.Duration{-48 * time.Hour, 0, 48 * time.Hour} {
+		_, offset := guess.Add(delta).Zone()
+		if offsets[offset] {
+			continue
+		}
+		offsets[offset] = true
+		candidate := civil.Add(-time.Duration(offset) * time.Second)
+		local := candidate.In(loc)
+		wall := time.Date(local.Year(), local.Month(), local.Day(), local.Hour(), local.Minute(), local.Second(), local.Nanosecond(), time.UTC)
+		if wall.Equal(civil) && (match.IsZero() || candidate.Before(match)) {
+			match = candidate
+		}
+		if wall.After(civil) && (after.IsZero() || candidate.Before(after)) {
+			after = candidate
+		}
+	}
+	if !match.IsZero() {
+		return match
+	}
+	if !after.IsZero() {
+		return after
+	}
+	return guess
+}
+
 func formatTimeClip(at time.Time) (float64, bool) {
 	ms := float64(at.Unix())*1000 + float64(at.Nanosecond()/1_000_000)
 	return ms, math.Abs(ms) <= 8_640_000_000_000_000
@@ -265,6 +297,11 @@ func formatLegacyDate(raw string) (float64, bool) {
 	// A malformed ISO time must not turn into a permissive legacy date.
 	if len(s) > 10 && s[4] == '-' && s[7] == '-' && (s[10] == 'T' || s[10] == 't') {
 		return 0, false
+	}
+	if len(s) > 10 && s[4] == '-' && s[7] == '-' && s[10] == ' ' {
+		if stamp, ok := formatDateMs(s[:10] + "T" + s[11:]); ok {
+			return stamp, true
+		}
 	}
 	if strings.HasSuffix(strings.ToUpper(s), "Z") && !strings.Contains(s, ":") {
 		if at, e := time.Parse("2006-01-02", s[:len(s)-1]); e == nil {
@@ -293,9 +330,13 @@ func formatLegacyDate(raw string) (float64, bool) {
 	}
 	s = strings.Join(fields, " ")
 	s = strings.ReplaceAll(s, "Sept ", "Sep ")
-	for _, layout := range []string{time.RFC1123, time.RFC1123Z, time.RFC822, time.RFC822Z, time.ANSIC, time.UnixDate, time.RFC850, "Mon Jan 02 2006 15:04:05 GMT-0700", "Jan 2 2006", "January 2, 2006", "Jan 2, 2006", "January 2 2006", "2 January 2006", "2 Jan 2006", "Jan 2 2006 15:04:05 MST", "Jan 2 2006 15:04:05 -0700", "2006-1-2 15:04:05", "2006-1-2 15:04", "2006-01-02", "2006-01", "2006"} {
-		if at, e := time.ParseInLocation(layout, s, loc); e == nil {
-			return formatTimeClip(at)
+	for _, layout := range []string{time.RFC1123, time.RFC1123Z, time.RFC822, time.RFC822Z, time.ANSIC, time.UnixDate, time.RFC850, "Mon Jan 02 2006 15:04:05 GMT-0700", "Jan 2 2006", "January 2, 2006", "Jan 2, 2006", "January 2 2006", "2 January 2006", "2 Jan 2006", "Jan 2 2006 15:04", "2006/1/2 15:04:05", "2006/1/2 15:04", "Jan 2 2006 15:04:05 MST", "Jan 2 2006 15:04:05 -0700", "2006-1-2 15:04:05", "2006-1-2 15:04", "2006-01-02", "2006-01", "2006"} {
+		if strings.Contains(layout, "MST") || strings.Contains(layout, "Z07") || strings.Contains(layout, "-0700") {
+			if at, e := time.ParseInLocation(layout, s, loc); e == nil {
+				return formatTimeClip(at)
+			}
+		} else if civil, e := time.Parse(layout, s); e == nil {
+			return formatTimeClip(formatInLocation(civil, loc))
 		}
 	}
 	nums := regexp.MustCompile(`^\d+(?:[-/,.]\d+){0,2}$`)
@@ -329,6 +370,13 @@ func formatLegacyDate(raw string) (float64, bool) {
 	case 3:
 		if value(0) > 31 {
 			year, month, day = value(0), value(1), value(2)
+			if len(parts[0]) <= 2 {
+				if year < 50 {
+					year += 2000
+				} else {
+					year += 1900
+				}
+			}
 		} else {
 			month, day, year = value(0), value(1), value(2)
 			if len(parts[2]) <= 2 {
@@ -343,5 +391,5 @@ func formatLegacyDate(raw string) (float64, bool) {
 	if month < 1 || month > 12 || day < 1 || day > 31 {
 		return 0, false
 	}
-	return formatTimeClip(time.Date(year, time.Month(month), day, 0, 0, 0, 0, time.Local))
+	return formatTimeClip(formatInLocation(time.Date(year, time.Month(month), day, 0, 0, 0, 0, time.UTC), time.Local))
 }

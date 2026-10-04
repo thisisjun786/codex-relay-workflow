@@ -136,6 +136,7 @@ func missingFlagError(key string) error {
 	case "context":
 		option = "-c, " + option
 	}
+	//lint:ignore ST1005 Preserve the exact Node parseArgs diagnostic.
 	return fmt.Errorf("Option '%s <value>' argument missing", option)
 }
 func unknownFlagError(raw string, quoted ...string) error {
@@ -143,6 +144,7 @@ func unknownFlagError(raw string, quoted ...string) error {
 	if len(quoted) > 0 {
 		example = quoted[0]
 	}
+	//lint:ignore ST1005 Preserve the exact Node parseArgs diagnostic.
 	return fmt.Errorf("Unknown option '%s'. To specify a positional argument starting with a '-', place it at the end of the command after '--', as in '-- %s", raw, example)
 }
 func ambiguousFlagError(raw, key string) error {
@@ -150,6 +152,7 @@ func ambiguousFlagError(raw, key string) error {
 	if !strings.HasPrefix(raw, "--") {
 		hint += " or '" + raw + "-XYZ'"
 	}
+	//lint:ignore ST1005 Preserve the exact Node parseArgs diagnostic.
 	return fmt.Errorf("Option '%s' argument is ambiguous.\nDid you forget to specify the option argument for '%s'?\nTo specify an option argument starting with a dash use %s.", raw, raw, hint)
 }
 func ParseFlags(args []string) (ParsedFlags, error) {
@@ -192,6 +195,7 @@ func ParseFlags(args []string) (ParsedFlags, error) {
 		}
 		if boolean {
 			if attached {
+				//lint:ignore ST1005 Preserve the exact Node parseArgs diagnostic.
 				return ParsedFlags{}, fmt.Errorf("Option '%s' does not take an argument", raw)
 			}
 			out.Values[key] = true
