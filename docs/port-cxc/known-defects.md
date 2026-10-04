@@ -612,6 +612,50 @@ The pinned oracle already publishes through an exclusive 0600 temporary file and
 - The first source capture is outside the runner's catch, while the second is caught, so a binding broken between the initial resolution and first capture throws instead of returning the runner's SOURCE-ROOT refusal (source `plugins/codexclaw/components/pabcd-state/src/receipt-cli.ts:120-127` and `:145-147`); port: kept.
 - The receipt is written in place, so a failed write leaves a truncated record (source `plugins/codexclaw/components/pabcd-state/src/receipt-cli.ts:184`; intentionally-changed recorded case `internal/pabcd/cli/testdata/atomic-change.json`, test `TestReceiptAtomicPublicationFailure`); port: fixed (record-file data loss: fsynced temporary-file publication and rename, with failed publication removing its partial temporary file).
 
+## CRW-352 memory requeue
+
+- A positive retry allowance below one is floored to zero, clearing backoff without restoring eligibility (`recall/src/memory-requeue.ts:73` at v0.2.40); port: kept.
+- The schema guard omits `retry_at`, so a selected store lacking it passes selection but apply fails and rolls back (`recall/src/memory-requeue.ts:66,94-98,137` at v0.2.40); port: kept.
+- NULL, numeric and BLOB kind/key values are coerced to strings for selection and binding, so an untyped jobs table can report selected candidates with zero rows changed (`recall/src/memory-requeue.ts:105-109,137-143` at v0.2.40); port: kept.
+- With no kind filter, exhausted consolidation jobs are selected despite the module's safety prose claiming otherwise (`recall/src/memory-requeue.ts:17-18,107` at v0.2.40); port: kept.
+- Candidates removed by the limit appear in neither the selected list nor skipped cause counts (`recall/src/memory-requeue.ts:107-112` at v0.2.40); port: kept.
+- A failed BEGIN reports that requeue was rolled back even when no transaction began (`recall/src/memory-requeue.ts:133,146-152` at v0.2.40); port: kept.
+- Reopening for apply uses a create-capable SQLite open, so external removal between selection and reopening can leave a new empty store (`recall/src/memory-requeue.ts:128` and `recall/src/sqlite.ts:34-36` at v0.2.40); port: kept.
+- Duplicate kind/key rows with a retry allowance floored to zero remain eligible across repeated updates, counting the same rows more than once (`recall/src/memory-requeue.ts:73,137-143` at v0.2.40); port: kept.
+
+## Found by the orchestrate session/status library port (CRW-519)
+
+- Session discovery accepts any stat-able name ending in `.json`, including a directory, and raw existence then permits status to report that unreadable directory as IDLE (source `orchestrate-cli.ts:301-316,328-330,509-516`; recorded directory case); port: kept.
+- Status uses advisory `readState`, so an existing corrupt session file reports default IDLE with exit zero rather than distinguishing unreadable state (source `orchestrate-cli.ts:509-516`; recorded corrupt-state case); port: kept.
+- The CLI checks the raw session path but reads a sanitized path, so an explicit id containing spaces or punctuation can pass existence for one file and report another file's phase (source `orchestrate-cli.ts:328-330,414-418,509-516`, `state.ts:327-329`; recorded raw/sanitized case); port: kept.
+- With no resolved session, status prints plain `no active session` even under `--json`, making that success response a different output form (source `orchestrate-cli.ts:500-501`; recorded empty JSON case); port: kept.
+- A sessions directory that exists but cannot be listed escapes the CLI's advertised never-throws behavior; the Go library propagates that IO error instead of turning it into success or a missing-session refusal (source `orchestrate-cli.ts:306,423,498`; deterministic non-directory listing test); port: kept.
+
+## Found by the recall ingest port (CRW-363)
+
+- A larger rewrite is assumed to be an append, leaving the previous prefix indexed and reporting fresh after the new fingerprint is stored (source `plugins/codexclaw/components/recall/src/ingest.ts:222-246`; recorded growth-rewrite case); port: kept.
+- A rewrite preserving size and integer-millisecond mtime is skipped, so its old text remains indexed and freshness reports no change (source `plugins/codexclaw/components/recall/src/ingest.ts:68-73,215`; recorded same-fingerprint case); port: kept.
+
+## Found by the shell write destination lexer port (CRW-361)
+
+- The destination token reads through adjacent operators, ends after the first quoted fragment, and retains shell escapes, missing actual files for `> a>b`, `>"a"x` and `> a\ b` (source `pabcd-state/src/shell-write-destinations.ts:173-184,234-235`); port: fixed (security: the exported result retains the oracle reports and adds the actual literal targets; helper tokenization kept).
+- Stderr `2>`, read/write `<>`, an unquoted arrow's `>`, and file-valued `>&` are skipped despite opening or writing files (source `shell-write-destinations.ts:209-235`); port: fixed (security: add literal file destinations, including the deliberately changed arrow test; numeric descriptor duplication, close and `/dev/null` remain excluded).
+- Heredoc delimiters stop at punctuation, ignore escaped spelling and compare `<<-` terminators without removing tabs, so later real redirects can be swallowed (source `shell-write-destinations.ts:52-77,87-99`); port: fixed (security: the exported scanner reads the raw command, recognizes literal delimiter words and tab-stripped terminators; the recorded helpers remain unchanged).
+- Only the first heredoc on a header has its body stripped; text in a later queued body can be returned as a destination (`leaked` in the recorded two-body case; source `shell-write-destinations.ts:58-77`); port: kept (legacy reports are retained, although the additive scanner suppresses all queued bodies).
+- Unterminated quoted tokens lose their last UTF-16 unit and double-quoted escapes remain encoded in the token (source `shell-write-destinations.ts:141-152,176-180`); port: kept (completed literal redirect words are additionally decoded; malformed quotes retain truncation, and a lone surrogate becomes U+FFFD at the Go string boundary, as in Node UTF-8 encoding).
+- JavaScript Unicode whitespace is treated as a shell token separator although POSIX shell blanks are ASCII (source `shell-write-destinations.ts:174-184`); port: fixed (security: add literal targets retaining a leading BOM or non-breaking space while preserving the oracle token).
+- Quoted command substitutions, variable/tilde/glob expansion and arbitrary executable behavior are not evaluated by the lexical parser (source `shell-write-destinations.ts:46-50,173-184,192-194`); port: kept (the library is not a shell evaluator; consumer policy must account for dynamic destinations).
+- Escaped blanks before `#` and backslash-newline joins are not lexed as shell word/operator boundaries, which can conceal stderr or clobber destinations (source `shell-write-destinations.ts:102-137,173-184,235`); port: fixed (security: the additive scanner tracks word boundaries and joins complete headers before operator recognition).
+- Empty quoted and dollar-bearing heredoc delimiters are not recognized, letting a quote in the body conceal a following real redirect (source `shell-write-destinations.ts:54-57,87-99`); port: fixed (security: delimiter parsing removes quotes without expansion, accepts a present empty word, and strips the body independently of its contents).
+- CR is JavaScript whitespace but is part of a POSIX filename, so `>a\rb` reports only `a` (source `shell-write-destinations.ts:174-184`); port: fixed (security: add the full CR-containing filename while retaining the oracle target).
+- An unquoted heredoc terminator continued with backslash-newline is not joined by the oracle, hiding following Bash redirects (source `shell-write-destinations.ts:64-75`); port: fixed (security: the additive scanner also recognizes Bash's continued terminator; this intentionally conservative addition covers that shell-specific behavior).
+
+## CRW-364 — current-directory session context
+
+- Only the first four nonsynthetic user rows are inspected, so four read-time harness blocks hide a later human opener (recall/src/cwd-context.ts:143-157 at v0.2.40); port: kept.
+- Excerpt limits below three use a negative slice end and can produce an excerpt longer than the requested limit (recall/src/cwd-context.ts:156 at v0.2.40); port: kept.
+- Heading whitespace can span line breaks, so a bare heading marker can take the next body line as its summary title (recall/src/cwd-context.ts:231-233 at v0.2.40); port: kept.
+
 ## Found by the CRW-507 recall query-condition port
 
 - Short words use SQLite's ASCII-only `lower()` and LIKE folding, so a query for `ü` misses an indexed `Ü` even though the final Unicode text predicate accepts it (source `recall/src/index-search.ts:185-191,268-270`; Node-recorded candidate cases in `internal/recall/testdata/indexquery/oracle.json`); port: kept.
