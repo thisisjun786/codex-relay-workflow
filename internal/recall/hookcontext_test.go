@@ -304,7 +304,7 @@ func TestHookContextDefaultOwners(t *testing.T) {
 	}
 	writeRolloutTestFile(t, codex, "memories/rollout_summaries/a.md", "thread_id: t\n# supplied summary\n")
 	result := BuildCwdContextResult("/repo", deps, FullBudget())
-	if result.Outcome != CwdContextHits || !strings.Contains(result.Text, "supplied summary") || !strings.Contains(result.Text, "chosen-runtime chat search") {
+	if result.Outcome != CwdContextHits || !strings.Contains(result.Text, "supplied summary") || !strings.Contains(result.Text, "chosen-runtime recall chat search") {
 		t.Fatal(result)
 	}
 	store, err = deps.OpenHitCounts()
@@ -342,10 +342,11 @@ func TestHookContextDefaultOwners(t *testing.T) {
 func hookContextTestNumber(n float64) *float64 { return &n }
 func TestHookContextExplicitSearchHistoryIndependent(t *testing.T) {
 	cwdTestHome(t)
-	home := buildRecallCodexHome(t, time.Now().UTC())
+	now := time.Now().UTC()
+	home := buildRecallCodexHome(t, now)
 	path := filepath.Join(t.TempDir(), "index.sqlite")
-	opts := ChatSearchOptions{Home: &home, IndexPath: &path, Days: hookContextTestNumber(0), Limit: hookContextTestNumber(8)}
-	before, err := SearchChat("trigram", opts)
+	opts := ChatSearchOptions{Home: &home, IndexPath: &path, Days: hookContextTestNumber(0), Limit: hookContextTestNumber(8), NowMs: hookContextTestNumber(float64(now.UnixMilli()))}
+	before, err := SearchChat("trigram", opts, now)
 	if err != nil || len(before.Hits) < 2 {
 		t.Fatal(before, err)
 	}
@@ -361,7 +362,7 @@ func TestHookContextExplicitSearchHistoryIndependent(t *testing.T) {
 		}
 	}
 	_ = db.Close()
-	after, err := SearchChat("trigram", opts)
+	after, err := SearchChat("trigram", opts, now)
 	if err != nil || !reflect.DeepEqual(before.Hits, after.Hits) {
 		t.Fatal("explicit search changed with injection history", err)
 	}

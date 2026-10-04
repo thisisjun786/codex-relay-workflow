@@ -15,7 +15,7 @@ writeFileSync(modulePath,readFileSync(new URL(dist+'/hook.js'),'utf8')
  '\nexport {quoteUntrusted, clip, demoteRepeats, candidatePool};\n');
 const h=await import(pathToFileURL(modulePath).href);
 const rows=[];
-const normalize=s=>s.replace('[cxc-recall]','[crw-recall]').replace('`cxc chat search','`crw chat search');
+const normalize=s=>s.replace('[cxc-recall]','[crw-recall]').replace('`cxc chat search','`crw recall chat search');
 const digest=s=>createHash('sha256').update(s).digest('hex').match(/.{8}/g);
 const units=s=>Array.from({length:s.length},(_,i)=>s.charCodeAt(i));
 function add(kind,input,out){rows.push({kind,input,out});}

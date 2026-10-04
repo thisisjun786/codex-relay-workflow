@@ -779,3 +779,13 @@ The parser feeds a fail-closed memory write gate, so a destination the oracle mi
 ## Found by the CRW-381 recall chat-search entry port
 
 - The entry computes a positive-days cutoff before checking the empty plan or forced-scan flag, so an out-of-range value throws `Invalid time value` even for an empty query and before the origin callback (source `recall/src/chat-search.ts:159-164`, recorded `invalid-days` in `internal/recall/testdata/chatsearch/oracle.json`); port: kept.
+
+## CRW-512 — cwd recall hook context
+
+- A character budget that fits no entry still reports `hits` with empty text (source `recall/src/hook.ts:382,534,586`; recorded tiny-budget builder); port: kept.
+- History is bumped before rendering, so entries dropped by the character budget or a subsequent summary-load failure are counted without injection (source `recall/src/hook.ts:433,518,534`; recorded tiny-budget and summary-error builders); port: kept.
+- A bump failure returns the neutral selection even after earlier refs were written, without rolling those counts back (source `recall/src/hook.ts:433-438`; recorded bump-error selection); port: kept.
+- The candidate pool doubles whenever a history opener is configured, including when it returns null (source `recall/src/hook.ts:449-451`; recorded null-store builder); port: kept.
+- A present empty thread id is one deduplication key while its history ref falls back to the file (source `recall/src/hook.ts:563,572`; recorded empty-id fallback hits); port: kept.
+- Dates are compared lexically and fallback timestamps are sliced to ten UTF-16 units, without calendar validation (source `recall/src/hook.ts:529,579,582`; recorded non-ISO date label); port: kept.
+- Clipping below three units uses a negative slice end, potentially keeping most of the input and exceeding the requested snippet size (source `recall/src/hook.ts:325-327`; recorded negative and tiny clip budgets); port: kept.
