@@ -2,9 +2,11 @@ package recall
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -18,6 +20,265 @@ func cwdTestHome(t *testing.T) string {
 	t.Setenv("CODEX_HOME", home)
 	t.Setenv("CRW_HOME", filepath.Join(home, "sidecar"))
 	return home
+}
+
+func cwdPointerValue(p *string) any {
+	if p != nil {
+		return *p
+	}
+	return nil
+}
+
+// Node is a recorder only. The Go replay seeds temporary SQLite and markdown inputs.
+func TestCwdContextOracle(t *testing.T) {
+	data, err := os.ReadFile("testdata/cwdcontext/oracle.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases []struct {
+		Kind    string
+		In, Out json.RawMessage
+		Wire    []string
+	}
+	if err := json.Unmarshal(data, &cases); err != nil {
+		t.Fatal(err)
+	}
+	if len(cases) < 100 {
+		t.Fatal("oracle case grid unexpectedly small", len(cases))
+	}
+	for i, c := range cases {
+		t.Run(fmt.Sprintf("%03d/%s", i, c.Kind), func(t *testing.T) {
+			home := cwdTestHome(t)
+			var got any
+			switch c.Kind {
+			case "summary":
+				var in struct {
+					Files       map[string]string
+					Dirs, Links []string
+				}
+				if err := json.Unmarshal(c.In, &in); err != nil {
+					t.Fatal(err)
+				}
+				dir := "memories/rollout_summaries"
+				if err := os.MkdirAll(filepath.Join(home, dir), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				for name, content := range in.Files {
+					writeRolloutTestFile(t, home, filepath.Join(dir, name), content)
+				}
+				for _, name := range in.Dirs {
+					if err := os.Mkdir(filepath.Join(home, dir, name), 0o700); err != nil {
+						t.Fatal(err)
+					}
+				}
+				for _, name := range in.Links {
+					if err := os.Symlink("absent-target", filepath.Join(home, dir, name)); err != nil {
+						t.Fatal(err)
+					}
+				}
+				got = LoadSummaryIndex(home)
+			case "list":
+				var in struct {
+					Cwd, Origin *string
+					N, Limit    *int
+					Mode        string
+					Legacy      bool
+					Threads     [][]string
+					Files       []struct {
+						Path, Source, Date     string
+						Cwd, ThreadID, RepoKey *string
+						Msgs                   []struct {
+							Text, Role string
+							Synthetic  int
+						}
+					}
+				}
+				if err := json.Unmarshal(c.In, &in); err != nil {
+					t.Fatal(err)
+				}
+				idx := filepath.Join(home, "index.sqlite")
+				if in.Mode != "missing" {
+					db, err := openIndex(idx)
+					if err != nil {
+						t.Fatal(err)
+					}
+					for _, file := range in.Files {
+						cwd, src, date := "/repo", "main", "2026-01-02"
+						if file.Cwd != nil {
+							cwd = *file.Cwd
+						}
+						if file.Source != "" {
+							src = file.Source
+						}
+						if file.Date != "" {
+							date = file.Date
+						}
+						_, err := recallStmt(t, db, "INSERT INTO files(path,mtime_ms,size,thread_id,cwd,source,date,repo_key) VALUES(?,0,0,?,?,?,?,?)").Run(file.Path, cwdPointerValue(file.ThreadID), cwd, src, date, cwdPointerValue(file.RepoKey))
+						if err != nil {
+							t.Fatal(err)
+						}
+						for ord, message := range file.Msgs {
+							role := message.Role
+							if role == "" {
+								role = "user"
+							}
+							_, err := recallStmt(t, db, "INSERT INTO msgs(path,ord,ts,role,match_field,synthetic,text) VALUES(?,?,?, ?,?,?,?)").Run(file.Path, ord, "ts", role, "content", message.Synthetic, message.Text)
+							if err != nil {
+								t.Fatal(err)
+							}
+						}
+					}
+					if in.Legacy {
+						recallSQL(t, db, "DROP INDEX idx_files_repo_key; ALTER TABLE files DROP COLUMN repo_key")
+					}
+					if in.Mode == "noMsgs" {
+						recallSQL(t, db, "DROP TABLE msgs")
+					}
+					if err := db.Close(); err != nil {
+						t.Fatal(err)
+					}
+					if in.Mode == "broken" {
+						if err := os.WriteFile(idx, []byte("not sqlite"), 0o600); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
+				if in.Threads != nil {
+					db, err := openDbReadWrite(filepath.Join(home, "state_2.sqlite"))
+					if err != nil {
+						t.Fatal(err)
+					}
+					recallSQL(t, db, "CREATE TABLE threads(id TEXT PRIMARY KEY,title TEXT,cwd TEXT,git_branch TEXT,git_origin_url TEXT,updated_at_ms INTEGER)")
+					for _, row := range in.Threads {
+						if _, err := recallStmt(t, db, "INSERT INTO threads VALUES(?, '', '/other',NULL,?,0)").Run(row[0], row[1]); err != nil {
+							t.Fatal(err)
+						}
+					}
+					if err := db.Close(); err != nil {
+						t.Fatal(err)
+					}
+				}
+				cwd, n, origin := "/repo", 5, ""
+				if in.Cwd != nil {
+					cwd = *in.Cwd
+				}
+				if in.N != nil {
+					n = *in.N
+				}
+				if in.Origin != nil {
+					origin = *in.Origin
+				}
+				sessions := ListCwdSessions(cwd, n, CwdSessionOptions{IndexPath: idx, Home: home, ExcerptChars: in.Limit, ReadOriginUrl: func(string) string { return origin }})
+				got = sessions
+				// Check surrogate escapes BEFORE decoding JSON can replace them with U+FFFD.
+				wire, err := json.Marshal(sessions)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var encoded []map[string]json.RawMessage
+				if err := json.Unmarshal(wire, &encoded); err != nil {
+					t.Fatal(err)
+				}
+				for j, quote := range c.Wire {
+					if strings.Contains(quote, `\ud`) && string(encoded[j]["excerpt"]) != quote {
+						t.Fatalf("serialized excerpt %s, oracle %s", encoded[j]["excerpt"], quote)
+					}
+				}
+			default:
+				t.Fatal("unknown oracle kind", c.Kind)
+			}
+			var want any
+			if err := json.Unmarshal(c.Out, &want); err != nil {
+				t.Fatal(err)
+			}
+			if actual := canon(t, got); !reflect.DeepEqual(actual, want) {
+				t.Fatalf("got %v, oracle %v", actual, want)
+			}
+		})
+	}
+}
+
+func TestCwdContextClipJSON(t *testing.T) {
+	for _, c := range []struct {
+		text  string
+		limit int
+		quote string
+	}{
+		{"😀abc", 4, `"\ud83d..."`}, {"😀abcdef", 5, `"😀..."`}, {"�abc", 4, `"�abc"`},
+		{"abcdef", 0, `"abc..."`}, {"abcdef", 1, `"abcd..."`}, {"abcdef", 2, `"abcde..."`}, {"abcdef", -10, `"..."`},
+	} {
+		excerpt, clip := cwdExcerpt(c.text, c.limit)
+		session := CwdSession{Excerpt: excerpt, excerptClip: clip}
+		encoded, err := json.Marshal(session)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(encoded, &fields); err != nil {
+			t.Fatal(err)
+		}
+		if string(fields["excerpt"]) != c.quote {
+			t.Fatalf("limit %d: %s, want %s", c.limit, fields["excerpt"], c.quote)
+		}
+		if clip != nil {
+			session.Excerpt = "changed �"
+			encoded, err := json.Marshal(session)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(encoded), `"excerpt":"changed �"`) || strings.Contains(string(encoded), `\ud83d`) {
+				t.Fatal("stale metadata overrode caller-modified excerpt", string(encoded))
+			}
+		}
+	}
+}
+
+func TestCwdContextLegacyJoinAndBound(t *testing.T) {
+	home := cwdTestHome(t)
+	idx := cwdTestIndex(t, home)
+	db, err := openIndex(idx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recallSQL(t, db, "DROP INDEX idx_files_repo_key; ALTER TABLE files DROP COLUMN repo_key")
+	db.Close()
+	state, err := openDbReadWrite(filepath.Join(home, "state_2.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	recallSQL(t, state, "CREATE TABLE threads(id TEXT PRIMARY KEY,title TEXT,cwd TEXT,git_branch TEXT,git_origin_url TEXT,updated_at_ms INTEGER); BEGIN")
+	stmt := recallStmt(t, state, "INSERT INTO threads VALUES(?, '', '/checkout',NULL,?,0)")
+	for i := 0; i < 5001; i++ {
+		id := fmt.Sprintf("id-%04d", i)
+		if i == 4999 {
+			id = "a4"
+		}
+		if i == 5000 {
+			id = "a3"
+		}
+		if _, err := stmt.Run(id, cwdFixtureOrigin); err != nil {
+			t.Fatal(err)
+		}
+	}
+	recallSQL(t, state, "COMMIT")
+	state.Close()
+	ids := sameOriginThreadIDs(home, normalizeRepoKey(cwdFixtureOrigin))
+	if len(ids) != 5000 || ids[4999] != "a4" {
+		t.Fatal("metadata ID bound/order", len(ids), ids[len(ids)-1])
+	}
+	opts := CwdSessionOptions{IndexPath: idx, ReadOriginUrl: func(string) string { return cwdFixtureOrigin }}
+	if got := ListCwdSessions(cwdFixturePath, 5, opts); len(got) != 3 || got[0].Excerpt != "land the parser rewrite" {
+		t.Fatalf("legacy join (including 5000 binds): %#v", got)
+	}
+	if err := os.WriteFile(filepath.Join(home, "state_3.sqlite"), []byte("bad metadata"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := ListCwdSessions(cwdFixturePath, 5, opts); len(got) != 2 {
+		t.Fatal("metadata failure must keep exact-cwd results", got)
+	}
+	if got := ListCwdSessions(cwdFixturePath, 1, opts); len(got) != 1 || got[0].Excerpt != "audit the envelope" {
+		t.Fatal("topN", got)
+	}
 }
 
 // Seed the real index from the landed rollout helpers, not a second ingest implementation.
@@ -85,7 +346,11 @@ func cwdTestIndex(t *testing.T, home string) string {
 			t.Fatal(err)
 		}
 		for i, entry := range entries {
-			_, err = recallStmt(t, db, "INSERT INTO msgs(path,ord,ts,role,match_field,synthetic,text) VALUES(?,?,?,?,?,?,?)").Run(file.Path, i, entry.TS, entry.Role, entry.MatchField, entry.Synthetic, entry.Text)
+			synthetic := 0
+			if entry.Synthetic {
+				synthetic = 1
+			}
+			_, err = recallStmt(t, db, "INSERT INTO msgs(path,ord,ts,role,match_field,synthetic,text) VALUES(?,?,?,?,?,?,?)").Run(file.Path, i, entry.TS, entry.Role, entry.MatchField, synthetic, entry.Text)
 			if err != nil {
 				t.Fatal(err)
 			}

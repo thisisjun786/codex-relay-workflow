@@ -558,3 +558,9 @@ The pinned oracle already publishes through an exclusive 0600 temporary file and
 - The FTS triggers cover INSERT and DELETE but not UPDATE, so changing a message in place leaves both search indexes stale (source `plugins/codexclaw/components/recall/src/index-db.ts:80-87`); port: kept.
 - `readHitCounts` suppresses every read error as empty history, whereas `bumpHitCounts` throws for a missing table and commits earlier refs before a later ref fails despite the shared tolerance comment (source `plugins/codexclaw/components/recall/src/index-db.ts:172-174`, `:182-205`); port: kept.
 - INTEGER affinity permits nonnumeric text in `hit_count`; its Number conversion can return NaN or Infinity to the penalty consumer (source `plugins/codexclaw/components/recall/src/index-db.ts:190`); port: kept.
+
+## CRW-364 — current-directory session context
+
+- Only the first four nonsynthetic user rows are inspected, so four read-time harness blocks hide a later human opener (recall/src/cwd-context.ts:143-157 at v0.2.40); port: kept.
+- Excerpt limits below three use a negative slice end and can produce an excerpt longer than the requested limit (recall/src/cwd-context.ts:156 at v0.2.40); port: kept.
+- Heading whitespace can span line breaks, so a bare heading marker can take the next body line as its summary title (recall/src/cwd-context.ts:231-233 at v0.2.40); port: kept.
