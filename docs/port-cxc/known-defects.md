@@ -775,3 +775,10 @@ The parser feeds a fail-closed memory write gate, so a destination the oracle mi
 ## CRW-523 — PABCD CLI verb adapters
 
 - Evidence has no help branch: `evidence help`, `-h` and `--help` are unknown-verb errors, and `evidence resolve --help` reports missing required arguments instead of displaying usage (source `plugins/codexclaw/components/pabcd-state/src/cli.ts:276-285`, `evidence-cli.ts:35-62`; four `cli-help__evidence__*` fixtures); port: kept.
+
+## CRW-332 — doctor targets and workspace reset
+
+- A symlinked state root or sessions directory lets state reset delete JSON records outside the workspace state tree, and an internal sessions-to-goalplans alias deletes preserved plans (CXC v0.2.40 `plugins/codexclaw/components/cxc-ops/src/reset.ts:49-63`); port: fixed (security and data loss: separately pinned non-link state and sessions directories).
+- Unknown or competing reset flags silently select a destructive default or precedence winner (CXC v0.2.40 `plugins/codexclaw/components/cxc-ops/src/reset.ts:88-93`); port: fixed (security: scope parsing is strict before any deletion).
+- If either target realpath fails, both paths fall back to lexical resolution, so a missing leaf below an outside symlink becomes a missing-target finding rather than an escape finding (CXC v0.2.40 `plugins/codexclaw/components/cxc-ops/src/manifest-targets.ts:106-117`); port: kept.
+- Target validation accepts a non-empty directory as a target and ignores non-array manifest hooks or non-string mcpServers declarations (CXC v0.2.40 `plugins/codexclaw/components/cxc-ops/src/manifest-targets.ts:138-144,157,181`); port: kept.

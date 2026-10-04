@@ -173,3 +173,29 @@ func TestResetAbsentDanglingAndAllLink(t *testing.T) {
 		t.Fatal("all followed link")
 	}
 }
+
+func TestResetPinRefusesReplacedDirectory(t *testing.T) {
+	base := t.TempDir()
+	if err := os.Mkdir(filepath.Join(base, "sessions"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.OpenRoot(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	observed, err := root.Lstat("sessions")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(base, "sessions"), filepath.Join(base, "old")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(base, "sessions"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if pinned, err := resetPin(root, "sessions", observed); err == nil {
+		pinned.Close()
+		t.Fatal("pinned replacement instead of observed directory")
+	}
+}
