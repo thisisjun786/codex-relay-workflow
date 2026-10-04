@@ -131,6 +131,12 @@ func spawnNormalizeTestFloods(t *testing.T, skills string) {
 		if !c.identity && !strings.Contains(got, spawnNormalizeTestLink(skills, "crw-dev")) {
 			t.Errorf("%s did not repair", c.name)
 		}
+		if !c.identity {
+			want := strings.Repeat(spawnNormalizeTestLink(skills, "crw-dev")+"\n", (size+len(repair)-1)/len(repair))
+			if got != want {
+				t.Errorf("%s incomplete output: got %d bytes, want %d", c.name, len(got), len(want))
+			}
+		}
 		t.Logf("%s: %d input bytes in %s", c.name, len(c.input), elapsed)
 	}
 }
