@@ -2,13 +2,16 @@ package role
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
-	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
+	"math/big"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"time"
 )
 
@@ -17,7 +20,7 @@ type DispatchHost interface {
 	Call(context.Context, string, map[string]any) (json.RawMessage, error)
 }
 
-const createdCheckCorrection = "; copy agentId from the native spawn result and ensure the App Server is available; close an old wrong-ID report with outcome stopped, executionState stopped and reconciliation"
+const createdCheckCorrection = "; copy agentId from the native spawn result and ensure the native thread database is readable; close an old wrong-ID report with outcome stopped, executionState stopped and reconciliation"
 
 // CheckedDispatch is the product boundary. RunDispatch stays the parity ledger.
 // The created check runs after domain validation, inside the same lock, before
@@ -59,13 +62,7 @@ func createdCheckRead(ctx context.Context, env host.LookupEnv, h DispatchHost, a
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	if h == nil {
-		home, err := host.Home(env)
-		if err != nil {
-			return createdCheckIdentity{}, err
-		}
-		client := appserver.New(filepath.Join(ResolveNativeRoleHome(env, home), "app-server-control", "app-server-control.sock"), appserver.DefaultBounds)
-		defer client.Close()
-		h = client
+		return createdCheckNative(ctx, env, agent)
 	}
 	raw, err := h.Call(ctx, "thread/read", map[string]any{"threadId": agent, "includeTurns": false})
 	if err != nil {
@@ -149,4 +146,79 @@ func createdCheckStop(ctx context.Context, cwd string, b map[string]any, env hos
 		return DispatchResult{}, err
 	}
 	return dispatchResult(&d, "stop", "dispatch closed; caller reconciliation recorded, recorded identity retained"), nil
+}
+
+// The host writes thread_spawn into threads.source when it creates a subagent.
+// Read that witness without networking: role is also imported by offline relay
+// packages. Existing host imports already register the pure-Go SQLite driver.
+func createdCheckNative(ctx context.Context, env host.LookupEnv, agent string) (createdCheckIdentity, error) {
+	home, err := host.CodexSQLiteHome(env)
+	if err != nil {
+		return createdCheckIdentity{}, err
+	}
+	entries, err := os.ReadDir(home)
+	if err != nil {
+		return createdCheckIdentity{}, err
+	}
+	pattern := regexp.MustCompile(`^state_([0-9]+)\.sqlite$`)
+	name := ""
+	var highest *big.Int
+	for _, entry := range entries {
+		match := pattern.FindStringSubmatch(entry.Name())
+		if match == nil {
+			continue
+		}
+		version, _ := new(big.Int).SetString(match[1], 10)
+		if highest == nil || version.Cmp(highest) > 0 || version.Cmp(highest) == 0 && entry.Name() < name {
+			name, highest = entry.Name(), version
+		}
+	}
+	if name == "" {
+		return createdCheckIdentity{}, errors.New("host thread database is missing")
+	}
+	path := filepath.Join(home, name)
+	info, err := os.Lstat(path)
+	if err != nil {
+		return createdCheckIdentity{}, err
+	}
+	if !info.Mode().IsRegular() {
+		return createdCheckIdentity{}, errors.New("host thread database must be a regular file")
+	}
+	path, err = filepath.Abs(path)
+	if err != nil {
+		return createdCheckIdentity{}, err
+	}
+	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: path, RawQuery: "mode=ro"}).String())
+	if err != nil {
+		return createdCheckIdentity{}, err
+	}
+	defer db.Close()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return createdCheckIdentity{}, err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, "PRAGMA query_only=ON"); err != nil {
+		return createdCheckIdentity{}, err
+	}
+	var id, source string
+	var archived int
+	if err := conn.QueryRowContext(ctx, "SELECT id, source, archived FROM threads WHERE id = ?", agent).Scan(&id, &source, &archived); err != nil {
+		return createdCheckIdentity{}, err
+	}
+	if id != agent || archived != 0 {
+		return createdCheckIdentity{}, errors.New("host thread identity is unavailable")
+	}
+	var marker struct {
+		Subagent struct {
+			Spawn struct {
+				Parent string `json:"parent_thread_id"`
+			} `json:"thread_spawn"`
+		} `json:"subagent"`
+	}
+	if err := json.Unmarshal([]byte(source), &marker); err != nil {
+		return createdCheckIdentity{}, err
+	}
+	parent := marker.Subagent.Spawn.Parent
+	return createdCheckIdentity{ID: id, Parent: parent, Subagent: parent != ""}, nil
 }

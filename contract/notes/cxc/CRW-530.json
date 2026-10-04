@@ -25,7 +25,7 @@
       "reason": "Created now refuses invented/offline identities without a real host subagent parent witness. Complete then refuses the unrecorded ID; status and claim remain reconcile, and the original compact given ledger is preserved. Refusal also preserves the given file mode instead of the oracle publication mode.",
       "set": {
         "steps/0/exit": "1",
-        "steps/0/stdout": "{\"error\":\"host could not verify created agent; copy agentId from the native spawn result and ensure the App Server is available; close an old wrong-ID report with outcome stopped, executionState stopped and reconciliation\"}",
+        "steps/0/stdout": "{\"error\":\"host could not verify created agent; copy agentId from the native spawn result and ensure the native thread database is readable; close an old wrong-ID report with outcome stopped, executionState stopped and reconciliation\"}",
         "steps/1/exit": "1",
         "steps/1/stdout": "{\"error\":\"complete requires the recorded agentId\"}",
         "steps/2/stdout": "{\"action\":\"reconcile\",\"dispatchId\":\"one\",\"attemptId\":\"att-1\",\"independentReviewRequired\":false,\"attempts\":[{\"id\":\"att-1\",\"candidate\":{\"model\":\"rec/exec-primary\",\"effort\":\"high\"},\"claimed\":true,\"agentId\":null,\"observedModel\":null,\"code\":null,\"taskFailure\":null,\"status\":\"claimed\",\"reconciliation\":null,\"spawnIssued\":false,\"toolUseId\":null}]}",

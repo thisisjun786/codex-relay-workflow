@@ -2,14 +2,13 @@ package role
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 )
 
 type createdCheckFake struct {
@@ -175,27 +174,103 @@ func TestCreatedCheckCloseRefusesActiveAndKeepsLock(t *testing.T) {
 	}
 }
 
-func TestCreatedCheckDefaultHostRealTransport(t *testing.T) {
-	server := fakehost.Start(t)
-	server.Respond("thread/read", fakehost.Reply{Result: map[string]any{"thread": map[string]any{"id": "child-a", "parentThreadId": "session-test", "threadSource": "subagent", "status": map[string]any{"type": "idle"}}}})
-	// Keep the unix pathname short; fakehost and this root own their cleanups.
-	root := must(os.MkdirTemp("/tmp", "crw530-host-"))
-	t.Cleanup(func() { check(t, os.RemoveAll(root)) })
-	native := filepath.Join(root, "codex")
-	check(t, os.MkdirAll(filepath.Join(native, "app-server-control"), 0700))
-	check(t, os.Symlink(server.SocketPath, filepath.Join(native, "app-server-control", "app-server-control.sock")))
-	ws, env, start, _ := dispatchTestFixture(t)
-	old := env
-	env = func(k string) (string, bool) {
-		if k == "CODEX_HOME" {
-			return native, true
-		}
-		return old(k)
-	}
-	dispatchTestCall(t, ws, env, map[string]any{"action": "claim", "attemptId": start.AttemptID})
-	out, err := CheckedDispatch(context.Background(), ws, createdCheckInput(start.AttemptID, "created"), env, nil)
+// Synthetic host-owned markers use the schema and source shape observed on a
+// real native child. Every DB is created in a temporary CODEX_HOME.
+func createdCheckSeed(t *testing.T, native, id, parent string) {
+	t.Helper()
+	db := must(sql.Open("sqlite", filepath.Join(native, "state_5.sqlite")))
+	defer db.Close()
+	_, err := db.Exec("CREATE TABLE IF NOT EXISTS threads (id TEXT PRIMARY KEY, source TEXT, archived INTEGER)")
 	check(t, err)
-	if out.Action != "wait" || server.Count("thread/read") != 1 || server.Count("thread/resume") != 0 {
-		t.Fatalf("real transport = %+v", out)
+	source := string(must(json.Marshal(map[string]any{"subagent": map[string]any{"thread_spawn": map[string]any{"parent_thread_id": parent, "depth": 1}}})))
+	_, err = db.Exec("INSERT OR REPLACE INTO threads VALUES (?,?,0)", id, source)
+	check(t, err)
+}
+func TestCreatedCheckDefaultHostSpawnMarker(t *testing.T) {
+	for _, tc := range []struct {
+		name, parent string
+		accept       bool
+	}{{"child", "session-test", true}, {"foreign", "other", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			ws, env, start, _ := dispatchTestFixture(t)
+			native := t.TempDir()
+			createdCheckSeed(t, native, "child-a", tc.parent)
+			old := env
+			env = func(k string) (string, bool) {
+				if k == "CODEX_HOME" {
+					return native, true
+				}
+				return old(k)
+			}
+			before := must(os.ReadFile(filepath.Join(native, "state_5.sqlite")))
+			dispatchTestCall(t, ws, env, map[string]any{"action": "claim", "attemptId": start.AttemptID})
+			out, err := CheckedDispatch(context.Background(), ws, createdCheckInput(start.AttemptID, "created"), env, nil)
+			if tc.accept {
+				check(t, err)
+				if out.Action != "wait" {
+					t.Fatal("host marker not accepted")
+				}
+			} else if err == nil {
+				t.Fatal("foreign marker accepted")
+			}
+			if string(before) != string(must(os.ReadFile(filepath.Join(native, "state_5.sqlite")))) {
+				t.Fatal("host DB changed")
+			}
+		})
+	}
+}
+
+func TestCreatedCheckNativeDatabaseRefusalsAndOrdering(t *testing.T) {
+	for _, kind := range []string{"numeric-order", "missing", "symlink-highest", "corrupt-highest", "malformed-marker", "root", "other-subagent", "archived"} {
+		t.Run(kind, func(t *testing.T) {
+			ws, env, start, _ := dispatchTestFixture(t)
+			native := t.TempDir()
+			createdCheckSeed(t, native, "child-a", "session-test")
+			file := filepath.Join(native, "state_5.sqlite")
+			switch kind {
+			case "numeric-order":
+				check(t, os.WriteFile(filepath.Join(native, "state_9.sqlite"), []byte("corrupt older database"), 0600))
+				check(t, os.Rename(file, filepath.Join(native, "state_10.sqlite")))
+			case "missing":
+				check(t, os.Rename(file, filepath.Join(native, "disconnected.sqlite")))
+			case "symlink-highest":
+				check(t, os.Symlink(file, filepath.Join(native, "state_10.sqlite")))
+			case "corrupt-highest":
+				check(t, os.WriteFile(filepath.Join(native, "state_10.sqlite"), []byte("corrupt highest database"), 0600))
+			default:
+				db := must(sql.Open("sqlite", file))
+				var source string
+				switch kind {
+				case "malformed-marker":
+					source = "{"
+				case "root":
+					source = `"cli"`
+				case "other-subagent":
+					source = `{"subagent":"review"}`
+				case "archived":
+					_, err := db.Exec("UPDATE threads SET archived=1")
+					check(t, err)
+				}
+				if source != "" {
+					_, err := db.Exec("UPDATE threads SET source=?", source)
+					check(t, err)
+				}
+				check(t, db.Close())
+			}
+			old := env
+			env = func(k string) (string, bool) {
+				if k == "CODEX_SQLITE_HOME" {
+					return native, true
+				}
+				return old(k)
+			}
+			dispatchTestCall(t, ws, env, map[string]any{"action": "claim", "attemptId": start.AttemptID})
+			_, err := CheckedDispatch(context.Background(), ws, createdCheckInput(start.AttemptID, "created"), env, nil)
+			if kind == "numeric-order" {
+				check(t, err)
+			} else if err == nil {
+				t.Fatal("invalid host witness accepted or older DB used")
+			}
+		})
 	}
 }

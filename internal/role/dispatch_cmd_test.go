@@ -11,7 +11,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
@@ -52,29 +51,13 @@ func TestDispatchCommandBoundedJSONErrors(t *testing.T) {
 
 func TestDispatchCommandHostReportsAcrossProcesses(t *testing.T) {
 	bin := testsupport.CRW(t)
-	server := fakehost.Start(t)
-	server.Handle("thread/read", func(raw json.RawMessage) fakehost.Reply {
-		var request struct {
-			ID string `json:"threadId"`
-		}
-		check(t, json.Unmarshal(raw, &request))
-		if request.ID == "invented" {
-			return fakehost.Reply{Error: &fakehost.RPCError{Code: -32000, Message: "no such thread"}}
-		}
-		parent := "session-test"
-		if request.ID == "foreign" {
-			parent = "other-session"
-		}
-		return fakehost.Reply{Result: map[string]any{"thread": map[string]any{"id": request.ID, "parentThreadId": parent, "threadSource": "subagent", "status": map[string]any{"type": "idle"}}}}
-	})
-	root := must(os.MkdirTemp("/tmp", "crw530-cli-"))
-	t.Cleanup(func() { check(t, os.RemoveAll(root)) })
 	ws := t.TempDir()
-	native := filepath.Join(root, "codex")
+	native := t.TempDir()
 	global := t.TempDir()
 	userHome := t.TempDir()
-	check(t, os.MkdirAll(filepath.Join(native, "app-server-control"), 0700))
-	check(t, os.Symlink(server.SocketPath, filepath.Join(native, "app-server-control", "app-server-control.sock")))
+	createdCheckSeed(t, native, "child-a", "session-test")
+	createdCheckSeed(t, native, "child-b", "session-test")
+	createdCheckSeed(t, native, "foreign", "other-session")
 	vars := map[string]string{"HOME": userHome, "CODEX_HOME": native, "CRW_HOME": global}
 	var env host.LookupEnv = func(k string) (string, bool) { v, ok := vars[k]; return v, ok }
 	_, err := SetRole(env, Executor, RolePatch{Mode: Some(ModeModel), Model: Some("primary/model"), Fallback: Some(FallbackPatch{Model: Some("fallback/model"), Effort: Some(EffortLow)})})
@@ -151,7 +134,7 @@ func TestDispatchCommandHostReportsAcrossProcesses(t *testing.T) {
 	// prove the product CLI can close it across processes without another spawn.
 	_, err = RunDispatch(ws, map[string]any{"action": "report", "sessionId": "session-test", "dispatchId": "wrong", "attemptId": wrong.AttemptID, "outcome": "created", "agentId": "PLACEHOLDER"}, env)
 	check(t, err)
-	check(t, os.Remove(filepath.Join(native, "app-server-control", "app-server-control.sock")))
+	check(t, os.Rename(filepath.Join(native, "state_5.sqlite"), filepath.Join(native, "disconnected.sqlite")))
 	if got := run("completion", map[string]any{"action": "report", "attemptId": complete.AttemptID, "outcome": "complete", "agentId": "child-a"}, 0); got.Action != "complete" {
 		t.Fatal("complete depends on connected host")
 	}
