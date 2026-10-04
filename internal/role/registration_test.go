@@ -420,3 +420,64 @@ func TestRegistrationFaultsPreservePriorAndReportPublication(t *testing.T) {
 	}
 	registrationTestClean(t, home)
 }
+
+func TestRegistrationRawRecheckRefusesEqualDecodedMutation(t *testing.T) {
+	home := registrationTestHome(t)
+	path := filepath.Join(home, "agents/architect.toml")
+	body := []byte("name = \"architect\"\nold \xff\n")
+	decoded := bytes.ReplaceAll(body, []byte{255}, []byte("\uFFFD"))
+	prior := append([]byte("# crw-managed: "+registrationTestHash(decoded)+"\n"), body...)
+	edited := bytes.ReplaceAll(prior, []byte{255}, []byte{254})
+	registrationTestWrite(t, path, prior)
+	_, err := registrationRegister(Architect, []string{home}, func(at registrationStep) error {
+		if at == registrationAfterBackup {
+			registrationTestWrite(t, path, edited)
+		}
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "changed during update") {
+		t.Fatal("equal decoded mutation lost", err)
+	}
+	if !bytes.Equal(registrationTestRead(t, path), edited) {
+		t.Fatal("raced bytes overwritten")
+	}
+	decodedPrior := bytes.ReplaceAll(prior, []byte{255}, []byte("\uFFFD"))
+	if !bytes.Equal(registrationTestRead(t, path+".backup-"+registrationTestHash(decodedPrior)), prior) {
+		t.Fatal("original bytes lost")
+	}
+	registrationTestClean(t, home)
+}
+
+func TestRegistrationCreationSyncFailureAndForeignMarker(t *testing.T) {
+	home := registrationTestHome(t)
+	fault := errors.New("directory sync failed")
+	_, err := registrationRegister(Executor, []string{home}, func(at registrationStep) error {
+		if at == registrationRoleDirSync {
+			return fault
+		}
+		return nil
+	})
+	if !errors.Is(err, fault) {
+		t.Fatal("publication sync error hidden", err)
+	}
+	path := filepath.Join(home, "agents/executor.toml")
+	content := registrationTestRead(t, path)
+	foreign := bytes.Replace(content, []byte("# crw-managed:"), []byte("# codexclaw-managed:"), 1)
+	registrationTestWrite(t, path, foreign)
+	if _, err := RegisterExecutor(home); err == nil || !strings.Contains(err.Error(), "differs") {
+		t.Fatal("foreign marker adopted", err)
+	}
+	if !bytes.Equal(registrationTestRead(t, path), foreign) {
+		t.Fatal("foreign marker changed")
+	}
+	registrationTestClean(t, home)
+}
+
+func TestRegistrationModelStripKeepsOracleFirstMatch(t *testing.T) {
+	registrationTestHome(t)
+	input := "name = \"executor\"\ndeveloper_instructions = \"\"\"\nmodel = \"default\"\nkeep\n\"\"\"\nmodel = \"default\"\n"
+	want := "name = \"executor\"\ndeveloper_instructions = \"\"\"\nkeep\n\"\"\"\nmodel = \"default\"\n"
+	if got := registrationBody(input); got != want {
+		t.Fatalf("body = %q", got)
+	}
+}
