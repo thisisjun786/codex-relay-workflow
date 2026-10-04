@@ -329,8 +329,8 @@ type memoryGatePath struct{ clean, joined string }
 // ".." components kept, which the physical test follows. These readings are the oracle's, made for Windows text: they trim
 // the ends, strip quotes, expand a home prefix and turn a backslash into a separator. On POSIX the destination the shell
 // parser or the tool hands over is an exact name, whose ends may be a space or a quote, whose first word may look like a
-// home prefix and whose backslash is a character (a directory called `\..` is one component), so the text as written is a
-// further candidate, and the oracle's reading stays first. A relative name is opened from the physical cwd, whose own
+// home prefix and whose backslash is a character (a directory called `\..` is one component), so each reading may also be
+// left out, and the oracle's, with all three, stays first. A relative name is opened from the physical cwd, whose own
 // links are followed on their own budget.
 func (g memoryGateEnv) abs(raw, cwd string) []memoryGatePath {
 	if !g.homeOK {
@@ -353,32 +353,34 @@ func (g memoryGateEnv) abs(raw, cwd string) []memoryGatePath {
 		v = v[1:]
 	}
 	var out []memoryGatePath
-	for i, as := range [...]string{v, raw} {
+	for _, as := range [...]string{v, raw} { // every combination of the three readings is a candidate; duplicates are dropped
 		if as == "" {
 			continue
 		}
-		norm, kept := as, as
-		if i == 0 {
-			norm, kept = g.expand(as)
-		}
-		for _, slashes := range [...]bool{true, false} {
-			n, k := norm, kept
-			if slashes {
-				n, k = strings.ReplaceAll(n, "\\", "/"), strings.ReplaceAll(k, "\\", "/")
-			} else if !strings.Contains(k, "\\") {
-				continue
+		for _, expand := range [...]bool{true, false} {
+			norm, kept := as, as
+			if expand {
+				norm, kept = g.expand(as)
 			}
-			var p memoryGatePath
-			switch {
-			case path.IsAbs(n):
-				p = memoryGatePath{path.Clean(n), k}
-			case cwd != "":
-				p = memoryGatePath{resolveFrom(cwd, n), base + "/" + k}
-			default:
-				continue
-			}
-			if !slices.Contains(out, p) {
-				out = append(out, p)
+			for _, slashes := range [...]bool{true, false} {
+				n, k := norm, kept
+				if slashes {
+					n, k = strings.ReplaceAll(n, "\\", "/"), strings.ReplaceAll(k, "\\", "/")
+				} else if !strings.Contains(k, "\\") {
+					continue
+				}
+				var p memoryGatePath
+				switch {
+				case path.IsAbs(n):
+					p = memoryGatePath{path.Clean(n), k}
+				case cwd != "":
+					p = memoryGatePath{resolveFrom(cwd, n), base + "/" + k}
+				default:
+					continue
+				}
+				if !slices.Contains(out, p) {
+					out = append(out, p)
+				}
 			}
 		}
 	}

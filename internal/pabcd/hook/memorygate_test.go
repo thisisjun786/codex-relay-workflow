@@ -556,7 +556,13 @@ func TestMemoryGateFollowsSymlinks(t *testing.T) {
 	if err := os.Symlink(filepath.Join(home, ".codex", "memories", "sub"), filepath.Join(home, `bad\alias`)); err != nil {
 		t.Fatal(err)
 	}
-	for _, dest := range []string{"$HOME/alias/../n.md", "~/alias/../n.md", "${HOME}/alias/../n.md", "$env:USERPROFILE/alias/../n.md", `"$HOME/bad\alias/../n.md"`} {
+	// And names that end in a space or a quote, behind a home prefix.
+	for _, name := range []string{"alias ", "alias'"} {
+		if err := os.Symlink(filepath.Join(home, ".codex", "memories", "new.md"), filepath.Join(home, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, dest := range []string{"$HOME/alias/../n.md", "~/alias/../n.md", "${HOME}/alias/../n.md", "$env:USERPROFILE/alias/../n.md", `"$HOME/bad\alias/../n.md"`, "\"$HOME/alias \"", "\"$HOME/alias'\""} {
 		if got := memoryGateClassify("Bash", map[string]any{"command": "echo hi > " + dest}, cwd, gateEnvOf(map[string]string{"HOME": home})); got.Surface != "shell" {
 			t.Errorf("%s: %+v", dest, got)
 		}
