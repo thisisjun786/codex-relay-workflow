@@ -109,7 +109,7 @@ func registrationRegister(role NativeRoleName, homes []string, fail func(registr
 		return RegistrationResult{}, err
 	}
 	if !st.IsDir() || st.Mode()&fs.ModeSymlink != 0 {
-		return RegistrationResult{}, fmt.Errorf("Refusing non-regular agents directory: %s", dir)
+		return RegistrationResult{}, sentinel(fmt.Sprintf("Refusing non-regular agents directory: %s", dir))
 	}
 	path := filepath.Join(dir, string(role)+".toml")
 	prior, err := registrationRead(path)
@@ -122,7 +122,7 @@ func registrationRegister(role NativeRoleName, homes []string, fail func(registr
 	}
 	if prior != nil {
 		if !registrationManaged(decoded) && decoded != body {
-			return RegistrationResult{}, fmt.Errorf("Existing %s role differs; preserved %s. Compare it with internal/role/%s before updating.", role, path, template)
+			return RegistrationResult{}, sentinel(fmt.Sprintf("Existing %s role differs; preserved %s. Compare it with internal/role/%s before updating.", role, path, template))
 		}
 		return registrationUpdate(role, path, prior, content, fail)
 	}
@@ -161,7 +161,7 @@ func registrationReadWith(path string, afterRead func(*os.File, []byte) error) (
 		return nil, err
 	}
 	if !st.Mode().IsRegular() {
-		return nil, fmt.Errorf("Refusing non-regular role file: %s", path)
+		return nil, sentinel(fmt.Sprintf("Refusing non-regular role file: %s", path))
 	}
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -176,7 +176,7 @@ func registrationReadWith(path string, afterRead func(*os.File, []byte) error) (
 		return nil, err
 	}
 	if !st.Mode().IsRegular() {
-		return nil, fmt.Errorf("Refusing non-regular role file: %s", path)
+		return nil, sentinel(fmt.Sprintf("Refusing non-regular role file: %s", path))
 	}
 	raw, err = io.ReadAll(f)
 	if err == nil && afterRead != nil {
