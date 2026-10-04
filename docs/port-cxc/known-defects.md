@@ -577,3 +577,11 @@ The pinned oracle already publishes through an exclusive 0600 temporary file and
 - Positive days outside JavaScript's Date range throw `Invalid time value` after metadata loading; an empty direct-scan plan returns before that cutoff is evaluated (source `recall/src/chat-search.ts:296-307`; recorded infinite-days and empty-query cases); port: kept.
 - A NaN limit defeats both limit comparisons and the truncation warning, allowing more hits than the maximum advertised cap (source `recall/src/chat-search.ts:313,342,370`; recorded 250-hit dense case); port: kept.
 - The raw JSON file prefilter can miss decoded text containing escaped query characters, even though the per-message matcher would find it (source `recall/src/chat-search.ts:334,349`; recorded escaped `CI` case); port: kept.
+
+## CRW-499 — install features commands
+
+- Enable, disable and status ignore trailing arguments except position-independent help, so an unknown option can still run a mutation (source `config-guard/src/cli.ts:159-167,197-262` at v0.2.40; `TestFeaturesHelpUsageAndStatus`); port: kept.
+- Explicit enable clears the self-heal opt-out even after a soft flag failure, and marker read/write errors are swallowed (source `config-guard/src/cli.ts:199-204,223-227` at v0.2.40; `TestFeaturesSoftAndHardFailures`, `TestFeaturesUnreadableSettingsAndManifest`); port: kept.
+- Disable prints success and exits 0 when individual feature-disable calls fail; failed flags are omitted without a diagnostic (source `config-guard/src/deactivate.ts:184-185`, `src/cli.ts:230-258` at v0.2.40; `TestFeaturesDisableBranches`); port: kept.
+- Repeated enable records the now-enabled flags as pre-existing, losing the earlier feature ownership, while managed-key ownership survives (source `config-guard/src/activate.ts:225-231,269-286` at v0.2.40; `TestFeaturesManagedKeyRoundTrips`); port: kept.
+- Settings and manifest writes can truncate a file when interrupted, and marker read failures can replace unread consent data (source `config-guard/src/activate.ts:278,299`, `src/deactivate.ts:58-65,155`, `src/self-heal.ts:258-269,276-277` at v0.2.40); port: fixed (data loss: command glue reuses the already ported read-refusing, fsynced temporary-file/rename owners; intentionally-changed unreadable-settings command cases preserve dangling links).
