@@ -1,0 +1,20 @@
+{
+  "issue": "CRW-357",
+  "pending": [
+    "cli__loop__init_show_validate_ready",
+    "cli__loop__init_objective_slug_and_session_binding",
+    "cli__loop__work_phases_tasks_and_completion",
+    "cli__loop__criteria_questions_and_steer",
+    "cli__loop__refusals",
+    "cli__loop__nongit_bound_cycle_refused",
+    "cli__loop__held_goalplan_lock_refuses_write",
+    "cli__loop__symlinked_goalplans_root_refused",
+    "cli__orchestrate__bound_goalplan_requires_work_phase_id",
+    "cli__orchestrate__full_cycle_idle_p_a_b_c_d_idle",
+    "cli__orchestrate__split_cwd_cycle_closes_on_real_commit_receipt",
+    "cli__orchestrate__bound_c_to_d_requires_test_receipt",
+    "cli__reset__all_and_goalplans_scopes"
+  ],
+  "identical": [],
+  "intentionally-changed": []
+}
