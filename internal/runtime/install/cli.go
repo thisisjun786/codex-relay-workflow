@@ -28,13 +28,13 @@ const DefaultIssue = "CRW-158"
 const backupHelp = "the directory the whole relay state directory is copied to (copy only, byte for byte, recorded) before a swap that brings the additive DAG zone, or ordinary indexes on tables the store already holds, to a store that lacks them; the acknowledgement that route needs"
 
 // Commands are `crw install`'s subcommands.
-var Commands = []string{"install", "update", "rollback", "remove", "status", "register-mcp", "hook", "register-service", "features"}
+var Commands = []string{"install", "update", "rollback", "remove", "status", "register-mcp", "hook", "register-service", "features", "config"}
 
 func usage(w io.Writer) {
 	// The installer help is a frozen contract; features has its own help surface.
 	var legacy []string
 	for _, command := range Commands {
-		if command != "features" {
+		if command != "features" && command != "config" {
 			legacy = append(legacy, command)
 		}
 	}
@@ -86,6 +86,9 @@ func Main(ctx context.Context, args []string, env scope.Env, stdout, stderr io.W
 	command, rest := args[0], args[1:]
 	if command == "features" {
 		return runFeatures(ctx, rest, env, stdout, stderr)
+	}
+	if command == "config" {
+		return runConfig(rest, env, stdout, stderr)
 	}
 	flags := flag.NewFlagSet("crw install "+command, flag.ContinueOnError)
 	flags.SetOutput(stderr)
