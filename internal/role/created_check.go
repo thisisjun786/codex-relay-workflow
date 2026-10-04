@@ -202,11 +202,12 @@ func createdCheckNative(ctx context.Context, env host.LookupEnv, agent string) (
 		return createdCheckIdentity{}, err
 	}
 	var id, source string
-	var archived int
-	if err := conn.QueryRowContext(ctx, "SELECT id, source, archived FROM threads WHERE id = ?", agent).Scan(&id, &source, &archived); err != nil {
+	if err := conn.QueryRowContext(ctx, "SELECT id, source FROM threads WHERE id = ?", agent).Scan(&id, &source); err != nil {
 		return createdCheckIdentity{}, err
 	}
-	if id != agent || archived != 0 {
+	// The archive flag is a lifecycle fact, not part of the identity: the host archives a child
+	// when it finishes, and the spawn marker below still proves who created it.
+	if id != agent {
 		return createdCheckIdentity{}, errors.New("host thread identity is unavailable")
 	}
 	var marker struct {

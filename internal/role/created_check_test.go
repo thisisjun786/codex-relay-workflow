@@ -222,7 +222,7 @@ func TestCreatedCheckDefaultHostSpawnMarker(t *testing.T) {
 }
 
 func TestCreatedCheckNativeDatabaseRefusalsAndOrdering(t *testing.T) {
-	for _, kind := range []string{"numeric-order", "missing", "symlink-highest", "corrupt-highest", "malformed-marker", "root", "other-subagent", "archived"} {
+	for _, kind := range []string{"numeric-order", "missing", "symlink-highest", "corrupt-highest", "malformed-marker", "root", "other-subagent"} {
 		t.Run(kind, func(t *testing.T) {
 			ws, env, start, _ := dispatchTestFixture(t)
 			native := t.TempDir()
@@ -248,9 +248,6 @@ func TestCreatedCheckNativeDatabaseRefusalsAndOrdering(t *testing.T) {
 					source = `"cli"`
 				case "other-subagent":
 					source = `{"subagent":"review"}`
-				case "archived":
-					_, err := db.Exec("UPDATE threads SET archived=1")
-					check(t, err)
 				}
 				if source != "" {
 					_, err := db.Exec("UPDATE threads SET source=?", source)
