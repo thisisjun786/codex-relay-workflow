@@ -655,3 +655,9 @@ The pinned oracle already publishes through an exclusive 0600 temporary file and
 - Only the first four nonsynthetic user rows are inspected, so four read-time harness blocks hide a later human opener (recall/src/cwd-context.ts:143-157 at v0.2.40); port: kept.
 - Excerpt limits below three use a negative slice end and can produce an excerpt longer than the requested limit (recall/src/cwd-context.ts:156 at v0.2.40); port: kept.
 - Heading whitespace can span line breaks, so a bare heading marker can take the next body line as its summary title (recall/src/cwd-context.ts:231-233 at v0.2.40); port: kept.
+
+## Found by the CRW-507 recall query-condition port
+
+- Short words use SQLite's ASCII-only `lower()` and LIKE folding, so a query for `ü` misses an indexed `Ü` even though the final Unicode text predicate accepts it (source `recall/src/index-search.ts:185-191,268-270`; Node-recorded candidate cases in `internal/recall/testdata/indexquery/oracle.json`); port: kept.
+- With cwd case folding enabled, SQL's ASCII-only `lower()` misses a non-ASCII case variant in a child path (`/Ü/child` for `/ü`) that the explicitly folded scan predicate accepts (source `recall/src/index-search.ts:243-246`; darwin-recorded candidate cases); port: kept.
+- An embedded NUL in a word of at least three code points survives FTS quoting and makes MATCH raise `unterminated string`, although the final text predicate can match that word (source `recall/src/index-search.ts:156-158,185-188`; Node-recorded NUL candidate case); port: kept.
