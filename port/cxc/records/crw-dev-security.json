@@ -1,0 +1,99 @@
+{
+  "origin": {
+    "tag": "v0.2.40",
+    "commit": "3c1459acadeb1906d97c00a598e1457327ae372d",
+    "skills_listing_sha256": "79d9580f39ca27221cb9c24337080e3fe4a1e71f76338c7329fca63f76a32e89"
+  },
+  "table_sha256": "25b5d19d9da7e07d474d2b31bc4d4139c68607457f59174a597f17505f7f23eb",
+  "from": "dev-security",
+  "files": {
+    "SKILL.md": {
+      "original": "e5ffc229501ad576324facf6654f6d4756e4c6759bffc3a2275da62bc60c6a8a"
+    },
+    "agents/openai.yaml": {
+      "original": "d021ff57c2866c358b906978ea81b4b7a1a8f1ce3af2ad865c22cf9d2c11417c"
+    },
+    "references/agent-skill-integrity.md": {
+      "original": "7a45f476af55b6798ed6893ed42933fcf0fc45af41e74a58efba9b9aa1c2bd7d"
+    },
+    "references/agentic-ai-security.md": {
+      "original": "bc3fc5dc68c3334ccc0e3e2aac9b6168d0bf5cd52cab38abe83c73dd3629c278"
+    },
+    "references/asvs-checklist.md": {
+      "original": "45ef89492ee513dbbe6654a52287c8070a489c275e1985d4b5bc73b1c0359a73"
+    },
+    "references/language-quirks.md": {
+      "original": "fdcbbef4aaf390c5eaeddbea957e036c4f178c3d2eba8f9cc37bb5d57c7a3473"
+    },
+    "references/llm-supply-chain.md": {
+      "original": "d90bf394fb474860a557f8232c82bd200bed8f77d5366a26069cfbd312664812"
+    },
+    "references/mcp-supply-chain.md": {
+      "original": "21522a384d63a27819f128245092056973934604713a75ff39cb4d00d029addc"
+    },
+    "references/owasp-top10.md": {
+      "original": "7f01c79737807409b18d7da86a418f64c4fc1e87d3dccb09e037df6c9e2abf96"
+    },
+    "references/static-analysis.md": {
+      "original": "bf786850317d5eb3f960281b72b7c3740a75e97cf87a396e2502ad6da602500c"
+    },
+    "references/supply-chain-sbom.md": {
+      "original": "f3794bfdc661b8ead7f0760fd123145d2ff6b139a81199221a2bb4d26dd005b1"
+    }
+  },
+  "edits": [
+    {
+      "file": "SKILL.md",
+      "reason": "Normalize frontmatter to the repository-supported name and description fields; preserve the invocation description and record the removed oracle metadata.",
+      "hunks": [
+        {
+          "line": 4,
+          "old": [
+            "metadata:\n",
+            "  last-verified: \"2026-07-02\"\n",
+            "  short-description: \"Security router for auth, validation, secrets, supply chain, and hardening.\"\n",
+            "  keywords:\n",
+            "    - xss\n",
+            "    - csrf\n",
+            "    - sql injection\n",
+            "    - jwt\n",
+            "    - oauth\n",
+            "    - secrets\n",
+            "    - owasp\n",
+            "    - auth hardening\n",
+            "    - supply chain\n",
+            "    - threat model\n",
+            "  injection_condition: \"security-sensitive code, trust boundary changes, PII/payment/upload/CI integrity changes, tool-using agents, or security/threat_model task_tags\"\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "agents/openai.yaml",
+      "reason": "Add the required interface default prompt naming the staged CRW skill; preserve the oracle display text and implicit-invocation policy.",
+      "hunks": [
+        {
+          "line": 4,
+          "new": [
+            "  default_prompt: \"Use $crw-dev-security to guide this task and verify its result.\"\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/owasp-top10.md",
+      "reason": "Adapt backticked cross-skill relative paths to the staged crw-* directory names; preserve the referenced guidance.",
+      "hunks": [
+        {
+          "line": 103,
+          "old": [
+            "For full npm trusted-publishing workflow shape, read `../../dev-devops/references/package-release.md`.\n"
+          ],
+          "new": [
+            "For full npm trusted-publishing workflow shape, read `../../crw-dev-devops/references/package-release.md`.\n"
+          ]
+        }
+      ]
+    }
+  ]
+}

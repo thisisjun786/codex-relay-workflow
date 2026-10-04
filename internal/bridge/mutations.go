@@ -29,6 +29,9 @@ type SendMessage struct {
 }
 
 func (b *Bridge) SendMessageToThread(ctx context.Context, in SendMessage) (ledger.Receipt, error) {
+	var watch *appserver.TurnWatch
+	var result ledger.Receipt
+	defer func() { finishSubscription(watch, result, false) }()
 	if err := nonempty(in.ThreadID, "thread_id", 128); err != nil {
 		return nil, err
 	}
@@ -102,7 +105,7 @@ func (b *Bridge) SendMessageToThread(ctx context.Context, in SendMessage) (ledge
 		}
 		return err
 	}
-	return b.mutate(ctx, mutation{in.RequestID, "send_message_to_thread", params, validate, func(ctx context.Context, receipt ledger.Receipt, effects *[]string) error {
+	result, err := b.mutate(ctx, mutation{in.RequestID, "send_message_to_thread", params, validate, func(ctx context.Context, receipt ledger.Receipt, effects *[]string) error {
 		receipt["threadId"] = in.ThreadID
 		receipt["executionPolicy"] = auth.Receipt
 		// Where this connection's server-request stream stood before anything was sent, so the
@@ -127,6 +130,20 @@ func (b *Bridge) SendMessageToThread(ctx context.Context, in SendMessage) (ledge
 		receipt["statusBeforeResume"] = status
 		if status == "notLoaded" {
 			receipt["echoIndependence"] = "not_established"
+			profileRole := in.Role
+			if profileRole == "" {
+				// No binding is available here: an unnamed recipient could be a profiled child.
+				profileRole = "child"
+			}
+			if declared, ok := b.Policy.Role(profileRole); selection.Name == "" && ok && declared.MCP != nil {
+				names := make([]string, 0, len(declared.MCP.Profiles))
+				for name := range declared.MCP.Profiles {
+					names = append(names, name)
+				}
+				slices.Sort(names)
+				message := fmt.Sprintf("Thread is not loaded; expected_settings.mcp_profile is required before resume because role %q declares MCP profiles %s. This bridge cannot read the relay record or infer the released profile. Use a NEW request id stating the recipient's role and the profile it was released with (child.settings.mcpProfile), not the role's default. For a non-child recipient, state its actual declared role; a role without profiles needs none. The existing pair guard still applies; prefer relay delivery, especially for a role with several pairs. No resume or turn was sent.", profileRole, show(anyStrings(names)))
+				return &appserver.RPCError{Method: "thread/read", Message: message, Object: map[string]any{"code": execution.Missing, "message": message}}
+			}
 			if in.Role != "" && !auth.Pinned {
 				message := "Thread is not loaded and this request's model and effort were not checked against a declared role pair; message withheld"
 				if auth.Provenance == "role_pair" {
@@ -141,6 +158,9 @@ func (b *Bridge) SendMessageToThread(ctx context.Context, in SendMessage) (ledge
 				return MCPRefusal("config/read", err)
 			}
 			receipt["mcpProfile"] = info
+		}
+		if watch, err = b.watchSubscription(ctx, in.ThreadID); err != nil {
+			return err
 		}
 		resumed, err := b.dispatch(ctx, "thread/resume", contract.ResumeParams(in.ThreadID), effects)
 		if err != nil {
@@ -177,6 +197,7 @@ func (b *Bridge) SendMessageToThread(ctx context.Context, in SendMessage) (ledge
 		}
 		return nil
 	}, nil, nil})
+	return result, err
 }
 
 // serverRequests is the part of appserver.Client that records server-to-client requests.

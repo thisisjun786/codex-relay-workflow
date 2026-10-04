@@ -768,6 +768,10 @@ transmitted nor compared. A parent's or a child's pair, which policy derived, is
 resumed exactly as before, carrying its settings. The bridge's own tool path still refuses the unloaded case, because it reads no binding and does not
 load a thread without transmitting, so an operator message to an unloaded supervisor through it
 still waits for the host to load that thread.
+The pair guard still cannot resolve an omitted role. Separately, a bridge send naming no MCP profile
+refuses an unnamed `notLoaded` recipient when the host declares child profiles, since that recipient
+could be a profiled child. State the recipient's actual declared role and, where applicable, the
+released `expected_settings.mcp_profile`; this does not bypass the existing pair guard.
 
 `supervisor-stage` refuses `--event` with `--observation` and `--project` with `--recipient`
 rather than ignoring the one it cannot use.
