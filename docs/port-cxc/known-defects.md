@@ -630,3 +630,8 @@ The pinned oracle already publishes through an exclusive 0600 temporary file and
 - The CLI checks the raw session path but reads a sanitized path, so an explicit id containing spaces or punctuation can pass existence for one file and report another file's phase (source `orchestrate-cli.ts:328-330,414-418,509-516`, `state.ts:327-329`; recorded raw/sanitized case); port: kept.
 - With no resolved session, status prints plain `no active session` even under `--json`, making that success response a different output form (source `orchestrate-cli.ts:500-501`; recorded empty JSON case); port: kept.
 - A sessions directory that exists but cannot be listed escapes the CLI's advertised never-throws behavior; the Go library propagates that IO error instead of turning it into success or a missing-session refusal (source `orchestrate-cli.ts:306,423,498`; deterministic non-directory listing test); port: kept.
+
+## Found by the recall ingest port (CRW-363)
+
+- A larger rewrite is assumed to be an append, leaving the previous prefix indexed and reporting fresh after the new fingerprint is stored (source `plugins/codexclaw/components/recall/src/ingest.ts:222-246`; recorded growth-rewrite case); port: kept.
+- A rewrite preserving size and integer-millisecond mtime is skipped, so its old text remains indexed and freshness reports no change (source `plugins/codexclaw/components/recall/src/ingest.ts:68-73,215`; recorded same-fingerprint case); port: kept.
