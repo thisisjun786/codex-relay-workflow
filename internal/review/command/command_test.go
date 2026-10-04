@@ -31,7 +31,7 @@ type repo struct {
 // clearEnv blanks the settings a developer's environment may carry, which the command reads.
 func clearEnv(t *testing.T) {
 	t.Helper()
-	for _, name := range []string{"STATE_DIR", "DAILY_CAP", "MODEL", "AGY", "LOCK", "LOCK_WAIT", "TIME_LIMIT_FLOOR", "TIME_LIMIT_CEILING"} {
+	for _, name := range []string{"STATE_DIR", "DAILY_CAP", "MODEL", "AGY", "GH", "LOCK", "LOCK_WAIT", "TIME_LIMIT_FLOOR", "TIME_LIMIT_CEILING"} {
 		t.Setenv("CRW_REVIEW_"+name, "")
 	}
 }
@@ -117,6 +117,7 @@ type fixture struct {
 	state, out, lock string
 	s                *script
 	at               time.Time // the fake clock
+	forge            forge     // when set, --post-summary talks to it instead of the gh CLI
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -137,7 +138,7 @@ func (f *fixture) args(head string, extra ...string) []string {
 // run is the command with the scripted runner; it is safe to call from a goroutine.
 func (f *fixture) run(head string, extra ...string) (int, Summary, string) {
 	var out, errOut bytes.Buffer
-	code := run(context.Background(), f.args(head, extra...), &out, &errOut, env{f.s.run, func() time.Time { return f.at }})
+	code := run(context.Background(), f.args(head, extra...), &out, &errOut, env{runner: f.s.run, now: func() time.Time { return f.at }, forge: func(Config) forge { return f.forge }})
 	var sum Summary
 	if out.Len() > 0 {
 		if err := json.Unmarshal(out.Bytes(), &sum); err != nil {
@@ -183,9 +184,10 @@ func TestSamePatchIDIsReviewedOnce(t *testing.T) {
 	}
 }
 
-func TestUnavailableArtifactStillCountsAsReviewed(t *testing.T) {
+// An unavailable artifact whose reason is not a problem of the account or the configuration is a result: it closes the patch (TestRetryRule has the rest).
+func TestUnavailableArtifactOfAnotherReasonStillCountsAsReviewed(t *testing.T) {
 	f := newFixture(t)
-	f.s.result = agy.Result{Class: agy.ClassUnavailable, Reason: agy.ReasonQuota}
+	f.s.result = agy.Result{Class: agy.ClassUnavailable, Reason: agy.ReasonCrash}
 	h := f.repo.change(f.base, 2)
 	if code, first, errOut := f.run(h); code != 0 || first.Status != string(review.StatusUnavailable) {
 		t.Fatalf("unavailable review: %d %+v %s", code, first, errOut)

@@ -33,6 +33,9 @@ type Config struct {
 	LockWait                     time.Duration // for the run lock and for agy's own lock; default 30 minutes, negative tries once
 	TimeLimitFloor               time.Duration // the agy call time limits; zero takes agy's defaults
 	TimeLimitCeiling             time.Duration
+	PostSummary                  bool   // keep the summary comment on pull request PR
+	PR                           int    // the pull request, with PostSummary
+	Gh                           string // the gh executable that talks to the forge; default "gh"
 }
 
 // parseConfig reads args; exit is the status to stop with, or -1 to carry on. A problem with a value of the environment is a usage error like one with a flag.

@@ -27,6 +27,7 @@ const (
 	OutcomeReviewed        = "reviewed"
 	OutcomeAlreadyReviewed = "already_reviewed"
 	OutcomeDailyCap        = "daily_cap_reached"
+	OutcomeRetryDeferred   = "retry_deferred"
 )
 
 // Exit statuses besides usageExit.
@@ -52,7 +53,16 @@ type Summary struct {
 	// already_reviewed only: the head of the earlier review, and whether its artifact file is there now.
 	ReviewedHead    string `json:"reviewedHead,omitempty"`
 	ArtifactPresent *bool  `json:"artifactPresent,omitempty"`
+	// The first UTC day (2006-01-02) on which the one more attempt of a review that could not run is allowed.
+	RetryNotBefore string  `json:"retryNotBefore,omitempty"`
+	Comment        *Posted `json:"summaryComment,omitempty"`
 	*Counts                // a review that ran
+}
+
+// Posted says what --post-summary did to the pull request: created, updated or unchanged the one summary comment.
+type Posted struct {
+	Action string `json:"action"`
+	URL    string `json:"url,omitempty"`
 }
 
 type Counts struct {
@@ -65,6 +75,7 @@ type Counts struct {
 type env struct {
 	runner pipeline.Runner
 	now    func() time.Time
+	forge  func(Config) forge // nil: the gh CLI of the checkout
 }
 
 // Run is crw review.
@@ -73,7 +84,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// agy running with both locks released. Cancelling the context makes the runner kill agy's group first.
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
-	return run(ctx, args, stdout, stderr, env{agy.Run, time.Now})
+	return run(ctx, args, stdout, stderr, env{runner: agy.Run, now: time.Now})
 }
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) int {
