@@ -441,7 +441,7 @@ func TestMergeBuildEnvKeepsTheCallersGoSettingsFile(t *testing.T) {
 		{"off", ""},
 	} {
 		t.Setenv("GOENV", c.set)
-		env, err := mergeBuildEnv(context.Background(), []string{"A=1"}, t.TempDir())
+		env, err := mergeBuildEnv(context.Background(), []string{"A=1", "HOME=" + t.TempDir()}, t.TempDir())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -459,12 +459,13 @@ func TestMergeBuildEnvKeepsTheCallersGoSettingsFile(t *testing.T) {
 }
 
 // The go tool on darwin reads the directory it keeps telemetry in from HOME, not from
-// XDG_CONFIG_HOME, so the darwin environment moves HOME into the directory the run owns and names
-// the three cache locations the caller's go environment holds before that, so the tool still builds
-// against the caller's caches. Linux keeps the caller's HOME (CRW-562).
+// XDG_CONFIG_HOME, so the darwin environment moves HOME into the directory the run owns, reads the
+// three cache locations the caller's go environment holds without running a go command under the
+// caller's home either, and pins the caller's values. Linux keeps the caller's HOME (CRW-562).
 func TestMergeBuildEnvMovesOnlyTheDarwinHome(t *testing.T) {
-	caller := os.Environ()
-	caches := mbcCallerGoEnv(t, caller)
+	callerHome := t.TempDir()
+	callerConfig := t.TempDir()
+	caller := append(os.Environ(), "HOME="+callerHome, "XDG_CONFIG_HOME="+callerConfig)
 	owned := t.TempDir()
 	darwinEnv, err := mergeBuildEnv(context.Background(), caller, owned, "darwin")
 	if err != nil {
@@ -478,6 +479,13 @@ func TestMergeBuildEnvMovesOnlyTheDarwinHome(t *testing.T) {
 	if info, err := os.Stat(home); err != nil || !info.IsDir() {
 		t.Errorf("darwin: the owned home is not a directory: %v", err)
 	}
+	if left, _ := os.ReadDir(callerHome); len(left) != 0 {
+		t.Errorf("darwin: the cache read wrote to the caller's home: %v", left)
+	}
+	if left, _ := os.ReadDir(callerConfig); len(left) != 0 {
+		t.Errorf("darwin: the cache read wrote to the caller's config directory: %v", left)
+	}
+	caches := mbcCallerGoEnv(t, caller)
 	for key, want := range map[string]string{"GOCACHE": caches[0], "GOMODCACHE": caches[1], "GOPATH": caches[2]} {
 		if got[key] != want {
 			t.Errorf("darwin: %s=%q, want the caller's %q", key, got[key], want)
@@ -489,6 +497,27 @@ func TestMergeBuildEnvMovesOnlyTheDarwinHome(t *testing.T) {
 	}
 	if got, want := mbcLastEnv(linuxEnv)["HOME"], mbcLastEnv(caller)["HOME"]; got != want {
 		t.Errorf("linux: HOME=%q, want the caller's %q", got, want)
+	}
+}
+
+// What go env answers is a value in itself: a path that ends in a space is the path, not another
+// one trimmed into shape (CRW-562).
+func TestMergeBuildEnvKeepsWhatGoEnvAnswers(t *testing.T) {
+	bin := t.TempDir()
+	shim := "#!/bin/sh\nprintf '%s\\n' '/cache with space/ ' '/mod' '/gopath'\n"
+	if err := os.WriteFile(filepath.Join(bin, "go"), []byte(shim), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	env, err := mergeBuildEnv(context.Background(), []string{"HOME=/caller"}, t.TempDir(), "darwin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := mbcLastEnv(env)
+	for key, want := range map[string]string{"GOCACHE": "/cache with space/ ", "GOMODCACHE": "/mod", "GOPATH": "/gopath"} {
+		if got[key] != want {
+			t.Errorf("%s=%q, want %q", key, got[key], want)
+		}
 	}
 }
 

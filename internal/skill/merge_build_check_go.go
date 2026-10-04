@@ -119,23 +119,64 @@ func mergeBuildEnv(ctx context.Context, base []string, owned string, targetOS ..
 	}
 	env = append(env, "GOWORK=off", "XDG_CONFIG_HOME="+config, "TMPDIR="+tmp, "GOTMPDIR="+tmp)
 	if goos == "darwin" {
-		caches, err := mergeBuildCallerCaches(ctx, base)
-		if err != nil {
-			return nil, err
-		}
 		home := filepath.Join(owned, "home")
 		if err := os.MkdirAll(home, 0o700); err != nil {
 			return nil, err
+		}
+		// The read must not run with the caller's HOME either: every go command started there
+		// initializes telemetry under it, and on darwin the telemetry directory is the one under
+		// HOME. So it runs with the owned HOME, and a value that lands under that home is the
+		// caller's own default with the home prefix swapped, which is swapped back here.
+		readEnv := append(append([]string{}, env...), "HOME="+home)
+		caches, err := mergeBuildCallerCaches(ctx, readEnv)
+		if err != nil {
+			return nil, err
+		}
+		callerHome := mergeBuildEnvValue(base, "HOME")
+		if callerHome == "" {
+			callerHome = os.Getenv("HOME")
+		}
+		for i, value := range caches {
+			caches[i] = mergeBuildCallerPath(value, home, callerHome)
 		}
 		env = append(env, "HOME="+home, "GOCACHE="+caches[0], "GOMODCACHE="+caches[1], "GOPATH="+caches[2])
 	}
 	return env, nil
 }
 
+// mergeBuildEnvValue is what an environment slice gives a key: of duplicated names the last value,
+// as the go tool reads them.
+func mergeBuildEnvValue(env []string, key string) string {
+	value := ""
+	for _, kv := range env {
+		if k, v, ok := strings.Cut(kv, "="); ok && k == key {
+			value = v
+		}
+	}
+	return value
+}
+
+// mergeBuildCallerPath turns a value computed for one home into the value for another: a path that
+// landed inside the owned home is the caller's default under that home, so its prefix becomes the
+// caller's home; anything else, which is what the caller's environment or settings file names, is
+// itself.
+func mergeBuildCallerPath(value, ownedHome, callerHome string) string {
+	if callerHome == "" {
+		return value
+	}
+	rest, ok := strings.CutPrefix(value, ownedHome+string(filepath.Separator))
+	if !ok {
+		return value
+	}
+	return filepath.Join(callerHome, rest)
+}
+
 // mergeBuildCallerCaches reads the build cache, the module cache and GOPATH the caller's go
 // environment names, so that moving HOME on darwin does not move the caches away from the caller.
 // It runs in a process group of its own that the check's context ends as a whole, so a go env that
-// stalls is cut off with the check instead of keeping it running past its timeout.
+// stalls is cut off with the check instead of keeping it running past its timeout. The caller has
+// already pointed the environment it passes at the run's own home, whose go defaults are the
+// caller's own with the home prefix changed; the caller swaps that prefix back.
 func mergeBuildCallerCaches(ctx context.Context, base []string) ([3]string, error) {
 	var caches [3]string
 	goTool, err := exec.LookPath("go")
@@ -151,13 +192,13 @@ func mergeBuildCallerCaches(ctx context.Context, base []string) ([3]string, erro
 	if err != nil {
 		return caches, err
 	}
-	lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+	// A line is the value itself: go env preserves whatever a path holds, including a trailing
+	// space, so only the newline that ends the last line is dropped.
+	lines := strings.Split(strings.TrimSuffix(string(out), "\n"), "\n")
 	if len(lines) != 3 {
 		return caches, fmt.Errorf("go env GOCACHE GOMODCACHE GOPATH answered %d lines, want 3", len(lines))
 	}
-	for i, line := range lines {
-		caches[i] = strings.TrimSpace(line)
-	}
+	copy(caches[:], lines)
 	return caches, nil
 }
 
