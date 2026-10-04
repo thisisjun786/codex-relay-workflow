@@ -294,9 +294,11 @@ func repositoryRoot() (string, error) {
 	return resolve(strings.TrimSpace(string(out))), nil
 }
 
-// Validate is `crw-dev ci validate`: skill metadata, local link paths and no Python outside skill assets.
+// Validate is `crw-dev ci validate`: skill metadata, local link paths, no Python outside skill assets
+// and no blob over 2 MiB brought into the history.
 func Validate(args []string, stdout, stderr io.Writer) int {
-	if code := parseFlags(newFlags("validate"), "Validate this repository's supported metadata format and link paths, and that Python sits only in skill assets.",
+	if code := parseFlags(newFlags("validate"), "Validate this repository's supported metadata format and link paths, that Python sits only in skill assets, "+
+		"and that no blob over 2 MiB comes into the history (BLOB_RANGE_BASE and GITHUB_EVENT_NAME give the range; see docs/CI.md).",
 		args, stdout, stderr); code >= 0 {
 		return code
 	}
@@ -340,9 +342,14 @@ func Validate(args []string, stdout, stderr io.Writer) int {
 	if count == 0 {
 		errs = append(errs, "No skills validated")
 	}
+	blobErrs, blobSummary := largeBlobCheck(root, os.Getenv)
+	errs = append(errs, blobErrs...)
 	if len(errs) > 0 {
 		return failf(stderr, "%s", strings.Join(errs, "\n"))
 	}
 	fmt.Fprintf(stdout, "Validated %d skills, local link paths and no Python outside skill assets.\n", count)
+	if blobSummary != "" {
+		fmt.Fprintln(stdout, blobSummary)
+	}
 	return 0
 }

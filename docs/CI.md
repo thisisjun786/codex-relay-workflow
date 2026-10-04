@@ -8,7 +8,7 @@ Installing and operating the runtime is [runtime installation](runtime-install.m
 
 | Command | Where CI runs it |
 | --- | --- |
-| `crw-dev ci validate` | `validate`: skill metadata, local Markdown links, and that Python sits only in skill assets: a `.py` file or a python-shebang script, tracked or untracked and not ignored, fails it unless it is below `<skill>/scripts/` or `<skill>/examples/` of `plugins/crw/skills` or `port/cxc/skills` (`TestTrackedPythonStaysInSkillAssets` holds the tracked files for `make test`); CI installs no Python and runs no skill script (`TestWorkflow_installs_no_python`) |
+| `crw-dev ci validate` | `validate`: skill metadata, local Markdown links, and that Python sits only in skill assets: a `.py` file or a python-shebang script, tracked or untracked and not ignored, fails it unless it is below `<skill>/scripts/` or `<skill>/examples/` of `plugins/crw/skills` or `port/cxc/skills` (`TestTrackedPythonStaysInSkillAssets` holds the tracked files for `make test`); CI installs no Python and runs no skill script (`TestWorkflow_installs_no_python`); and that no blob over 2 MiB comes into the history unless the allow list names it ([large blobs](#large-blobs)) |
 | `crw-dev ci plugin` | `validate`: plugin package shape, payload hygiene and the recorded version digest ([below](#plugin-package)) |
 | `crw-dev ci contracts` | `validate`: the offline contract checks built into `crw-dev`: the hook replay, the operations shape check (`crw-dev ci operations`), the component definition, the start-policy self-test and the parent-title replay |
 | `bash scripts/ci/secrets.sh` | `secrets`: checksum-pinned Gitleaks scan: the commits a pull request adds to its base on a pull request, all fetched history on any other event ([scope](#secret-scanning)) |
@@ -178,6 +178,51 @@ Secret scanning is not proof that every private fact or credential was detected.
 and publication history separately. A PR can change the scanner and workflow, so review those
 changes as changes to the gate itself. Do not upload secret-bearing findings; keep output
 redacted and repair with the owner.
+
+## Large blobs
+
+This repository merges pull requests with merge commits, so every blob of every commit on a branch
+becomes part of `dev`'s public history, and a public history cannot drop it again: deleting or
+shrinking the file in a later commit leaves the blob behind. `crw-dev ci validate` therefore refuses
+any blob over 2 MiB (2,097,152 bytes, measured uncompressed) that the range under judgment brings
+into the history, unless [`.large-blob-allowlist.json`](../.large-blob-allowlist.json) names its path
+with a ceiling that covers it.
+
+The range follows the event, and `validate` learns it from two variables (its workflow step has no
+flag, as the secrets script has none). On a `pull_request` run the workflow passes the event's base tip
+as `BLOB_RANGE_BASE` and the check judges `base..HEAD`: the commits the pull request adds,
+intermediate commits included, so a blob that a later commit deletes is still refused. A pull request
+run without a usable base is refused, as the secrets scan refuses it. On a push to `dev` the variable
+carries the commit the push replaced, and the check judges the commits the push adds. With no base (a
+manual dispatch, a push that created the branch, a base that does not resolve, a local run) every blob
+reachable from `HEAD` is judged: stricter, never weaker. The job fetches full history, and a shallow
+checkout is refused, because its boundary commit's whole tree would look new. To check a branch before
+pushing it, run `BLOB_RANGE_BASE=origin/dev go run -tags dev ./cmd/crw-dev ci validate`; without the
+variable the whole history of the branch is judged. A repository with no commit has nothing to judge.
+
+A blob is new when `HEAD` reaches it and the base does not: a blob the base's history held and dropped
+before the base is not new again. The refusal names each offending path, the exact size, the commit that
+brought the blob first and that commit's subject. It then says how to shrink the file (regenerate a
+generated input deterministically in the test that uses it; check a large record by its hash and
+count), how to name it in the allow list, and how to rebuild the branch from its base: a new branch
+from the base, `git merge --squash` of the old branch, the file shrunk or removed, a commit, a push of
+the new branch and a replacement pull request with the old one closed unmerged, so that no commit that
+carries the blob reaches `dev`.
+
+The allow list starts empty (`{"entries": []}`). An entry is `{"path": ..., "max_bytes": ...,
+"reason": ...}`: the exact repository path as git records it, a ceiling above 2 MiB and the reason the
+file has to be committed. The file is read from the working tree and strictly: unknown keys, duplicate
+or unclean paths, an empty reason and a ceiling that is not an integer above the limit are refused. Keep
+an entry for as long as its blob is in the history, because a run that judges the whole history (a local
+run, a manual dispatch) judges the blob again. The list is part of the change, so a pull request can add
+a file and its own entry; review the entry's reason as the gate itself is reviewed.
+
+Limits. The size is the object's uncompressed size. On a push to `dev` the blob is already public when
+the check runs; the failure is the report, and the repair is a follow-up (shrink the file, or name it)
+because `dev`'s history cannot be rewritten. `base.sha` is the base tip at the time of the event, so
+commits that reached `dev` between that moment and the run count as the pull request's own, as in the
+secrets scan. Files no commit holds yet are not judged.
+
 
 ## Activation
 
