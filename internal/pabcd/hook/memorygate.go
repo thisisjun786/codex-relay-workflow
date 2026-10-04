@@ -178,8 +178,8 @@ func memoryGateClassify(tool string, input any, cwd string, env host.LookupEnv) 
 			candidates = memoryGatePatchTargets(command)
 		}
 		for _, candidate := range candidates {
-			if clean, joined := g.abs(candidate, cwd); memoryGateIsPath(clean, joined, root) {
-				return MemoryWriteAttempt{Surface: "edit", Target: clean}
+			if target, ok := g.hit(candidate, cwd, root); ok {
+				return MemoryWriteAttempt{Surface: "edit", Target: target}
 			}
 		}
 	case memoryGateShellTool(tool):
@@ -187,8 +187,8 @@ func memoryGateClassify(tool string, input any, cwd string, env host.LookupEnv) 
 		// perl and ruby -i operands are the write surface (ShellWriteDestinations).
 		command, _ := record["command"].(string)
 		for _, token := range ShellWriteDestinations(command) {
-			if clean, joined := g.abs(token, cwd); memoryGateIsPath(clean, joined, root) {
-				return MemoryWriteAttempt{Surface: "shell", Target: clean}
+			if target, ok := g.hit(token, cwd, root); ok {
+				return MemoryWriteAttempt{Surface: "shell", Target: target}
 			}
 		}
 	}
@@ -246,8 +246,9 @@ func memoryGateDirective(s string) (string, bool) {
 	return "", false
 }
 
-// memoryGateDot is what /.+/ matches to the end of the input in JavaScript: something, with no line terminator in it.
-func memoryGateDot(s string) bool { return s != "" && !strings.ContainsAny(s, "\n\r\u2028\u2029") }
+// memoryGateDot is what /.+/ must match to the end of the line: something. The oracle's JavaScript dot refuses U+2028 and
+// U+2029, so a patch path holding one was never read, although apply_patch accepts such a name.
+func memoryGateDot(s string) bool { return s != "" }
 
 // memoryGateEnv is what the gate reads of the environment: the home directory (Node's os.homedir(), which the oracle's
 // expandHomePrefix asks for on every path) and CODEX_HOME, which names the memories root.
@@ -283,13 +284,14 @@ type memoryGatePrefix struct{ prefix, base string }
 // expand is expandHomePrefix: a home prefix of shell text or of a patch header, in any case, followed by a slash or a
 // backslash. Shell text also names the root through ${HOME}, $CODEX_HOME and ${CODEX_HOME}, which the shell expands to it
 // and the oracle read as relative paths. The case folding is ASCII only, as the prefixes are: JavaScript does not fold the
-// dotted capital I of U+0130 to an ASCII letter.
-func (g memoryGateEnv) expand(raw string) string {
+// dotted capital I of U+0130 to an ASCII letter. norm is the expansion joined and cleaned as the oracle does; kept is the same
+// expansion with the ".." components of the text left alone, because an open follows them from the place a link led to.
+func (g memoryGateEnv) expand(raw string) (norm, kept string) {
 	if raw == "~" {
-		return g.home
+		return g.home, g.home
 	}
 	if strings.HasPrefix(raw, "~/") || strings.HasPrefix(raw, "~\\") {
-		return path.Join(g.home, raw[2:])
+		return memoryGateJoin(g.home, raw[2:])
 	}
 	prefixes := []memoryGatePrefix{{"%userprofile%", g.home}, {"$env:userprofile", g.home}, {"$home", g.home}, {"${home}", g.home}}
 	if g.codexHome != "" {
@@ -303,19 +305,29 @@ func (g memoryGateEnv) expand(raw string) string {
 	}
 	for _, p := range prefixes {
 		if string(lower) == p.prefix {
-			return p.base
+			return p.base, p.base
 		}
 		if len(raw) > len(p.prefix) && string(lower[:len(p.prefix)]) == p.prefix && (raw[len(p.prefix)] == '/' || raw[len(p.prefix)] == '\\') {
-			return path.Join(p.base, raw[len(p.prefix)+1:])
+			return memoryGateJoin(p.base, raw[len(p.prefix)+1:])
 		}
 	}
-	return raw
+	return raw, raw
 }
+
+func memoryGateJoin(base, rest string) (norm, kept string) {
+	if base == "" {
+		return path.Join(base, rest), rest
+	}
+	return path.Join(base, rest), base + "/" + rest
+}
+
+type memoryGatePath struct{ clean, joined string }
 
 // abs is absolutize: the quotes off the ends, the home prefix expanded, backslashes read as slashes, and the path resolved
 // against cwd. clean is that path, which the lexical test reads and the deny reason names; joined is the same path with its
-// ".." components kept, which the physical test follows.
-func (g memoryGateEnv) abs(raw, cwd string) (clean, joined string) {
+// ".." components kept, which the physical test follows. The oracle read a backslash as a separator for Windows; on POSIX it
+// is a character of a name (a directory called `\..` is one component), so the text read as written is a second candidate.
+func (g memoryGateEnv) abs(raw, cwd string) []memoryGatePath {
 	v := text.Trim(raw)
 	head, tail := v != "" && (v[0] == '"' || v[0] == '\''), len(v) > 1 && (v[len(v)-1] == '"' || v[len(v)-1] == '\'')
 	if tail {
@@ -325,16 +337,35 @@ func (g memoryGateEnv) abs(raw, cwd string) (clean, joined string) {
 		v = v[1:]
 	}
 	if v == "" || !g.homeOK {
-		return "", ""
+		return nil
 	}
-	v = strings.ReplaceAll(g.expand(v), "\\", "/")
-	switch {
-	case path.IsAbs(v):
-		return path.Clean(v), v
-	case cwd == "":
-		return "", ""
+	norm, kept := g.expand(v)
+	var out []memoryGatePath
+	for _, slashes := range [...]bool{true, false} {
+		n, k := norm, kept
+		if slashes {
+			n, k = strings.ReplaceAll(n, "\\", "/"), strings.ReplaceAll(k, "\\", "/")
+		} else if !strings.Contains(n, "\\") {
+			continue
+		}
+		switch {
+		case path.IsAbs(n):
+			out = append(out, memoryGatePath{path.Clean(n), k})
+		case cwd != "":
+			out = append(out, memoryGatePath{resolveFrom(cwd, n), resolveFrom(cwd, "") + "/" + k})
+		}
 	}
-	return resolveFrom(cwd, v), resolveFrom(cwd, "") + "/" + v
+	return out
+}
+
+// hit says whether a destination named in a command or a patch is the memories root or inside it, and names it as the deny does.
+func (g memoryGateEnv) hit(raw, cwd, root string) (string, bool) {
+	for _, p := range g.abs(raw, cwd) {
+		if memoryGateIsPath(p.clean, p.joined, root) {
+			return p.clean, true
+		}
+	}
+	return "", false
 }
 
 // memoryGateIsPath is isMemoryPath: the path is the memories root or inside it, on a separator boundary so that a sibling

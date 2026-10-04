@@ -292,7 +292,7 @@ func TestMemoryGatePatchTargets(t *testing.T) {
 		{"+++ /a/b.md\n+++ b/\n", []string{"/a/b.md", "b/"}},
 		{"  *** Add File:  /x \r\n*** Delete File: y\r\n*** Update File: z", []string{"/x", "y", "z"}},
 		{"*** Move File: m\n*** Move to: n/o.md", []string{"m", "n/o.md"}},
-		{"*** Add File: a\u2028b\n*** Add File:\n*** Add File: ", []string{}},
+		{"*** Add File: a\u2028b\n*** Add File:\n*** Add File: ", []string{"a\u2028b"}},
 		{"--- a/x\n*** Begin Patch\n*** End Patch", []string{}},
 	} {
 		if got := memoryGatePatchTargets(c.patch); !reflect.DeepEqual(got, c.want) && !(len(got) == 0 && len(c.want) == 0) {
@@ -320,6 +320,8 @@ func TestMemoryGateEditSurface(t *testing.T) {
 		{"elsewhere", "apply_patch", patch("*** Update File: src/index.ts\n+hi\n"), ""},
 		{"sibling sharing the prefix", "apply_patch", patch("*** Add File: " + root + "-backup/x.md\n+hi\n"), ""},
 		{"the root's parent", "Write", map[string]any{"file_path": filepath.Dir(root) + "/n.md"}, ""},
+		{"line separator in the name", "apply_patch", patch("*** Add File: " + root + "/a\u2028b.md\n+hi\n"), "edit"},
+		{"backslash directory in the name", "Write", map[string]any{"file_path": root + "/\\../x.md"}, "edit"},
 		{"string input", "apply_patch", "junk", ""},
 		{"no command", "apply_patch", map[string]any{}, ""},
 	} {
@@ -409,17 +411,31 @@ func TestMemoryGateHomeForms(t *testing.T) {
 // The JavaScript spelling of absolutize: one quote off each end, ASCII-only case folding of the prefixes, and the path resolved.
 func TestMemoryGateAbsolutize(t *testing.T) {
 	g := newMemoryGateEnv(gateEnvOf(map[string]string{"HOME": "/h"}))
+	first := func(raw, cwd string) string {
+		if p := g.abs(raw, cwd); len(p) > 0 {
+			return p[0].clean
+		}
+		return ""
+	}
 	for raw, want := range map[string]string{
 		"~": "/h", "'~/x'": "/h/x", `~\x\y`: "/h/x/y", `%UserProfile%/a`: "/h/a", `$env:USERPROFILE\a`: "/h/a", "$Home/a": "/h/a", "$HOME": "/h",
 		"${home}/a": "/h/a", "\"/a/b/\"": "/a/b", "./x": "/w/x", "../x": "/x", "a/../../x": "/x", "": "", "\"": "", "''": "", "   ": "",
 		"~user/x": "/w/~user/x", "$HOMEx/a": "/w/$HOMEx/a", "%USERPROFİLE%": "/w/%USERPROFİLE%", "'a": "/w/a", `a\b`: "/w/a/b", "\"'a'\"": "/w/'a'",
 	} {
-		if got, _ := g.abs(raw, "/w"); got != want {
+		if got := first(raw, "/w"); got != want {
 			t.Errorf("%q: %q, want %q", raw, got, want)
 		}
 	}
-	if got, _ := g.abs("x", ""); got != "" {
+	if got := first("x", ""); got != "" {
 		t.Errorf("a relative path with no cwd: %q", got)
+	}
+	// A backslash is a separator for the oracle and a name character on POSIX: both readings are candidates, and the joined
+	// form keeps its "..".
+	if got := g.abs(`a\..\b`, "/w"); len(got) != 2 || got[0] != (memoryGatePath{"/w/b", "/w/a/../b"}) || got[1] != (memoryGatePath{"/w/a\\..\\b", "/w/a\\..\\b"}) {
+		t.Errorf("candidates: %+v", got)
+	}
+	if got := g.abs("~/x/../y", "/w"); len(got) != 1 || got[0] != (memoryGatePath{"/h/y", "/h/x/../y"}) {
+		t.Errorf("home prefix: %+v", got)
 	}
 }
 
@@ -471,6 +487,36 @@ func TestMemoryGateFollowsSymlinks(t *testing.T) {
 	for command, want := range map[string]bool{"echo hi > " + dir + "/real/memories/n.md": true, "echo hi > " + dir + "/real/other.md": false} {
 		if got := memoryGateClassify("Bash", map[string]any{"command": command}, cwd, linked); (got.Surface == "shell") != want {
 			t.Errorf("linked CODEX_HOME %s: %+v, want gated %v", command, got, want)
+		}
+	}
+	// A home prefix is expanded without cleaning the ".." that follows a link.
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".codex", "memories", "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(home, ".codex", "memories", "sub"), filepath.Join(home, "alias")); err != nil {
+		t.Fatal(err)
+	}
+	for _, dest := range []string{"$HOME/alias/../n.md", "~/alias/../n.md", "${HOME}/alias/../n.md", "$env:USERPROFILE/alias/../n.md"} {
+		if got := memoryGateClassify("Bash", map[string]any{"command": "echo hi > " + dest}, cwd, gateEnvOf(map[string]string{"HOME": home})); got.Surface != "shell" {
+			t.Errorf("%s: %+v", dest, got)
+		}
+	}
+}
+
+// On POSIX a backslash is a character of a name, so a directory called `\..` inside the root is a place the oracle's
+// separator reading sent somewhere else.
+func TestMemoryGateReadsABackslashAsPartOfAName(t *testing.T) {
+	cwd, root, env := gateScene(t)
+	if err := os.MkdirAll(filepath.Join(root, `\..`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for command, want := range map[string]bool{
+		"echo hi > '" + root + `/\../note.md'`:               true,
+		"echo hi > '" + filepath.Dir(root) + `/\../note.md'`: false,
+	} {
+		if got := memoryGateClassify("Bash", map[string]any{"command": command}, cwd, env); (got.Surface == "shell") != want {
+			t.Errorf("%s: %+v, want gated %v", command, got, want)
 		}
 	}
 }
