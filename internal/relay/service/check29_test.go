@@ -226,14 +226,72 @@ func Test29D3LaunchSnapshotTwenty(t *testing.T) {
 				// response snapshot, never to manufacture its readiness.
 				var record Object
 				watch.until(t, func() bool {
-					record = read(filepath.Join(home, "state", "daemon.json"))
-					receipt := read(filepath.Join(home, "state", "worker-policy.json"))
-					run, _ := receipt.Get("service").(Object)
-					return equal(run.Get("pid"), supervisor.PID)
+					var ready bool
+					record, ready = launchSnapshotWorkerReady(filepath.Join(home, "state"), supervisor.PID)
+					return ready
 				})
 				process(t, num(record.Get("workerPid")))
 			}
 			// pidfd cleanup completes before the next iteration starts.
+		})
+	}
+}
+
+// launchSnapshotWorkerReady reports whether the launch run by supervisorPID has published and
+// recorded its worker, and returns the daemon.json it judged so the caller opens the worker that
+// record names (opening it is the caller's step; this does not hold the worker alive).
+// Two processes write the evidence: the worker publishes worker-policy.json, copying the
+// supervisor's pid into service.pid, and the supervisor records workerPid in daemon.json only
+// after it has spawned that worker. The receipt alone therefore does not say workerPid is set: on
+// a slow runner the worker published first and the test opened pid 0 (CRW-537). The receipt is
+// read before daemon.json, so the record snapshot is taken no earlier than the receipt snapshot it
+// is judged with, and the receipt's worker pid must be the recorded workerPid, the state
+// startServing waits for.
+func launchSnapshotWorkerReady(state string, supervisorPID int) (Object, bool) {
+	receipt := read(filepath.Join(state, "worker-policy.json"))
+	record := read(filepath.Join(state, "daemon.json"))
+	run, _ := receipt.Get("service").(Object)
+	worker, _ := receipt.Get("worker").(Object)
+	return record, equal(run.Get("pid"), supervisorPID) && truth(record.Get("workerPid")) && equal(worker.Get("pid"), record.Get("workerPid"))
+}
+
+// Test29D3WorkerReadyRules: the launch is ready only when the receipt names this supervisor, the
+// supervisor has recorded a worker, and the receipt's worker is that recorded worker.
+func Test29D3WorkerReadyRules(t *testing.T) {
+	t.Parallel()
+	const (
+		receiptOfSupervisor = `{"service":{"pid":100},"worker":{"pid":200}}`
+		recordOfWorker      = `{"pid":100,"workerPid":200}`
+	)
+	for _, one := range []struct {
+		name            string
+		receipt, record string
+		ready           bool
+	}{
+		{"ready", receiptOfSupervisor, recordOfWorker, true},
+		// The CRW-537 shape: the worker has published, the supervisor has not recorded it yet.
+		{"worker_not_recorded", receiptOfSupervisor, `{"pid":100,"workerPid":null}`, false},
+		{"worker_pid_absent", receiptOfSupervisor, `{"pid":100}`, false},
+		{"recorded_worker_not_published", receiptOfSupervisor, `{"pid":100,"workerPid":201}`, false},
+		{"receipt_of_previous_supervisor", `{"service":{"pid":99},"worker":{"pid":199}}`, recordOfWorker, false},
+		{"receipt_absent", "", recordOfWorker, false},
+		{"record_absent", receiptOfSupervisor, "", false},
+	} {
+		t.Run(one.name, func(t *testing.T) {
+			t.Parallel()
+			state := t.TempDir()
+			for name, raw := range map[string]string{"worker-policy.json": one.receipt, "daemon.json": one.record} {
+				if raw == "" {
+					continue
+				}
+				if err := os.WriteFile(filepath.Join(state, name), []byte(raw), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			record, ready := launchSnapshotWorkerReady(state, 100)
+			if ready != one.ready {
+				t.Fatalf("ready=%v, want %v (record %v)", ready, one.ready, record)
+			}
 		})
 	}
 }
