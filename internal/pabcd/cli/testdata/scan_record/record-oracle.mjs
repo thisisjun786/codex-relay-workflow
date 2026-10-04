@@ -30,7 +30,7 @@ const cases = [
   ['max-kept', [run(),patch({dimensions:{goal:{level:'max',known:[],unknown:[],confidence:1},constraint:{level:'low',known:[],unknown:[],confidence:0},success:{level:'low',known:[],unknown:[],confidence:0},ontology:{level:'low',known:[],unknown:[],confidence:0}}}),run('--unknown','goal=gap')]],
   ['empty-question', [qa('q0','',['answer']),run('--derive','--map','q0=goal')]],
   ['blank-answer', [qa('q0','Goal?',['']),run('--derive','--map','q0=goal')]],
-  
+
   ['help', [{kind:'help'}]],
   ['fresh', [run('--contradictions','2','--high','1')]],
   ['monotonic', [run(),run('--contradictions','3')]],
