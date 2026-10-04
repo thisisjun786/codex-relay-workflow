@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 func TestPinnedInputReleaseSurvivesSourceOverwrite(t *testing.T) {
@@ -353,5 +354,30 @@ func TestPinnedInputRelativeStorePathUsesSelectedState(t *testing.T) {
 	path := body["volatile"].([]any)[0].(map[string]any)["snapshot_uri"].(string)
 	if !filepath.IsAbs(path) || !strings.HasPrefix(path, filepath.Dir(k.path)+"/") {
 		t.Fatalf("retained outside the selected state: %q", path)
+	}
+}
+
+func TestPinnedInputPublishedInodeRemainsStable(t *testing.T) {
+	k := newReleaseKit(t)
+	source := writeFile(t, k.root, "source", "published input")
+	root := k.sched.pinnedInputRoot("rp")
+	var opened *store.AuthorizedFile
+	pinnedInputAfterPublish = func(path string) {
+		var err error
+		opened, err = store.OpenAuthorized(path, []string{root}, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() { pinnedInputAfterPublish = nil })
+	if err := pinnedInputPublish(context.Background(), source, dig("published input"), root, []string{k.root}); err != nil {
+		t.Fatal(err)
+	}
+	if opened == nil {
+		t.Fatal("publication did not reach the concurrent reader")
+	}
+	defer opened.Close()
+	if err := opened.VerifyStable(); err != nil {
+		t.Fatalf("publication cleanup mutated the retained inode during a concurrent read: %v", err)
 	}
 }

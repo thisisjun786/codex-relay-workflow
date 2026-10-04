@@ -58,7 +58,7 @@ func (r pinnedInputReader) Read(p []byte) (int, error) {
 	return r.file.Read(p)
 }
 
-// Publish by linking a complete, synced file, never by writing the digest pathname.
+// Publish by exclusively renaming a complete, synced file, never by writing the digest pathname.
 // A concurrent publisher can reuse the winner only after the caller hashes it.
 func pinnedInputPublish(ctx context.Context, source, digest, root string, roots []string) (err error) {
 	input, err := store.OpenAuthorized(source, roots, false)
@@ -80,7 +80,7 @@ func pinnedInputPublish(ctx context.Context, source, digest, root string, roots 
 	file := os.NewFile(uintptr(fd), name)
 	defer func() {
 		err = errors.Join(err, file.Close())
-		if removed := unix.Unlinkat(dirfd, name, 0); removed != nil {
+		if removed := unix.Unlinkat(dirfd, name, 0); removed != nil && !errors.Is(removed, unix.ENOENT) {
 			err = errors.Join(err, removed)
 		}
 	}()
@@ -100,8 +100,13 @@ func pinnedInputPublish(ctx context.Context, source, digest, root string, roots 
 	if err = file.Sync(); err != nil {
 		return err
 	}
-	if err = unix.Linkat(dirfd, name, dirfd, digest, 0); err != nil && !errors.Is(err, unix.EEXIST) {
+	// A hard link followed by removing the temporary alias would change the retained
+	// inode's ctime after publication and falsely fail a concurrent authorized read.
+	if err = unix.Renameat2(dirfd, name, dirfd, digest, unix.RENAME_NOREPLACE); err != nil && !errors.Is(err, unix.EEXIST) {
 		return err
+	}
+	if pinnedInputAfterPublish != nil {
+		pinnedInputAfterPublish(filepath.Join(root, digest))
 	}
 	return dir.Sync()
 }

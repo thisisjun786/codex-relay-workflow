@@ -15,6 +15,9 @@ const pinnedInputDirectory = "dag-input-snapshots"
 
 const pinnedInputReadInstruction = " Volatile snapshot_uri paths in this manifest are retained relay copies authorized as read-only inputs. Consume those exact paths instead of original source paths mentioned in earlier instructions; do not modify the copies."
 
+// Test seam after publication and before temporary-name cleanup; nil in production.
+var pinnedInputAfterPublish func(string)
+
 func (s *Scheduler) pinnedInputRoot(plan string) string {
 	state, err := filepath.Abs(filepath.Dir(s.Store.Path))
 	if err != nil {
