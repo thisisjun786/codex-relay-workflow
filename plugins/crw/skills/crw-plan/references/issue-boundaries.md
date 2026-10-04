@@ -51,6 +51,16 @@ separating two candidate parts is that they touch different files, they are one 
 large single-landing change is one issue, and three one-line changes in three
 repositories are three.
 
+Sibling issues that each add files to one Go package share a namespace the diff never shows: every
+pull request builds on its own base, git merges the files without a conflict, and two declarations
+of one identifier break only the merge. So when a split gives two or more issues new files in one
+package, each of those issues states the top-level names already used in that package (read from the
+current tree, not from memory) and a naming prefix of its own for what it adds, and each new
+identifier is named in one issue's criteria only: a type or helper that two issues both ask for is
+either a prerequisite issue the others depend on or part of one issue. The parent builds the merge
+before each verdict to catch what still slips through ([build and vet the merged
+tree](../../crw-run/references/merge-readiness.md#build-and-vet-the-merged-tree-before-the-verdict)).
+
 ## Check the size of an issue
 
 Run `crw skill issue-size check` on each implementation issue this skill writes or refines, giving it the issue as
@@ -251,3 +261,4 @@ wrong row, and both are fixed here.
 | 34 | An issue reads as a wiring change that an existing pattern decides (`answer=reference`), but two earlier fixes of the same fault did not remove it. | 1 issue with `history=retried`: bundle SOL fixed by row 2 before row 3 is read, axis `answer must be found`; 0 lines that stay Sonnet because the first reading was a wiring change. | Record the child pair: failure history comes before the reference. |
 | 35 | A plan writes an issue for a new report format that nothing outside the issue decides (`output=writing`, `answer=found`). | 1 issue, bundle flexible by row 5, axis `half-half`, pair by the count rule, source `table`; the shape table's third row is not reworded. | Record the child pair: the ambiguous case. |
 | 36 | Two flexible issues are planned in a project with no line yet and no child working. | The first goes to either pair and the pick is recorded; the second goes to the pair the first did not take, because fewer of the project's lines name it. | Record the child pair: the count rule's tie. |
+| 37 | Two planned issues each add a new file to one Go package, and both would declare a `tokenize` helper. | 2 issues, no order edge for the files alone; each states the names already used in the package and a prefix of its own, and the shared helper is either 1 prerequisite issue both depend on or part of 1 issue; 0 criteria that name one identifier in two issues. | Decide the boundary: sibling issues in one package. |
