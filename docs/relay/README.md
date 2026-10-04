@@ -602,6 +602,10 @@ A child completing work from inside its own live turn:
       --turn-thread <child task id> --turn-id <this turn> --turn-status inProgress \
       --artifact /abs/path/to/deliverable
 
+A child that ran the independent code review adds `--independent-review <file>` to a `ready_for_review`
+emit; the file is one JSON object, the `independentReview` item of the receipt contract. The relay
+stores it as stated and reads nothing it names ([coordination](coordination.md#an-independent-review-beside-a-restatement)).
+
 The turn status you pass is a claim, not proof. With `--socket` the relay reads the turn from the
 host and uses what the host actually reports. **Offline, a readiness claim can only STAGE**: it is
 stored and visible, and it becomes deliverable only once an independent observation sees that turn

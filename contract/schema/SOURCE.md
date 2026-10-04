@@ -7,7 +7,7 @@ with this note until todo 44 removed its source; the copies here are the ones th
 | File | sha256 |
 |---|---|
 | acknowledgement.json | 193c2a1dbdb6197f852aaa38c6b8b4e55ba804ffc66e7b2a73925365b133eb7c |
-| completion-receipt.json | 8111438e60b46b209a33902dd9080426953dfaaf2a7025cb47c2336d72b49317 |
+| completion-receipt.json | fd6498fdca80c7e8f4d97e37ceec12935bf1afce10211826fdc232593b9fb0d5 |
 | delivery-attempt.json | ad856f98872952ffc2235acc12ccc5942bbd6e5cae0df1771f063dc74526d24b |
 | relationship.json | c8ebaf4559fa1ac6df26d98c4214938caf78bd8c61659bce026da6a3595a4b90 |
 | verification-verdict.json | 0b3f8f4b061cff2992fc60a7c1f45dec6f803116894735751c40df3a8d356af9 |
@@ -24,3 +24,11 @@ Old attempts without the key still validate. The 16 existing attempt cases were 
 against the revised bytes with jsonschema 4.19.2 Draft7Validator and kept their verdicts;
 12 additional recorded cases cover presence, absence, unknown executable and malformed
 attribution. This changes the stored JSON contract, not the SQLite schema.
+
+The completion-receipt copy now allows an optional `independentReview` item (what the child states
+about its independent code review: the review artifact's path and sha256, status and reason, the
+count of unusable reviewer calls, an optional `headPatchId`, and one disposition per finding), only
+on a `ready_for_review` receipt. Old receipts without it still validate. The 18 existing receipt cases
+were re-judged against the revised bytes with jsonschema 4.19.2 Draft7Validator and kept their
+verdicts; 18 additional recorded cases cover the item stated, absent, on an execution-only receipt and
+malformed. This changes the stored JSON contract, not the SQLite schema.

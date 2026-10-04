@@ -33,6 +33,13 @@ the same socket with delays from five seconds up to five minutes, logging the
 first error. Socket loss abandons only that socket's work. Shutdown cancels and
 drains release work before closing the transport.
 
+The late-cancellation regressions observe successful client transmission before
+cancelling the caller while the reply is still withheld. Fake-host reception
+alone does not establish that boundary: cancellation during an unfinished write
+can end the socket, and an unscoped test probe can reconnect. These tests retain
+their terminal and premature-release assertions, then wait for release proof to
+retire and check exactly one handshake and one unsubscribe attempt.
+
 ## Never-run roots and sub-threads
 
 A newly acknowledged root without a first durable turn retains its subscription:

@@ -15,7 +15,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// A record is one line of ledger.jsonl. Event is started (counts toward the daily cap), finished (the patch-id is reviewed from then on), failed (history only) or refused (the daily cap stopped it).
+// A record is one line of ledger.jsonl. Event is started (counts toward the daily cap), finished (the patch-id is reviewed from then on), unavailable (a review that could not run at all for a reason of the
+// account or the configuration: the patch-id is still open for one more attempt, see standing), failed (history only) or refused (the run rules stopped it).
 type record struct {
 	Time     string `json:"time"`
 	Event    string `json:"event"`
@@ -70,16 +71,6 @@ func (l *ledger) read() ([]record, error) {
 	return recs, nil
 }
 
-// reviewed is the finished record of patchID, if there is one.
-func reviewed(recs []record, patchID string) (record, bool) {
-	for _, r := range recs {
-		if r.Event == "finished" && r.PatchID == patchID {
-			return r, true
-		}
-	}
-	return record{}, false
-}
-
 // runsOn counts the reviews that started on the UTC day (2006-01-02).
 func runsOn(recs []record, day string) (n int) {
 	for _, r := range recs {
@@ -89,6 +80,44 @@ func runsOn(recs []record, day string) (n int) {
 	}
 	return n
 }
+
+// standing is where one patch-id stands: a finished record closes it, an unavailable one leaves it open for one more attempt, which is spent as soon as a started record follows it.
+type standing struct {
+	finished, unavailable *record
+	retried               bool
+}
+
+func standingOf(recs []record, patchID string) (s standing) {
+	for i, r := range recs {
+		switch {
+		case r.PatchID != patchID:
+		case r.Event == "finished" && s.finished == nil:
+			s.finished = &recs[i]
+		case r.Event == "unavailable":
+			s.unavailable, s.retried = &recs[i], false
+		case r.Event == "started" && s.unavailable != nil:
+			s.retried = true
+		}
+	}
+	return s
+}
+
+// closer is the record that answers a repeated request for the patch: its finished record or, when the one more attempt began and left no result, the unavailable record before it.
+func (s standing) closer() (record, bool) {
+	switch {
+	case s.finished != nil:
+		return *s.finished, true
+	case s.unavailable != nil && s.retried:
+		return *s.unavailable, true
+	}
+	return record{}, false
+}
+
+// open reports whether the one more attempt is still to come.
+func (s standing) open() bool { return s.finished == nil && s.unavailable != nil && !s.retried }
+
+// dayOf is the UTC day (2006-01-02) of a record's time.
+func dayOf(t string) string { return t[:min(len(t), len(time.DateOnly))] }
 
 // append writes r as one line and syncs it, first cutting off a torn tail.
 func (l *ledger) append(r record) error {
@@ -104,7 +133,9 @@ func (l *ledger) append(r record) error {
 			return err
 		}
 	}
-	r.Time = l.now().UTC().Format(time.RFC3339)
+	if r.Time == "" {
+		r.Time = l.now().UTC().Format(time.RFC3339)
+	}
 	line, err := json.Marshal(r)
 	if err != nil {
 		return err
@@ -118,12 +149,21 @@ func (l *ledger) append(r record) error {
 
 // lock takes the run lock, an exclusive flock on run.lock held for the whole review, polled every 50 ms until wait has passed (negative tries once); errBusy if it stayed busy.
 func (l *ledger) lock(ctx context.Context, wait time.Duration) (release func(), err error) {
+	return l.lockFile(ctx, "run.lock", wait)
+}
+
+// postLock takes the post lock the same way: it is held while the summary comment is listed and created or updated, so two posts cannot interleave and make two comments.
+func (l *ledger) postLock(ctx context.Context, wait time.Duration) (release func(), err error) {
+	return l.lockFile(ctx, "post.lock", wait)
+}
+
+func (l *ledger) lockFile(ctx context.Context, name string, wait time.Duration) (release func(), err error) {
 	if err = os.MkdirAll(l.dir, 0o700); err != nil {
 		return nil, err
 	}
-	fd, err := unix.Open(filepath.Join(l.dir, "run.lock"), unix.O_CREAT|unix.O_RDWR|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
+	fd, err := unix.Open(filepath.Join(l.dir, name), unix.O_CREAT|unix.O_RDWR|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
 	if err != nil {
-		return nil, fmt.Errorf("open the run lock: %w", err)
+		return nil, fmt.Errorf("open %s: %w", name, err)
 	}
 	deadline := time.Now().Add(wait)
 	for {
@@ -136,7 +176,7 @@ func (l *ledger) lock(ctx context.Context, wait time.Duration) (release func(), 
 		}
 		if !errors.Is(err, unix.EWOULDBLOCK) && !errors.Is(err, unix.EINTR) {
 			_ = unix.Close(fd)
-			return nil, fmt.Errorf("lock run.lock: %w", err)
+			return nil, fmt.Errorf("lock %s: %w", name, err)
 		}
 		if !time.Now().Before(deadline) {
 			_ = unix.Close(fd)

@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"os"
 	"strconv"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -49,6 +52,12 @@ func cmdEmit(c *cliRun) (any, error) {
 		}
 		manifest = records
 	}
+	var independentReview Obj
+	if path := c.s("--independent-review"); path != "" {
+		if independentReview, err = readIndependentReview(path); err != nil {
+			return nil, err
+		}
+	}
 	reference := c.s("--manifest-ref")
 	if reference != "" && len(entries) > 0 {
 		if err := store.FreezeManifest(entries, reference); err != nil {
@@ -88,6 +97,9 @@ func cmdEmit(c *cliRun) (any, error) {
 		{Key: "manifest", Value: manifest}, {Key: "emittedAt", Value: c.clock.ISO()}}
 	if reference != "" {
 		payload = append(payload, F{Key: "manifestRef", Value: reference})
+	}
+	if independentReview != nil {
+		payload = append(payload, F{Key: "independentReview", Value: independentReview})
 	}
 	options := store.AcceptOptions{}
 	if anchor := c.s("--continues-anchor"); anchor != "" {
@@ -139,6 +151,43 @@ func cmdEmit(c *cliRun) (any, error) {
 		}
 	}
 	return result, nil
+}
+
+// independentReviewCap bounds the file --independent-review reads: the item is a short statement,
+// not the review artifact it names.
+const independentReviewCap = 1 << 20
+
+// readIndependentReview reads the file that holds the independentReview item: one JSON object. What
+// the object says about the artifact is for the parent to grade; emit carries it and reads nothing
+// the item names.
+func readIndependentReview(path string) (Obj, error) {
+	usage := func(detail string) error {
+		return &dispatch.UsageError{Detail: "--independent-review: " + detail, Code: contract.ExitUsage}
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, usage("the file could not be read: " + err.Error())
+	}
+	defer file.Close()
+	raw, err := io.ReadAll(io.LimitReader(file, independentReviewCap+1))
+	if err != nil {
+		return nil, usage("the file could not be read: " + err.Error())
+	}
+	if len(raw) > independentReviewCap {
+		return nil, usage("the file is larger than " + strconv.Itoa(independentReviewCap) + " bytes, and the item is a short statement that names the artifact rather than holding it")
+	}
+	value, err := loads(string(raw))
+	if err == nil && !json.Valid(raw) {
+		err = errors.New("text follows the value") // loads stops at a closing bracket; the file is one value
+	}
+	if err != nil {
+		return nil, usage("the file is not JSON: " + err.Error())
+	}
+	item, isObject := value.(Obj)
+	if !isObject {
+		return nil, usage("the file must hold one JSON object, not " + quote.Kind(value))
+	}
+	return item, nil
 }
 
 // withContinuationHint adds to the refusal of a turn the generation never admitted, when the
