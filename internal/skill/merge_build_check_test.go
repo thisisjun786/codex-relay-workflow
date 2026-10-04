@@ -1,6 +1,7 @@
 package skill
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"os"
@@ -440,7 +441,7 @@ func TestMergeBuildEnvKeepsTheCallersGoSettingsFile(t *testing.T) {
 		{"off", ""},
 	} {
 		t.Setenv("GOENV", c.set)
-		env, err := mergeBuildEnv([]string{"A=1"}, t.TempDir())
+		env, err := mergeBuildEnv(context.Background(), []string{"A=1"}, t.TempDir())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -465,7 +466,7 @@ func TestMergeBuildEnvMovesOnlyTheDarwinHome(t *testing.T) {
 	caller := os.Environ()
 	caches := mbcCallerGoEnv(t, caller)
 	owned := t.TempDir()
-	darwinEnv, err := mergeBuildEnv(caller, owned, "darwin")
+	darwinEnv, err := mergeBuildEnv(context.Background(), caller, owned, "darwin")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -482,7 +483,7 @@ func TestMergeBuildEnvMovesOnlyTheDarwinHome(t *testing.T) {
 			t.Errorf("darwin: %s=%q, want the caller's %q", key, got[key], want)
 		}
 	}
-	linuxEnv, err := mergeBuildEnv(caller, t.TempDir(), "linux")
+	linuxEnv, err := mergeBuildEnv(context.Background(), caller, t.TempDir(), "linux")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -509,6 +510,25 @@ func mbcCallerGoEnv(t *testing.T, base []string) [3]string {
 		t.Fatalf("go env GOCACHE GOMODCACHE GOPATH answered %q", out)
 	}
 	return [3]string{strings.TrimSpace(lines[0]), strings.TrimSpace(lines[1]), strings.TrimSpace(lines[2])}
+}
+
+// The cache read darwin needs runs under the check's own context: a go env that stalls is cut off
+// with the check instead of keeping merge-build-check running past --timeout (CRW-562).
+func TestMergeBuildEnvStopsAStalledCacheRead(t *testing.T) {
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "go"), []byte("#!/bin/sh\nexec sleep 60\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	start := time.Now()
+	if _, err := mergeBuildEnv(ctx, []string{"HOME=/caller"}, t.TempDir(), "darwin"); err == nil {
+		t.Error("a stalled go env was not cut off")
+	}
+	if elapsed := time.Since(start); elapsed > 30*time.Second {
+		t.Errorf("the stalled go env was not cut off promptly: %v", elapsed)
+	}
 }
 
 // mbcLastEnv folds an environment the way exec uses it: of duplicated keys the last value wins.

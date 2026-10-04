@@ -86,8 +86,9 @@ type mergeBuild struct {
 // the caller has them, and GOENV is pinned to the caller's file first, so the settings of go env -w
 // keep their place between the environment and the defaults. The module workspace is off. targetOS
 // names the platform the go tool targets and defaults to runtime.GOOS; a test names darwin and linux
-// to exercise both on any host.
-func mergeBuildEnv(base []string, owned string, targetOS ...string) ([]string, error) {
+// to exercise both on any host. ctx is the check's own deadline: what this environment prepares runs
+// under it, so nothing it starts can outlast the check.
+func mergeBuildEnv(ctx context.Context, base []string, owned string, targetOS ...string) ([]string, error) {
 	goos := runtime.GOOS
 	if len(targetOS) > 0 {
 		goos = targetOS[0]
@@ -118,7 +119,7 @@ func mergeBuildEnv(base []string, owned string, targetOS ...string) ([]string, e
 	}
 	env = append(env, "GOWORK=off", "XDG_CONFIG_HOME="+config, "TMPDIR="+tmp, "GOTMPDIR="+tmp)
 	if goos == "darwin" {
-		caches, err := mergeBuildCallerCaches(base)
+		caches, err := mergeBuildCallerCaches(ctx, base)
 		if err != nil {
 			return nil, err
 		}
@@ -133,14 +134,19 @@ func mergeBuildEnv(base []string, owned string, targetOS ...string) ([]string, e
 
 // mergeBuildCallerCaches reads the build cache, the module cache and GOPATH the caller's go
 // environment names, so that moving HOME on darwin does not move the caches away from the caller.
-func mergeBuildCallerCaches(base []string) ([3]string, error) {
+// It runs in a process group of its own that the check's context ends as a whole, so a go env that
+// stalls is cut off with the check instead of keeping it running past its timeout.
+func mergeBuildCallerCaches(ctx context.Context, base []string) ([3]string, error) {
 	var caches [3]string
 	goTool, err := exec.LookPath("go")
 	if err != nil {
 		return caches, err
 	}
-	cmd := exec.Command(goTool, "env", "GOCACHE", "GOMODCACHE", "GOPATH")
+	cmd := exec.CommandContext(ctx, goTool, "env", "GOCACHE", "GOMODCACHE", "GOPATH")
 	cmd.Env = append([]string{}, base...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = 5 * time.Second
 	out, err := cmd.Output()
 	if err != nil {
 		return caches, err
