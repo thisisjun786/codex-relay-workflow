@@ -1,7 +1,6 @@
 package recall
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -285,8 +284,11 @@ func TestIngestRewriteAndRollback(t *testing.T) {
 			}
 		})
 	}
-	for _, b := range [][]byte{nil, []byte("no newline"), []byte("한\npartial"), []byte("a\r\n")} {
-		if got := completeLineBoundary(b); got != bytes.LastIndexByte(b, '\n')+1 {
+	for _, c := range []struct {
+		text   string
+		offset int
+	}{{"", 0}, {"no newline", 0}, {"한\npartial", 4}, {"a\r\n", 3}} {
+		if got := completeLineBoundary([]byte(c.text)); got != c.offset {
 			t.Fatal(got)
 		}
 	}
@@ -328,7 +330,7 @@ func TestIngestBackfillBatchFailure(t *testing.T) {
 	if _, err := file.Run("no-cwd", nil, "thread-0"); err != nil {
 		t.Fatal(err)
 	}
-	recallSQL(t, db, "INSERT INTO meta VALUES ('last_ingest_at','sentinel'); CREATE TRIGGER refuse BEFORE UPDATE ON files WHEN NEW.thread_id='thread-1000' BEGIN SELECT RAISE(ABORT,'batch fault'); END")
+	recallSQL(t, db, "INSERT INTO meta VALUES ('last_ingest_at','sentinel'); CREATE TRIGGER refuse BEFORE UPDATE ON files WHEN NEW.thread_id='thread-1001' BEGIN SELECT RAISE(ABORT,'batch fault'); END")
 	backfillRepoKeysFromThreads(home, db)
 	if n := recallRow(t, recallStmt(t, db, "SELECT count(*) AS n FROM files WHERE repo_key IS NOT NULL"))["n"]; n != float64(1000) {
 		t.Fatal("committed batch lost or failed batch retained:", n)
