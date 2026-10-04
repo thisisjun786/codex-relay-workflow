@@ -164,7 +164,7 @@ func TestShellWriteLiteralSecurity(t *testing.T) {
 			}
 		})
 	}
-	if got := tokenize("tee 'a b' c"); !slices.Equal(got, []string{"tee", "a b", "c"}) {
+	if got := shellTokenize("tee 'a b' c"); !slices.Equal(got, []string{"tee", "a b", "c"}) {
 		t.Fatalf("verb tokens %q", got)
 	}
 	if got := ShellWriteDestinations("tee out"); len(got) != 0 {

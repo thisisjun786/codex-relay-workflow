@@ -26,7 +26,7 @@ func ShellWriteDestinations(command string) []string {
 	return dests
 }
 
-// The next verb port fills this one call, using tokenize below. It deliberately
+// The next verb port fills this one call, using shellTokenize below. It deliberately
 // adds no verb inference, interpreter detection or memory-gate activation here.
 func verbDestinations(string) []string { return nil }
 
@@ -332,6 +332,6 @@ func tokenizeUnits(segment []uint16) [][]uint16 {
 	return tokens
 }
 
-func tokenize(segment string) []string {
+func shellTokenize(segment string) []string {
 	return shellStrings(tokenizeUnits(utf16.Encode([]rune(segment))))
 }
