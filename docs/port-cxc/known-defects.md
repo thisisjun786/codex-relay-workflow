@@ -808,3 +808,12 @@ The parser feeds a fail-closed memory write gate, so a destination the oracle mi
 - Whitespace-only known/unknown facts pass because only empty text is rejected (source `pabcd-state/src/scan-cli.ts:165-170`); port: kept.
 - Confidence accepts JavaScript radix notation such as `0x1`, `0o1` and `0b1` (source `pabcd-state/src/scan-cli.ts:172-180`); port: kept.
 - The high contradiction count is not constrained by the total count, so a positive high count with total zero parses successfully (source `pabcd-state/src/scan-cli.ts:187-191`); port: kept.
+
+## Found by the scan record runner port (CRW-540)
+
+- A scan of an unreadable state replaces its bytes with a fresh default, losing stored state (pabcd-state/src/scan-cli.ts:322,391; state.ts:420-422,494-511 at v0.2.40); port: fixed (strict read refuses before either write; recorded case intentionally-changed).
+- A scan rewrites a reconstructed state after unreadable or overflowed unverified records were dropped, losing those records (pabcd-state/src/scan-cli.ts:322,391; state.ts:reconstructUnverified at v0.2.40); port: fixed (reuse the existing stored-record count refusal before append; recorded case intentionally-changed).
+- The scan read-modify-write has no session lock, so overlapping processes can replace a sibling's state update (pabcd-state/src/scan-cli.ts:322-391 at v0.2.40); port: fixed (the required state session lock covers the read, append and write; concurrent scans retain every update).
+- Derivation detects changes by array lengths only; at the keep-first cap it can report zero derived dimensions and the nothing-matched warning even with matched answers, preserving a prior explicit level (pabcd-state/src/scan-cli.ts:342-351,395-405 at v0.2.40); port: kept.
+- A malformed ledger's truthy non-string question or non-string answers can grant a level before write normalization drops those values, leaving high/mid with empty arrays (pabcd-state/src/scan-cli.ts:249-279,366-369; interview.ts:348-360 at v0.2.40); port: kept.
+- A question id whose object cannot convert to a property key throws after the scan row was appended, leaving that row without its tracker write (pabcd-state/src/scan-cli.ts:255,325-336,391,412-415 at v0.2.40); port: kept.

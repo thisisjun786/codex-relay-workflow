@@ -80,7 +80,11 @@ func TestScanRecordOracle(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					_, err = f.Write(append(a.Row, '\n'))
+					var compact bytes.Buffer
+					if err := json.Compact(&compact, a.Row); err != nil {
+						t.Fatal(err)
+					}
+					_, err = f.Write(append(compact.Bytes(), '\n'))
 					closeErr := f.Close()
 					if err != nil || closeErr != nil {
 						t.Fatalf("append: %v %v", err, closeErr)
@@ -91,6 +95,9 @@ func TestScanRecordOracle(t *testing.T) {
 					var fields, patch map[string]any
 					if err := json.Unmarshal(encoded, &fields); err != nil {
 						t.Fatal(err)
+					}
+					if fields == nil {
+						t.Fatal("previous scan did not create the tracker")
 					}
 					if err := json.Unmarshal(a.Value, &patch); err != nil {
 						t.Fatal(err)

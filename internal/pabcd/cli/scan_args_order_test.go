@@ -38,8 +38,14 @@ func TestScanArgsMapOrder(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if strings.Contains(string(encoded), "MapOrder") || strings.Contains(string(encoded), "mapOrder") {
-			t.Fatal("internal order serialized")
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(encoded, &fields); err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{"MapOrder", "mapOrder"} {
+			if _, exists := fields[name]; exists {
+				t.Fatal("internal order serialized")
+			}
 		}
 	}
 }
