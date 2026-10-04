@@ -756,3 +756,8 @@ The parser feeds a fail-closed memory write gate, so a destination the oracle mi
 - perl and ruby option bundles that start with a digit option (`-0pi`, `-0777pi`) do not match the in-place pattern (source `shell-write-destinations.ts:388`); port: fixed (security: digits are allowed in the bundle).
 - python is recognized only as python, python3 and py, and only as a separate `-c` or `-cPROGRAM`: `python3.11`, `python2`, `-Ic`, `-uc` are missed; `open(path, "r+")`, `open(path, mode="w")`, `open(file=path, mode="w")` are missed because only a mode that starts with w, a or x counts; `open(mode="w", file=path)` (keywords in either order or with others between) is missed; node `-p`, `--print`, `-pe` and a template literal path are missed (source `shell-write-destinations.ts:303,505-549`); port: fixed (security: versioned names, bundles with -c, update modes, an argument reader for open() calls, node print forms and backtick paths are added).
 - A double-quoted program keeps its backslash-escaped quotes in the token, so `python3 -c "open(\"/m/a\",\"w\")"` never matches the call patterns (source `shell-write-destinations.ts:141-152,505-549`); port: fixed (security: the program is also read with the shell's escapes removed).
+
+## CRW-351 — markdown memory search and cwd scope
+
+- Prose cwd matching uses substring containment, so a mention of an adjacent path such as `/proj/here-adjacent` earns the half boost and survives a `/proj/here` hard filter (CXC v0.2.40 `recall/src/memory-search.ts:357-358`); port: kept.
+- A computed date cutoff of exactly zero disables file age filtering because the cutoff check uses JavaScript truthiness (CXC v0.2.40 `recall/src/memory-search.ts:484`); port: kept.
