@@ -16,6 +16,8 @@ func scripted() ([]Record, []PR, []Reviewer) {
 		r := Run{ID: id, PR: pr, Reviewer: group, Status: status, Calls: calls, Findings: []Finding{}}
 		if group.Source == Independent {
 			r.ArtifactSHA256 = strings.Repeat(id[:1], 64)
+			n := 2
+			r.Reviewers = &n
 		}
 		if status != "complete" {
 			r.Reason = status
@@ -72,7 +74,7 @@ func TestScriptedMetrics(t *testing.T) {
 			if r.Correct != 2 || r.Pending != 1 || r.Precision.Value == nil || *r.Precision.Value != .5 || r.P0.Numerator != 1 || r.P1.Numerator != 1 || r.P1.Denominator != 2 || r.Security.Numerator != 1 || r.UniqueCorrect != 0 {
 				t.Fatalf("A metrics: %+v", r)
 			}
-			if r.ElapsedMillis != 31 || r.Tokens != (review.TokenUsage{Input: 34, Output: 3, Thinking: 6, CacheRead: 8, Total: 51}) || r.Calls != 3 || r.InvalidRuns != 1 || r.ModelMismatchRuns != 1 || r.CorrectWithChange != 1 || r.CorrectWithoutChange != 1 {
+			if r.ElapsedMillis != 31 || r.Tokens != (review.TokenUsage{Input: 34, Output: 3, Thinking: 6, CacheRead: 8, Total: 51}) || r.Calls != 3 || r.InvalidRuns != 1 || r.ModelMismatchRuns != 1 || r.CorrectWithChange != 1 || r.CorrectWithoutChange != 1 || r.Reviewers != 4 || r.KnownReviewerRuns != 2 || r.KnownElapsedCalls != 3 || r.KnownTokenCalls != 3 || r.RecordedTokens != r.Tokens {
 				t.Fatalf("A accounting: %+v", r)
 			}
 		case groups[1]:
