@@ -11,6 +11,7 @@ import (
 	"strings"
 	"syscall"
 	"unicode/utf16"
+	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
@@ -147,32 +148,72 @@ func reviewRoundArgsAbs(cwd, p string) (string, error) {
 	return filepath.Join(wd, p), err
 }
 
-// reviewRoundArgsInside is the working directory cwd's real path and the real path of abs, links followed, relative to it, and
-// whether abs lies in that directory. This is the departure from the oracle, by decision (a review finding of kind security): the
-// oracle read a path as spelled, so a link inside the workspace made it hash a file outside. A path whose real path cannot be named
-// is not inside. The file is then read by reviewRoundArgsReadBelow, so a path swapped after this check cannot lead the read out.
-func reviewRoundArgsInside(cwd, abs string) (base, below string, ok bool) {
-	base, err := reviewRoundArgsAbs("", cwd)
-	if err == nil {
-		base, err = filepath.EvalSymlinks(base)
-	}
-	physical, perr := filepath.EvalSymlinks(abs)
-	if err != nil || perr != nil {
-		return "", "", false
-	}
-	below, err = filepath.Rel(base, physical)
-	return base, below, err == nil && filepath.IsLocal(below)
+// reviewRoundArgsBase is the working directory opened once as an os.Root, so that every decision about an entry and every read is
+// bound to that one directory handle. This is the departure from the oracle, by decision (a review finding of kind security): the
+// oracle read a path as spelled, so a link inside the workspace made it hash a file outside. Here an entry is read only when its
+// real path, links followed, lies in the working directory's real path, and the read is made through the handle, which refuses any
+// path that leads out of the directory, a link swapped in after the check included; replacing the directory itself or one of its
+// ancestors after the open leaves the read on the directory that was checked. real is the real path root was opened on.
+type reviewRoundArgsBase struct {
+	root *os.Root
+	real string
 }
 
-// reviewRoundArgsReadBelow reads below, relative to the directory base, through os.Root, which refuses any path that leads out of
-// base, a link swapped in since reviewRoundArgsInside included, and a link given as an absolute path.
-func reviewRoundArgsReadBelow(base, below string) ([]byte, error) {
-	root, err := os.OpenRoot(base)
+// reviewRoundArgsOpenBase opens the working directory cwd. The result is nil, with no error, when it cannot be opened or is not the
+// directory its real path names (replaced while it was opened); every entry then reads as outside. The error is where Node throws:
+// a relative working directory that cannot be made absolute.
+func reviewRoundArgsOpenBase(cwd string) (*reviewRoundArgsBase, error) {
+	abs, err := reviewRoundArgsAbs("", cwd)
 	if err != nil {
 		return nil, err
 	}
-	defer root.Close()
-	return root.ReadFile(below)
+	root, err := os.OpenRoot(abs)
+	if err != nil {
+		return nil, nil
+	}
+	real, err := filepath.EvalSymlinks(abs)
+	opened, openedErr := root.Stat(".")
+	var named os.FileInfo
+	if err == nil {
+		named, err = os.Stat(real)
+	}
+	if err != nil || openedErr != nil || !os.SameFile(opened, named) {
+		root.Close()
+		return nil, nil
+	}
+	return &reviewRoundArgsBase{root, real}, nil
+}
+
+func (b *reviewRoundArgsBase) close() {
+	if b != nil {
+		b.root.Close()
+	}
+}
+
+// inside is the real path of abs relative to the base's real path, and whether abs lies in it. A path whose real path cannot be
+// named is not inside.
+func (b *reviewRoundArgsBase) inside(abs string) (below string, ok bool) {
+	if b == nil {
+		return "", false
+	}
+	physical, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", false
+	}
+	below, err = filepath.Rel(b.real, physical)
+	return below, err == nil && filepath.IsLocal(below)
+}
+
+// read reads below, relative to the base, through the handle.
+func (b *reviewRoundArgsBase) read(below string) ([]byte, error) { return b.root.ReadFile(below) }
+
+// readInside is inside followed by read: the file abs names, its real path relative to the base, whether it is inside (nothing is
+// read when it is not) and the error of the read.
+func (b *reviewRoundArgsBase) readInside(abs string) (data []byte, below string, inside bool, err error) {
+	if below, inside = b.inside(abs); inside {
+		data, err = b.read(below)
+	}
+	return data, below, inside, err
 }
 
 // reviewRoundArgsNumberedDoc is NUMBERED_DOC_RE, /^\d{3}_.+\.md$/ (review-round-cli.ts:34): three ASCII digits, an underscore, at
@@ -187,9 +228,9 @@ func reviewRoundArgsNumberedDoc(rel string) bool {
 
 // reviewRoundArgsCollectPlanFiles ports collectPlanFiles (review-round-cli.ts:141-165): the --plan-path entries resolved against
 // the unit P>A validated. refusal is the message of a refused entry; err is where the oracle throws, an unreadable file or a working
-// directory that cannot be read. Unlike the oracle each entry must have a real path inside the working directory
-// (reviewRoundArgsInside), one that does not reads as missing, and the read stays below that directory (reviewRoundArgsReadBelow).
-// An entry is decoded as Node decodes argv, so a stored key is valid text.
+// directory that cannot be read. Unlike the oracle each entry must have a real path inside the working directory and is read
+// through reviewRoundArgsBase; one that does not reads as missing. An entry is decoded as Node decodes argv, so a stored key is
+// valid text.
 func reviewRoundArgsCollectPlanFiles(cwd, planUnit string, paths []string) ([]goalplan.PlanFileHash, string, error) {
 	if len(paths) == 0 {
 		return nil, "--plan-path is required at least once: a round with no files audits nothing", nil
@@ -202,6 +243,11 @@ func reviewRoundArgsCollectPlanFiles(cwd, planUnit string, paths []string) ([]go
 	if err != nil {
 		return nil, "", err
 	}
+	opened, err := reviewRoundArgsOpenBase(cwd)
+	if err != nil {
+		return nil, "", err
+	}
+	defer opened.close()
 	var files []goalplan.PlanFileHash
 	seen := map[string]bool{}
 	for _, p := range paths {
@@ -217,25 +263,33 @@ func reviewRoundArgsCollectPlanFiles(cwd, planUnit string, paths []string) ([]go
 		if !reviewRoundArgsNumberedDoc(rel) {
 			return nil, fmt.Sprintf("plan path %s is not a numbered plan document (000_*.md) directly inside %s", p, planUnit), nil
 		}
-		info, statErr := os.Lstat(abs)
-		root, below, inside := reviewRoundArgsInside(cwd, abs)
-		if statErr != nil || !info.Mode().IsRegular() || !inside {
-			return nil, fmt.Sprintf("plan path %s is not a readable regular file", p), nil
+		unreadable := fmt.Sprintf("plan path %s is not a readable regular file", p)
+		if info, err := os.Lstat(abs); err != nil || !info.Mode().IsRegular() {
+			return nil, unreadable, nil
+		}
+		data, below, inside, err := opened.readInside(abs)
+		if !inside {
+			return nil, unreadable, nil
+		}
+		if err != nil {
+			return nil, "", err
 		}
 		key, _ := filepath.Rel(base, abs)
 		if !filepath.IsLocal(key) {
-			// Only a working directory that is a link gets here, with the entry spelled by its physical path: the key as the oracle
-			// stores it climbs out ("../ws/..."), and the revival of a round's plan files drops a list holding such a key.
-			key = below
+			// The key as the oracle stores it climbs out ("../ws/...") and the revival of a round's plan files drops a list holding
+			// such a key: the entry is spelled by the real path of a working directory that is a link, or by another alias of it.
+			// The first fallback keeps the links of the entry's own spelling, which the binding of the round depends on.
+			if key, _ = filepath.Rel(opened.real, abs); !filepath.IsLocal(key) {
+				key = below
+			}
+		}
+		if !utf8.ValidString(key) {
+			return nil, unreadable, nil
 		}
 		if seen[key] {
 			continue
 		}
 		seen[key] = true
-		data, err := reviewRoundArgsReadBelow(root, below)
-		if err != nil {
-			return nil, "", err
-		}
 		files = append(files, goalplan.PlanFileHash{Path: key, Sha256: reviewRoundArgsSum(data)})
 	}
 	// JavaScript compares strings by UTF-16 code unit, which puts a supplementary character before U+E000; byte order does not.
@@ -247,19 +301,22 @@ func reviewRoundArgsCollectPlanFiles(cwd, planUnit string, paths []string) ([]go
 
 // Recomputed ports review-round-cli.ts:308-317: the files a round named, read again, each entry keeping its path and its place.
 // An unreadable file reads "missing", and so does an entry whose real path is outside the working directory
-// (reviewRoundArgsInside), which the oracle hashed.
+// (reviewRoundArgsBase), which the oracle hashed.
 func Recomputed(cwd string, files []goalplan.PlanFileHash) []goalplan.PlanFileHash {
 	out := make([]goalplan.PlanFileHash, len(files))
+	opened, err := reviewRoundArgsOpenBase(cwd)
+	if err != nil {
+		opened = nil
+	}
+	defer opened.close()
 	for i, f := range files {
 		out[i] = goalplan.PlanFileHash{Path: f.Path, Sha256: "missing"}
 		abs, err := reviewRoundArgsAbs(cwd, f.Path)
 		if err != nil {
 			continue
 		}
-		if root, below, inside := reviewRoundArgsInside(cwd, abs); inside {
-			if data, err := reviewRoundArgsReadBelow(root, below); err == nil {
-				out[i].Sha256 = reviewRoundArgsSum(data)
-			}
+		if data, _, inside, err := opened.readInside(abs); inside && err == nil {
+			out[i].Sha256 = reviewRoundArgsSum(data)
 		}
 	}
 	return out

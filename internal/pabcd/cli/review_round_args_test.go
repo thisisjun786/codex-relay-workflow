@@ -511,23 +511,78 @@ func TestReviewRoundArgsHomeThatCannotBeResolvedIsAnError(t *testing.T) {
 	}
 }
 
-// The race a review named: a link swapped in between the real-path check and the read must not lead the read out of the working
-// directory. Here the unit directory becomes a link to a directory outside the workspace after the check.
-func TestReviewRoundArgsReadBelowRefusesAPathSwappedAfterTheCheck(t *testing.T) {
+// The races a review named, driven through the two halves of reading a file (inside, then read): a link swapped in after the real-path
+// check must not lead the read out of the working directory, and neither must the working directory itself being replaced by a link
+// to an outside directory, since the read is bound to the directory handle that was opened and checked.
+func TestReviewRoundArgsReadIsBoundToTheCheckedDirectory(t *testing.T) {
+	for _, swapBase := range []bool{false, true} {
+		root := t.TempDir()
+		ws := filepath.Join(root, "ws")
+		unit := filepath.Join(ws, "devlog", "u")
+		reviewRoundArgsWrite(t, filepath.Join(unit, "000_plan.md"), "# plan\n")
+		reviewRoundArgsWrite(t, filepath.Join(root, "out", "devlog", "u", "000_plan.md"), "TOP SECRET\n")
+		b, err := reviewRoundArgsOpenBase(ws)
+		if err != nil || b == nil {
+			t.Fatalf("the working directory does not open: %v", err)
+		}
+		below, ok := b.inside(filepath.Join(unit, "000_plan.md"))
+		if !ok {
+			t.Fatal("the plan inside the workspace reads as outside")
+		}
+		if data, err := b.read(below); err != nil || string(data) != "# plan\n" {
+			t.Fatalf("before the swap: %q %v", data, err)
+		}
+		if swapBase {
+			reviewRoundArgsMust(t, os.Rename(ws, ws+".moved"))
+			reviewRoundArgsMust(t, os.Symlink(filepath.Join(root, "out"), ws))
+		} else {
+			reviewRoundArgsMust(t, os.Rename(unit, unit+".moved"))
+			reviewRoundArgsMust(t, os.Symlink(filepath.Join(root, "out", "devlog", "u"), unit))
+		}
+		data, err := b.read(below)
+		if strings.Contains(string(data), "SECRET") || (swapBase && (err != nil || string(data) != "# plan\n")) || (!swapBase && err == nil) {
+			t.Errorf("swapped base %v: read %q after the swap (err %v)", swapBase, data, err)
+		}
+		b.close()
+	}
+}
+
+// A working directory that is a link, an entry spelled by its physical path, and a plan unit that is a link inside the workspace: the
+// stored key climbs out in the oracle, so it is the entry's own spelling relative to the real working directory, which keeps the link
+// of the unit that the round is bound to; pointing the link elsewhere then changes what Recomputed reads.
+func TestReviewRoundArgsKeyKeepsTheLinkOfTheUnit(t *testing.T) {
 	root := t.TempDir()
-	ws, unit := filepath.Join(root, "ws"), filepath.Join(root, "ws", "devlog", "u")
-	reviewRoundArgsWrite(t, filepath.Join(unit, "000_plan.md"), "# plan\n")
-	reviewRoundArgsWrite(t, filepath.Join(root, "out", "000_plan.md"), "TOP SECRET\n")
-	base, below, ok := reviewRoundArgsInside(ws, filepath.Join(unit, "000_plan.md"))
-	if !ok {
-		t.Fatal("the plan inside the workspace reads as outside")
+	for _, dir := range []string{"a", "b"} {
+		reviewRoundArgsWrite(t, filepath.Join(root, "ws", dir, "000_plan.md"), "plan "+dir+"\n")
 	}
-	if data, err := reviewRoundArgsReadBelow(base, below); err != nil || string(data) != "# plan\n" {
-		t.Fatalf("before the swap: %q %v", data, err)
+	reviewRoundArgsMust(t, os.Symlink("ws", filepath.Join(root, "wslink")))
+	reviewRoundArgsMust(t, os.Symlink("a", filepath.Join(root, "ws", "unit")))
+	physical := filepath.Join(root, "ws", "unit")
+	files, refusal, err := reviewRoundArgsCollectPlanFiles(filepath.Join(root, "wslink"), physical, []string{physical + "/000_plan.md"})
+	if want := []goalplan.PlanFileHash{{Path: "unit/000_plan.md", Sha256: reviewRoundArgsHex("plan a\n")}}; err != nil || refusal != "" || !slices.Equal(files, want) {
+		t.Fatalf("%v %q %v, want %v", files, refusal, err, want)
 	}
-	reviewRoundArgsMust(t, os.Rename(unit, unit+".moved"))
-	reviewRoundArgsMust(t, os.Symlink(filepath.Join(root, "out"), unit))
-	if data, err := reviewRoundArgsReadBelow(base, below); err == nil || strings.Contains(string(data), "SECRET") {
-		t.Errorf("read %q after the swap (err %v)", data, err)
+	reviewRoundArgsMust(t, os.Remove(filepath.Join(root, "ws", "unit")))
+	reviewRoundArgsMust(t, os.Symlink("b", filepath.Join(root, "ws", "unit")))
+	if got := Recomputed(filepath.Join(root, "wslink"), files); got[0].Sha256 != reviewRoundArgsHex("plan b\n") {
+		t.Errorf("the key no longer follows the link of the unit: %v", got)
+	}
+}
+
+// A key that cannot be stored as text is refused: the entry is spelled through an alias of the working directory, so both spellings of
+// its key climb out, and the real path that is left names a directory whose name is not UTF-8.
+func TestReviewRoundArgsKeyThatIsNotTextIsRefused(t *testing.T) {
+	root, bad := t.TempDir(), "d\xff"
+	if err := os.MkdirAll(filepath.Join(root, "ws", bad), 0o755); err != nil {
+		t.Skip("the file system refuses a name that is not UTF-8")
+	}
+	reviewRoundArgsWrite(t, filepath.Join(root, "ws", bad, "000_plan.md"), "x\n")
+	reviewRoundArgsMust(t, os.Symlink("ws", filepath.Join(root, "wslink")))
+	reviewRoundArgsMust(t, os.Symlink("ws", filepath.Join(root, "alias")))
+	reviewRoundArgsMust(t, os.Symlink(bad, filepath.Join(root, "ws", "unit")))
+	unit := filepath.Join(root, "alias", "unit")
+	files, refusal, err := reviewRoundArgsCollectPlanFiles(filepath.Join(root, "wslink"), unit, []string{unit + "/000_plan.md"})
+	if want := "plan path " + unit + "/000_plan.md is not a readable regular file"; err != nil || len(files) != 0 || refusal != want {
+		t.Errorf("%v %q %v, want refusal %q", files, refusal, err, want)
 	}
 }
