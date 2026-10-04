@@ -200,6 +200,11 @@ func (s *Service) stopWorker(r Object, timeout time.Duration) string {
 	}
 	current := readTicks(pid)
 	if r.Get("workerStartTicks") == nil || current == nil {
+		// A worker can be reaped after pidfd_open but before the identity
+		// read. Missing ticks alone prove nothing; the held pidfd proves exit.
+		if h.Wait(0) {
+			return "exited"
+		}
 		return "unverifiable"
 	}
 	if !equal(current, r.Get("workerStartTicks")) {
