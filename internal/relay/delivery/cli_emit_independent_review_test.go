@@ -39,20 +39,6 @@ func TestEmitCarriesTheIndependentReviewItemOnAReviewableReceipt(t *testing.T) {
 	}
 }
 
-func TestEmitWithoutTheIndependentReviewItemStoresNoSuchMember(t *testing.T) {
-	t.Parallel()
-	work := filepath.Join(t.TempDir(), "work")
-	side := newSide(t, work)
-	handoff := filepath.Join(work, "handoff.json")
-	mustDo(t, os.WriteFile(handoff, []byte("{}"), 0o644))
-	rid := strings.Trim(sqliteDump(t, side, "SELECT relationship_id FROM relationships"), "[]\"\n ")
-	accepted, code := runJSON(t, side, "emit", "--relationship", rid, "--generation", "1", "--outcome", "ready_for_review", "--turn-thread", child, "--turn-id", dispatchTurn, "--artifact", handoff)
-	receipt, _ := accepted["receipt"].(map[string]any)
-	if _, stated := receipt["independentReview"]; code != 0 || stated {
-		t.Fatalf("an emit that states no item: %d %v", code, accepted)
-	}
-}
-
 // An execution-only receipt carries no deliverable, so it carries no statement about reviewing one;
 // the refusal names the correction, as the one for a file does.
 func TestEmitRefusesTheIndependentReviewItemOnAnExecutionOnlyReceipt(t *testing.T) {

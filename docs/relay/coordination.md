@@ -479,13 +479,8 @@ usage error without `--restate`). Otherwise the payload is exactly what it was.
   it is the same commit, or when the item's `headPatchId` equals the artifact's `patchId`: a base refresh
   does not change the patch, and a head whose patch-id is unchanged is not reviewed again. The relay does
   not compute the patch-id; the parent confirms the stated one with the diff the review bundle builds
-  (its options are fixed in `internal/review/bundle/gitdiff.go`; a plain `git diff` differs on binary files):
-
-    git diff -z --no-abbrev --full-index --find-renames=50% --no-ext-diff --no-textconv --no-color \
-      --no-relative --diff-algorithm=myers --no-indent-heuristic --inter-hunk-context=0 \
-      --src-prefix=a/ --dst-prefix=b/ --submodule=short --ignore-submodules=none -O/dev/null -U3 -p \
-      $(git merge-base <base> <head>) <head> -- | git patch-id --stable
-
+  (command below; its options are fixed in `internal/review/bundle/gitdiff.go`, and a plain `git diff`
+  differs on binary files).
 - **Warning codes**, all prefixed `independent_review_`: `absent` (flag, no member), `malformed`,
   `unreadable`, `sha256_mismatch`, `artifact_invalid`, `status_differs`, `head_differs`,
   `disposition_missing` and `disposition_unknown`. A file that cannot be read or does not hash to the
@@ -498,6 +493,15 @@ usage error without `--restate`). Otherwise the payload is exactly what it was.
 - **What the relay does not decide.** Whether a finding is real, or whether an open one matters, is the
   parent's judgement from the raw artifact ([the crw-run reading](../../plugins/crw/skills/crw-run/references/merge-readiness.md#the-independent-review-is-a-reference-opinion)).
   The item is unauthenticated, like the rest of the record.
+
+The patch-id of `<head>` against `<base>`, as the review bundle computes it:
+
+```sh
+git diff -z --no-abbrev --full-index --find-renames=50% --no-ext-diff --no-textconv --no-color \
+  --no-relative --diff-algorithm=myers --no-indent-heuristic --inter-hunk-context=0 \
+  --src-prefix=a/ --dst-prefix=b/ --submodule=short --ignore-submodules=none -O/dev/null -U3 -p \
+  $(git merge-base <base> <head>) <head> -- | git patch-id --stable
+```
 
 ## What this is not
 - **`reaffirm` spans two transactions, and that is a choice with a stated reason.** The first

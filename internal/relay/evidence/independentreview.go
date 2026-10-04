@@ -131,6 +131,9 @@ func IndependentReviewCoverage(head string, record any, read ArtifactReader) Rev
 		warn(ReviewStatusDiffers, "the item states status "+quote.Value(item.status)+" and the artifact says "+quote.Value(string(artifact.Status)))
 	}
 	if artifact.Head != head {
+		if !shaPattern.MatchString(head) {
+			head = "the head under restatement" // a record can name any string as its head
+		}
 		switch {
 		case item.headPatchID == "":
 			warn(ReviewHeadDiffers, "the review covered head "+artifact.Head+", not "+head+", and the item states no headPatchId for it, so a base refresh cannot be told from changed code")
@@ -261,9 +264,9 @@ func count(value any) (int64, bool) {
 			return n, true
 		}
 		f, err := v.Float64()
-		return int64(f), err == nil && f == math.Trunc(f) && math.Abs(f) < 1<<53
+		return int64(f), err == nil && f == math.Trunc(f) && math.Abs(f) <= 1<<53
 	case float64:
-		return int64(v), v == math.Trunc(v) && math.Abs(v) < 1<<53
+		return int64(v), v == math.Trunc(v) && math.Abs(v) <= 1<<53
 	}
 	if n, isWhole := Whole(value); isWhole && n.IsInt64() {
 		return n.Int64(), true
