@@ -793,3 +793,10 @@ The parser feeds a fail-closed memory write gate, so a destination the oracle mi
 - A created report is accepted before spawn issuance and can turn a reconciled attempt back into running (`subagent-config/src/fallback-dispatch.ts:171-176`); port: kept, issuance rules belong to the managed-spawn slice.
 - Stored status validation coerces values to strings, admitting singleton arrays while subsequent strict comparisons can return an array action or reconcile a nominally ready attempt (`subagent-config/src/fallback-dispatch.ts:95,100,121,156,158`); port: kept.
 - A process killed between temporary write and rename can leave an orphan temporary dispatch record, with no sweep (`subagent-config/src/fallback-dispatch.ts:110-114`); port: kept.
+
+## CRW-530 managed spawn and checked dispatch
+
+- Created accepts an arbitrary syntactically valid agent ID without a native subagent or parent witness (`subagent-config/src/fallback-dispatch.ts:171-176`); port: fixed, intentionally-changed by the assignment: the product dispatch boundary checks App Server thread/read identity, subagent source and parent before publishing the report.
+- A mistaken created ID cannot be corrected and no honest terminal close exists (`subagent-config/src/fallback-dispatch.ts:173,183-184`); port: fixed, intentionally-changed by the assignment: a stopped report requires stopped execution and reconciliation, preserves the recorded ID and permanently closes without another spawn.
+- A managed marker can occur after an arbitrary earlier line, rather than only at the start of the message (`subagent-config/src/fallback-dispatch.ts:239,252`); port: kept, including JavaScript CR, LF, LS and PS line boundaries.
+- Dispatch ignores trailing command arguments, so dispatch --help still reads stdin and errors on empty input (`subagent-config/src/fallback-dispatch-cli.ts:23-40`; `plugins/codexclaw/bin/cxc.mjs:176-179`); port: kept. JSON and filesystem error wording is intentionally-changed to the Go library's wording; exit 1 and the JSON error-object shape are preserved.
