@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"cmp"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -113,10 +114,14 @@ func subpart(b []byte) int {
 // ListPlanFiles hashes every file below planDir except the dot-names, with paths relative to planDir. It is existsSync, statSync and
 // readdirSync: a directory that cannot be stat'ed is no files, one that can and cannot be read is an error, links are followed, and a
 // name is decoded as Node decodes it (invalid bytes become U+FFFD) before it is joined, stat'ed, read and reported. A file is hashed
-// as the text readFileSync(path, "utf8") returns, so its invalid bytes hash as U+FFFD.
-func ListPlanFiles(planDir string) ([]PlanFileHash, error) {
+// as the text readFileSync(path, "utf8") returns, so its invalid bytes hash as U+FFFD. Unlike the oracle it refuses a plan directory or
+// a file whose real path is outside the working directory cwd (see realPath).
+func ListPlanFiles(cwd, planDir string) ([]PlanFileHash, error) {
 	if _, err := os.Stat(planDir); err != nil {
 		return nil, nil
+	}
+	if err := confined(cwd, planDir); err != nil {
+		return nil, err
 	}
 	var files []PlanFileHash
 	var walk func(dir, rel string) error
@@ -132,6 +137,9 @@ func ListPlanFiles(planDir string) ([]PlanFileHash, error) {
 			}
 			full, shown := filepath.Join(dir, name), path.Join(rel, name)
 			info, err := os.Stat(full)
+			if err == nil {
+				err = confined(cwd, full)
+			}
 			if err != nil {
 				return err
 			}
@@ -149,6 +157,54 @@ func ListPlanFiles(planDir string) ([]PlanFileHash, error) {
 		return nil
 	}
 	return files, walk(planDir, "")
+}
+
+// confined fails unless p, with its links resolved, is the working directory cwd or lies below it. Both are made absolute first, a relative
+// one against syscall.Getwd, the kernel's directory (os.Getwd prefers $PWD), and cleaned as filepath.Join cleaned the work paths, so the
+// path judged is the path opened: resolving links first would read "<link>/.." as the parent of the link's target.
+func confined(cwd, p string) error {
+	var real [2]string
+	for i, q := range [2]string{cwd, p} {
+		if !filepath.IsAbs(q) {
+			wd, err := syscall.Getwd()
+			if err != nil {
+				return err
+			}
+			q = filepath.Join(wd, q)
+		}
+		r, err := filepath.EvalSymlinks(filepath.Clean(q))
+		if err != nil {
+			return err
+		}
+		real[i] = r
+	}
+	if rel, err := filepath.Rel(real[0], real[1]); err != nil || !filepath.IsLocal(rel) {
+		return fmt.Errorf("%s resolves outside the working directory", p)
+	}
+	return nil
+}
+
+// checkManifestPlace runs before the manifest is published. Lstat does not follow a link, so a link or a file in place of .crw or
+// .crw/interview is refused, and so is a manifest that is a link, which crwdir.Publish would follow: the oracle writes through all three.
+func checkManifestPlace(cwd, stateDir, manifestPath string) error {
+	dir, plain := filepath.Dir(manifestPath), func(p string) error {
+		info, err := os.Lstat(p)
+		if err == nil && !info.IsDir() {
+			err = fmt.Errorf("%s is a link or not a directory", p)
+		}
+		return err
+	}
+	err := plain(stateDir)
+	if err == nil {
+		err = os.MkdirAll(dir, 0o777)
+	}
+	if err == nil {
+		err = errors.Join(plain(dir), confined(cwd, dir))
+	}
+	if info, lerr := os.Lstat(manifestPath); err == nil && lerr == nil && info.Mode()&os.ModeSymlink != 0 {
+		err = fmt.Errorf("%s is a symbolic link", manifestPath)
+	}
+	return err
 }
 
 // jsOf is obj[key] as a jsVal; id tells the objects and arrays of one manifest apart.
@@ -248,7 +304,7 @@ func RunFreeze(args FreezeCliArgs, read SessionReader) (string, error) {
 	slug, tracker := read(args.Cwd, args.SessionID)
 	objective := cmp.Or(slug, args.SessionID)
 	derived, stateDir := DeriveSlug(objective), filepath.Join(args.Cwd, crwdir.DirName)
-	files, err := ListPlanFiles(filepath.Join(stateDir, PlanSubdir, derived))
+	files, err := ListPlanFiles(args.Cwd, filepath.Join(stateDir, PlanSubdir, derived))
 	if err != nil {
 		return "", err
 	}
@@ -284,7 +340,7 @@ func RunFreeze(args FreezeCliArgs, read SessionReader) (string, error) {
 			_, err = crwdir.EnsureDir(args.Cwd)
 		}
 		if err == nil {
-			err = os.MkdirAll(filepath.Dir(manifestPath), 0o777)
+			err = checkManifestPlace(args.Cwd, stateDir, manifestPath)
 		}
 		if err == nil {
 			err = crwdir.Publish(manifestPath, data)

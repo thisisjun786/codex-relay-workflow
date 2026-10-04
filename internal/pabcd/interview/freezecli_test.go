@@ -176,8 +176,59 @@ func TestFreezeAnUnreadablePlanDirectoryFails(t *testing.T) {
 	if err := os.Mkdir(closed, 0o000); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ListPlanFiles(closed); err == nil && os.Geteuid() != 0 {
+	if _, err := ListPlanFiles(filepath.Dir(closed), closed); err == nil && os.Geteuid() != 0 {
 		t.Error("a plan directory that cannot be read must fail")
+	}
+}
+
+// A link planted in the working directory must not take the manifest write or the plan reads outside it: each placement is refused with
+// an error, and what lies outside keeps its entries and content. A link that stays inside is followed (the recorded scenario symlinks).
+func TestFreezeRefusesLinksOutOfTheWorkspace(t *testing.T) {
+	for _, tc := range []struct {
+		place string
+		file  bool // the link names a file outside, not a directory
+	}{{".crw", false}, {".crw/interview", false}, {".crw/interview/freeze.json", true}, {".crw/plan", false}, {".crw/plan/default/link.md", true}, {".crw/plan/default/sub", false}} {
+		t.Run(tc.place, func(t *testing.T) {
+			ws, outside := t.TempDir(), t.TempDir()
+			secret, link, to := filepath.Join(outside, "secret"), filepath.Join(ws, tc.place), outside
+			if tc.file {
+				to = secret
+			}
+			if err := errors.Join(os.WriteFile(secret, []byte("keep"), 0o666), os.Mkdir(filepath.Join(outside, "default"), 0o777), os.MkdirAll(filepath.Dir(link), 0o777), os.Symlink(to, link)); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := RunFreeze(FreezeCliArgs{Cwd: ws, SessionID: "default"}, freezeFileReader); err == nil {
+				t.Error("freeze went through the link")
+			}
+			kept, _ := os.ReadFile(secret)
+			if entries, _ := os.ReadDir(outside); string(kept) != "keep" || len(entries) != 2 {
+				t.Errorf("outside the workspace: %q and %d entries, want the content kept and no new entry", kept, len(entries))
+			}
+		})
+	}
+}
+
+// The check judges the path the kernel opens. "<root>/jump/.." (jump a link) is composed as <root>, and ".." from a process whose $PWD is
+// a link to its directory is that directory's real parent: neither is refused, and nothing is created beside the links.
+func TestFreezeConfinementUsesTheCwdAsComposed(t *testing.T) {
+	root, target, logical := t.TempDir(), filepath.Join(t.TempDir(), "target"), t.TempDir()
+	child := filepath.Join(root, "child")
+	if err := errors.Join(os.Mkdir(target, 0o777), os.Mkdir(child, 0o777), os.Symlink(target, filepath.Join(root, "jump")), os.Symlink(child, filepath.Join(logical, "alias"))); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(filepath.Join(logical, "alias")) // the kernel's directory is root/child while $PWD names the link
+	for _, cwd := range []string{root + "/jump/..", ".."} {
+		if _, err := RunFreeze(FreezeCliArgs{Cwd: cwd, SessionID: "default"}, freezeFileReader); err != nil {
+			t.Errorf("cwd %q: %v", cwd, err)
+		}
+	}
+	for dir, want := range map[string]int{target: 0, logical: 1} {
+		if entries, _ := os.ReadDir(dir); len(entries) != want {
+			t.Errorf("%s holds %d entries, want %d", dir, len(entries), want)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, ".crw", "interview", "freeze.json")); err != nil {
+		t.Error(err)
 	}
 }
 
