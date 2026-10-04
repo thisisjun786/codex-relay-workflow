@@ -8,6 +8,7 @@ import (
 	"io"
 	"math"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -60,7 +61,7 @@ func recallCLIJSON(stdout, stderr io.Writer, value any) int {
 	if err != nil {
 		return recallCLIFail(stderr, err)
 	}
-	fmt.Fprintln(stdout, string(b))
+	fmt.Fprintln(stdout, recallCLIUnescapeHTML(b))
 	return 0
 }
 func recallCLIFlags(args []string) (ParsedFlags, *string, error) {
@@ -275,7 +276,7 @@ func recallCLIParseLax(args []string, stringKeys string) map[string]any {
 			continue
 		}
 		values[key] = true
-		if strings.Contains(" "+stringKeys+" ", " "+key+" ") && i+1 < len(args) {
+		if slices.Contains(strings.Fields(stringKeys), key) && i+1 < len(args) {
 			i++
 			values[key] = args[i]
 		}
@@ -397,4 +398,36 @@ func recallCLIStatusJSON(stdout, stderr io.Writer, status MemoryStatus) int {
 	}
 	out.WriteByte('}')
 	return recallCLIJSON(stdout, stderr, json.RawMessage(out.String()))
+}
+
+func recallCLIUnescapeHTML(raw []byte) string {
+	var out strings.Builder
+	for i := 0; i < len(raw); i++ {
+		if raw[i] != '\\' {
+			out.WriteByte(raw[i])
+			continue
+		}
+		if i+6 <= len(raw) {
+			switch string(raw[i : i+6]) {
+			case `\u003c`:
+				out.WriteByte('<')
+				i += 5
+				continue
+			case `\u003e`:
+				out.WriteByte('>')
+				i += 5
+				continue
+			case `\u0026`:
+				out.WriteByte('&')
+				i += 5
+				continue
+			}
+		}
+		out.WriteByte(raw[i])
+		if i+1 < len(raw) {
+			i++
+			out.WriteByte(raw[i])
+		}
+	}
+	return out.String()
 }

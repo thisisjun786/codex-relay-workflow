@@ -182,6 +182,9 @@ func TestRecallCLIRecordedOracle(t *testing.T) {
 				var a, b map[string]any
 				json.Unmarshal([]byte(out), &a)
 				json.Unmarshal([]byte(row.Stdout), &b)
+				if n, ok := a["elapsedMs"].(float64); !ok || n < 0 {
+					t.Fatal("missing/invalid elapsedMs", out)
+				}
 				delete(a, "elapsedMs")
 				delete(b, "elapsedMs")
 				if !reflect.DeepEqual(a, b) {
@@ -447,4 +450,29 @@ func TestRecallCLIManagementAndSearchEdges(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestRecallCLIReviewerRegressions(t *testing.T) {
+	home := recallCLIHome(t)
+	a, b := filepath.Join(home, "a"), filepath.Join(home, "b-<&>")
+	code, out, e := recallCLIInvoke(t, []string{"memory", "requeue", "--home", a, "--limit retries", "--home", b, "--json"}, time.Now())
+	if code != 1 || e != "" || !strings.Contains(out, b) || strings.Contains(out, a) {
+		t.Fatal("unknown option consumed home", code, out, e)
+	}
+	code, out, e = recallCLIInvoke(t, []string{"memory", "status", "--home", b, "--json"}, time.Now())
+	if code != 1 || e != "" || !strings.Contains(out, b) || strings.Contains(out, `\u003c`) {
+		t.Fatal("JSON escaped HTML", code, out, e)
+	}
+}
+
+func TestRecallCLIHTMLAndLiteralEscapes(t *testing.T) {
+	var out, errOut strings.Builder
+	input := []string{"<&>", `\u003c\u003e\u0026`}
+	if recallCLIJSON(&out, &errOut, input) != 0 || errOut.Len() != 0 {
+		t.Fatal(errOut.String())
+	}
+	var got []string
+	if json.Unmarshal([]byte(out.String()), &got) != nil || !reflect.DeepEqual(got, input) || !strings.Contains(out.String(), "<&>") {
+		t.Fatal(out.String())
+	}
 }
