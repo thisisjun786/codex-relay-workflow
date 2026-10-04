@@ -376,3 +376,43 @@ func TestSubagentStopOmittedFieldsAndObserverIsolation(t *testing.T) {
 		}
 	}
 }
+
+func TestSubagentStopReceiptRecoveryIOFailures(t *testing.T) {
+	for _, failure := range []string{"held_lock", "counter_delete"} {
+		t.Run(failure, func(t *testing.T) {
+			cwd := subagentStopWorkspace(t)
+			for n := 0; n < 4; n++ {
+				subagentStopRun(t, cwd, "executor", "a1", "t1", "", nil)
+			}
+			subagentStopPut(t, filepath.Join(cwd, ".crw/evidence/proof.md"), "verified")
+			before, _ := os.ReadFile(state.StatePath(cwd, "s1"))
+			if failure == "held_lock" {
+				subagentStopPut(t, state.StatePath(cwd, "s1")+".lock", "held")
+			} else {
+				if os.Geteuid() == 0 {
+					t.Skip("counter deletion permissions require a non-root process")
+				}
+				dir := filepath.Join(cwd, ".crw/evidence-attempts")
+				if err := os.Chmod(dir, 0o500); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() {
+					if err := os.Chmod(dir, 0o700); err != nil {
+						t.Error(err)
+					}
+				})
+			}
+			if out := subagentStopRun(t, cwd, "executor", "a1", "t1", "EVIDENCE_RECORDED: .crw/evidence/proof.md", nil); out != "" {
+				t.Fatal(out)
+			}
+			if failure == "held_lock" {
+				after, _ := os.ReadFile(state.StatePath(cwd, "s1"))
+				if !bytes.Equal(before, after) || len(state.ReadState(cwd, "s1").UnverifiedSubagents) != 1 {
+					t.Fatal("failed resolution lost verdict")
+				}
+			} else if !evidence.HasSpentBudget(cwd, "s1") || evidence.ReadAttempts(cwd, "s1", "a1", "t1") != 3 {
+				t.Fatal("failed clear lost budget")
+			}
+		})
+	}
+}
