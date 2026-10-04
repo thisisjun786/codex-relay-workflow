@@ -475,6 +475,17 @@ func TestMemoryGateFollowsSymlinks(t *testing.T) {
 	if got := memoryGateClassify("Bash", map[string]any{"command": "echo hi > alias/n.md"}, cwd, env); got.Target != filepath.Join(cwd, "alias", "n.md") {
 		t.Errorf("target: %+v", got)
 	}
+	// A root that leads to "/" holds every absolute path.
+	slash := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(slash, "ch"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/", filepath.Join(slash, "ch", "memories")); err != nil {
+		t.Fatal(err)
+	}
+	if got := memoryGateClassify("Bash", map[string]any{"command": "echo hi > " + cwd + "/n.md"}, cwd, gateEnvOf(map[string]string{"HOME": slash, "CODEX_HOME": filepath.Join(slash, "ch")})); got.Surface != "shell" {
+		t.Errorf("a root that is a link to /: %+v", got)
+	}
 	// A CODEX_HOME that is itself a link protects the directory it leads to.
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, "real"), 0o755); err != nil {
@@ -497,7 +508,11 @@ func TestMemoryGateFollowsSymlinks(t *testing.T) {
 	if err := os.Symlink(filepath.Join(home, ".codex", "memories", "sub"), filepath.Join(home, "alias")); err != nil {
 		t.Fatal(err)
 	}
-	for _, dest := range []string{"$HOME/alias/../n.md", "~/alias/../n.md", "${HOME}/alias/../n.md", "$env:USERPROFILE/alias/../n.md"} {
+	// The same when the link's own name holds a backslash, which the cleaned text no longer shows.
+	if err := os.Symlink(filepath.Join(home, ".codex", "memories", "sub"), filepath.Join(home, `bad\alias`)); err != nil {
+		t.Fatal(err)
+	}
+	for _, dest := range []string{"$HOME/alias/../n.md", "~/alias/../n.md", "${HOME}/alias/../n.md", "$env:USERPROFILE/alias/../n.md", `"$HOME/bad\alias/../n.md"`} {
 		if got := memoryGateClassify("Bash", map[string]any{"command": "echo hi > " + dest}, cwd, gateEnvOf(map[string]string{"HOME": home})); got.Surface != "shell" {
 			t.Errorf("%s: %+v", dest, got)
 		}

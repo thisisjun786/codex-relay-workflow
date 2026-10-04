@@ -326,7 +326,8 @@ type memoryGatePath struct{ clean, joined string }
 // abs is absolutize: the quotes off the ends, the home prefix expanded, backslashes read as slashes, and the path resolved
 // against cwd. clean is that path, which the lexical test reads and the deny reason names; joined is the same path with its
 // ".." components kept, which the physical test follows. The oracle read a backslash as a separator for Windows; on POSIX it
-// is a character of a name (a directory called `\..` is one component), so the text read as written is a second candidate.
+// is a character of a name (a directory called `\..` is one component), so the text read as written is a second candidate:
+// kept is tested for the backslash, because a cleaned ".." can remove the component that held it.
 func (g memoryGateEnv) abs(raw, cwd string) []memoryGatePath {
 	v := text.Trim(raw)
 	head, tail := v != "" && (v[0] == '"' || v[0] == '\''), len(v) > 1 && (v[len(v)-1] == '"' || v[len(v)-1] == '\'')
@@ -345,7 +346,7 @@ func (g memoryGateEnv) abs(raw, cwd string) []memoryGatePath {
 		n, k := norm, kept
 		if slashes {
 			n, k = strings.ReplaceAll(n, "\\", "/"), strings.ReplaceAll(k, "\\", "/")
-		} else if !strings.Contains(n, "\\") {
+		} else if !strings.Contains(k, "\\") {
 			continue
 		}
 		switch {
@@ -378,7 +379,9 @@ func memoryGateIsPath(clean, joined, root string) bool {
 	return memoryGateWithin(clean, root) || memoryGateWithin(memoryGateReal(joined), memoryGateReal(root))
 }
 
-func memoryGateWithin(p, root string) bool { return p == root || strings.HasPrefix(p, root+"/") }
+func memoryGateWithin(p, root string) bool {
+	return p == root || strings.HasPrefix(p, strings.TrimSuffix(root, "/")+"/") // a root that is "/" holds every absolute path
+}
 
 // memoryGateReal is the place an open of the absolute path p reaches: each component that is a symlink is replaced by its
 // target (a dangling link too), and a ".." goes up from the place reached so far, not from the text before it. A component
