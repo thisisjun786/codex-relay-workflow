@@ -1,0 +1,4 @@
+{
+  "issue": "CRW-437",
+  "identical": ["cli-help__freeze__word_help", "cli-help__freeze__dash_h", "cli-help__freeze__dashdash_help", "cli__freeze__dry_run_and_write", "cli__freeze__without_session"]
+}

@@ -1,13 +1,16 @@
 package main
 
 import (
+	"bytes"
 	"io"
 	"os"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/affordance"
+	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
 	"github.com/thisisjun786/codex-relay-workflow/internal/provider"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/job"
+	"github.com/thisisjun786/codex-relay-workflow/internal/role"
 )
 
 // componentHook is an ingress outside the PABCD stage table. Each component owns
@@ -36,6 +39,13 @@ func componentHooks() []componentHook {
 		}
 	}
 	return []componentHook{
+		{"session-start-announcing-subagent-fallback", "session-start", func(c invocation, in io.Reader) int {
+			return role.RunFallbackNoticeHook(c.ctx, in, c.stdout, os.LookupEnv, func(data []byte) string {
+				raw, _ := harness.ReadStdin(bytes.NewReader(data))
+				harness.RecordInvocation(raw, "subagent-config", "session-start", os.LookupEnv)
+				return raw
+			})
+		}},
 		// Provider-bridge component ingress; activation is owned by the cutover.
 		{"session-start-ensuring-provider-bridge", "session-start", func(c invocation, in io.Reader) int {
 			return provider.RunHook(c.ctx, in, c.stdout, os.LookupEnv)

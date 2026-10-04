@@ -1,0 +1,3528 @@
+[
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "b",
+          "threadId": "one",
+          "msgs": [
+            {
+              "text": "<recommended_plugins> harness"
+            },
+            {
+              "text": "human opener"
+            }
+          ]
+        },
+        {
+          "path": "a",
+          "threadId": "two",
+          "msgs": [
+            {
+              "text": "older opener"
+            }
+          ]
+        },
+        {
+          "path": "c",
+          "threadId": "same",
+          "cwd": "/checkout",
+          "repoKey": "example.test/group/repo",
+          "msgs": [
+            {
+              "text": "same origin"
+            }
+          ]
+        },
+        {
+          "path": "d",
+          "threadId": "foreign",
+          "cwd": "/other",
+          "repoKey": "example.test/group/other",
+          "msgs": [
+            {
+              "text": "foreign origin"
+            }
+          ]
+        },
+        {
+          "path": "z",
+          "source": "subagent",
+          "msgs": [
+            {
+              "text": "subagent"
+            }
+          ]
+        },
+        {
+          "path": "old",
+          "date": "2026-01-01",
+          "msgs": [
+            {
+              "text": "old date"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "b",
+        "threadId": "one",
+        "date": "2026-01-02",
+        "excerpt": "human opener"
+      },
+      {
+        "path": "a",
+        "threadId": "two",
+        "date": "2026-01-02",
+        "excerpt": "older opener"
+      },
+      {
+        "path": "old",
+        "threadId": null,
+        "date": "2026-01-01",
+        "excerpt": "old date"
+      }
+    ],
+    "wire": [
+      "\"human opener\"",
+      "\"older opener\"",
+      "\"old date\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "b",
+          "threadId": "one",
+          "msgs": [
+            {
+              "text": "<recommended_plugins> harness"
+            },
+            {
+              "text": "human opener"
+            }
+          ]
+        },
+        {
+          "path": "a",
+          "threadId": "two",
+          "msgs": [
+            {
+              "text": "older opener"
+            }
+          ]
+        },
+        {
+          "path": "c",
+          "threadId": "same",
+          "cwd": "/checkout",
+          "repoKey": "example.test/group/repo",
+          "msgs": [
+            {
+              "text": "same origin"
+            }
+          ]
+        },
+        {
+          "path": "d",
+          "threadId": "foreign",
+          "cwd": "/other",
+          "repoKey": "example.test/group/other",
+          "msgs": [
+            {
+              "text": "foreign origin"
+            }
+          ]
+        },
+        {
+          "path": "z",
+          "source": "subagent",
+          "msgs": [
+            {
+              "text": "subagent"
+            }
+          ]
+        },
+        {
+          "path": "old",
+          "date": "2026-01-01",
+          "msgs": [
+            {
+              "text": "old date"
+            }
+          ]
+        }
+      ],
+      "cwd": "/absent"
+    },
+    "out": [],
+    "wire": []
+  },
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "b",
+          "threadId": "one",
+          "msgs": [
+            {
+              "text": "<recommended_plugins> harness"
+            },
+            {
+              "text": "human opener"
+            }
+          ]
+        },
+        {
+          "path": "a",
+          "threadId": "two",
+          "msgs": [
+            {
+              "text": "older opener"
+            }
+          ]
+        },
+        {
+          "path": "c",
+          "threadId": "same",
+          "cwd": "/checkout",
+          "repoKey": "example.test/group/repo",
+          "msgs": [
+            {
+              "text": "same origin"
+            }
+          ]
+        },
+        {
+          "path": "d",
+          "threadId": "foreign",
+          "cwd": "/other",
+          "repoKey": "example.test/group/other",
+          "msgs": [
+            {
+              "text": "foreign origin"
+            }
+          ]
+        },
+        {
+          "path": "z",
+          "source": "subagent",
+          "msgs": [
+            {
+              "text": "subagent"
+            }
+          ]
+        },
+        {
+          "path": "old",
+          "date": "2026-01-01",
+          "msgs": [
+            {
+              "text": "old date"
+            }
+          ]
+        }
+      ],
+      "cwd": "/repo/sub"
+    },
+    "out": [],
+    "wire": []
+  },
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "b",
+          "threadId": "one",
+          "msgs": [
+            {
+              "text": "<recommended_plugins> harness"
+            },
+            {
+              "text": "human opener"
+            }
+          ]
+        },
+        {
+          "path": "a",
+          "threadId": "two",
+          "msgs": [
+            {
+              "text": "older opener"
+            }
+          ]
+        },
+        {
+          "path": "c",
+          "threadId": "same",
+          "cwd": "/checkout",
+          "repoKey": "example.test/group/repo",
+          "msgs": [
+            {
+              "text": "same origin"
+            }
+          ]
+        },
+        {
+          "path": "d",
+          "threadId": "foreign",
+          "cwd": "/other",
+          "repoKey": "example.test/group/other",
+          "msgs": [
+            {
+              "text": "foreign origin"
+            }
+          ]
+        },
+        {
+          "path": "z",
+          "source": "subagent",
+          "msgs": [
+            {
+              "text": "subagent"
+            }
+          ]
+        },
+        {
+          "path": "old",
+          "date": "2026-01-01",
+          "msgs": [
+            {
+              "text": "old date"
+            }
+          ]
+        }
+      ],
+      "cwd": "/other"
+    },
+    "out": [
+      {
+        "path": "d",
+        "threadId": "foreign",
+        "date": "2026-01-02",
+        "excerpt": "foreign origin"
+      }
+    ],
+    "wire": [
+      "\"foreign origin\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "b",
+          "threadId": "one",
+          "msgs": [
+            {
+              "text": "<recommended_plugins> harness"
+            },
+            {
+              "text": "human opener"
+            }
+          ]
+        },
+        {
+          "path": "a",
+          "threadId": "two",
+          "msgs": [
+            {
+              "text": "older opener"
+            }
+          ]
+        },
+        {
+          "path": "c",
+          "threadId": "same",
+          "cwd": "/checkout",
+          "repoKey": "example.test/group/repo",
+          "msgs": [
+            {
+              "text": "same origin"
+            }
+          ]
+        },
+        {
+          "path": "d",
+          "threadId": "foreign",
+          "cwd": "/other",
+          "repoKey": "example.test/group/other",
+          "msgs": [
+            {
+              "text": "foreign origin"
+            }
+          ]
+        },
+        {
+          "path": "z",
+          "source": "subagent",
+          "msgs": [
+            {
+              "text": "subagent"
+            }
+          ]
+        },
+        {
+          "path": "old",
+          "date": "2026-01-01",
+          "msgs": [
+            {
+              "text": "old date"
+            }
+          ]
+        }
+      ],
+      "n": 1
+    },
+    "out": [
+      {
+        "path": "b",
+        "threadId": "one",
+        "date": "2026-01-02",
+        "excerpt": "human opener"
+      }
+    ],
+    "wire": [
+      "\"human opener\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "b",
+          "threadId": "one",
+          "msgs": [
+            {
+              "text": "<recommended_plugins> harness"
+            },
+            {
+              "text": "human opener"
+            }
+          ]
+        },
+        {
+          "path": "a",
+          "threadId": "two",
+          "msgs": [
+            {
+              "text": "older opener"
+            }
+          ]
+        },
+        {
+          "path": "c",
+          "threadId": "same",
+          "cwd": "/checkout",
+          "repoKey": "example.test/group/repo",
+          "msgs": [
+            {
+              "text": "same origin"
+            }
+          ]
+        },
+        {
+          "path": "d",
+          "threadId": "foreign",
+          "cwd": "/other",
+          "repoKey": "example.test/group/other",
+          "msgs": [
+            {
+              "text": "foreign origin"
+            }
+          ]
+        },
+        {
+          "path": "z",
+          "source": "subagent",
+          "msgs": [
+            {
+              "text": "subagent"
+            }
+          ]
+        },
+        {
+          "path": "old",
+          "date": "2026-01-01",
+          "msgs": [
+            {
+              "text": "old date"
+            }
+          ]
+        }
+      ],
+      "n": 2
+    },
+    "out": [
+      {
+        "path": "b",
+        "threadId": "one",
+        "date": "2026-01-02",
+        "excerpt": "human opener"
+      },
+      {
+        "path": "a",
+        "threadId": "two",
+        "date": "2026-01-02",
+        "excerpt": "older opener"
+      }
+    ],
+    "wire": [
+      "\"human opener\"",
+      "\"older opener\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "b",
+          "threadId": "one",
+          "msgs": [
+            {
+              "text": "<recommended_plugins> harness"
+            },
+            {
+              "text": "human opener"
+            }
+          ]
+        },
+        {
+          "path": "a",
+          "threadId": "two",
+          "msgs": [
+            {
+              "text": "older opener"
+            }
+          ]
+        },
+        {
+          "path": "c",
+          "threadId": "same",
+          "cwd": "/checkout",
+          "repoKey": "example.test/group/repo",
+          "msgs": [
+            {
+              "text": "same origin"
+            }
+          ]
+        },
+        {
+          "path": "d",
+          "threadId": "foreign",
+          "cwd": "/other",
+          "repoKey": "example.test/group/other",
+          "msgs": [
+            {
+              "text": "foreign origin"
+            }
+          ]
+        },
+        {
+          "path": "z",
+          "source": "subagent",
+          "msgs": [
+            {
+              "text": "subagent"
+            }
+          ]
+        },
+        {
+          "path": "old",
+          "date": "2026-01-01",
+          "msgs": [
+            {
+              "text": "old date"
+            }
+          ]
+        }
+      ],
+      "n": 0
+    },
+    "out": null,
+    "wire": null
+  },
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "b",
+          "threadId": "one",
+          "msgs": [
+            {
+              "text": "<recommended_plugins> harness"
+            },
+            {
+              "text": "human opener"
+            }
+          ]
+        },
+        {
+          "path": "a",
+          "threadId": "two",
+          "msgs": [
+            {
+              "text": "older opener"
+            }
+          ]
+        },
+        {
+          "path": "c",
+          "threadId": "same",
+          "cwd": "/checkout",
+          "repoKey": "example.test/group/repo",
+          "msgs": [
+            {
+              "text": "same origin"
+            }
+          ]
+        },
+        {
+          "path": "d",
+          "threadId": "foreign",
+          "cwd": "/other",
+          "repoKey": "example.test/group/other",
+          "msgs": [
+            {
+              "text": "foreign origin"
+            }
+          ]
+        },
+        {
+          "path": "z",
+          "source": "subagent",
+          "msgs": [
+            {
+              "text": "subagent"
+            }
+          ]
+        },
+        {
+          "path": "old",
+          "date": "2026-01-01",
+          "msgs": [
+            {
+              "text": "old date"
+            }
+          ]
+        }
+      ],
+      "n": -1
+    },
+    "out": null,
+    "wire": null
+  },
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "b",
+          "threadId": "one",
+          "msgs": [
+            {
+              "text": "<recommended_plugins> harness"
+            },
+            {
+              "text": "human opener"
+            }
+          ]
+        },
+        {
+          "path": "a",
+          "threadId": "two",
+          "msgs": [
+            {
+              "text": "older opener"
+            }
+          ]
+        },
+        {
+          "path": "c",
+          "threadId": "same",
+          "cwd": "/checkout",
+          "repoKey": "example.test/group/repo",
+          "msgs": [
+            {
+              "text": "same origin"
+            }
+          ]
+        },
+        {
+          "path": "d",
+          "threadId": "foreign",
+          "cwd": "/other",
+          "repoKey": "example.test/group/other",
+          "msgs": [
+            {
+              "text": "foreign origin"
+            }
+          ]
+        },
+        {
+          "path": "z",
+          "source": "subagent",
+          "msgs": [
+            {
+              "text": "subagent"
+            }
+          ]
+        },
+        {
+          "path": "old",
+          "date": "2026-01-01",
+          "msgs": [
+            {
+              "text": "old date"
+            }
+          ]
+        }
+      ],
+      "cwd": ""
+    },
+    "out": null,
+    "wire": null
+  },
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "b",
+          "threadId": "one",
+          "msgs": [
+            {
+              "text": "<recommended_plugins> harness"
+            },
+            {
+              "text": "human opener"
+            }
+          ]
+        },
+        {
+          "path": "a",
+          "threadId": "two",
+          "msgs": [
+            {
+              "text": "older opener"
+            }
+          ]
+        },
+        {
+          "path": "c",
+          "threadId": "same",
+          "cwd": "/checkout",
+          "repoKey": "example.test/group/repo",
+          "msgs": [
+            {
+              "text": "same origin"
+            }
+          ]
+        },
+        {
+          "path": "d",
+          "threadId": "foreign",
+          "cwd": "/other",
+          "repoKey": "example.test/group/other",
+          "msgs": [
+            {
+              "text": "foreign origin"
+            }
+          ]
+        },
+        {
+          "path": "z",
+          "source": "subagent",
+          "msgs": [
+            {
+              "text": "subagent"
+            }
+          ]
+        },
+        {
+          "path": "old",
+          "date": "2026-01-01",
+          "msgs": [
+            {
+              "text": "old date"
+            }
+          ]
+        }
+      ],
+      "origin": "git@example.test:group/repo.git"
+    },
+    "out": [
+      {
+        "path": "c",
+        "threadId": "same",
+        "date": "2026-01-02",
+        "excerpt": "same origin"
+      },
+      {
+        "path": "b",
+        "threadId": "one",
+        "date": "2026-01-02",
+        "excerpt": "human opener"
+      },
+      {
+        "path": "a",
+        "threadId": "two",
+        "date": "2026-01-02",
+        "excerpt": "older opener"
+      },
+      {
+        "path": "old",
+        "threadId": null,
+        "date": "2026-01-01",
+        "excerpt": "old date"
+      }
+    ],
+    "wire": [
+      "\"same origin\"",
+      "\"human opener\"",
+      "\"older opener\"",
+      "\"old date\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "b",
+          "threadId": "one",
+          "msgs": [
+            {
+              "text": "<recommended_plugins> harness"
+            },
+            {
+              "text": "human opener"
+            }
+          ]
+        },
+        {
+          "path": "a",
+          "threadId": "two",
+          "msgs": [
+            {
+              "text": "older opener"
+            }
+          ]
+        },
+        {
+          "path": "c",
+          "threadId": "same",
+          "cwd": "/checkout",
+          "repoKey": "example.test/group/repo",
+          "msgs": [
+            {
+              "text": "same origin"
+            }
+          ]
+        },
+        {
+          "path": "d",
+          "threadId": "foreign",
+          "cwd": "/other",
+          "repoKey": "example.test/group/other",
+          "msgs": [
+            {
+              "text": "foreign origin"
+            }
+          ]
+        },
+        {
+          "path": "z",
+          "source": "subagent",
+          "msgs": [
+            {
+              "text": "subagent"
+            }
+          ]
+        },
+        {
+          "path": "old",
+          "date": "2026-01-01",
+          "msgs": [
+            {
+              "text": "old date"
+            }
+          ]
+        }
+      ],
+      "origin": "https://example.test/group/other.git"
+    },
+    "out": [
+      {
+        "path": "d",
+        "threadId": "foreign",
+        "date": "2026-01-02",
+        "excerpt": "foreign origin"
+      },
+      {
+        "path": "b",
+        "threadId": "one",
+        "date": "2026-01-02",
+        "excerpt": "human opener"
+      },
+      {
+        "path": "a",
+        "threadId": "two",
+        "date": "2026-01-02",
+        "excerpt": "older opener"
+      },
+      {
+        "path": "old",
+        "threadId": null,
+        "date": "2026-01-01",
+        "excerpt": "old date"
+      }
+    ],
+    "wire": [
+      "\"foreign origin\"",
+      "\"human opener\"",
+      "\"older opener\"",
+      "\"old date\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "b",
+          "threadId": "one",
+          "msgs": [
+            {
+              "text": "<recommended_plugins> harness"
+            },
+            {
+              "text": "human opener"
+            }
+          ]
+        },
+        {
+          "path": "a",
+          "threadId": "two",
+          "msgs": [
+            {
+              "text": "older opener"
+            }
+          ]
+        },
+        {
+          "path": "c",
+          "threadId": "same",
+          "cwd": "/checkout",
+          "repoKey": "example.test/group/repo",
+          "msgs": [
+            {
+              "text": "same origin"
+            }
+          ]
+        },
+        {
+          "path": "d",
+          "threadId": "foreign",
+          "cwd": "/other",
+          "repoKey": "example.test/group/other",
+          "msgs": [
+            {
+              "text": "foreign origin"
+            }
+          ]
+        },
+        {
+          "path": "z",
+          "source": "subagent",
+          "msgs": [
+            {
+              "text": "subagent"
+            }
+          ]
+        },
+        {
+          "path": "old",
+          "date": "2026-01-01",
+          "msgs": [
+            {
+              "text": "old date"
+            }
+          ]
+        }
+      ],
+      "legacy": true,
+      "origin": "https://example.test/group/repo.git",
+      "threads": [
+        [
+          "same",
+          "git@example.test:group/repo.git"
+        ],
+        [
+          "foreign",
+          "https://example.test/group/other.git"
+        ]
+      ]
+    },
+    "out": [
+      {
+        "path": "c",
+        "threadId": "same",
+        "date": "2026-01-02",
+        "excerpt": "same origin"
+      },
+      {
+        "path": "b",
+        "threadId": "one",
+        "date": "2026-01-02",
+        "excerpt": "human opener"
+      },
+      {
+        "path": "a",
+        "threadId": "two",
+        "date": "2026-01-02",
+        "excerpt": "older opener"
+      },
+      {
+        "path": "old",
+        "threadId": null,
+        "date": "2026-01-01",
+        "excerpt": "old date"
+      }
+    ],
+    "wire": [
+      "\"same origin\"",
+      "\"human opener\"",
+      "\"older opener\"",
+      "\"old date\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "b",
+          "threadId": "one",
+          "msgs": [
+            {
+              "text": "<recommended_plugins> harness"
+            },
+            {
+              "text": "human opener"
+            }
+          ]
+        },
+        {
+          "path": "a",
+          "threadId": "two",
+          "msgs": [
+            {
+              "text": "older opener"
+            }
+          ]
+        },
+        {
+          "path": "c",
+          "threadId": "same",
+          "cwd": "/checkout",
+          "repoKey": "example.test/group/repo",
+          "msgs": [
+            {
+              "text": "same origin"
+            }
+          ]
+        },
+        {
+          "path": "d",
+          "threadId": "foreign",
+          "cwd": "/other",
+          "repoKey": "example.test/group/other",
+          "msgs": [
+            {
+              "text": "foreign origin"
+            }
+          ]
+        },
+        {
+          "path": "z",
+          "source": "subagent",
+          "msgs": [
+            {
+              "text": "subagent"
+            }
+          ]
+        },
+        {
+          "path": "old",
+          "date": "2026-01-01",
+          "msgs": [
+            {
+              "text": "old date"
+            }
+          ]
+        }
+      ],
+      "origin": "https://example.test/group/repo.git",
+      "threads": [
+        [
+          "foreign",
+          "git@example.test:group/repo.git"
+        ]
+      ]
+    },
+    "out": [
+      {
+        "path": "d",
+        "threadId": "foreign",
+        "date": "2026-01-02",
+        "excerpt": "foreign origin"
+      },
+      {
+        "path": "c",
+        "threadId": "same",
+        "date": "2026-01-02",
+        "excerpt": "same origin"
+      },
+      {
+        "path": "b",
+        "threadId": "one",
+        "date": "2026-01-02",
+        "excerpt": "human opener"
+      },
+      {
+        "path": "a",
+        "threadId": "two",
+        "date": "2026-01-02",
+        "excerpt": "older opener"
+      },
+      {
+        "path": "old",
+        "threadId": null,
+        "date": "2026-01-01",
+        "excerpt": "old date"
+      }
+    ],
+    "wire": [
+      "\"foreign origin\"",
+      "\"same origin\"",
+      "\"human opener\"",
+      "\"older opener\"",
+      "\"old date\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "b",
+          "threadId": "one",
+          "msgs": [
+            {
+              "text": "<recommended_plugins> harness"
+            },
+            {
+              "text": "human opener"
+            }
+          ]
+        },
+        {
+          "path": "a",
+          "threadId": "two",
+          "msgs": [
+            {
+              "text": "older opener"
+            }
+          ]
+        },
+        {
+          "path": "c",
+          "threadId": "same",
+          "cwd": "/checkout",
+          "repoKey": "example.test/group/repo",
+          "msgs": [
+            {
+              "text": "same origin"
+            }
+          ]
+        },
+        {
+          "path": "d",
+          "threadId": "foreign",
+          "cwd": "/other",
+          "repoKey": "example.test/group/other",
+          "msgs": [
+            {
+              "text": "foreign origin"
+            }
+          ]
+        },
+        {
+          "path": "z",
+          "source": "subagent",
+          "msgs": [
+            {
+              "text": "subagent"
+            }
+          ]
+        },
+        {
+          "path": "old",
+          "date": "2026-01-01",
+          "msgs": [
+            {
+              "text": "old date"
+            }
+          ]
+        }
+      ],
+      "mode": "missing"
+    },
+    "out": null,
+    "wire": null
+  },
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "b",
+          "threadId": "one",
+          "msgs": [
+            {
+              "text": "<recommended_plugins> harness"
+            },
+            {
+              "text": "human opener"
+            }
+          ]
+        },
+        {
+          "path": "a",
+          "threadId": "two",
+          "msgs": [
+            {
+              "text": "older opener"
+            }
+          ]
+        },
+        {
+          "path": "c",
+          "threadId": "same",
+          "cwd": "/checkout",
+          "repoKey": "example.test/group/repo",
+          "msgs": [
+            {
+              "text": "same origin"
+            }
+          ]
+        },
+        {
+          "path": "d",
+          "threadId": "foreign",
+          "cwd": "/other",
+          "repoKey": "example.test/group/other",
+          "msgs": [
+            {
+              "text": "foreign origin"
+            }
+          ]
+        },
+        {
+          "path": "z",
+          "source": "subagent",
+          "msgs": [
+            {
+              "text": "subagent"
+            }
+          ]
+        },
+        {
+          "path": "old",
+          "date": "2026-01-01",
+          "msgs": [
+            {
+              "text": "old date"
+            }
+          ]
+        }
+      ],
+      "mode": "broken"
+    },
+    "out": null,
+    "wire": null
+  },
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "b",
+          "threadId": "one",
+          "msgs": [
+            {
+              "text": "<recommended_plugins> harness"
+            },
+            {
+              "text": "human opener"
+            }
+          ]
+        },
+        {
+          "path": "a",
+          "threadId": "two",
+          "msgs": [
+            {
+              "text": "older opener"
+            }
+          ]
+        },
+        {
+          "path": "c",
+          "threadId": "same",
+          "cwd": "/checkout",
+          "repoKey": "example.test/group/repo",
+          "msgs": [
+            {
+              "text": "same origin"
+            }
+          ]
+        },
+        {
+          "path": "d",
+          "threadId": "foreign",
+          "cwd": "/other",
+          "repoKey": "example.test/group/other",
+          "msgs": [
+            {
+              "text": "foreign origin"
+            }
+          ]
+        },
+        {
+          "path": "z",
+          "source": "subagent",
+          "msgs": [
+            {
+              "text": "subagent"
+            }
+          ]
+        },
+        {
+          "path": "old",
+          "date": "2026-01-01",
+          "msgs": [
+            {
+              "text": "old date"
+            }
+          ]
+        }
+      ],
+      "mode": "noMsgs"
+    },
+    "out": null,
+    "wire": null
+  },
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "p",
+          "msgs": [
+            {
+              "text": " \t﻿<recommended_plugins> harness"
+            },
+            {
+              "text": "actual user"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "actual user"
+      }
+    ],
+    "wire": [
+      "\"actual user\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "p",
+          "msgs": [
+            {
+              "text": " \t﻿<hook_prompt harness"
+            },
+            {
+              "text": "actual user"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "actual user"
+      }
+    ],
+    "wire": [
+      "\"actual user\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "p",
+          "msgs": [
+            {
+              "text": " \t﻿<realtime_delegation> harness"
+            },
+            {
+              "text": "actual user"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "actual user"
+      }
+    ],
+    "wire": [
+      "\"actual user\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "p",
+          "msgs": [
+            {
+              "text": " \t﻿<codex_internal_context harness"
+            },
+            {
+              "text": "actual user"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "actual user"
+      }
+    ],
+    "wire": [
+      "\"actual user\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "p",
+          "msgs": [
+            {
+              "text": " \t﻿<in-app-browser-context harness"
+            },
+            {
+              "text": "actual user"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "actual user"
+      }
+    ],
+    "wire": [
+      "\"actual user\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "p",
+          "msgs": [
+            {
+              "text": " \t﻿<send_user_message_question_reply> harness"
+            },
+            {
+              "text": "actual user"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "actual user"
+      }
+    ],
+    "wire": [
+      "\"actual user\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "p",
+          "msgs": [
+            {
+              "text": " \t﻿# Files mentioned by the user: harness"
+            },
+            {
+              "text": "actual user"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "actual user"
+      }
+    ],
+    "wire": [
+      "\"actual user\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "p",
+          "msgs": [
+            {
+              "text": " \t﻿# Files pasted by the user: harness"
+            },
+            {
+              "text": "actual user"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "actual user"
+      }
+    ],
+    "wire": [
+      "\"actual user\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "p",
+          "msgs": [
+            {
+              "text": " \t﻿# Browser comments: harness"
+            },
+            {
+              "text": "actual user"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "actual user"
+      }
+    ],
+    "wire": [
+      "\"actual user\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "p",
+          "msgs": [
+            {
+              "text": " \t﻿## Referenced chats with Codex: harness"
+            },
+            {
+              "text": "actual user"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "actual user"
+      }
+    ],
+    "wire": [
+      "\"actual user\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "p",
+          "msgs": [
+            {
+              "text": " \t﻿<environment_context> harness"
+            },
+            {
+              "text": "actual user"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "actual user"
+      }
+    ],
+    "wire": [
+      "\"actual user\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "p",
+          "msgs": [
+            {
+              "text": " \t﻿<ENVIRONMENT_CONTEXT> harness"
+            },
+            {
+              "text": "actual user"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "actual user"
+      }
+    ],
+    "wire": [
+      "\"actual user\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "p",
+          "msgs": [
+            {
+              "text": " \t﻿<skill> harness"
+            },
+            {
+              "text": "actual user"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "actual user"
+      }
+    ],
+    "wire": [
+      "\"actual user\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "p",
+          "msgs": [
+            {
+              "text": " \t﻿<subagent_notification> harness"
+            },
+            {
+              "text": "actual user"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "actual user"
+      }
+    ],
+    "wire": [
+      "\"actual user\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "p",
+          "msgs": [
+            {
+              "text": " \t﻿<turn_aborted> harness"
+            },
+            {
+              "text": "actual user"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "actual user"
+      }
+    ],
+    "wire": [
+      "\"actual user\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "p",
+          "msgs": [
+            {
+              "text": " \t﻿<permissions instructions> harness"
+            },
+            {
+              "text": "actual user"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "actual user"
+      }
+    ],
+    "wire": [
+      "\"actual user\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "p",
+          "msgs": [
+            {
+              "text": " \t﻿<INSTRUCTIONS> harness"
+            },
+            {
+              "text": "actual user"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "actual user"
+      }
+    ],
+    "wire": [
+      "\"actual user\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "p",
+          "msgs": [
+            {
+              "text": " \t﻿<user_instructions> harness"
+            },
+            {
+              "text": "actual user"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "actual user"
+      }
+    ],
+    "wire": [
+      "\"actual user\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "p",
+          "msgs": [
+            {
+              "text": " \t﻿<system-reminder> harness"
+            },
+            {
+              "text": "actual user"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "actual user"
+      }
+    ],
+    "wire": [
+      "\"actual user\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "p",
+          "msgs": [
+            {
+              "text": " \t﻿# AGENTS.md instructions harness"
+            },
+            {
+              "text": "actual user"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "actual user"
+      }
+    ],
+    "wire": [
+      "\"actual user\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "p",
+          "msgs": [
+            {
+              "text": " \t﻿## Workspace Context harness"
+            },
+            {
+              "text": "actual user"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "actual user"
+      }
+    ],
+    "wire": [
+      "\"actual user\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "p",
+          "msgs": [
+            {
+              "text": " \t﻿[Recent Context] harness"
+            },
+            {
+              "text": "actual user"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "actual user"
+      }
+    ],
+    "wire": [
+      "\"actual user\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "p",
+          "msgs": [
+            {
+              "text": ""
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": ""
+      }
+    ],
+    "wire": [
+      "\"\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "p",
+          "msgs": [
+            {
+              "text": " \t﻿"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": ""
+      }
+    ],
+    "wire": [
+      "\"\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "p",
+          "msgs": [
+            {
+              "text": "<recommended_plugins> human"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "<recommended_plugins> human"
+      }
+    ],
+    "wire": [
+      "\"<recommended_plugins> human\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "p",
+          "msgs": [
+            {
+              "text": "<RECOMMENDED_PLUGINS> human"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "<RECOMMENDED_PLUGINS> human"
+      }
+    ],
+    "wire": [
+      "\"<RECOMMENDED_PLUGINS> human\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "p",
+          "msgs": [
+            {
+              "text": "a b c d e f g h　i﻿j"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "a b c d e f g h i j"
+      }
+    ],
+    "wire": [
+      "\"a b c d e f g h i j\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "p",
+          "msgs": [
+            {
+              "text": "ab᠎c​d"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "ab᠎c​d"
+      }
+    ],
+    "wire": [
+      "\"ab᠎c​d\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "p",
+          "msgs": [
+            {
+              "text": "first\nsecond xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "first second xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..."
+      }
+    ],
+    "wire": [
+      "\"first second xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx...\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "limit": -10,
+      "files": [
+        {
+          "path": "p",
+          "msgs": [
+            {
+              "text": "😀abc def"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "..."
+      }
+    ],
+    "wire": [
+      "\"...\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "limit": -1,
+      "files": [
+        {
+          "path": "p",
+          "msgs": [
+            {
+              "text": "😀abc def"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "😀abc..."
+      }
+    ],
+    "wire": [
+      "\"😀abc...\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "limit": 0,
+      "files": [
+        {
+          "path": "p",
+          "msgs": [
+            {
+              "text": "😀abc def"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "😀abc ..."
+      }
+    ],
+    "wire": [
+      "\"😀abc ...\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "limit": 1,
+      "files": [
+        {
+          "path": "p",
+          "msgs": [
+            {
+              "text": "😀abc def"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "😀abc d..."
+      }
+    ],
+    "wire": [
+      "\"😀abc d...\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "limit": 2,
+      "files": [
+        {
+          "path": "p",
+          "msgs": [
+            {
+              "text": "😀abc def"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "😀abc de..."
+      }
+    ],
+    "wire": [
+      "\"😀abc de...\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "limit": 3,
+      "files": [
+        {
+          "path": "p",
+          "msgs": [
+            {
+              "text": "😀abc def"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "..."
+      }
+    ],
+    "wire": [
+      "\"...\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "limit": 4,
+      "files": [
+        {
+          "path": "p",
+          "msgs": [
+            {
+              "text": "😀abc def"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "\ud83d..."
+      }
+    ],
+    "wire": [
+      "\"\\ud83d...\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "limit": 5,
+      "files": [
+        {
+          "path": "p",
+          "msgs": [
+            {
+              "text": "😀abc def"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "😀..."
+      }
+    ],
+    "wire": [
+      "\"😀...\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "limit": 6,
+      "files": [
+        {
+          "path": "p",
+          "msgs": [
+            {
+              "text": "😀abc def"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "😀a..."
+      }
+    ],
+    "wire": [
+      "\"😀a...\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "limit": 7,
+      "files": [
+        {
+          "path": "p",
+          "msgs": [
+            {
+              "text": "😀abc def"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "😀ab..."
+      }
+    ],
+    "wire": [
+      "\"😀ab...\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "limit": 10,
+      "files": [
+        {
+          "path": "p",
+          "msgs": [
+            {
+              "text": "😀abc def"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "😀abc def"
+      }
+    ],
+    "wire": [
+      "\"😀abc def\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "limit": 100,
+      "files": [
+        {
+          "path": "p",
+          "msgs": [
+            {
+              "text": "😀abc def"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "😀abc def"
+      }
+    ],
+    "wire": [
+      "\"😀abc def\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "limit": 1000,
+      "files": [
+        {
+          "path": "p",
+          "msgs": [
+            {
+              "text": "😀abc def"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "😀abc def"
+      }
+    ],
+    "wire": [
+      "\"😀abc def\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "p",
+          "msgs": [
+            {
+              "text": "<hook_prompt harness"
+            },
+            {
+              "text": "<hook_prompt harness"
+            },
+            {
+              "text": "<hook_prompt harness"
+            },
+            {
+              "text": "later human"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "later human"
+      }
+    ],
+    "wire": [
+      "\"later human\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "p",
+          "msgs": [
+            {
+              "text": "<hook_prompt harness"
+            },
+            {
+              "text": "<hook_prompt harness"
+            },
+            {
+              "text": "<hook_prompt harness"
+            },
+            {
+              "text": "<hook_prompt harness"
+            },
+            {
+              "text": "later human"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": ""
+      }
+    ],
+    "wire": [
+      "\"\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "p",
+          "msgs": [
+            {
+              "text": "<hook_prompt harness"
+            },
+            {
+              "text": "<hook_prompt harness"
+            },
+            {
+              "text": "<hook_prompt harness"
+            },
+            {
+              "text": "<hook_prompt harness"
+            },
+            {
+              "text": "<hook_prompt harness"
+            },
+            {
+              "text": "later human"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": ""
+      }
+    ],
+    "wire": [
+      "\"\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "files": [
+        {
+          "path": "p",
+          "msgs": [
+            {
+              "text": "assistant",
+              "role": "assistant"
+            },
+            {
+              "text": "flagged",
+              "synthetic": 1
+            },
+            {
+              "text": "user"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "user"
+      }
+    ],
+    "wire": [
+      "\"user\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "cwd": "C:\\proj\\here",
+      "platformCase": false,
+      "files": [
+        {
+          "path": "p",
+          "cwd": "\\\\?\\C:\\proj\\here",
+          "msgs": [
+            {
+              "text": "path opener"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "path opener"
+      }
+    ],
+    "wire": [
+      "\"path opener\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "cwd": "//server/share",
+      "platformCase": false,
+      "files": [
+        {
+          "path": "p",
+          "cwd": "//?/UNC/server/share/",
+          "msgs": [
+            {
+              "text": "path opener"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "path opener"
+      }
+    ],
+    "wire": [
+      "\"path opener\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "cwd": "c:\\proj\\HERE",
+      "platformCase": true,
+      "files": [
+        {
+          "path": "p",
+          "cwd": "C:\\proj\\here",
+          "msgs": [
+            {
+              "text": "path opener"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [],
+    "wire": [],
+    "foldedOut": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "path opener"
+      }
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "cwd": "/repo",
+      "platformCase": false,
+      "files": [
+        {
+          "path": "p",
+          "cwd": "/repo/",
+          "msgs": [
+            {
+              "text": "path opener"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "path opener"
+      }
+    ],
+    "wire": [
+      "\"path opener\""
+    ]
+  },
+  {
+    "kind": "list",
+    "in": {
+      "cwd": "/repo2",
+      "platformCase": false,
+      "files": [
+        {
+          "path": "p",
+          "cwd": "/repo",
+          "msgs": [
+            {
+              "text": "path opener"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [],
+    "wire": []
+  },
+  {
+    "kind": "list",
+    "in": {
+      "cwd": "/repo/a'b",
+      "platformCase": false,
+      "files": [
+        {
+          "path": "p",
+          "cwd": "/repo/a'b",
+          "msgs": [
+            {
+              "text": "path opener"
+            }
+          ]
+        }
+      ]
+    },
+    "out": [
+      {
+        "path": "p",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "path opener"
+      }
+    ],
+    "wire": [
+      "\"path opener\""
+    ]
+  },
+  {
+    "kind": "summary",
+    "in": {
+      "files": {},
+      "dirs": [],
+      "links": []
+    },
+    "out": {}
+  },
+  {
+    "kind": "summary",
+    "in": {
+      "files": {
+        "z.md": "thread_id: duplicate\n# Z wins\n",
+        "a.md": "thread_id: duplicate\n# A\n",
+        "bare.md": "# no id\n",
+        "headless.md": "thread_id: absent\n",
+        "ignore.txt": "thread_id: no\n# no\n"
+      },
+      "dirs": [
+        "dir.md"
+      ],
+      "links": [
+        "broken.md"
+      ]
+    },
+    "out": {
+      "duplicate": {
+        "relpath": "z.md",
+        "title": "Z wins"
+      }
+    }
+  },
+  {
+    "kind": "summary",
+    "in": {
+      "files": {
+        "s.md": "thread_id:\n token\n# first\n# second"
+      },
+      "dirs": [],
+      "links": []
+    },
+    "out": {
+      "token": {
+        "relpath": "s.md",
+        "title": "first"
+      }
+    }
+  },
+  {
+    "kind": "summary",
+    "in": {
+      "files": {
+        "s.md": "thread_id:\n token\n# \n# second"
+      },
+      "dirs": [],
+      "links": []
+    },
+    "out": {
+      "token": {
+        "relpath": "s.md",
+        "title": "# second"
+      }
+    }
+  },
+  {
+    "kind": "summary",
+    "in": {
+      "files": {
+        "s.md": "thread_id:\n token\n#  \n# second"
+      },
+      "dirs": [],
+      "links": []
+    },
+    "out": {
+      "token": {
+        "relpath": "s.md",
+        "title": "# second"
+      }
+    }
+  },
+  {
+    "kind": "summary",
+    "in": {
+      "files": {
+        "s.md": "thread_id:\n token\n#\nnext line\n# second"
+      },
+      "dirs": [],
+      "links": []
+    },
+    "out": {
+      "token": {
+        "relpath": "s.md",
+        "title": "next line"
+      }
+    }
+  },
+  {
+    "kind": "summary",
+    "in": {
+      "files": {
+        "s.md": "thread_id:\n token\n# heading\n# second"
+      },
+      "dirs": [],
+      "links": []
+    },
+    "out": {
+      "token": {
+        "relpath": "s.md",
+        "title": "heading"
+      }
+    }
+  },
+  {
+    "kind": "summary",
+    "in": {
+      "files": {
+        "s.md": "thread_id:\n token\n#﻿heading\n# second"
+      },
+      "dirs": [],
+      "links": []
+    },
+    "out": {
+      "token": {
+        "relpath": "s.md",
+        "title": "heading"
+      }
+    }
+  },
+  {
+    "kind": "summary",
+    "in": {
+      "files": {
+        "s.md": "thread_id:\n token\n## not h1\n# second"
+      },
+      "dirs": [],
+      "links": []
+    },
+    "out": {
+      "token": {
+        "relpath": "s.md",
+        "title": "second"
+      }
+    }
+  },
+  {
+    "kind": "summary",
+    "in": {
+      "files": {
+        "s.md": "thread_id:\n token\r# first\r# second"
+      },
+      "dirs": [],
+      "links": []
+    },
+    "out": {
+      "token": {
+        "relpath": "s.md",
+        "title": "first"
+      }
+    }
+  },
+  {
+    "kind": "summary",
+    "in": {
+      "files": {
+        "s.md": "thread_id:\n token\r# \r# second"
+      },
+      "dirs": [],
+      "links": []
+    },
+    "out": {
+      "token": {
+        "relpath": "s.md",
+        "title": "# second"
+      }
+    }
+  },
+  {
+    "kind": "summary",
+    "in": {
+      "files": {
+        "s.md": "thread_id:\n token\r#  \r# second"
+      },
+      "dirs": [],
+      "links": []
+    },
+    "out": {
+      "token": {
+        "relpath": "s.md",
+        "title": "# second"
+      }
+    }
+  },
+  {
+    "kind": "summary",
+    "in": {
+      "files": {
+        "s.md": "thread_id:\n token\r#\nnext line\r# second"
+      },
+      "dirs": [],
+      "links": []
+    },
+    "out": {
+      "token": {
+        "relpath": "s.md",
+        "title": "next line"
+      }
+    }
+  },
+  {
+    "kind": "summary",
+    "in": {
+      "files": {
+        "s.md": "thread_id:\n token\r# heading\r# second"
+      },
+      "dirs": [],
+      "links": []
+    },
+    "out": {
+      "token": {
+        "relpath": "s.md",
+        "title": "heading"
+      }
+    }
+  },
+  {
+    "kind": "summary",
+    "in": {
+      "files": {
+        "s.md": "thread_id:\n token\r#﻿heading\r# second"
+      },
+      "dirs": [],
+      "links": []
+    },
+    "out": {
+      "token": {
+        "relpath": "s.md",
+        "title": "heading"
+      }
+    }
+  },
+  {
+    "kind": "summary",
+    "in": {
+      "files": {
+        "s.md": "thread_id:\n token\r## not h1\r# second"
+      },
+      "dirs": [],
+      "links": []
+    },
+    "out": {
+      "token": {
+        "relpath": "s.md",
+        "title": "second"
+      }
+    }
+  },
+  {
+    "kind": "summary",
+    "in": {
+      "files": {
+        "s.md": "thread_id:\n token\r\n# first\r\n# second"
+      },
+      "dirs": [],
+      "links": []
+    },
+    "out": {
+      "token": {
+        "relpath": "s.md",
+        "title": "first"
+      }
+    }
+  },
+  {
+    "kind": "summary",
+    "in": {
+      "files": {
+        "s.md": "thread_id:\n token\r\n# \r\n# second"
+      },
+      "dirs": [],
+      "links": []
+    },
+    "out": {
+      "token": {
+        "relpath": "s.md",
+        "title": "# second"
+      }
+    }
+  },
+  {
+    "kind": "summary",
+    "in": {
+      "files": {
+        "s.md": "thread_id:\n token\r\n#  \r\n# second"
+      },
+      "dirs": [],
+      "links": []
+    },
+    "out": {
+      "token": {
+        "relpath": "s.md",
+        "title": "# second"
+      }
+    }
+  },
+  {
+    "kind": "summary",
+    "in": {
+      "files": {
+        "s.md": "thread_id:\n token\r\n#\nnext line\r\n# second"
+      },
+      "dirs": [],
+      "links": []
+    },
+    "out": {
+      "token": {
+        "relpath": "s.md",
+        "title": "next line"
+      }
+    }
+  },
+  {
+    "kind": "summary",
+    "in": {
+      "files": {
+        "s.md": "thread_id:\n token\r\n# heading\r\n# second"
+      },
+      "dirs": [],
+      "links": []
+    },
+    "out": {
+      "token": {
+        "relpath": "s.md",
+        "title": "heading"
+      }
+    }
+  },
+  {
+    "kind": "summary",
+    "in": {
+      "files": {
+        "s.md": "thread_id:\n token\r\n#﻿heading\r\n# second"
+      },
+      "dirs": [],
+      "links": []
+    },
+    "out": {
+      "token": {
+        "relpath": "s.md",
+        "title": "heading"
+      }
+    }
+  },
+  {
+    "kind": "summary",
+    "in": {
+      "files": {
+        "s.md": "thread_id:\n token\r\n## not h1\r\n# second"
+      },
+      "dirs": [],
+      "links": []
+    },
+    "out": {
+      "token": {
+        "relpath": "s.md",
+        "title": "second"
+      }
+    }
+  },
+  {
+    "kind": "summary",
+    "in": {
+      "files": {
+        "s.md": "thread_id:\n token # first # second"
+      },
+      "dirs": [],
+      "links": []
+    },
+    "out": {
+      "token": {
+        "relpath": "s.md",
+        "title": "first"
+      }
+    }
+  },
+  {
+    "kind": "summary",
+    "in": {
+      "files": {
+        "s.md": "thread_id:\n token #  # second"
+      },
+      "dirs": [],
+      "links": []
+    },
+    "out": {
+      "token": {
+        "relpath": "s.md",
+        "title": "# second"
+      }
+    }
+  },
+  {
+    "kind": "summary",
+    "in": {
+      "files": {
+        "s.md": "thread_id:\n token #   # second"
+      },
+      "dirs": [],
+      "links": []
+    },
+    "out": {
+      "token": {
+        "relpath": "s.md",
+        "title": "# second"
+      }
+    }
+  },
+  {
+    "kind": "summary",
+    "in": {
+      "files": {
+        "s.md": "thread_id:\n token #\nnext line # second"
+      },
+      "dirs": [],
+      "links": []
+    },
+    "out": {
+      "token": {
+        "relpath": "s.md",
+        "title": "next line"
+      }
+    }
+  },
+  {
+    "kind": "summary",
+    "in": {
+      "files": {
+        "s.md": "thread_id:\n token # heading # second"
+      },
+      "dirs": [],
+      "links": []
+    },
+    "out": {
+      "token": {
+        "relpath": "s.md",
+        "title": "heading"
+      }
+    }
+  },
+  {
+    "kind": "summary",
+    "in": {
+      "files": {
+        "s.md": "thread_id:\n token #﻿heading # second"
+      },
+      "dirs": [],
+      "links": []
+    },
+    "out": {
+      "token": {
+        "relpath": "s.md",
+        "title": "heading"
+      }
+    }
+  },
+  {
+    "kind": "summary",
+    "in": {
+      "files": {
+        "s.md": "thread_id:\n token ## not h1 # second"
+      },
+      "dirs": [],
+      "links": []
+    },
+    "out": {
+      "token": {
+        "relpath": "s.md",
+        "title": "second"
+      }
+    }
+  },
+  {
+    "kind": "summary",
+    "in": {
+      "files": {
+        "s.md": "thread_id:\n token # first # second"
+      },
+      "dirs": [],
+      "links": []
+    },
+    "out": {
+      "token": {
+        "relpath": "s.md",
+        "title": "first"
+      }
+    }
+  },
+  {
+    "kind": "summary",
+    "in": {
+      "files": {
+        "s.md": "thread_id:\n token #  # second"
+      },
+      "dirs": [],
+      "links": []
+    },
+    "out": {
+      "token": {
+        "relpath": "s.md",
+        "title": "# second"
+      }
+    }
+  },
+  {
+    "kind": "summary",
+    "in": {
+      "files": {
+        "s.md": "thread_id:\n token #   # second"
+      },
+      "dirs": [],
+      "links": []
+    },
+    "out": {
+      "token": {
+        "relpath": "s.md",
+        "title": "# second"
+      }
+    }
+  },
+  {
+    "kind": "summary",
+    "in": {
+      "files": {
+        "s.md": "thread_id:\n token #\nnext line # second"
+      },
+      "dirs": [],
+      "links": []
+    },
+    "out": {
+      "token": {
+        "relpath": "s.md",
+        "title": "next line"
+      }
+    }
+  },
+  {
+    "kind": "summary",
+    "in": {
+      "files": {
+        "s.md": "thread_id:\n token # heading # second"
+      },
+      "dirs": [],
+      "links": []
+    },
+    "out": {
+      "token": {
+        "relpath": "s.md",
+        "title": "heading"
+      }
+    }
+  },
+  {
+    "kind": "summary",
+    "in": {
+      "files": {
+        "s.md": "thread_id:\n token #﻿heading # second"
+      },
+      "dirs": [],
+      "links": []
+    },
+    "out": {
+      "token": {
+        "relpath": "s.md",
+        "title": "heading"
+      }
+    }
+  },
+  {
+    "kind": "summary",
+    "in": {
+      "files": {
+        "s.md": "thread_id:\n token ## not h1 # second"
+      },
+      "dirs": [],
+      "links": []
+    },
+    "out": {
+      "token": {
+        "relpath": "s.md",
+        "title": "second"
+      }
+    }
+  },
+  {
+    "kind": "summary",
+    "in": {
+      "files": {
+        "s.md": "thread_id: a extra\n# invalid id\n"
+      },
+      "dirs": [],
+      "links": []
+    },
+    "out": {}
+  },
+  {
+    "kind": "summary",
+    "in": {
+      "files": {
+        "s.md": "thread_id: first\nthread_id: second\n# first heading\n# later heading\n"
+      },
+      "dirs": [],
+      "links": []
+    },
+    "out": {
+      "first": {
+        "relpath": "s.md",
+        "title": "first heading"
+      }
+    }
+  },
+  {
+    "kind": "summary",
+    "in": {
+      "files": {
+        "s.md": "                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                thread_id: late\n# late\n"
+      },
+      "dirs": [],
+      "links": []
+    },
+    "out": {}
+  },
+  {
+    "kind": "summary",
+    "in": {
+      "files": {
+        "s.md": "thread_id: a\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n# too late\n"
+      },
+      "dirs": [],
+      "links": []
+    },
+    "out": {}
+  },
+  {
+    "kind": "summary",
+    "in": {
+      "files": {
+        "s.md": "thread_id: a\n# xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx😀"
+      },
+      "dirs": [],
+      "links": []
+    },
+    "out": {
+      "a": {
+        "relpath": "s.md",
+        "title": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      }
+    }
+  },
+  {
+    "kind": "summary",
+    "in": {
+      "files": {
+        "s.md": "thread_id: a\n# xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx😀"
+      },
+      "dirs": [],
+      "links": []
+    },
+    "out": {
+      "a": {
+        "relpath": "s.md",
+        "title": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx�"
+      }
+    }
+  },
+  {
+    "kind": "sqliteStrings",
+    "in": {
+      "sql": [
+        "INSERT INTO files(path,mtime_ms,size,cwd,source,date) VALUES(NULL,0,0,'/repo','main','2026-01-02')",
+        "INSERT INTO files(path,mtime_ms,size,cwd,source,date) VALUES('blob',0,0,'/repo','main',x'4344')",
+        "INSERT INTO files(path,mtime_ms,size,cwd,source,date) VALUES(x'6566',0,0,'/repo','main','2026-01-02')",
+        "INSERT INTO msgs(path,ord,ts,role,match_field,synthetic,text) VALUES('null',0,'ts','user','content',0,x'4142')",
+        "INSERT INTO msgs(path,ord,ts,role,match_field,synthetic,text) VALUES('blob',0,'ts','user','content',0,x'0100410042')",
+        "INSERT INTO msgs(path,ord,ts,role,match_field,synthetic,text) VALUES('101,102',0,'ts','user','content',0,'blob path message')"
+      ]
+    },
+    "out": [
+      {
+        "path": "blob",
+        "threadId": null,
+        "date": "67,68",
+        "excerpt": "1,0,65,0,66"
+      },
+      {
+        "path": "101,102",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "blob path message"
+      },
+      {
+        "path": "null",
+        "threadId": null,
+        "date": "2026-01-02",
+        "excerpt": "65,66"
+      }
+    ]
+  }
+]

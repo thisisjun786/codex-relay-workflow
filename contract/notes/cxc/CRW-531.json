@@ -1,0 +1,15 @@
+{
+  "issue": "CRW-531",
+  "pending": [
+    "cli__disable__without_manifest_writes_opt_out",
+    "hook__pre-tool-use-attaching-skills__items_recursive_and_malformed",
+    "hook__pre-tool-use-attaching-skills__recursion_denied_without_grant",
+    "hook__session-start-healing-declared-features__declines_a_key_it_already_healed",
+    "hook__session-start-healing-declared-features__enable_failure_reported_not_cached",
+    "hook__session-start-healing-declared-features__heal_claims_manifest_ownership",
+    "hook__session-start-healing-declared-features__heals_soft_flag_without_manifest",
+    "hook__session-start-healing-declared-features__opted_out_marker_skips_without_codex_call"
+  ],
+  "identical": [],
+  "intentionally-changed": []
+}

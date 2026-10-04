@@ -1,0 +1,11 @@
+{
+  "classification": "intentionally-changed",
+  "reason": "data-loss: writeFileSync leaves a truncated receipt on write failure; Go publishes atomically",
+  "oracle": {
+    "error": "injected partial write",
+    "receiptBytes": "{\n  \"kind\": "
+  },
+  "goExpected": {
+    "receiptExists": false
+  }
+}
