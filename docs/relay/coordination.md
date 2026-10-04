@@ -66,7 +66,10 @@ turn: `merge-turn-resolve` admits only an unknown one.
 So the merge turn reads one fact from the target itself: the commit its base branch points at. It
 reads it at the four moments it records a base, and at no other time. One more reading, how the
 branch got from the last landing's base to that tip, is taken only by a check that finds the two
-differ (below):
+differ (below). Of a pull request it reads one fact as well, the commit its head points at, and only
+for a turn that records a pull request on an `owner/name` repository: when `merge-turn-ready` moves the
+turn's head and when `merge-turn-check` begins the merge
+([a restated head](#a-restated-head-is-a-new-candidate)). The base readings are:
 
 | Command | What it reads and records |
 | --- | --- |
@@ -211,6 +214,37 @@ also be passed on, below), and
 separate facts. The same rule from the other side is that a parent asserting its turn in
 conversation changes nothing: only a write by the registered project parent does.
 
+## One live turn per parent per target
+
+A parent holds at most one live turn (waiting, holding, merging or of unknown effect) on a target,
+and that turn is bound to the pull request it was claimed for: `merge-turn-request --pr <n>
+--relationship <id>` records both. A request for another pull request used to be answered with the
+live turn and nothing said so, and a caller that took it for the turn of the pull request it asked
+about declared that pull request's head on the live one (2026-10-04). It is refused now.
+
+- A request that states no pull request and no relationship is the replay of the live turn, as
+  before (`alreadyClaimed: true`).
+- A request that states some is the replay when no stated identity contradicts what the turn
+  records (the same kind, recorded and different) and at least one agrees. Another pull request or
+  another relationship is refused `disposition_conflict`. So are identities the turn does not record at
+  all, unless the request names the turn's own candidate head: a request for another pull request
+  names its own head, and two pull requests do not share one. A refused request writes nothing to the
+  turns or their ledgers; the refusal is kept as a contest (`merge-turn-show` lists it). It names the
+  live turn, what it is bound to, its state, its place in the order and the step that frees the
+  target, and says whether the request contradicts the turn or only names what the turn does not
+  record.
+- The place is counted among the live claims on the target in the order the lane serves them: the
+  claims that hold the target first, then the waiting ones by the time they were made, which is the
+  order a released target promotes them in. A claim that closed is not counted.
+- The other pull request's turn is requested after the earlier one lands or is returned
+  (`merge-turn-release --disposition returned`; a waiting claim is withdrawn with
+  `merge-turn-withdraw`). A claim made with no pull request and no relationship records nothing to
+  compare, so it answers only requests that state nothing or name its own candidate head, and a claim
+  that records one kind only (a relationship but no pull request) answers a request that states the
+  other kind only at that head: state both on every claim.
+- `dag-merge-request` applies a stricter comparison to the turn it is answered with (pull request,
+  relationship, head and project) and refuses `disposition_conflict` as before.
+
 ## A restated head is a new candidate
 
 A holder that refreshes its pull request branch inside its turn has a new head, and the turn still names the old
@@ -231,6 +265,26 @@ the head being a different commit. Both are deliberate: they were written with t
   grant could never answer it, and one that had could merge a candidate it acknowledged nothing about. This grant wakes
   nobody. The answer to the restating call names it, and `merge-turn-show` reads it later. A waiting claim holds no grant;
   it is granted one when it takes the target.
+
+**A head that moves on a turn bound to a pull request is that pull request's head.**
+`merge-turn-ready` with a head that is not the turn's candidate reads the head of the pull request
+the turn records (one GET of `repos/<owner>/<name>/pulls/<n>`, before its transaction) and takes the
+new head only if it is that head. Another pull request's head is refused `merge_candidate_moved`,
+naming the pull request, the head the forge reads and the head declared; a forge that cannot be
+read is refused `merge_target_unreadable`. Neither refusal changes the turn, its candidate head or its
+ledger; each is kept as a contest like the lane's other refusals, and a refused `merge-turn-check` as a
+check row. The turn records no head for its pull request and no work report is recorded, so nothing
+the relay holds could decide it. Where nothing can be compared no read is made: a head that did not
+move, a turn that records no pull request, a relay with no pull request reader. A turn on a
+local-path repository records a pull request number but not where it lives, so the record decides
+and the answer says so. The answer carries `pullRequestHead`: `decidedBy` `forge` with
+`pullRequest`, `head` and `source`, or `decidedBy` `record` with the `reason`; it is absent when
+nothing was compared. A branch update is asynchronous on the forge, so the first declaration after a
+refresh can still read the old head: the refusal says to read the pull request again and declare the
+head it shows, and a repeated refusal is not an escalation. `merge-turn-check` makes the same
+comparison with the head it restates, before the merge begins, and refuses the same two ways; it is
+also what stops a turn that a relay older than this rule left holding another pull request's head.
+The head a claim states at `merge-turn-request --head` is not read: the check is its gate.
 
 The answer to the restating call carries `readinessReset` whenever the head changed: `previousHead`, `candidateHead`,
 `readyRequested` (what the call asked for), `grantId` (the grant the holder now owes, null for a waiting claim) and
@@ -535,9 +589,10 @@ git diff -z --no-abbrev --full-index --find-renames=50% --no-ext-diff --no-textc
   able to invoke the CLI is already inside the boundary.
 - **Forge evidence is cross-checked, never observed.** `merge-turn-check` verifies that what
   the caller restated is internally consistent and current against what this store knows. It
-  cannot see the pull request; what it reads from the target is where the base branch points
+  cannot see the pull request's checks, reviews or threads; what it reads from the target is where the base branch points
   and, only when the last landing's recorded base is older than that tip, how the branch got
-  there (see above). An operator who wants proof that required CI was green reads
+  there (see above), and, for a turn bound to a pull request on an `owner/name` repository, the
+  head of that pull request, which it compares with the head it is given. An operator who wants proof that required CI was green reads
   the forge, not this record.
 
 - **An agreement confers nothing.** Not merge permission, not authority to instruct, not a
@@ -557,7 +612,7 @@ git diff -z --no-abbrev --full-index --find-renames=50% --no-ext-diff --no-textc
   two totals and neither is a host-wide number.
 - **Required checks are restated, not discovered.** `merge-turn-check --required` is the
   caller's declaration of what branch protection requires, stored as `requiredDeclared`. The
-  merge turn never reads a forge's rules or checks; it reads where the base branch points and, in the one case described under "A merge outside the lane", how it moved. What the check establishes is that the restated evidence is
+  merge turn never reads a forge's rules or checks; it reads where the base branch points, in the one case described under "A merge outside the lane" how it moved, and for a turn bound to a pull request that pull request's head. What the check establishes is that the restated evidence is
   internally consistent and current: every declared required name present and successful on the
   candidate head at its highest submitted attempt, the base matching the last landing recorded
   here (or restated by the check itself after a confirmed merge outside the lane), and the

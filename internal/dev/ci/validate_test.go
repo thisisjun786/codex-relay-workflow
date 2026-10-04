@@ -20,10 +20,11 @@ func validateRepo(t *testing.T) *fixtureRepo {
 	return r
 }
 
-// validate runs `crw-dev ci validate` in the fixture.
+// validate runs `crw-dev ci validate` in the fixture. The two variables the large-blob check reads
+// are pinned to empty (a local run), because hosted CI sets them for the test process itself.
 func validate(t *testing.T, r *fixtureRepo) result {
 	t.Helper()
-	return goCheck(t, r.root, nil, "validate")
+	return goCheck(t, r.root, []string{"GITHUB_EVENT_NAME=", "BLOB_RANGE_BASE="}, "validate")
 }
 
 const validated = "Validated 1 skills, local link paths and no Python outside skill assets.\n"
@@ -151,7 +152,8 @@ func Test47_VAL_3_PythonInSkillAssetsIsAllowed(t *testing.T) {
 	r.write("plugins/crw/skills/example/examples/demo.py", "print()\n")
 	expectEqual(t, "untracked", validate(t, r), result{0, validated, ""})
 	r.commit()
-	expectEqual(t, "tracked", validate(t, r), result{0, validated, ""})
+	// A commit now exists, so the large-blob check judges its history and says so.
+	expectEqual(t, "tracked", validate(t, r), result{0, validated + largeBlobTestFull, ""})
 }
 
 // The allow-list is judged by where a file really is: only a regular file below

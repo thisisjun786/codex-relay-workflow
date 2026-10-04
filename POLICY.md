@@ -79,6 +79,7 @@ The release workflow is manual and owner-controlled.
 | Evidence | What it establishes |
 | --- | --- |
 | Skill metadata, local links and no Python outside skill assets | Repository structure, and that Python sits only in skill assets, so the runtime, installer and CI do not depend on it |
+| Large-blob guard: no blob over 2 MiB that a pull request's commits or a push to `dev` bring into the history, unless `.large-blob-allowlist.json` names it | No oversized file enters the public `dev` history, which cannot drop it afterwards |
 | Installer and skill-linker tests in temporary destinations (Go) | Idempotence and preservation of conflicting files, directories and links |
 | CI-control negative tests | Missing, malformed, failed, cancelled or skipped prerequisites cannot pass the gate; main-target PRs and invalid release sources are rejected |
 | Go lint, the Go test suite with the contract corpus, static release binaries and the isolated-home install | The Go runtime builds, passes its tests and installs and wires from this checkout |

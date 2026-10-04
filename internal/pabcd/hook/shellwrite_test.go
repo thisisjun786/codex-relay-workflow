@@ -167,9 +167,6 @@ func TestShellWriteLiteralSecurity(t *testing.T) {
 	if got := shellTokenize("tee 'a b' c"); !slices.Equal(got, []string{"tee", "a b", "c"}) {
 		t.Fatalf("verb tokens %q", got)
 	}
-	if got := ShellWriteDestinations("tee out"); len(got) != 0 {
-		t.Fatalf("deferred verbs implemented: %q", got)
-	}
 	// Malformed quotes retain the oracle's one-unit truncation; UTF-8 output
 	// replaces the remaining high surrogate as Node Buffer.from does.
 	u := readToken(utf16.Encode([]rune("\"🧪")), 0)

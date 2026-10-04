@@ -23,13 +23,19 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          # The large-blob check judges every blob a pull request or a push brings into the history.
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
       # The CI checks live in the development binary, which release archives never carry.
       - run: go build -tags dev -o "$RUNNER_TEMP/crw-dev" ./cmd/crw-dev
+      # A pull request run judges the commits it adds to its base, a push to dev the commits it adds;
+      # a run with neither (a manual dispatch) judges every commit.
       - run: '"$RUNNER_TEMP/crw-dev" ci validate'
+        env:
+          BLOB_RANGE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
       - run: '"$RUNNER_TEMP/crw-dev" ci plugin'
       - run: '"$RUNNER_TEMP/crw-dev" ci contracts'
 
