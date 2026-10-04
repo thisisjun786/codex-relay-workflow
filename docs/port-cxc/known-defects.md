@@ -611,3 +611,14 @@ The pinned oracle already publishes through an exclusive 0600 temporary file and
 - The recorded command joins argv with spaces and loses argument boundaries, so distinct invocations can record the same command text (source `plugins/codexclaw/components/pabcd-state/src/receipt-cli.ts:174`; test `TestReceiptArgvNoShellAndEncoding`); port: kept.
 - The first source capture is outside the runner's catch, while the second is caught, so a binding broken between the initial resolution and first capture throws instead of returning the runner's SOURCE-ROOT refusal (source `plugins/codexclaw/components/pabcd-state/src/receipt-cli.ts:120-127` and `:145-147`); port: kept.
 - The receipt is written in place, so a failed write leaves a truncated record (source `plugins/codexclaw/components/pabcd-state/src/receipt-cli.ts:184`; intentionally-changed recorded case `internal/pabcd/cli/testdata/atomic-change.json`, test `TestReceiptAtomicPublicationFailure`); port: fixed (record-file data loss: fsynced temporary-file publication and rename, with failed publication removing its partial temporary file).
+
+## CRW-352 memory requeue
+
+- A positive retry allowance below one is floored to zero, clearing backoff without restoring eligibility (`recall/src/memory-requeue.ts:73` at v0.2.40); port: kept.
+- The schema guard omits `retry_at`, so a selected store lacking it passes selection but apply fails and rolls back (`recall/src/memory-requeue.ts:66,94-98,137` at v0.2.40); port: kept.
+- NULL, numeric and BLOB kind/key values are coerced to strings for selection and binding, so an untyped jobs table can report selected candidates with zero rows changed (`recall/src/memory-requeue.ts:105-109,137-143` at v0.2.40); port: kept.
+- With no kind filter, exhausted consolidation jobs are selected despite the module's safety prose claiming otherwise (`recall/src/memory-requeue.ts:17-18,107` at v0.2.40); port: kept.
+- Candidates removed by the limit appear in neither the selected list nor skipped cause counts (`recall/src/memory-requeue.ts:107-112` at v0.2.40); port: kept.
+- A failed BEGIN reports that requeue was rolled back even when no transaction began (`recall/src/memory-requeue.ts:133,146-152` at v0.2.40); port: kept.
+- Reopening for apply uses a create-capable SQLite open, so external removal between selection and reopening can leave a new empty store (`recall/src/memory-requeue.ts:128` and `recall/src/sqlite.ts:34-36` at v0.2.40); port: kept.
+- Duplicate kind/key rows with a retry allowance floored to zero remain eligible across repeated updates, counting the same rows more than once (`recall/src/memory-requeue.ts:73,137-143` at v0.2.40); port: kept.
