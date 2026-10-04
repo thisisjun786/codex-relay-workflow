@@ -559,6 +559,33 @@ The pinned oracle already publishes through an exclusive 0600 temporary file and
 - `readHitCounts` suppresses every read error as empty history, whereas `bumpHitCounts` throws for a missing table and commits earlier refs before a later ref fails despite the shared tolerance comment (source `plugins/codexclaw/components/recall/src/index-db.ts:172-174`, `:182-205`); port: kept.
 - INTEGER affinity permits nonnumeric text in `hit_count`; its Number conversion can return NaN or Infinity to the penalty consumer (source `plugins/codexclaw/components/recall/src/index-db.ts:190`); port: kept.
 
+## Found by CRW-360 plan init library port
+
+- The seeded plan `--date` observation remains physically unchanged under this append-only port: unknown flags are ignored and their bare values can become the positional slug, including `--date` before `--slug`; this section records its disposition (source `plugins/codexclaw/components/pabcd-state/src/plan-cli.ts:83-101`); port: kept.
+- `plan init -h` treats `-h` as the slug `h`, while `plan init --help` rejects the missing slug instead of displaying help (source `plugins/codexclaw/components/pabcd-state/src/plan-cli.ts:76-94`); port: kept.
+- A six-digit date prefix is accepted without checking the calendar, so `999999_name` creates a unit bearing that prefix (source `plugins/codexclaw/components/pabcd-state/src/plan-cli.ts:51-55`); port: kept.
+- A failed document write leaves the partially created plan unit and blocks a later init of that name; the scaffold is not fsynced (source `plugins/codexclaw/components/pabcd-state/src/plan-cli.ts:183-192`); port: kept.
+- A symlinked plan parent is followed and can redirect creation outside the workspace, and a direct caller's date or slug can escape the workspace (source `plugins/codexclaw/components/pabcd-state/src/plan-cli.ts:177-185`); port: fixed by the explicit containment and symlink-parent refusal requirement; recorded safety cases are intentionally-changed.
+- The exists-then-recursive-mkdir and non-exclusive document writes can overwrite a concurrent creator's files or truncate a record reached by a document symlink (source `plugins/codexclaw/components/pabcd-state/src/plan-cli.ts:179-190`); port: fixed as a record data-loss defect using exclusive unit and document creation; the recorded raced-file case is intentionally-changed.
+- A direct library caller can bypass the nine-phase parser cap: phase 10 has file `100_phase10.md` but heading `0100`, because the document template interpolates `0${n}0` rather than padding the decade (source `plugins/codexclaw/components/pabcd-state/src/plan-cli.ts:137` and `:189`); port: kept.
+
+## Found by the CRW-508 recall chat scan port
+
+- Scan limits are applied in file/entry iteration order before the stable global timestamp sort, so a newer matching message can be excluded by an earlier message in the same rollout (source `recall/src/chat-search.ts:313-315,342-344,373`; recorded `chronology` case in `testdata/chatscan/oracle.json`); port: kept.
+- Reaching the limit can report truncation merely because another entry/file remains, before its source, role or match filters run; reaching it on the final entry of the final file reports no warning (source `recall/src/chat-search.ts:313-319,342-349`; recorded limit cases); port: kept.
+- A fractional context window throws when its clamped start is a positive noninteger; windows starting at zero can succeed, and infinite context includes every visible entry (source `recall/src/chat-search.ts:383-387`; recorded context cases); port: kept.
+- Positive days outside JavaScript's Date range throw `Invalid time value` after metadata loading; an empty direct-scan plan returns before that cutoff is evaluated (source `recall/src/chat-search.ts:296-307`; recorded infinite-days and empty-query cases); port: kept.
+- A NaN limit defeats both limit comparisons and the truncation warning, allowing more hits than the maximum advertised cap (source `recall/src/chat-search.ts:313,342,370`; recorded 250-hit dense case); port: kept.
+- The raw JSON file prefilter can miss decoded text containing escaped query characters, even though the per-message matcher would find it (source `recall/src/chat-search.ts:334,349`; recorded escaped `CI` case); port: kept.
+
+## CRW-499 — install features commands
+
+- Enable, disable and status ignore trailing arguments except position-independent help, so an unknown option can still run a mutation (source `config-guard/src/cli.ts:159-167,197-262` at v0.2.40; `TestFeaturesHelpUsageAndStatus`); port: kept.
+- Explicit enable clears the self-heal opt-out even after a soft flag failure, and marker read/write errors are swallowed (source `config-guard/src/cli.ts:199-204,223-227` at v0.2.40; `TestFeaturesSoftAndHardFailures`, `TestFeaturesUnreadableSettingsAndManifest`); port: kept.
+- Disable prints success and exits 0 when individual feature-disable calls fail; failed flags are omitted without a diagnostic (source `config-guard/src/deactivate.ts:184-185`, `src/cli.ts:230-258` at v0.2.40; `TestFeaturesDisableBranches`); port: kept.
+- Repeated enable records the now-enabled flags as pre-existing, losing the earlier feature ownership, while managed-key ownership survives (source `config-guard/src/activate.ts:225-231,269-286` at v0.2.40; `TestFeaturesManagedKeyRoundTrips`); port: kept.
+- Settings and manifest writes can truncate a file when interrupted, and marker read failures can replace unread consent data (source `config-guard/src/activate.ts:278,299`, `src/deactivate.ts:58-65,155`, `src/self-heal.ts:258-269,276-277` at v0.2.40); port: fixed (data loss: command glue reuses the already ported read-refusing, fsynced temporary-file/rename owners; intentionally-changed unreadable-settings command cases preserve dangling links).
+
 ## Found by the recall ingest port (CRW-363)
 
 - A larger rewrite is assumed to be an append, leaving the previous prefix indexed and reporting fresh after the new fingerprint is stored (source `plugins/codexclaw/components/recall/src/ingest.ts:222-246`; recorded growth-rewrite case); port: kept.
