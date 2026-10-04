@@ -375,15 +375,21 @@ func TestMergeBuildCheckKeepsTheGoToolInsideItsOwnScratchAndEndsItOnTimeout(t *t
 		key, value, _ := strings.Cut(line, "=")
 		seen[key] = value
 	}
-	if !strings.HasPrefix(seen["args"], "list -e -p=4 ") {
-		t.Errorf("go list does not carry -p: %q", seen["args"])
+	// On darwin the check reads the caller's caches first, with the go tool's HOME inside its own
+	// scratch directory; elsewhere the first command it runs is the list.
+	firstArgs, firstHomeOK := "list -e -p=4 ", seen["home"] == realHome
+	if runtime.GOOS == "darwin" {
+		firstArgs, firstHomeOK = "env GOCACHE GOMODCACHE GOPATH", strings.HasPrefix(seen["home"], m.scratch)
+	}
+	if !strings.HasPrefix(seen["args"], firstArgs) {
+		t.Errorf("the first go command is %q, want %q", seen["args"], firstArgs)
 	}
 	for _, key := range []string{"tmpdir", "gotmpdir", "xdg"} {
 		if !strings.HasPrefix(seen[key], m.scratch) {
 			t.Errorf("%s of the go tool is %q, not below the scratch directory %s", key, seen[key], m.scratch)
 		}
 	}
-	if seen["home"] != realHome || seen["gocache"] != "/pinned/gocache" || seen["gowork"] != "off" || seen["goenv"] != filepath.Join(config, "go", "env") {
+	if !firstHomeOK || seen["gocache"] != "/pinned/gocache" || seen["gowork"] != "off" || seen["goenv"] != filepath.Join(config, "go", "env") {
 		t.Errorf("home %q, gocache %q, gowork %q, goenv %q", seen["home"], seen["gocache"], seen["gowork"], seen["goenv"])
 	}
 	pid, _ := strconv.Atoi(seen["pid"])
