@@ -1,14 +1,18 @@
 package skill
 
 import (
+	"errors"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // The merge-build-check tests run the real command on synthetic repositories that hold a tiny Go
@@ -34,8 +38,9 @@ func newMbcRepo(t *testing.T) *mbcRepo {
 	}
 	t.Setenv("TMPDIR", m.scratch)
 	m.commitFiles("module", map[string]string{
-		"go.mod": "module example.test/m\n\ngo 1.21\n",
-		"p/a.go": "package p\n\nfunc A() int { return 1 }\n",
+		"go.mod":       "module example.test/m\n\ngo 1.21\n",
+		"p/a.go":       "package p\n\nfunc A() int { return 1 }\n",
+		"tool/main.go": "package main\n\nfunc main() {}\n",
 	})
 	return m
 }
@@ -73,7 +78,11 @@ func (m *mbcRepo) check(t *testing.T, args ...string) skillProcessResult {
 	t.Helper()
 	got := runSkillInProcess(append([]string{"merge-build-check", "--repo", m.path}, args...)...)
 	if left, _ := os.ReadDir(m.scratch); len(left) != 0 {
-		t.Errorf("the check left %d entries in its scratch directory", len(left))
+		names := []string{}
+		for _, e := range left {
+			names = append(names, e.Name())
+		}
+		t.Errorf("the check left %d entries in its scratch directory: %v", len(left), names)
 	}
 	return got
 }
@@ -159,6 +168,11 @@ func TestMergeBuildCheckRefusesAHeadThatIsAlreadyOnTheBase(t *testing.T) {
 // was: its files, its refs, its worktrees and its working tree.
 func TestMergeBuildCheckLeavesTheCallersRepositoryAlone(t *testing.T) {
 	m := newMbcRepo(t)
+	if os.Getenv("GOCACHE") == "" {
+		t.Fatal("the test process pins the Go caches before it moves HOME")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
 	m.sibling("s1", map[string]string{"p/b.go": mbcTokenize})
 	bad := m.sibling("s2", map[string]string{"p/c.go": mbcTokenize})
 	good := m.sibling("s3", map[string]string{"p/d.go": "package p\n\nfunc other() {}\n"})
@@ -186,6 +200,9 @@ func TestMergeBuildCheckLeavesTheCallersRepositoryAlone(t *testing.T) {
 	mbcExpect(t, m.check(t, "--head", good, "--base", "dev"), 0, "ok: ")
 	if after := snapshot(); !reflect.DeepEqual(before, after) {
 		t.Errorf("the caller's repository changed:\nbefore %v\nafter  %v", before, after)
+	}
+	if left, _ := os.ReadDir(home); len(left) != 0 {
+		t.Errorf("the caller's home was written: %v", left)
 	}
 }
 
@@ -246,6 +263,154 @@ func TestMergeBuildCheckReadsItsInputsOrSaysItCannot(t *testing.T) {
 	mbcExpect(t, m.check(t, "--head", head, "--base", "dev", "--parallel", "0"), 2, "--parallel")
 	mbcExpect(t, runSkillInProcess("merge-build-check", "--repo", t.TempDir(), "--head", "HEAD", "--base", "dev"), 2, "cannot read")
 	mbcExpect(t, runSkillInProcess("merge-build-check", "-h"), 0, "usage: crw skill merge-build-check [flags]", "-head", "-base", "-tags")
+	mbcExpect(t, runSkillInProcess("merge-build-check", "--unknown"), 2, "crw skill merge-build-check: error: flag provided but not defined: -unknown")
 	mbcWithoutGo(t)
 	mbcExpect(t, m.check(t, "--head", head, "--base", "dev"), 3, "go tool")
+	mbcExpect(t, m.check(t, "--head", head, "--base", "dev", "--timeout", "1ns"), 3, "it ran out of its 1ns")
+}
+
+// A package with a file that only builds under the dev tag is built under it as well, so a clash
+// between a plain file and a dev file shows; --tags with no value leaves that out.
+func TestMergeBuildCheckBuildsAPackageUnderTheDevTagToo(t *testing.T) {
+	m := newMbcRepo(t)
+	m.commitFiles("a plain file", map[string]string{"mix/a.go": "package mix\n\nfunc A() {}\n"})
+	head := m.sibling("g1", map[string]string{"mix/b.go": "//go:build dev\n\npackage mix\n\nfunc A() {}\n"})
+	mbcExpect(t, m.check(t, "--head", head, "--base", "dev", "--tags", ""), 0, "ok: ")
+	got := m.check(t, "--head", head, "--base", "dev")
+	mbcExpect(t, got, 1, "refused: build_failed:", "A redeclared in this block", "example.test/m/mix")
+}
+
+// A package that builds only for darwin is vetted for darwin although the host skips it, and a main
+// package builds without writing a binary next to a directory of its name.
+func TestMergeBuildCheckVetsADarwinOnlyPackageAndBuildsAMainPackage(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the darwin-only package is the host's own on darwin")
+	}
+	m := newMbcRepo(t)
+	tool := m.sibling("m1", map[string]string{"tool/main.go": "package main\n\nfunc main() { _ = 1 }\n"})
+	mbcExpect(t, m.check(t, "--head", tool, "--base", "dev"), 0, "ok: ", "packages=1", "checked: example.test/m/tool steps=build,vet,vet_darwin")
+	head := m.sibling("m2", map[string]string{"dn/x_darwin.go": "package dn\n\nvar X = undefinedName\n"})
+	mbcExpect(t, m.check(t, "--head", head, "--base", "dev"), 1,
+		"refused: vet_darwin_failed:", "undefinedName", "skipped: example.test/m/dn steps=build,vet,test_compile reason=not_built_on_host")
+}
+
+// The go tool runs with a home, a temporary directory and a telemetry setting of its own, below the
+// directory the check removes, and with the caller's caches. A check that outran its time is cut off:
+// the go process is gone, exit 3, and nothing is left, not even the go tool's own temporary files.
+func TestMergeBuildCheckKeepsTheGoToolInsideItsOwnScratchAndEndsItOnTimeout(t *testing.T) {
+	m := newMbcRepo(t)
+	head := m.sibling("s1", map[string]string{"p/b.go": mbcTokenize})
+	bin := t.TempDir()
+	logFile := filepath.Join(t.TempDir(), "go.log")
+	git, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(git, filepath.Join(bin, "git")); err != nil {
+		t.Fatal(err)
+	}
+	shim := "#!/bin/sh\n{ echo \"pid=$$\"; echo \"args=$*\"; echo \"home=$HOME\"; echo \"tmpdir=$TMPDIR\"; echo \"gotmpdir=$GOTMPDIR\"; echo \"gocache=$GOCACHE\"; echo \"gowork=$GOWORK\"; echo \"xdg=$XDG_CONFIG_HOME\"; echo \"goenv=$GOENV\"; } > \"$MBC_SHIM_LOG\"\n/bin/mkdir \"$TMPDIR/go-build123\"\nexec /bin/sleep 60\n"
+	if err := os.WriteFile(filepath.Join(bin, "go"), []byte(shim), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	realHome := t.TempDir()
+	t.Setenv("HOME", realHome)
+	config, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	t.Setenv("MBC_SHIM_LOG", logFile)
+	t.Setenv("GOCACHE", "/pinned/gocache")
+	mbcExpect(t, m.check(t, "--head", head, "--base", "dev", "--timeout", "3s"), 3, "it ran out of its 3s")
+	raw, err := os.ReadFile(logFile)
+	if err != nil {
+		t.Fatalf("the go tool was never started: %v", err)
+	}
+	seen := map[string]string{}
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		key, value, _ := strings.Cut(line, "=")
+		seen[key] = value
+	}
+	if !strings.HasPrefix(seen["args"], "list -e -p=4 ") {
+		t.Errorf("go list does not carry -p: %q", seen["args"])
+	}
+	for _, key := range []string{"tmpdir", "gotmpdir", "xdg"} {
+		if !strings.HasPrefix(seen[key], m.scratch) {
+			t.Errorf("%s of the go tool is %q, not below the scratch directory %s", key, seen[key], m.scratch)
+		}
+	}
+	if seen["home"] != realHome || seen["gocache"] != "/pinned/gocache" || seen["gowork"] != "off" || seen["goenv"] != filepath.Join(config, "go", "env") {
+		t.Errorf("home %q, gocache %q, gowork %q, goenv %q", seen["home"], seen["gocache"], seen["gowork"], seen["goenv"])
+	}
+	pid, _ := strconv.Atoi(seen["pid"])
+	for i := 0; i < 20 && syscall.Kill(pid, 0) == nil; i++ {
+		time.Sleep(100 * time.Millisecond)
+	}
+	if err := syscall.Kill(pid, 0); !errors.Is(err, syscall.ESRCH) {
+		t.Errorf("the go process %d outlived the check: %v", pid, err)
+	}
+	if left, _ := os.ReadDir(realHome); len(left) != 0 {
+		t.Errorf("the caller's home was written: %v", left)
+	}
+}
+
+// What a tag changes in a package the head only calls into counts too: p is built under dev with the
+// dev version of q, which lacks what p now uses.
+func TestMergeBuildCheckBuildsAChangedPackageAgainstTheDevVersionOfWhatItImports(t *testing.T) {
+	m := newMbcRepo(t)
+	m.commitFiles("q has a plain and a dev version", map[string]string{
+		"q/plain.go": "//go:build !dev\n\npackage q\n\nfunc A() {}\n",
+		"q/dev.go":   "//go:build dev\n\npackage q\n",
+	})
+	head := m.sibling("u1", map[string]string{"p/use.go": "package p\n\nimport \"example.test/m/q\"\n\nfunc Use() { q.A() }\n"})
+	mbcExpect(t, m.check(t, "--head", head, "--base", "dev", "--tags", ""), 0, "ok: ")
+	mbcExpect(t, m.check(t, "--head", head, "--base", "dev"), 1, "refused: build_failed:", "undefined: q.A", "example.test/m/p")
+}
+
+// A head that only deletes a package has no package to check: the check does not fall back to the
+// module's root package, which go lists when it is given no pattern.
+func TestMergeBuildCheckChecksNothingWhenTheHeadOnlyRemovesAPackage(t *testing.T) {
+	m := newMbcRepo(t)
+	m.commitFiles("a root package that does not build under dev", map[string]string{
+		"root.go":     "package m\n",
+		"root_dev.go": "//go:build dev\n\npackage m\n\nvar _ = undefinedName\n",
+		"gone/g.go":   "package gone\n",
+	})
+	head := m.sibling("r1", nil, "gone/g.go")
+	mbcExpect(t, m.check(t, "--head", head, "--base", "dev"), 0, "ok: ", "packages=0", "skipped: gone reason=removed")
+}
+
+// The go environment keeps the caller's settings file, wherever the caller's directory was.
+func TestMergeBuildEnvKeepsTheCallersGoSettingsFile(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ set, want string }{
+		{"", "GOENV=" + filepath.Join(config, "go", "env")},
+		{"settings/go-env", "GOENV=" + filepath.Join(cwd, "settings", "go-env")},
+		{"/etc/go-env", "GOENV=/etc/go-env"},
+		{"off", ""},
+	} {
+		t.Setenv("GOENV", c.set)
+		env, err := mergeBuildEnv([]string{"A=1"}, t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, kv := range env {
+			if strings.HasPrefix(kv, "GOENV=") {
+				got = append(got, kv)
+			}
+		}
+		switch {
+		case c.want == "" && len(got) != 0, c.want != "" && !reflect.DeepEqual(got, []string{c.want}):
+			t.Errorf("GOENV=%q: the environment names %v, want %q", c.set, got, c.want)
+		}
+	}
 }

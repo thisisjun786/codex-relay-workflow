@@ -63,7 +63,7 @@ type commandLine struct {
 }
 
 func newCommandLine(family, command, summary string) *commandLine {
-	flags := flag.NewFlagSet("crw skill "+family+" "+command, flag.ContinueOnError)
+	flags := flag.NewFlagSet(strings.TrimSpace("crw skill "+family+" "+command), flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	flags.Usage = func() {}
 	return &commandLine{FlagSet: flags, summary: summary}
@@ -160,3 +160,7 @@ The issue is read as the Linear tools give it (id, title, description) or as fie
 }}
 
 var pairChoice = family{name: "pair-choice", description: "Offline child pair decision from release facts and an optional crw-pair-quota/1 snapshot. No snapshot producer is approved yet; absent quota uses the table. Exit 0 chooses, 1 holds, 2 rejects a request, 3 reports request/output I/O failure.", commands: [][2]string{{"choose", "print the selected family, quota values, rule and release-window counts as JSON"}}}
+
+// mergeBuildCheckSummary is the usage text of `crw skill merge-build-check`, which has no command
+// below it and so no family of its own.
+const mergeBuildCheckSummary = "Build and vet what a head changes, on the merge of the head with the base, before a verdict.\n\nTwo pull requests that add different files to one Go package can declare the same identifier: each is green on its own base, git merges them without a conflict, and the build breaks only on the merge. This check merges --head with --base in memory (git merge-tree --write-tree), extracts the merged tree into a scratch directory under TMPDIR and, for the Go packages the merge changes there, runs go build, go vet, go vet for darwin/arm64 and a test compile (go test -exec true: nothing is run), each package with and without --tags and for each target that has files of it. It stops at the first step that fails and removes the scratch directory whatever happens. It only reads the checkout: no branch, no commit, no worktree is written. The go tool runs with the caller's build cache and settings, and keeps its temporary files, and its telemetry counters where the config directory follows XDG_CONFIG_HOME (not on macOS), in the scratch directory; it compiles the head's code without executing it.\n\nNot covered: packages that import a changed package, files a package embeds or compiles besides its .go files, a dependency change in go.mod or go.sum (a note says so), a build tag other than --tags, running any test.\n\nExit 0: the merge builds and vets. Exit 1: a finding; the first line is refused: <code>: with merge_conflict (git's, not a build finding), head_on_base, list_failed, build_failed, vet_failed, test_compile_failed or vet_darwin_failed. Exit 2: an input git cannot read (an unknown revision, not a repository, git older than 2.41) or a TMPDIR git cannot write. Exit 3: the go tool is not on PATH, ran out of --timeout, or was interrupted."
