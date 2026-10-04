@@ -871,6 +871,20 @@ Source: `plugins/codexclaw/components/pabcd-state/src/memory-write-gate.ts` at v
 - If either target realpath fails, both paths fall back to lexical resolution, so a missing leaf below an outside symlink becomes a missing-target finding rather than an escape finding (CXC v0.2.40 `plugins/codexclaw/components/cxc-ops/src/manifest-targets.ts:106-117`); port: kept.
 - Target validation accepts a non-empty directory as a target and ignores non-array manifest hooks or non-string mcpServers declarations (CXC v0.2.40 `plugins/codexclaw/components/cxc-ops/src/manifest-targets.ts:138-144,157,181`); port: kept.
 
+## Found by the CRW-391 recall CLI port
+
+- Unknown recall verbs print usage and exit 0, while an empty search query prints usage on stdout and exits 1 (source `recall/src/cli.ts:154-157,196-199,418-446`; recorded CLI cases); port: kept.
+- Memory status and requeue ignore unknown flags, consume dash-leading string values and accept a missing string value as boolean true, unlike the strict search/index parser (source `recall/src/cli.ts:306-358`; recorded lax-parser cases); port: kept.
+- An unsupported memory schema exits 0 for status and 1 for requeue, so status success does not establish schema support (source `recall/src/cli.ts:320,358`; `TestRecallCLIRecordedCorpus`); port: kept.
+- `chat index --status --rebuild` writes and re-ingests despite the status flag; help still wins before opening the index (source `recall/src/cli.ts:272-278,419-422`; hygiene and index corpus cases); port: kept.
+- Requeue accepts a decimal integer prefix such as `2tail`, whereas search flags use whole-value Number conversion (source `recall/src/cli.ts:140-144,345-348`; recorded CLI cases); port: kept.
+- The oracle recorder advances Date by 1 ms on each read, while the landed search owners accept one rank timestamp per call: only `hits[].score` in `TestRecallCLIRecordedCorpus` permits an absolute difference of 1e-8 for that stepping; every other normalized stdout field, stderr and exit stays compared (source `recall/src/memory-search.ts:427-433`, `index-search.ts:309`; fixture cases driven at the recorded epoch); port: kept.
+- The executable corpus replay supplies no frozen clock, so nine clock-sensitive CLI fixtures stay pending and `TestRecallCLIRecordedCorpus` drives their unchanged recordings with an injected epoch; the same test drives the three bare-memory help fixtures that the name table does not map; `memory allow-write` remains a separate permission surface (source `contract/notes/cxc/README.md`, `contract/schema/cxc/name-substitution.json`; pending reasons recorded here because the notes schema accepts only fixture IDs); port: kept.
+
+## Found by the goalplan DAG query port (CRW-368)
+
+- With duplicate work-phase IDs, `nextOpenTask` can return the first phase's record paired with a pending task from a later phase because it re-finds the phase by ID after selecting the task (source `plugins/codexclaw/components/pabcd-state/src/goalplan.ts:1090-1094`; recorded case `first phase match and mismatched next pair` in `internal/pabcd/goalplan/testdata/query/oracle.json`); port: kept (the structural validator rejects the duplicate plan, while these selection queries remain direct derived views).
+
 ## Found by the metric CLI port
 
 - `cxc metric kind` has no `--set` flag: positionalArgs skips every flag-shaped token, so the documented `--set maximize` reaches the parser only because `maximize` is a bare token, a `--set` without a value sets nothing without an error, and an invalid `--set bogus` is silently ignored rather than refused (source `plugins/codexclaw/components/pabcd-state/src/metric-cli.ts:40-53` and `:137`); port: kept.
