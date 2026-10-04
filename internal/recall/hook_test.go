@@ -399,3 +399,12 @@ func TestRecallHookUpstreamFixtures(t *testing.T) {
 		})
 	}
 }
+
+func TestRecallHookUnavailableAdviceParity(t *testing.T) {
+	recallHookTestHome(t)
+	off := false
+	out := HandleSessionStart("", "/repo/current", "startup", SessionStartOptions{DedicatedTools: &off}, RecallContextDeps{Invocation: "custom-invocation"})
+	if !strings.Contains(out, "Run `crw recall chat index --status`") || !strings.Contains(out, "Recall: custom-invocation recall chat search") {
+		t.Fatal(out)
+	}
+}

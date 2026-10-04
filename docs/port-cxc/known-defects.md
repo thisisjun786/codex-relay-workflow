@@ -885,3 +885,4 @@ Source: `plugins/codexclaw/components/pabcd-state/src/memory-write-gate.ts` at v
 
 - The recovery pointer is sliced at 160 UTF-16 units and can end inside a long command invocation, leaving an unusable command (source `recall/src/hook.ts:646-653`; recorded long-invocation recovery rows); port: kept.
 - Version target extraction matches date and IP address fragments without distinguishing them from software versions (source `recall/src/hook.ts:131`; recorded `2026.10.04 1.2.3.4` target rows); port: kept.
+- The unavailable-project diagnostic hardcodes the bare command instead of the resolved invocation, so it can be unusable when that command is absent from PATH (source `recall/src/hook.ts:718`; Devin yellow bug finding and `TestRecallHookUnavailableAdviceParity`); port: kept.
