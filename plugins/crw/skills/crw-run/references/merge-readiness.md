@@ -722,6 +722,78 @@ task](../SKILL.md#return-corrections-to-the-existing-task)).
    carries the landing and the expected conflicts in its [restoration
    block](task-packet.md#restoration-block).
 
+### Build and vet the merged tree before the verdict
+
+Each sibling pull request is green on its own base, and the forge and `git merge-tree` report no
+conflict when they add different files, yet two of them can declare one identifier in one Go
+package (on 2026-10-04 two pairs did: `tokenize` in one package, `ChatOrder` in another). Only a
+build of the merge shows it, and found in the merge lane it costs a whole lane turn. So building the
+merge is a step of judging a receipt: it comes after the comparisons above and before the verdict is
+`verified`, for every receipt that changes Go code.
+
+    crw skill merge-build-check --repo <a checkout that has fetched the head and the base> --head <head> --base origin/dev
+
+It merges the two with `git merge-tree --write-tree`, extracts the merged tree into a scratch
+directory under `TMPDIR` that it removes whatever happens, and in the Go packages the merge changes
+it runs `go build`, `go vet`, `go vet` for `darwin/arm64` and a test compile that runs no test, each
+package with and without the build tag `--tags` names (default `dev`) and for each target that has
+files of it, stopping at the first step that fails. It only reads the checkout: no branch, commit or
+worktree is written. It takes the build cache and the Go settings from the environment, keeps the go
+tool's temporary files in its scratch directory (and, except on macOS, where Go keeps them under
+`HOME`, the tool's telemetry counters) and passes `-p=4`, so it runs under the same
+[`Go build resources:`](task-packet.md#launch-packet) line as any other local run of the parent, in
+the packages the change touches and never as a full test run. The hosted CI of the head stays the
+test suite.
+
+Read the answer by its first line and its exit status:
+
+- Exit 0, `ok:`: the merge builds and vets. The `evidence:` line (`head`, `base`, `merge_tree`, the
+  package count, the steps that ran, `rule=merged_tree_build`) goes into the verdict's record, as
+  the base-refresh check's does. It holds for the head and the base tip it names: a base that moved
+  since needs the check again. The one exception is the refresh of that head onto that same tip,
+  once the [base-refresh check](#refresh-the-base-yourself-when-only-the-base-moved) has proved it
+  `clean`: its tree is the merge tree the check built.
+- Exit 1, `refused: <code>:`. `build_failed`, `vet_failed`, `vet_darwin_failed`,
+  `test_compile_failed` and `list_failed` mean the merge does not build or vet: a needs-changes
+  finding, the first one of the verdict, with the restoration block. It names the package and quotes
+  the first lines of the output (for a redeclared identifier, both declarations), and the candidate
+  returns to the same child, which merges the base and renames
+  ([Return corrections to the existing task](../SKILL.md#return-corrections-to-the-existing-task)).
+  `merge_conflict` is git's, not a build finding: nothing was built, and the candidate is handled as
+  a base conflict is, below. `head_on_base` means the head has already landed or the wrong base was
+  named: read the tip of the base again.
+- Exit 2 and 3 are no answer and not a pass. Exit 2 is an input git could not read (an unknown
+  revision, a checkout that has not fetched the head, git older than 2.41, a `TMPDIR` git cannot
+  write); exit 3 is a go tool that is not on PATH, a run that outran `--timeout`, or an interrupt.
+  Fix the cause and run it again; the verdict waits.
+
+What it does not look at is stated so that a pass is not read for more: the packages that import a
+changed package, the files a package embeds or compiles besides its `.go` files, a dependency change
+in `go.mod` or `go.sum` (it prints a note), a build tag other than `--tags`, and every test. Where the
+installed `crw` does not have the command yet (`crw skill` answers `invalid command
+"merge-build-check"`), run the same steps by hand, in a scratch worktree of the parent's own checkout,
+under the same `Go build resources:`, in bash (zsh does not split `$pkgs` into words):
+
+    scratch=$(mktemp -d) && git worktree add --detach "$scratch/wt" <head> && (
+      set -e
+      cd "$scratch/wt"
+      git merge --no-commit --no-ff <base>    # a conflict stops here: it is not a build finding
+      pkgs=$(git diff --name-only <base>...<head> -- '*.go' | xargs -n1 dirname | sort -u | sed 's|^|./|')
+      for tags in "" dev; do
+        go build -p=4 -tags "$tags" -o /dev/null $pkgs
+        go vet -p=4 -tags "$tags" $pkgs
+        go test -p=4 -tags "$tags" -count=1 -run '^$' -vet=off -exec true $pkgs
+        GOOS=darwin GOARCH=arm64 go vet -p=4 -tags "$tags" $pkgs
+      done
+    ); rc=$?
+    git worktree remove --force "$scratch/wt"; rmdir "$scratch"; [ "$rc" -eq 0 ]
+
+Leave out of `$pkgs` the directories that are gone from the merge, `testdata` directories and the
+ones no file of builds for a target, which the helper lists as skipped. A hand run leaves the go
+tool's temporary files and telemetry counters where they always are; the helper redirects them. The
+planning side of the same failure is the naming rule in
+[issue boundaries](../../crw-plan/references/issue-boundaries.md#decide-the-boundary).
+
 ### Refresh the base yourself when only the base moved
 
 The dev ruleset is strict: a pull request has to contain the tip of its base, so each landing leaves
