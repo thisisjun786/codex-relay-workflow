@@ -205,6 +205,19 @@ func TestScanRecordWriteFailures(t *testing.T) {
 }
 
 func TestScanRecordLockAndConcurrentUpdates(t *testing.T) {
+	var oracle struct {
+		Classification, Reason string
+		Oracle                 struct {
+			ScanRounds, KnownCount, Rows int
+			RoundIDs                     []int
+		}
+	}
+	if err := json.Unmarshal(scanRecordRead(t, "testdata/scan_record/unlocked.json"), &oracle); err != nil {
+		t.Fatal(err)
+	}
+	if oracle.Classification != "intentionally-changed" || oracle.Reason == "" || oracle.Oracle.ScanRounds != 1 || oracle.Oracle.KnownCount != 1 || oracle.Oracle.Rows != 2 || !reflect.DeepEqual(oracle.Oracle.RoundIDs, []int{1, 1}) {
+		t.Fatal("missing recorded oracle data-loss case")
+	}
 	cwd := scanRecordWorkspace(t)
 	if r := scanRecordInvoke(t, cwd); r.Code != 0 {
 		t.Fatal(r)
