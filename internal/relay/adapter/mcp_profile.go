@@ -2,6 +2,7 @@ package adapter
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge"
 	bridgesettings "github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
@@ -9,6 +10,25 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/managed"
 )
+
+// mcpRecovery names what lets a later resume apply the record again. It advises
+// the operator; the relay neither unloads a thread nor changes its fixed profile.
+func mcpRecovery(record delivery.TaskSettings, status any, findings []contract.OrderedObject) string {
+	if status != "idle" {
+		return ""
+	}
+	for _, finding := range findings {
+		if finding.Get("code") != bridgesettings.NotPreserved || finding.Get("field") != "mcpServers" {
+			continue
+		}
+		profile := "the recorded MCP settings"
+		if name, _ := record.Data.Get("mcpProfile").(string); name != "" {
+			profile = fmt.Sprintf("the recorded MCP profile %q", name)
+		}
+		return ". Recovery: the host ignores MCP overrides on a loaded thread. Only after a completed durable turn and confirmation that its rollout is resumable, release all subscriptions and wait until thread/read reports notLoaded; other clients may keep it loaded, and the host decides when it unloads. If it remains loaded, an operator can use thread/archive then thread/unarchive. The next relay delivery resumes under " + profile + ". Never unload a never-run root."
+	}
+	return ""
+}
 
 // withMCP is the record a send resumes with: a copy that carries no stored mcpServers key (settings-record
 // stores any object, and only what this send resolved is its expectation) and, when the record states an

@@ -1,0 +1,125 @@
+[
+  {
+    "name": "generated-directory",
+    "generated": [
+      "build"
+    ],
+    "result": {
+      "code": 0,
+      "output": "<RECEIPT>"
+    },
+    "receipt": {
+      "kind": "test",
+      "exitCode": 0,
+      "ownerSessionId": "s1",
+      "checkEpoch": "check-epoch",
+      "generatedPaths": [
+        "build"
+      ],
+      "dirty": false
+    }
+  },
+  {
+    "name": "undeclared-source",
+    "generated": [
+      "build"
+    ],
+    "result": {
+      "code": 1,
+      "output": "receipt test: the command changed the source while running (working tree went dirty); no receipt written — a check cannot certify a tree it rewrote.\nIf the check REGENERATES artifacts by design, declare them:\n  crw pabcd receipt test --session <id> --generated <path> -- <command>\n(repeatable; a path covers that file or that directory. Undeclared rewrites are still refused.)"
+    },
+    "receipt": null
+  },
+  {
+    "name": "wrong-path",
+    "generated": [
+      "docs"
+    ],
+    "result": {
+      "code": 1,
+      "output": "receipt test: the command changed the source while running (working tree went dirty); no receipt written — a check cannot certify a tree it rewrote.\nIf the check REGENERATES artifacts by design, declare them:\n  crw pabcd receipt test --session <id> --generated <path> -- <command>\n(repeatable; a path covers that file or that directory. Undeclared rewrites are still refused.)"
+    },
+    "receipt": null
+  },
+  {
+    "name": "generated-file",
+    "generated": [
+      "build/graph.json"
+    ],
+    "result": {
+      "code": 0,
+      "output": "<RECEIPT>"
+    },
+    "receipt": {
+      "kind": "test",
+      "exitCode": 0,
+      "ownerSessionId": "s1",
+      "checkEpoch": "check-epoch",
+      "generatedPaths": [
+        "build/graph.json"
+      ],
+      "dirty": false
+    }
+  },
+  {
+    "name": "generated-sibling",
+    "generated": [
+      "build/graph.json"
+    ],
+    "result": {
+      "code": 1,
+      "output": "receipt test: the command changed the source while running (working tree went dirty); no receipt written — a check cannot certify a tree it rewrote.\nIf the check REGENERATES artifacts by design, declare them:\n  crw pabcd receipt test --session <id> --generated <path> -- <command>\n(repeatable; a path covers that file or that directory. Undeclared rewrites are still refused.)"
+    },
+    "receipt": null
+  },
+  {
+    "name": "nonzero",
+    "generated": [],
+    "result": {
+      "code": 3,
+      "output": "receipt test: the command exited 3; no receipt written"
+    },
+    "receipt": null
+  },
+  {
+    "name": "signal",
+    "generated": [],
+    "result": {
+      "code": 1,
+      "output": "receipt test: the command did not run to completion (terminated by signal); no receipt written"
+    },
+    "receipt": null
+  },
+  {
+    "name": "plain-success",
+    "generated": [],
+    "result": {
+      "code": 0,
+      "output": "<RECEIPT>"
+    },
+    "receipt": {
+      "kind": "test",
+      "exitCode": 0,
+      "ownerSessionId": "s1",
+      "checkEpoch": "check-epoch",
+      "generatedPaths": null,
+      "dirty": false
+    }
+  },
+  {
+    "name": "command-text",
+    "generated": [],
+    "result": {
+      "code": 0,
+      "output": "<RECEIPT>"
+    },
+    "receipt": {
+      "kind": "test",
+      "exitCode": 0,
+      "ownerSessionId": "s1",
+      "checkEpoch": "check-epoch",
+      "generatedPaths": null,
+      "dirty": false
+    }
+  }
+]
