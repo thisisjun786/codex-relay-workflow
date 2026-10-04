@@ -237,14 +237,16 @@ func Test29D3LaunchSnapshotTwenty(t *testing.T) {
 	}
 }
 
-// launchSnapshotWorkerReady reports whether the launch run by supervisorPID has a worker this test
-// can open, and returns the daemon.json it judged so the caller opens the worker that record names.
+// launchSnapshotWorkerReady reports whether the launch run by supervisorPID has published and
+// recorded its worker, and returns the daemon.json it judged so the caller opens the worker that
+// record names (opening it is the caller's step; this does not hold the worker alive).
 // Two processes write the evidence: the worker publishes worker-policy.json, copying the
 // supervisor's pid into service.pid, and the supervisor records workerPid in daemon.json only
 // after it has spawned that worker. The receipt alone therefore does not say workerPid is set: on
 // a slow runner the worker published first and the test opened pid 0 (CRW-537). The receipt is
-// read before daemon.json, so the record is never older than the receipt it is judged against, and
-// the receipt's worker pid must be the recorded workerPid, the state startServing waits for.
+// read before daemon.json, so the record snapshot is taken no earlier than the receipt snapshot it
+// is judged with, and the receipt's worker pid must be the recorded workerPid, the state
+// startServing waits for.
 func launchSnapshotWorkerReady(state string, supervisorPID int) (Object, bool) {
 	receipt := read(filepath.Join(state, "worker-policy.json"))
 	record := read(filepath.Join(state, "daemon.json"))
