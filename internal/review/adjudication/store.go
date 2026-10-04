@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"reflect"
 
 	"golang.org/x/sys/unix"
 )
@@ -29,6 +30,22 @@ func decode(data []byte, target any) error {
 	var extra any
 	if err := d.Decode(&extra); err != io.EOF {
 		return fmt.Errorf("expected exactly one JSON value")
+	}
+	// Compare JSON values with the canonical typed shape. This catches omitted or
+	// null scalars that encoding/json silently coerces, while retaining nullable fields.
+	var raw, canonical any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	encoded, err := json.Marshal(target)
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(encoded, &canonical); err != nil {
+		return err
+	}
+	if !reflect.DeepEqual(raw, canonical) {
+		return fmt.Errorf("JSON must preserve the canonical field shape and nullability")
 	}
 	return nil
 }

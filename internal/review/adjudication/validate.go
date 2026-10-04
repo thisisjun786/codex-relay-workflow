@@ -107,6 +107,8 @@ func replay(records []Record) (ledger, error) {
 		PR   PR
 		Hash string
 	}]bool{}
+	var totals [6]int64
+	var reviewers int
 	for i, r := range records {
 		if err := r.validate(); err != nil {
 			return l, fmt.Errorf("record %d: %w", i+1, err)
@@ -117,6 +119,21 @@ func replay(records []Record) (ledger, error) {
 		ids[r.ID] = true
 		if r.Run != nil {
 			run := *r.Run
+			if run.Reviewers != nil {
+				if *run.Reviewers > int(^uint(0)>>1)-reviewers {
+					return l, fmt.Errorf("reviewer total overflows")
+				}
+				reviewers += *run.Reviewers
+			}
+			for _, call := range run.Calls {
+				c, t := call.Record, call.Record.Tokens
+				for i, v := range [6]int64{c.ElapsedMillis, t.Input, t.Output, t.Thinking, t.CacheRead, t.Total} {
+					if v > (1<<63-1)-totals[i] {
+						return l, fmt.Errorf("call accounting total overflows")
+					}
+					totals[i] += v
+				}
+			}
 			if _, exists := l.runs[run.ID]; exists {
 				return l, fmt.Errorf("duplicate run id %q", run.ID)
 			}

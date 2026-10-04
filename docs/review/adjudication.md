@@ -17,9 +17,31 @@ Each line is one `Record`: `schema` is `crw-review-adjudication/1`, `id` is uniq
 
 `ReadExport(bytes, pr)` accepts saved, normalized `Run` JSON for Devin or Codex and verifies the expected PR identity. The parent normalizes its already saved review data into the fields above, using stable comment/finding IDs and `model: "unknown"` when no model is known. No GitHub fetch or interpretation of badge prose occurs here. The small reader rejects unknown fields, invalid identities, grades, states and negative accounting. Reviewer text stays data; neither reader executes or follows it.
 
+Saved JSON must preserve the canonical Go JSON field shape: required fields cannot be omitted or null, except `reviewers`, `calls` and `codeChanged`, whose null value explicitly means unknown. Zero-valued optional fields are omitted as `encoding/json` writes them. Readers compare the decoded JSON with that typed shape so null cannot become measured zero or a parent's false security flag. Replay rejects overflowing ledger-wide elapsed, token or reviewer sums before reporting any subset.
+
 Run states are `complete`, `partial`, `invalid`, `unavailable`. Every non-complete run needs a reason; invalid/unavailable runs have no findings. A partial run can retain invalid/unavailable calls and usable findings. Missing runs are visible in the report's coverage, rather than invented as observations.
 
 The parent assigns `problem` to correlate different claims about the same issue on the same PR/head. This correlation never assigns correctness. Canonical grade/security are supplied by the parent; two effective correct judgments on one problem must agree. `codeChanged: null` means unknown, `false` means unchanged, and `true` requires a different valid `changeCommit`. The parent verifies that commit followed the finding and explains the evidence in `note`; the package checks its shape, not Git ancestry. `parent` is attribution, not authentication.
+
+A repository-scoped Go caller wraps imports and judgments into records (handle each returned error):
+
+```go
+run, err := adjudication.ReadArtifact(artifactBytes, pr, artifactHash)
+if err != nil { return err }
+if err := adjudication.Append(ledgerPath, adjudication.Record{
+    Schema: adjudication.Schema, ID: "import-"+run.ID, Run: &run,
+}); err != nil { return err }
+judgment := adjudication.Judgment{
+    RunID: run.ID, FindingID: run.Findings[0].ID, Parent: "parent",
+    Problem: "bounds-check", Verdict: adjudication.Correct,
+    Grade: review.P1, Security: false, CodeChanged: nil, Note: "parent code evidence",
+}
+return adjudication.Append(ledgerPath, adjudication.Record{
+    Schema: adjudication.Schema, ID: "judgment-1", Judgment: &judgment,
+})
+```
+
+Only create that judgment when the imported run has a finding. For saved external reviews, use `ReadExport` and the same record wrapper. The caller imports this repository's `internal/review/adjudication` and `internal/review` packages; there is no installed CLI consumer.
 
 `Append(path, records...)` appends a validated batch under a nonblocking exclusive lock. A new judgment with a fresh record ID replaces the effective judgment for its finding in file order and leaves history intact. To correct a shared problem's canonical severity, append all affected judgments together: final-state validation happens before any write. Duplicate event/run IDs, unknown finding references, contradictory final severity and malformed records refuse the append. A contended writer returns an error immediately.
 
@@ -44,7 +66,7 @@ Every ratio carries numerator, denominator and a value that is `null` when the d
 
 Schema-v1 artifacts always carry scalar token counters and cannot distinguish absent usage from measured zero. Imports preserve those counters in `recordedTokens`, conservatively set `tokensKnown: false`, and mark measured call duration known. Saved exports may attest known tokens, including measured zero. A report with unknown accounting is not a complete usage measurement or a quality verdict.
 
-The scripted tests cover import → append → replay → report, coordinated corrections followed by another append, fixed metric numbers, false-positive correlation, model comparison with failed/missing runs, unknown versus measured-zero usage, and corrupt/contended inputs. They use temporary files and synthetic data only:
+The scripted tests separately cover saved imports into combined report records and append → replay → report, coordinated corrections followed by another append, fixed metric numbers, false-positive correlation, model comparison with failed/missing runs, unknown versus measured-zero usage, null/missing fields, aggregate overflow and corrupt/contended inputs. They use temporary files and synthetic data only:
 
 ```sh
 go test -count=1 ./internal/review/adjudication

@@ -66,3 +66,48 @@ func TestSavedReadersCombineThreeSourcesWithoutGroundTruth(t *testing.T) {
 		}
 	}
 }
+
+func TestRejectMissingNullAndOverflow(t *testing.T) {
+	records, prs, groups := scripted()
+	r := *records[0].Run
+	r.Source, r.ArtifactSHA256 = Codex, ""
+	data, _ := json.Marshal(r)
+	for _, key := range []string{"elapsedMillis", "tokens"} {
+		for _, absent := range []bool{false, true} {
+			var raw map[string]any
+			if err := json.Unmarshal(data, &raw); err != nil {
+				t.Fatal(err)
+			}
+			call := raw["calls"].([]any)[0].(map[string]any)["record"].(map[string]any)
+			if absent {
+				delete(call, key)
+			} else {
+				call[key] = nil
+			}
+			bad, _ := json.Marshal(raw)
+			if _, err := ReadExport(bad, r.PR); err == nil {
+				t.Fatalf("%s absent=%v became known zero", key, absent)
+			}
+		}
+	}
+	parent, _ := json.Marshal(records[6])
+	observation, _ := json.Marshal(records[0])
+	snapshot := string(observation) + "\n" + strings.Replace(string(parent), `"security":true`, `"security":null`, 1) + "\n"
+	if _, err := Read(strings.NewReader(snapshot)); err == nil {
+		t.Fatal("null parent security became false")
+	}
+	r.Calls[0].Record.ElapsedMillis = 1<<63 - 1
+	r.Calls[0].Record.Tokens = review.TokenUsage{Input: 1<<63 - 1, Total: 1<<63 - 1}
+	r.Calls[1] = r.Calls[0]
+	if _, err := Report([]Record{{Schema, "overflow", &r, nil}}, prs, append(groups, r.Reviewer)); err == nil {
+		t.Fatal("aggregate overflow accepted")
+	}
+	r.Calls = nil
+	n := int(^uint(0) >> 1)
+	r.Reviewers = &n
+	first := r
+	r.ID = "second-run"
+	if _, err := Report([]Record{{Schema, "one", &first, nil}, {Schema, "two", &r, nil}}, prs, []Reviewer{r.Reviewer}); err == nil {
+		t.Fatal("reviewer total overflow accepted")
+	}
+}
