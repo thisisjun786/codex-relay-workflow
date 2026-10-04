@@ -337,6 +337,67 @@ func mbcNoGoFlags(t *testing.T) {
 	}
 }
 
+// Every step of the untagged pass names the empty tag set on its command line, so a -tags the
+// caller carries cannot decide it: with GOFLAGS=-tags=dev a shim that logs each go invocation and
+// then runs the real go shows list, build, vet and test asked both tagged and untagged (CRW-562).
+func TestMergeBuildCheckNamesTheEmptyTagSetOnEveryStep(t *testing.T) {
+	realGo, err := exec.LookPath("go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	git, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	trueTool, err := exec.LookPath("true")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := newMbcRepo(t)
+	head := m.sibling("s1", map[string]string{
+		"p/b.go":      mbcTokenize,
+		"p/b_test.go": "package p\n\nimport \"testing\"\n\nfunc TestB(t *testing.T) { tokenize() }\n",
+	})
+	bin := t.TempDir()
+	for name, path := range map[string]string{"git": git, "true": trueTool} {
+		if err := os.Symlink(path, filepath.Join(bin, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	log := filepath.Join(t.TempDir(), "go.log")
+	shim := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$MBC_SHIM_LOG\"\nexec " + realGo + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "go"), []byte(shim), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	t.Setenv("MBC_SHIM_LOG", log)
+	t.Setenv("GOFLAGS", "-tags=dev")
+	mbcExpect(t, m.check(t, "--head", head, "--base", "dev"), 0, "ok: ")
+	raw, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]map[string]bool{}
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		step, _, _ := strings.Cut(line, " ")
+		if seen[step] == nil {
+			seen[step] = map[string]bool{}
+		}
+		for _, form := range []string{"-tags=", "-tags dev"} {
+			if strings.Contains(line, form+" ") {
+				seen[step][form] = true
+			}
+		}
+	}
+	for _, step := range []string{"list", "build", "vet", "test"} {
+		for _, form := range []string{"-tags=", "-tags dev"} {
+			if !seen[step][form] {
+				t.Errorf("go %s was never asked with %q: %q", step, form, strings.Split(string(raw), "\n"))
+			}
+		}
+	}
+}
+
 // The go tool runs with a home, a temporary directory and a telemetry setting of its own, below the
 // directory the check removes, and with the caller's caches. A check that outran its time is cut off:
 // the go process is gone, exit 3, and nothing is left, not even the go tool's own temporary files.
