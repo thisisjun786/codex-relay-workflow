@@ -34,6 +34,15 @@ type mindsOracleCases struct {
 		Tracker  any
 		Expected I.PendingInterviewWork
 	}
+	Failures []struct {
+		ID             string
+		Tracker, Count any
+		Error, Kind    string
+	}
+	Overflow struct {
+		Row      string
+		Expected I.PendingInterviewWork
+	}
 }
 
 func mindsLoadCases(t *testing.T) mindsOracleCases {
@@ -163,8 +172,13 @@ func TestMindsRecordedOracle(t *testing.T) {
 	for _, c := range cases.Normalization {
 		t.Run(c.ID, func(t *testing.T) {
 			round := c.Round
-			if round == "negativeZero" {
+			switch round {
+			case "negativeZero":
 				round = math.Copysign(0, -1)
+			case "nan":
+				round = math.NaN()
+			case "infinity":
+				round = math.Inf(1)
 			}
 			got := I.NormalizeMindOutput(c.Mind, c.Raw, round)
 			if !reflect.DeepEqual(got, c.Expected) {
@@ -192,6 +206,26 @@ func TestMindsRecordedOracle(t *testing.T) {
 			if !reflect.DeepEqual(got, c.Expected) {
 				t.Fatalf("got %v, oracle %v", got, c.Expected)
 			}
+		})
+	}
+}
+
+func TestMindsObjectCoercionFailure(t *testing.T) {
+	for _, c := range mindsLoadCases(t).Failures {
+		t.Run(c.ID, func(t *testing.T) {
+			count, _ := c.Count.(float64)
+			if c.Count == "nan" {
+				count = math.NaN()
+			}
+			if c.Kind != "TypeError" {
+				t.Fatalf("unexpected oracle failure kind %q", c.Kind)
+			}
+			defer func() {
+				if got := recover(); got != c.Error {
+					t.Errorf("coercion failure = %v, want oracle failure", got)
+				}
+			}()
+			I.SelectMinds(c.Tracker, count)
 		})
 	}
 }

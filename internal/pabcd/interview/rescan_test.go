@@ -158,3 +158,19 @@ func TestRescanReaderFailure(t *testing.T) {
 	}
 	rescanAssert(t, I.HasPendingInterviewWork(t.TempDir(), "s", nil, deps), []string{}, 0, false)
 }
+
+func TestRescanQAOverflowMetadata(t *testing.T) {
+	cwd := t.TempDir()
+	dir := filepath.Join(cwd, ".crw", "interviews")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	c := mindsLoadCases(t).Overflow
+	if err := os.WriteFile(filepath.Join(dir, "s.jsonl"), []byte(c.Row), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got := I.HasPendingInterviewWork(cwd, "s", nil, rescanDeps())
+	if !reflect.DeepEqual(got, c.Expected) {
+		t.Fatalf("overflow QA=%#v, oracle %#v", got, c.Expected)
+	}
+}

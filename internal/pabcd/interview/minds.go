@@ -189,13 +189,13 @@ func SelectMinds(tracker any, count ...float64) []Mind {
 	if len(count) > 0 {
 		n = math.Max(1, math.Min(MindConcurrencyCap, math.Floor(count[0])))
 	}
-	if math.IsNaN(n) {
-		return []Mind{}
-	}
 	ids := Minds()
 	rank := [5]float64{}
 	for i, dim := range [5]Dimension{DimensionConstraint, DimensionGoal, DimensionOntology, DimensionSuccess, DimensionConstraint} {
 		rank[i] = mindsRank(mindsLevel(tracker, dim))
+	}
+	if math.IsNaN(n) {
+		return []Mind{}
 	}
 	// The inherited-property comparator is not transitive. Reproduce V8's sort
 	// of five elements: detect/reverse its initial run, then binary insertion.
@@ -281,6 +281,11 @@ func mindsPropertyKey(v any) string {
 		}
 		return strings.Join(parts, ",")
 	case map[string]any:
+		// With string hint JS tries toString before valueOf. JSON can shadow
+		// that method with a noncallable value; valueOf then returns the object.
+		if _, shadowed := x["toString"]; shadowed {
+			panic("Cannot convert object to primitive value")
+		}
 		return "[object Object]"
 	}
 	b, _ := json.Marshal(v)

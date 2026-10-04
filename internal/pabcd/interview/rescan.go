@@ -4,7 +4,9 @@ package interview
 // never a dispatcher, writer or Stop handler.
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"math"
 	"os"
 
@@ -42,7 +44,12 @@ func HasPendingInterviewWork(cwd, sessionID string, tracker any, deps RescanDeps
 	order := []string{}
 	for _, raw := range rescanReadQA(cwd, sessionID, deps.ReadQaEvents) {
 		var row map[string]any
-		if json.Unmarshal(raw, &row) != nil {
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		decoder.UseNumber() // Unrelated overflowing numbers must not discard a QA pair.
+		if decoder.Decode(&row) != nil {
+			continue
+		}
+		if _, err := decoder.Token(); err != io.EOF {
 			continue
 		}
 		turn, turnOK := row["turnId"].(string)

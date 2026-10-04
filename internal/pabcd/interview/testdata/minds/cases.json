@@ -2985,5 +2985,81 @@
         "pending": false
       }
     }
-  ]
+  ],
+  "failures": [
+    {
+      "id": "object-normal",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": {
+              "toString": null
+            }
+          }
+        }
+      },
+      "count": 2,
+      "error": "Cannot convert object to primitive value",
+      "kind": "TypeError"
+    },
+    {
+      "id": "object-nan",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": {
+              "toString": null
+            }
+          }
+        }
+      },
+      "count": "nan",
+      "error": "Cannot convert object to primitive value",
+      "kind": "TypeError"
+    },
+    {
+      "id": "nested-normal",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": [
+              {
+                "toString": 3
+              }
+            ]
+          }
+        }
+      },
+      "count": 2,
+      "error": "Cannot convert object to primitive value",
+      "kind": "TypeError"
+    },
+    {
+      "id": "nested-nan",
+      "tracker": {
+        "dimensions": {
+          "goal": {
+            "level": [
+              {
+                "toString": 3
+              }
+            ]
+          }
+        }
+      },
+      "count": "nan",
+      "error": "Cannot convert object to primitive value",
+      "kind": "TypeError"
+    }
+  ],
+  "overflow": {
+    "row": "{\"event\":\"question_asked\",\"eventId\":\"e\",\"turnId\":\"t\",\"questionId\":\"q\",\"extra\":1e400}",
+    "expected": {
+      "pendingQuestionIds": [
+        "t\u0000q"
+      ],
+      "highContradictionCount": 0,
+      "pending": true
+    }
+  }
 }
