@@ -81,6 +81,9 @@ func TestIncompleteReleaseAndRunningPrecedence(t *testing.T) {
 				if mode != "unresolved-running" && len(s.archived()) != 1 {
 					t.Fatalf("completed descendant not archived: %v", s.archived())
 				}
+				if mode == "unresolved-running" && len(s.archived()) != 0 {
+					t.Fatalf("unresolved subtree archived: %v", s.archived())
+				}
 			} else if err != nil || len(s.archived()) != 0 {
 				t.Fatalf("non-running root pinned: %v archives=%v", err, s.archived())
 			}

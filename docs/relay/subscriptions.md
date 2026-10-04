@@ -57,7 +57,7 @@ the existing root gate. A client-wide admission barrier also drains admitted
 operations and prevents direct descendant sends during this callback. Waits hold
 neither client nor subscription-manager mutex. Close cancels and drains the worker.
 
-Cleanup first proves the root is idle with its latest turn completed, scans the
+Cleanup first checks whether the root is idle with its latest turn completed, scans the
 loaded subtree twice, and checks every member's completion. A running, unknown,
 unreadable or never-run member holds archival of the whole subtree. An active root alone is
 also an incomplete report, even with no loaded descendants. Pending completion
