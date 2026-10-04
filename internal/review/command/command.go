@@ -51,12 +51,11 @@ type Summary struct {
 	DailyCap  int    `json:"dailyCap,omitempty"`
 	RunsToday int    `json:"runsToday,omitempty"`
 	// already_reviewed only: the head of the earlier review, and whether its artifact file is there now.
-	ReviewedHead    string `json:"reviewedHead,omitempty"`
-	ArtifactPresent *bool  `json:"artifactPresent,omitempty"`
-	// The first UTC day (2006-01-02) on which the one more attempt of a review that could not run is allowed.
-	RetryNotBefore string  `json:"retryNotBefore,omitempty"`
-	Comment        *Posted `json:"summaryComment,omitempty"`
-	*Counts                // a review that ran
+	ReviewedHead    string  `json:"reviewedHead,omitempty"`
+	ArtifactPresent *bool   `json:"artifactPresent,omitempty"`
+	RetryNotBefore  string  `json:"retryNotBefore,omitempty"` // the first UTC day (2006-01-02) on which the one more attempt of a review that could not run is allowed
+	Comment         *Posted `json:"summaryComment,omitempty"`
+	*Counts                 // a review that ran
 }
 
 // Posted says what --post-summary did to the pull request: created, updated or unchanged the one summary comment.
@@ -111,6 +110,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	out, _ := json.Marshal(sum)
 	fmt.Fprintf(stdout, "%s\n", out)
 	switch {
+	case postErr != nil && ctx.Err() != nil:
+		fmt.Fprintln(stderr, "crw review: interrupted")
+		return exitInterrupted
 	case errors.Is(postErr, errBusy):
 		fmt.Fprintf(stderr, "crw review: busy: another post holds the post lock in %s; the summary comment was not posted, try again later\n", cfg.StateDir)
 		return exitRefused
@@ -144,8 +146,7 @@ func execute(ctx context.Context, cfg Config, e env) (*Summary, error) {
 		present := statErr == nil && info.Mode().IsRegular()
 		sum.Artifact, sum.SHA256, sum.Status, sum.ReviewedHead, sum.ArtifactPresent = r.Artifact, r.SHA256, r.Status, r.Head, &present
 	}
-	// already reads the ledger and, if this patch is closed, turns sum into the answer that says so. Without the run lock only a finished record closes it, since an attempt that runs now may still
-	// finish; with the lock the one more attempt of an unavailable review that began and left no result closes it too.
+	// already reads the ledger and, if this patch is closed, turns sum into the answer that says so. Without the run lock only a finished record closes it (an attempt that runs now may still finish).
 	already := func(locked bool) (recs []record, done bool, err error) {
 		if recs, err = l.read(); err != nil {
 			return nil, false, err
@@ -219,11 +220,12 @@ func execute(ctx context.Context, cfg Config, e env) (*Summary, error) {
 	}
 	digest := sha256.Sum256(data)
 	result := entry("finished")
+	result.Time = e.now().UTC().Format(time.RFC3339) // the day the attempt ended, maybe after the one it began on: the ledger line and retryNotBefore must agree on it
 	result.Artifact, result.SHA256, result.Status = artifact, hex.EncodeToString(digest[:]), string(a.Status)
 	if reasons, ok := accountUnavailable(a); ok {
 		result.Reason = reasons
 		if st.unavailable == nil { // the first attempt that could not run: the patch stays open for one more, on a later day
-			result.Event, sum.RetryNotBefore = "unavailable", nextDay(day)
+			result.Event, sum.RetryNotBefore = "unavailable", nextDay(dayOf(result.Time))
 		}
 	}
 	// The review is recorded before its files are written, so that nothing after this point can let the patch be reviewed again.

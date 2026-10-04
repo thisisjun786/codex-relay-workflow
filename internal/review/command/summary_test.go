@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -28,9 +27,10 @@ type scriptedForge struct {
 	fail                    error         // returned by the next Create, once
 	entered, hold           chan struct{} // when set, the first List announces itself on entered and waits for hold
 	held                    bool
+	onList                  func() // when set, called by every List
 }
 
-func (s *scriptedForge) List(_ context.Context, _ int) ([]prComment, error) {
+func (s *scriptedForge) List(ctx context.Context, _ int) ([]prComment, error) {
 	s.mu.Lock()
 	s.lists++
 	block := s.hold != nil && !s.held
@@ -41,7 +41,10 @@ func (s *scriptedForge) List(_ context.Context, _ int) ([]prComment, error) {
 		s.entered <- struct{}{}
 		<-s.hold
 	}
-	return snapshot, nil
+	if s.onList != nil {
+		s.onList()
+	}
+	return snapshot, ctx.Err()
 }
 
 func (s *scriptedForge) Create(_ context.Context, pr int, body string) (prComment, error) {
@@ -68,12 +71,6 @@ func (s *scriptedForge) Update(_ context.Context, id int64, body string) (prComm
 		}
 	}
 	return prComment{}, errors.New("no such comment")
-}
-
-func (s *scriptedForge) counts() (lists, creates, updates int) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.lists, s.creates, s.updates
 }
 
 func (f *fixture) post(head string, extra ...string) (int, Summary, string) {
@@ -116,11 +113,11 @@ func TestPostSummaryKeepsOneCommentAndUpdatesIt(t *testing.T) {
 		}
 	}
 
-	_, _, updates := sf.counts()
+	updates := sf.updates
 	calls := f.s.count()
 	code, sum, errOut = f.post(h3) // already reviewed: the same text, so nothing is written
-	if _, creates, now := sf.counts(); code != 0 || sum.Outcome != OutcomeAlreadyReviewed || sum.Comment == nil || sum.Comment.Action != "unchanged" || creates != 1 || now != updates || f.s.count() != calls {
-		t.Fatalf("repeat: %d %+v %s (creates %d, updates %d, was %d)", code, sum, errOut, creates, now, updates)
+	if code != 0 || sum.Outcome != OutcomeAlreadyReviewed || sum.Comment == nil || sum.Comment.Action != "unchanged" || sf.creates != 1 || sf.updates != updates || f.s.count() != calls {
+		t.Fatalf("repeat: %d %+v %s (creates %d, updates %d, was %d)", code, sum, errOut, sf.creates, sf.updates, updates)
 	}
 }
 
@@ -166,8 +163,8 @@ func TestPostSummaryNeedsAnArtifactItCanTrust(t *testing.T) {
 	if code, sum, errOut := f.post(a); code != 1 || sum.Outcome != OutcomeAlreadyReviewed || !strings.Contains(errOut, "artifact") {
 		t.Fatalf("a missing artifact: %d %+v %s", code, sum, errOut)
 	}
-	if lists, creates, updates := sf.counts(); lists+creates+updates != 0 {
-		t.Fatalf("the forge was used: %d %d %d", lists, creates, updates)
+	if sf.lists+sf.creates+sf.updates != 0 {
+		t.Fatalf("the forge was used: %d %d %d", sf.lists, sf.creates, sf.updates)
 	}
 }
 
@@ -179,7 +176,7 @@ func TestPostSummaryUpdatesTheFirstOfSeveralMarkerComments(t *testing.T) {
 	sf := &scriptedForge{comments: []prComment{{ID: 1, Body: "hello"}, {ID: 2, Body: mark + "A"}, {ID: 3, Body: mark + "B"}, {ID: 4, Body: quoted}}}
 	f.forge = sf
 	code, sum, errOut := f.post(f.repo.change(f.base, 2))
-	if _, creates, updates := sf.counts(); code != 0 || sum.Comment == nil || sum.Comment.Action != "updated" || creates != 0 || updates != 1 || !strings.HasPrefix(sf.comments[1].Body, "<!-- crw-independent-review v1 {") ||
+	if code != 0 || sum.Comment == nil || sum.Comment.Action != "updated" || sf.creates != 0 || sf.updates != 1 || !strings.HasPrefix(sf.comments[1].Body, "<!-- crw-independent-review v1 {") ||
 		sf.comments[2].Body != mark+"B" || sf.comments[3].Body != quoted || !strings.Contains(errOut, "2 comments") {
 		t.Fatalf("%d %+v %s\n%+v", code, sum, errOut, sf.comments)
 	}
@@ -206,8 +203,8 @@ func TestPostSummaryRunsTakeTurns(t *testing.T) {
 		t.Fatal("the first post never reached the forge")
 	}
 	code, _, errOut := f.post(head, "--lock-wait", "-1s")
-	if lists, creates, _ := sf.counts(); code != 3 || !strings.Contains(errOut, "post lock") || lists != 1 || creates != 0 {
-		t.Fatalf("contender: exit %d %q (forge lists %d, creates %d)", code, errOut, lists, creates)
+	if code != 3 || !strings.Contains(errOut, "post lock") || sf.lists != 1 || sf.creates != 0 {
+		t.Fatalf("contender: exit %d %q (forge lists %d, creates %d)", code, errOut, sf.lists, sf.creates)
 	}
 	release()
 	if code := <-done; code != 0 || len(sf.comments) != 1 {
@@ -294,25 +291,14 @@ func TestGhForgeCallsOnlyTheCommentEndpoints(t *testing.T) {
 	}
 }
 
-func TestPostSummaryFlags(t *testing.T) {
-	base := []string{"--base", "a", "--head", "b", "--issue", "CRW-1", "--out", "o"}
-	for _, c := range []struct {
-		args []string
-		want string // empty: accepted
-	}{
-		{[]string{"--post-summary"}, "--post-summary needs --pr"},
-		{[]string{"--pr", "7"}, "--pr is only used with --post-summary"},
-		{[]string{"--post-summary", "--pr", "7", "--gh", "/opt/gh"}, ""},
-	} {
-		clearEnv(t)
-		var errOut bytes.Buffer
-		cfg, code := parseConfig(append(slices.Clone(base), c.args...), io.Discard, &errOut)
-		if (c.want == "") != (code == -1) || !strings.Contains(errOut.String(), c.want) || (c.want == "" && (!cfg.PostSummary || cfg.PR != 7 || cfg.Gh != "/opt/gh")) {
-			t.Errorf("%v: %d %+v %q", c.args, code, cfg, errOut.String())
-		}
-	}
-	t.Setenv("CRW_REVIEW_GH", "/env/gh")
-	if cfg, code := parseConfig(base, io.Discard, io.Discard); code != -1 || cfg.Gh != "/env/gh" {
-		t.Errorf("CRW_REVIEW_GH: %d %q", code, cfg.Gh)
+// Cancelling the command while it posts ends it as interrupted, as cancelling the review does.
+func TestInterruptWhilePostingExits130(t *testing.T) {
+	f := newFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	sf := &scriptedForge{onList: cancel}
+	e := env{runner: f.s.run, now: func() time.Time { return f.at }, forge: func(Config) forge { return sf }}
+	var out, errOut bytes.Buffer
+	if code := run(ctx, f.args(f.repo.change(f.base, 2), "--post-summary", "--pr", "7"), &out, &errOut, e); code != 130 || !strings.Contains(errOut.String(), "interrupted") || len(sf.comments) != 0 {
+		t.Fatalf("interrupted while posting: %d %q", code, errOut.String())
 	}
 }

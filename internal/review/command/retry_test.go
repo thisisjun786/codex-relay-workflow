@@ -162,10 +162,8 @@ func TestRetryOnAnotherHeadOfTheSamePatch(t *testing.T) {
 	if code != 0 || retry.Outcome != OutcomeReviewed || retry.Artifact != filepath.Join(f.out, h2+".json") || first.Artifact != filepath.Join(f.out, h1+".json") {
 		t.Fatalf("retry on another head: %d %+v %s", code, retry, errOut)
 	}
-	if data, err := os.ReadFile(first.Artifact); err != nil || !bytes.Contains(data, []byte("unavailable")) {
-		t.Fatalf("the first artifact was touched: %v", err)
-	}
-	if _, again, _ := f.run(h1); again.Outcome != OutcomeAlreadyReviewed || again.ReviewedHead != h2 || again.Status != "complete" {
+	data, _ := os.ReadFile(first.Artifact) // the first head's artifact is untouched
+	if _, again, _ := f.run(h1); again.Outcome != OutcomeAlreadyReviewed || again.ReviewedHead != h2 || again.Status != "complete" || !bytes.Contains(data, []byte("unavailable")) {
 		t.Fatalf("after the retry: %+v", again)
 	}
 }
@@ -221,6 +219,26 @@ func TestRetryThatEndsWithoutAResultClosesThePatch(t *testing.T) {
 		if code != 0 || sum.Outcome != OutcomeAlreadyReviewed || sum.Artifact != first.Artifact || sum.Status != "unavailable" || f.s.count() != calls {
 			t.Fatalf("%s after the interrupted retry: %d %+v (calls %d, were %d)", day, code, sum, f.s.count(), calls)
 		}
+	}
+}
+
+// An attempt that ends after UTC midnight is dated by its end: the answer and the ledger agree on the day the retry opens.
+func TestRetryDayIsTheDayTheAttemptEnded(t *testing.T) {
+	f := newFixture(t)
+	head := f.repo.change(f.base, 2)
+	f.on("2026-10-04", quotaResult)
+	f.at = f.at.Add(11*time.Hour + 59*time.Minute) // it starts at 23:59 and the answer comes after midnight
+	e := env{now: func() time.Time { return f.at }, runner: func(ctx context.Context, c agy.Config, r agy.Request) (agy.Result, error) {
+		f.at = time.Date(2026, 10, 5, 0, 1, 0, 0, time.UTC)
+		return f.s.run(ctx, c, r)
+	}}
+	var out, errOut bytes.Buffer
+	if code := run(context.Background(), f.args(head), &out, &errOut, e); code != 0 || !strings.Contains(out.String(), `"retryNotBefore":"2026-10-06"`) {
+		t.Fatalf("attempt across midnight: %d %s %s", code, out.String(), errOut.String())
+	}
+	f.on("2026-10-05", okResult)
+	if code, sum, _ := f.run(head); code != 3 || sum.Outcome != OutcomeRetryDeferred || sum.RetryNotBefore != "2026-10-06" {
+		t.Fatalf("the day after the start: %d %+v", code, sum)
 	}
 }
 

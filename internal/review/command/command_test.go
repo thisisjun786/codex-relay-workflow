@@ -389,6 +389,8 @@ func TestUsageErrorsAndHelp(t *testing.T) {
 		{[]string{"--base", "a", "--head", "b", "--issue", "crw 1", "--out", "o"}, "", "is not an issue id"},
 		{[]string{"--base", "a", "--head", "b", "--issue", "CRW-1", "--out", "o", "--daily-cap", "0"}, "", "the daily cap must be at least 1"},
 		{[]string{"--base", "a", "--head", "b", "--issue", "CRW-1", "--out", "o", "extra"}, "", `unrecognized argument "extra"`},
+		{[]string{"--base", "a", "--head", "b", "--issue", "CRW-1", "--out", "o", "--post-summary"}, "", "--post-summary needs --pr"},
+		{[]string{"--base", "a", "--head", "b", "--issue", "CRW-1", "--out", "o", "--pr", "7"}, "", "--pr is only used with --post-summary"},
 		{[]string{"--base", "a", "--head", "b", "--issue", "CRW-1", "--out", "o"}, "soon", "CRW_REVIEW_DAILY_CAP"},
 	} {
 		clearEnv(t)
@@ -417,13 +419,14 @@ func TestConfigFlagBeatsEnvironmentBeatsDefault(t *testing.T) {
 	}
 	clearEnv(t)
 	t.Setenv("XDG_STATE_HOME", "/xdg")
-	if c := parse(); c.DailyCap != 20 || c.Model != agy.DefaultModel || c.StateDir != "/xdg/crw/review" || c.LockWait != 30*time.Minute {
+	if c := parse(); c.DailyCap != 20 || c.Model != agy.DefaultModel || c.StateDir != "/xdg/crw/review" || c.LockWait != 30*time.Minute || c.Gh != "gh" {
 		t.Errorf("defaults: %+v", c)
 	}
 	t.Setenv("CRW_REVIEW_DAILY_CAP", "7")
 	t.Setenv("CRW_REVIEW_MODEL", "from-env")
 	t.Setenv("CRW_REVIEW_LOCK_WAIT", "90s")
-	if c := parse(); c.DailyCap != 7 || c.Model != "from-env" || c.LockWait != 90*time.Second {
+	t.Setenv("CRW_REVIEW_GH", "/env/gh")
+	if c := parse(); c.DailyCap != 7 || c.Model != "from-env" || c.LockWait != 90*time.Second || c.Gh != "/env/gh" {
 		t.Errorf("environment: %+v", c)
 	}
 	if c := parse("--daily-cap", "3", "--model", "from-flag"); c.DailyCap != 3 || c.Model != "from-flag" || c.LockWait != 90*time.Second {

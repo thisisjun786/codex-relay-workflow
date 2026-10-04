@@ -120,14 +120,7 @@ func renderSummary(a *review.Artifact, sha string) string {
 			fmt.Fprintf(&b, "- and %d more in the artifact\n", len(a.Findings)-maxListed)
 			break
 		}
-		label := ""
-		if f.Security {
-			label = " security"
-		}
-		note := ""
-		if f.NeedsContext {
-			note = ", needs context"
-		}
+		label, note := map[bool]string{true: " security"}[f.Security], map[bool]string{true: ", needs context"}[f.NeedsContext]
 		fmt.Fprintf(&b, "- **%s**%s: %s at %s; %d of %d reviewers; %s%s\n", f.Grade, label, code(f.Title, 120), code(fmt.Sprintf("%s:%d", f.File, f.Line), 100), f.Support, a.Reviewers.Run, f.Verdict, note)
 	}
 	return b.String()

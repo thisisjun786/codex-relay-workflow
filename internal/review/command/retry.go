@@ -9,13 +9,12 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/review/agy"
 )
 
-// accountReasons are the reasons of a call that could not run at all because of the account or the configuration: out of quota, not logged in, a model agy does not know, agy that cannot be started. They are the
-// reasons for which the same patch-id may be tried once more on a later UTC day. Every other outcome (a content filter, an invalid answer such as a denied action, the time limit, a crash, a wait for agy's lock) is
-// treated as a result and closes the patch-id on its first run.
+// accountReasons are the reasons of a call that could not run at all because of the account or the configuration (out of quota, not logged in, an unknown model, agy that cannot be started): the same patch-id may be
+// tried once more on a later UTC day. Every other outcome (a content filter, a denied action, the time limit, a crash, a wait for agy's lock) is a result and closes the patch-id on its first run.
 var accountReasons = []agy.Reason{agy.ReasonQuota, agy.ReasonAuthentication, agy.ReasonUnknownModel, agy.ReasonNotStarted}
 
-// accountUnavailable reports whether a is an unavailable review that could not run for a reason of the account or the configuration: every review call failed as unavailable with one of accountReasons
-// (so a single call of another kind decides against), and reasons lists the distinct reasons, sorted and joined by commas. Calls of the auxiliary stages do not count.
+// accountUnavailable reports whether a is an unavailable review whose every review call failed as unavailable with one of accountReasons (one call of another kind decides against); reasons lists them,
+// sorted and joined by commas. Calls of the auxiliary stages do not count.
 func accountUnavailable(a *review.Artifact) (reasons string, ok bool) {
 	if a.Status != review.StatusUnavailable {
 		return "", false

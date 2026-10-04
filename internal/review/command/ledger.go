@@ -81,8 +81,7 @@ func runsOn(recs []record, day string) (n int) {
 	return n
 }
 
-// standing is where one patch-id stands. A finished record closes it. An unavailable record leaves it open for one more attempt, which is spent as soon as a started record follows (a retry that
-// ends without a result, interrupted or killed, does not give a third attempt).
+// standing is where one patch-id stands: a finished record closes it, an unavailable one leaves it open for one more attempt, which is spent as soon as a started record follows it.
 type standing struct {
 	finished, unavailable *record
 	retried               bool
@@ -134,7 +133,9 @@ func (l *ledger) append(r record) error {
 			return err
 		}
 	}
-	r.Time = l.now().UTC().Format(time.RFC3339)
+	if r.Time == "" {
+		r.Time = l.now().UTC().Format(time.RFC3339)
+	}
 	line, err := json.Marshal(r)
 	if err != nil {
 		return err
