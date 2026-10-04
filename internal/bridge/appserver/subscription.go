@@ -14,15 +14,17 @@ const releaseRetryFloor = 5 * time.Second
 const releaseRetryCeiling = 5 * time.Minute
 
 type subscriptionRoot struct {
-	gate           chan struct{}
-	refs           int // Watches plus admissions waiting for the gate.
-	connection     *websocket.Conn
-	watches        []*TurnWatch
-	retainedOn     *websocket.Conn
-	due            time.Time
-	delay          time.Duration
-	releasing      bool
-	releasePending bool
+	gate             chan struct{}
+	refs             int // Watches plus admissions waiting for the gate.
+	connection       *websocket.Conn
+	watches          []*TurnWatch
+	retainedOn       *websocket.Conn
+	due              time.Time
+	delay            time.Duration
+	releasing        bool
+	releasePending   bool
+	cleanupErrors    int
+	cleanupAbandoned bool
 }
 
 // TurnWatch holds the root's mutation gate until Finish. Its context fences all
@@ -35,6 +37,7 @@ type TurnWatch struct {
 	turn                                    string
 	seen                                    map[string]bool
 	transmitted, refused, finished, retired bool
+	admission                               bool
 }
 type watchContextKey struct{}
 
@@ -51,11 +54,16 @@ type subscriptionManager struct {
 	wake, done        chan struct{}
 	started, stopping bool
 	retryFloor        time.Duration
+	cleanup           func(context.Context, string) (bool, error)
+	cleanupActive     bool
+	admitted          int
+	changed           chan struct{}
+	cleanupBound      time.Duration
 }
 
 func newSubscriptions(c *Client) *subscriptionManager {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &subscriptionManager{client: c, roots: map[string]*subscriptionRoot{}, ctx: ctx, cancel: cancel, wake: make(chan struct{}, 1), done: make(chan struct{}), retryFloor: releaseRetryFloor}
+	return &subscriptionManager{client: c, roots: map[string]*subscriptionRoot{}, ctx: ctx, cancel: cancel, wake: make(chan struct{}, 1), done: make(chan struct{}), retryFloor: releaseRetryFloor, changed: make(chan struct{}), cleanupBound: descendantCleanupBound}
 }
 func (m *subscriptionManager) signal() {
 	select {
@@ -112,6 +120,11 @@ func (c *Client) watchTurn(ctx context.Context, thread string, created bool) (*T
 		m.unreserve(thread, r)
 		return nil, m.ctx.Err()
 	}
+	if err := m.admit(ctx); err != nil {
+		r.gate <- struct{}{}
+		m.unreserve(thread, r)
+		return nil, err
+	}
 	c.mu.Lock()
 	m.mu.Lock()
 	err := ctx.Err()
@@ -119,13 +132,14 @@ func (c *Client) watchTurn(ctx context.Context, thread string, created bool) (*T
 		err = &TransportError{Reason: "subscription connection ended before admission"}
 	}
 	if err != nil {
+		m.endAdmission()
 		m.mu.Unlock()
 		c.mu.Unlock()
 		r.gate <- struct{}{}
 		m.unreserve(thread, r)
 		return nil, err
 	}
-	w := &TurnWatch{manager: m, root: r, thread: thread, connection: conn, seen: map[string]bool{}}
+	w := &TurnWatch{manager: m, root: r, thread: thread, connection: conn, seen: map[string]bool{}, admission: true}
 	r.connection = conn
 	r.watches = append(r.watches, w)
 	m.start()
@@ -155,6 +169,10 @@ func (w *TurnWatch) Finish(turn string, retain bool) {
 		w.turn = turn
 	}
 	w.finished = true
+	if w.admission {
+		w.admission = false
+		m.endAdmission()
+	}
 	if !w.retired && retain && w.turn == "" && !w.transmitted && len(w.seen) == 0 {
 		w.root.retainedOn = w.connection
 	}
@@ -196,6 +214,10 @@ func (m *subscriptionManager) reply(p pending, result, rpcError json.RawMessage)
 			p.watch.refused = rpcError != nil
 			if ids.Turn.ID != "" {
 				p.watch.turn = ids.Turn.ID
+				if rpcError == nil {
+					p.watch.root.cleanupErrors = 0
+					p.watch.root.cleanupAbandoned = false
+				}
 			}
 		}
 		m.mu.Unlock()
@@ -326,6 +348,9 @@ func (m *subscriptionManager) release(thread string, r *subscriptionRoot) {
 	m.client.mu.Unlock()
 	if !live {
 		m.lost(conn)
+		return
+	}
+	if !m.cleanupRoot(thread, r, conn) {
 		return
 	}
 	_, err := m.client.request(m.ctx, conn, "thread/unsubscribe", map[string]any{"threadId": thread})
