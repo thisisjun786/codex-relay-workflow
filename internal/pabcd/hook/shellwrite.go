@@ -26,9 +26,9 @@ func ShellWriteDestinations(command string) []string {
 	return dests
 }
 
-// The next verb port fills this one call, using shellTokenize below. It deliberately
-// adds no verb inference, interpreter detection or memory-gate activation here.
-func verbDestinations(string) []string { return nil }
+// verbDestinations is the verb step: shellwrite_verbs.go reads the destinations of tee, sed -i, cp, mv, perl, ruby, python
+// and node from the segment's words (shellTokenize below). It adds no memory-gate activation here.
+func verbDestinations(segment string) []string { return shellVerbDestinations(segment) }
 
 type shellToken struct {
 	token []uint16

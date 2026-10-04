@@ -1,0 +1,2609 @@
+[
+  {
+    "name": "basic-0",
+    "files": [
+      {
+        "path": "MEMORY.md",
+        "content": "# Task Group: search infrastructure\n\n## Task 1: ship the trigram sidecar index, success\n\nkeywords: trigram, sidecar, 한글 검색\n",
+        "mtime": 1788998400000
+      },
+      {
+        "path": "windows-notes.md",
+        "content": "# CRLF notes\r\n\r\nthe wombat migration finished on windows\r\n",
+        "mtime": 1788998400000
+      },
+      {
+        "path": "rollout_summaries/summary.md",
+        "content": "thread_id: main\nupdated_at: ignored\n\n# Deployed the trigram index\n\nRollout context: korean trigram deployment succeeded.\n",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "trigram sidecar",
+    "options": {
+      "nowMs": 1788998400000
+    },
+    "memoryDB": true,
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "relpath": "MEMORY.md",
+          "threadId": null,
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "## Task 1: ship the trigram sidecar index, success",
+          "startLine": 3,
+          "cwd": null,
+          "score": 13
+        },
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "relpath": "MEMORY.md",
+          "threadId": null,
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "keywords: trigram, sidecar, 한글 검색",
+          "startLine": 5,
+          "cwd": null,
+          "score": 7
+        }
+      ],
+      "warnings": [],
+      "scannedFiles": 3
+    }
+  },
+  {
+    "name": "basic-1",
+    "files": [
+      {
+        "path": "MEMORY.md",
+        "content": "# Task Group: search infrastructure\n\n## Task 1: ship the trigram sidecar index, success\n\nkeywords: trigram, sidecar, 한글 검색\n",
+        "mtime": 1788998400000
+      },
+      {
+        "path": "windows-notes.md",
+        "content": "# CRLF notes\r\n\r\nthe wombat migration finished on windows\r\n",
+        "mtime": 1788998400000
+      },
+      {
+        "path": "rollout_summaries/summary.md",
+        "content": "thread_id: main\nupdated_at: ignored\n\n# Deployed the trigram index\n\nRollout context: korean trigram deployment succeeded.\n",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "wombat migration",
+    "options": {
+      "nowMs": 1788998400000
+    },
+    "memoryDB": true,
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "other",
+          "relpath": "windows-notes.md",
+          "threadId": null,
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "the wombat migration finished on windows",
+          "startLine": 3,
+          "cwd": null,
+          "score": 10.5
+        }
+      ],
+      "warnings": [],
+      "scannedFiles": 3
+    }
+  },
+  {
+    "name": "basic-2",
+    "files": [
+      {
+        "path": "MEMORY.md",
+        "content": "# Task Group: search infrastructure\n\n## Task 1: ship the trigram sidecar index, success\n\nkeywords: trigram, sidecar, 한글 검색\n",
+        "mtime": 1788998400000
+      },
+      {
+        "path": "windows-notes.md",
+        "content": "# CRLF notes\r\n\r\nthe wombat migration finished on windows\r\n",
+        "mtime": 1788998400000
+      },
+      {
+        "path": "rollout_summaries/summary.md",
+        "content": "thread_id: main\nupdated_at: ignored\n\n# Deployed the trigram index\n\nRollout context: korean trigram deployment succeeded.\n",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "한글 검색",
+    "options": {
+      "nowMs": 1788998400000
+    },
+    "memoryDB": true,
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "relpath": "MEMORY.md",
+          "threadId": null,
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "keywords: trigram, sidecar, 한글 검색",
+          "startLine": 5,
+          "cwd": null,
+          "score": 12
+        }
+      ],
+      "warnings": [],
+      "scannedFiles": 3
+    }
+  },
+  {
+    "name": "basic-3",
+    "files": [
+      {
+        "path": "MEMORY.md",
+        "content": "# Task Group: search infrastructure\n\n## Task 1: ship the trigram sidecar index, success\n\nkeywords: trigram, sidecar, 한글 검색\n",
+        "mtime": 1788998400000
+      },
+      {
+        "path": "windows-notes.md",
+        "content": "# CRLF notes\r\n\r\nthe wombat migration finished on windows\r\n",
+        "mtime": 1788998400000
+      },
+      {
+        "path": "rollout_summaries/summary.md",
+        "content": "thread_id: main\nupdated_at: ignored\n\n# Deployed the trigram index\n\nRollout context: korean trigram deployment succeeded.\n",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "한글 없는단어조합",
+    "options": {
+      "nowMs": 1788998400000
+    },
+    "memoryDB": true,
+    "out": {
+      "hits": [],
+      "warnings": [],
+      "scannedFiles": 3
+    }
+  },
+  {
+    "name": "basic-4",
+    "files": [
+      {
+        "path": "MEMORY.md",
+        "content": "# Task Group: search infrastructure\n\n## Task 1: ship the trigram sidecar index, success\n\nkeywords: trigram, sidecar, 한글 검색\n",
+        "mtime": 1788998400000
+      },
+      {
+        "path": "windows-notes.md",
+        "content": "# CRLF notes\r\n\r\nthe wombat migration finished on windows\r\n",
+        "mtime": 1788998400000
+      },
+      {
+        "path": "rollout_summaries/summary.md",
+        "content": "thread_id: main\nupdated_at: ignored\n\n# Deployed the trigram index\n\nRollout context: korean trigram deployment succeeded.\n",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "",
+    "options": {
+      "nowMs": 1788998400000
+    },
+    "memoryDB": true,
+    "out": {
+      "hits": [],
+      "warnings": [
+        "empty query"
+      ],
+      "scannedFiles": 0
+    }
+  },
+  {
+    "name": "basic-5",
+    "files": [
+      {
+        "path": "MEMORY.md",
+        "content": "# Task Group: search infrastructure\n\n## Task 1: ship the trigram sidecar index, success\n\nkeywords: trigram, sidecar, 한글 검색\n",
+        "mtime": 1788998400000
+      },
+      {
+        "path": "windows-notes.md",
+        "content": "# CRLF notes\r\n\r\nthe wombat migration finished on windows\r\n",
+        "mtime": 1788998400000
+      },
+      {
+        "path": "rollout_summaries/summary.md",
+        "content": "thread_id: main\nupdated_at: ignored\n\n# Deployed the trigram index\n\nRollout context: korean trigram deployment succeeded.\n",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": " ﻿\t",
+    "options": {
+      "nowMs": 1788998400000
+    },
+    "memoryDB": true,
+    "out": {
+      "hits": [],
+      "warnings": [
+        "empty query"
+      ],
+      "scannedFiles": 0
+    }
+  },
+  {
+    "name": "basic-6",
+    "files": [
+      {
+        "path": "MEMORY.md",
+        "content": "# Task Group: search infrastructure\n\n## Task 1: ship the trigram sidecar index, success\n\nkeywords: trigram, sidecar, 한글 검색\n",
+        "mtime": 1788998400000
+      },
+      {
+        "path": "windows-notes.md",
+        "content": "# CRLF notes\r\n\r\nthe wombat migration finished on windows\r\n",
+        "mtime": 1788998400000
+      },
+      {
+        "path": "rollout_summaries/summary.md",
+        "content": "thread_id: main\nupdated_at: ignored\n\n# Deployed the trigram index\n\nRollout context: korean trigram deployment succeeded.\n",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "absent",
+    "options": {
+      "nowMs": 1788998400000
+    },
+    "memoryDB": true,
+    "out": {
+      "hits": [],
+      "warnings": [],
+      "scannedFiles": 3
+    }
+  },
+  {
+    "name": "missing-root-db",
+    "files": [],
+    "query": "anything",
+    "options": {
+      "nowMs": 1788998400000
+    },
+    "out": {
+      "hits": [],
+      "warnings": [
+        "memories root not found (file search off)",
+        "memories db not found (stage1 search off)"
+      ],
+      "scannedFiles": 0
+    }
+  },
+  {
+    "name": "missing-db",
+    "files": [
+      {
+        "path": "MEMORY.md",
+        "content": "anything",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "anything",
+    "options": {
+      "nowMs": 1788998400000
+    },
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "relpath": "MEMORY.md",
+          "threadId": null,
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "anything",
+          "startLine": 1,
+          "cwd": null,
+          "score": 5
+        }
+      ],
+      "warnings": [
+        "memories db not found (stage1 search off)"
+      ],
+      "scannedFiles": 1
+    }
+  },
+  {
+    "name": "span-Handbook consolidated",
+    "files": [
+      {
+        "path": "MEMORY.md",
+        "content": "# Memory Handbook\n\nNo groups consolidated yet.\n",
+        "mtime": 1788998400000
+      },
+      {
+        "path": "windows-span.md",
+        "content": "# Memory Handbook\r\n\r\nNo groups consolidated yet.\r\n",
+        "mtime": 1788998400000
+      },
+      {
+        "path": "later-span.md",
+        "content": "Leading preamble.\n\n# Memory Handbook\n\nNo groups consolidated yet.\n",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "Handbook consolidated",
+    "options": {
+      "nowMs": 1788998400000
+    },
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "relpath": "MEMORY.md",
+          "threadId": null,
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "# Memory Handbook\n\nNo groups consolidated yet.\n",
+          "startLine": 1,
+          "cwd": null,
+          "score": 8
+        },
+        {
+          "origin": "file",
+          "kind": "other",
+          "relpath": "windows-span.md",
+          "threadId": null,
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "# Memory Handbook\n\nNo groups consolidated yet.\n",
+          "startLine": 1,
+          "cwd": null,
+          "score": 6.5
+        },
+        {
+          "origin": "file",
+          "kind": "other",
+          "relpath": "later-span.md",
+          "threadId": null,
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "Leading preamble.\n\n# Memory Handbook\n\nNo groups consolidated yet.\n",
+          "startLine": 3,
+          "cwd": null,
+          "score": 5.5
+        }
+      ],
+      "warnings": [
+        "memories db not found (stage1 search off)"
+      ],
+      "scannedFiles": 3
+    }
+  },
+  {
+    "name": "span-Handbook",
+    "files": [
+      {
+        "path": "MEMORY.md",
+        "content": "# Memory Handbook\n\nNo groups consolidated yet.\n",
+        "mtime": 1788998400000
+      },
+      {
+        "path": "windows-span.md",
+        "content": "# Memory Handbook\r\n\r\nNo groups consolidated yet.\r\n",
+        "mtime": 1788998400000
+      },
+      {
+        "path": "later-span.md",
+        "content": "Leading preamble.\n\n# Memory Handbook\n\nNo groups consolidated yet.\n",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "Handbook",
+    "options": {
+      "nowMs": 1788998400000
+    },
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "relpath": "MEMORY.md",
+          "threadId": null,
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "# Memory Handbook",
+          "startLine": 1,
+          "cwd": null,
+          "score": 6
+        },
+        {
+          "origin": "file",
+          "kind": "other",
+          "relpath": "windows-span.md",
+          "threadId": null,
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "# Memory Handbook",
+          "startLine": 1,
+          "cwd": null,
+          "score": 4.5
+        },
+        {
+          "origin": "file",
+          "kind": "other",
+          "relpath": "later-span.md",
+          "threadId": null,
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "# Memory Handbook",
+          "startLine": 3,
+          "cwd": null,
+          "score": 4.5
+        }
+      ],
+      "warnings": [
+        "memories db not found (stage1 search off)"
+      ],
+      "scannedFiles": 3
+    }
+  },
+  {
+    "name": "span-Handbook missingtokenxyz",
+    "files": [
+      {
+        "path": "MEMORY.md",
+        "content": "# Memory Handbook\n\nNo groups consolidated yet.\n",
+        "mtime": 1788998400000
+      },
+      {
+        "path": "windows-span.md",
+        "content": "# Memory Handbook\r\n\r\nNo groups consolidated yet.\r\n",
+        "mtime": 1788998400000
+      },
+      {
+        "path": "later-span.md",
+        "content": "Leading preamble.\n\n# Memory Handbook\n\nNo groups consolidated yet.\n",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "Handbook missingtokenxyz",
+    "options": {
+      "nowMs": 1788998400000
+    },
+    "out": {
+      "hits": [],
+      "warnings": [
+        "memories db not found (stage1 search off)"
+      ],
+      "scannedFiles": 3
+    }
+  },
+  {
+    "name": "same-paragraph-line",
+    "files": [
+      {
+        "path": "MEMORY.md",
+        "content": "# Title\n\n## Task 1: ship the trigram sidecar index\n",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "trigram sidecar",
+    "options": {
+      "nowMs": 1788998400000
+    },
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "relpath": "MEMORY.md",
+          "threadId": null,
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "## Task 1: ship the trigram sidecar index",
+          "startLine": 3,
+          "cwd": null,
+          "score": 13
+        }
+      ],
+      "warnings": [
+        "memories db not found (stage1 search off)"
+      ],
+      "scannedFiles": 1
+    }
+  },
+  {
+    "name": "kind-recency-ranking",
+    "files": [
+      {
+        "path": "memory_summary.md",
+        "content": "zebra ranking checkpoint\n",
+        "mtime": 1781222400000
+      },
+      {
+        "path": "MEMORY.md",
+        "content": "zebra ranking checkpoint\n",
+        "mtime": 1781222400000
+      },
+      {
+        "path": "rollout_summaries/fresh.md",
+        "content": "zebra ranking checkpoint\n",
+        "mtime": 1788991200000
+      },
+      {
+        "path": "rollout_summaries/stale.md",
+        "content": "zebra ranking checkpoint\n",
+        "mtime": 1783814400000
+      }
+    ],
+    "query": "zebra ranking",
+    "options": {
+      "nowMs": 1788998400000
+    },
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "summary",
+          "relpath": "memory_summary.md",
+          "threadId": null,
+          "updatedAt": "2026-06-12T00:00:00.000Z",
+          "excerpt": "zebra ranking checkpoint",
+          "startLine": 1,
+          "cwd": null,
+          "score": 13
+        },
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "relpath": "MEMORY.md",
+          "threadId": null,
+          "updatedAt": "2026-06-12T00:00:00.000Z",
+          "excerpt": "zebra ranking checkpoint",
+          "startLine": 1,
+          "cwd": null,
+          "score": 12
+        },
+        {
+          "origin": "file",
+          "kind": "rollout",
+          "relpath": "rollout_summaries/fresh.md",
+          "threadId": null,
+          "updatedAt": "2026-09-09T22:00:00.000Z",
+          "excerpt": "zebra ranking checkpoint",
+          "startLine": 1,
+          "cwd": null,
+          "score": 10.487673300156802
+        },
+        {
+          "origin": "file",
+          "kind": "rollout",
+          "relpath": "rollout_summaries/stale.md",
+          "threadId": null,
+          "updatedAt": "2026-07-12T00:00:00.000Z",
+          "excerpt": "zebra ranking checkpoint",
+          "startLine": 1,
+          "cwd": null,
+          "score": 7.003943066970603
+        }
+      ],
+      "warnings": [
+        "memories db not found (stage1 search off)"
+      ],
+      "scannedFiles": 4
+    }
+  },
+  {
+    "name": "days-filter",
+    "files": [
+      {
+        "path": "memory_summary.md",
+        "content": "zebra ranking checkpoint\n",
+        "mtime": 1781222400000
+      },
+      {
+        "path": "MEMORY.md",
+        "content": "zebra ranking checkpoint\n",
+        "mtime": 1781222400000
+      },
+      {
+        "path": "rollout_summaries/fresh.md",
+        "content": "zebra ranking checkpoint\n",
+        "mtime": 1788991200000
+      },
+      {
+        "path": "rollout_summaries/stale.md",
+        "content": "zebra ranking checkpoint\n",
+        "mtime": 1783814400000
+      }
+    ],
+    "query": "zebra ranking",
+    "options": {
+      "nowMs": 1788998400000,
+      "days": 7
+    },
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "rollout",
+          "relpath": "rollout_summaries/fresh.md",
+          "threadId": null,
+          "updatedAt": "2026-09-09T22:00:00.000Z",
+          "excerpt": "zebra ranking checkpoint",
+          "startLine": 1,
+          "cwd": null,
+          "score": 10.487673300156802
+        }
+      ],
+      "warnings": [
+        "memories db not found (stage1 search off)"
+      ],
+      "scannedFiles": 1
+    }
+  },
+  {
+    "name": "cutoff-equality",
+    "files": [
+      {
+        "path": "old.md",
+        "content": "zebra ranking",
+        "mtime": 1788912000000
+      }
+    ],
+    "query": "zebra ranking",
+    "options": {
+      "nowMs": 1788998400000,
+      "days": 1
+    },
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "other",
+          "relpath": "old.md",
+          "threadId": null,
+          "updatedAt": "2026-09-09T00:00:00.000Z",
+          "excerpt": "zebra ranking",
+          "startLine": 1,
+          "cwd": null,
+          "score": 10.358585496395861
+        }
+      ],
+      "warnings": [
+        "memories db not found (stage1 search off)"
+      ],
+      "scannedFiles": 1
+    }
+  },
+  {
+    "name": "zero-cutoff-kept",
+    "files": [
+      {
+        "path": "old.md",
+        "content": "cutoff zebra",
+        "mtime": -86400000
+      }
+    ],
+    "query": "cutoff zebra",
+    "options": {
+      "nowMs": 86400000,
+      "days": 1
+    },
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "other",
+          "relpath": "old.md",
+          "threadId": null,
+          "updatedAt": "1969-12-31T00:00:00.000Z",
+          "excerpt": "cutoff zebra",
+          "startLine": 1,
+          "cwd": null,
+          "score": 10.230503034011457
+        }
+      ],
+      "warnings": [
+        "memories db not found (stage1 search off)"
+      ],
+      "scannedFiles": 1
+    }
+  },
+  {
+    "name": "limit--1",
+    "files": [
+      {
+        "path": "memory_summary.md",
+        "content": "zebra ranking checkpoint\n",
+        "mtime": 1781222400000
+      },
+      {
+        "path": "MEMORY.md",
+        "content": "zebra ranking checkpoint\n",
+        "mtime": 1781222400000
+      },
+      {
+        "path": "rollout_summaries/fresh.md",
+        "content": "zebra ranking checkpoint\n",
+        "mtime": 1788991200000
+      },
+      {
+        "path": "rollout_summaries/stale.md",
+        "content": "zebra ranking checkpoint\n",
+        "mtime": 1783814400000
+      }
+    ],
+    "query": "zebra ranking",
+    "options": {
+      "nowMs": 1788998400000,
+      "limit": -1
+    },
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "summary",
+          "relpath": "memory_summary.md",
+          "threadId": null,
+          "updatedAt": "2026-06-12T00:00:00.000Z",
+          "excerpt": "zebra ranking checkpoint",
+          "startLine": 1,
+          "cwd": null,
+          "score": 13
+        }
+      ],
+      "warnings": [
+        "memories db not found (stage1 search off)"
+      ],
+      "scannedFiles": 4
+    }
+  },
+  {
+    "name": "limit-0",
+    "files": [
+      {
+        "path": "memory_summary.md",
+        "content": "zebra ranking checkpoint\n",
+        "mtime": 1781222400000
+      },
+      {
+        "path": "MEMORY.md",
+        "content": "zebra ranking checkpoint\n",
+        "mtime": 1781222400000
+      },
+      {
+        "path": "rollout_summaries/fresh.md",
+        "content": "zebra ranking checkpoint\n",
+        "mtime": 1788991200000
+      },
+      {
+        "path": "rollout_summaries/stale.md",
+        "content": "zebra ranking checkpoint\n",
+        "mtime": 1783814400000
+      }
+    ],
+    "query": "zebra ranking",
+    "options": {
+      "nowMs": 1788998400000,
+      "limit": 0
+    },
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "summary",
+          "relpath": "memory_summary.md",
+          "threadId": null,
+          "updatedAt": "2026-06-12T00:00:00.000Z",
+          "excerpt": "zebra ranking checkpoint",
+          "startLine": 1,
+          "cwd": null,
+          "score": 13
+        }
+      ],
+      "warnings": [
+        "memories db not found (stage1 search off)"
+      ],
+      "scannedFiles": 4
+    }
+  },
+  {
+    "name": "limit-1.5",
+    "files": [
+      {
+        "path": "memory_summary.md",
+        "content": "zebra ranking checkpoint\n",
+        "mtime": 1781222400000
+      },
+      {
+        "path": "MEMORY.md",
+        "content": "zebra ranking checkpoint\n",
+        "mtime": 1781222400000
+      },
+      {
+        "path": "rollout_summaries/fresh.md",
+        "content": "zebra ranking checkpoint\n",
+        "mtime": 1788991200000
+      },
+      {
+        "path": "rollout_summaries/stale.md",
+        "content": "zebra ranking checkpoint\n",
+        "mtime": 1783814400000
+      }
+    ],
+    "query": "zebra ranking",
+    "options": {
+      "nowMs": 1788998400000,
+      "limit": 1.5
+    },
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "summary",
+          "relpath": "memory_summary.md",
+          "threadId": null,
+          "updatedAt": "2026-06-12T00:00:00.000Z",
+          "excerpt": "zebra ranking checkpoint",
+          "startLine": 1,
+          "cwd": null,
+          "score": 13
+        },
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "relpath": "MEMORY.md",
+          "threadId": null,
+          "updatedAt": "2026-06-12T00:00:00.000Z",
+          "excerpt": "zebra ranking checkpoint",
+          "startLine": 1,
+          "cwd": null,
+          "score": 12
+        }
+      ],
+      "warnings": [
+        "memories db not found (stage1 search off)"
+      ],
+      "scannedFiles": 4
+    }
+  },
+  {
+    "name": "limit-3",
+    "files": [
+      {
+        "path": "memory_summary.md",
+        "content": "zebra ranking checkpoint\n",
+        "mtime": 1781222400000
+      },
+      {
+        "path": "MEMORY.md",
+        "content": "zebra ranking checkpoint\n",
+        "mtime": 1781222400000
+      },
+      {
+        "path": "rollout_summaries/fresh.md",
+        "content": "zebra ranking checkpoint\n",
+        "mtime": 1788991200000
+      },
+      {
+        "path": "rollout_summaries/stale.md",
+        "content": "zebra ranking checkpoint\n",
+        "mtime": 1783814400000
+      }
+    ],
+    "query": "zebra ranking",
+    "options": {
+      "nowMs": 1788998400000,
+      "limit": 3
+    },
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "summary",
+          "relpath": "memory_summary.md",
+          "threadId": null,
+          "updatedAt": "2026-06-12T00:00:00.000Z",
+          "excerpt": "zebra ranking checkpoint",
+          "startLine": 1,
+          "cwd": null,
+          "score": 13
+        },
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "relpath": "MEMORY.md",
+          "threadId": null,
+          "updatedAt": "2026-06-12T00:00:00.000Z",
+          "excerpt": "zebra ranking checkpoint",
+          "startLine": 1,
+          "cwd": null,
+          "score": 12
+        },
+        {
+          "origin": "file",
+          "kind": "rollout",
+          "relpath": "rollout_summaries/fresh.md",
+          "threadId": null,
+          "updatedAt": "2026-09-09T22:00:00.000Z",
+          "excerpt": "zebra ranking checkpoint",
+          "startLine": 1,
+          "cwd": null,
+          "score": 10.487673300156802
+        }
+      ],
+      "warnings": [
+        "memories db not found (stage1 search off)"
+      ],
+      "scannedFiles": 4
+    }
+  },
+  {
+    "name": "limit-20",
+    "files": [
+      {
+        "path": "memory_summary.md",
+        "content": "zebra ranking checkpoint\n",
+        "mtime": 1781222400000
+      },
+      {
+        "path": "MEMORY.md",
+        "content": "zebra ranking checkpoint\n",
+        "mtime": 1781222400000
+      },
+      {
+        "path": "rollout_summaries/fresh.md",
+        "content": "zebra ranking checkpoint\n",
+        "mtime": 1788991200000
+      },
+      {
+        "path": "rollout_summaries/stale.md",
+        "content": "zebra ranking checkpoint\n",
+        "mtime": 1783814400000
+      }
+    ],
+    "query": "zebra ranking",
+    "options": {
+      "nowMs": 1788998400000,
+      "limit": 20
+    },
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "summary",
+          "relpath": "memory_summary.md",
+          "threadId": null,
+          "updatedAt": "2026-06-12T00:00:00.000Z",
+          "excerpt": "zebra ranking checkpoint",
+          "startLine": 1,
+          "cwd": null,
+          "score": 13
+        },
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "relpath": "MEMORY.md",
+          "threadId": null,
+          "updatedAt": "2026-06-12T00:00:00.000Z",
+          "excerpt": "zebra ranking checkpoint",
+          "startLine": 1,
+          "cwd": null,
+          "score": 12
+        },
+        {
+          "origin": "file",
+          "kind": "rollout",
+          "relpath": "rollout_summaries/fresh.md",
+          "threadId": null,
+          "updatedAt": "2026-09-09T22:00:00.000Z",
+          "excerpt": "zebra ranking checkpoint",
+          "startLine": 1,
+          "cwd": null,
+          "score": 10.487673300156802
+        },
+        {
+          "origin": "file",
+          "kind": "rollout",
+          "relpath": "rollout_summaries/stale.md",
+          "threadId": null,
+          "updatedAt": "2026-07-12T00:00:00.000Z",
+          "excerpt": "zebra ranking checkpoint",
+          "startLine": 1,
+          "cwd": null,
+          "score": 7.003943066970603
+        }
+      ],
+      "warnings": [
+        "memories db not found (stage1 search off)"
+      ],
+      "scannedFiles": 4
+    }
+  },
+  {
+    "name": "per-file-cap",
+    "files": [
+      {
+        "path": "MEMORY.md",
+        "content": "zebra\n\nzebra zebra\n\nzebra zebra zebra\n\nzebra zebra zebra zebra",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "zebra",
+    "options": {
+      "nowMs": 1788998400000
+    },
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "relpath": "MEMORY.md",
+          "threadId": null,
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "zebra zebra zebra zebra",
+          "startLine": 7,
+          "cwd": null,
+          "score": 8
+        },
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "relpath": "MEMORY.md",
+          "threadId": null,
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "zebra zebra zebra",
+          "startLine": 5,
+          "cwd": null,
+          "score": 7
+        }
+      ],
+      "warnings": [
+        "memories db not found (stage1 search off)"
+      ],
+      "scannedFiles": 1
+    }
+  },
+  {
+    "name": "any-mode",
+    "files": [
+      {
+        "path": "one.md",
+        "content": "alpha",
+        "mtime": 1788998400000
+      },
+      {
+        "path": "two.md",
+        "content": "beta",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "alpha beta",
+    "options": {
+      "nowMs": 1788998400000,
+      "any": true
+    },
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "other",
+          "relpath": "two.md",
+          "threadId": null,
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "beta",
+          "startLine": 1,
+          "cwd": null,
+          "score": 3.5
+        },
+        {
+          "origin": "file",
+          "kind": "other",
+          "relpath": "one.md",
+          "threadId": null,
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "alpha",
+          "startLine": 1,
+          "cwd": null,
+          "score": 3.5
+        }
+      ],
+      "warnings": [
+        "memories db not found (stage1 search off)"
+      ],
+      "scannedFiles": 2
+    }
+  },
+  {
+    "name": "synonym-true",
+    "files": [
+      {
+        "path": "one.md",
+        "content": "deployment completed",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "배포",
+    "options": {
+      "nowMs": 1788998400000,
+      "synonyms": true
+    },
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "other",
+          "relpath": "one.md",
+          "threadId": null,
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "deployment completed",
+          "startLine": 1,
+          "cwd": null,
+          "score": 3.5
+        }
+      ],
+      "warnings": [
+        "memories db not found (stage1 search off)"
+      ],
+      "scannedFiles": 1
+    }
+  },
+  {
+    "name": "korean-stem-true",
+    "files": [
+      {
+        "path": "one.md",
+        "content": "첫 배포 이후 인덱스 재생성이 필요했다.",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "배포까지",
+    "options": {
+      "nowMs": 1788998400000,
+      "synonyms": true
+    },
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "other",
+          "relpath": "one.md",
+          "threadId": null,
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "첫 배포 이후 인덱스 재생성이 필요했다.",
+          "startLine": 1,
+          "cwd": null,
+          "score": 3.5
+        }
+      ],
+      "warnings": [
+        "memories db not found (stage1 search off)"
+      ],
+      "scannedFiles": 1
+    }
+  },
+  {
+    "name": "long-query-true",
+    "files": [
+      {
+        "path": "one.md",
+        "content": "로컬 소스를 실제 서비스에 연결하고 정상 동작까지 확인. bun link healthz 10100.",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "지난번 로컬 소스를 실제 서비스에 연결하고 정상 동작까지 확인한 방법",
+    "options": {
+      "nowMs": 1788998400000,
+      "synonyms": true
+    },
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "other",
+          "relpath": "one.md",
+          "threadId": null,
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "로컬 소스를 실제 서비스에 연결하고 정상 동작까지 확인. bun link healthz 10100.",
+          "startLine": 1,
+          "cwd": null,
+          "score": 15.5
+        }
+      ],
+      "warnings": [
+        "memories db not found (stage1 search off)"
+      ],
+      "scannedFiles": 1
+    }
+  },
+  {
+    "name": "synonym-false",
+    "files": [
+      {
+        "path": "one.md",
+        "content": "deployment completed",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "배포",
+    "options": {
+      "nowMs": 1788998400000,
+      "synonyms": false
+    },
+    "out": {
+      "hits": [],
+      "warnings": [
+        "memories db not found (stage1 search off)"
+      ],
+      "scannedFiles": 1
+    }
+  },
+  {
+    "name": "korean-stem-false",
+    "files": [
+      {
+        "path": "one.md",
+        "content": "첫 배포 이후 인덱스 재생성이 필요했다.",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "배포까지",
+    "options": {
+      "nowMs": 1788998400000,
+      "synonyms": false
+    },
+    "out": {
+      "hits": [],
+      "warnings": [
+        "memories db not found (stage1 search off)"
+      ],
+      "scannedFiles": 1
+    }
+  },
+  {
+    "name": "long-query-false",
+    "files": [
+      {
+        "path": "one.md",
+        "content": "로컬 소스를 실제 서비스에 연결하고 정상 동작까지 확인. bun link healthz 10100.",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "지난번 로컬 소스를 실제 서비스에 연결하고 정상 동작까지 확인한 방법",
+    "options": {
+      "nowMs": 1788998400000,
+      "synonyms": false
+    },
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "other",
+          "relpath": "one.md",
+          "threadId": null,
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "로컬 소스를 실제 서비스에 연결하고 정상 동작까지 확인. bun link healthz 10100.",
+          "startLine": 1,
+          "cwd": null,
+          "score": 15.5
+        }
+      ],
+      "warnings": [
+        "memories db not found (stage1 search off)"
+      ],
+      "scannedFiles": 1
+    }
+  },
+  {
+    "name": "boundary-retry",
+    "files": [
+      {
+        "path": "one.md",
+        "content": "shipped PR3956 today",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "3956",
+    "options": {
+      "nowMs": 1788998400000
+    },
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "other",
+          "relpath": "one.md",
+          "threadId": null,
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "shipped PR3956 today",
+          "startLine": 1,
+          "cwd": null,
+          "score": 1.5
+        }
+      ],
+      "warnings": [
+        "memories db not found (stage1 search off)",
+        "no word-boundary matches — showing substring matches (lower confidence)"
+      ],
+      "scannedFiles": 1
+    }
+  },
+  {
+    "name": "boundary-presence-retained",
+    "files": [
+      {
+        "path": "one.md",
+        "content": "NaiControlsPanel PR3956",
+        "mtime": 1788998400000
+      },
+      {
+        "path": "two.md",
+        "content": "the LSP server",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "3956 LSP",
+    "options": {
+      "nowMs": 1788998400000
+    },
+    "out": {
+      "hits": [],
+      "warnings": [
+        "memories db not found (stage1 search off)"
+      ],
+      "scannedFiles": 2
+    }
+  },
+  {
+    "name": "boundary-no-retry",
+    "files": [
+      {
+        "path": "one.md",
+        "content": "the LSP server",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "LSP",
+    "options": {
+      "nowMs": 1788998400000
+    },
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "other",
+          "relpath": "one.md",
+          "threadId": null,
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "the LSP server",
+          "startLine": 1,
+          "cwd": null,
+          "score": 3.5
+        }
+      ],
+      "warnings": [
+        "memories db not found (stage1 search off)"
+      ],
+      "scannedFiles": 1
+    }
+  },
+  {
+    "name": "stopword-relax-threshold",
+    "files": [
+      {
+        "path": "one.md",
+        "content": "alpha beta gamma delta",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "alpha beta gamma delta epsilon zeta theta omega 문제",
+    "options": {
+      "nowMs": 1788998400000,
+      "synonyms": false
+    },
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "other",
+          "relpath": "one.md",
+          "threadId": null,
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "alpha beta gamma delta",
+          "startLine": 1,
+          "cwd": null,
+          "score": 9.5
+        }
+      ],
+      "warnings": [
+        "memories db not found (stage1 search off)"
+      ],
+      "scannedFiles": 1
+    }
+  },
+  {
+    "name": "hidden-and-extension",
+    "files": [
+      {
+        "path": ".hidden.md",
+        "content": "zebra",
+        "mtime": 1788998400000
+      },
+      {
+        "path": ".hidden/a.md",
+        "content": "zebra",
+        "mtime": 1788998400000
+      },
+      {
+        "path": "ignore.MD",
+        "content": "zebra",
+        "mtime": 1788998400000
+      },
+      {
+        "path": "nested/a.md",
+        "content": "zebra",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "zebra",
+    "options": {
+      "nowMs": 1788998400000
+    },
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "other",
+          "relpath": "nested/a.md",
+          "threadId": null,
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "zebra",
+          "startLine": 1,
+          "cwd": null,
+          "score": 3.5
+        }
+      ],
+      "warnings": [
+        "memories db not found (stage1 search off)"
+      ],
+      "scannedFiles": 1
+    }
+  },
+  {
+    "name": "cwd-plain",
+    "files": [
+      {
+        "path": "rollout_summaries/here.md",
+        "content": "thread_id: here\ncwd: /proj/here\n\n# Rollout\n\nThe wombat pipeline shipped.\n",
+        "mtime": 1788998400000
+      },
+      {
+        "path": "rollout_summaries/there.md",
+        "content": "thread_id: there\ncwd: /proj/here-adjacent\n\n# Rollout\n\nThe wombat pipeline shipped.\n",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "wombat",
+    "options": {
+      "nowMs": 1788998400000
+    },
+    "threads": [
+      {
+        "id": "here",
+        "cwd": "/proj/here",
+        "origin": null
+      },
+      {
+        "id": "there",
+        "cwd": "/proj/here-adjacent",
+        "origin": null
+      }
+    ],
+    "legacy": true,
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "rollout",
+          "relpath": "rollout_summaries/there.md",
+          "threadId": "there",
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "The wombat pipeline shipped.",
+          "startLine": 6,
+          "cwd": "/proj/here-adjacent",
+          "score": 3.5
+        },
+        {
+          "origin": "file",
+          "kind": "rollout",
+          "relpath": "rollout_summaries/here.md",
+          "threadId": "here",
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "The wombat pipeline shipped.",
+          "startLine": 6,
+          "cwd": "/proj/here",
+          "score": 3.5
+        }
+      ],
+      "warnings": [
+        "memories db not found (stage1 search off)"
+      ],
+      "scannedFiles": 2
+    }
+  },
+  {
+    "name": "cwd-boost",
+    "files": [
+      {
+        "path": "rollout_summaries/here.md",
+        "content": "thread_id: here\ncwd: /proj/here\n\n# Rollout\n\nThe wombat pipeline shipped.\n",
+        "mtime": 1788998400000
+      },
+      {
+        "path": "rollout_summaries/there.md",
+        "content": "thread_id: there\ncwd: /proj/here-adjacent\n\n# Rollout\n\nThe wombat pipeline shipped.\n",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "wombat",
+    "options": {
+      "nowMs": 1788998400000,
+      "cwd": "/proj/here"
+    },
+    "threads": [
+      {
+        "id": "here",
+        "cwd": "/proj/here",
+        "origin": null
+      },
+      {
+        "id": "there",
+        "cwd": "/proj/here-adjacent",
+        "origin": null
+      }
+    ],
+    "legacy": true,
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "rollout",
+          "relpath": "rollout_summaries/here.md",
+          "threadId": "here",
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "The wombat pipeline shipped.",
+          "startLine": 6,
+          "cwd": "/proj/here",
+          "score": 5.5
+        },
+        {
+          "origin": "file",
+          "kind": "rollout",
+          "relpath": "rollout_summaries/there.md",
+          "threadId": "there",
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "The wombat pipeline shipped.",
+          "startLine": 6,
+          "cwd": "/proj/here-adjacent",
+          "score": 3.5
+        }
+      ],
+      "warnings": [
+        "memories db not found (stage1 search off)"
+      ],
+      "scannedFiles": 2
+    }
+  },
+  {
+    "name": "cwd-only",
+    "files": [
+      {
+        "path": "rollout_summaries/here.md",
+        "content": "thread_id: here\ncwd: /proj/here\n\n# Rollout\n\nThe wombat pipeline shipped.\n",
+        "mtime": 1788998400000
+      },
+      {
+        "path": "rollout_summaries/there.md",
+        "content": "thread_id: there\ncwd: /proj/here-adjacent\n\n# Rollout\n\nThe wombat pipeline shipped.\n",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "wombat",
+    "options": {
+      "nowMs": 1788998400000,
+      "cwd": "/proj/here",
+      "cwdOnly": true
+    },
+    "threads": [
+      {
+        "id": "here",
+        "cwd": "/proj/here",
+        "origin": null
+      },
+      {
+        "id": "there",
+        "cwd": "/proj/here-adjacent",
+        "origin": null
+      }
+    ],
+    "legacy": true,
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "rollout",
+          "relpath": "rollout_summaries/here.md",
+          "threadId": "here",
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "The wombat pipeline shipped.",
+          "startLine": 6,
+          "cwd": "/proj/here",
+          "score": 5.5
+        }
+      ],
+      "warnings": [
+        "memories db not found (stage1 search off)"
+      ],
+      "scannedFiles": 2
+    }
+  },
+  {
+    "name": "cwd-adjacent",
+    "files": [
+      {
+        "path": "rollout_summaries/here.md",
+        "content": "thread_id: here\ncwd: /proj/here\n\n# Rollout\n\nThe wombat pipeline shipped.\n",
+        "mtime": 1788998400000
+      },
+      {
+        "path": "rollout_summaries/there.md",
+        "content": "thread_id: there\ncwd: /proj/here-adjacent\n\n# Rollout\n\nThe wombat pipeline shipped.\n",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "wombat",
+    "options": {
+      "nowMs": 1788998400000,
+      "cwd": "/proj/here-adjacent",
+      "cwdOnly": true
+    },
+    "threads": [
+      {
+        "id": "here",
+        "cwd": "/proj/here",
+        "origin": null
+      },
+      {
+        "id": "there",
+        "cwd": "/proj/here-adjacent",
+        "origin": null
+      }
+    ],
+    "legacy": true,
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "rollout",
+          "relpath": "rollout_summaries/there.md",
+          "threadId": "there",
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "The wombat pipeline shipped.",
+          "startLine": 6,
+          "cwd": "/proj/here-adjacent",
+          "score": 5.5
+        }
+      ],
+      "warnings": [
+        "memories db not found (stage1 search off)"
+      ],
+      "scannedFiles": 2
+    }
+  },
+  {
+    "name": "cwd-empty",
+    "files": [
+      {
+        "path": "rollout_summaries/here.md",
+        "content": "thread_id: here\ncwd: /proj/here\n\n# Rollout\n\nThe wombat pipeline shipped.\n",
+        "mtime": 1788998400000
+      },
+      {
+        "path": "rollout_summaries/there.md",
+        "content": "thread_id: there\ncwd: /proj/here-adjacent\n\n# Rollout\n\nThe wombat pipeline shipped.\n",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "wombat",
+    "options": {
+      "nowMs": 1788998400000,
+      "cwd": "/unrelated",
+      "cwdOnly": true
+    },
+    "threads": [
+      {
+        "id": "here",
+        "cwd": "/proj/here",
+        "origin": null
+      },
+      {
+        "id": "there",
+        "cwd": "/proj/here-adjacent",
+        "origin": null
+      }
+    ],
+    "legacy": true,
+    "out": {
+      "hits": [],
+      "warnings": [
+        "memories db not found (stage1 search off)",
+        "no matches inside --cwd-only /unrelated — retry with --cwd to rank it first instead"
+      ],
+      "scannedFiles": 2
+    }
+  },
+  {
+    "name": "cwd-unrelated-boost",
+    "files": [
+      {
+        "path": "rollout_summaries/here.md",
+        "content": "thread_id: here\ncwd: /proj/here\n\n# Rollout\n\nThe wombat pipeline shipped.\n",
+        "mtime": 1788998400000
+      },
+      {
+        "path": "rollout_summaries/there.md",
+        "content": "thread_id: there\ncwd: /proj/here-adjacent\n\n# Rollout\n\nThe wombat pipeline shipped.\n",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "wombat",
+    "options": {
+      "nowMs": 1788998400000,
+      "cwd": "/unrelated"
+    },
+    "threads": [
+      {
+        "id": "here",
+        "cwd": "/proj/here",
+        "origin": null
+      },
+      {
+        "id": "there",
+        "cwd": "/proj/here-adjacent",
+        "origin": null
+      }
+    ],
+    "legacy": true,
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "rollout",
+          "relpath": "rollout_summaries/there.md",
+          "threadId": "there",
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "The wombat pipeline shipped.",
+          "startLine": 6,
+          "cwd": "/proj/here-adjacent",
+          "score": 3.5
+        },
+        {
+          "origin": "file",
+          "kind": "rollout",
+          "relpath": "rollout_summaries/here.md",
+          "threadId": "here",
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "The wombat pipeline shipped.",
+          "startLine": 6,
+          "cwd": "/proj/here",
+          "score": 3.5
+        }
+      ],
+      "warnings": [
+        "memories db not found (stage1 search off)"
+      ],
+      "scannedFiles": 2
+    }
+  },
+  {
+    "name": "cwd-backslashes",
+    "files": [
+      {
+        "path": "rollout_summaries/here.md",
+        "content": "thread_id: here\ncwd: /proj/here\n\n# Rollout\n\nThe wombat pipeline shipped.\n",
+        "mtime": 1788998400000
+      },
+      {
+        "path": "rollout_summaries/there.md",
+        "content": "thread_id: there\ncwd: /proj/here-adjacent\n\n# Rollout\n\nThe wombat pipeline shipped.\n",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "wombat",
+    "options": {
+      "nowMs": 1788998400000,
+      "cwd": "\\proj\\here",
+      "cwdOnly": true
+    },
+    "threads": [
+      {
+        "id": "here",
+        "cwd": "/proj/here",
+        "origin": null
+      },
+      {
+        "id": "there",
+        "cwd": "/proj/here-adjacent",
+        "origin": null
+      }
+    ],
+    "legacy": true,
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "rollout",
+          "relpath": "rollout_summaries/here.md",
+          "threadId": "here",
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "The wombat pipeline shipped.",
+          "startLine": 6,
+          "cwd": "/proj/here",
+          "score": 5.5
+        }
+      ],
+      "warnings": [
+        "memories db not found (stage1 search off)"
+      ],
+      "scannedFiles": 2
+    }
+  },
+  {
+    "name": "cwd-blank",
+    "files": [
+      {
+        "path": "rollout_summaries/here.md",
+        "content": "thread_id: here\ncwd: /proj/here\n\n# Rollout\n\nThe wombat pipeline shipped.\n",
+        "mtime": 1788998400000
+      },
+      {
+        "path": "rollout_summaries/there.md",
+        "content": "thread_id: there\ncwd: /proj/here-adjacent\n\n# Rollout\n\nThe wombat pipeline shipped.\n",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "wombat",
+    "options": {
+      "nowMs": 1788998400000,
+      "cwd": " ﻿\t",
+      "cwdOnly": true
+    },
+    "threads": [
+      {
+        "id": "here",
+        "cwd": "/proj/here",
+        "origin": null
+      },
+      {
+        "id": "there",
+        "cwd": "/proj/here-adjacent",
+        "origin": null
+      }
+    ],
+    "legacy": true,
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "rollout",
+          "relpath": "rollout_summaries/there.md",
+          "threadId": "there",
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "The wombat pipeline shipped.",
+          "startLine": 6,
+          "cwd": "/proj/here-adjacent",
+          "score": 3.5
+        },
+        {
+          "origin": "file",
+          "kind": "rollout",
+          "relpath": "rollout_summaries/here.md",
+          "threadId": "here",
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "The wombat pipeline shipped.",
+          "startLine": 6,
+          "cwd": "/proj/here",
+          "score": 3.5
+        }
+      ],
+      "warnings": [
+        "memories db not found (stage1 search off)"
+      ],
+      "scannedFiles": 2
+    }
+  },
+  {
+    "name": "prose-half-boost",
+    "files": [
+      {
+        "path": "MEMORY.md",
+        "content": "# Notes\n\napplies_to: cwd=/proj/here; the wombat pipeline is owned here.\n",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "wombat",
+    "options": {
+      "nowMs": 1788998400000,
+      "cwd": "/proj/here",
+      "cwdOnly": true
+    },
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "relpath": "MEMORY.md",
+          "threadId": null,
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "applies_to: cwd=/proj/here; the wombat pipeline is owned here.",
+          "startLine": 3,
+          "cwd": null,
+          "score": 6
+        }
+      ],
+      "warnings": [
+        "memories db not found (stage1 search off)",
+        "state db not found (metadata enrichment off)"
+      ],
+      "scannedFiles": 1
+    }
+  },
+  {
+    "name": "prose-adjacent-kept",
+    "files": [
+      {
+        "path": "MEMORY.md",
+        "content": "wombat lives under /proj/here-adjacent",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "wombat",
+    "options": {
+      "nowMs": 1788998400000,
+      "cwd": "/proj/here",
+      "cwdOnly": true
+    },
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "handbook",
+          "relpath": "MEMORY.md",
+          "threadId": null,
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "wombat lives under /proj/here-adjacent",
+          "startLine": 1,
+          "cwd": null,
+          "score": 6
+        }
+      ],
+      "warnings": [
+        "memories db not found (stage1 search off)",
+        "state db not found (metadata enrichment off)"
+      ],
+      "scannedFiles": 1
+    }
+  },
+  {
+    "name": "no-span-after-dropped-paragraph",
+    "files": [
+      {
+        "path": "MEMORY.md",
+        "content": "cwd=/proj/here\n\nwombat migration",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "wombat migration",
+    "options": {
+      "nowMs": 1788998400000,
+      "cwd": "/proj/here",
+      "cwdOnly": true
+    },
+    "out": {
+      "hits": [],
+      "warnings": [
+        "memories db not found (stage1 search off)",
+        "state db not found (metadata enrichment off)",
+        "no matches inside --cwd-only /proj/here — retry with --cwd to rank it first instead"
+      ],
+      "scannedFiles": 1
+    }
+  },
+  {
+    "name": "same-origin",
+    "files": [
+      {
+        "path": "rollout_summaries/main.md",
+        "content": "thread_id: main\ncwd: /proj/main\n\nquokka release",
+        "mtime": 1788998400000
+      },
+      {
+        "path": "rollout_summaries/other.md",
+        "content": "thread_id: other\ncwd: /proj/other\n\nquokka release",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "quokka",
+    "options": {
+      "nowMs": 1788998400000,
+      "cwd": "/worktrees/task",
+      "cwdOnly": true
+    },
+    "threads": [
+      {
+        "id": "main",
+        "cwd": "/proj/main",
+        "origin": "https://github.com/example/alpha.git"
+      },
+      {
+        "id": "other",
+        "cwd": "/proj/other",
+        "origin": "git@github.com:example/beta.git"
+      }
+    ],
+    "origin": "git@github.com:example/alpha.git",
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "rollout",
+          "relpath": "rollout_summaries/main.md",
+          "threadId": "main",
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "quokka release",
+          "startLine": 4,
+          "cwd": "/proj/main",
+          "score": 5.5
+        }
+      ],
+      "warnings": [
+        "memories db not found (stage1 search off)"
+      ],
+      "scannedFiles": 2
+    }
+  },
+  {
+    "name": "no-origin-filter",
+    "files": [
+      {
+        "path": "rollout_summaries/main.md",
+        "content": "thread_id: main\ncwd: /proj/main\n\nquokka release",
+        "mtime": 1788998400000
+      },
+      {
+        "path": "rollout_summaries/other.md",
+        "content": "thread_id: other\ncwd: /proj/other\n\nquokka release",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "quokka",
+    "options": {
+      "nowMs": 1788998400000,
+      "cwd": "/worktrees/task",
+      "cwdOnly": true
+    },
+    "threads": [
+      {
+        "id": "main",
+        "cwd": "/proj/main",
+        "origin": "https://github.com/example/alpha.git"
+      },
+      {
+        "id": "other",
+        "cwd": "/proj/other",
+        "origin": "git@github.com:example/beta.git"
+      }
+    ],
+    "out": {
+      "hits": [],
+      "warnings": [
+        "memories db not found (stage1 search off)",
+        "no matches inside --cwd-only /worktrees/task — retry with --cwd to rank it first instead"
+      ],
+      "scannedFiles": 2
+    }
+  },
+  {
+    "name": "frontmatter-beats-thread",
+    "files": [
+      {
+        "path": "s.md",
+        "content": "thread_id: here\ncwd: /proj/other\n\nnumbat",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "numbat",
+    "options": {
+      "nowMs": 1788998400000,
+      "cwd": "/proj/here",
+      "cwdOnly": true
+    },
+    "threads": [
+      {
+        "id": "here",
+        "cwd": "/proj/here",
+        "origin": null
+      },
+      {
+        "id": "there",
+        "cwd": "/proj/here-adjacent",
+        "origin": null
+      }
+    ],
+    "out": {
+      "hits": [],
+      "warnings": [
+        "memories db not found (stage1 search off)",
+        "no matches inside --cwd-only /proj/here — retry with --cwd to rank it first instead"
+      ],
+      "scannedFiles": 1
+    }
+  },
+  {
+    "name": "thread-cwd-join",
+    "files": [
+      {
+        "path": "s.md",
+        "content": "thread_id: here\n\nnumbat",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "numbat",
+    "options": {
+      "nowMs": 1788998400000,
+      "cwd": "/proj/here",
+      "cwdOnly": true
+    },
+    "threads": [
+      {
+        "id": "here",
+        "cwd": "/proj/here",
+        "origin": null
+      },
+      {
+        "id": "there",
+        "cwd": "/proj/here-adjacent",
+        "origin": null
+      }
+    ],
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "other",
+          "relpath": "s.md",
+          "threadId": "here",
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "numbat",
+          "startLine": 3,
+          "cwd": "/proj/here",
+          "score": 5.5
+        }
+      ],
+      "warnings": [
+        "memories db not found (stage1 search off)"
+      ],
+      "scannedFiles": 1
+    }
+  },
+  {
+    "name": "empty-thread-cwd",
+    "files": [
+      {
+        "path": "s.md",
+        "content": "thread_id: here\n\nnumbat",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "numbat",
+    "options": {
+      "nowMs": 1788998400000,
+      "cwd": "/elsewhere"
+    },
+    "threads": [
+      {
+        "id": "here",
+        "cwd": "",
+        "origin": null
+      }
+    ],
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "other",
+          "relpath": "s.md",
+          "threadId": "here",
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "numbat",
+          "startLine": 3,
+          "cwd": "",
+          "score": 3.5
+        }
+      ],
+      "warnings": [
+        "memories db not found (stage1 search off)"
+      ],
+      "scannedFiles": 1
+    }
+  },
+  {
+    "name": "aggregate-null-cwd",
+    "files": [
+      {
+        "path": "raw_memories.md",
+        "content": "# Raw Memories\n\n## Thread one\ncwd: /proj/here\n\nplatypus work here.\n\n## Thread two\ncwd: /proj/other\n\nplatypus work elsewhere.",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "platypus",
+    "options": {
+      "nowMs": 1788998400000
+    },
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "raw",
+          "relpath": "raw_memories.md",
+          "threadId": null,
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "platypus work elsewhere.",
+          "startLine": 11,
+          "cwd": null,
+          "score": 4
+        },
+        {
+          "origin": "file",
+          "kind": "raw",
+          "relpath": "raw_memories.md",
+          "threadId": null,
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "platypus work here.",
+          "startLine": 6,
+          "cwd": null,
+          "score": 4
+        }
+      ],
+      "warnings": [
+        "memories db not found (stage1 search off)"
+      ],
+      "scannedFiles": 1
+    }
+  },
+  {
+    "name": "leading-frontmatter",
+    "files": [
+      {
+        "path": "s.md",
+        "content": "thread_id: t1\nrollout_path: ignored\ncwd: /proj/here\n\n# Notes\n\ncwd: /proj/other numbat",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "numbat",
+    "options": {
+      "nowMs": 1788998400000
+    },
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "other",
+          "relpath": "s.md",
+          "threadId": "t1",
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "cwd: /proj/other numbat",
+          "startLine": 7,
+          "cwd": "/proj/here",
+          "score": 3.5
+        }
+      ],
+      "warnings": [
+        "memories db not found (stage1 search off)"
+      ],
+      "scannedFiles": 1
+    }
+  },
+  {
+    "name": "drive-53",
+    "files": [
+      {
+        "path": "s.md",
+        "content": "thread_id: win\ncwd: C:\\proj\\here\\sub\n\nnumbat",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "numbat",
+    "options": {
+      "nowMs": 1788998400000,
+      "cwd": "C:\\proj\\here",
+      "cwdOnly": true
+    },
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "other",
+          "relpath": "s.md",
+          "threadId": "win",
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "numbat",
+          "startLine": 4,
+          "cwd": "C:\\proj\\here\\sub",
+          "score": 5.5
+        }
+      ],
+      "warnings": [
+        "memories db not found (stage1 search off)",
+        "state db not found (metadata enrichment off)"
+      ],
+      "scannedFiles": 1
+    }
+  },
+  {
+    "name": "drive-54",
+    "files": [
+      {
+        "path": "s.md",
+        "content": "thread_id: win\ncwd: C:\\proj\\here\\sub\n\nnumbat",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "numbat",
+    "options": {
+      "nowMs": 1788998400000,
+      "cwd": "C:/proj/here",
+      "cwdOnly": true
+    },
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "other",
+          "relpath": "s.md",
+          "threadId": "win",
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "numbat",
+          "startLine": 4,
+          "cwd": "C:\\proj\\here\\sub",
+          "score": 5.5
+        }
+      ],
+      "warnings": [
+        "memories db not found (stage1 search off)",
+        "state db not found (metadata enrichment off)"
+      ],
+      "scannedFiles": 1
+    }
+  },
+  {
+    "name": "drive-55",
+    "files": [
+      {
+        "path": "s.md",
+        "content": "thread_id: win\ncwd: C:\\proj\\here\\sub\n\nnumbat",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "numbat",
+    "options": {
+      "nowMs": 1788998400000,
+      "cwd": "c:/proj/here",
+      "cwdOnly": true
+    },
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "other",
+          "relpath": "s.md",
+          "threadId": "win",
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "numbat",
+          "startLine": 4,
+          "cwd": "C:\\proj\\here\\sub",
+          "score": 5.5
+        }
+      ],
+      "warnings": [
+        "memories db not found (stage1 search off)",
+        "state db not found (metadata enrichment off)"
+      ],
+      "scannedFiles": 1
+    }
+  },
+  {
+    "name": "drive-56",
+    "files": [
+      {
+        "path": "s.md",
+        "content": "thread_id: win\ncwd: C:\\proj\\here\\sub\n\nnumbat",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "numbat",
+    "options": {
+      "nowMs": 1788998400000,
+      "cwd": "C:\\proj\\here\\",
+      "cwdOnly": true
+    },
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "other",
+          "relpath": "s.md",
+          "threadId": "win",
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "numbat",
+          "startLine": 4,
+          "cwd": "C:\\proj\\here\\sub",
+          "score": 5.5
+        }
+      ],
+      "warnings": [
+        "memories db not found (stage1 search off)",
+        "state db not found (metadata enrichment off)"
+      ],
+      "scannedFiles": 1
+    }
+  },
+  {
+    "name": "drive-57",
+    "files": [
+      {
+        "path": "s.md",
+        "content": "thread_id: win\ncwd: C:\\proj\\here\\sub\n\nnumbat",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "numbat",
+    "options": {
+      "nowMs": 1788998400000,
+      "cwd": "C:\\proj\\here2",
+      "cwdOnly": true
+    },
+    "out": {
+      "hits": [],
+      "warnings": [
+        "memories db not found (stage1 search off)",
+        "state db not found (metadata enrichment off)",
+        "no matches inside --cwd-only C:/proj/here2 — retry with --cwd to rank it first instead"
+      ],
+      "scannedFiles": 1
+    }
+  },
+  {
+    "name": "extended-windows",
+    "files": [
+      {
+        "path": "s.md",
+        "content": "thread_id: win\ncwd: \\\\?\\C:\\proj\\here\n\nnumbat",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "numbat",
+    "options": {
+      "nowMs": 1788998400000,
+      "cwd": "C:\\proj\\here",
+      "cwdOnly": true
+    },
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "other",
+          "relpath": "s.md",
+          "threadId": "win",
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "numbat",
+          "startLine": 4,
+          "cwd": "\\\\?\\C:\\proj\\here",
+          "score": 5.5
+        }
+      ],
+      "warnings": [
+        "memories db not found (stage1 search off)",
+        "state db not found (metadata enrichment off)"
+      ],
+      "scannedFiles": 1
+    }
+  },
+  {
+    "name": "relative-process-cwd",
+    "files": [
+      {
+        "path": "s.md",
+        "content": "cwd: $WORK/sub\n\nnumbat",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "numbat",
+    "options": {
+      "nowMs": 1788998400000,
+      "cwd": ".",
+      "cwdOnly": true
+    },
+    "relative": true,
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "other",
+          "relpath": "s.md",
+          "threadId": null,
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "numbat",
+          "startLine": 3,
+          "cwd": "$WORK/sub",
+          "score": 5.5
+        }
+      ],
+      "warnings": [
+        "memories db not found (stage1 search off)",
+        "state db not found (metadata enrichment off)"
+      ],
+      "scannedFiles": 1
+    }
+  },
+  {
+    "name": "relative-symlink-cwd",
+    "files": [
+      {
+        "path": "s.md",
+        "content": "cwd: $WORK/sub\n\nnumbat",
+        "mtime": 1788998400000
+      }
+    ],
+    "query": "numbat",
+    "options": {
+      "nowMs": 1788998400000,
+      "cwd": ".",
+      "cwdOnly": true
+    },
+    "relative": true,
+    "pwdAlias": true,
+    "out": {
+      "hits": [
+        {
+          "origin": "file",
+          "kind": "other",
+          "relpath": "s.md",
+          "threadId": null,
+          "updatedAt": "2026-09-10T00:00:00.000Z",
+          "excerpt": "numbat",
+          "startLine": 3,
+          "cwd": "$WORK/sub",
+          "score": 5.5
+        }
+      ],
+      "warnings": [
+        "memories db not found (stage1 search off)",
+        "state db not found (metadata enrichment off)"
+      ],
+      "scannedFiles": 1
+    }
+  },
+  {
+    "name": "root-is-file",
+    "files": [],
+    "query": "anything",
+    "options": {
+      "nowMs": 1788998400000
+    },
+    "rootFile": true,
+    "error": true
+  },
+  {
+    "name": "home-is-file",
+    "files": [],
+    "query": "anything",
+    "options": {
+      "nowMs": 1788998400000
+    },
+    "homeFile": true,
+    "error": true
+  }
+]
