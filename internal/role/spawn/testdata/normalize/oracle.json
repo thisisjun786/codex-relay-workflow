@@ -1,0 +1,479 @@
+{
+  "oracle": "CXC v0.2.40 (3c1459ac)",
+  "source": "subagent-config/src/spawn-attach-hook.ts:74-263",
+  "tests": "subagent-config/test/spawn-attach-hook.test.ts:104-381",
+  "groups": [
+    {
+      "number": 1,
+      "name": "bare and plugin-prefixed known skills become canonical links",
+      "cases": [
+        {
+          "input": "use $crw-dev now",
+          "skills": "${SKILLS}",
+          "oracle": "use [$cxc-dev](skill://${SKILLS}/dev/SKILL.md) now",
+          "expected": "use [$crw-dev](skill://${SKILLS}/crw-dev/SKILL.md) now",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+        },
+        {
+          "input": "use $crw:crw-dev now",
+          "skills": "${SKILLS}",
+          "oracle": "use [$cxc-dev](skill://${SKILLS}/dev/SKILL.md) now",
+          "expected": "use [$crw-dev](skill://${SKILLS}/crw-dev/SKILL.md) now",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+        }
+      ]
+    },
+    {
+      "number": 2,
+      "name": "unknown, boundary-extended, and mixed-case tokens stay verbatim",
+      "cases": [
+        {
+          "input": "$crw-not-a-real-skill",
+          "skills": "${SKILLS}",
+          "oracle": "$cxc-not-a-real-skill",
+          "expected": "$crw-not-a-real-skill",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+        },
+        {
+          "input": "$crw-dev_extra",
+          "skills": "${SKILLS}",
+          "oracle": "$cxc-dev_extra",
+          "expected": "$crw-dev_extra",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+        },
+        {
+          "input": "$crw-Dev",
+          "skills": "${SKILLS}",
+          "oracle": "$cxc-Dev",
+          "expected": "$crw-Dev",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+        },
+        {
+          "input": "$CXC-dev",
+          "skills": "${SKILLS}",
+          "oracle": "$CXC-dev",
+          "expected": "$CXC-dev",
+          "classification": "identical",
+          "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+        }
+      ]
+    },
+    {
+      "number": 3,
+      "name": "complete links, inline code, and fenced code are protected",
+      "cases": [
+        {
+          "input": "[label $crw-dev](/target/$crw-search)\n`$crw-dev`\n```ts\n$crw-dev\n```\n~~~text\n$crw:crw-dev\n~~~",
+          "skills": "${SKILLS}",
+          "oracle": "[label $cxc-dev](/target/$cxc-search)\n`$cxc-dev`\n```ts\n$cxc-dev\n```\n~~~text\n$codexclaw:cxc-dev\n~~~",
+          "expected": "[label $crw-dev](/target/$crw-search)\n`$crw-dev`\n```ts\n$crw-dev\n```\n~~~text\n$crw:crw-dev\n~~~",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+        }
+      ]
+    },
+    {
+      "number": 4,
+      "name": "an inline delimiter inside a fence body does not close the fence",
+      "cases": [
+        {
+          "input": "```\nbody with ``` inline\n$crw-search must stay bare\n```\nafter $crw-dev",
+          "skills": "${SKILLS}",
+          "oracle": "```\nbody with ``` inline\n$cxc-search must stay bare\n```\nafter [$cxc-dev](skill://${SKILLS}/dev/SKILL.md)",
+          "expected": "```\nbody with ``` inline\n$crw-search must stay bare\n```\nafter [$crw-dev](skill://${SKILLS}/crw-dev/SKILL.md)",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+        },
+        {
+          "input": "```\nstill protected ``` here\n$crw-dev",
+          "skills": "${SKILLS}",
+          "oracle": "```\nstill protected ``` here\n$cxc-dev",
+          "expected": "```\nstill protected ``` here\n$crw-dev",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+        }
+      ]
+    },
+    {
+      "number": 5,
+      "name": "a close-run line with trailing text does not close the fence",
+      "cases": [
+        {
+          "input": "```\n``` not a close\n$crw-search protected\n```\nafter $crw-dev",
+          "skills": "${SKILLS}",
+          "oracle": "```\n``` not a close\n$cxc-search protected\n```\nafter [$cxc-dev](skill://${SKILLS}/dev/SKILL.md)",
+          "expected": "```\n``` not a close\n$crw-search protected\n```\nafter [$crw-dev](skill://${SKILLS}/crw-dev/SKILL.md)",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+        }
+      ]
+    },
+    {
+      "number": 6,
+      "name": "indented fences close on the same prefix; drift protects to EOM",
+      "cases": [
+        {
+          "input": "   ```\n$crw-search protected\n   ```\nafter $crw-dev",
+          "skills": "${SKILLS}",
+          "oracle": "   ```\n$cxc-search protected\n   ```\nafter [$cxc-dev](skill://${SKILLS}/dev/SKILL.md)",
+          "expected": "   ```\n$crw-search protected\n   ```\nafter [$crw-dev](skill://${SKILLS}/crw-dev/SKILL.md)",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+        },
+        {
+          "input": "   ```\n$crw-search protected\n  ```\nafter $crw-dev",
+          "skills": "${SKILLS}",
+          "oracle": "   ```\n$cxc-search protected\n  ```\nafter $cxc-dev",
+          "expected": "   ```\n$crw-search protected\n  ```\nafter $crw-dev",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+        }
+      ]
+    },
+    {
+      "number": 7,
+      "name": "a block-quoted fence with an inline delimiter protects its body",
+      "cases": [
+        {
+          "input": "> ```\n> body ``` inline\n> $crw-search stays\n> ```\nafter $crw-dev",
+          "skills": "${SKILLS}",
+          "oracle": "> ```\n> body ``` inline\n> $cxc-search stays\n> ```\nafter [$cxc-dev](skill://${SKILLS}/dev/SKILL.md)",
+          "expected": "> ```\n> body ``` inline\n> $crw-search stays\n> ```\nafter [$crw-dev](skill://${SKILLS}/crw-dev/SKILL.md)",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+        }
+      ]
+    },
+    {
+      "number": 8,
+      "name": "CRLF fences close so mentions after the fence still normalize",
+      "cases": [
+        {
+          "input": "```\r\n$crw-search protected\r\n```\r\nafter $crw-dev",
+          "skills": "${SKILLS}",
+          "oracle": "```\r\n$cxc-search protected\r\n```\r\nafter [$cxc-dev](skill://${SKILLS}/dev/SKILL.md)",
+          "expected": "```\r\n$crw-search protected\r\n```\r\nafter [$crw-dev](skill://${SKILLS}/crw-dev/SKILL.md)",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+        }
+      ]
+    },
+    {
+      "number": 9,
+      "name": "an escaped backtick is not an inline-code opener",
+      "cases": [
+        {
+          "input": "escaped \\` backtick here\nthen $crw-dev",
+          "skills": "${SKILLS}",
+          "oracle": "escaped \\` backtick here\nthen [$cxc-dev](skill://${SKILLS}/dev/SKILL.md)",
+          "expected": "escaped \\` backtick here\nthen [$crw-dev](skill://${SKILLS}/crw-dev/SKILL.md)",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+        }
+      ]
+    },
+    {
+      "number": 10,
+      "name": "broken known-skill links are atomically repaired",
+      "cases": [
+        {
+          "input": "[$crw-dev](/tmp/not-a-skill.txt)",
+          "skills": "${SKILLS}",
+          "oracle": "[$cxc-dev](skill://${SKILLS}/dev/SKILL.md)",
+          "expected": "[$crw-dev](skill://${SKILLS}/crw-dev/SKILL.md)",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+        },
+        {
+          "input": "[$crw:crw-dev](skill:///missing/dev/SKILL.md)",
+          "skills": "${SKILLS}",
+          "oracle": "[$cxc-dev](skill://${SKILLS}/dev/SKILL.md)",
+          "expected": "[$crw-dev](skill://${SKILLS}/crw-dev/SKILL.md)",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+        },
+        {
+          "input": "[$crw-not-a-real-skill](/tmp/broken)",
+          "skills": "${SKILLS}",
+          "oracle": "[$cxc-not-a-real-skill](/tmp/broken)",
+          "expected": "[$crw-not-a-real-skill](/tmp/broken)",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+        }
+      ]
+    },
+    {
+      "number": 11,
+      "name": "canonical and alternate existing SKILL.md targets stay verbatim",
+      "cases": [
+        {
+          "input": "[$crw-dev](skill://${SKILLS}/crw-dev/SKILL.md)",
+          "skills": "${SKILLS}",
+          "oracle": "[$cxc-dev](skill://${SKILLS}/dev/SKILL.md)",
+          "expected": "[$crw-dev](skill://${SKILLS}/crw-dev/SKILL.md)",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+        },
+        {
+          "input": "[$crw-dev](skill://${ALT1}/crw-dev/SKILL.md)",
+          "skills": "${SKILLS}",
+          "oracle": "[$cxc-dev](skill://${ALT1}/dev/SKILL.md)",
+          "expected": "[$crw-dev](skill://${ALT1}/crw-dev/SKILL.md)",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+        },
+        {
+          "input": "[$crw:crw-dev](${ALT1}/crw-dev/SKILL.md)",
+          "skills": "${SKILLS}",
+          "oracle": "[$codexclaw:cxc-dev](${ALT1}/dev/SKILL.md)",
+          "expected": "[$crw:crw-dev](${ALT1}/crw-dev/SKILL.md)",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+        }
+      ]
+    },
+    {
+      "number": 12,
+      "name": "angle-bracket and titled destinations are not the standalone shape and stay verbatim",
+      "cases": [
+        {
+          "input": "[$crw-dev](<${SKILLS}/crw-dev/SKILL.md>)",
+          "skills": "${SKILLS}",
+          "oracle": "[$cxc-dev](<${SKILLS}/dev/SKILL.md>)",
+          "expected": "[$crw-dev](<${SKILLS}/crw-dev/SKILL.md>)",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+        },
+        {
+          "input": "[$crw-dev](${SKILLS}/crw-dev/SKILL.md \"Dev skill\")",
+          "skills": "${SKILLS}",
+          "oracle": "[$cxc-dev](${SKILLS}/dev/SKILL.md \"Dev skill\")",
+          "expected": "[$crw-dev](${SKILLS}/crw-dev/SKILL.md \"Dev skill\")",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+        },
+        {
+          "input": "[$crw-dev](<skill://${SKILLS}/crw-dev/SKILL.md> 'Dev skill')",
+          "skills": "${SKILLS}",
+          "oracle": "[$cxc-dev](<skill://${SKILLS}/dev/SKILL.md> 'Dev skill')",
+          "expected": "[$crw-dev](<skill://${SKILLS}/crw-dev/SKILL.md> 'Dev skill')",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+        },
+        {
+          "input": "[$crw-dev](</missing/dev/SKILL.md>)",
+          "skills": "${SKILLS}",
+          "oracle": "[$cxc-dev](</missing/dev/SKILL.md>)",
+          "expected": "[$crw-dev](</missing/dev/SKILL.md>)",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+        },
+        {
+          "input": "[$crw-dev](/missing/dev.txt \"broken\")",
+          "skills": "${SKILLS}",
+          "oracle": "[$cxc-dev](/missing/dev.txt \"broken\")",
+          "expected": "[$crw-dev](/missing/dev.txt \"broken\")",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+        }
+      ]
+    },
+    {
+      "number": 13,
+      "name": "a quoted-title link keeps its whole line protected",
+      "cases": [
+        {
+          "input": "[$crw-dev](${SKILLS}/crw-dev/SKILL.md \"(\")",
+          "skills": "${SKILLS}",
+          "oracle": "[$cxc-dev](${SKILLS}/dev/SKILL.md \"(\")",
+          "expected": "[$crw-dev](${SKILLS}/crw-dev/SKILL.md \"(\")",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+        },
+        {
+          "input": "before [$crw-dev](${SKILLS}/crw-dev/SKILL.md \"(\") after $crw-dev",
+          "skills": "${SKILLS}",
+          "oracle": "before [$cxc-dev](${SKILLS}/dev/SKILL.md \"(\") after $cxc-dev",
+          "expected": "before [$crw-dev](${SKILLS}/crw-dev/SKILL.md \"(\") after $crw-dev",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+        }
+      ]
+    },
+    {
+      "number": 14,
+      "name": "a huge quoted-title link stays byte-identical, never nested-rewritten",
+      "cases": [
+        {
+          "input": "[$crw-dev](${SKILLS}/crw-dev/SKILL.md \"tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt\")",
+          "skills": "${SKILLS}",
+          "oracle": "[$cxc-dev](${SKILLS}/dev/SKILL.md \"tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt\")",
+          "expected": "[$crw-dev](${SKILLS}/crw-dev/SKILL.md \"tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt\")",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+        },
+        {
+          "input": "[$crw-dev](${SKILLS}/crw-dev/SKILL.md \"tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt\") then $crw-dev",
+          "skills": "${SKILLS}",
+          "oracle": "[$cxc-dev](${SKILLS}/dev/SKILL.md \"tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt\") then $cxc-dev",
+          "expected": "[$crw-dev](${SKILLS}/crw-dev/SKILL.md \"tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt\") then $crw-dev",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+        }
+      ]
+    },
+    {
+      "number": 15,
+      "name": "nested block-quote fences protect their body",
+      "cases": [
+        {
+          "input": "> > ```\n> > $crw-search inside\n> > ```\nafter $crw-dev",
+          "skills": "${SKILLS}",
+          "oracle": "> > ```\n> > $cxc-search inside\n> > ```\nafter [$cxc-dev](skill://${SKILLS}/dev/SKILL.md)",
+          "expected": "> > ```\n> > $crw-search inside\n> > ```\nafter [$crw-dev](skill://${SKILLS}/crw-dev/SKILL.md)",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+        }
+      ]
+    },
+    {
+      "number": 16,
+      "name": "a literal quoted fence line inside a top-level fence does not close it",
+      "cases": [
+        {
+          "input": "```\n> ```\n$crw-search still fenced\n```\nafter $crw-dev",
+          "skills": "${SKILLS}",
+          "oracle": "```\n> ```\n$cxc-search still fenced\n```\nafter [$cxc-dev](skill://${SKILLS}/dev/SKILL.md)",
+          "expected": "```\n> ```\n$crw-search still fenced\n```\nafter [$crw-dev](skill://${SKILLS}/crw-dev/SKILL.md)",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+        },
+        {
+          "input": "> ```\n> $crw-search fenced\n> ```\nafter $crw-dev",
+          "skills": "${SKILLS}",
+          "oracle": "> ```\n> $cxc-search fenced\n> ```\nafter [$cxc-dev](skill://${SKILLS}/dev/SKILL.md)",
+          "expected": "> ```\n> $crw-search fenced\n> ```\nafter [$crw-dev](skill://${SKILLS}/crw-dev/SKILL.md)",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+        }
+      ]
+    },
+    {
+      "number": 17,
+      "name": "deep container nesting still opens fence protection",
+      "cases": [
+        {
+          "input": "> > > > > ```\n> > > > > $crw-search body\nplain $crw-search body\n> > > > > ```\nafter $crw-dev",
+          "skills": "${SKILLS}",
+          "oracle": "> > > > > ```\n> > > > > $cxc-search body\nplain $cxc-search body\n> > > > > ```\nafter [$cxc-dev](skill://${SKILLS}/dev/SKILL.md)",
+          "expected": "> > > > > ```\n> > > > > $crw-search body\nplain $crw-search body\n> > > > > ```\nafter [$crw-dev](skill://${SKILLS}/crw-dev/SKILL.md)",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+        }
+      ]
+    },
+    {
+      "number": 18,
+      "name": "an escaped destination is not the standalone shape and stays verbatim",
+      "cases": [
+        {
+          "input": "[$crw-dev](/tmp/pa\\th/SKILL.md)",
+          "skills": "${SKILLS}",
+          "oracle": "[$cxc-dev](/tmp/pa\\th/SKILL.md)",
+          "expected": "[$crw-dev](/tmp/pa\\th/SKILL.md)",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+        }
+      ]
+    },
+    {
+      "number": 19,
+      "name": "a bare mention sharing a line with any link stays bare",
+      "cases": [
+        {
+          "input": "see [docs](https://example.com) and $crw-dev",
+          "skills": "${SKILLS}",
+          "oracle": "see [docs](https://example.com) and $cxc-dev",
+          "expected": "see [docs](https://example.com) and $crw-dev",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+        }
+      ]
+    },
+    {
+      "number": 20,
+      "name": "container-prefixed standalone link lines are handled",
+      "cases": [
+        {
+          "input": "- [$crw-dev](skill://${SKILLS}/crw-dev/SKILL.md)",
+          "skills": "${SKILLS}",
+          "oracle": "- [$cxc-dev](skill://${SKILLS}/dev/SKILL.md)",
+          "expected": "- [$crw-dev](skill://${SKILLS}/crw-dev/SKILL.md)",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+        },
+        {
+          "input": "- [$crw-dev](skill:///missing/dev/SKILL.md)",
+          "skills": "${SKILLS}",
+          "oracle": "- [$cxc-dev](skill://${SKILLS}/dev/SKILL.md)",
+          "expected": "- [$crw-dev](skill://${SKILLS}/crw-dev/SKILL.md)",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+        },
+        {
+          "input": "> 1. [$crw-dev](/tmp/broken.txt)\t",
+          "skills": "${SKILLS}",
+          "oracle": "> 1. [$cxc-dev](skill://${SKILLS}/dev/SKILL.md)\t",
+          "expected": "> 1. [$crw-dev](skill://${SKILLS}/crw-dev/SKILL.md)\t",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+        }
+      ]
+    },
+    {
+      "number": 21,
+      "name": "adversarial floods stay linear-time",
+      "cases": [],
+      "recipe": "adversarial-floods"
+    },
+    {
+      "number": 22,
+      "name": "messages over 256 KiB pass through untouched",
+      "cases": [],
+      "recipe": "over-limit"
+    },
+    {
+      "number": 23,
+      "name": "link-unsafe skill roots use the plugin-prefixed token",
+      "cases": [
+        {
+          "input": "$crw-dev",
+          "skills": "${UNSAFE1}",
+          "oracle": "$codexclaw:cxc-dev",
+          "expected": "$crw:crw-dev",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+        }
+      ]
+    },
+    {
+      "number": 24,
+      "name": "plugin prefix is pinned to plugin.json name",
+      "cases": [
+        {
+          "input": "$crw:crw-dev",
+          "skills": "${SKILLS}",
+          "oracle": "[$cxc-dev](skill://${SKILLS}/dev/SKILL.md)",
+          "expected": "[$crw-dev](skill://${SKILLS}/crw-dev/SKILL.md)",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+        }
+      ]
+    }
+  ]
+}
