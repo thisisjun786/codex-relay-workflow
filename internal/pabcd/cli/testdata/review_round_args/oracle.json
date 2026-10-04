@@ -1428,6 +1428,22 @@
       }
     },
     {
+      "id": "cwd_link_physical_spelling",
+      "cwd": "${ROOT}/wslink",
+      "unit": "${ROOT}/ws/devlog/_plan/u",
+      "paths": [
+        "${ROOT}/ws/devlog/_plan/u/000_plan.md"
+      ],
+      "want": {
+        "files": [
+          {
+            "path": "../ws/devlog/_plan/u/000_plan.md",
+            "sha256": "98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844"
+          }
+        ]
+      }
+    },
+    {
       "id": "unit_outside_cwd",
       "cwd": "${ROOT}/ws",
       "unit": "${ROOT}/out",

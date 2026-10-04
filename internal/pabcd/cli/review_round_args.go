@@ -223,6 +223,11 @@ func reviewRoundArgsCollectPlanFiles(cwd, planUnit string, paths []string) ([]go
 			return nil, fmt.Sprintf("plan path %s is not a readable regular file", p), nil
 		}
 		key, _ := filepath.Rel(base, abs)
+		if !filepath.IsLocal(key) {
+			// Only a working directory that is a link gets here, with the entry spelled by its physical path: the key as the oracle
+			// stores it climbs out ("../ws/..."), and the revival of a round's plan files drops a list holding such a key.
+			key = below
+		}
 		if seen[key] {
 			continue
 		}

@@ -89,6 +89,7 @@ for (const [id, unit, paths, cwd = R + '/ws'] of [
   ['file_symlink_to_inside', U, [U + '/030_inlink.md']], ['dangling_symlink', U, [U + '/040_dangle.md']], ['unit_itself', U, [U]], ['empty_string_path', U, ['']],
   ['unit_symlinked_outside', 'devlog/_plan/esc', ['devlog/_plan/esc/000_x.md']], ['unit_symlinked_inside', 'devlog/_plan/lnk', ['devlog/_plan/lnk/000_plan.md']],
   ['subdirectory_symlinked_outside', U, [U + '/000_subdirlink/000_x.md']], ['cwd_is_a_symlink', U, [U + '/000_plan.md', U + '/010_second.md'], R + '/wslink'],
+  ['cwd_link_physical_spelling', R + '/ws/' + U, [R + '/ws/' + U + '/000_plan.md'], R + '/wslink'],
   ['unit_outside_cwd', R + '/out', [R + '/out/000_x.md']], ['unreadable_file', U, [U + '/000_locked.md']],
 ]) {
   let want;

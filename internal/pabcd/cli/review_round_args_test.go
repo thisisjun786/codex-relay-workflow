@@ -186,6 +186,9 @@ func TestReviewRoundArgsCollectOracle(t *testing.T) {
 	root := reviewRoundArgsWorld(t, o)
 	expand := func(s string) string { return strings.ReplaceAll(s, reviewRoundArgsRoot, root) }
 	changed := map[string]bool{"unit_symlinked_outside": true, "subdirectory_symlinked_outside": true, "unit_outside_cwd": true}
+	// A working directory that is a link, the entry spelled by its physical path: the oracle's key climbs out of the working
+	// directory, where the revival of a round's plan files would drop it with the whole list, so the key is the physical relative path.
+	rekeyed := map[string]string{"cwd_link_physical_spelling": "devlog/_plan/u/000_plan.md"}
 	for _, c := range o.Collect {
 		t.Run(c.ID, func(t *testing.T) {
 			paths := make([]string, len(c.Paths))
@@ -203,6 +206,13 @@ func TestReviewRoundArgsCollectOracle(t *testing.T) {
 				return
 			}
 			wantFiles, wantRefusal := c.Want.Files, expand(c.Want.Error)
+			if key, ok := rekeyed[c.ID]; ok {
+				if len(wantFiles) != 1 || !strings.HasPrefix(wantFiles[0].Path, "../") {
+					t.Fatal("a case tagged as rekeyed must have been answered with a key that climbs out")
+				}
+				wantFiles = []goalplan.PlanFileHash{{Path: key, Sha256: wantFiles[0].Sha256}}
+				delete(rekeyed, c.ID)
+			}
 			if changed[c.ID] {
 				if len(wantFiles) == 0 {
 					t.Fatal("a case tagged as changed must have been answered with files by the oracle")
@@ -215,8 +225,8 @@ func TestReviewRoundArgsCollectOracle(t *testing.T) {
 			}
 		})
 	}
-	if len(changed) != 0 {
-		t.Errorf("changed cases never recorded: %v", changed)
+	if len(changed)+len(rekeyed) != 0 {
+		t.Errorf("changed cases never recorded: %v %v", changed, rekeyed)
 	}
 }
 
