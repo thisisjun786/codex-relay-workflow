@@ -3,6 +3,7 @@ package recall
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -375,11 +376,19 @@ func recallHookRun(ctx context.Context, event string, in io.Reader, out io.Write
 		if sessionStart == nil {
 			return 0
 		}
+		invalidCwd := false
 		if value := p["cwd"]; value != nil {
-			var ok bool
-			cwd, ok = value.(string)
-			if !ok {
-				return 0
+			cwd = ""
+			switch value := value.(type) {
+			case string:
+				cwd = value
+			case bool:
+				invalidCwd = value
+			case json.Number:
+				n, _ := value.Float64()
+				invalidCwd = n != 0
+			default:
+				invalidCwd = true
 			}
 		}
 		home, err := hookContextHome(env)
@@ -391,7 +400,13 @@ func recallHookRun(ctx context.Context, event string, in io.Reader, out io.Write
 			return 0
 		}
 		src, _ := p["source"].(string)
-		answer = sessionStart(home, path, cwd, src, DefaultRecallDeps(env))
+		deps := DefaultRecallDeps(env)
+		if invalidCwd {
+			// The oracle catches basename's type error before any context reader runs.
+			cwd = "invalid-cwd"
+			deps.ListCwdSessions = func(string, int) ([]CwdSession, error) { return nil, errors.New("cwd is not a string") }
+		}
+		answer = sessionStart(home, path, cwd, src, deps)
 	case "post-compact":
 		answer = HandlePostCompact(cwd)
 	}

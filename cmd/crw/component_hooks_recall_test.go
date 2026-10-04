@@ -146,3 +146,17 @@ func TestRecallHookSessionStartProduction(t *testing.T) {
 		})
 	}
 }
+
+func TestRecallHookSessionStartCwdShapes(t *testing.T) {
+	recallHookComponentHome(t)
+	for _, row := range []struct {
+		value       string
+		unavailable bool
+	}{{"false", false}, {"0", false}, {"true", true}, {"{}", true}, {"[]", true}, {"3", true}} {
+		var out bytes.Buffer
+		claimed, code := runComponentHook(invocation{ctx: context.Background(), args: []string{"session-start", "--leg", "session-start-injecting-recall-context"}, stdout: &out}, strings.NewReader(`{"cwd":`+row.value+`}`), componentHooks())
+		if !claimed || code != 0 || !strings.Contains(out.String(), "recall is available") || strings.Contains(out.String(), "Recall unavailable") != row.unavailable {
+			t.Fatalf("cwd=%s exit=%d out=%s", row.value, code, out.String())
+		}
+	}
+}
