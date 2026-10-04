@@ -52,10 +52,12 @@ type ManifestInput struct {
 }
 
 // VerifyOptions say how much of the world a verification reads. SkipFileBytes leaves every file unread (the store half, which is what can change under the release
-// lock); ArtifactRoots are the roots a volatile snapshot has to lie under (the roots of the child's request).
+// lock); ArtifactRoots authorize source snapshots. The private pinned root authorizes
+// only exact per-plan digest paths retained by the relay.
 type VerifyOptions struct {
-	SkipFileBytes bool
-	ArtifactRoots []string
+	SkipFileBytes   bool
+	ArtifactRoots   []string
+	pinnedInputRoot string
 }
 
 // maxInlineManifest is the manifest size a prompt carries inline; a larger one is frozen to a file and the prompt names its path and digest.
@@ -113,6 +115,7 @@ func shapeFindings(body map[string]any, node dag.SnapNode) []BlockedFinding {
 // scope, and the base and volatile snapshots the caller supplies. Every input is verified as it is built; the findings it returns are the contract's blocked paths and an
 // empty list means the manifest is whole. It writes nothing.
 func (s *Scheduler) BuildManifest(ctx context.Context, q store.Querier, plan string, snap dag.Snapshot, node dag.SnapNode, in ManifestInput, opts VerifyOptions) (map[string]any, []BlockedFinding, error) {
+	opts.pinnedInputRoot = s.pinnedInputRoot(plan)
 	var blocked []BlockedFinding
 	edges := incomingEdges(snap, node.NodeID)
 	statuses := map[string]EdgeStatus{}
@@ -269,20 +272,28 @@ func scopeOf(path string, roots []string) string {
 	return best
 }
 
-// verifyVolatile is the contract's check of what is outside the store: every snapshot is a file under one of the child's artifact roots, is there, and hashes to the digest the manifest names.
+// verifyVolatile checks source snapshots under the child's roots and retained snapshots
+// at their exact per-plan digest paths. Every file must hash to the manifest's digest.
 func (s *Scheduler) verifyVolatile(ctx context.Context, volatile []Volatile, opts VerifyOptions) *BlockedFinding {
 	for _, v := range volatile {
-		if !filepath.IsAbs(v.SnapshotURI) || scopeOf(v.SnapshotURI, opts.ArtifactRoots) == "" {
+		root := scopeOf(v.SnapshotURI, opts.ArtifactRoots)
+		if path := pinnedInputPath(opts.pinnedInputRoot, v.SHA256); path != "" && v.SnapshotURI == path {
+			root = opts.pinnedInputRoot
+		}
+		if !filepath.IsAbs(v.SnapshotURI) || root == "" {
 			return &BlockedFinding{"B-05", BlockedInputOutOfScope, "volatile snapshot " + v.SnapshotURI + " is not a file under one of the child's artifact roots"}
 		}
 		if opts.SkipFileBytes {
 			continue
 		}
-		finding, _, err := hashEntry(ctx, consumed{Path: v.SnapshotURI, SHA256: v.SHA256}, []string{scopeOf(v.SnapshotURI, opts.ArtifactRoots)})
+		finding, _, err := hashEntry(ctx, consumed{Path: v.SnapshotURI, SHA256: v.SHA256}, []string{root})
 		if err != nil {
 			return &BlockedFinding{"B-03", BlockedInputMissing, v.SnapshotURI + ": " + err.Error()}
 		}
 		if finding != nil {
+			if finding.Code == "B-04" {
+				finding.Detail += pinnedInputRestoreHint(ctx, opts.pinnedInputRoot, v)
+			}
 			return finding
 		}
 	}
@@ -293,6 +304,7 @@ func (s *Scheduler) verifyVolatile(ctx context.Context, volatile []Volatile, opt
 // their current acceptances, and every artifact and volatile snapshot it names is there and hashes to what it says. The findings are the violated paths; none means the manifest is
 // fit to release. It writes nothing.
 func (s *Scheduler) VerifyManifest(ctx context.Context, q store.Querier, plan string, snap dag.Snapshot, node dag.SnapNode, body map[string]any, opts VerifyOptions) ([]BlockedFinding, error) {
+	opts.pinnedInputRoot = s.pinnedInputRoot(plan)
 	if out := shapeFindings(body, node); len(out) > 0 {
 		return out, nil
 	}

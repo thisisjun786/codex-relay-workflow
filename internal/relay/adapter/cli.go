@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
@@ -24,12 +25,16 @@ var testClock string
 
 // Register installs the production path at executable composition time, not package
 // initialization: importing this library never changes another package's test defaults.
-func Register() {
-	delivery.HostCommand = hostCommand
-	delivery.ObserveTurn = observeTurn
-	cli.SupervisorHostCommand = supervisorHostCommand
-	cli.DaemonFactory = daemonFactory
-	managed.HostStart = managedStart
+func Register(configure ...func(*appserver.Client)) {
+	f := hostFactory{}
+	if len(configure) > 0 {
+		f.configure = configure[0]
+	}
+	delivery.HostCommand = f.hostCommand
+	delivery.ObserveTurn = f.observeTurn
+	cli.SupervisorHostCommand = f.supervisorHostCommand
+	cli.DaemonFactory = f.daemonFactory
+	managed.HostStart = f.managedStart
 	if testClock != "" {
 		now, err := strconv.ParseFloat(testClock, 64)
 		if err != nil {
@@ -41,12 +46,12 @@ func Register() {
 	}
 }
 
-func observeTurn(ctx context.Context, state, socket, thread, turn string) (status string, err error) {
+func (f hostFactory) observeTurn(ctx context.Context, state, socket, thread, turn string) (status string, err error) {
 	selection, err := store.ResolveStateDir("", socket)
 	if err != nil {
 		return "", err
 	}
-	a, err := Open(socket, selection.Path, Options{})
+	a, err := f.open(socket, selection.Path, Options{})
 	if err != nil {
 		return "", err
 	}
@@ -73,7 +78,7 @@ func unconfirmedTurn(turn string, err error) error {
 	return err
 }
 
-func supervisorHostCommand(ctx context.Context, command, state, socket, program string, args map[string]string, now float64) (out any, err error) {
+func (f hostFactory) supervisorHostCommand(ctx context.Context, command, state, socket, program string, args map[string]string, now float64) (out any, err error) {
 	s, err := store.Open(ctx, state+"/relay.sqlite3", socket)
 	if err != nil {
 		return nil, err
@@ -83,7 +88,7 @@ func supervisorHostCommand(ctx context.Context, command, state, socket, program 
 	if err != nil {
 		return nil, err
 	}
-	a, err := Open(socket, ledgerSelection.Path, Options{Store: s, Clock: &delivery.FakeClock{T: now}})
+	a, err := f.open(socket, ledgerSelection.Path, Options{Store: s, Clock: &delivery.FakeClock{T: now}})
 	if err != nil {
 		return nil, err
 	}
@@ -129,7 +134,7 @@ func supervisorHostCommand(ctx context.Context, command, state, socket, program 
 	}
 }
 
-func hostCommand(ctx context.Context, command, state, socket string, args map[string]any, clock delivery.Clock) (out any, err error) {
+func (f hostFactory) hostCommand(ctx context.Context, command, state, socket string, args map[string]any, clock delivery.Clock) (out any, err error) {
 	s, err := store.Open(ctx, state+"/relay.sqlite3", socket)
 	if err != nil {
 		return nil, err
@@ -139,7 +144,7 @@ func hostCommand(ctx context.Context, command, state, socket string, args map[st
 	if err != nil {
 		return nil, err
 	}
-	a, err := Open(socket, ledgerSelection.Path, Options{Store: s, Clock: clock})
+	a, err := f.open(socket, ledgerSelection.Path, Options{Store: s, Clock: clock})
 	if err != nil {
 		return nil, err
 	}

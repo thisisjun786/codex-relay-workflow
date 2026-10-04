@@ -84,6 +84,9 @@ func (c *Client) connect(ctx context.Context) error {
 func (c *Client) Connect(ctx context.Context) error { return c.connect(ctx) }
 
 func (c *Client) Call(ctx context.Context, method string, params map[string]any) (json.RawMessage, error) {
+	if conn, ok := ctx.Value(cleanupConnectionKey{}).(*websocket.Conn); ok {
+		return c.request(ctx, conn, method, params)
+	}
 	if w, ok := ctx.Value(watchContextKey{}).(*TurnWatch); ok {
 		if w.manager.client != c {
 			return nil, &TransportError{Reason: "subscription watch belongs to another client"}
