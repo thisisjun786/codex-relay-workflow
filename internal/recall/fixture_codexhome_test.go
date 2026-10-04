@@ -61,3 +61,46 @@ func buildCodexHome(t *testing.T, now time.Time) string {
 	}
 	return home
 }
+
+// buildIngestCodexHome adds ingest's metadata/state cases without changing the
+// rollout fixture above. Dates stay relative to the clock, as fixtures.ts does.
+func buildIngestCodexHome(t *testing.T) string {
+	t.Helper()
+	home := buildCodexHome(t, time.Now().UTC())
+	files, err := ListRolloutFiles(home, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		b, err := os.ReadFile(f.Path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		head, rest, _ := strings.Cut(string(b), "\n")
+		var meta map[string]any
+		if err := json.Unmarshal([]byte(head), &meta); err != nil {
+			t.Fatal(err)
+		}
+		p := meta["payload"].(map[string]any)
+		switch p["id"] {
+		case "old":
+			p["cwd"], p["git"] = "/proj/beta", map[string]any{"repository_url": "git@github.com:example/beta.git"}
+		case "archived":
+			delete(p, "git")
+		default:
+			p["git"] = map[string]any{"repository_url": "https://github.com/example/alpha.git"}
+		}
+		writeRolloutTestFile(t, home, strings.TrimPrefix(f.Path, home+string(os.PathSeparator)), rolloutTestLine(t, meta)+rest)
+	}
+	state := recallDB(t, filepath.Join(home, "state_2.sqlite"))
+	recallSQL(t, state, "CREATE TABLE threads (id TEXT PRIMARY KEY, title TEXT, cwd TEXT, git_branch TEXT, git_origin_url TEXT, updated_at_ms INTEGER)")
+	for _, id := range []string{"main", "sub"} {
+		if _, err := recallStmt(t, state, "INSERT INTO threads VALUES (?, '', '/proj/alpha', NULL, ?, 1)").Run(id, "https://github.com/example/alpha.git"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	decoy := recallDB(t, filepath.Join(home, "state_1.sqlite"))
+	recallSQL(t, decoy, "CREATE TABLE threads(id TEXT PRIMARY KEY)")
+	t.Setenv("CODEX_HOME", home)
+	return home
+}
