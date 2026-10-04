@@ -70,3 +70,23 @@ func TestSignoffPositionAndASCIILabels(t *testing.T) {
 	}
 	reviewTestEqual(t, ParseSignoff("quoted format\nLAUNCH: id\nVERDICT: PASS"), &ReviewSignoff{LaunchID: "id", Verdict: goalplan.VerdictPass})
 }
+
+func TestHistoricalClosureIsPreserved(t *testing.T) {
+	f := reviewTestFlight(t)
+	historical := *f.Round
+	historical.RoundID = "r0"
+	historical.Status = goalplan.ReviewApproved
+	historical.ClosedAt = reviewTestPtr("2025-01-01T00:00:00.000Z")
+	f.Plan.ReviewRounds = append([]goalplan.ReviewRoundState{historical}, f.Plan.ReviewRounds...)
+	f.Plan.ReviewRounds[1].OwnerSessionID = "s"
+	f.Plan.ReviewRounds[1].PlanEpoch = "old"
+	out, closed := SupersedeStaleRounds(f.Plan, goalplan.PurposePlanAudit, "s", "old")
+	reviewTestEqual(t, closed, []string{"r1"})
+	reviewTestEqual(t, out.ReviewRounds[0], historical)
+	reviewTestEqual(t, f.Plan.ReviewRounds[1].ClosedAt, (*string)(nil))
+	if out.ReviewRounds[1].ClosedAt == nil || *out.ReviewRounds[1].ClosedAt == *historical.ClosedAt {
+		t.Fatal("new closure did not get its own timestamp")
+	}
+	aborted := reviewTestOK(t, AbortRound(f.Plan, goalplan.PurposePlanAudit, "stop"))
+	reviewTestEqual(t, aborted.Plan.ReviewRounds[0], historical)
+}
