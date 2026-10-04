@@ -536,3 +536,14 @@ The pinned oracle already publishes through an exclusive 0600 temporary file and
 
 - Required-column checks do not validate timestamp values: nonnumeric TEXT/BLOB maxima become NaN while state remains `ok`, serialize as null, render `NaNd ago`, and never trigger the stale notice (source `recall/src/memory-status.ts:134-157,181-186,224-225`; recorded scalar cases and `TestMemoryStatusOracle`); port: kept.
 - Every jobs-read failure is called an unsupported store schema by the notice, including corruption and an INTEGER too large for Node's number representation; partial counts are discarded (source `recall/src/memory-status.ts:170-171,217-218`; recorded corrupt/unsafe-integer cases and `TestMemoryStatusOracle`); port: kept.
+
+## CRW-352 memory requeue
+
+- A positive retry allowance below one is floored to zero, clearing backoff without restoring eligibility (`recall/src/memory-requeue.ts:73` at v0.2.40); port: kept.
+- The schema guard omits `retry_at`, so a selected store lacking it passes selection but apply fails and rolls back (`recall/src/memory-requeue.ts:66,94-98,137` at v0.2.40); port: kept.
+- NULL, numeric and BLOB kind/key values are coerced to strings for selection and binding, so an untyped jobs table can report selected candidates with zero rows changed (`recall/src/memory-requeue.ts:105-109,137-143` at v0.2.40); port: kept.
+- With no kind filter, exhausted consolidation jobs are selected despite the module's safety prose claiming otherwise (`recall/src/memory-requeue.ts:17-18,107` at v0.2.40); port: kept.
+- Candidates removed by the limit appear in neither the selected list nor skipped cause counts (`recall/src/memory-requeue.ts:107-112` at v0.2.40); port: kept.
+- A failed BEGIN reports that requeue was rolled back even when no transaction began (`recall/src/memory-requeue.ts:133,146-152` at v0.2.40); port: kept.
+- Reopening for apply uses a create-capable SQLite open, so external removal between selection and reopening can leave a new empty store (`recall/src/memory-requeue.ts:128` and `recall/src/sqlite.ts:34-36` at v0.2.40); port: kept.
+- Duplicate kind/key rows with a retry allowance floored to zero remain eligible across repeated updates, counting the same rows more than once (`recall/src/memory-requeue.ts:73,137-143` at v0.2.40); port: kept.

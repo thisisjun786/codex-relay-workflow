@@ -1,9 +1,12 @@
 package recall
 
 import (
+	"encoding/json"
+	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -15,6 +18,131 @@ func requeueTestHome(t *testing.T, sql ...string) string {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("CRW_HOME", t.TempDir())
 	return memoryStatusHome(t, memoryStatusOracle{SQL: sql})
+}
+
+type requeueOracleCase struct {
+	ID, Mode, Text, SnapshotSQL string
+	SQL, Newer                  []string
+	Options                     map[string]any
+	Result                      json.RawMessage
+	Rows                        []map[string]any
+}
+
+func requeueOracleOptions(t *testing.T, values map[string]any) RequeueOptions {
+	t.Helper()
+	opts := RequeueOptions{}
+	opts.Apply, _ = values["apply"].(bool)
+	opts.IncludeContextWindow, _ = values["includeContextWindow"].(bool)
+	opts.Kind, _ = values["kind"].(string)
+	for key, target := range map[string]**float64{"limit": &opts.Limit, "retries": &opts.Retries} {
+		if value, ok := values[key]; ok {
+			n, ok := value.(float64)
+			if !ok {
+				var err error
+				n, err = strconv.ParseFloat(value.(string), 64)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			*target = &n
+		}
+	}
+	return opts
+}
+
+func TestMemoryRequeueOracle(t *testing.T) {
+	data, err := os.ReadFile("testdata/memoryrequeue/oracle.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var oracle struct {
+		Transient []string
+		Cases     []requeueOracleCase
+	}
+	if err := json.Unmarshal(data, &oracle); err != nil {
+		t.Fatal(err)
+	}
+	if len(oracle.Cases) != 44 || !reflect.DeepEqual(TransientCauses(), oracle.Transient) {
+		t.Fatal("incomplete oracle grid")
+	}
+	for _, c := range oracle.Cases {
+		t.Run(c.ID, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			t.Setenv("CRW_HOME", t.TempDir())
+			home := memoryStatusHome(t, memoryStatusOracle{SQL: c.SQL, Newer: c.Newer, Mode: c.Mode})
+			before := memoryStatusFiles(t, home)
+			r := RequeueExhaustedMemoryJobs(home, requeueOracleOptions(t, c.Options))
+			got, err := json.Marshal(r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var actual, want any
+			if err := json.Unmarshal([]byte(strings.ReplaceAll(string(got), home, "<HOME>")), &actual); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(c.Result, &want); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(actual, want) {
+				t.Fatalf("result: got %s oracle %s", got, c.Result)
+			}
+			if text := strings.ReplaceAll(FormatRequeue(r), home, "<HOME>"); text != c.Text {
+				t.Fatalf("text: got %q oracle %q", text, c.Text)
+			}
+			if !r.Applied && !reflect.DeepEqual(memoryStatusFiles(t, home), before) {
+				t.Fatal("unsuccessful/dry requeue changed store bytes")
+			}
+			if c.SnapshotSQL == "" {
+				return
+			}
+			path, err := memoriesDbPath(home)
+			if err != nil {
+				t.Fatal(err)
+			}
+			db, err := openDbReadOnly(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			rows, err := recallStmt(t, db, c.SnapshotSQL).All()
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, row := range rows {
+				for key, value := range row {
+					if blob, ok := value.([]byte); ok {
+						obj := map[string]any{}
+						for i, b := range blob {
+							obj[strconv.Itoa(i)] = float64(b)
+						}
+						row[key] = obj // JSON.stringify(Uint8Array) is an indexed object.
+					}
+				}
+			}
+			if !reflect.DeepEqual(rows, c.Rows) {
+				t.Fatalf("post-state: got %v oracle %v", rows, c.Rows)
+			}
+		})
+	}
+}
+
+func TestMemoryRequeueLockedTransaction(t *testing.T) {
+	home := requeueTestHome(t, requeueTestSchema, requeueTestRow("a", "capacity"))
+	before := requeueTestRows(t, home)
+	db, err := openDbReadWrite(filepath.Join(home, "memories_1.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	recallSQL(t, db, "BEGIN IMMEDIATE")
+	r := RequeueExhaustedMemoryJobs(home, RequeueOptions{Apply: true})
+	recallSQL(t, db, "ROLLBACK")
+	if r.State != MemoryStatusUnavailable || r.Applied || r.Changed != 0 || len(r.Selected) != 1 || !strings.Contains(r.Detail, "database is locked") {
+		t.Fatalf("lock: %+v", r)
+	}
+	if !reflect.DeepEqual(requeueTestRows(t, home), before) {
+		t.Fatal("locked apply changed rows")
+	}
 }
 
 func requeueTestRow(key, cause string) string {
