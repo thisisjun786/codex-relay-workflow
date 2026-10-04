@@ -186,6 +186,10 @@ func AppendGoalplanLedger(cwd, slug string, entry GoalplanLedgerEntry) error {
 // Split at the lexical check so a deterministic regression can replace a
 // checked path before the descriptor walk. No pathname mutation follows it.
 func writeOpenCheckedDir(cwd, checked string) (*os.File, string, error) {
+	return writeOpenCheckedDirWithIgnore(cwd, checked, writeIgnoreAt)
+}
+
+func writeOpenCheckedDirWithIgnore(cwd, checked string, writeIgnore func(*os.File, string) error) (*os.File, string, error) {
 	base, err := filepath.Abs(cwd)
 	if err == nil {
 		base, err = filepath.EvalSymlinks(base)
@@ -227,25 +231,40 @@ func writeOpenCheckedDir(cwd, checked string) (*os.File, string, error) {
 			parent.Close()
 			return nil, "", err
 		}
-		flags := directoryOpenFlags()
-		if i == 2 {
-			flags = unix.O_RDONLY | unix.O_DIRECTORY
-		}
-		next, e := openAt(parent, part, path, flags, true, 0)
-		_ = parent.Close()
+		next, e := openAt(parent, part, path, directoryOpenFlags(), true, 0)
 		if e != nil {
+			parent.Close()
 			return nil, "", e
 		}
-		parent, expected = next, path
 		if created && i == 0 {
-			if e = writeIgnoreAt(parent, path); e != nil {
+			if e = writeIgnore(next, path); e != nil {
+				writeRemoveEmptyDir(parent, next, part, path)
 				parent.Close()
+				next.Close()
 				return nil, "", e
 			}
 		}
+		_ = parent.Close()
+		parent, expected = next, path
 	}
 	return parent, expected, nil
 }
+func writeRemoveEmptyDir(parent, owned *os.File, name, path string) {
+	if boundFile(parent, filepath.Dir(path), true) != nil || boundFile(owned, path, true) != nil {
+		return
+	}
+	current, err := openAt(parent, name, path, directoryOpenFlags(), true, 0)
+	if err != nil {
+		return
+	}
+	defer current.Close()
+	own, e := owned.Stat()
+	info, err := current.Stat()
+	if e == nil && err == nil && os.SameFile(own, info) {
+		_ = unix.Unlinkat(int(parent.Fd()), name, unix.AT_REMOVEDIR)
+	}
+}
+
 func writeIgnoreAt(dir *os.File, real string) error {
 	file, err := openAt(dir, ".gitignore", filepath.Join(real, ".gitignore"), unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL, false, 0666)
 	if errors.Is(err, os.ErrExist) {
@@ -284,7 +303,17 @@ func writePublishAt(dir *os.File, real string, data []byte) error {
 	if err = unix.Renameat(int(dir.Fd()), name, int(dir.Fd()), GoalplanFile); err != nil {
 		return err
 	}
-	return dir.Sync()
+	reader, err := openAt(dir, ".", real, unix.O_RDONLY|unix.O_DIRECTORY, true, 0)
+	// File fsync and rename remain available to a search/write-only directory,
+	// as in the oracle. Directory fsync additionally runs when readable.
+	if errors.Is(err, os.ErrPermission) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer reader.Close()
+	return reader.Sync()
 }
 func writeAppendAt(dir *os.File, real string, data []byte) error {
 	if err := boundFile(dir, real, true); err != nil {

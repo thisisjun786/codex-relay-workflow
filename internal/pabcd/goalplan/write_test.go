@@ -380,3 +380,46 @@ func TestWriteLedgerUnreadableTailAndExistingIgnore(t *testing.T) {
 		t.Fatal("existing ignore overwritten")
 	}
 }
+
+func TestWriteDirectoryDoesNotNeedReadPermission(t *testing.T) {
+	cwd := t.TempDir()
+	p := writeTestPlan()
+	dir, e := GoalplanDir(cwd, p.Slug)
+	writeTestRequire(t, e)
+	writeTestRequire(t, os.MkdirAll(dir, 0700))
+	writeTestRequire(t, os.Chmod(dir, 0300))
+	t.Cleanup(func() { _ = os.Chmod(dir, 0700) })
+	writeTestRequire(t, WriteGoalplan(cwd, p))
+	writeTestRequire(t, AppendGoalplanLedger(cwd, p.Slug, GoalplanLedgerEntry{Slug: p.Slug, Event: EventCreated}))
+}
+
+func TestWriteIgnoreFailureCleansOnlyOwnedEmptyRoot(t *testing.T) {
+	for _, concurrent := range []bool{false, true} {
+		t.Run(fmt.Sprint(concurrent), func(t *testing.T) {
+			cwd := t.TempDir()
+			checked, e := GoalplanDir(cwd, "hello-world")
+			writeTestRequire(t, e)
+			injected := fmt.Errorf("injected ignore creation failure")
+			dir, _, e := writeOpenCheckedDirWithIgnore(cwd, checked, func(dir *os.File, path string) error {
+				if concurrent {
+					writeTestRequire(t, os.WriteFile(filepath.Join(path, "winner"), []byte("keep"), 0600))
+				}
+				return injected
+			})
+			if dir != nil {
+				dir.Close()
+			}
+			if e != injected {
+				t.Fatalf("error%v", e)
+			}
+			root := filepath.Join(cwd, crwdir.DirName)
+			if concurrent {
+				if string(writeTestFile(t, filepath.Join(root, "winner"))) != "keep" {
+					t.Fatal("concurrent file lost")
+				}
+			} else if _, e := os.Stat(root); !os.IsNotExist(e) {
+				t.Fatal("owned empty root retained")
+			}
+		})
+	}
+}

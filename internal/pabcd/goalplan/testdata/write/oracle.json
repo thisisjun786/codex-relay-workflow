@@ -1,4 +1,12 @@
 {
+  "directoryMode": {
+    "mode": "0300",
+    "accepted": true,
+    "files": [
+      "goalplan.json",
+      "ledger.jsonl"
+    ]
+  },
   "oracle": "CXC v0.2.40, commit 3c1459ac",
   "builds": [
     {
