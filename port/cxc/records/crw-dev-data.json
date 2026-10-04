@@ -1,0 +1,57 @@
+{
+  "origin": {
+    "tag": "v0.2.40",
+    "commit": "3c1459acadeb1906d97c00a598e1457327ae372d",
+    "skills_listing_sha256": "79d9580f39ca27221cb9c24337080e3fe4a1e71f76338c7329fca63f76a32e89"
+  },
+  "table_sha256": "25b5d19d9da7e07d474d2b31bc4d4139c68607457f59174a597f17505f7f23eb",
+  "from": "dev-data",
+  "files": {
+    "SKILL.md": {
+      "original": "84b57246722266bf073e49f289e56b6f8f9cd752caff7169b2ab6b5d79dc4e93"
+    },
+    "agents/openai.yaml": {
+      "original": "c80e48bd5bd39de4d3a40100039f6c1bc58d33365a76863ab9d419c04dbc85af"
+    },
+    "references/governance.md": {
+      "original": "020351411f90b6994e4c68dc8d8694b697ae1a5ee7944c8a16a4bd0d5ea20201"
+    },
+    "references/ml-pipeline.md": {
+      "original": "7b0314c2b995a40712d3ab97fe44e261302f23857d9d8e990e8cb628443e4c6c"
+    },
+    "references/streaming.md": {
+      "original": "2dfacc07da14ec04115faec40691f4d97d3717ccae235d4f1e10fba7ebb90454"
+    },
+    "references/tools.md": {
+      "original": "81ea4748926d416931905919870600f6584fb0aa31d95e8fabba0ea1f520adb4"
+    }
+  },
+  "edits": [
+    {
+      "file": "SKILL.md",
+      "reason": "Normalize frontmatter to the repository-supported name and description fields; preserve the invocation description and record the removed oracle metadata.",
+      "hunks": [
+        {
+          "line": 4,
+          "old": [
+            "metadata:\n",
+            "  last-verified: \"2026-07-02\"\n",
+            "  short-description: \"Data pipelines, ETL/ELT design, data quality validation, SQL optimization, and analysis patterns.\"\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "agents/openai.yaml",
+      "reason": "Add the required interface default prompt naming the staged CRW skill; preserve the oracle display text and implicit-invocation policy.",
+      "hunks": [
+        {
+          "line": 4,
+          "new": [
+            "  default_prompt: \"Use $crw-dev-data to guide this task and verify its result.\"\n"
+          ]
+        }
+      ]
+    }
+  ]
+}

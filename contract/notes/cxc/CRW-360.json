@@ -1,0 +1,16 @@
+{
+  "issue": "CRW-360",
+  "pending": [
+    "cli-help__plan__dash_h",
+    "cli-help__plan__dashdash_help",
+    "cli-help__plan__init_dashdash_help",
+    "cli-help__plan__word_help",
+    "cli__orchestrate__full_cycle_idle_p_a_b_c_d_idle",
+    "cli__plan__init_default_date_uses_local_today",
+    "cli__plan__init_normalises_slug_and_date",
+    "cli__plan__init_refuses_existing_unit",
+    "cli__plan__init_scaffolds_unit"
+  ],
+  "identical": [],
+  "intentionally-changed": []
+}
