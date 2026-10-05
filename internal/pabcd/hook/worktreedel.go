@@ -275,13 +275,14 @@ func destructiveHint(extended bool) *regexp.Regexp {
 // backslash pair, so \" does not close them; a # that opens a word starts a comment, which keeps everything up to its
 // newline. prev is the last byte that decides the next one: a space at the start, the byte itself after a plain byte, a
 // backslash after an escaped pair, a quote after it closes, a newline after a comment, and x for the second dollar of a
-// pair ($$ is the process id, so only an odd run of dollars opens $'...'). A removed pair leaves it alone. Substitutions,
-// backticks and parameter expansions are read as the same flat text (a quote nested in them is not tracked). A command with
-// a here-document operator keeps the plain removal of every pair: the scan cannot tell a body from shell text, and such a
-// command is read as it was before this function.
+// pair ($$ is the process id, so only an odd run of dollars opens $'...'). A removed pair leaves it alone. Substitutions
+// and parameter expansions are read as the same flat text (a quote nested in them is not tracked). A command with a
+// here-document operator or a backtick keeps the plain removal of every pair, as it was read before this function: the scan
+// cannot tell a here-document body from shell text, and bash reads a backtick body in a pass of its own, where it removes a
+// pair even inside single quotes, so for those commands the scan could allow what the plain removal denied.
 func worktreeDelJoinContinuations(command string) string {
 	joined := strings.ReplaceAll(command, "\\\n", "")
-	if joined == command || strings.Contains(joined, "<<") {
+	if joined == command || strings.Contains(joined, "<<") || strings.Contains(joined, "`") {
 		return joined
 	}
 	const (
