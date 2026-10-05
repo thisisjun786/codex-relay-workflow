@@ -46,10 +46,11 @@ type harnessDriftCheckRecorded struct {
 }
 
 type harnessDriftCaseRecorded struct {
-	Name   string                      `json:"name"`
-	Files  map[string]string           `json:"files"`
-	Dirs   []string                    `json:"dirs"`
-	Checks []harnessDriftCheckRecorded `json:"checks"`
+	Name    string                      `json:"name"`
+	Files   map[string]string           `json:"files"`
+	Dirs    []string                    `json:"dirs"`
+	Outside map[string]string           `json:"outside"`
+	Checks  []harnessDriftCheckRecorded `json:"checks"`
 }
 
 type harnessDriftRunRecorded struct {
@@ -110,16 +111,24 @@ func harnessDriftRenamed(path string) string {
 func harnessDriftTree(t *testing.T, files map[string]string, dirs []string) string {
 	t.Helper()
 	plugin := filepath.Join(t.TempDir(), "plugin")
-	if err := os.MkdirAll(plugin, 0o755); err != nil {
+	harnessDriftWriteTree(t, plugin, files, dirs)
+	return plugin
+}
+
+// harnessDriftWriteTree writes a recorded case's relative files and directories under root,
+// through the names decision. The outside files of a case are written against the case root.
+func harnessDriftWriteTree(t *testing.T, root string, files map[string]string, dirs []string) {
+	t.Helper()
+	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	for _, rel := range dirs {
-		if err := os.MkdirAll(filepath.Join(plugin, filepath.FromSlash(harnessDriftRenamed(rel))), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Join(root, filepath.FromSlash(harnessDriftRenamed(rel))), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
 	for rel, content := range files {
-		path := filepath.Join(plugin, filepath.FromSlash(harnessDriftRenamed(rel)))
+		path := filepath.Join(root, filepath.FromSlash(harnessDriftRenamed(rel)))
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -127,7 +136,6 @@ func harnessDriftTree(t *testing.T, files map[string]string, dirs []string) stri
 			t.Fatal(err)
 		}
 	}
-	return plugin
 }
 
 // harnessDriftCheckMatches judges one recorded check against the port's answer.
@@ -193,15 +201,49 @@ func harnessDriftRun(t *testing.T, want *harnessDriftRunRecorded) HarnessRun {
 func TestHarnessDriftChecksRecorded(t *testing.T) {
 	for _, want := range harnessDriftOracleRecorded(t).Drift {
 		t.Run(want.Name, func(t *testing.T) {
-			got := HarnessDriftChecks(harnessDriftTree(t, want.Files, want.Dirs))
-			if len(got) != len(want.Checks) {
-				t.Fatalf("checks = %+v, want the %d recorded", got, len(want.Checks))
+			plugin := harnessDriftTree(t, want.Files, want.Dirs)
+			harnessDriftWriteTree(t, filepath.Dir(plugin), want.Outside, nil)
+			wanted := want.Checks
+			if strings.HasPrefix(want.Name, "intentionally_changed_") {
+				wanted = harnessDriftIntentionallyChanged(t, want.Name)
 			}
-			for i := range want.Checks {
-				harnessDriftCheckMatches(t, got[i], want.Checks[i])
+			got := HarnessDriftChecks(plugin)
+			if len(got) != len(wanted) {
+				t.Fatalf("checks = %+v, want the %d expected", got, len(wanted))
+			}
+			for i := range wanted {
+				gotCheck, wantCheck := got[i], wanted[i]
+				if strings.Contains(want.Name, "lone_surrogate") {
+					// The recorders' toWellFormed convention: a recorded string a JSON writer carries
+					// as \"\\ud800\" reads back through encoding/json as U+FFFD, and UTF-8 encoding
+					// writes a lone surrogate the same way. The port keeps the oracle's raw WTF-8
+					// value for the writer to spell.
+					gotCheck.Evidence = strings.ToValidUTF8(gotCheck.Evidence, "\uFFFD")
+					wantCheck.Evidence = strings.ToValidUTF8(wantCheck.Evidence, "\uFFFD")
+				}
+				harnessDriftCheckMatches(t, gotCheck, wantCheck)
 			}
 		})
 	}
+}
+
+// harnessDriftIntentionallyChanged is the port's answer for a case whose oracle answer this PR
+// deliberately changes, the form hooktrust_entries_test.go uses for its intentionally_changed_
+// cases. Only one exists: a Devin review finding of kind security (port: fixed in
+// docs/port-cxc/known-defects.md), a manifest mcpServers reference that resolves outside the
+// plugin root -- the oracle reads wherever path.join lands, the port refuses it.
+func harnessDriftIntentionallyChanged(t *testing.T, name string) []harnessDriftCheckRecorded {
+	t.Helper()
+	switch name {
+	case "intentionally_changed_mcp_reference_escapes_root":
+		return []harnessDriftCheckRecorded{
+			{Name: "drift:version", Severity: "PASS", Evidence: "declared plugin version 0.4.0"},
+			{Name: "drift:mcp", Severity: "FAIL", Evidence: "mcpServers -> ../outside.json resolves outside the plugin root"},
+			{Name: "known-issues", Severity: "WARN", Evidence: "drift FAIL in [drift:mcp] \u2014 re-run `npm run build`, then inspect the named file before reinstalling"},
+		}
+	}
+	t.Fatalf("no port answer recorded for the intentionally changed case %q", name)
+	return nil
 }
 
 func TestHarnessAstGrepCheckRecorded(t *testing.T) {

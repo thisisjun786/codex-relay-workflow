@@ -103,7 +103,10 @@ func harnessDriftManifestFailure(err error) HarnessCheck {
 
 // harnessDriftMCPCheck is the drift:mcp branch (doctor.ts:556-578): the reference the manifest
 // declares must exist and parse, and the servers it declares must be countable. Everything it
-// reads is evidence only; nothing is run or written.
+// reads is evidence only; nothing is run or written. One deviation is deliberate (a Devin review
+// finding of kind security, port: fixed in docs/port-cxc/known-defects.md): a reference that
+// resolves outside the plugin root is refused instead of read, where the oracle reads wherever
+// path.join lands.
 func harnessDriftMCPCheck(pluginRoot string, manifest any) HarnessCheck {
 	// The member read cannot throw here: the version read proved the manifest is not null.
 	reference, _ := harnessDriftMember(manifest, "mcpServers")
@@ -111,7 +114,16 @@ func harnessDriftMCPCheck(pluginRoot string, manifest any) HarnessCheck {
 	if !ok || text == "" {
 		return HarnessCheck{Name: "drift:mcp", Severity: HarnessWarn, Evidence: "manifest declares no mcpServers reference"}
 	}
-	path := filepath.Join(pluginRoot, text)
+	// Node passes the decoded string to the filesystem as hookTrustEntriesFSPath holds it (a lone
+	// surrogate becomes U+FFFD), and path.join keeps a trailing separator, which existsSync then
+	// rejects for a regular file (doctor.ts:565-566); filepath.Join cleans it away, so put it back.
+	path := filepath.Join(pluginRoot, hookTrustEntriesFSPath(text))
+	if strings.HasSuffix(text, "/") && !strings.HasSuffix(path, "/") {
+		path += "/"
+	}
+	if targetEscapesRoot(pluginRoot, path) {
+		return HarnessCheck{Name: "drift:mcp", Severity: HarnessFail, Evidence: "mcpServers -> " + text + " resolves outside the plugin root"}
+	}
 	if _, err := os.Stat(path); err != nil {
 		return HarnessCheck{Name: "drift:mcp", Severity: HarnessFail, Evidence: "mcpServers -> " + text + " but file is missing"}
 	}
@@ -138,12 +150,18 @@ func harnessDriftServerCount(servers any) int {
 		return len(value)
 	case string:
 		units := 0
-		for _, r := range value {
-			if r > 0xFFFF {
+		for i := 0; i < len(value); {
+			r, size := pyjson.CodePoint(value, i)
+			switch {
+			case size == 3 && pyjson.IsSurrogate(r):
+				// A lone surrogate the reader kept as its three WTF-8 bytes is one UTF-16 unit.
+				units++
+			case r > 0xFFFF:
 				units += 2
-			} else {
+			default:
 				units++
 			}
+			i += size
 		}
 		return units
 	}
@@ -167,14 +185,15 @@ func harnessDriftNullMember(key string) error {
 }
 
 // harnessDriftReadJSON is the oracle's readFileSync + JSON.parse (doctor.ts:549, :568): the file's
-// bytes as Buffer.toString("utf8") would hold them, read by the in-package reader that keeps
-// JSON.parse's semantics (hooktrust_entries.go), or the engine error the catch clauses report.
+// bytes as Buffer.toString("utf8") holds them, parsed the way JSON.parse does, or the engine
+// error the catch clauses report. The depth is the manifest-target reader's (Deep), not the
+// hook-trust reader's shallower cap: a document JSON.parse accepts must not read as unparseable.
 func harnessDriftReadJSON(path string) (any, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	return hookTrustEntriesParse(raw)
+	return pyjson.Loads(hookTrustEntriesUTF8(raw), pyjson.LoadOptions{Surrogates: true, Deep: true})
 }
 
 // HarnessAstGrepCheck is the POSIX branch of runAstGrepCheck (doctor.ts:597-645): the ast-grep

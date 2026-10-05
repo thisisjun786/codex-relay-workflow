@@ -178,6 +178,37 @@ const driftCases = [
   },
   { name: "mcp_no_reference", files: { ".codex-plugin/plugin.json": JSON.stringify({ version: "0.4.0" }) } },
   { name: "mcp_empty_reference", files: { ".codex-plugin/plugin.json": JSON.stringify({ version: "0.4.0", mcpServers: "" }) } },
+  {
+    name: "mcp_trailing_separator",
+    files: {
+      ".codex-plugin/plugin.json": JSON.stringify({ version: "0.4.0", mcpServers: "./.mcp.json/" }),
+      ".mcp.json": JSON.stringify({ mcpServers: { one: {} } }),
+    },
+  },
+  {
+    name: "mcp_servers_lone_surrogate_string",
+    files: {
+      ".codex-plugin/plugin.json": JSON.stringify({ version: "0.4.0", mcpServers: "./.mcp.json" }),
+      ".mcp.json": '{"mcpServers":"\\ud800"}',
+    },
+  },
+  {
+    name: "mcp_reference_lone_surrogate",
+    files: {
+      ".codex-plugin/plugin.json": JSON.stringify({ version: "0.4.0", mcpServers: "./\ud800.json" }),
+      "\uFFFD.json": JSON.stringify({ mcpServers: { one: {} } }),
+    },
+  },
+  {
+    // The one case this port deliberately answers differently (a Devin review finding of kind
+    // security, port: fixed): the oracle reads wherever path.join lands, the port refuses a
+    // reference that resolves outside the plugin root. The Go test asserts the port answer.
+    name: "intentionally_changed_mcp_reference_escapes_root",
+    outside: { "outside.json": JSON.stringify({ mcpServers: { one: {}, two: {} } }) },
+    files: {
+      ".codex-plugin/plugin.json": JSON.stringify({ version: "0.4.0", mcpServers: "../outside.json" }),
+    },
+  },
 ];
 
 const driftRecorded = driftCases.map((testCase) => {
@@ -185,6 +216,7 @@ const driftRecorded = driftCases.map((testCase) => {
   const plugin = join(root, "plugin");
   mkdirSync(plugin, { recursive: true });
   writeTree(plugin, testCase.files, testCase.dirs);
+  writeTree(root, testCase.outside);
   const manifestProbe = probeManifest(plugin);
   let manifest = null;
   try {
@@ -211,6 +243,7 @@ const driftRecorded = driftCases.map((testCase) => {
     name: testCase.name,
     files: testCase.files ?? {},
     dirs: testCase.dirs ?? [],
+    outside: testCase.outside ?? {},
     checks,
   };
 });
@@ -287,7 +320,7 @@ writeFileSync(out, JSON.stringify({
   oracle: "CXC v0.2.40 (3c1459acadeb1906d97c00a598e1457327ae372d)",
   dist: "plugins/codexclaw/components/cxc-ops/dist/doctor.js",
   node: process.version,
-  note: "Each drift case holds the given files (oracle names) and the oracle checks. A check whose evidence the oracle built from a swallowed engine error carries evidencePrefix + errorClass instead of a comparable text when that error names a host path (ENOENT, EISDIR) or is a V8 parse error (SyntaxError); a swallowed V8 TypeError names no host and stays exact. Each ast-grep case holds the given files, the runner shape (status/error/signal) and the oracle answer; the Go replay maps status null + error ENOENT to a run with no status and status null + error ETIMEDOUT to a killed run (Go exit code -1), the two readings the oracle tells apart by error.code and signal. Files keep the oracle spelling so the Go test applies the names decision (skills/ast-grep -> skills/crw-ast-grep).",
+  note: "Each drift case holds the given files (oracle names; outside files are relative to the case root, one level above plugin/) and the oracle checks. A check whose evidence the oracle built from a swallowed engine error carries evidencePrefix + errorClass instead of a comparable text when that error names a host path (ENOENT, EISDIR) or is a V8 parse error (SyntaxError); a swallowed V8 TypeError names no host and stays exact. A case named intentionally_changed_ (one today: a manifest mcpServers reference that resolves outside the plugin root, refused by the port as a security fix) records the oracle answer for the record; the Go test asserts the port answer instead. Each ast-grep case holds the given files, the runner shape (status/error/signal) and the oracle answer; the Go replay maps status null + error ENOENT to a run with no status and status null + error ETIMEDOUT to a killed run (Go exit code -1), the two readings the oracle tells apart by error.code and signal. Files keep the oracle spelling so the Go test applies the names decision (skills/ast-grep -> skills/crw-ast-grep).",
   drift: driftRecorded,
   astGrep: astGrepRecorded,
 }, null, 2) + "\n");
