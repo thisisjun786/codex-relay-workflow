@@ -104,3 +104,50 @@ func TestLegacyLocalKitRefusesAnOwnerNameTarget(t *testing.T) {
 		t.Fatalf("the local path read = %+v %v, want the production local reader's answer", tip, err)
 	}
 }
+
+// legacyLocalProvokedTB is a testing.TB the guard's end-of-test check can run against without failing the real test: it records the clean-up functions and the errors the check reports. The guard's
+// check calls only Helper, Cleanup and Errorf, so the nil embedded TB is never reached.
+type legacyLocalProvokedTB struct {
+	testing.TB
+	mu      sync.Mutex
+	cleanup []func()
+	failed  []string
+}
+
+func (b *legacyLocalProvokedTB) Helper() {}
+
+func (b *legacyLocalProvokedTB) Cleanup(f func()) {
+	b.mu.Lock()
+	b.cleanup = append(b.cleanup, f)
+	b.mu.Unlock()
+}
+
+func (b *legacyLocalProvokedTB) Errorf(format string, args ...any) {
+	b.mu.Lock()
+	b.failed = append(b.failed, fmt.Sprintf(format, args...))
+	b.mu.Unlock()
+}
+
+// Criterion c1: the guard fails a test that returns its refusal to nobody: the check runs when the test ends, not when the read happens, so a caller that swallows the error (a sweep skips a tip
+// it cannot read) cannot leave the test green.
+func TestLegacyLocalGuardFailsATestThatSwallowsTheRefusal(t *testing.T) {
+	tb := &legacyLocalProvokedTB{}
+	reader := newLegacyLocalTipReader(tb)
+	calls := legacyLocalFakeGH(t)
+
+	if _, err := reader.Tip(context.Background(), "owner/repo", "dev"); !errors.Is(err, errLegacyLocalForgeTarget) {
+		t.Fatalf("the refused read = %v, want the guard's refusal", err)
+	}
+	if len(tb.failed) != 0 {
+		t.Fatalf("the guard failed the test before it ended: %v", tb.failed)
+	}
+	for _, check := range tb.cleanup {
+		check()
+	}
+	if len(tb.failed) != 1 || !strings.Contains(tb.failed[0], "owner/repo") {
+		t.Fatalf("the guard's end-of-test check reported %v, want the swallowed owner/name refusal", tb.failed)
+	}
+	if _, err := os.Stat(calls); err == nil {
+		t.Fatal("the guard's refusal reached gh")
+	}
+}
