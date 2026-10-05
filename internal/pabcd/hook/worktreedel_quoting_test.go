@@ -67,3 +67,19 @@ func TestWorktreeDelQuoteFirstWalkIsTheOracles(t *testing.T) {
 		t.Errorf("tokenize keeps the backslash: got %q, want %q", got, want)
 	}
 }
+
+// CRW-585 regression (pair evaluation of PR #557): a program string that a shell reads again has its backslash-newline pairs
+// removed by that shell even inside this shell's single quotes, so sh -c 'r<backslash><newline>m -rf ../../zk3q' runs rm on
+// the slot. The guard denied these before CRW-585 and allows them since. The neighbours name ../../other.
+func TestWorktreeDelQuoteShellProgram(t *testing.T) {
+	r := newDelRig(t)
+	for _, c := range []struct{ deny, allow string }{
+		{"sh -c 'r<BS><NL>m -rf ../../zk3q'", "sh -c 'r<BS><NL>m -rf ../../other'"},
+		{"bash -c 'r<BS><NL>m -rf ../../zk3q'", "bash -c 'r<BS><NL>m -rf ../../other'"},
+		{"eval 'r<BS><NL>m -rf ../../zk3q'", "eval 'r<BS><NL>m -rf ../../other'"},
+	} {
+		r.denied(t, worktreeDelSpell(c.deny), "rm -r ../../zk3q")
+		r.allowed(t, worktreeDelSpell(c.allow))
+	}
+	r.intact(t)
+}
