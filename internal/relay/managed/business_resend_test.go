@@ -110,25 +110,68 @@ func TestBusinessResendHostHistoryWithholds(t *testing.T) {
 		reason string
 	}{
 		{"another", []any{map[string]any{"id": "standby"}, map[string]any{"id": "other"}}, nil, nil, "business_identity_unobserved"},
+		{"another-more", []any{map[string]any{"id": "standby"}, map[string]any{"id": "other"}}, "more", nil, "business_identity_unobserved"},
+		{"another-first-more", []any{map[string]any{"id": "other"}, map[string]any{"id": "standby"}}, "more", nil, "business_identity_unobserved"},
 		{"wrong-anchor", []any{map[string]any{"id": "other"}}, nil, nil, "business_identity_unobserved"},
 		{"empty", []any{}, nil, nil, "lifecycle_unknown"},
 		{"malformed", "bad", nil, nil, "lifecycle_unknown"},
 		{"missing-id", []any{map[string]any{}}, nil, nil, "lifecycle_unknown"},
+		{"missing-id-after-standby", []any{map[string]any{"id": "standby"}, map[string]any{}}, nil, nil, "lifecycle_unknown"},
+		{"malformed-before-standby", []any{42, map[string]any{"id": "standby"}}, nil, nil, "lifecycle_unknown"},
+		{"missing-id-before-foreign-more", []any{map[string]any{}, map[string]any{"id": "other"}}, "more", nil, "business_identity_unobserved"},
+		{"foreign-before-missing-id-more", []any{map[string]any{"id": "other"}, map[string]any{}}, "more", nil, "business_identity_unobserved"},
+		{"duplicate-standby", []any{map[string]any{"id": "standby"}, map[string]any{"id": "standby"}}, nil, nil, "lifecycle_unknown"},
 		{"more", []any{map[string]any{"id": "standby"}}, "more", nil, "lifecycle_unknown"},
 		{"bad-cursor", []any{map[string]any{"id": "standby"}}, 3, nil, "lifecycle_unknown"},
 		{"read-error", nil, nil, errors.New("observation failed"), "lifecycle_unknown"},
 		{"no-rollout", nil, nil, errors.New("thread/turns/list: no rollout found"), "lifecycle_unknown"},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
-			k, _, _ := businessResendKit(t)
+			k, business, _ := businessResendKit(t)
 			k.start.Adapter = &businessResendObservationApp{Adapter: k.host, list: func() (map[string]any, error) {
 				return map[string]any{"data": scenario.rows, "nextCursor": scenario.cursor}, scenario.err
 			}}
-			if got := k.run(); got["reason"] != scenario.reason {
-				t.Fatalf("history refusal: %v", got)
+			state := "incomplete"
+			if scenario.reason == "business_identity_unobserved" {
+				state = "refused"
 			}
-			if len(k.host.sends) != 0 {
+			k.expect(k.run(), state, scenario.reason, "")
+			if len(k.host.sends) != 0 || k.host.sent != 0 || k.host.operations[businessResendID("managed-1", business, 1)] != nil {
 				t.Fatal("unobserved/foreign history consumed operation")
+			}
+		})
+	}
+}
+
+func TestBusinessResendPaginatedFinalGuardWithholds(t *testing.T) {
+	for _, scenario := range []struct {
+		name   string
+		rows   []any
+		reason string
+	}{
+		{"another-more", []any{map[string]any{"id": "standby"}, map[string]any{"id": "other"}}, "business_identity_unobserved"},
+		{"another-first-more", []any{map[string]any{"id": "other"}, map[string]any{"id": "standby"}}, "business_identity_unobserved"},
+		{"standby-more", []any{map[string]any{"id": "standby"}}, "lifecycle_unknown"},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			k, business, _ := businessResendKit(t)
+			final := false
+			k.start.Adapter = &businessResendObservationApp{Adapter: k.host, list: func() (map[string]any, error) {
+				if final {
+					return map[string]any{"data": scenario.rows, "nextCursor": "more"}, nil
+				}
+				return map[string]any{"data": []any{map[string]any{"id": "standby"}}}, nil
+			}}
+			k.host.beforeSend = func(in SendRequest) {
+				final = true
+				withhold, err := in.BeforeStart(t.Context())
+				if err != nil || withhold["code"] != scenario.reason {
+					t.Fatalf("final history guard: %v %v", withhold, err)
+				}
+			}
+			k.expect(k.run(), "incomplete", "business_failed", "")
+			if !final || k.host.sent != 0 || k.host.operations[businessResendID("managed-1", business, 1)] != nil {
+				t.Fatal("final history guard consumed operation or was not reached")
 			}
 		})
 	}
