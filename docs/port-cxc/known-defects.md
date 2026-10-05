@@ -1169,6 +1169,46 @@ Source: `plugins/codexclaw/components/subagent-config/src/spawn-attach-hook.ts` 
 - `JSON.parse` reads any depth, but `JSON.stringify` throws a RangeError near 4,458 levels at Node 24's default stack (9,103 with a 2 MB stack), which the hook's outer catch turns into no output, even for a spawn that would have been allowed; the threshold depends on the stack size. The port reads any depth as well (a document nested past pyjson's 10,000 levels is checked against the JSON grammar by an explicit-stack scan, which a recursive parser could not do for the 2 million levels 4 MiB holds, and cut to its first 4,402 levels), so a subagent that carries a deep junk field is still denied and a malformed deep document prints nothing; it prints nothing for a `tool_input` nested past 4,400 levels, so a depth in 4,400-4,458 differs, and the writer is not recursive past that bound, because a Go stack overflow cannot be recovered (recorded in "deep nesting" and "deep documents"; `TestSpawnHookRouteMaximumNesting` runs the deepest payload 4 MiB holds); port: kept.
 - The 256 KiB cap on the skill blocks of an items spawn is measured on the renamed text, whose guard and skill lines are shorter than the oracle's, so the exact edge differs by the length difference; the port finds its own edge and checks the oracle's outcomes at it (`itemsCap`), and far from the edge the answers are identical (hash steps); port: kept (a consequence of the name substitution).
 - A role's `promptOverride` that holds a lone surrogate escape is read as U+FFFD by the role store (the existing note in `internal/role/role.go`, I8), so a message the oracle would write with the escape is written with U+FFFD; the surrogate cases of this port use messages, not role strings; port: kept.
+
+## CRW-615 — the doctor install checks
+
+Source: `plugins/codexclaw/components/cxc-ops/src/doctor.ts` at v0.2.40 (commit 3c1459ac), through
+the recorder and replay in `internal/runtime/doctor/testdata/harness/install/`.
+
+- `cxc doctor` aborts the whole report with an uncaught `EACCES` when the project's
+  `.codexclaw/sessions` directory exists but cannot be enumerated, instead of reporting a WARN
+  (source `doctor.ts:171`; the recorded case `unreadable` holds the thrown message, and the CLI's
+  own top-level boundary prints "cxc-ops error: EACCES: permission denied, scandir '<path>'" with
+  exit 1); the port keeps the abort as a panic at the same seam (`HarnessPabcdCheck`), which the
+  CLI boundary of the assembly issue catches as `cli.ts` does; port: kept.
+
+## CRW-594 — a failed divergence candidate save (port-introduced defect, fixed)
+
+- The candidate add branch printed Go's `*os.PathError` spelling where the oracle prints the Node
+  runtime's error message: with a regular file at the `--cwd` path, so `<cwd>/.crw` cannot be
+  created, the port answered `divergence candidate add: mkdir <cwd>/.crw: not a directory` where the
+  oracle answers `divergence candidate add: ENOTDIR: not a directory, mkdir '<cwd>/.crw'`, exit 1,
+  nothing written (source `pabcd-state/src/divergence-cli.ts:153`, the `err.message` of the
+  `mkdirSync` failure at `divergence.ts:197`; recorded with Node 24 for the PR, and no corpus fixture
+  drives a failed candidate save). `internal/pabcd/cli/nodeErrorMessage` now spells a
+  `*os.PathError` whose errno `planErrno` names as `<NAME>: <description>, <op> '<path>'`, with the
+  path left out for write and close, and `planFailure` and the candidate add branch both call it, so
+  plan init's output stays byte-identical (pinned by the recorded cases of `plan_test.go`);
+  port: fixed (port-introduced, not an oracle defect: the oracle text is the reference and the port
+  now matches it; no recorded case is retagged).
+- The table the conversion reads named thirteen errnos and left EFBIG out, so a candidate write past
+  RLIMIT_FSIZE still answered `divergence candidate add: write <archive>: file too large` where the
+  oracle prints `divergence candidate add: EFBIG: file too large, write` (both recorded with a
+  512-byte limit and Node 24 for the oracle; the limit needs a lowered `ulimit -f`, so no corpus
+  fixture reaches it). EFBIG with its verified description is added to `planErrno`, and
+  `TestDivergenceCliCandidateAddReportsTheFileSizeLimitFailure` pins the end-to-end text; the other
+  plan init outputs are unchanged. port: fixed (port-introduced, the same class as the line above).
+- The divergence CLI's other error path keeps Go's spelling: the mode write (the oracle's one
+  uncaught path, `divergence-cli.ts:115`) is reported by its caller as `crw cli failed: <PathError
+  text>` where the oracle prints `codexclaw cli failed: <err.message>` (`src/cli.ts:530`; the
+  difference in the reporting path itself is the divergence-CLI section's line above), and this
+  conversion is not applied there, because this issue's criteria keep every other divergence output
+  unchanged; port: kept (follow-up: apply the same conversion at that boundary with its own test).
 ## Found by the dispatch lock mutual exclusion (CRW-635)
 
 Source: `internal/role/dispatch_ledger.go` (`lockWith` and its release) and `internal/role/dispatch_lock_clear.go` (`dispatchLockClear`) at the base of CRW-635. Code of this repository with no oracle counterpart: the oracle's record lock has no stale-lock path and no clear (`fallback-dispatch.ts:137-139` at v0.2.40), so no recorded case drives either line and none is retagged.

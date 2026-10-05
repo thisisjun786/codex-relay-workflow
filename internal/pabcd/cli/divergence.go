@@ -329,7 +329,7 @@ func divergenceCliCandidateAdd(cwdOut, sessionID string, argv []string, asJSON b
 		Status: &status, Worktree: worktree, ChangeClass: changeClass, KilledAtPhase: killedAtPhase,
 	})
 	if err != nil {
-		return DivergenceCliResult{Output: "divergence candidate add: " + err.Error(), Code: 1}
+		return DivergenceCliResult{Output: "divergence candidate add: " + nodeErrorMessage(err), Code: 1}
 	}
 	if asJSON {
 		return DivergenceCliResult{Output: metric.EncodeCandidate(candidate), Code: 0}
