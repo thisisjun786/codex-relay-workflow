@@ -23,15 +23,18 @@ import crypto from 'node:crypto';
 import assert from 'node:assert/strict';
 import { pathToFileURL } from 'node:url';
 
-const [oracle, scratch, output] = process.argv.slice(2);
-if (!oracle || !scratch || !output) {
+const [oracle, scratchArg, outputArg] = process.argv.slice(2);
+if (!oracle || !scratchArg || !outputArg) {
   console.error('usage: record-hook.mjs <oracle-root> <scratch> <output>');
   process.exit(2);
 }
 const srcDir = path.join(oracle, 'plugins/codexclaw/components/subagent-config/src');
 const hook = await import(pathToFileURL(path.join(srcDir, 'spawn-attach-hook.ts')).href);
 const MAX = 256 * 1024;
+const scratch = path.resolve(scratchArg);
+const output = path.resolve(outputArg);
 fs.mkdirSync(scratch, { recursive: true });
+process.chdir(scratch); // a relative cwd in a payload resolves inside the scratch tree, never against the invoking directory
 
 const FOLDERS = ['dev', 'search', 'dev-testing'];
 const BODY = f => '---\nname: cxc-' + f + '\ndescription: "Synthetic ' + f + ' skill for hook oracle tests."\n---\n# ' + f + '\nUse $cxc-search only if the task calls for it.\n';
@@ -89,10 +92,17 @@ function run(ctx, spec, previous) {
   const real = realized(ctx, input);
   const raw = hook.runSpawnAttachHook(JSON.stringify(real));
   for (const m of raw.matchAll(GRANT)) if (!ctx.nonces.includes(m[1])) ctx.nonces.push(m[1]);
-  const step = { seam: spec.seam, input: stored(ctx, real), oracle: { sha256: crypto.createHash('sha256').update(raw).digest('hex'), bytes: Buffer.byteLength(raw) } };
+  // the hash is of the raw output with the scratch paths and minted nonces replaced, so a re-run reproduces it
+  const stable = ctx.nonces.reduce((o, n, i) => o.replaceAll(n, '{N' + (i + 1) + '}'), raw.replaceAll(ctx.real, '{SKILLS}').replaceAll(ctx.dirs.ws, '{WS}'));
+  const step = { seam: spec.seam, input: stored(ctx, real), oracle: { sha256: crypto.createHash('sha256').update(stable).digest('hex'), bytes: Buffer.byteLength(stable) } };
   if (spec.note) step.note = spec.note;
   if (spec.reapply) step.reapply = true;
-  if (raw === '') {
+  if (raw === '' && spec.changed) {
+    step.kind = 'deny';
+    step.expected = rename(DENY_RAW);
+    step.classification = 'intentionally-changed';
+    step.reason = spec.changed;
+  } else if (raw === '') {
     step.kind = 'empty';
     step.classification = 'identical';
   } else {
@@ -108,12 +118,19 @@ function run(ctx, spec, previous) {
   }
   const want = { 'stop-empty': 'empty', 'stop-deny': 'deny', assembled: step.kind === 'empty' ? 'empty' : 'allow' }[spec.seam];
   assert.equal(step.kind, want, ctx.name + ': seam annotation ' + spec.seam + ' does not match the oracle output ' + step.kind);
+  if (spec.changed) assert.equal(raw, '', ctx.name + ': a changed answer replaces an empty oracle output');
   if (step.kind === 'empty' && spec.seam === 'assembled') assert.ok(spec.reapply, ctx.name + ': an empty output that assembles is a reapplication');
   if (spec.files) step.grantFiles = countFiles(ctx.tmp);
   if (spec.tmpExists) step.tmpExists = fs.existsSync(path.dirname(ctx.tmp)) && fs.existsSync(ctx.tmp);
   return { step, raw };
 }
 
+// The oracle's own deny answer, the text a port-changed step is expected to give.
+const DENY_RAW = (() => {
+  const ctx = setup('deny sample');
+  return hook.runSpawnAttachHook(JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'spawn_agent', session_id: 's', cwd: ctx.dirs.ws, agent_id: 'a', tool_input: { message: 'x' } }));
+})();
+assert.ok(DENY_RAW.includes('deny'));
 const cases = [];
 function record(name, test, env, steps) {
   const ctx = setup(name, env);
@@ -279,7 +296,7 @@ for (const [unit, delta] of [['a', 0], ['a', 1], ['\u{1F600}', 0], ['\u{1F600}',
   const n = MAX - 2 - blockLen + delta;
   const message = unit.length === 1 ? unit.repeat(n) : unit.repeat(Math.floor(n / 2)) + 'a'.repeat(n % 2);
   assert.equal(message.length, n);
-  const raw = hook.runSpawnAttachHook(JSON.stringify(T({ task_name: 't', message })));
+  const raw = hook.runSpawnAttachHook(JSON.stringify(realized(capCtx, T({ task_name: 't', message }))));
   const updated = JSON.parse(raw).hookSpecificOutput.updatedInput.message;
   capCases.push({ unit, delta, appended: updated.includes('[CXC-SKILL-AFFORDANCE]') });
 }
@@ -294,8 +311,8 @@ assert.deepEqual(capCases.map(c => c.appended), [true, false, true, false]);
   const M = '[CXC-SUBSPAWN-GRANT:' + 'b'.repeat(64) + ']';
   const noCwd = o => ({ hook_event_name: 'PreToolUse', tool_name: 'spawn_agent', session_id: 'rec-s1', ...o });
   record('unreadable working directory', SRC + ':396,888; known-defects CRW-612 line 1068', { unreadableCwd: true, tmp: 'missing' }, [
-    st('stop-empty', noCwd({ ...CHILD, cwd: 'rel', tool_input: { message: M + ' go' } }), { note: 'one marker, relative cwd: grantScope throws, the outer catch prints nothing' }),
-    st('stop-empty', noCwd({ ...CHILD, tool_input: { message: M + ' go' } }), { note: 'one marker, missing cwd' }),
+    st('stop-deny', noCwd({ ...CHILD, cwd: 'rel', tool_input: { message: M + ' go' } }), { changed: 'Security fix (port: fixed): one grant marker with a relative cwd makes the oracle throw out of the grant check, and its outer catch prints nothing, which allows the subagent to recurse; the port denies it.', note: 'one marker, relative cwd: grantScope throws, the oracle prints nothing' }),
+    st('stop-deny', noCwd({ ...CHILD, tool_input: { message: M + ' go' } }), { changed: 'Security fix (port: fixed): as for a relative cwd, the oracle allows the recursion when the grant scope cannot be resolved; the port denies it.', note: 'one marker, missing cwd' }),
     st('stop-deny', noCwd({ ...CHILD, cwd: '{WS}', tool_input: { message: M + ' go' } }), { note: 'one marker, absolute cwd: no throw, no grant' }),
     st('stop-deny', noCwd({ ...CHILD, tool_input: { message: 'no marker' } }), { note: 'no marker: denied before grantScope' }),
     st('stop-deny', noCwd({ ...CHILD, tool_input: { message: M + M } }), { note: 'two markers' }),

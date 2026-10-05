@@ -679,8 +679,8 @@
       }
      },
      "oracle": {
-      "sha256": "cfb179a54dec45d6de55449b0ea5a0e4cf15aa2937af82cec0a0c81335ef320a",
-      "bytes": 1794
+      "sha256": "c765b7c93ad1910876d7760c132e9010c345bf165a015f867fab96749dfe8d68",
+      "bytes": 1642
      },
      "classification": "intentionally-changed",
      "reason": "CRW names: guard and skill markers, skill and namespace prefixes, command wording.",
@@ -711,8 +711,8 @@
       }
      },
      "oracle": {
-      "sha256": "287805fb67075b9ca49e6db11fdab77539f828a061b3e1e32082275ad7dc108f",
-      "bytes": 2002
+      "sha256": "300eb36554aacc27acb182c88a73d808b29c8133433c5bbd3c04f7320b7e93cd",
+      "bytes": 1910
      },
      "classification": "intentionally-changed",
      "reason": "CRW names: guard and skill markers, skill and namespace prefixes, command wording.",
@@ -790,8 +790,8 @@
       }
      },
      "oracle": {
-      "sha256": "95fe6bfcbb89094c2cc596c15f731fa3a415c9ebe63d32c7c77f18dc5755ea95",
-      "bytes": 891
+      "sha256": "14ed79636fc387cc24f187ba38748c53a6d70beaafd2b3839cfcc09114fad70b",
+      "bytes": 831
      },
      "classification": "intentionally-changed",
      "reason": "CRW names: guard and skill markers, skill and namespace prefixes, command wording.",
@@ -917,8 +917,8 @@
       }
      },
      "oracle": {
-      "sha256": "fd50322bfd59102eb222a87968463b722888b8b1b45f92550bdbae5f658ed382",
-      "bytes": 806
+      "sha256": "3167f466622cb4f3f9b5d61529b9642a6782085591125e67525cd034cf2f52c5",
+      "bytes": 746
      },
      "classification": "intentionally-changed",
      "reason": "CRW names: guard and skill markers, skill and namespace prefixes, command wording.",
@@ -984,8 +984,8 @@
       }
      },
      "oracle": {
-      "sha256": "b5de9ba9ba3e4431666f4f331c5754c5505f7042f37d4dd730a8e462ee23904e",
-      "bytes": 1785
+      "sha256": "4d59247cab4470678fe5ed46496cf4d352483e2ea15b28d99cebc6a80e94157c",
+      "bytes": 1621
      },
      "classification": "intentionally-changed",
      "reason": "CRW names: guard and skill markers, skill and namespace prefixes, command wording.",
@@ -1014,8 +1014,8 @@
       }
      },
      "oracle": {
-      "sha256": "f80a3cb465c2dc7869d63690594cd482756a30d0f4108e9147628ffece9eb60f",
-      "bytes": 2810
+      "sha256": "75a9930d0501184e895c2283553608e8be6a05b690f4b196c4840faa706b5064",
+      "bytes": 2706
      },
      "note": "the second pass has no token and no grant, so its plain guard does not match the coordinator guard in front: the guards stack",
      "reapply": true,
@@ -1109,8 +1109,8 @@
       }
      },
      "oracle": {
-      "sha256": "17ffda1eb2100511ee4814ca07a36627fa833c23544457f15f45d78d609c28c0",
-      "bytes": 920
+      "sha256": "8c8524cde9b398d97aee70ef467d645c7834899e9079ca7b4d18abba0b6d9986",
+      "bytes": 881
      },
      "classification": "intentionally-changed",
      "reason": "CRW names: guard and skill markers, skill and namespace prefixes, command wording.",
@@ -1135,8 +1135,8 @@
       }
      },
      "oracle": {
-      "sha256": "4227779eac47780e512c2218696962a7d8fc7e29de648595d8f7b778e16c32a7",
-      "bytes": 1173
+      "sha256": "dc24f1deb0e0f4adfc9b25c0409e24f983f5c31bffdcc51f7edaff2ad1a4e15e",
+      "bytes": 1095
      },
      "classification": "intentionally-changed",
      "reason": "CRW names: guard and skill markers, skill and namespace prefixes, command wording.",
@@ -1389,8 +1389,8 @@
       }
      },
      "oracle": {
-      "sha256": "7ed15e9eb7fea05d566a05fbbf3bc2d947f907a38a85f75a61e9f1c93d11173d",
-      "bytes": 1342
+      "sha256": "63fead31c9cbb16c1d2fcb085578436504f3386bc737a59d06e8404e2957a73f",
+      "bytes": 1231
      },
      "note": "each skill is inlined once, after the last text item",
      "classification": "intentionally-changed",
@@ -1481,8 +1481,8 @@
       }
      },
      "oracle": {
-      "sha256": "ce1754bfeb2ff9dba48995c4478698054e51e8cfd45d27584f37c7e50b85bda9",
-      "bytes": 888
+      "sha256": "e887f556bc40dd83388f2a5b858f893b5d1207a48d18d4b44257aa04eb7fac78",
+      "bytes": 828
      },
      "note": "whitespace is preserved; the token and marker are removed",
      "classification": "intentionally-changed",
@@ -1753,8 +1753,8 @@
       }
      },
      "oracle": {
-      "sha256": "43e0a3a417a2b43cce91a89ee2f3aaf8ddba9ed31d1cc42239cc8f77c92f74ca",
-      "bytes": 1050
+      "sha256": "31ff193bd4e3da26a943964228575ca286549e582b414b17aaf740faf9467838",
+      "bytes": 976
      },
      "note": "a closed block hides its folder from inlining",
      "classification": "intentionally-changed",
@@ -2100,8 +2100,8 @@
       }
      },
      "oracle": {
-      "sha256": "254ba8e12a826fabd991b65bf30a84aa814fd77afe1a0856b43b5561a0a67eac",
-      "bytes": 1988
+      "sha256": "789cd6c4bef7c4c40275ff1bcbd6bcc79a8ee470cc50ea11044c54e5aded5a6e",
+      "bytes": 1904
      },
      "note": "short gAAAA prefix: plaintext path, guard and affordance attached",
      "classification": "intentionally-changed",
@@ -2130,8 +2130,8 @@
       }
      },
      "oracle": {
-      "sha256": "45094b01a978e1c8b9ea8ce6253dc9d3bbe96fb2ddc9e53477f5cad58717c79f",
-      "bytes": 1987
+      "sha256": "9c9343c0e8952d4e71962689fab64e32e8f35c5c84fbe8f5cf7de9701d7c9453",
+      "bytes": 1903
      },
      "note": "impossible base64 length: plaintext path, guard and affordance attached",
      "classification": "intentionally-changed",
@@ -2160,8 +2160,8 @@
       }
      },
      "oracle": {
-      "sha256": "22915878e99ed9c626db8a02c59b88092e2dc69495543e12ed947e1a1b588fce",
-      "bytes": 2082
+      "sha256": "483b14feaa4e564fd78ffae4cf00b0b017343c4220b76db66f4cceb78709f669",
+      "bytes": 1998
      },
      "note": "wrong version byte: plaintext path, guard and affordance attached",
      "classification": "intentionally-changed",
@@ -2190,8 +2190,8 @@
       }
      },
      "oracle": {
-      "sha256": "18958cd2424a3344c82f85e2ec7cd6628566b1ab25e4d658c248497e176591af",
-      "bytes": 2062
+      "sha256": "0bf145fc554ce5df47339c0791cb0fdc28bcef4ff826746a06ab0559299edb12",
+      "bytes": 1978
      },
      "note": "truncated frame: plaintext path, guard and affordance attached",
      "classification": "intentionally-changed",
@@ -2220,8 +2220,8 @@
       }
      },
      "oracle": {
-      "sha256": "1a66663a5252783ed4977932c264b3d3418fb458e1743eebf8fb2e5ee78b9d29",
-      "bytes": 2058
+      "sha256": "1d91d8d75b89fa6232fd2e25114440697203fe22c32d3b51566716678ca267e5",
+      "bytes": 1974
      },
      "note": "empty ciphertext: plaintext path, guard and affordance attached",
      "classification": "intentionally-changed",
@@ -2250,8 +2250,8 @@
       }
      },
      "oracle": {
-      "sha256": "518971e0057c5285dea846d5363377603452c42c322fe7554484ce18a07aafad",
-      "bytes": 2090
+      "sha256": "cd45dd3e70d666c6c6f170e03161601333e802521a9a987bf8128b1d613093d2",
+      "bytes": 2006
      },
      "note": "non-16-byte-block ciphertext: plaintext path, guard and affordance attached",
      "classification": "intentionally-changed",
@@ -2280,8 +2280,8 @@
       }
      },
      "oracle": {
-      "sha256": "0c1e9370fc6ecbf77d6f2c582003bf3e085fef32a55a6f8c1c104768d379f085",
-      "bytes": 2083
+      "sha256": "a89d5789cf34adfb890266e96b60ae109cb32877e06a8a2865dd0329c596c8b4",
+      "bytes": 1999
      },
      "note": "embedded whitespace: plaintext path, guard and affordance attached",
      "classification": "intentionally-changed",
@@ -2310,8 +2310,8 @@
       }
      },
      "oracle": {
-      "sha256": "3ce0796e329789a9a1989997b715ea79bc5e91ee88ad0f2d5bf662287eacaa39",
-      "bytes": 2082
+      "sha256": "5848e9f53eca438ff12607a60e276585f05fd7b8707a8d8e82395255ce20acc5",
+      "bytes": 1998
      },
      "note": "standard alphabet characters: plaintext path, guard and affordance attached",
      "classification": "intentionally-changed",
@@ -2340,8 +2340,8 @@
       }
      },
      "oracle": {
-      "sha256": "e10c0fee305cb5f16b738e3d1ac38706ebd8744df5b7b70e88360da7de21c66d",
-      "bytes": 2081
+      "sha256": "9b40390f7b09f40097ebb93dca137a59850a7cf531395357f6bb2c541f5b2c48",
+      "bytes": 1997
      },
      "note": "partial padding: plaintext path, guard and affordance attached",
      "classification": "intentionally-changed",
@@ -2370,8 +2370,8 @@
       }
      },
      "oracle": {
-      "sha256": "7b5c25984194ed8321664a63b042dc5195ced29cbbdbce5ef2bb5e52f7a5065e",
-      "bytes": 2083
+      "sha256": "ef981d42e87e9d4ac9bb32dcc3ec1a7938fa9ef8595676612d96228a5491596d",
+      "bytes": 1999
      },
      "note": "excess padding: plaintext path, guard and affordance attached",
      "classification": "intentionally-changed",
@@ -2400,8 +2400,8 @@
       }
      },
      "oracle": {
-      "sha256": "6e9ebf25e733ff447bb5b93c9ba2f339b86a249e133a11339d0c5a336472c78d",
-      "bytes": 2082
+      "sha256": "02a2a3ab08cf97a30f425a96b8c41eb54b42cb63be5a58f5b0669c07452e6e95",
+      "bytes": 1998
      },
      "note": "trailing newline: plaintext path, guard and affordance attached",
      "classification": "intentionally-changed",
@@ -2430,8 +2430,8 @@
       }
      },
      "oracle": {
-      "sha256": "b15637b580175dc7f0ed89c3ddc52b8b2547e5e92ee78a862eefb752696ac724",
-      "bytes": 2083
+      "sha256": "fdafb840626028de58a97f451e73b4d92e8f3afbd2d35c8d690cf1bdc34e1eb9",
+      "bytes": 1999
      },
      "note": "mid-string padding: plaintext path, guard and affordance attached",
      "classification": "intentionally-changed",
@@ -2460,8 +2460,8 @@
       }
      },
      "oracle": {
-      "sha256": "6ac2c7de5d64adb846d6a6c07ba05ffddf3448e3c03dced8049554c0ecc2458f",
-      "bytes": 2082
+      "sha256": "eee2a0845cb205bf7b09a5d179d1704dccf4673d7b9619b1295e4bbd2995d44f",
+      "bytes": 1998
      },
      "note": "nonzero unused pad bits: plaintext path, guard and affordance attached",
      "classification": "intentionally-changed",
@@ -2502,8 +2502,8 @@
       }
      },
      "oracle": {
-      "sha256": "90f1cb3d702df61f234604176908cf03c195a6ba36fce2435bc8d64cda46f10f",
-      "bytes": 2005
+      "sha256": "85885eadb57f6720969afc616f9aa9115f39661488da38db04bfef71308c6c65",
+      "bytes": 1925
      },
      "note": "affordance rides after the task text",
      "classification": "intentionally-changed",
@@ -2532,8 +2532,8 @@
       }
      },
      "oracle": {
-      "sha256": "0eaac4f5e5c19a49c8f8655e8193e821698cdcaaa57ac5cabb3a384746b4b792",
-      "bytes": 1523
+      "sha256": "c55ef213036ad6bd522c86793a192614f7160f8e6a9b8cc3b497fadd543383c2",
+      "bytes": 1483
      },
      "note": "inlined, no affordance",
      "classification": "intentionally-changed",
@@ -2560,8 +2560,8 @@
       }
      },
      "oracle": {
-      "sha256": "81511f6de709ba0f8e4a92ad2f145a81215d9fa23f273e99b055854e937680ef",
-      "bytes": 1487
+      "sha256": "4bc1422e53589d4e0c7ebdfc3f67c184320c44295f1883e0efd4ef7c1e3b2675",
+      "bytes": 1447
      },
      "note": "the hook name proves v2 on a marker-less payload",
      "classification": "intentionally-changed",
@@ -2586,8 +2586,8 @@
       }
      },
      "oracle": {
-      "sha256": "5dc710d9ee4878db875bd7b7f41124a0626122d61eeda97a65ce9a07d6867895",
-      "bytes": 1947
+      "sha256": "3c57eedca161ed6d7f08f07efe580acaa205faeb9d0596168bb6223a2161d75d",
+      "bytes": 1867
      },
      "classification": "intentionally-changed",
      "reason": "CRW names: guard and skill markers, skill and namespace prefixes, command wording.",
@@ -2611,8 +2611,8 @@
       }
      },
      "oracle": {
-      "sha256": "5dc710d9ee4878db875bd7b7f41124a0626122d61eeda97a65ce9a07d6867895",
-      "bytes": 1947
+      "sha256": "3c57eedca161ed6d7f08f07efe580acaa205faeb9d0596168bb6223a2161d75d",
+      "bytes": 1867
      },
      "classification": "intentionally-changed",
      "reason": "CRW names: guard and skill markers, skill and namespace prefixes, command wording.",
@@ -2637,8 +2637,8 @@
       }
      },
      "oracle": {
-      "sha256": "873f570a0be2026cabc010788ee30b5cd499d2bb02493a1399b8f42511cc4b92",
-      "bytes": 1990
+      "sha256": "e8773b7212d52beeb6ac9a4490c4d22fe0564f5f59d339b1dfc55f38f1344beb",
+      "bytes": 1910
      },
      "note": "a bare marker cannot dedupe the full guard",
      "classification": "intentionally-changed",
@@ -2687,8 +2687,8 @@
       }
      },
      "oracle": {
-      "sha256": "731d8401d302e3948822b8cefaa58c0aee43b6cdd470e3dd09fe157e82527549",
-      "bytes": 1550
+      "sha256": "d7dbb6cf55b1ee22d4cc3da5c9122155b38e2302bfed7896c9adb755e6b0b6d2",
+      "bytes": 1510
      },
      "classification": "intentionally-changed",
      "reason": "CRW names: guard and skill markers, skill and namespace prefixes, command wording.",
@@ -2715,8 +2715,8 @@
       }
      },
      "oracle": {
-      "sha256": "565ff55a871ab0f67e61de8b830862396b434af1ee1333e1e079ab59cf72fdff",
-      "bytes": 2126
+      "sha256": "2bdf1d4ef18077696a55ff3b40373af04ac13818c0eabcb502d873df35024c0c",
+      "bytes": 2006
      },
      "note": "a marker inside a closed block does not suppress the affordance",
      "classification": "intentionally-changed",
@@ -2772,8 +2772,8 @@
       }
      },
      "oracle": {
-      "sha256": "cc3f30b2e5adeabb40be903b5268d686914d8c7620d35e5cf3abdd0eaedbdb64",
-      "bytes": 1989
+      "sha256": "59328759b643137be9086a741c3b9020e47a127e907a468500327f9d20ccc6e1",
+      "bytes": 1909
      },
      "classification": "intentionally-changed",
      "reason": "CRW names: guard and skill markers, skill and namespace prefixes, command wording.",
@@ -2800,8 +2800,8 @@
       }
      },
      "oracle": {
-      "sha256": "8ee91e8f91792ca706576c0a84df9f437e8e9499aeb072d02b53026ef94dd5e0",
-      "bytes": 1989
+      "sha256": "5c09d893090167b3cecba8607f75f6b2a069a40509d7db3299d3d42931902833",
+      "bytes": 1909
      },
      "classification": "intentionally-changed",
      "reason": "CRW names: guard and skill markers, skill and namespace prefixes, command wording.",
@@ -2827,8 +2827,8 @@
       }
      },
      "oracle": {
-      "sha256": "43485618ee4dd59783c46d108c29c1cb532fdb7a2181f8906b7fc70a8877ec55",
-      "bytes": 1988
+      "sha256": "acf7010b8c1d1efa9ef1cca22db03abcedeccc5822ff510e2dda3d34c8f14fa2",
+      "bytes": 1908
      },
      "classification": "intentionally-changed",
      "reason": "CRW names: guard and skill markers, skill and namespace prefixes, command wording.",
@@ -3217,8 +3217,8 @@
       }
      },
      "oracle": {
-      "sha256": "1418f06f2228a5cb8e4ca5afe2a3d7f9b9b60a388b7909ccee9abe5ea4f6d41c",
-      "bytes": 2094
+      "sha256": "9193b3a1f4d6c4edc55df65075a8eb3059ad77f58b26f7cb370b562134c4a4da",
+      "bytes": 1978
      },
      "classification": "intentionally-changed",
      "reason": "CRW names: guard and skill markers, skill and namespace prefixes, command wording.",
@@ -3261,8 +3261,8 @@
       }
      },
      "oracle": {
-      "sha256": "809696554b6dc7116a929cf19bc7e5840210d3cc9b16a374bacbb993119ae971",
-      "bytes": 1517
+      "sha256": "d32d1d6ad406cf8da8e8a67fda6557443536fdba0663ba15b3c5a8824b199ac3",
+      "bytes": 1463
      },
      "classification": "intentionally-changed",
      "reason": "CRW names: guard and skill markers, skill and namespace prefixes, command wording.",
@@ -3300,8 +3300,8 @@
       }
      },
      "oracle": {
-      "sha256": "015aff121c73008b4d0fdd339e67ef5862f048e6c90a7ea54b36f7fa94cfa0ed",
-      "bytes": 1515
+      "sha256": "d32d1d6ad406cf8da8e8a67fda6557443536fdba0663ba15b3c5a8824b199ac3",
+      "bytes": 1463
      },
      "classification": "intentionally-changed",
      "reason": "CRW names: guard and skill markers, skill and namespace prefixes, command wording.",
@@ -3339,8 +3339,8 @@
       }
      },
      "oracle": {
-      "sha256": "7b31322c2c1e2219c9c2da4ec33e78fac97c3166321eb40536d3b799d44a068c",
-      "bytes": 1753
+      "sha256": "57cdb189add6acde8018f5e3b2937c1f991a39aee7d21fb93797aef1e11ef92e",
+      "bytes": 1601
      },
      "classification": "intentionally-changed",
      "reason": "CRW names: guard and skill markers, skill and namespace prefixes, command wording.",
@@ -3370,8 +3370,8 @@
       }
      },
      "oracle": {
-      "sha256": "5428b20e477a5d69de3ff6124b5ec248d26a43551e28d64f65540e3c58a54147",
-      "bytes": 1972
+      "sha256": "8c0245a1fa489b14ab48e7455279da6c6850f7689d33ed498f78d929a9b721a2",
+      "bytes": 1880
      },
      "classification": "intentionally-changed",
      "reason": "CRW names: guard and skill markers, skill and namespace prefixes, command wording.",
@@ -3398,7 +3398,7 @@
    },
    "steps": [
     {
-     "seam": "stop-empty",
+     "seam": "stop-deny",
      "input": {
       "hook_event_name": "PreToolUse",
       "tool_name": "spawn_agent",
@@ -3414,12 +3414,14 @@
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "bytes": 0
      },
-     "note": "one marker, relative cwd: grantScope throws, the outer catch prints nothing",
-     "kind": "empty",
-     "classification": "identical"
+     "note": "one marker, relative cwd: grantScope throws, the oracle prints nothing",
+     "kind": "deny",
+     "expected": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"crw LEAF-TOPOLOGY-01: sub-agents are leaf agents and may not spawn their own sub-agents (multi_agent_v2 enforces no depth limit upstream, so recursion is denied by dispatcher policy). Finish your own scope and report the need for delegation in your final answer. A dispatcher can authorize recursion for a specific spawn by including the recursion grant token in the spawn message.\"}}\n",
+     "classification": "intentionally-changed",
+     "reason": "Security fix (port: fixed): one grant marker with a relative cwd makes the oracle throw out of the grant check, and its outer catch prints nothing, which allows the subagent to recurse; the port denies it."
     },
     {
-     "seam": "stop-empty",
+     "seam": "stop-deny",
      "input": {
       "hook_event_name": "PreToolUse",
       "tool_name": "spawn_agent",
@@ -3435,8 +3437,10 @@
       "bytes": 0
      },
      "note": "one marker, missing cwd",
-     "kind": "empty",
-     "classification": "identical"
+     "kind": "deny",
+     "expected": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"crw LEAF-TOPOLOGY-01: sub-agents are leaf agents and may not spawn their own sub-agents (multi_agent_v2 enforces no depth limit upstream, so recursion is denied by dispatcher policy). Finish your own scope and report the need for delegation in your final answer. A dispatcher can authorize recursion for a specific spawn by including the recursion grant token in the spawn message.\"}}\n",
+     "classification": "intentionally-changed",
+     "reason": "Security fix (port: fixed): as for a relative cwd, the oracle allows the recursion when the grant scope cannot be resolved; the port denies it."
     },
     {
      "seam": "stop-deny",

@@ -23,6 +23,7 @@ import (
 // assembly. Differences from the oracle, each recorded in docs/port-cxc/known-defects.md:
 //   - the skills directory: CRW_SKILLS_DIR, then <PLUGIN_ROOT>/skills where the oracle has the module-relative plugin directory;
 //   - an unusable store, a missing home and an unknown role stop with empty output, as the oracle's throw does;
+//   - a subagent spawn whose grant scope cannot be resolved is denied, where the oracle's throw allows it (a security fix);
 //   - the working directory is read with the kernel call (syscall.Getwd), like process.cwd().
 
 // spawnHookAssembly is every value the oracle's runSpawnAttachHook holds when it reaches :987, each named after its oracle variable.
@@ -97,19 +98,13 @@ func spawnHookAssemble(obj map[string]any, env host.LookupEnv) (spawnHookAssembl
 		outgoing = strings.Join(texts, "\n\n")
 	}
 
-	// D1: a spawn by a subagent needs a minted grant, and is denied before the message no-op below (:881-882). A grant marker the
-	// oracle cannot resolve a scope for (:396) throws into its outer catch, which prints nothing.
+	// D1: a spawn by a subagent needs a minted grant, and is denied before the message no-op below (:881-882). Where the oracle
+	// throws for a grant scope it cannot resolve (:396) and its outer catch prints nothing, which allows the spawn, the port denies:
+	// a failed grant check never lets a subagent recurse (known-defects, security).
 	tmpRoot, now := spawnHookTmpDir(env), time.Now()
 	spawnedBySubagent := IsSubagentSpawner(obj)
-	if spawnedBySubagent {
-		if _, marked := spawnGrantOnlyMarker(outgoing); marked {
-			if _, _, resolved := spawnGrantScope(obj); !resolved {
-				return stop("")
-			}
-		}
-		if !ConsumeRecursionGrant(obj, outgoing, tmpRoot, now) {
-			return stop(DenyEnvelope(RecurseDenyReason))
-		}
+	if spawnedBySubagent && !ConsumeRecursionGrant(obj, outgoing, tmpRoot, now) {
+		return stop(DenyEnvelope(RecurseDenyReason))
 	}
 
 	if a.validItems {
