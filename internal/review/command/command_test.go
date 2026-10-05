@@ -450,7 +450,7 @@ func TestUsageErrorsAndHelp(t *testing.T) {
 		{[]string{"--base", "a", "--head", "b", "--issue", "CRW-1", "--out", "o", "extra"}, "", `unrecognized argument "extra"`},
 		{[]string{"--base", "a", "--head", "b", "--issue", "CRW-1", "--out", "o", "--post-summary"}, "", "--post-summary needs --pr"},
 		{[]string{"--base", "a", "--head", "b", "--issue", "CRW-1", "--out", "o", "--post-only"}, "", "--post-only needs --pr"},
-		{[]string{"--base", "a", "--head", "b", "--issue", "CRW-1", "--out", "o", "--pr", "7"}, "", "--pr is only used with --post-summary"},
+		{[]string{"--base", "a", "--head", "b", "--issue", "CRW-1", "--out", "o", "--pr", "7"}, "", "--pr is only used with --post-summary or --post-only"},
 		{[]string{"--base", "a", "--head", "b", "--issue", "CRW-1", "--out", "o"}, "soon", "CRW_REVIEW_DAILY_CAP"},
 	} {
 		clearEnv(t)
