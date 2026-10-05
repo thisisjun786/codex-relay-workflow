@@ -1,0 +1,15 @@
+{
+  "issue": "CRW-380",
+  "identical": [
+    "hook__subagent-stop-verifying-evidence__baseline_empty_workspace",
+    "hook__subagent-stop-verifying-evidence__context_pressure_in_message_still_blocks",
+    "hook__subagent-stop-verifying-evidence__context_pressure_releases",
+    "hook__subagent-stop-verifying-evidence__empty_receipt_blocks",
+    "hook__subagent-stop-verifying-evidence__receipt_outside_evidence_root_blocks",
+    "hook__subagent-stop-verifying-evidence__symlinked_receipt_blocks",
+    "hook__subagent-stop-verifying-evidence__three_attempts_then_release",
+    "hook__subagent-stop-verifying-evidence__valid_receipt_passes",
+    "hook__subagent-stop-verifying-evidence__worker_unarmed_releases"
+  ],
+  "intentionally-changed": []
+}

@@ -276,6 +276,110 @@ func TestLargeBlob_a_shallow_checkout_is_refused(t *testing.T) {
 	}
 }
 
+// A HEAD that cannot be read as a commit is refused, in one line: only a branch that has not been
+// born yet returns the empty result. Here the commit's object file is gone while the branch's ref
+// still resolves, so the repository has history this checkout cannot read.
+func TestLargeBlob_a_HEAD_whose_commit_is_missing_is_refused(t *testing.T) {
+	r, head := largeBlobTestRepo(t)
+	branch := strings.TrimSpace(r.git("symbolic-ref", "HEAD"))
+	largeBlobTestRemoveObject(t, r, head)
+	for _, event := range []string{"", "pull_request"} {
+		expectEqual(t, "event "+event, largeBlobTestValidate(t, r.root, event, ""), result{1, "",
+			"validate: HEAD cannot be read as a commit: HEAD names " + branch + " at " + head +
+				", which this checkout does not hold as a commit\n"})
+	}
+}
+
+// A detached HEAD naming a missing commit id is refused the same way.
+func TestLargeBlob_a_detached_HEAD_at_a_missing_commit_is_refused(t *testing.T) {
+	r, head := largeBlobTestRepo(t)
+	r.git("checkout", "-q", "--detach")
+	largeBlobTestRemoveObject(t, r, head)
+	for _, event := range []string{"", "pull_request"} {
+		expectEqual(t, "event "+event, largeBlobTestValidate(t, r.root, event, ""), result{1, "",
+			"validate: HEAD cannot be read as a commit: HEAD is detached at " + head +
+				", which this checkout does not hold as a commit\n"})
+	}
+}
+
+// A ref store git cannot read is not an unborn branch: the loose branch ref and the commit stay
+// intact while packed-refs is unreadable, so the ref probe ends in a git error, not a missing ref,
+// and the check refuses instead of reporting a repository with nothing to judge.
+func TestLargeBlob_an_unreadable_ref_store_is_refused(t *testing.T) {
+	r := validateRepo(t)
+	r.commit()
+	largeBlobTestWrite(t, r, ".git/packed-refs", []byte("invalid line\n"))
+	for _, event := range []string{"", "pull_request"} {
+		got := largeBlobTestValidate(t, r.root, event, "")
+		expectEqual(t, "event "+event+": exit", got.code, 1)
+		expectEqual(t, "event "+event+": stdout", got.stdout, "")
+		largeBlobTestOneLineRefusal(t, "event "+event, got.stderr)
+	}
+}
+
+// git's own error text can carry a newline - here the gitdir path holds one - and the refusal is
+// still one line.
+func TestLargeBlob_a_multiline_git_error_still_refuses_in_one_line(t *testing.T) {
+	r := validateRepo(t)
+	r.commit()
+	head := largeBlobTestRev(r, "HEAD")
+	gitdir := filepath.Join(t.TempDir(), "meta\nrepo")
+	if err := os.Rename(filepath.Join(r.root, ".git"), gitdir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(r.root, ".git"), []byte("gitdir: "+gitdir+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(gitdir, "HEAD"), []byte(head+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(gitdir, "packed-refs"), []byte("invalid line\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range []string{"", "pull_request"} {
+		got := largeBlobTestValidate(t, r.root, event, "")
+		expectEqual(t, "event "+event+": exit", got.code, 1)
+		expectEqual(t, "event "+event+": stdout", got.stdout, "")
+		largeBlobTestOneLineRefusal(t, "event "+event, got.stderr)
+	}
+}
+
+// A branch name may end in Unicode whitespace, which is not the newline the command adds: the
+// exact ref has to be probed. Trimming the name would ask about a different branch and could call
+// a repository whose commit is missing an unborn branch.
+func TestLargeBlob_a_branch_name_ending_in_unicode_whitespace_is_refused_exactly(t *testing.T) {
+	r, head := largeBlobTestRepo(t)
+	r.git("branch", "-m", "topic\u00a0")
+	branch := "refs/heads/topic\u00a0"
+	largeBlobTestRemoveObject(t, r, head)
+	for _, event := range []string{"", "pull_request"} {
+		expectEqual(t, "event "+event, largeBlobTestValidate(t, r.root, event, ""), result{1, "",
+			"validate: HEAD cannot be read as a commit: HEAD names " + branch + " at " + head +
+				", which this checkout does not hold as a commit\n"})
+	}
+}
+
+// largeBlobTestRemoveObject removes the loose object file of the commit id: the shape of an
+// incomplete copy whose HEAD cannot be read as a commit.
+func largeBlobTestRemoveObject(t *testing.T, r *fixtureRepo, id string) {
+	t.Helper()
+	if err := os.Remove(filepath.Join(r.root, ".git", "objects", id[:2], id[2:])); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// largeBlobTestOneLineRefusal requires a refusal to carry the HEAD refusal prefix and to be
+// exactly one line, whatever git's own message looks like.
+func largeBlobTestOneLineRefusal(t *testing.T, label, stderr string) {
+	t.Helper()
+	if !strings.HasPrefix(stderr, "validate: HEAD cannot be read as a commit: ") {
+		t.Errorf("%s: the refusal does not name the unreadable HEAD: %q", label, stderr)
+	}
+	if strings.Count(stderr, "\n") != 1 || !strings.HasSuffix(stderr, "\n") {
+		t.Errorf("%s: the refusal is not one line: %q", label, stderr)
+	}
+}
+
 // The allow list is read strictly, so a typo cannot quietly leave a file unlisted or an entry
 // without a ceiling or a reason, and a bad list is reported whether or not a blob needs it.
 func TestLargeBlob_the_allow_list_is_read_strictly(t *testing.T) {
