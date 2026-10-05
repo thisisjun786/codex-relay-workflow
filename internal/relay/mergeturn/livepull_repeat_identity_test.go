@@ -103,6 +103,15 @@ func TestRepeatIdentityBareClaimIsRepeatedOnlyWithoutIdentity(t *testing.T) {
 	}
 }
 
+// A claim made with a pull request and no relationship says so in the refusal, so the caller repeats it with that.
+func TestRepeatIdentityRefusalSaysWhatAPullRequestOnlyClaimWasMadeWith(t *testing.T) {
+	w := newFx(t)
+	turn := w.must(livePullClaim(w, alpha, fxA, repeatIdentityCommit, 500, ""))["turnId"].(string)
+	_, err := livePullClaim(w, alpha, fxA, repeatIdentityCommit, 0, "R500")
+	livePullRefusedWith(t, err, turn, "pull request 500", "does not record the relationship this request names",
+		"repeat the request with the arguments the claim was made with (its identity arguments: --pr 500 and no --relationship)")
+}
+
 // Which values count as naming or recording an identity: a pull request when its field is set (whatever the number, 0
 // included), a relationship when its field is set and not empty, and nothing for a value left in a field that is not
 // set. A request that contradicts the turn says so, also when it names an identity the turn does not record besides.
