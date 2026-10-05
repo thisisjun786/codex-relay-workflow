@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/role"
 )
 
@@ -61,24 +62,15 @@ func StripControlMarkers(message string, preserveWhitespace bool) string {
 
 // DenyEnvelope is the oracle's denyEnvelope: the JSON.stringify bytes of the D1 deny envelope
 // (hookSpecificOutput.permissionDecision deny, output_parser.rs:144) plus exactly one newline.
-// role.Stringify is this repository's JSON.stringify - HTML is not escaped and U+2028/U+2029
-// stay literal - and the fixed shape below cannot fail to encode.
+// spawnHookRouteStringify is JSON.stringify for the hook's answers: HTML is not escaped, U+2028 and
+// U+2029 stay literal, and a lone surrogate (three WTF-8 bytes in a Go string) is written as its
+// \udXXX escape, where encoding/json would write U+FFFD.
 func DenyEnvelope(reason string) string {
-	var envelope struct {
-		HookSpecificOutput struct {
-			HookEventName            string `json:"hookEventName"`
-			PermissionDecision       string `json:"permissionDecision"`
-			PermissionDecisionReason string `json:"permissionDecisionReason"`
-		} `json:"hookSpecificOutput"`
-	}
-	envelope.HookSpecificOutput.HookEventName = "PreToolUse"
-	envelope.HookSpecificOutput.PermissionDecision = "deny"
-	envelope.HookSpecificOutput.PermissionDecisionReason = reason
-	encoded, err := role.Stringify(envelope, "")
-	if err != nil {
-		return ""
-	}
-	return string(encoded) + "\n"
+	return spawnHookRouteStringify(pyjson.Object{{Key: "hookSpecificOutput", Value: pyjson.Object{
+		{Key: "hookEventName", Value: "PreToolUse"},
+		{Key: "permissionDecision", Value: "deny"},
+		{Key: "permissionDecisionReason", Value: reason},
+	}}}) + "\n"
 }
 
 // InferRole is the oracle's inferRole. The order is the oracle's own: explicit worker/executor,
