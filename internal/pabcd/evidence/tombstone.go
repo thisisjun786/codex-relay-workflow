@@ -1,6 +1,9 @@
 package evidence
 
 import (
+	"errors"
+	"io/fs"
+	"os"
 	"slices"
 	"time"
 	"unicode/utf16"
@@ -21,6 +24,21 @@ type sentinel string
 func (e sentinel) Error() string { return string(e) }
 
 const errUnreadable = sentinel("session state is unreadable; refusing to overwrite it")
+
+// rewriteGuardLoses is what a tier returns when writing the rebuilt state back would change a record the file stores.
+const rewriteGuardLoses = sentinel("session state holds records a rewrite would change; refusing to overwrite it")
+
+// rewriteGuardKeeps says whether writing kept, the list the strict read rebuilt, over the session file would lose nothing it stores:
+// the reader keeps 64 records, cuts a receipt to 256 units and defaults a field of the wrong type, none of which a count shows
+// (state.RewriteKeepsUnverified). A file that does not exist stores nothing; one that cannot be read now is refused. It is called
+// inside the session lock, after the strict read.
+func rewriteGuardKeeps(cwd, sessionID string, kept []state.UnverifiedSubagent) bool {
+	raw, err := os.ReadFile(state.StatePath(cwd, sessionID))
+	if errors.Is(err, fs.ErrNotExist) {
+		return len(kept) == 0
+	}
+	return err == nil && state.RewriteKeepsUnverified(raw, kept)
+}
 
 // tombstoneIdentity is the identity of a tombstone. An empty agent id is not resolvable: such ids collide.
 func tombstoneIdentity(p Payload) (agentID, turnID string, resolvable bool) {
@@ -45,6 +63,10 @@ func HasTombstone(cwd, sessionID string, p Payload) bool {
 // verdicts, and an unreadable session file is never overwritten with a state rebuilt from nothing. When that fails (a held lock,
 // an unreadable file, a write error) the second tier sets the corruption sentinel on a readable file, and when that fails too
 // the verdict goes to marker. Every tier's failure is swallowed: the agent is released either way.
+//
+// Changed from the oracle, a fix for a loss of state: the oracle writes back what its read kept, so a file that stores more than 64
+// verdicts, or a receipt past 256 units, lost the rest (after the 65th verdict the 66th dropped it). Here a state whose rewrite
+// would change a stored record is unwritable in both tiers, and the verdict goes to marker.
 func RecordTombstone(cwd, sessionID string, p Payload, attempts int, marker MarkerWriter) bool {
 	return recordTombstone(cwd, sessionID, p, attempts, time.Now(), state.WithSessionLock, marker)
 }
@@ -62,6 +84,9 @@ func recordTombstone(cwd, sessionID string, p Payload, attempts int, now time.Ti
 		if unreadable {
 			return errUnreadable
 		}
+		if !rewriteGuardKeeps(cwd, sessionID, s.UnverifiedSubagents) {
+			return rewriteGuardLoses
+		}
 		s.SessionID = sessionID
 		s.UnverifiedSubagents = append(slices.DeleteFunc(slices.Clone(s.UnverifiedSubagents), func(e state.UnverifiedSubagent) bool {
 			return sameAgent(e, agentID, turnID)
@@ -75,6 +100,9 @@ func recordTombstone(cwd, sessionID string, p Payload, attempts int, now time.Ti
 		s, unreadable := state.ReadStateStrict(cwd, sessionID)
 		if unreadable { // changed: the oracle writes the sentinel over the unreadable file
 			return errUnreadable
+		}
+		if !rewriteGuardKeeps(cwd, sessionID, s.UnverifiedSubagents) { // the sentinel write rebuilds the list too
+			return rewriteGuardLoses
 		}
 		s.SessionID, s.UnverifiedCorrupt = sessionID, true
 		return state.WriteState(cwd, s)
