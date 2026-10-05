@@ -5,8 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
+	"io/fs"
 	"math/big"
 	"net/url"
 	"os"
@@ -26,6 +26,11 @@ const createdCheckCorrection = "; copy agentId from the native spawn result and 
 // The created check runs after domain validation, inside the same lock, before
 // atomic publication. On refusal dispatchSave removes its owned temporary file.
 func CheckedDispatch(ctx context.Context, cwd string, input any, env host.LookupEnv, h DispatchHost) (DispatchResult, error) {
+	return dispatchPinnedChecked(ctx, cwd, input, env, h, nil)
+}
+
+// dispatchPinnedChecked is CheckedDispatch with the after callback of the pinned walk (see dispatchPinnedDir).
+func dispatchPinnedChecked(ctx context.Context, cwd string, input any, env host.LookupEnv, h DispatchHost, after func(string)) (DispatchResult, error) {
 	if env == nil {
 		env = os.LookupEnv
 	}
@@ -34,16 +39,16 @@ func CheckedDispatch(ctx context.Context, cwd string, input any, env host.Lookup
 		return DispatchResult{}, err
 	}
 	if dispatchIs(b["action"], "report") && dispatchIs(b["outcome"], "stopped") {
-		return createdCheckStop(ctx, cwd, b, env, h)
+		return createdCheckStop(ctx, cwd, b, env, h, after)
 	}
 	if !dispatchIs(b["action"], "report") || !dispatchIs(b["outcome"], "created") {
 		return RunDispatch(cwd, input, env)
 	}
-	return dispatchRun(cwd, input, env, func(temp, final string) error {
+	return dispatchPinnedRun(cwd, input, env, func(dir *dispatchPinnedDir, _, final string) error {
 		session, _ := b["sessionId"].(string)
 		agent, _ := b["agentId"].(string)
 		attempt, _ := b["attemptId"].(string)
-		if err := createdArchivedReplay(final, session, attempt, agent); err != nil {
+		if err := createdArchivedReplay(dir, final, session, attempt, agent); err != nil {
 			return err
 		}
 		identity, err := createdCheckRead(ctx, env, h, agent)
@@ -53,18 +58,18 @@ func CheckedDispatch(ctx context.Context, cwd string, input any, env host.Lookup
 		if identity.ID != agent || identity.Parent != session || !identity.Subagent {
 			return errors.New("agentId is not a real subagent thread parented by this session" + createdCheckCorrection)
 		}
-		return crwdir.Rename(temp, final)
-	})
+		return nil
+	}, after)
 }
 
 // createdArchivedReplay refuses an agent id that another attempt of the session already holds. The
 // host archives a child when it finishes, but it stays a real child of the session, so only the
 // ledger can tell that it was spawned for an earlier attempt. The attempt that reports its own id
 // again is not another attempt. A record that cannot be read as a regular dispatch file fails the
-// check, because it may be the one that holds the id.
-func createdArchivedReplay(final, session, attempt, agent string) error {
-	dir := filepath.Dir(final)
-	entries, err := os.ReadDir(dir)
+// check, because it may be the one that holds the id. The directory is listed and every record read
+// through the pinned directory the report holds the lock in.
+func createdArchivedReplay(dir *dispatchPinnedDir, final, session, attempt, agent string) error {
+	entries, err := fs.ReadDir(dir.root.FS(), ".")
 	if err != nil {
 		return err
 	}
@@ -76,13 +81,13 @@ func createdArchivedReplay(final, session, attempt, agent string) error {
 		if !entry.Type().IsRegular() {
 			return errors.New("dispatch record " + name + " is unusable: not a regular file")
 		}
-		path := filepath.Join(dir, name)
-		d, err := dispatchRead(path, session, name[:len(name)-len(".json")])
+		dir.point("sibling")
+		d, err := dispatchPinnedRead(dir, name, session, name[:len(name)-len(".json")])
 		if err != nil {
 			return errors.New("dispatch record " + name + " is unusable: " + err.Error())
 		}
 		for _, a := range d.Attempts {
-			if a.AgentID != nil && *a.AgentID == agent && (path != final || a.ID != attempt) {
+			if a.AgentID != nil && *a.AgentID == agent && (name != final || a.ID != attempt) {
 				return errors.New("agentId was already reported for dispatch " + d.ID + " attempt " + a.ID + createdCheckCorrection)
 			}
 		}
@@ -131,7 +136,7 @@ func createdCheckRead(ctx context.Context, env host.LookupEnv, h DispatchHost, a
 
 // Closing reduces authority only. Caller reconciliation is recorded, never
 // presented as a host-authenticated termination receipt; the old ID is retained.
-func createdCheckStop(ctx context.Context, cwd string, b map[string]any, env host.LookupEnv, h DispatchHost) (DispatchResult, error) {
+func createdCheckStop(ctx context.Context, cwd string, b map[string]any, env host.LookupEnv, h DispatchHost, after func(string)) (DispatchResult, error) {
 	status := map[string]any{"action": "status", "sessionId": b["sessionId"], "dispatchId": b["dispatchId"]}
 	if _, err := RunDispatch(cwd, status, env); err != nil {
 		return DispatchResult{}, err
@@ -142,17 +147,18 @@ func createdCheckStop(ctx context.Context, cwd string, b map[string]any, env hos
 	}
 	session, _ := b["sessionId"].(string)
 	id, _ := b["dispatchId"].(string)
-	dir, err := dispatchDirectory(root, session)
+	dir, err := dispatchDirectory(root, session, after)
 	if err != nil {
 		return DispatchResult{}, err
 	}
-	path := filepath.Join(dir, id+".json")
-	lock := path + ".lock"
-	if err := os.Mkdir(lock, 0700); err != nil {
+	defer dir.Close()
+	name := id + ".json"
+	release, err := dir.lock(name)
+	if err != nil {
 		return DispatchResult{}, err
 	}
-	defer os.RemoveAll(lock)
-	d, err := dispatchRead(path, session, id)
+	defer release()
+	d, err := dispatchPinnedRead(dir, name, session, id)
 	if err != nil {
 		return DispatchResult{}, err
 	}
@@ -179,7 +185,7 @@ func createdCheckStop(ctx context.Context, cwd string, b map[string]any, env hos
 	a.TaskFailure = nil
 	a.Status = "failed"
 	d.Status = "stopped"
-	if err := dispatchSave(path, &d, crwdir.Rename); err != nil {
+	if err := dispatchSave(dir, name, &d, nil); err != nil {
 		return DispatchResult{}, err
 	}
 	return dispatchResult(&d, "stop", "dispatch closed; caller reconciliation recorded, recorded identity retained"), nil

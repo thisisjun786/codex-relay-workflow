@@ -46,14 +46,14 @@ func TestSlotWithSeveralTenuresIsReturnedByName(t *testing.T) {
 		}
 	})
 	t.Run("integration", func(t *testing.T) {
-		k := newIntegrationKit(t)
+		k := newForgeIntegrationKit(t)
 		repo := k.repo
 		repo.git("checkout", "-q", "-b", "feature")
 		feature := repo.commit("feature.txt", "feature")
 		repo.git("checkout", "-q", "dev")
 		repo.git("merge", "-q", "--no-ff", "-m", "merge feature", "feature")
 		k.declare("g", "I", "feature.txt")
-		a := k.acceptNode("g", "I", acceptOpts{HeadSHA: feature, PR: 5, Forge: "owner/repo", Repository: repo.path})
+		a := k.acceptOnForge("g", "I", acceptOpts{HeadSHA: feature, PR: 5})
 		k.mark(a)
 		k.holdSlotsFor("g", "I")
 		k.reserveAgain("g", "I")
@@ -93,7 +93,7 @@ func TestTargetsAreJudgedAgainstThePlanNow(t *testing.T) {
 		}
 	})
 	t.Run("integration", func(t *testing.T) {
-		k := newIntegrationKit(t)
+		k := newForgeIntegrationKit(t)
 		repo := k.repo
 		repo.git("checkout", "-q", "-b", "feature")
 		feature := repo.commit("feature.txt", "feature")
@@ -101,14 +101,14 @@ func TestTargetsAreJudgedAgainstThePlanNow(t *testing.T) {
 		repo.git("branch", "release")
 		repo.git("merge", "-q", "--no-ff", "-m", "merge feature", "feature")
 		k.declare("g", "I", "feature.txt")
-		a := k.acceptNode("g", "I", acceptOpts{HeadSHA: feature, PR: 5, Forge: "owner/repo", Repository: repo.path})
+		a := k.acceptOnForge("g", "I", acceptOpts{HeadSHA: feature, PR: 5})
 		k.mark(a)
 		k.holdSlotsFor("g", "I")
 		// while the tips are read a second integrated edge appears: its branch does not hold the head and nobody has observed it
 		k.sched.testBeforeObserveTx = func() {
-			k.putPlan("g", int(k.snapshot("g").Revision), "g-r2", addRelNode("L", dag.NodeNonPR), addEdge("il", "I", "L", dag.EdgeIntegrated, doc{"target_repository": repo.path, "target_base_ref": "release"}))
+			k.putPlan("g", int(k.snapshot("g").Revision), "g-r2", addRelNode("L", dag.NodeNonPR), addEdge("il", "I", "L", dag.EdgeIntegrated, doc{"target_repository": forgeKitRepository, "target_base_ref": "release"}))
 		}
-		res, err := k.observe(Target{repo.path, "dev"})
+		res, err := k.observe(k.forgeTarget("dev"))
 		if err != nil || res.Integrated || res.SlotReleased {
 			t.Fatalf("observe = %v %+v, want a node that still has a target to land on to stay unintegrated", err, res)
 		}

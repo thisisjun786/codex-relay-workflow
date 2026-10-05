@@ -1,0 +1,10 @@
+{
+  "issue": "CRW-601",
+  "pending": [
+    "cli__doctor__codex_bin_and_surface_env",
+    "cli__hooks__retrust_needs_bootstrap_then_writes",
+    "cli__hooks__retrust_safety_pin_refuses_all_drifted"
+  ],
+  "identical": [],
+  "intentionally-changed": []
+}

@@ -52,7 +52,7 @@ func TestMergeTreeConflictCount(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			k := newIntegrationKit(t)
+			k := newForgeIntegrationKit(t)
 			repo := k.repo
 			// the base holds the files the branches change
 			repo.commit("c.txt", lines(12, nil))
@@ -92,7 +92,7 @@ func TestMergeTreeConflictCount(t *testing.T) {
 // What is not a pair of branches of a plan is refused and writes nothing: a node of another kind, two heads that are not commits of the checkout, a repository that is not a local path,
 // and a caller that is not the project's parent.
 func TestObserveConflictsRefusals(t *testing.T) {
-	k := newIntegrationKit(t)
+	k := newForgeIntegrationKit(t)
 	repo := k.repo
 	left, right := repo.parallel(map[string]string{"a.txt": "left\n"}, map[string]string{"b.txt": "right\n"})
 	ok := ConflictInput{Repository: repo.path, LeftNode: "D", RightNode: "I", LeftHead: left, RightHead: right}
@@ -135,7 +135,7 @@ func TestObserveConflictsInUnusualCheckouts(t *testing.T) {
 		return k.sched.ObserveConflicts(context.Background(), "g", "parent", ConflictInput{Repository: path, LeftNode: "D", RightNode: "I", LeftHead: left, RightHead: right})
 	}
 	t.Run("a linked working tree", func(t *testing.T) {
-		k := newIntegrationKit(t)
+		k := newForgeIntegrationKit(t)
 		left, right := conflict(t, k.repo, "c.txt")
 		linked := filepath.Join(t.TempDir(), "linked")
 		k.repo.git("worktree", "add", "-q", linked, "-b", "linked-branch")
@@ -145,7 +145,7 @@ func TestObserveConflictsInUnusualCheckouts(t *testing.T) {
 		}
 	})
 	t.Run("a path with a colon", func(t *testing.T) {
-		k := newIntegrationKit(t)
+		k := newForgeIntegrationKit(t)
 		colon := newGitRepoAt(t, filepath.Join(t.TempDir(), "a:b"))
 		left, right := conflict(t, colon, "c.txt")
 		res, err := observe(t, k, colon.path, left, right)
@@ -154,7 +154,7 @@ func TestObserveConflictsInUnusualCheckouts(t *testing.T) {
 		}
 	})
 	t.Run("a file named with a space", func(t *testing.T) {
-		k := newIntegrationKit(t)
+		k := newForgeIntegrationKit(t)
 		left, right := conflict(t, k.repo, " ")
 		res, err := observe(t, k, k.repo.path, left, right)
 		if err != nil || res.Conflicts != 1 || len(res.Files) != 1 || res.Files[0] != " " {
@@ -162,7 +162,7 @@ func TestObserveConflictsInUnusualCheckouts(t *testing.T) {
 		}
 	})
 	t.Run("a merge git cannot compute is not zero conflicts", func(t *testing.T) {
-		k := newIntegrationKit(t)
+		k := newForgeIntegrationKit(t)
 		missing := strings.Repeat("7", 40)
 		if files, err := mergeTreeConflicts(context.Background(), k.repo.path, missing, missing); err == nil {
 			t.Fatalf("an impossible merge answered %v", files)
@@ -172,7 +172,7 @@ func TestObserveConflictsInUnusualCheckouts(t *testing.T) {
 		}
 	})
 	t.Run("the throwaway directory is removed", func(t *testing.T) {
-		k := newIntegrationKit(t)
+		k := newForgeIntegrationKit(t)
 		left, right := conflict(t, k.repo, "c.txt")
 		tmp := t.TempDir()
 		t.Setenv("TMPDIR", tmp)
@@ -188,7 +188,7 @@ func TestObserveConflictsInUnusualCheckouts(t *testing.T) {
 // The checkout's own configuration and working tree are not part of the question: a merge driver it configures would be a command run for whoever observes it, and an uncommitted
 // .gitattributes would change the count of the same two commits. Neither runs, and neither changes the answer.
 func TestObserveConflictsIgnoresTheCheckoutsConfigurationAndAttributes(t *testing.T) {
-	k := newIntegrationKit(t)
+	k := newForgeIntegrationKit(t)
 	repo := k.repo
 	repo.commit("c.txt", lines(12, nil))
 	left, right := repo.parallel(map[string]string{"c.txt": lines(12, map[int]string{3: "left"})}, map[string]string{"c.txt": lines(12, map[int]string{3: "right"})})
@@ -216,7 +216,7 @@ func TestObserveConflictsIgnoresTheCheckoutsConfigurationAndAttributes(t *testin
 // The attributes that count are the ones committed in the left head: a union merge driver named in .gitattributes of the commits is built in to git and resolves the file, so a pair that
 // git itself merges cleanly is not counted as a conflict.
 func TestObserveConflictsHonoursCommittedAttributes(t *testing.T) {
-	k := newIntegrationKit(t)
+	k := newForgeIntegrationKit(t)
 	repo := k.repo
 	repo.commit("c.txt", lines(12, nil))
 	repo.commit(".gitattributes", "c.txt merge=union\n")
