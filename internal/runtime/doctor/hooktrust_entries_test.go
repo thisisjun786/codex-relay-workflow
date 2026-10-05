@@ -127,6 +127,9 @@ func TestListHookTrustEntries_recordedCases(t *testing.T) {
 				root = "plugin"
 			}
 			got, err := doctor.ListHookTrustEntries(root, want.Key)
+			if err != nil && len(got) != 0 {
+				t.Fatalf("entries %+v came with the error %v", got, err)
+			}
 			switch {
 			case strings.HasPrefix(want.Name, "matcher_residual_"):
 				hookTrustEntriesCheckResidual(t, want, got, err)

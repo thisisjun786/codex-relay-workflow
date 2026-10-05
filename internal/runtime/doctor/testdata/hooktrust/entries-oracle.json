@@ -355,6 +355,16 @@
    "error": "plugin manifest path escapes plugin root: ../outside/x.json"
   },
   {
+   "name": "later_document_failure_discards_earlier",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\",\"./hooks/b.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}",
+    "plugin/hooks/b.json": "{\"hooks\":{\"Unknown\":[]}}"
+   },
+   "error": "unsupported hook event: Unknown"
+  },
+  {
    "name": "ref_dot_slash",
    "key": "fixture@market",
    "files": {
@@ -608,6 +618,36 @@
      "key": "fixture@market:hooks/a.json:pre_tool_use:0:0",
      "hash": "sha256:1d246626c0dca0508a88afaff7c5297a6ae851036f558be38fb2731678f6a7b7",
      "fileSha256": "59deee482f8099a0aa7961548db93252031dda13a38836b42d9d4fd5c262ae71"
+    }
+   ]
+  },
+  {
+   "name": "matcher_residual_non_ascii_group_name",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"(?<é>x)\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:pre_tool_use:0:0",
+     "hash": "sha256:aa415516b72475f29e8b7f1761315694fe96018a0c7783ce50b2d0cb286c6947",
+     "fileSha256": "0340831dbd4d39c7da8dbf6d80b7b2a6c7253cf2067400bd9f2d691280989e5c"
+    }
+   ]
+  },
+  {
+   "name": "matcher_residual_lone_surrogate",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"\\ud800\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:pre_tool_use:0:0",
+     "hash": "sha256:eeee8ecb1c3d9d56271dd2d6049d0601e17a4fc52bdc3c53c07921a16d83739b",
+     "fileSha256": "c6ee162442e847e6efebd9266a59d4a692fcbfd0a41579efd1c92ba45d310eb7"
     }
    ]
   },
