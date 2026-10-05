@@ -160,3 +160,52 @@ func TestRecallHookSessionStartCwdShapes(t *testing.T) {
 		}
 	}
 }
+
+// A SessionStart payload without cwd falls back to the process directory, which for
+// Node is the physical one: a rollout recorded under it must be found from a symlink.
+func TestRecallHookSessionStartPhysicalCwd(t *testing.T) {
+	home := recallHookComponentHome(t)
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	physical, plain, alias := filepath.Join(root, "real", "a", "phys"), filepath.Join(root, "plain"), filepath.Join(root, "alias")
+	for _, dir := range []string{physical, plain} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(physical, alias); err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []struct{ id, cwd, opener string }{{"s1", physical, "physical opener"}, {"s2", plain, "plain opener"}} {
+		meta, _ := json.Marshal(map[string]any{"type": "session_meta", "payload": map[string]any{"id": s.id, "cwd": s.cwd}})
+		message, _ := json.Marshal(map[string]any{"type": "response_item", "timestamp": "2026-10-05T00:00:00Z", "payload": map[string]any{"type": "message", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": s.opener}}}})
+		path := filepath.Join(home, "sessions", "2026", "10", "05", s.id+".jsonl")
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(string(meta)+"\n"+string(message)+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var indexOut, indexErr bytes.Buffer
+	if code := recall.Run([]string{"chat", "index", "--json"}, &indexOut, &indexErr, time.Now()); code != 0 {
+		t.Fatalf("seed index %d %s", code, indexErr.String())
+	}
+	payloadCwd, _ := json.Marshal(map[string]any{"hook_event_name": "SessionStart", "source": "startup", "cwd": physical})
+	for _, c := range []struct{ name, dir, raw, header, opener string }{
+		{"symlinked directory without payload cwd", alias, `{"hook_event_name":"SessionStart","source":"startup"}`, "Recent work — phys (this project)", "physical opener"},
+		{"directory without a symlink", plain, `{"hook_event_name":"SessionStart","source":"startup"}`, "Recent work — plain (this project)", "plain opener"},
+		{"payload cwd wins", plain, string(payloadCwd), "Recent work — phys (this project)", "physical opener"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Chdir(c.dir)
+			var out bytes.Buffer
+			claimed, code := runComponentHook(invocation{ctx: context.Background(), args: []string{"session-start", "--leg", "session-start-injecting-recall-context"}, stdout: &out}, strings.NewReader(c.raw), componentHooks())
+			if !claimed || code != 0 || !strings.Contains(out.String(), c.header) || !strings.Contains(out.String(), c.opener) {
+				t.Fatalf("%v %d, want %q and %q in %q", claimed, code, c.header, c.opener, out.String())
+			}
+		})
+	}
+}

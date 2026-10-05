@@ -41,17 +41,18 @@ func componentHooks() []componentHook {
 	}
 	return []componentHook{
 		{"session-start-injecting-recall-context", "session-start", func(c invocation, in io.Reader) int {
-			cwd, _ := os.Getwd()
+			// Node's process.cwd() is the physical directory, which a logical $PWD can hide.
+			cwd, _ := recall.RecallPhysicalAbs(".")
 			return recall.RunHook(c.ctx, "session-start", in, c.stdout, os.LookupEnv, cwd, func(home, path, cwd, source string, deps recall.RecallContextDeps) string {
 				return recall.HandleSessionStart(recall.IndexStatusLine(home, path), cwd, source, recall.SessionStartOptions{Home: home, MemoryNotice: recall.MemoryPipelineNotice(home)}, deps)
 			})
 		}},
 		{"post-compact-injecting-recall-context", "post-compact", func(c invocation, in io.Reader) int {
-			cwd, _ := os.Getwd()
+			cwd, _ := recall.RecallPhysicalAbs(".")
 			return recall.RunHook(c.ctx, "post-compact", in, c.stdout, os.LookupEnv, cwd, nil)
 		}},
 		{"user-prompt-submit-detecting-recall-intent", "user-prompt-submit", func(c invocation, in io.Reader) int {
-			cwd, _ := os.Getwd()
+			cwd, _ := recall.RecallPhysicalAbs(".")
 			return recall.RunHook(c.ctx, "user-prompt-submit", in, c.stdout, os.LookupEnv, cwd, nil)
 		}},
 		{"session-start-announcing-subagent-fallback", "session-start", func(c invocation, in io.Reader) int {

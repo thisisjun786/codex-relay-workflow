@@ -424,6 +424,15 @@
     },
     {
       "cxc": [
+        "memory"
+      ],
+      "crw": [
+        "recall",
+        "memory"
+      ]
+    },
+    {
+      "cxc": [
         "memory",
         "search"
       ],

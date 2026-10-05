@@ -93,8 +93,6 @@
     "host-a",
     "--head",
     "head-a",
-    "--pr",
-    "7",
     "--ready"
    ]
   },
@@ -1345,6 +1343,439 @@
     "--event",
     "67390000000000000000000000000000",
     "--message"
+   ]
+  }
+ ],
+ "head_compare_forge": [
+  {
+   "argv": [
+    "linkage-bind",
+    "--role",
+    "parent",
+    "--scope",
+    "PRJ-A",
+    "--task",
+    "task-alpha",
+    "--host",
+    "host-a"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-request",
+    "--repository",
+    "owner/repo",
+    "--base-ref",
+    "dev",
+    "--project",
+    "PRJ-A",
+    "--task",
+    "task-alpha",
+    "--host",
+    "host-a",
+    "--head",
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "--pr",
+    "500",
+    "--relationship",
+    "rel-hc"
+   ],
+   "files": {
+    "pr500": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+   },
+   "bin": {
+    "gh": "#!/bin/sh\nfor a; do last=\"$a\"; done\ncase \"$last\" in\n  repos/owner/repo/pulls/500) printf '{\"number\":500,\"head\":{\"sha\":\"%s\"}}\\n' \"$(cat ${HOME}/pr500)\" ;;\n  repos/owner/repo/git/ref/heads/dev) printf '{\"ref\":\"refs/heads/dev\",\"object\":{\"type\":\"commit\",\"sha\":\"cccccccccccccccccccccccccccccccccccccccc\"}}\\n' ;;\n  *) echo 'gh: HTTP 404' >&2; exit 1 ;;\nesac\n"
+   }
+  },
+  {
+   "argv": [
+    "merge-turn-acknowledge",
+    "--turn",
+    "mtn-fbf20d64678c00914b7e8dce6bd9518e",
+    "--actor",
+    "task-alpha",
+    "--grant",
+    "mtg-19530b364d6659fc092253786921e44e",
+    "--evidence",
+    "read it and re-checked the head"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-ready",
+    "--turn",
+    "mtn-fbf20d64678c00914b7e8dce6bd9518e",
+    "--actor",
+    "task-alpha",
+    "--ready"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-ready",
+    "--turn",
+    "mtn-fbf20d64678c00914b7e8dce6bd9518e",
+    "--actor",
+    "task-alpha",
+    "--head",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "--not-ready",
+    "--cause",
+    "refreshed the base"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-acknowledge",
+    "--turn",
+    "mtn-fbf20d64678c00914b7e8dce6bd9518e",
+    "--actor",
+    "task-alpha",
+    "--grant",
+    "mtg-8f52d060aff8f8aae61e531ef8a0b54c",
+    "--evidence",
+    "read it and re-checked the head"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-ready",
+    "--turn",
+    "mtn-fbf20d64678c00914b7e8dce6bd9518e",
+    "--actor",
+    "task-alpha",
+    "--head",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "--ready"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-check",
+    "--turn",
+    "mtn-fbf20d64678c00914b7e8dce6bd9518e",
+    "--actor",
+    "task-alpha",
+    "--head-sha",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "--base-sha",
+    "cccccccccccccccccccccccccccccccccccccccc",
+    "--checks",
+    "[{\"runId\": \"run-1\", \"name\": \"dev-gate\", \"headSha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"conclusion\": \"success\", \"attempt\": 1}]",
+    "--review",
+    "{\"hasNextPage\": false, \"pagesRead\": 1, \"totalCount\": 1, \"threadsSeen\": [\"thread-1\"], \"unresolved\": 0}",
+    "--required",
+    "dev-gate"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-show",
+    "--turn",
+    "mtn-fbf20d64678c00914b7e8dce6bd9518e"
+   ]
+  }
+ ],
+ "head_compare_work_report": [
+  {
+   "argv": [
+    "linkage-bind",
+    "--role",
+    "parent",
+    "--scope",
+    "PRJ-A",
+    "--task",
+    "task-alpha",
+    "--host",
+    "host-a"
+   ]
+  },
+  {
+   "sql": "INSERT INTO relationships (relationship_id, issue_key, status, parent_task_id, parent_host_id, child_task_id, child_host_id, execution_generation, artifact_roots, allowed_recipients, created_at, updated_at) VALUES ('rel-hc', 'ISS-1', 'active', 'task-alpha', 'host-a', 'task-child', 'host-child', 3, '[]', '[\"task-alpha\"]', '2023-11-14T22:13:20.000000+00:00', '2023-11-14T22:13:20.000000+00:00'); INSERT INTO work_reports (event_id, submission_no, relationship_id, execution_generation, revision_hash, repository, pr_number, base_ref, head_sha, cxc_status, cxc_reason, contract_version, summary, next_action, recorded_at) VALUES ('77390000000000000000000000000000', 1, 'rel-hc', 3, 'rev', 'owner/repo', 7, 'dev', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'done', 'r', '1', 's', 'n', '2023-11-14T22:13:20.000000+00:00');"
+  },
+  {
+   "argv": [
+    "merge-turn-request",
+    "--repository",
+    "/nonexistent-crw-586/R.git",
+    "--base-ref",
+    "dev",
+    "--project",
+    "PRJ-A",
+    "--task",
+    "task-alpha",
+    "--host",
+    "host-a",
+    "--head",
+    "head-0",
+    "--pr",
+    "7",
+    "--relationship",
+    "rel-hc"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-acknowledge",
+    "--turn",
+    "mtn-be62fec42e50102e2f6519e6127f9b4c",
+    "--actor",
+    "task-alpha",
+    "--grant",
+    "mtg-4d7936cdec56f4540a81253b6d4dbd43",
+    "--evidence",
+    "read it and re-checked the head"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-ready",
+    "--turn",
+    "mtn-be62fec42e50102e2f6519e6127f9b4c",
+    "--actor",
+    "task-alpha",
+    "--head",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "--not-ready"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-acknowledge",
+    "--turn",
+    "mtn-be62fec42e50102e2f6519e6127f9b4c",
+    "--actor",
+    "task-alpha",
+    "--grant",
+    "mtg-2709b1282a82746d2b232c0660fb8320",
+    "--evidence",
+    "read it and re-checked the head"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-ready",
+    "--turn",
+    "mtn-be62fec42e50102e2f6519e6127f9b4c",
+    "--actor",
+    "task-alpha",
+    "--head",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "--ready"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-ready",
+    "--turn",
+    "mtn-be62fec42e50102e2f6519e6127f9b4c",
+    "--actor",
+    "task-alpha",
+    "--head",
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "--not-ready"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-check",
+    "--turn",
+    "mtn-be62fec42e50102e2f6519e6127f9b4c",
+    "--actor",
+    "task-alpha",
+    "--head-sha",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "--base-sha",
+    "cccccccccccccccccccccccccccccccccccccccc",
+    "--checks",
+    "[{\"runId\": \"run-1\", \"name\": \"dev-gate\", \"headSha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"conclusion\": \"success\", \"attempt\": 1}]",
+    "--review",
+    "{\"hasNextPage\": false, \"pagesRead\": 1, \"totalCount\": 1, \"threadsSeen\": [\"thread-1\"], \"unresolved\": 0}",
+    "--required",
+    "dev-gate"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-show",
+    "--turn",
+    "mtn-be62fec42e50102e2f6519e6127f9b4c"
+   ]
+  }
+ ],
+ "head_compare_pr_on_local_path": [
+  {
+   "argv": [
+    "linkage-bind",
+    "--role",
+    "parent",
+    "--scope",
+    "PRJ-A",
+    "--task",
+    "task-alpha",
+    "--host",
+    "host-a"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-request",
+    "--repository",
+    "/nonexistent-crw-586/R.git",
+    "--base-ref",
+    "dev",
+    "--project",
+    "PRJ-A",
+    "--task",
+    "task-alpha",
+    "--host",
+    "host-a",
+    "--head",
+    "head-0",
+    "--pr",
+    "7",
+    "--ready"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-acknowledge",
+    "--turn",
+    "mtn-be62fec42e50102e2f6519e6127f9b4c",
+    "--actor",
+    "task-alpha",
+    "--grant",
+    "mtg-4d7936cdec56f4540a81253b6d4dbd43",
+    "--evidence",
+    "read it and re-checked the head"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-check",
+    "--turn",
+    "mtn-be62fec42e50102e2f6519e6127f9b4c",
+    "--actor",
+    "task-alpha",
+    "--head-sha",
+    "head-0",
+    "--base-sha",
+    "cccccccccccccccccccccccccccccccccccccccc",
+    "--checks",
+    "[{\"runId\": \"run-1\", \"name\": \"dev-gate\", \"headSha\": \"head-0\", \"conclusion\": \"success\", \"attempt\": 1}]",
+    "--review",
+    "{\"hasNextPage\": false, \"pagesRead\": 1, \"totalCount\": 1, \"threadsSeen\": [\"thread-1\"], \"unresolved\": 0}",
+    "--required",
+    "dev-gate"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-ready",
+    "--turn",
+    "mtn-be62fec42e50102e2f6519e6127f9b4c",
+    "--actor",
+    "task-alpha",
+    "--head",
+    "head-1",
+    "--not-ready"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-show",
+    "--turn",
+    "mtn-be62fec42e50102e2f6519e6127f9b4c"
+   ]
+  }
+ ],
+ "head_compare_relationship_without_report": [
+  {
+   "argv": [
+    "linkage-bind",
+    "--role",
+    "parent",
+    "--scope",
+    "PRJ-A",
+    "--task",
+    "task-alpha",
+    "--host",
+    "host-a"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-request",
+    "--repository",
+    "owner/repo",
+    "--base-ref",
+    "dev",
+    "--project",
+    "PRJ-A",
+    "--task",
+    "task-alpha",
+    "--host",
+    "host-a",
+    "--head",
+    "head-0",
+    "--relationship",
+    "rel-none",
+    "--ready"
+   ],
+   "bin": {
+    "gh": "#!/bin/sh\nfor a; do last=\"$a\"; done\ncase \"$last\" in\n  repos/owner/repo/pulls/500) printf '{\"number\":500,\"head\":{\"sha\":\"%s\"}}\\n' \"$(cat ${HOME}/pr500)\" ;;\n  repos/owner/repo/git/ref/heads/dev) printf '{\"ref\":\"refs/heads/dev\",\"object\":{\"type\":\"commit\",\"sha\":\"cccccccccccccccccccccccccccccccccccccccc\"}}\\n' ;;\n  *) echo 'gh: HTTP 404' >&2; exit 1 ;;\nesac\n"
+   },
+   "files": {
+    "pr500": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+   }
+  },
+  {
+   "argv": [
+    "merge-turn-acknowledge",
+    "--turn",
+    "mtn-fbf20d64678c00914b7e8dce6bd9518e",
+    "--actor",
+    "task-alpha",
+    "--grant",
+    "mtg-19530b364d6659fc092253786921e44e",
+    "--evidence",
+    "read it and re-checked the head"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-check",
+    "--turn",
+    "mtn-fbf20d64678c00914b7e8dce6bd9518e",
+    "--actor",
+    "task-alpha",
+    "--head-sha",
+    "head-0",
+    "--base-sha",
+    "cccccccccccccccccccccccccccccccccccccccc",
+    "--checks",
+    "[{\"runId\": \"run-1\", \"name\": \"dev-gate\", \"headSha\": \"head-0\", \"conclusion\": \"success\", \"attempt\": 1}]",
+    "--review",
+    "{\"hasNextPage\": false, \"pagesRead\": 1, \"totalCount\": 1, \"threadsSeen\": [\"thread-1\"], \"unresolved\": 0}",
+    "--required",
+    "dev-gate"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-ready",
+    "--turn",
+    "mtn-fbf20d64678c00914b7e8dce6bd9518e",
+    "--actor",
+    "task-alpha",
+    "--ready"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-show",
+    "--turn",
+    "mtn-fbf20d64678c00914b7e8dce6bd9518e"
    ]
   }
  ]
