@@ -199,6 +199,13 @@ func TestLatePostNeverOverwritesANewerResult(t *testing.T) {
 	if len(sf.comments) != 1 || sf.comments[0].Body != posted || sf.updates != 0 || a.Comment == nil || a.Comment.Action != "unchanged" || a.Comment.Reason == "" {
 		t.Fatalf("the late post changed the comment: %+v (updates %d)\n%s", a.Comment, sf.updates, sf.comments[0].Body)
 	}
+	// The newer result's record is appended before its files are published, so the late post may meet it with no file yet: the copy kept before the record has the bytes.
+	if err := os.Remove(filepath.Join(f.out, h2+".json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := postSummary(context.Background(), cfg, sf, &a, &stderr); err != nil || a.Comment.Action != "unchanged" {
+		t.Fatalf("the late post with the newer result not yet published: %v %+v", err, a.Comment)
+	}
 }
 
 // --post-only posts the recorded result of the patch on any day: it runs no review, writes no ledger record, so the one more attempt of an unavailable review and the daily cap are untouched.

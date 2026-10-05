@@ -6,8 +6,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"strings"
@@ -120,6 +122,11 @@ func postSummary(ctx context.Context, cfg Config, f forge, sum *Summary, stderr 
 		path, sha, head, newer = n.Artifact, n.SHA256, n.Head, fmt.Sprintf("a newer result of this patch (sha256 %s) was recorded; the comment shows it", short(n.SHA256))
 	}
 	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) { // a result whose record was appended a moment ago and whose files are still being published: the copy kept before the record has the same bytes
+		if kept, keptErr := os.ReadFile(l.keptPath(sha)); keptErr == nil {
+			data, err = kept, nil
+		}
+	}
 	if err != nil {
 		return fmt.Errorf("the artifact of the review cannot be read: %w", err)
 	}

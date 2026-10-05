@@ -98,9 +98,35 @@ func TestRestoreReplacesOnlyTheUnavailableBytesOfARetryWhoseFilesWereNotWritten(
 	if err := os.WriteFile(first.Artifact, []byte("someone else's file\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Remove(first.Artifact + ".sha256"); err != nil { // not even its checksum file is written beside a file that is not the recorded artifact
+		t.Fatal(err)
+	}
 	if _, foreign, _ := f.run(h); len(foreign.Restored) != 0 {
 		t.Fatalf("a foreign file was restored over: %+v", foreign)
 	} else if got, _ := os.ReadFile(first.Artifact); string(got) != "someone else's file\n" {
 		t.Fatalf("a foreign file was replaced: %q", got)
+	} else if _, err := os.Stat(first.Artifact + ".sha256"); !os.IsNotExist(err) {
+		t.Fatalf("a checksum file was written beside a foreign file: %v", err)
+	}
+}
+
+// A restore of an older result that reaches the lock after a newer result replaced it at the same path must leave the newer result's files alone: its checksum is not the older one's.
+func TestRestoreOfAnOlderResultLeavesTheNewerResultsChecksumAlone(t *testing.T) {
+	f := newFixture(t)
+	h := f.repo.change(f.base, 2)
+	f.on("2026-10-04", quotaResult)
+	f.run(h)
+	f.on("2026-10-05", okResult)
+	_, retry, _ := f.run(h)
+	var older record
+	for _, r := range f.ledger() {
+		if r.Event == "unavailable" {
+			older = r
+		}
+	}
+	before, _ := os.ReadFile(retry.Artifact + ".sha256")
+	written, err := (&ledger{dir: f.state}).restore(context.Background(), older, nil, f.out, true)
+	if after, _ := os.ReadFile(retry.Artifact + ".sha256"); err != nil || len(written) != 0 || !bytes.Equal(before, after) || !strings.HasPrefix(string(after), retry.SHA256) {
+		t.Fatalf("restoring the older result: wrote %v (%v); checksum file %q, was %q", written, err, after, before)
 	}
 }

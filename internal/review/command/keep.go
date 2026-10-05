@@ -28,7 +28,8 @@ func (l *ledger) keep(sha string, data []byte) error {
 func checksumLine(r record) string { return r.SHA256 + "  " + filepath.Base(r.Artifact) + "\n" }
 
 // restoreWanted reports which files of the artifact r recorded a restore would write: the artifact when nothing is at its path, or when what is there is exactly the bytes of the earlier
-// unavailable attempt that r replaced (a retry whose files were not written); the checksum file when it is missing or says something else. Any other file at those paths is not ours to replace.
+// unavailable attempt that r replaced (a retry whose files were not written); the checksum file when it is missing or says something else and the artifact it sits beside has the recorded
+// bytes (or is written now), so that a foreign file, or a newer result that replaced r at the same path, never gets a checksum that is not its own. Any other file at those paths is not ours to replace.
 func restoreWanted(r record, earlier *record) (artifact, checksum bool) {
 	if _, err := os.Lstat(r.Artifact); errors.Is(err, fs.ErrNotExist) {
 		artifact = true
@@ -36,7 +37,11 @@ func restoreWanted(r record, earlier *record) (artifact, checksum bool) {
 		artifact = true
 	}
 	got, err := os.ReadFile(r.Artifact + ".sha256")
-	return artifact, err != nil || string(got) != checksumLine(r)
+	checksum = err != nil || string(got) != checksumLine(r)
+	if checksum && !artifact {
+		checksum = replaces(&r, r.Artifact) // replaces: the file at the path has the bytes r recorded
+	}
+	return artifact, checksum
 }
 
 // restore writes the files of the artifact r recorded that restoreWanted names, from the copy kept with the record, and returns the paths it wrote. A record with no kept copy (a ledger from before
