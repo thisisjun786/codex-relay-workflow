@@ -11,13 +11,31 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
 
+// RecallPhysicalAbs resolves path as Node's path.resolve does: process.cwd() is the
+// physical directory, while Go's os.Getwd honors a logical $PWD, so a relative path
+// joins the symlink-resolved working directory. Only that base is resolved; path
+// itself may not exist and keeps its own symlinks. The result of a failed lookup is "".
+func RecallPhysicalAbs(path string) (string, error) {
+	if filepath.IsAbs(path) {
+		return filepath.Clean(path), nil
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	if cwd, err = filepath.EvalSymlinks(cwd); err != nil {
+		return "", err
+	}
+	return filepath.Join(cwd, path), nil
+}
+
 func codexHome(env ...host.LookupEnv) (string, error) {
 	lookup := host.LookupEnv(os.LookupEnv)
 	if len(env) != 0 {
 		lookup = env[0]
 	}
 	if value, _ := lookup("CODEX_HOME"); text.Trim(value) != "" {
-		return filepath.Abs(source.DecodeUTF8([]byte(value)))
+		return RecallPhysicalAbs(source.DecodeUTF8([]byte(value)))
 	}
 	home, err := host.Home(os.LookupEnv)
 	if err != nil {
