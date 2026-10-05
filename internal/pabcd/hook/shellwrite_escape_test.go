@@ -72,7 +72,7 @@ func TestShellWriteEscapePathJoin(t *testing.T) {
 		{command: path("Path('/review/memories', name, f'/safe/{tail}').write_text('x')"), has: []string{"/review/memories"}},
 		{command: path("Path('/review/memories', f'/safe/{tail}').write_text('x')"), has: []string{"/review/memories", "/safe/{tail}"}},
 		{command: path("Path(f'/m/{x}').write_text('x')"), has: []string{"/m/{x}"}},
-		{command: path("Path('/m', f'a{{b}}').write_text('x')"), has: []string{"/m/a{{b}}"}, lacks: []string{"/m/a{b}"}},
+		{command: path("Path('/m', f'a{{b}}').write_text('x')"), has: []string{"/m/a{{b}}"}, lacks: []string{"/m", "/m/a{b}"}},
 		{command: path("Path(name, 'a').write_text('x')"), same: true},
 		{command: path("Path(base, '/m/a').write_text('x')"), has: []string{"/m/a"}},
 		{command: path("Path('/m', *parts).write_text('x')"), has: []string{"/m"}},

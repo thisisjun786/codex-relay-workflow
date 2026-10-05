@@ -723,9 +723,7 @@ func shellVerbOpenWrites(script string) []string {
 					out = append(out, path)
 				}
 			} else if top.kind == 'p' && c == ')' && shellVerbWriteMethod(rs, i+1) {
-				if path, ok := shellWriteEscapePath(rs, spans); ok {
-					out = append(out, path)
-				}
+				out = append(out, shellWriteEscapePath(rs, spans)...)
 			}
 		}
 	}
@@ -898,19 +896,24 @@ func shellVerbLiteral(arg []rune) (string, bool) {
 	return "", false
 }
 
-// shellWriteEscapePath is the path a Path(...) call names: posixpath.join of its string literal arguments (a trailing comma leaves
-// a blank). An absolute part discards the parts before it and nothing else is normalized, so Path("/m", "") is "/m/". An argument
-// that is no literal leaves the rest of the path unknown, so the call names the literal prefix, the directory the write lands under
-// (Path("/m", name) is "/m"), until an absolute literal part starts the path over; no known prefix names nothing. The path grows in
-// one buffer, so the work is linear in the arguments.
-func shellWriteEscapePath(rs []rune, spans [][2]int) (string, bool) {
+// shellWriteEscapePath is what a Path(...) call names: posixpath.join of its string literal arguments (a trailing comma leaves a
+// blank). An absolute part discards the parts before it and nothing else is normalized, so Path("/m", "") is "/m/". An argument
+// that is no literal, or an f-string with a field, leaves the rest of the path unknown, so the call names the literal prefix, the
+// directory the write lands under (Path("/m", name) is "/m"), until an absolute literal part starts the path over; no known prefix
+// names nothing. Such a call also keeps the earlier reading, its first argument when that is a literal, so the join never names
+// fewer destinations than before. The path grows in one buffer, so the work is linear in the arguments.
+func shellWriteEscapePath(rs []rune, spans [][2]int) []string {
 	var path []byte
-	known := true // false once a part that is no literal stands in the path
+	known, dynamic, head, parts := true, false, "", 0
 	for _, span := range spans {
 		if shellVerbBlank(rs[span[0]:span[1]]) {
 			continue
 		}
 		part, ok := shellVerbLiteral(rs[span[0]:span[1]])
+		if parts++; parts == 1 && ok {
+			head = part
+		}
+		dynamic = dynamic || !ok || shellWriteEscapeField(rs[span[0]:span[1]])
 		switch {
 		case !ok:
 			known = false
@@ -923,7 +926,34 @@ func shellWriteEscapePath(rs []rune, spans [][2]int) (string, bool) {
 			path = append(append(path, '/'), part...)
 		}
 	}
-	return string(path), len(path) > 0
+	names := []string{}
+	if len(path) > 0 {
+		names = append(names, string(path))
+	}
+	if dynamic && head != "" && head != string(path) {
+		names = append(names, head)
+	}
+	return names
+}
+
+// shellWriteEscapeField reports whether arg is an f-string literal with a replacement field: a brace that is not doubled.
+func shellWriteEscapeField(arg []rune) bool {
+	i, f := 0, false
+	for i < len(arg) && shellVerbSpaceRune(arg[i]) {
+		i++
+	}
+	for ; i < len(arg) && strings.ContainsRune("rRuUbBfF", arg[i]); i++ {
+		f = f || arg[i] == 'f' || arg[i] == 'F'
+	}
+	for ; f && i < len(arg); i++ {
+		if arg[i] == '{' {
+			if i+1 == len(arg) || arg[i+1] != '{' {
+				return true
+			}
+			i++
+		}
+	}
+	return false
 }
 
 // shellWriteEscapePython decodes the body of a non-raw Python string literal: a line continuation (a CR or CRLF is a newline to
