@@ -108,6 +108,15 @@ func TestHookTrustEntriesReadContained_rootOpen(t *testing.T) {
 			setup: func(t *testing.T, root string) { hookTrustEntriesRaceChain(t, root, 8) }},
 		{name: "chain of nine links", ref: "c1", wantIs: syscall.ELOOP,
 			setup: func(t *testing.T, root string) { hookTrustEntriesRaceChain(t, root, 9) }},
+		{name: "plugin root that can be searched but not read", ref: "sub/real.json", wantIs: fs.ErrPermission,
+			setup: func(t *testing.T, root string) {
+				if os.Geteuid() == 0 {
+					t.Skip("root reads every directory")
+				}
+				// os.OpenRoot opens the directory for reading; opening a file by its path needs search only.
+				hookTrustEntriesRaceMust(t, os.Chmod(root, 0o111))
+				t.Cleanup(func() { os.Chmod(root, 0o755) })
+			}},
 		{name: "dangling link inside", ref: "gone.json", wantIs: fs.ErrNotExist,
 			setup: func(t *testing.T, root string) { link(t, root, "gone.json", "sub/missing.json") }},
 		{name: "directory", ref: "sub", wantIs: syscall.EISDIR},
