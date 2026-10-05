@@ -1,0 +1,16 @@
+{
+  "issue": "CRW-544",
+  "identical": [],
+  "intentionally-changed": [],
+  "pending": [
+    "cli__review-round__open_signoff_and_binding_verdict",
+    "cli__review-round__show_and_open_refusals",
+    "cli__review-round__unparsed_signoff_noted_and_abort",
+    "cli-help__review-round__dash_h",
+    "cli-help__review-round__dashdash_help",
+    "cli-help__review-round__word_help",
+    "cli-help__review-round__open_dashdash_help",
+    "cli-help__review-round__show_dashdash_help",
+    "cli-help__review-round__abort_dashdash_help"
+  ]
+}
