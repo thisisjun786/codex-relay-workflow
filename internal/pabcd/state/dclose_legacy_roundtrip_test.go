@@ -1,6 +1,10 @@
 package state
 
-import "testing"
+import (
+	"bytes"
+	"os"
+	"testing"
+)
 
 // CRW-648: a D-close recovery marker the reader restores as Legacy must keep the distinction across a state write. The port
 // persists such a marker as nextWorkPhaseId:null with legacy:true, so the next read must take the stored flag, not the null,
@@ -22,6 +26,11 @@ func TestDcloseLegacySurvivesAWriteAndRead(t *testing.T) {
 	again, unreadable := ReadStateStrict(cwd, "s1")
 	if unreadable || again.DcloseRecovery == nil || !again.DcloseRecovery.Legacy || again.DcloseRecovery.NextWorkPhaseID != nil {
 		t.Fatalf("after a write: %+v unreadable=%v", again.DcloseRecovery, unreadable)
+	}
+	// the persisted shape is unchanged, and the stored flag is what the next read takes as the answer
+	raw, err := os.ReadFile(StatePath(cwd, "s1"))
+	if err != nil || !bytes.Contains(raw, []byte(`"nextWorkPhaseId": null`)) || !bytes.Contains(raw, []byte(`"legacy": true`)) {
+		t.Fatalf("written file %s: %v", raw, err)
 	}
 }
 
