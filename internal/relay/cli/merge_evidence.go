@@ -93,7 +93,15 @@ var mergeEvidenceCommand = dispatch.Command{Name: "merge-evidence", Unselected: 
 		snapshot["restatement"] = restatement
 		// The child's statement about its independent review is read beside the restatement and never
 		// in it: whatever it finds, the problems above, current, the verdict and the exit code stand.
-		if coverage := evidence.IndependentReviewCoverage(pyvalue.Str(head), handoff, nil); coverage.Stated || expectReview {
+		// The review is compared with the head the forge reports now, the candidate head the restatement
+		// judges; the record's head is the comparison only when the forge reports none.
+		reviewHead := head
+		if pinned, isObject := snapshot["pinned"].(map[string]any); isObject {
+			if reported, isText := pinned["headSha"].(string); isText && reported != "" {
+				reviewHead = reported
+			}
+		}
+		if coverage := evidence.IndependentReviewCoverage(pyvalue.Str(reviewHead), handoff, nil); coverage.Stated || expectReview {
 			warnings := make([]any, len(coverage.Warnings))
 			for i, w := range coverage.Warnings {
 				warnings[i] = map[string]any{"code": w.Code, "detail": w.Detail}
