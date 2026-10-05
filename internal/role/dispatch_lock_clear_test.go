@@ -71,7 +71,11 @@ func lockClearOwner(pid int, start string) map[string]any {
 // lockClearDead is an owner whose process has finished.
 func lockClearDead(t *testing.T) map[string]any {
 	t.Helper()
-	cmd := exec.Command("sleep", "60")
+	sleep, err := exec.LookPath("sleep")
+	if err != nil {
+		t.Skip("no sleep binary to start the finished owner with")
+	}
+	cmd := exec.Command(sleep, "60")
 	check(t, cmd.Start())
 	start, err := dispatchProcessStart(cmd.Process.Pid)
 	check(t, err)
@@ -222,7 +226,11 @@ func TestDispatchLockClearRefusals(t *testing.T) {
 			if syscall.Kill(1, 0) != syscall.EPERM {
 				t.Skip("pid 1 can be signalled here (root)")
 			}
-			return lockClearOwner(1, must(dispatchProcessStart(1)))
+			start, err := dispatchProcessStart(1)
+			if err != nil {
+				t.Skip("the start time of pid 1 cannot be read: " + err.Error())
+			}
+			return lockClearOwner(1, start)
 		})},
 		{"start not recorded, pid exists", "cannot confirm its owner is gone", held(func(*testing.T) map[string]any { return lockClearOwner(os.Getpid(), "") })},
 		{"no owner", "cannot confirm its owner is gone", ownerCase(func(*testing.T, string) {})},
@@ -504,9 +512,40 @@ func TestDispatchLockClearKeepsALockReplacedAfterTheCheck(t *testing.T) {
 			if retaken && len(must(os.ReadDir(lock))) != 0 {
 				t.Error("the directory that took the name was touched")
 			}
+			if tombs := must(filepath.Glob(lock + ".clearing-*")); !retaken && len(tombs) != 0 {
+				t.Errorf("a put-back left a tombstone: %v", tombs)
+			}
 			if line, _ := os.ReadFile(filepath.Join(lockClearDir(ws), "lock-clears.jsonl")); len(line) != 0 {
 				t.Errorf("a clear that did not happen was written down: %q", line)
 			}
 		})
+	}
+}
+
+// Once the lock is claimed it is cleared whatever happens to its tombstone: the line is written and printed, and the error says where the leftover is.
+func TestDispatchLockClearReportsATombstoneThatCannotBeRemoved(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root removes a read-only directory")
+	}
+	ws := t.TempDir()
+	env, _ := home(t)
+	lock := lockClearHold(t, ws, dispatchSessionLock)
+	lockClearOwn(t, lock, lockClearDead(t))
+	stuck := filepath.Join(lock, "stuck") // moves with the lock; a file in a read-only directory makes the removal fail
+	check(t, os.Mkdir(stuck, 0o700))
+	check(t, os.WriteFile(filepath.Join(stuck, "f"), nil, 0o600))
+	check(t, os.Chmod(stuck, 0o500))
+	t.Cleanup(func() {
+		for _, tomb := range must(filepath.Glob(lock + ".clearing-*")) {
+			_ = os.Chmod(filepath.Join(tomb, "stuck"), 0o700)
+		}
+	})
+	code, out, errOut := lockClearRun(t, env, ws, "--session", lockClearSession, "--session-lock", "--reason", "owner crashed")
+	answer := lockClearLine(t, out)
+	message, _ := answer["error"].(string)
+	tombs := must(filepath.Glob(lock + ".clearing-*"))
+	logged := string(must(os.ReadFile(filepath.Join(lockClearDir(ws), "lock-clears.jsonl"))))
+	if code != 1 || errOut != "" || !strings.Contains(message, "its tombstone") || answer["cleared"] == nil || strings.Count(logged, "\n") != 1 || lockClearExists(lock) || len(tombs) != 1 {
+		t.Fatalf("exit %d, %q, stderr %q, tombstones %v, log %q", code, out, errOut, tombs, logged)
 	}
 }

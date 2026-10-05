@@ -87,7 +87,8 @@ differs (the pid was taken over), then appends the removal to `lock-clears.jsonl
 prints that line (exit 0). It removes nothing and exits 1 when the owner is alive (a pid it cannot signal still
 counts), `owner.json` is missing or unreadable, the host differs, the start time cannot be compared, or the
 entry is a link or not a directory; usage errors exit 2. Clears of one session take turns, and a lock that turns
-out to have been replaced after the check is put back, never removed.
+out to have been replaced after the check is put back, or left at a `.clearing-` name that the error
+reports, and never removed.
 
 Each callback attempt has a thirty-second budget. Known running holds keep polling
 with the existing five-second to five-minute backoff, including mixed subtrees

@@ -165,9 +165,11 @@ func dispatchLockClearExclusive(f *os.File) error {
 }
 
 // dispatchLockClear removes lock from dir once its owner is confirmed gone and appends what it did to lock-clears.jsonl; it
-// returns that line. Clears of one session take turns. The log is checked before anything is removed and opened for
-// writing before the removal, so only the write itself can fail after it; the line is then returned with the error. os.Root
-// follows a link that stays inside the root even with O_NOFOLLOW, so a link or any other entry that is not a regular file
+// returns that line. Clears of one session take turns. The log is checked before anything is touched and opened for writing
+// before the claim. The owner is judged by name, then the lock is claimed by renaming it to a tombstone, whose owner.json must
+// still be the bytes that were judged: a lock that took the place of the judged one in between is put back (restoreLock),
+// never removed. After the claim only the write of the line and the removal of the tombstone can fail, and the line is then
+// returned with the error. os.Root follows a link that stays inside the root even with O_NOFOLLOW, so a link or any other entry that is not a regular file
 // is refused by its Lstat, and an existing log must still be that file once it is open.
 func dispatchLockClear(dir *dispatchPinnedDir, lock, reason string) ([]byte, error) {
 	guard, err := dir.root.Open(".")
@@ -216,10 +218,11 @@ func dispatchLockClear(dir *dispatchPinnedDir, lock, reason string) ([]byte, err
 	if now, err := dispatchLockOwnerRead(dir, tomb); err != nil || !bytes.Equal(now, judged) {
 		return nil, dir.restoreLock(lock, tomb)
 	}
-	if err = dir.root.RemoveAll(tomb); err != nil {
-		return nil, fmt.Errorf("%w (the lock is left at %s, partly removed, and one without an owner stays refused)", err, dir.display(tomb))
-	}
+	// The lock is gone from its name, so the removal is written down first; removing the tombstone is only tidying up.
 	_, err = log.Write(append(line, '\n'))
+	if rmErr := dir.root.RemoveAll(tomb); rmErr != nil {
+		err = errors.Join(err, fmt.Errorf("the lock is cleared, but its tombstone %s could not be removed: %w", dir.display(tomb), rmErr))
+	}
 	return line, err
 }
 
