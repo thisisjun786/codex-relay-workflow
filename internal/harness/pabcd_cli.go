@@ -162,3 +162,74 @@ func scanVerb(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 	fmt.Fprintln(stdout, result.Output)
 	return result.Code
 }
+
+// reviewRoundVerb is the review-round row: the parser and the runner this repository already
+// ported, driven exactly as the oracle's branch does (cli.ts:310-330). A parse refusal keeps the
+// "review-round: " prefix on stderr and exit 1; a library error is the oracle's uncaught throw and
+// answers with the generic "crw cli failed: " prefix; every result goes to stdout with its code.
+func reviewRoundVerb(args []string, _ io.Reader, stdout, stderr io.Writer) int {
+	cwd, err := syscall.Getwd()
+	if err != nil {
+		fmt.Fprintln(stderr, "crw cli failed: "+err.Error())
+		return 1
+	}
+	parsed := cli.ParseReviewRoundCliArgs(args, cwd)
+	if parsed.Error != "" {
+		fmt.Fprintln(stderr, "review-round: "+parsed.Error)
+		return 1
+	}
+	result, err := cli.RunReviewRoundCli(*parsed.Args, nil)
+	if err != nil {
+		fmt.Fprintln(stderr, "crw cli failed: "+err.Error())
+		return 1
+	}
+	fmt.Fprintln(stdout, result.Output)
+	return result.Code
+}
+
+// metricVerb is the metric row (cli.ts:156-181). The oracle reads stdin only when the first
+// argument after the verb is exactly "ingest", and before it resolves the working directory, so an
+// oversized ingest in a deleted cwd still reports the overflow. The bound and the overflow rule
+// are the repository's ReadStdin, the same one the hook envelope uses; every result goes to stdout
+// with its code, and a library error answers "crw cli failed: ".
+func metricVerb(args []string, in io.Reader, stdout, stderr io.Writer) int {
+	raw := ""
+	if len(args) > 0 && args[0] == "ingest" {
+		var overflow bool
+		raw, overflow = ReadStdin(in)
+		if overflow {
+			fmt.Fprintf(stderr, "metric: stdin exceeds %d bytes\n", MaxStdinBytes)
+			return 1
+		}
+	}
+	cwd, err := syscall.Getwd()
+	if err != nil {
+		fmt.Fprintln(stderr, "crw cli failed: "+err.Error())
+		return 1
+	}
+	result, err := cli.RunMetricCLI(args, cwd, raw)
+	if err != nil {
+		fmt.Fprintln(stderr, "crw cli failed: "+err.Error())
+		return 1
+	}
+	fmt.Fprintln(stdout, result.Output)
+	return result.Code
+}
+
+// divergenceVerb is the divergence row (cli.ts:183-189). The library's error is the oracle's one
+// uncaught path (the mode write), reported as "crw cli failed: "; every result goes to stdout with
+// its code.
+func divergenceVerb(args []string, _ io.Reader, stdout, stderr io.Writer) int {
+	cwd, err := syscall.Getwd()
+	if err != nil {
+		fmt.Fprintln(stderr, "crw cli failed: "+err.Error())
+		return 1
+	}
+	result, err := cli.RunDivergenceCli(args, cwd)
+	if err != nil {
+		fmt.Fprintln(stderr, "crw cli failed: "+err.Error())
+		return 1
+	}
+	fmt.Fprintln(stdout, result.Output)
+	return result.Code
+}
