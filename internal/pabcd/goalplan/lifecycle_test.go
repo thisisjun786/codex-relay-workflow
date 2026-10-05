@@ -56,7 +56,7 @@ func lifecycleProjectPlan(plan *Goalplan) any {
 			if task.DependsOn != nil {
 				dependsOn = task.DependsOn
 			}
-			tasks = append(tasks, map[string]any{"id": task.ID, "status": string(task.Status), "outcome": outcome, "dependsOn": dependsOn})
+			tasks = append(tasks, map[string]any{"id": task.ID, "title": task.Title, "status": string(task.Status), "outcome": outcome, "dependsOn": dependsOn})
 		}
 		var awaits any
 		if phase.AwaitsDecision != nil {
@@ -175,7 +175,7 @@ func TestGoalplanLifecycleOracleCorpus(t *testing.T) {
 	if err := json.Unmarshal(raw, &corpus); err != nil {
 		t.Fatal(err)
 	}
-	if len(corpus.Cases) != 64 {
+	if len(corpus.Cases) != 78 {
 		t.Fatalf("recorded corpus changed: %d cases", len(corpus.Cases))
 	}
 	for _, c := range corpus.Cases {
@@ -184,6 +184,7 @@ func TestGoalplanLifecycleOracleCorpus(t *testing.T) {
 			if err := json.Unmarshal(c.Plan, &plan); err != nil {
 				t.Fatal(err)
 			}
+			before := mustJSON(t, &plan)
 			got := map[string]any{}
 			switch c.Fn {
 			case "ask":
@@ -257,6 +258,9 @@ func TestGoalplanLifecycleOracleCorpus(t *testing.T) {
 				gotRaw, _ := json.Marshal(lifecycleJSON(t, got))
 				wantRaw, _ := json.Marshal(lifecycleJSON(t, want))
 				t.Fatalf("case %s\ngot  %s\nwant %s", c.Name, gotRaw, wantRaw)
+			}
+			if after := mustJSON(t, &plan); after != before {
+				t.Fatalf("case %s mutated its input plan:\n%s\nwant\n%s", c.Name, after, before)
 			}
 			if after := lifecycleProjectPlan(&plan); !reflect.DeepEqual(lifecycleJSON(t, after), lifecycleJSON(t, c.Input)) {
 				t.Fatalf("case %s mutated its input plan:\n%s", c.Name, mustJSON(t, after))
@@ -379,7 +383,8 @@ func TestGoalplanLifecycleInputShapes(t *testing.T) {
 			Criteria:   []GoalplanCriterion{{ID: "c-1", Scenario: "s", Status: CriterionOpen}},
 		}
 	}
-	// A nil Options is absent (the corpus can only carry a present empty list), so the
+	// A nil Options is absent; the corpus carries the present-empty form as an explicit
+	// empty list, so the two forms stay distinguishable. The
 	// ask is accepted and stores no options field.
 	plan := open()
 	result := AskGoalplanDecision(plan, AskGoalplanDecisionInput{ID: "dec-1", Question: "Choose", WorkPhaseIDs: []string{"wp1"}, AskedAt: ts})
@@ -412,5 +417,31 @@ func TestGoalplanLifecycleInputShapes(t *testing.T) {
 	}
 	if ids := lifecycleDoneWithPendingIDs(&Goalplan{}); len(ids) != 0 {
 		t.Fatalf("done-with-pending on empty plan = %v", ids)
+	}
+}
+
+// A changed result must not share a backing array with its input. The corpus compares
+// projected values and cannot see aliasing, so this probe writes through every slice of
+// the result and re-reads the input.
+func TestGoalplanLifecycleResultDoesNotAliasInput(t *testing.T) {
+	ts := "2026-01-01T00:00:00.000Z"
+	decisions := make([]GoalplanDecision, 0, 4)
+	decisions = append(decisions, GoalplanDecision{ID: "dec-1", Question: "Choose", Status: DecisionOpen, AskedAt: ts})
+	phases := make([]GoalplanWorkPhase, 0, 4)
+	phases = append(phases, GoalplanWorkPhase{ID: "wp1", Title: "Exporter", Status: WorkPhasePending, Tasks: make([]GoalplanTask, 0, 4), CriteriaIDs: []string{}})
+	plan := &Goalplan{WorkPhases: phases, Criteria: []GoalplanCriterion{}, Decisions: decisions}
+	result := AskGoalplanDecision(plan, AskGoalplanDecisionInput{ID: "dec-2", Question: "Second", WorkPhaseIDs: []string{"wp1"}, AskedAt: ts})
+	if result.Kind != GoalplanLifecycleChanged || result.Plan == nil {
+		t.Fatalf("ask = %#v", result)
+	}
+	result.Plan.Decisions[0].Question = "overwritten"
+	result.Plan.Decisions = append(result.Plan.Decisions, GoalplanDecision{ID: "dec-3", Question: "Third", AskedAt: ts})
+	result.Plan.WorkPhases[0].AwaitsDecision = append(result.Plan.WorkPhases[0].AwaitsDecision, "dec-9")
+	result.Plan.WorkPhases = append(result.Plan.WorkPhases, GoalplanWorkPhase{ID: "wp2", Title: "Extra", CriteriaIDs: []string{}})
+	if plan.Decisions[0].Question != "Choose" {
+		t.Fatalf("result aliases the input decisions: %q", plan.Decisions[0].Question)
+	}
+	if len(plan.Decisions) != 1 || len(plan.WorkPhases) != 1 || len(plan.WorkPhases[0].AwaitsDecision) != 0 {
+		t.Fatalf("result shares backing arrays with the input: %+v", plan)
 	}
 }

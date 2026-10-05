@@ -37,7 +37,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -61,12 +61,14 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "Write the CSV writer",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": null
               },
               {
                 "id": "t-2",
+                "title": "Wire the CLI",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": [
@@ -99,12 +101,14 @@
               "tasks": [
                 {
                   "id": "t-1",
+                  "title": "Write the CSV writer",
                   "status": "pending",
                   "outcome": null,
                   "dependsOn": null
                 },
                 {
                   "id": "t-2",
+                  "title": "Wire the CLI",
                   "status": "pending",
                   "outcome": null,
                   "dependsOn": [
@@ -134,52 +138,6 @@
             }
           ]
         }
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "in_progress",
-            "awaitsDecision": [
-              "dec-1"
-            ],
-            "tasks": [
-              {
-                "id": "t-1",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": null
-              },
-              {
-                "id": "t-2",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": [
-                  "t-1"
-                ]
-              }
-            ]
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": [
-          {
-            "id": "dec-1",
-            "question": "Choose API",
-            "status": "open",
-            "answer": null,
-            "askedAt": "2026-01-01T00:00:00.000Z",
-            "decidedAt": null,
-            "recommendation": null,
-            "options": null
-          }
-        ]
       }
     },
     {
@@ -217,7 +175,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -246,12 +204,14 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "Write the CSV writer",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": null
               },
               {
                 "id": "t-2",
+                "title": "Wire the CLI",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": [
@@ -284,12 +244,14 @@
               "tasks": [
                 {
                   "id": "t-1",
+                  "title": "Write the CSV writer",
                   "status": "pending",
                   "outcome": null,
                   "dependsOn": null
                 },
                 {
                   "id": "t-2",
+                  "title": "Wire the CLI",
                   "status": "pending",
                   "outcome": null,
                   "dependsOn": [
@@ -322,24 +284,74 @@
             }
           ]
         }
+      }
+    },
+    {
+      "name": "ask_ok_recommendation_without_options",
+      "fn": "ask",
+      "plan": {
+        "objective": "Ship the export feature",
+        "slug": "ship-the-export-feature",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [
+          {
+            "id": "wp1",
+            "title": "Exporter",
+            "status": "in_progress",
+            "tasks": [
+              {
+                "id": "t-1",
+                "title": "Write the CSV writer",
+                "status": "pending"
+              },
+              {
+                "id": "t-2",
+                "title": "Wire the CLI",
+                "status": "pending",
+                "dependsOn": [
+                  "t-1"
+                ]
+              }
+            ],
+            "criteriaIds": []
+          }
+        ],
+        "criteria": [
+          {
+            "id": "c-1",
+            "scenario": "s",
+            "expectedEvidence": "",
+            "capturedEvidence": null,
+            "status": "open"
+          }
+        ]
       },
-      "after": {
+      "args": {
+        "id": "dec-1",
+        "question": "Choose API",
+        "recommendation": " A ",
+        "workPhaseIds": [],
+        "askedAt": "2026-01-01T00:00:00.000Z"
+      },
+      "input": {
         "workPhases": [
           {
             "id": "wp1",
             "status": "in_progress",
-            "awaitsDecision": [
-              "dec-1"
-            ],
+            "awaitsDecision": null,
             "tasks": [
               {
                 "id": "t-1",
+                "title": "Write the CSV writer",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": null
               },
               {
                 "id": "t-2",
+                "title": "Wire the CLI",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": [
@@ -356,21 +368,57 @@
             "capturedEvidence": null
           }
         ],
-        "decisions": [
-          {
-            "id": "dec-1",
-            "question": "Choose API",
-            "status": "open",
-            "answer": null,
-            "askedAt": "2026-01-01T00:00:00.000Z",
-            "decidedAt": null,
-            "recommendation": "A",
-            "options": [
-              "A",
-              "B"
-            ]
-          }
-        ]
+        "decisions": []
+      },
+      "expect": {
+        "kind": "changed",
+        "reason": null,
+        "plan": {
+          "workPhases": [
+            {
+              "id": "wp1",
+              "status": "in_progress",
+              "awaitsDecision": null,
+              "tasks": [
+                {
+                  "id": "t-1",
+                  "title": "Write the CSV writer",
+                  "status": "pending",
+                  "outcome": null,
+                  "dependsOn": null
+                },
+                {
+                  "id": "t-2",
+                  "title": "Wire the CLI",
+                  "status": "pending",
+                  "outcome": null,
+                  "dependsOn": [
+                    "t-1"
+                  ]
+                }
+              ]
+            }
+          ],
+          "criteria": [
+            {
+              "id": "c-1",
+              "status": "open",
+              "capturedEvidence": null
+            }
+          ],
+          "decisions": [
+            {
+              "id": "dec-1",
+              "question": "Choose API",
+              "status": "open",
+              "answer": null,
+              "askedAt": "2026-01-01T00:00:00.000Z",
+              "decidedAt": null,
+              "recommendation": "A",
+              "options": null
+            }
+          ]
+        }
       }
     },
     {
@@ -408,7 +456,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -434,12 +482,14 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "Write the CSV writer",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": null
               },
               {
                 "id": "t-2",
+                "title": "Wire the CLI",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": [
@@ -470,12 +520,14 @@
               "tasks": [
                 {
                   "id": "t-1",
+                  "title": "Write the CSV writer",
                   "status": "pending",
                   "outcome": null,
                   "dependsOn": null
                 },
                 {
                   "id": "t-2",
+                  "title": "Wire the CLI",
                   "status": "pending",
                   "outcome": null,
                   "dependsOn": [
@@ -508,53 +560,6 @@
             }
           ]
         }
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "in_progress",
-            "awaitsDecision": null,
-            "tasks": [
-              {
-                "id": "t-1",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": null
-              },
-              {
-                "id": "t-2",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": [
-                  "t-1"
-                ]
-              }
-            ]
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": [
-          {
-            "id": "dec-1",
-            "question": "Choose API",
-            "status": "open",
-            "answer": null,
-            "askedAt": "2026-01-01T00:00:00.000Z",
-            "decidedAt": null,
-            "recommendation": null,
-            "options": [
-              "A",
-              "B"
-            ]
-          }
-        ]
       }
     },
     {
@@ -592,7 +597,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -614,12 +619,14 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "Write the CSV writer",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": null
               },
               {
                 "id": "t-2",
+                "title": "Wire the CLI",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": [
@@ -650,12 +657,14 @@
               "tasks": [
                 {
                   "id": "t-1",
+                  "title": "Write the CSV writer",
                   "status": "pending",
                   "outcome": null,
                   "dependsOn": null
                 },
                 {
                   "id": "t-2",
+                  "title": "Wire the CLI",
                   "status": "pending",
                   "outcome": null,
                   "dependsOn": [
@@ -685,27 +694,64 @@
             }
           ]
         }
-      },
-      "after": {
+      }
+    },
+    {
+      "name": "ask_ok_blocked_phase_untrimmed_id",
+      "fn": "ask",
+      "plan": {
+        "objective": "Ship the export feature",
+        "slug": "ship-the-export-feature",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
         "workPhases": [
           {
             "id": "wp1",
-            "status": "in_progress",
+            "title": "Exporter",
+            "status": "blocked",
+            "tasks": [
+              {
+                "id": "t-1",
+                "title": "Write the CSV writer",
+                "status": "pending"
+              }
+            ],
+            "criteriaIds": [],
+            "blockedReason": "waiting on input"
+          }
+        ],
+        "criteria": [
+          {
+            "id": "c-1",
+            "scenario": "s",
+            "expectedEvidence": "",
+            "capturedEvidence": null,
+            "status": "open"
+          }
+        ]
+      },
+      "args": {
+        "id": "dec-1",
+        "question": "Choose API",
+        "workPhaseIds": [
+          " wp1 "
+        ],
+        "askedAt": "2026-01-01T00:00:00.000Z"
+      },
+      "input": {
+        "workPhases": [
+          {
+            "id": "wp1",
+            "status": "blocked",
             "awaitsDecision": null,
             "tasks": [
               {
                 "id": "t-1",
+                "title": "Write the CSV writer",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": null
-              },
-              {
-                "id": "t-2",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": [
-                  "t-1"
-                ]
               }
             ]
           }
@@ -717,18 +763,50 @@
             "capturedEvidence": null
           }
         ],
-        "decisions": [
-          {
-            "id": "dec-1",
-            "question": "Choose API",
-            "status": "open",
-            "answer": null,
-            "askedAt": "2026-01-01T00:00:00.000Z",
-            "decidedAt": null,
-            "recommendation": null,
-            "options": null
-          }
-        ]
+        "decisions": []
+      },
+      "expect": {
+        "kind": "changed",
+        "reason": null,
+        "plan": {
+          "workPhases": [
+            {
+              "id": "wp1",
+              "status": "blocked",
+              "awaitsDecision": [
+                "dec-1"
+              ],
+              "tasks": [
+                {
+                  "id": "t-1",
+                  "title": "Write the CSV writer",
+                  "status": "pending",
+                  "outcome": null,
+                  "dependsOn": null
+                }
+              ]
+            }
+          ],
+          "criteria": [
+            {
+              "id": "c-1",
+              "status": "open",
+              "capturedEvidence": null
+            }
+          ],
+          "decisions": [
+            {
+              "id": "dec-1",
+              "question": "Choose API",
+              "status": "open",
+              "answer": null,
+              "askedAt": "2026-01-01T00:00:00.000Z",
+              "decidedAt": null,
+              "recommendation": null,
+              "options": null
+            }
+          ]
+        }
       }
     },
     {
@@ -766,7 +844,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -788,12 +866,14 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "Write the CSV writer",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": null
               },
               {
                 "id": "t-2",
+                "title": "Wire the CLI",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": [
@@ -816,39 +896,6 @@
         "kind": "rejected",
         "reason": "decision id must be a short lowercase id, e.g. dec-1",
         "plan": null
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "in_progress",
-            "awaitsDecision": null,
-            "tasks": [
-              {
-                "id": "t-1",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": null
-              },
-              {
-                "id": "t-2",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": [
-                  "t-1"
-                ]
-              }
-            ]
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": []
       }
     },
     {
@@ -886,7 +933,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -908,12 +955,14 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "Write the CSV writer",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": null
               },
               {
                 "id": "t-2",
+                "title": "Wire the CLI",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": [
@@ -936,39 +985,6 @@
         "kind": "rejected",
         "reason": "decision id must be a short lowercase id, e.g. dec-1",
         "plan": null
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "in_progress",
-            "awaitsDecision": null,
-            "tasks": [
-              {
-                "id": "t-1",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": null
-              },
-              {
-                "id": "t-2",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": [
-                  "t-1"
-                ]
-              }
-            ]
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": []
       }
     },
     {
@@ -1006,7 +1022,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -1028,12 +1044,14 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "Write the CSV writer",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": null
               },
               {
                 "id": "t-2",
+                "title": "Wire the CLI",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": [
@@ -1056,39 +1074,6 @@
         "kind": "rejected",
         "reason": "decision id must be a short lowercase id, e.g. dec-1",
         "plan": null
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "in_progress",
-            "awaitsDecision": null,
-            "tasks": [
-              {
-                "id": "t-1",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": null
-              },
-              {
-                "id": "t-2",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": [
-                  "t-1"
-                ]
-              }
-            ]
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": []
       }
     },
     {
@@ -1126,7 +1111,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -1148,12 +1133,14 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "Write the CSV writer",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": null
               },
               {
                 "id": "t-2",
+                "title": "Wire the CLI",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": [
@@ -1184,12 +1171,14 @@
               "tasks": [
                 {
                   "id": "t-1",
+                  "title": "Write the CSV writer",
                   "status": "pending",
                   "outcome": null,
                   "dependsOn": null
                 },
                 {
                   "id": "t-2",
+                  "title": "Wire the CLI",
                   "status": "pending",
                   "outcome": null,
                   "dependsOn": [
@@ -1219,50 +1208,6 @@
             }
           ]
         }
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "in_progress",
-            "awaitsDecision": null,
-            "tasks": [
-              {
-                "id": "t-1",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": null
-              },
-              {
-                "id": "t-2",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": [
-                  "t-1"
-                ]
-              }
-            ]
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": [
-          {
-            "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "question": "Q",
-            "status": "open",
-            "answer": null,
-            "askedAt": "2026-01-01T00:00:00.000Z",
-            "decidedAt": null,
-            "recommendation": null,
-            "options": null
-          }
-        ]
       }
     },
     {
@@ -1300,7 +1245,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -1322,12 +1267,14 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "Write the CSV writer",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": null
               },
               {
                 "id": "t-2",
+                "title": "Wire the CLI",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": [
@@ -1350,39 +1297,6 @@
         "kind": "rejected",
         "reason": "decision question must not be empty",
         "plan": null
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "in_progress",
-            "awaitsDecision": null,
-            "tasks": [
-              {
-                "id": "t-1",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": null
-              },
-              {
-                "id": "t-2",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": [
-                  "t-1"
-                ]
-              }
-            ]
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": []
       }
     },
     {
@@ -1420,7 +1334,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -1443,12 +1357,14 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "Write the CSV writer",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": null
               },
               {
                 "id": "t-2",
+                "title": "Wire the CLI",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": [
@@ -1471,39 +1387,6 @@
         "kind": "rejected",
         "reason": "decision recommendation must not be empty",
         "plan": null
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "in_progress",
-            "awaitsDecision": null,
-            "tasks": [
-              {
-                "id": "t-1",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": null
-              },
-              {
-                "id": "t-2",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": [
-                  "t-1"
-                ]
-              }
-            ]
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": []
       }
     },
     {
@@ -1541,7 +1424,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -1564,12 +1447,14 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "Write the CSV writer",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": null
               },
               {
                 "id": "t-2",
+                "title": "Wire the CLI",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": [
@@ -1592,39 +1477,6 @@
         "kind": "rejected",
         "reason": "decision options must not be empty",
         "plan": null
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "in_progress",
-            "awaitsDecision": null,
-            "tasks": [
-              {
-                "id": "t-1",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": null
-              },
-              {
-                "id": "t-2",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": [
-                  "t-1"
-                ]
-              }
-            ]
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": []
       }
     },
     {
@@ -1662,7 +1514,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -1688,12 +1540,14 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "Write the CSV writer",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": null
               },
               {
                 "id": "t-2",
+                "title": "Wire the CLI",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": [
@@ -1716,39 +1570,6 @@
         "kind": "rejected",
         "reason": "decision options must be non-empty text",
         "plan": null
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "in_progress",
-            "awaitsDecision": null,
-            "tasks": [
-              {
-                "id": "t-1",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": null
-              },
-              {
-                "id": "t-2",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": [
-                  "t-1"
-                ]
-              }
-            ]
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": []
       }
     },
     {
@@ -1786,7 +1607,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -1812,12 +1633,14 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "Write the CSV writer",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": null
               },
               {
                 "id": "t-2",
+                "title": "Wire the CLI",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": [
@@ -1840,8 +1663,62 @@
         "kind": "rejected",
         "reason": "duplicate decision option 'A'",
         "plan": null
+      }
+    },
+    {
+      "name": "ask_reject_duplicate_then_blank_option",
+      "fn": "ask",
+      "plan": {
+        "objective": "Ship the export feature",
+        "slug": "ship-the-export-feature",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [
+          {
+            "id": "wp1",
+            "title": "Exporter",
+            "status": "in_progress",
+            "tasks": [
+              {
+                "id": "t-1",
+                "title": "Write the CSV writer",
+                "status": "pending"
+              },
+              {
+                "id": "t-2",
+                "title": "Wire the CLI",
+                "status": "pending",
+                "dependsOn": [
+                  "t-1"
+                ]
+              }
+            ],
+            "criteriaIds": []
+          }
+        ],
+        "criteria": [
+          {
+            "id": "c-1",
+            "scenario": "s",
+            "expectedEvidence": "",
+            "capturedEvidence": null,
+            "status": "open"
+          }
+        ]
       },
-      "after": {
+      "args": {
+        "id": "dec-1",
+        "question": "Q",
+        "options": [
+          "A",
+          "A",
+          " "
+        ],
+        "workPhaseIds": [],
+        "askedAt": "2026-01-01T00:00:00.000Z"
+      },
+      "input": {
         "workPhases": [
           {
             "id": "wp1",
@@ -1850,12 +1727,14 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "Write the CSV writer",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": null
               },
               {
                 "id": "t-2",
+                "title": "Wire the CLI",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": [
@@ -1873,6 +1752,106 @@
           }
         ],
         "decisions": []
+      },
+      "expect": {
+        "kind": "rejected",
+        "reason": "decision options must be non-empty text",
+        "plan": null
+      }
+    },
+    {
+      "name": "ask_reject_first_repeated_option",
+      "fn": "ask",
+      "plan": {
+        "objective": "Ship the export feature",
+        "slug": "ship-the-export-feature",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [
+          {
+            "id": "wp1",
+            "title": "Exporter",
+            "status": "in_progress",
+            "tasks": [
+              {
+                "id": "t-1",
+                "title": "Write the CSV writer",
+                "status": "pending"
+              },
+              {
+                "id": "t-2",
+                "title": "Wire the CLI",
+                "status": "pending",
+                "dependsOn": [
+                  "t-1"
+                ]
+              }
+            ],
+            "criteriaIds": []
+          }
+        ],
+        "criteria": [
+          {
+            "id": "c-1",
+            "scenario": "s",
+            "expectedEvidence": "",
+            "capturedEvidence": null,
+            "status": "open"
+          }
+        ]
+      },
+      "args": {
+        "id": "dec-1",
+        "question": "Q",
+        "options": [
+          "A",
+          "B",
+          "B",
+          "A"
+        ],
+        "workPhaseIds": [],
+        "askedAt": "2026-01-01T00:00:00.000Z"
+      },
+      "input": {
+        "workPhases": [
+          {
+            "id": "wp1",
+            "status": "in_progress",
+            "awaitsDecision": null,
+            "tasks": [
+              {
+                "id": "t-1",
+                "title": "Write the CSV writer",
+                "status": "pending",
+                "outcome": null,
+                "dependsOn": null
+              },
+              {
+                "id": "t-2",
+                "title": "Wire the CLI",
+                "status": "pending",
+                "outcome": null,
+                "dependsOn": [
+                  "t-1"
+                ]
+              }
+            ]
+          }
+        ],
+        "criteria": [
+          {
+            "id": "c-1",
+            "status": "open",
+            "capturedEvidence": null
+          }
+        ],
+        "decisions": []
+      },
+      "expect": {
+        "kind": "rejected",
+        "reason": "duplicate decision option 'B'",
+        "plan": null
       }
     },
     {
@@ -1910,7 +1889,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -1937,12 +1916,14 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "Write the CSV writer",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": null
               },
               {
                 "id": "t-2",
+                "title": "Wire the CLI",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": [
@@ -1965,39 +1946,6 @@
         "kind": "rejected",
         "reason": "decision recommendation must be one of the options",
         "plan": null
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "in_progress",
-            "awaitsDecision": null,
-            "tasks": [
-              {
-                "id": "t-1",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": null
-              },
-              {
-                "id": "t-2",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": [
-                  "t-1"
-                ]
-              }
-            ]
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": []
       }
     },
     {
@@ -2035,7 +1983,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -2057,12 +2005,14 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "Write the CSV writer",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": null
               },
               {
                 "id": "t-2",
+                "title": "Wire the CLI",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": [
@@ -2085,39 +2035,6 @@
         "kind": "rejected",
         "reason": "decision askedAt must be an ISO timestamp",
         "plan": null
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "in_progress",
-            "awaitsDecision": null,
-            "tasks": [
-              {
-                "id": "t-1",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": null
-              },
-              {
-                "id": "t-2",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": [
-                  "t-1"
-                ]
-              }
-            ]
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": []
       }
     },
     {
@@ -2155,7 +2072,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -2177,12 +2094,14 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "Write the CSV writer",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": null
               },
               {
                 "id": "t-2",
+                "title": "Wire the CLI",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": [
@@ -2205,39 +2124,6 @@
         "kind": "rejected",
         "reason": "decision askedAt must be an ISO timestamp",
         "plan": null
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "in_progress",
-            "awaitsDecision": null,
-            "tasks": [
-              {
-                "id": "t-1",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": null
-              },
-              {
-                "id": "t-2",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": [
-                  "t-1"
-                ]
-              }
-            ]
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": []
       }
     },
     {
@@ -2261,7 +2147,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -2315,35 +2201,6 @@
         "kind": "rejected",
         "reason": "decision 'dec-1' is already in this plan",
         "plan": null
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "pending",
-            "awaitsDecision": null,
-            "tasks": []
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": [
-          {
-            "id": "dec-1",
-            "question": "Choose API",
-            "status": "open",
-            "answer": null,
-            "askedAt": "2026-01-01T00:00:00.000Z",
-            "decidedAt": null,
-            "recommendation": null,
-            "options": null
-          }
-        ]
       }
     },
     {
@@ -2367,7 +2224,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -2421,35 +2278,6 @@
         "kind": "rejected",
         "reason": "question is already open as decision 'dec-1'",
         "plan": null
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "pending",
-            "awaitsDecision": null,
-            "tasks": []
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": [
-          {
-            "id": "dec-1",
-            "question": "Choose API",
-            "status": "open",
-            "answer": null,
-            "askedAt": "2026-01-01T00:00:00.000Z",
-            "decidedAt": null,
-            "recommendation": null,
-            "options": null
-          }
-        ]
       }
     },
     {
@@ -2473,7 +2301,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -2567,45 +2395,6 @@
             }
           ]
         }
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "pending",
-            "awaitsDecision": null,
-            "tasks": []
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": [
-          {
-            "id": "dec-1",
-            "question": "Choose API",
-            "status": "decided",
-            "answer": "A",
-            "askedAt": "2026-01-01T00:00:00.000Z",
-            "decidedAt": "2026-01-02T00:00:00.000Z",
-            "recommendation": null,
-            "options": null
-          },
-          {
-            "id": "dec-2",
-            "question": "Choose API",
-            "status": "open",
-            "answer": null,
-            "askedAt": "2026-01-01T00:00:00.000Z",
-            "decidedAt": null,
-            "recommendation": null,
-            "options": null
-          }
-        ]
       }
     },
     {
@@ -2643,7 +2432,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -2668,12 +2457,14 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "Write the CSV writer",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": null
               },
               {
                 "id": "t-2",
+                "title": "Wire the CLI",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": [
@@ -2696,39 +2487,6 @@
         "kind": "rejected",
         "reason": "--work-phase requires distinct non-empty ids",
         "plan": null
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "in_progress",
-            "awaitsDecision": null,
-            "tasks": [
-              {
-                "id": "t-1",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": null
-              },
-              {
-                "id": "t-2",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": [
-                  "t-1"
-                ]
-              }
-            ]
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": []
       }
     },
     {
@@ -2766,7 +2524,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -2791,12 +2549,14 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "Write the CSV writer",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": null
               },
               {
                 "id": "t-2",
+                "title": "Wire the CLI",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": [
@@ -2819,39 +2579,6 @@
         "kind": "rejected",
         "reason": "--work-phase requires distinct non-empty ids",
         "plan": null
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "in_progress",
-            "awaitsDecision": null,
-            "tasks": [
-              {
-                "id": "t-1",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": null
-              },
-              {
-                "id": "t-2",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": [
-                  "t-1"
-                ]
-              }
-            ]
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": []
       }
     },
     {
@@ -2889,7 +2616,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -2913,12 +2640,14 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "Write the CSV writer",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": null
               },
               {
                 "id": "t-2",
+                "title": "Wire the CLI",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": [
@@ -2941,39 +2670,6 @@
         "kind": "rejected",
         "reason": "work phase 'ghost' is not in this plan",
         "plan": null
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "in_progress",
-            "awaitsDecision": null,
-            "tasks": [
-              {
-                "id": "t-1",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": null
-              },
-              {
-                "id": "t-2",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": [
-                  "t-1"
-                ]
-              }
-            ]
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": []
       }
     },
     {
@@ -2997,7 +2693,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -3034,24 +2730,6 @@
         "kind": "rejected",
         "reason": "work phase 'wp1' is done and cannot await a decision",
         "plan": null
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "done",
-            "awaitsDecision": null,
-            "tasks": []
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": []
       }
     },
     {
@@ -3083,7 +2761,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -3126,17 +2804,59 @@
         "kind": "rejected",
         "reason": "work phase 'wp1' is superseded and cannot await a decision",
         "plan": null
-      },
-      "after": {
+      }
+    },
+    {
+      "name": "ask_reject_duplicate_phase_id_integrity",
+      "fn": "ask",
+      "plan": {
+        "objective": "Ship the export feature",
+        "slug": "ship-the-export-feature",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
         "workPhases": [
           {
             "id": "wp1",
-            "status": "superseded",
+            "title": "Exporter",
+            "status": "pending",
+            "tasks": [],
+            "criteriaIds": []
+          },
+          {
+            "id": "wp1",
+            "title": "Again",
+            "status": "pending",
+            "tasks": [],
+            "criteriaIds": []
+          }
+        ],
+        "criteria": [
+          {
+            "id": "c-1",
+            "scenario": "s",
+            "expectedEvidence": "",
+            "capturedEvidence": null,
+            "status": "open"
+          }
+        ]
+      },
+      "args": {
+        "id": "dec-1",
+        "question": "Q",
+        "workPhaseIds": [],
+        "askedAt": "2026-01-01T00:00:00.000Z"
+      },
+      "input": {
+        "workPhases": [
+          {
+            "id": "wp1",
+            "status": "pending",
             "awaitsDecision": null,
             "tasks": []
           },
           {
-            "id": "wp2",
+            "id": "wp1",
             "status": "pending",
             "awaitsDecision": null,
             "tasks": []
@@ -3150,6 +2870,11 @@
           }
         ],
         "decisions": []
+      },
+      "expect": {
+        "kind": "rejected",
+        "reason": "duplicate work phase id 'wp1' makes dependency references ambiguous",
+        "plan": null
       }
     },
     {
@@ -3176,7 +2901,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -3261,37 +2986,6 @@
             }
           ]
         }
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "pending",
-            "awaitsDecision": [
-              "dec-1"
-            ],
-            "tasks": []
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": [
-          {
-            "id": "dec-1",
-            "question": "Choose API",
-            "status": "decided",
-            "answer": "yes",
-            "askedAt": "2026-01-01T00:00:00.000Z",
-            "decidedAt": "2026-01-02T00:00:00.000Z",
-            "recommendation": null,
-            "options": null
-          }
-        ]
       }
     },
     {
@@ -3329,7 +3023,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -3350,12 +3044,14 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "Write the CSV writer",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": null
               },
               {
                 "id": "t-2",
+                "title": "Wire the CLI",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": [
@@ -3378,39 +3074,6 @@
         "kind": "rejected",
         "reason": "decision 'dec-1' is not in this plan",
         "plan": null
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "in_progress",
-            "awaitsDecision": null,
-            "tasks": [
-              {
-                "id": "t-1",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": null
-              },
-              {
-                "id": "t-2",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": [
-                  "t-1"
-                ]
-              }
-            ]
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": []
       }
     },
     {
@@ -3434,7 +3097,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -3503,45 +3166,6 @@
         "kind": "rejected",
         "reason": "decision id 'dec-1' is ambiguous (2 entries); repair the plan first",
         "plan": null
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "pending",
-            "awaitsDecision": null,
-            "tasks": []
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": [
-          {
-            "id": "dec-1",
-            "question": "First",
-            "status": "open",
-            "answer": null,
-            "askedAt": "2026-01-01T00:00:00.000Z",
-            "decidedAt": null,
-            "recommendation": null,
-            "options": null
-          },
-          {
-            "id": "dec-1",
-            "question": "Second",
-            "status": "open",
-            "answer": null,
-            "askedAt": "2026-01-01T00:00:00.000Z",
-            "decidedAt": null,
-            "recommendation": null,
-            "options": null
-          }
-        ]
       }
     },
     {
@@ -3568,7 +3192,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -3623,37 +3247,6 @@
         "kind": "rejected",
         "reason": "decision answer must not be empty",
         "plan": null
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "pending",
-            "awaitsDecision": [
-              "dec-1"
-            ],
-            "tasks": []
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": [
-          {
-            "id": "dec-1",
-            "question": "Choose API",
-            "status": "open",
-            "answer": null,
-            "askedAt": "2026-01-01T00:00:00.000Z",
-            "decidedAt": null,
-            "recommendation": null,
-            "options": null
-          }
-        ]
       }
     },
     {
@@ -3680,7 +3273,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -3735,37 +3328,6 @@
         "kind": "rejected",
         "reason": "decision decidedAt must be an ISO timestamp",
         "plan": null
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "pending",
-            "awaitsDecision": [
-              "dec-1"
-            ],
-            "tasks": []
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": [
-          {
-            "id": "dec-1",
-            "question": "Choose API",
-            "status": "open",
-            "answer": null,
-            "askedAt": "2026-01-01T00:00:00.000Z",
-            "decidedAt": null,
-            "recommendation": null,
-            "options": null
-          }
-        ]
       }
     },
     {
@@ -3792,7 +3354,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -3879,37 +3441,6 @@
             }
           ]
         }
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "pending",
-            "awaitsDecision": [
-              "dec-1"
-            ],
-            "tasks": []
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": [
-          {
-            "id": "dec-1",
-            "question": "Choose API",
-            "status": "decided",
-            "answer": "yes",
-            "askedAt": "2026-01-01T00:00:00.000Z",
-            "decidedAt": "2026-01-02T00:00:00.000Z",
-            "recommendation": null,
-            "options": null
-          }
-        ]
       }
     },
     {
@@ -3936,7 +3467,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -3993,8 +3524,138 @@
         "kind": "rejected",
         "reason": "decision 'dec-1' already has a different answer",
         "plan": null
+      }
+    },
+    {
+      "name": "decide_reject_padded_stored_answer",
+      "fn": "decide",
+      "plan": {
+        "objective": "Ship the export feature",
+        "slug": "ship-the-export-feature",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [
+          {
+            "id": "wp1",
+            "title": "Exporter",
+            "status": "pending",
+            "tasks": [],
+            "criteriaIds": [],
+            "awaitsDecision": [
+              "dec-1"
+            ]
+          }
+        ],
+        "criteria": [
+          {
+            "id": "c-1",
+            "scenario": "s",
+            "expectedEvidence": "",
+            "capturedEvidence": null,
+            "status": "open"
+          }
+        ],
+        "decisions": [
+          {
+            "id": "dec-1",
+            "question": "Choose API",
+            "status": "decided",
+            "askedAt": "2026-01-01T00:00:00.000Z",
+            "answer": " yes",
+            "decidedAt": "2026-01-02T00:00:00.000Z"
+          }
+        ]
       },
-      "after": {
+      "args": {
+        "id": "dec-1",
+        "answer": "yes",
+        "decidedAt": "2026-01-03T00:00:00.000Z"
+      },
+      "input": {
+        "workPhases": [
+          {
+            "id": "wp1",
+            "status": "pending",
+            "awaitsDecision": [
+              "dec-1"
+            ],
+            "tasks": []
+          }
+        ],
+        "criteria": [
+          {
+            "id": "c-1",
+            "status": "open",
+            "capturedEvidence": null
+          }
+        ],
+        "decisions": [
+          {
+            "id": "dec-1",
+            "question": "Choose API",
+            "status": "decided",
+            "answer": " yes",
+            "askedAt": "2026-01-01T00:00:00.000Z",
+            "decidedAt": "2026-01-02T00:00:00.000Z",
+            "recommendation": null,
+            "options": null
+          }
+        ]
+      },
+      "expect": {
+        "kind": "rejected",
+        "reason": "decision 'dec-1' already has a different answer",
+        "plan": null
+      }
+    },
+    {
+      "name": "decide_reject_decided_bad_time",
+      "fn": "decide",
+      "plan": {
+        "objective": "Ship the export feature",
+        "slug": "ship-the-export-feature",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [
+          {
+            "id": "wp1",
+            "title": "Exporter",
+            "status": "pending",
+            "tasks": [],
+            "criteriaIds": [],
+            "awaitsDecision": [
+              "dec-1"
+            ]
+          }
+        ],
+        "criteria": [
+          {
+            "id": "c-1",
+            "scenario": "s",
+            "expectedEvidence": "",
+            "capturedEvidence": null,
+            "status": "open"
+          }
+        ],
+        "decisions": [
+          {
+            "id": "dec-1",
+            "question": "Choose API",
+            "status": "decided",
+            "askedAt": "2026-01-01T00:00:00.000Z",
+            "answer": "yes",
+            "decidedAt": "2026-01-02T00:00:00.000Z"
+          }
+        ]
+      },
+      "args": {
+        "id": "dec-1",
+        "answer": "yes",
+        "decidedAt": "bad"
+      },
+      "input": {
         "workPhases": [
           {
             "id": "wp1",
@@ -4024,6 +3685,11 @@
             "options": null
           }
         ]
+      },
+      "expect": {
+        "kind": "rejected",
+        "reason": "decision decidedAt must be an ISO timestamp",
+        "plan": null
       }
     },
     {
@@ -4061,7 +3727,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -4084,12 +3750,14 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "Write the CSV writer",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": null
               },
               {
                 "id": "t-2",
+                "title": "Wire the CLI",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": [
@@ -4120,12 +3788,14 @@
               "tasks": [
                 {
                   "id": "t-1",
+                  "title": "Write the CSV writer",
                   "status": "pending",
                   "outcome": null,
                   "dependsOn": null
                 },
                 {
                   "id": "t-2",
+                  "title": "Wire the CLI",
                   "status": "pending",
                   "outcome": null,
                   "dependsOn": [
@@ -4134,6 +3804,7 @@
                 },
                 {
                   "id": "t-3",
+                  "title": "Add docs",
                   "status": "pending",
                   "outcome": null,
                   "dependsOn": null
@@ -4150,45 +3821,6 @@
           ],
           "decisions": []
         }
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "in_progress",
-            "awaitsDecision": null,
-            "tasks": [
-              {
-                "id": "t-1",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": null
-              },
-              {
-                "id": "t-2",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": [
-                  "t-1"
-                ]
-              },
-              {
-                "id": "t-3",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": null
-              }
-            ]
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": []
       }
     },
     {
@@ -4226,7 +3858,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -4252,12 +3884,14 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "Write the CSV writer",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": null
               },
               {
                 "id": "t-2",
+                "title": "Wire the CLI",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": [
@@ -4288,12 +3922,14 @@
               "tasks": [
                 {
                   "id": "t-1",
+                  "title": "Write the CSV writer",
                   "status": "pending",
                   "outcome": null,
                   "dependsOn": null
                 },
                 {
                   "id": "t-2",
+                  "title": "Wire the CLI",
                   "status": "pending",
                   "outcome": null,
                   "dependsOn": [
@@ -4302,6 +3938,7 @@
                 },
                 {
                   "id": "t-3",
+                  "title": "Docs",
                   "status": "pending",
                   "outcome": null,
                   "dependsOn": [
@@ -4320,8 +3957,59 @@
           ],
           "decisions": []
         }
+      }
+    },
+    {
+      "name": "add_ok_empty_depends_list",
+      "fn": "add",
+      "plan": {
+        "objective": "Ship the export feature",
+        "slug": "ship-the-export-feature",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [
+          {
+            "id": "wp1",
+            "title": "Exporter",
+            "status": "in_progress",
+            "tasks": [
+              {
+                "id": "t-1",
+                "title": "Write the CSV writer",
+                "status": "pending"
+              },
+              {
+                "id": "t-2",
+                "title": "Wire the CLI",
+                "status": "pending",
+                "dependsOn": [
+                  "t-1"
+                ]
+              }
+            ],
+            "criteriaIds": []
+          }
+        ],
+        "criteria": [
+          {
+            "id": "c-1",
+            "scenario": "s",
+            "expectedEvidence": "",
+            "capturedEvidence": null,
+            "status": "open"
+          }
+        ]
       },
-      "after": {
+      "args": {
+        "workPhaseId": "wp1",
+        "input": {
+          "id": "t-3",
+          "title": "Docs",
+          "dependsOn": []
+        }
+      },
+      "input": {
         "workPhases": [
           {
             "id": "wp1",
@@ -4330,20 +4018,14 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "Write the CSV writer",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": null
               },
               {
                 "id": "t-2",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": [
-                  "t-1"
-                ]
-              },
-              {
-                "id": "t-3",
+                "title": "Wire the CLI",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": [
@@ -4361,6 +4043,248 @@
           }
         ],
         "decisions": []
+      },
+      "expect": {
+        "kind": "changed",
+        "reason": null,
+        "plan": {
+          "workPhases": [
+            {
+              "id": "wp1",
+              "status": "in_progress",
+              "awaitsDecision": null,
+              "tasks": [
+                {
+                  "id": "t-1",
+                  "title": "Write the CSV writer",
+                  "status": "pending",
+                  "outcome": null,
+                  "dependsOn": null
+                },
+                {
+                  "id": "t-2",
+                  "title": "Wire the CLI",
+                  "status": "pending",
+                  "outcome": null,
+                  "dependsOn": [
+                    "t-1"
+                  ]
+                },
+                {
+                  "id": "t-3",
+                  "title": "Docs",
+                  "status": "pending",
+                  "outcome": null,
+                  "dependsOn": null
+                }
+              ]
+            }
+          ],
+          "criteria": [
+            {
+              "id": "c-1",
+              "status": "open",
+              "capturedEvidence": null
+            }
+          ],
+          "decisions": []
+        }
+      }
+    },
+    {
+      "name": "add_ok_blocked_phase",
+      "fn": "add",
+      "plan": {
+        "objective": "Ship the export feature",
+        "slug": "ship-the-export-feature",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [
+          {
+            "id": "wp1",
+            "title": "Exporter",
+            "status": "blocked",
+            "tasks": [
+              {
+                "id": "t-1",
+                "title": "Write the CSV writer",
+                "status": "pending"
+              }
+            ],
+            "criteriaIds": [],
+            "blockedReason": "waiting on input"
+          }
+        ],
+        "criteria": [
+          {
+            "id": "c-1",
+            "scenario": "s",
+            "expectedEvidence": "",
+            "capturedEvidence": null,
+            "status": "open"
+          }
+        ]
+      },
+      "args": {
+        "workPhaseId": "wp1",
+        "input": {
+          "id": "t-3",
+          "title": "Docs"
+        }
+      },
+      "input": {
+        "workPhases": [
+          {
+            "id": "wp1",
+            "status": "blocked",
+            "awaitsDecision": null,
+            "tasks": [
+              {
+                "id": "t-1",
+                "title": "Write the CSV writer",
+                "status": "pending",
+                "outcome": null,
+                "dependsOn": null
+              }
+            ]
+          }
+        ],
+        "criteria": [
+          {
+            "id": "c-1",
+            "status": "open",
+            "capturedEvidence": null
+          }
+        ],
+        "decisions": []
+      },
+      "expect": {
+        "kind": "changed",
+        "reason": null,
+        "plan": {
+          "workPhases": [
+            {
+              "id": "wp1",
+              "status": "blocked",
+              "awaitsDecision": null,
+              "tasks": [
+                {
+                  "id": "t-1",
+                  "title": "Write the CSV writer",
+                  "status": "pending",
+                  "outcome": null,
+                  "dependsOn": null
+                },
+                {
+                  "id": "t-3",
+                  "title": "Docs",
+                  "status": "pending",
+                  "outcome": null,
+                  "dependsOn": null
+                }
+              ]
+            }
+          ],
+          "criteria": [
+            {
+              "id": "c-1",
+              "status": "open",
+              "capturedEvidence": null
+            }
+          ],
+          "decisions": []
+        }
+      }
+    },
+    {
+      "name": "add_reject_untrimmed_phase_id",
+      "fn": "add",
+      "plan": {
+        "objective": "Ship the export feature",
+        "slug": "ship-the-export-feature",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [
+          {
+            "id": "wp1",
+            "title": "Exporter",
+            "status": "in_progress",
+            "tasks": [
+              {
+                "id": "t-1",
+                "title": "Write the CSV writer",
+                "status": "pending"
+              },
+              {
+                "id": "t-2",
+                "title": "Wire the CLI",
+                "status": "pending",
+                "dependsOn": [
+                  "t-1"
+                ]
+              }
+            ],
+            "criteriaIds": []
+          }
+        ],
+        "criteria": [
+          {
+            "id": "c-1",
+            "scenario": "s",
+            "expectedEvidence": "",
+            "capturedEvidence": null,
+            "status": "open"
+          }
+        ]
+      },
+      "args": {
+        "workPhaseId": " wp1",
+        "input": {
+          "id": "t-3",
+          "title": "Docs"
+        }
+      },
+      "input": {
+        "workPhases": [
+          {
+            "id": "wp1",
+            "status": "in_progress",
+            "awaitsDecision": null,
+            "tasks": [
+              {
+                "id": "t-1",
+                "title": "Write the CSV writer",
+                "status": "pending",
+                "outcome": null,
+                "dependsOn": null
+              },
+              {
+                "id": "t-2",
+                "title": "Wire the CLI",
+                "status": "pending",
+                "outcome": null,
+                "dependsOn": [
+                  "t-1"
+                ]
+              }
+            ]
+          }
+        ],
+        "criteria": [
+          {
+            "id": "c-1",
+            "status": "open",
+            "capturedEvidence": null
+          }
+        ],
+        "decisions": []
+      },
+      "expect": {
+        "kind": "rejected",
+        "reason": "work phase ' wp1' is not in this plan",
+        "plan": null
       }
     },
     {
@@ -4398,7 +4322,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -4421,12 +4345,14 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "Write the CSV writer",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": null
               },
               {
                 "id": "t-2",
+                "title": "Wire the CLI",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": [
@@ -4449,39 +4375,6 @@
         "kind": "rejected",
         "reason": "task id must be a short lowercase id, e.g. t-1",
         "plan": null
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "in_progress",
-            "awaitsDecision": null,
-            "tasks": [
-              {
-                "id": "t-1",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": null
-              },
-              {
-                "id": "t-2",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": [
-                  "t-1"
-                ]
-              }
-            ]
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": []
       }
     },
     {
@@ -4519,7 +4412,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -4542,12 +4435,14 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "Write the CSV writer",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": null
               },
               {
                 "id": "t-2",
+                "title": "Wire the CLI",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": [
@@ -4570,39 +4465,6 @@
         "kind": "rejected",
         "reason": "task title must not be empty",
         "plan": null
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "in_progress",
-            "awaitsDecision": null,
-            "tasks": [
-              {
-                "id": "t-1",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": null
-              },
-              {
-                "id": "t-2",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": [
-                  "t-1"
-                ]
-              }
-            ]
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": []
       }
     },
     {
@@ -4640,7 +4502,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -4666,12 +4528,14 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "Write the CSV writer",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": null
               },
               {
                 "id": "t-2",
+                "title": "Wire the CLI",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": [
@@ -4694,39 +4558,6 @@
         "kind": "rejected",
         "reason": "task dependencies must be non-empty task ids",
         "plan": null
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "in_progress",
-            "awaitsDecision": null,
-            "tasks": [
-              {
-                "id": "t-1",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": null
-              },
-              {
-                "id": "t-2",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": [
-                  "t-1"
-                ]
-              }
-            ]
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": []
       }
     },
     {
@@ -4764,7 +4595,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -4791,12 +4622,14 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "Write the CSV writer",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": null
               },
               {
                 "id": "t-2",
+                "title": "Wire the CLI",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": [
@@ -4819,39 +4652,6 @@
         "kind": "rejected",
         "reason": "task dependencies must not contain duplicate ids",
         "plan": null
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "in_progress",
-            "awaitsDecision": null,
-            "tasks": [
-              {
-                "id": "t-1",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": null
-              },
-              {
-                "id": "t-2",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": [
-                  "t-1"
-                ]
-              }
-            ]
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": []
       }
     },
     {
@@ -4889,7 +4689,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -4912,12 +4712,14 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "Write the CSV writer",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": null
               },
               {
                 "id": "t-2",
+                "title": "Wire the CLI",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": [
@@ -4940,39 +4742,6 @@
         "kind": "rejected",
         "reason": "work phase 'ghost' is not in this plan",
         "plan": null
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "in_progress",
-            "awaitsDecision": null,
-            "tasks": [
-              {
-                "id": "t-1",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": null
-              },
-              {
-                "id": "t-2",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": [
-                  "t-1"
-                ]
-              }
-            ]
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": []
       }
     },
     {
@@ -5003,7 +4772,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -5026,6 +4795,7 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "a",
                 "status": "done",
                 "outcome": "ok",
                 "dependsOn": null
@@ -5046,31 +4816,6 @@
         "kind": "rejected",
         "reason": "work phase 'wp1' is done and cannot accept a new task",
         "plan": null
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "done",
-            "awaitsDecision": null,
-            "tasks": [
-              {
-                "id": "t-1",
-                "status": "done",
-                "outcome": "ok",
-                "dependsOn": null
-              }
-            ]
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": []
       }
     },
     {
@@ -5102,7 +4847,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -5144,30 +4889,6 @@
         "kind": "rejected",
         "reason": "work phase 'wp1' is superseded and cannot accept a new task",
         "plan": null
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "superseded",
-            "awaitsDecision": null,
-            "tasks": []
-          },
-          {
-            "id": "wp2",
-            "status": "pending",
-            "awaitsDecision": null,
-            "tasks": []
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": []
       }
     },
     {
@@ -5205,7 +4926,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -5228,12 +4949,14 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "Write the CSV writer",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": null
               },
               {
                 "id": "t-2",
+                "title": "Wire the CLI",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": [
@@ -5256,39 +4979,6 @@
         "kind": "rejected",
         "reason": "task 'wp1/t-1' is already in this work phase",
         "plan": null
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "in_progress",
-            "awaitsDecision": null,
-            "tasks": [
-              {
-                "id": "t-1",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": null
-              },
-              {
-                "id": "t-2",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": [
-                  "t-1"
-                ]
-              }
-            ]
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": []
       }
     },
     {
@@ -5326,7 +5016,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -5352,12 +5042,14 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "Write the CSV writer",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": null
               },
               {
                 "id": "t-2",
+                "title": "Wire the CLI",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": [
@@ -5380,39 +5072,6 @@
         "kind": "rejected",
         "reason": "task wp1/t-3 depends on unknown task 'ghost' in the same work phase",
         "plan": null
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "in_progress",
-            "awaitsDecision": null,
-            "tasks": [
-              {
-                "id": "t-1",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": null
-              },
-              {
-                "id": "t-2",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": [
-                  "t-1"
-                ]
-              }
-            ]
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": []
       }
     },
     {
@@ -5450,7 +5109,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -5476,12 +5135,14 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "Write the CSV writer",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": null
               },
               {
                 "id": "t-2",
+                "title": "Wire the CLI",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": [
@@ -5504,39 +5165,6 @@
         "kind": "rejected",
         "reason": "task 'wp1/t-1' is already in this work phase",
         "plan": null
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "in_progress",
-            "awaitsDecision": null,
-            "tasks": [
-              {
-                "id": "t-1",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": null
-              },
-              {
-                "id": "t-2",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": [
-                  "t-1"
-                ]
-              }
-            ]
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": []
       }
     },
     {
@@ -5574,7 +5202,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -5595,12 +5223,14 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "Write the CSV writer",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": null
               },
               {
                 "id": "t-2",
+                "title": "Wire the CLI",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": [
@@ -5631,12 +5261,14 @@
               "tasks": [
                 {
                   "id": "t-1",
+                  "title": "Write the CSV writer",
                   "status": "done",
                   "outcome": "writer verified by 4 tests",
                   "dependsOn": null
                 },
                 {
                   "id": "t-2",
+                  "title": "Wire the CLI",
                   "status": "pending",
                   "outcome": null,
                   "dependsOn": [
@@ -5655,39 +5287,6 @@
           ],
           "decisions": []
         }
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "in_progress",
-            "awaitsDecision": null,
-            "tasks": [
-              {
-                "id": "t-1",
-                "status": "done",
-                "outcome": "writer verified by 4 tests",
-                "dependsOn": null
-              },
-              {
-                "id": "t-2",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": [
-                  "t-1"
-                ]
-              }
-            ]
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": []
       }
     },
     {
@@ -5725,7 +5324,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -5746,12 +5345,14 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "Write the CSV writer",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": null
               },
               {
                 "id": "t-2",
+                "title": "Wire the CLI",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": [
@@ -5774,39 +5375,6 @@
         "kind": "rejected",
         "reason": "task outcome must not be empty",
         "plan": null
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "in_progress",
-            "awaitsDecision": null,
-            "tasks": [
-              {
-                "id": "t-1",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": null
-              },
-              {
-                "id": "t-2",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": [
-                  "t-1"
-                ]
-              }
-            ]
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": []
       }
     },
     {
@@ -5844,7 +5412,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -5865,12 +5433,14 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "Write the CSV writer",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": null
               },
               {
                 "id": "t-2",
+                "title": "Wire the CLI",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": [
@@ -5893,39 +5463,6 @@
         "kind": "rejected",
         "reason": "task 'wp1/ghost' is not in this plan",
         "plan": null
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "in_progress",
-            "awaitsDecision": null,
-            "tasks": [
-              {
-                "id": "t-1",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": null
-              },
-              {
-                "id": "t-2",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": [
-                  "t-1"
-                ]
-              }
-            ]
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": []
       }
     },
     {
@@ -5956,7 +5493,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -5977,6 +5514,7 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "a",
                 "status": "done",
                 "outcome": "ok",
                 "dependsOn": null
@@ -6005,6 +5543,7 @@
               "tasks": [
                 {
                   "id": "t-1",
+                  "title": "a",
                   "status": "done",
                   "outcome": "ok",
                   "dependsOn": null
@@ -6021,31 +5560,6 @@
           ],
           "decisions": []
         }
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "in_progress",
-            "awaitsDecision": null,
-            "tasks": [
-              {
-                "id": "t-1",
-                "status": "done",
-                "outcome": "ok",
-                "dependsOn": null
-              }
-            ]
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": []
       }
     },
     {
@@ -6083,7 +5597,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -6104,12 +5618,14 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "Write the CSV writer",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": null
               },
               {
                 "id": "t-2",
+                "title": "Wire the CLI",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": [
@@ -6132,39 +5648,6 @@
         "kind": "rejected",
         "reason": "task 'wp1/t-2' is not ready",
         "plan": null
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "in_progress",
-            "awaitsDecision": null,
-            "tasks": [
-              {
-                "id": "t-1",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": null
-              },
-              {
-                "id": "t-2",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": [
-                  "t-1"
-                ]
-              }
-            ]
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": []
       }
     },
     {
@@ -6203,7 +5686,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -6224,12 +5707,14 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "a",
                 "status": "done",
                 "outcome": "ok",
                 "dependsOn": null
               },
               {
                 "id": "t-2",
+                "title": "b",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": [
@@ -6260,12 +5745,14 @@
               "tasks": [
                 {
                   "id": "t-1",
+                  "title": "a",
                   "status": "done",
                   "outcome": "ok",
                   "dependsOn": null
                 },
                 {
                   "id": "t-2",
+                  "title": "b",
                   "status": "done",
                   "outcome": "ok",
                   "dependsOn": [
@@ -6284,39 +5771,6 @@
           ],
           "decisions": []
         }
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "in_progress",
-            "awaitsDecision": null,
-            "tasks": [
-              {
-                "id": "t-1",
-                "status": "done",
-                "outcome": "ok",
-                "dependsOn": null
-              },
-              {
-                "id": "t-2",
-                "status": "done",
-                "outcome": "ok",
-                "dependsOn": [
-                  "t-1"
-                ]
-              }
-            ]
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": []
       }
     },
     {
@@ -6356,7 +5810,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -6383,6 +5837,7 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "a",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": null
@@ -6403,37 +5858,6 @@
         "kind": "rejected",
         "reason": "task 'wp2/t-1' is not ready",
         "plan": null
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "pending",
-            "awaitsDecision": null,
-            "tasks": []
-          },
-          {
-            "id": "wp2",
-            "status": "pending",
-            "awaitsDecision": null,
-            "tasks": [
-              {
-                "id": "t-1",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": null
-              }
-            ]
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": []
       }
     },
     {
@@ -6460,7 +5884,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -6515,37 +5939,6 @@
         "kind": "rejected",
         "reason": "task 'wp1/t-1' is not in this plan",
         "plan": null
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "pending",
-            "awaitsDecision": [
-              "dec-1"
-            ],
-            "tasks": []
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": [
-          {
-            "id": "dec-1",
-            "question": "Choose API",
-            "status": "open",
-            "answer": null,
-            "askedAt": "2026-01-01T00:00:00.000Z",
-            "decidedAt": null,
-            "recommendation": null,
-            "options": null
-          }
-        ]
       }
     },
     {
@@ -6565,18 +5958,18 @@
             "tasks": [
               {
                 "id": "t-1",
-                "title": "a",
+                "title": "Write the CSV writer",
                 "status": "pending"
               }
             ],
             "criteriaIds": [],
-            "blockedReason": "waiting"
+            "blockedReason": "waiting on input"
           }
         ],
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -6597,6 +5990,7 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "Write the CSV writer",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": null
@@ -6617,16 +6011,86 @@
         "kind": "rejected",
         "reason": "task 'wp1/t-1' is not ready",
         "plan": null
-      },
-      "after": {
+      }
+    },
+    {
+      "name": "complete_ok_duplicate_task_ids",
+      "fn": "complete",
+      "plan": {
+        "objective": "Ship the export feature",
+        "slug": "ship-the-export-feature",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
         "workPhases": [
           {
             "id": "wp1",
-            "status": "blocked",
+            "title": "Exporter",
+            "status": "in_progress",
+            "tasks": [
+              {
+                "id": "t-1",
+                "title": "a",
+                "status": "pending",
+                "dependsOn": [
+                  "t-0"
+                ]
+              },
+              {
+                "id": "t-1",
+                "title": "b",
+                "status": "pending"
+              },
+              {
+                "id": "t-0",
+                "title": "c",
+                "status": "pending"
+              }
+            ],
+            "criteriaIds": []
+          }
+        ],
+        "criteria": [
+          {
+            "id": "c-1",
+            "scenario": "s",
+            "expectedEvidence": "",
+            "capturedEvidence": null,
+            "status": "open"
+          }
+        ]
+      },
+      "args": {
+        "workPhaseId": "wp1",
+        "taskId": "t-1",
+        "outcome": "ok"
+      },
+      "input": {
+        "workPhases": [
+          {
+            "id": "wp1",
+            "status": "in_progress",
             "awaitsDecision": null,
             "tasks": [
               {
                 "id": "t-1",
+                "title": "a",
+                "status": "pending",
+                "outcome": null,
+                "dependsOn": [
+                  "t-0"
+                ]
+              },
+              {
+                "id": "t-1",
+                "title": "b",
+                "status": "pending",
+                "outcome": null,
+                "dependsOn": null
+              },
+              {
+                "id": "t-0",
+                "title": "c",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": null
@@ -6642,6 +6106,52 @@
           }
         ],
         "decisions": []
+      },
+      "expect": {
+        "kind": "changed",
+        "reason": null,
+        "plan": {
+          "workPhases": [
+            {
+              "id": "wp1",
+              "status": "in_progress",
+              "awaitsDecision": null,
+              "tasks": [
+                {
+                  "id": "t-1",
+                  "title": "a",
+                  "status": "done",
+                  "outcome": "ok",
+                  "dependsOn": [
+                    "t-0"
+                  ]
+                },
+                {
+                  "id": "t-1",
+                  "title": "b",
+                  "status": "done",
+                  "outcome": "ok",
+                  "dependsOn": null
+                },
+                {
+                  "id": "t-0",
+                  "title": "c",
+                  "status": "pending",
+                  "outcome": null,
+                  "dependsOn": null
+                }
+              ]
+            }
+          ],
+          "criteria": [
+            {
+              "id": "c-1",
+              "status": "open",
+              "capturedEvidence": null
+            }
+          ],
+          "decisions": []
+        }
       }
     },
     {
@@ -6679,7 +6189,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -6699,12 +6209,14 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "Write the CSV writer",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": null
               },
               {
                 "id": "t-2",
+                "title": "Wire the CLI",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": [
@@ -6735,12 +6247,14 @@
               "tasks": [
                 {
                   "id": "t-1",
+                  "title": "Write the CSV writer",
                   "status": "pending",
                   "outcome": null,
                   "dependsOn": null
                 },
                 {
                   "id": "t-2",
+                  "title": "Wire the CLI",
                   "status": "pending",
                   "outcome": null,
                   "dependsOn": [
@@ -6759,39 +6273,6 @@
           ],
           "decisions": []
         }
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "in_progress",
-            "awaitsDecision": null,
-            "tasks": [
-              {
-                "id": "t-1",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": null
-              },
-              {
-                "id": "t-2",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": [
-                  "t-1"
-                ]
-              }
-            ]
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "met",
-            "capturedEvidence": "4 tests green"
-          }
-        ],
-        "decisions": []
       }
     },
     {
@@ -6829,7 +6310,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -6849,12 +6330,14 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "Write the CSV writer",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": null
               },
               {
                 "id": "t-2",
+                "title": "Wire the CLI",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": [
@@ -6877,39 +6360,6 @@
         "kind": "rejected",
         "reason": "criterion evidence must not be empty",
         "plan": null
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "in_progress",
-            "awaitsDecision": null,
-            "tasks": [
-              {
-                "id": "t-1",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": null
-              },
-              {
-                "id": "t-2",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": [
-                  "t-1"
-                ]
-              }
-            ]
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": []
       }
     },
     {
@@ -6947,7 +6397,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -6967,12 +6417,14 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "Write the CSV writer",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": null
               },
               {
                 "id": "t-2",
+                "title": "Wire the CLI",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": [
@@ -6995,8 +6447,55 @@
         "kind": "rejected",
         "reason": "criterion 'c-2' is not in this plan",
         "plan": null
+      }
+    },
+    {
+      "name": "meet_reject_untrimmed_id",
+      "fn": "meet",
+      "plan": {
+        "objective": "Ship the export feature",
+        "slug": "ship-the-export-feature",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [
+          {
+            "id": "wp1",
+            "title": "Exporter",
+            "status": "in_progress",
+            "tasks": [
+              {
+                "id": "t-1",
+                "title": "Write the CSV writer",
+                "status": "pending"
+              },
+              {
+                "id": "t-2",
+                "title": "Wire the CLI",
+                "status": "pending",
+                "dependsOn": [
+                  "t-1"
+                ]
+              }
+            ],
+            "criteriaIds": []
+          }
+        ],
+        "criteria": [
+          {
+            "id": "c-1",
+            "scenario": "s",
+            "expectedEvidence": "",
+            "capturedEvidence": null,
+            "status": "open"
+          }
+        ]
       },
-      "after": {
+      "args": {
+        "criterionId": " c-1",
+        "evidence": "ok"
+      },
+      "input": {
         "workPhases": [
           {
             "id": "wp1",
@@ -7005,12 +6504,14 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "Write the CSV writer",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": null
               },
               {
                 "id": "t-2",
+                "title": "Wire the CLI",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": [
@@ -7028,6 +6529,11 @@
           }
         ],
         "decisions": []
+      },
+      "expect": {
+        "kind": "rejected",
+        "reason": "criterion ' c-1' is not in this plan",
+        "plan": null
       }
     },
     {
@@ -7101,24 +6607,6 @@
           ],
           "decisions": []
         }
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "in_progress",
-            "awaitsDecision": null,
-            "tasks": []
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "met",
-            "capturedEvidence": "done"
-          }
-        ],
-        "decisions": []
       }
     },
     {
@@ -7149,7 +6637,7 @@
           },
           {
             "id": "c-1",
-            "scenario": "s2",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -7209,29 +6697,6 @@
           ],
           "decisions": []
         }
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "in_progress",
-            "awaitsDecision": null,
-            "tasks": []
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "met",
-            "capturedEvidence": "ok"
-          },
-          {
-            "id": "c-1",
-            "status": "met",
-            "capturedEvidence": "ok"
-          }
-        ],
-        "decisions": []
       }
     },
     {
@@ -7310,34 +6775,6 @@
           "c-1",
           "c-3"
         ]
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "in_progress",
-            "awaitsDecision": null,
-            "tasks": []
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          },
-          {
-            "id": "c-2",
-            "status": "met",
-            "capturedEvidence": "done"
-          },
-          {
-            "id": "c-3",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": []
       }
     },
     {
@@ -7373,7 +6810,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -7390,12 +6827,14 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "a",
                 "status": "done",
                 "outcome": "ok",
                 "dependsOn": null
               },
               {
                 "id": "t-2",
+                "title": "b",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": null
@@ -7416,37 +6855,6 @@
         "ids": [
           "wp1"
         ]
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "done",
-            "awaitsDecision": null,
-            "tasks": [
-              {
-                "id": "t-1",
-                "status": "done",
-                "outcome": "ok",
-                "dependsOn": null
-              },
-              {
-                "id": "t-2",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": null
-              }
-            ]
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": []
       }
     },
     {
@@ -7477,7 +6885,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -7494,6 +6902,7 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "a",
                 "status": "done",
                 "outcome": "ok",
                 "dependsOn": null
@@ -7512,31 +6921,6 @@
       },
       "expect": {
         "ids": []
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "done",
-            "awaitsDecision": null,
-            "tasks": [
-              {
-                "id": "t-1",
-                "status": "done",
-                "outcome": "ok",
-                "dependsOn": null
-              }
-            ]
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": []
       }
     },
     {
@@ -7584,6 +6968,7 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "a",
                 "status": "done",
                 "outcome": "ok",
                 "dependsOn": null
@@ -7602,31 +6987,6 @@
       },
       "expect": {
         "value": true
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "done",
-            "awaitsDecision": null,
-            "tasks": [
-              {
-                "id": "t-1",
-                "status": "done",
-                "outcome": "ok",
-                "dependsOn": null
-              }
-            ]
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "met",
-            "capturedEvidence": "done"
-          }
-        ],
-        "decisions": []
       }
     },
     {
@@ -7657,7 +7017,7 @@
         "criteria": [
           {
             "id": "c-1",
-            "scenario": "CSV export works",
+            "scenario": "s",
             "expectedEvidence": "",
             "capturedEvidence": null,
             "status": "open"
@@ -7674,6 +7034,7 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "a",
                 "status": "done",
                 "outcome": "ok",
                 "dependsOn": null
@@ -7692,31 +7053,6 @@
       },
       "expect": {
         "value": false
-      },
-      "after": {
-        "workPhases": [
-          {
-            "id": "wp1",
-            "status": "done",
-            "awaitsDecision": null,
-            "tasks": [
-              {
-                "id": "t-1",
-                "status": "done",
-                "outcome": "ok",
-                "dependsOn": null
-              }
-            ]
-          }
-        ],
-        "criteria": [
-          {
-            "id": "c-1",
-            "status": "open",
-            "capturedEvidence": null
-          }
-        ],
-        "decisions": []
       }
     },
     {
@@ -7763,6 +7099,7 @@
             "tasks": [
               {
                 "id": "t-1",
+                "title": "a",
                 "status": "pending",
                 "outcome": null,
                 "dependsOn": null
@@ -7781,21 +7118,44 @@
       },
       "expect": {
         "value": false
-      },
-      "after": {
+      }
+    },
+    {
+      "name": "is_complete_false_blocked_phase",
+      "fn": "isComplete",
+      "plan": {
+        "objective": "Ship the export feature",
+        "slug": "ship-the-export-feature",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
         "workPhases": [
           {
             "id": "wp1",
-            "status": "done",
+            "title": "Exporter",
+            "status": "blocked",
+            "tasks": [],
+            "criteriaIds": []
+          }
+        ],
+        "criteria": [
+          {
+            "id": "c-1",
+            "scenario": "s",
+            "expectedEvidence": "",
+            "capturedEvidence": "done",
+            "status": "met"
+          }
+        ]
+      },
+      "args": {},
+      "input": {
+        "workPhases": [
+          {
+            "id": "wp1",
+            "status": "blocked",
             "awaitsDecision": null,
-            "tasks": [
-              {
-                "id": "t-1",
-                "status": "pending",
-                "outcome": null,
-                "dependsOn": null
-              }
-            ]
+            "tasks": []
           }
         ],
         "criteria": [
@@ -7806,6 +7166,89 @@
           }
         ],
         "decisions": []
+      },
+      "expect": {
+        "value": false
+      }
+    },
+    {
+      "name": "is_complete_true_superseded_sibling",
+      "fn": "isComplete",
+      "plan": {
+        "objective": "Ship the export feature",
+        "slug": "ship-the-export-feature",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [
+          {
+            "id": "wp1",
+            "title": "Exporter",
+            "status": "done",
+            "tasks": [
+              {
+                "id": "t-1",
+                "title": "a",
+                "status": "done",
+                "outcome": "ok"
+              }
+            ],
+            "criteriaIds": []
+          },
+          {
+            "id": "wp2",
+            "title": "Dropped",
+            "status": "superseded",
+            "tasks": [],
+            "criteriaIds": [],
+            "supersededBy": "wp1"
+          }
+        ],
+        "criteria": [
+          {
+            "id": "c-1",
+            "scenario": "s",
+            "expectedEvidence": "",
+            "capturedEvidence": "done",
+            "status": "met"
+          }
+        ]
+      },
+      "args": {},
+      "input": {
+        "workPhases": [
+          {
+            "id": "wp1",
+            "status": "done",
+            "awaitsDecision": null,
+            "tasks": [
+              {
+                "id": "t-1",
+                "title": "a",
+                "status": "done",
+                "outcome": "ok",
+                "dependsOn": null
+              }
+            ]
+          },
+          {
+            "id": "wp2",
+            "status": "superseded",
+            "awaitsDecision": null,
+            "tasks": []
+          }
+        ],
+        "criteria": [
+          {
+            "id": "c-1",
+            "status": "met",
+            "capturedEvidence": "done"
+          }
+        ],
+        "decisions": []
+      },
+      "expect": {
+        "value": true
       }
     },
     {
@@ -7828,11 +7271,6 @@
       },
       "expect": {
         "value": true
-      },
-      "after": {
-        "workPhases": [],
-        "criteria": [],
-        "decisions": []
       }
     }
   ]

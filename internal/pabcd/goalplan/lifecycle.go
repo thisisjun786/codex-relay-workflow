@@ -102,6 +102,8 @@ func AskGoalplanDecision(plan *Goalplan, input AskGoalplanDecisionInput) Goalpla
 			if option == "" {
 				return goalplanLifecycleRejected("decision options must be non-empty text")
 			}
+		}
+		for _, option := range options {
 			if seen[option] {
 				return goalplanLifecycleRejected(fmt.Sprintf("duplicate decision option '%s'", option))
 			}
