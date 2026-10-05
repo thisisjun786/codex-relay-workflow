@@ -274,6 +274,56 @@
    "diagnoseErrorClass": "EISDIR"
   },
   {
+   "name": "final_cr_after_plugin_header",
+   "config": "[plugins.\"fixture@one\"]\r",
+   "keys": [],
+   "diagnose": [
+    {
+     "key": "fixture@market:hooks/sample.json:stop:0:0",
+     "status": "untrusted",
+     "actual": null
+    }
+   ]
+  },
+  {
+   "name": "final_cr_after_enabled_false",
+   "config": "[plugins.\"fixture@one\"]\nenabled = false\r",
+   "keys": [
+    "fixture@one"
+   ],
+   "diagnose": [
+    {
+     "key": "fixture@market:hooks/sample.json:stop:0:0",
+     "status": "untrusted",
+     "actual": null
+    }
+   ]
+  },
+  {
+   "name": "final_cr_after_trusted_hash",
+   "config": "[hooks.state.\"fixture@market:hooks/sample.json:stop:0:0\"]\ntrusted_hash = \"sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4\"\r",
+   "keys": [],
+   "diagnose": [
+    {
+     "key": "fixture@market:hooks/sample.json:stop:0:0",
+     "status": "untrusted",
+     "actual": null
+    }
+   ]
+  },
+  {
+   "name": "final_u2028_after_trusted_hash",
+   "config": "[hooks.state.\"fixture@market:hooks/sample.json:stop:0:0\"]\ntrusted_hash = \"sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4\" ",
+   "keys": [],
+   "diagnose": [
+    {
+     "key": "fixture@market:hooks/sample.json:stop:0:0",
+     "status": "untrusted",
+     "actual": null
+    }
+   ]
+  },
+  {
    "name": "bom_before_first_plugin_header",
    "config": "﻿[plugins.\"fixture@market\"]\nenabled = true\n[hooks.state.\"fixture@market:hooks/sample.json:stop:0:0\"]\ntrusted_hash = \"sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4\"\n",
    "keys": [],

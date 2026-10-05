@@ -126,6 +126,14 @@ const cases = [
   { name: "invalid_utf8_before_section", config: (entry) => bytes("\ufffd = ", Buffer.from([0xff, 0xfe]), "\n", section(entry)) },
   { name: "multibyte_before_section", config: (entry) => bytes("\u00ff = \u00fe\n" + section(entry)) },
   { name: "config_is_directory", configDir: true },
+  // A file-final CR (or U+2028) stays in the last line's text, and no side accepts the line:
+  // JavaScript's $ has no before-a-final-terminator rule (the review thread questioned this).
+  { name: "final_cr_after_plugin_header", config: '[plugins."fixture@one"]\r' },
+  { name: "final_cr_after_enabled_false", config: '[plugins."fixture@one"]\nenabled = false\r' },
+  { name: "final_cr_after_trusted_hash", config: (entry) =>
+    `[hooks.state."${entry.key}"]\ntrusted_hash = "${entry.hash}"\r` },
+  { name: "final_u2028_after_trusted_hash", config: (entry) =>
+    `[hooks.state."${entry.key}"]\ntrusted_hash = "${entry.hash}"\u2028` },
   { name: "bom_before_first_plugin_header", config: (entry) =>
     "\ufeff[plugins.\"fixture@market\"]\nenabled = true\n" + section(entry) },
   { name: "cr_only_line_endings", config: (entry) => section(entry).replace(/\n/g, "\r") },
