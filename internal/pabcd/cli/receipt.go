@@ -244,8 +244,8 @@ func RunReceiptCLI(args ReceiptCLIArgs, options ReceiptRunOptions) (ReceiptCLIRe
 		ctx = context.Background()
 	}
 	if err = crwdir.PublishContext(ctx, path, data); err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return refuse(receiptInterrupted)
+		if result, refused := receiptPublishRefusal(ctx, err); refused {
+			return result, nil
 		}
 		return ReceiptCLIResult{}, err
 	}
@@ -253,14 +253,44 @@ func RunReceiptCLI(args ReceiptCLIArgs, options ReceiptRunOptions) (ReceiptCLIRe
 		receiptAfterPublishHook()
 	}
 	// The rename beat a cancellation that landed after the check above: withdraw the receipt just
-	// published, as the oracle's dead process leaves nothing behind either.
+	// published, as the oracle's dead process leaves nothing behind either. Only the bytes written
+	// here are removed: a receipt another invocation published in the meantime is left alone.
 	if ctx.Err() != nil {
-		if err := removeReceipt(path); err != nil {
+		if err := withdrawReceipt(path, data); err != nil {
 			return ReceiptCLIResult{}, err
 		}
 		return refuse(receiptInterrupted)
 	}
 	return ReceiptCLIResult{Output: path}, nil
+}
+
+// receiptPublishRefusal maps the error of the receipt's publish onto the caller's result: the
+// interrupted refusal when the cancellation was clean - err is the context's own error, which
+// PublishContext returns after the temp file it had written was removed - and refused=false when the
+// error must be reported as it happened. That includes a cancellation joined with a failed removal,
+// which publish joins, so a stranded temporary file is never hidden behind "no receipt written".
+func receiptPublishRefusal(ctx context.Context, err error) (ReceiptCLIResult, bool) {
+	if err == nil || ctx.Err() == nil || err != ctx.Err() {
+		return ReceiptCLIResult{}, false
+	}
+	return ReceiptCLIResult{Output: receiptInterrupted, Code: 1}, true
+}
+
+// withdrawReceipt removes the receipt this invocation published at path, while the bytes on disk are
+// still the ones it wrote; a path another invocation for the same session replaced stays. An already
+// absent path is fine, and any other failure is reported as it happened.
+func withdrawReceipt(path string, published []byte) error {
+	current, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(current, published) {
+		return nil
+	}
+	return removeReceipt(path)
 }
 
 // removeReceipt unlinks a receipt; its absence is fine, as rmSync with force treats it. The removal
