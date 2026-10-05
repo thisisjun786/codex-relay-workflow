@@ -21,7 +21,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
-	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -203,24 +202,9 @@ func TestHarnessHooksReplayTheOracleReader(t *testing.T) {
 					for j := range want {
 						want[j].Entrypoint = harness.Entrypoint
 					}
-					// Records with one event keep no order of their own (readdir order in the oracle, name order here).
-					less := func(a, b harness.HookObservation) int {
-						return strings.Compare(a.Event+"/"+a.Component, b.Event+"/"+b.Component)
-					}
-					gotEvents, wantEvents := []string{}, []string{}
-					for _, o := range got.Observations {
-						gotEvents = append(gotEvents, o.Event)
-					}
-					for _, o := range want {
-						wantEvents = append(wantEvents, o.Event)
-					}
-					slices.SortFunc(got.Observations, less)
-					slices.SortFunc(want, less)
+					// The oracle's order is the order to match: every recorded query holds one entrypoint and distinct events.
 					if got.Ignored != q.Reader.Ignored || got.Reason != reason || len(got.Observations) != len(want) || (len(want) > 0 && !reflect.DeepEqual(got.Observations, want)) {
 						t.Errorf("query %d reader: got %+v, oracle %+v ignored %d reason %q", i, got, want, q.Reader.Ignored, reason)
-					}
-					if !slices.IsSortedFunc(gotEvents, strings.Compare) && !slices.Equal(gotEvents, wantEvents) {
-						t.Errorf("query %d order: %v, oracle %v", i, gotEvents, wantEvents)
 					}
 				}
 				options := doctor.HarnessOptions{CodexHome: home, SessionID: q.SessionID, AgentID: q.AgentID, ObservationNow: &now, ObservationMaxAgeMS: q.MaxAgeMS}

@@ -191,7 +191,7 @@ func observationRecord(path string, q ObservationQuery, root, version, manifest 
 	entrypoint, _ := record["entrypoint"].(string)
 	observedAt, _ := record["observedAt"].(string)
 	agent, hasAgent := record["agentId"]
-	if schema, _ := record["schemaVersion"].(json.Number); !isOne(schema) || record["outcome"] != "invoked" || record["sessionId"] != q.SessionID ||
+	if schema, _ := record["schemaVersion"].(json.Number); !observationIsOne(schema) || record["outcome"] != "invoked" || record["sessionId"] != q.SessionID ||
 		!hasAgent || (q.AgentID == nil && agent != nil) || (q.AgentID != nil && agent != *q.AgentID) ||
 		record["pluginRoot"] != root || record["pluginVersion"] != version || record["manifestDigest"] != manifest ||
 		!slug(component) || !slug(event) {
@@ -212,8 +212,8 @@ func observationRecord(path string, q ObservationQuery, root, version, manifest 
 	return HookObservation{SessionID: q.SessionID, AgentID: q.AgentID, Component: component, Event: event, ObservedAt: observedAt, Entrypoint: entrypoint, Outcome: "invoked"}, true
 }
 
-// isOne is schemaVersion === 1 for a JSON number: 1, 1.0 and 1e0 are all the number one.
-func isOne(n json.Number) bool {
+// observationIsOne is schemaVersion === 1 for a JSON number: 1, 1.0 and 1e0 are all the number one.
+func observationIsOne(n json.Number) bool {
 	f, err := strconv.ParseFloat(string(n), 64)
 	return n != "" && err == nil && f == 1
 }
