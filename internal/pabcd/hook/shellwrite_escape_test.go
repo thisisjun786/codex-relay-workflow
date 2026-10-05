@@ -1,7 +1,9 @@
 package hook
 
 import (
+	"runtime"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -73,6 +75,7 @@ func TestShellWriteEscapePythonPaths(t *testing.T) {
 		{command: "python3 -c 'open(\"\\x2fm/a\",\"w\")'", has: []string{"\\x2fm/a", "/m/a"}},
 		{command: "python3 -c 'open(file=\"\\x2fm/a\",mode=\"w\")'", has: []string{"/m/a"}},
 		{command: "python3 -c 'open(\"\\u002fm/a\",\"w\")'", has: []string{"/m/a"}},
+		{command: "python3 -c 'open(\"/h/\\udcc3\\udca9/m\",\"w\")'", has: []string{"/h/\u00e9/m"}},
 		{command: "python3 -c 'open(\"\\057m/a\",\"w\")'", has: []string{"/m/a"}},
 		{command: "python3 -c 'open(b\"\\x2fm/a\",\"w\")'", has: []string{"/m/a"}},
 		{command: "python3 -c 'open(\"/m/a\",\"\\x77\")'", has: []string{"/m/a"}},
@@ -107,6 +110,8 @@ func TestShellWriteEscapePythonLiteral(t *testing.T) {
 		{"'\\U00110000'", "", false}, {"'\\N{SOLIDUS}'", "", false}, {"'\\N'", "", false}, {"b'\\x2'", "", false},
 		{"'\\0'", "", false}, {"'\\x00'", "", false}, {"'\\u0000'", "", false}, {"'a\\000'", "", false}, {"b'\\400'", "", false},
 		{"'a' 'b'", "", false}, {"'abc", "", false}, {"name", "", false},
+		{"'/h/\\udcc3\\udca9/m'", "/h/\u00e9/m", true}, {"'\\U0000dcc3'", "\xc3", true}, {"'\\udc80'", "\x80", true}, {"b'\\udcc3'", "\\udcc3", true},
+		{"'\\ud83d'", "", false}, {"'\\ud83d\\ude00'", "", false}, {"'\\udc7f'", "", false}, {"'\\udd00'", "", false}, {"'\\ud800'", "", false},
 	} {
 		got, ok := shellVerbLiteral([]rune(c.literal))
 		if got != c.want || ok != c.ok {
@@ -121,6 +126,7 @@ func TestShellWriteEscapeJSPaths(t *testing.T) {
 	shellWriteEscapeRun(t, []shellWriteEscapeCase{
 		{command: js("fs.writeFileSync(\"\\x2fm/a\",\"x\")"), has: []string{"\\x2fm/a", "/m/a"}},
 		{command: js("fs.writeFileSync(\"\\u{2f}m/a\",\"x\")"), has: []string{"/m/a"}},
+		{command: js("fs.writeFileSync(\"/h/\\u{d83d}\\u{de00}/m\",\"x\")"), has: []string{"/h/\U0001f600/m"}},
 		{command: js("fs.writeFileSync(\"\\u002fm/a\",\"x\")"), has: []string{"/m/a"}},
 		{command: js("fs.writeFileSync(\"\\57m/a\",\"x\")"), has: []string{"/m/a"}},
 		{command: js("fs.writeFileSync(`\\x2fm/a`,\"x\")"), has: []string{"/m/a"}},
@@ -168,6 +174,7 @@ func TestShellWriteEscapeJSLiteral(t *testing.T) {
 	}{
 		{`\x2fm/a`, false, "/m/a", true}, {`\u002fm/a`, false, "/m/a", true}, {`\u{2f}m/a`, false, "/m/a", true},
 		{`\u{0000002f}m/a`, false, "/m/a", true}, {`\u{1F600}`, false, "\U0001f600", true}, {`\ud83d\ude00`, false, "\U0001f600", true},
+		{`\u{d83d}\u{de00}`, false, "\U0001f600", true}, {`\ud83d\u{de00}`, false, "\U0001f600", true}, {`\u{d83d}\ude00`, false, "\U0001f600", true}, {`\u{d800}`, false, "\ufffd", true},
 		{`\ud800`, false, "\ufffd", true}, {`\0`, false, "\x00", true}, {`\01`, false, "\x01", true}, {`\08`, false, "\x008", true},
 		{`\101`, false, "A", true}, {`\1010`, false, "A0", true}, {`\400`, false, " 0", true}, {`\477`, false, "'7", true},
 		{`\57m`, false, "/m", true}, {`\8`, false, "8", true}, {`\q/m`, false, "q/m", true}, {`\$`, false, "$", true},
@@ -181,5 +188,25 @@ func TestShellWriteEscapeJSLiteral(t *testing.T) {
 		if got, ok := shellWriteEscapeJS(c.body, c.template); got != c.want || ok != c.ok {
 			t.Errorf("%q (template %v): got %q, %v; want %q, %v", c.body, c.template, got, ok, c.want, c.ok)
 		}
+	}
+}
+
+// The Path join costs time and memory linear in its arguments: a long run of literal parts must not copy the accumulated path again for
+// each one (the hook reads inputs of several MiB).
+func TestShellWriteEscapePathJoinIsLinear(t *testing.T) {
+	allocated := func(parts int) uint64 {
+		script := "Path(" + strings.Repeat("'a',", parts) + "'/m/x').write_text(1)"
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		got := shellVerbOpenWrites(script)
+		runtime.ReadMemStats(&after)
+		if !slices.Equal(got, []string{"/m/x"}) {
+			t.Fatalf("%d parts: got %q", parts, got)
+		}
+		return after.TotalAlloc - before.TotalAlloc
+	}
+	small, large := allocated(8000), allocated(32000)
+	if large > 8*small { // four times the input: about four times the allocation, sixteen when each part copies the path
+		t.Errorf("allocation grew from %d to %d bytes for four times the parts", small, large)
 	}
 }

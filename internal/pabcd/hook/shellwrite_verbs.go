@@ -898,9 +898,10 @@ func shellVerbLiteral(arg []rune) (string, bool) {
 
 // shellWriteEscapePath is the path a Path(...) call names: posixpath.join of its arguments, when every non-blank one (a trailing
 // comma leaves a blank) is a string literal. An absolute part discards the parts before it and nothing else is normalized, so
-// Path("/m", "") is "/m/". One argument that is no literal, or an empty result, names nothing.
+// Path("/m", "") is "/m/". One argument that is no literal, or an empty result, names nothing. The path grows in one buffer, so
+// the work is linear in the arguments.
 func shellWriteEscapePath(rs []rune, spans [][2]int) (string, bool) {
-	path := ""
+	var path []byte
 	for _, span := range spans {
 		if shellVerbBlank(rs[span[0]:span[1]]) {
 			continue
@@ -911,21 +912,22 @@ func shellWriteEscapePath(rs []rune, spans [][2]int) (string, bool) {
 		}
 		switch {
 		case strings.HasPrefix(part, "/"):
-			path = part
-		case path == "" || strings.HasSuffix(path, "/"):
-			path += part
+			path = append(path[:0], part...)
+		case len(path) == 0 || path[len(path)-1] == '/':
+			path = append(path, part...)
 		default:
-			path += "/" + part
+			path = append(append(path, '/'), part...)
 		}
 	}
-	return path, path != ""
+	return string(path), len(path) > 0
 }
 
 // shellWriteEscapePython decodes the body of a non-raw Python string literal: a line continuation (a CR or CRLF is a newline to
 // Python as well), the one-character escapes, octal of one to three digits, \xhh, and in a str literal \uXXXX and \UXXXXXXXX. An
 // unknown escape keeps its backslash. It reports false for what Python rejects (a short or oversized \x, \u or \U) and for a \N
-// escape, which needs the Unicode name table, and for a NUL, which no path holds. In a b literal \u, \U and \N are plain text, an
-// escape is a byte (octal wraps at eight bits) and is written as that byte.
+// escape, which needs the Unicode name table, and for a NUL, which no path holds. A str value that is a surrogate is the byte
+// os.fsencode makes of U+DC80 to U+DCFF (surrogateescape) and no path at all otherwise, since Python cannot encode it. In a b
+// literal \u, \U and \N are plain text, an escape is a byte (octal wraps at eight bits) and is written as that byte.
 func shellWriteEscapePython(body []rune, isBytes bool) (string, bool) {
 	var out strings.Builder
 	for i := 0; i < len(body); i++ {
@@ -970,6 +972,11 @@ func shellWriteEscapePython(body []rune, isBytes bool) (string, bool) {
 		switch {
 		case value == 0:
 			return "", false
+		case value >= 0xd800 && value <= 0xdfff && !isBytes:
+			if value < 0xdc80 || value > 0xdcff {
+				return "", false
+			}
+			out.WriteByte(byte(value - 0xdc00))
 		case value > 0 && isBytes:
 			out.WriteByte(byte(value))
 		case value > 0:
@@ -1068,7 +1075,12 @@ func shellWriteEscapeJS(body string, template bool) (string, bool) {
 				if !ok {
 					return "", false
 				}
-				units, i = utf16.AppendRune(units, rune(value)), i+end
+				if value > 0xffff {
+					units = utf16.AppendRune(units, rune(value))
+				} else { // a surrogate stays a unit, so \u{d83d}\u{de00} joins as a pair does
+					units = append(units, uint16(value))
+				}
+				i += end
 			case d >= '0' && d <= '7':
 				value := int(d - '0')
 				for more := 2 - value/4; more > 0 && i+1 < len(rs) && rs[i+1] >= '0' && rs[i+1] <= '7'; more-- {
