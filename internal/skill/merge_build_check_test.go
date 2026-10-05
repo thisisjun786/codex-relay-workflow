@@ -553,6 +553,10 @@ func TestMergeBuildEnvMovesOnlyTheDarwinHome(t *testing.T) {
 		t.Errorf("darwin: the cache read wrote to the caller's config directory: %v", left)
 	}
 	caches := mbcCallerGoEnv(t, caller)
+	// The helper above ran the real go tool with the caller's environment: a run without an off
+	// file below the caller's config directory leaves the asynchronous telemetry writer behind,
+	// and its writes then race this test's temporary-directory cleanup (CRW-598).
+	telemetryOffForbidLocal(t, caller)
 	for key, want := range map[string]string{"GOCACHE": caches[0], "GOMODCACHE": caches[1], "GOPATH": caches[2]} {
 		if got[key] != want {
 			t.Errorf("darwin: %s=%q, want the caller's %q", key, got[key], want)
@@ -606,6 +610,54 @@ func mbcCallerGoEnv(t *testing.T, base []string) [3]string {
 		t.Fatalf("go env GOCACHE GOMODCACHE GOPATH answered %q", out)
 	}
 	return [3]string{strings.TrimSpace(lines[0]), strings.TrimSpace(lines[1]), strings.TrimSpace(lines[2])}
+}
+
+// telemetryOffDir is the directory the go tool of this environment keeps telemetry in: the user
+// config directory of that environment as os.UserConfigDir resolves it - XDG_CONFIG_HOME, or
+// HOME/.config when it names none, and HOME/Library/Application Support on darwin (CRW-598).
+func telemetryOffDir(env []string) string {
+	last := mbcLastEnv(env)
+	if runtime.GOOS == "darwin" {
+		return filepath.Join(last["HOME"], "Library", "Application Support", "go", "telemetry")
+	}
+	if config := last["XDG_CONFIG_HOME"]; config != "" {
+		return filepath.Join(config, "go", "telemetry")
+	}
+	return filepath.Join(last["HOME"], ".config", "go", "telemetry")
+}
+
+// telemetryOffWriteMode puts the off mode file - the same one the check itself writes - under the
+// environment's telemetry directory before a real go command runs with it: without it the go tool
+// writes counters there asynchronously, after the command returned, and those writes race the
+// test's temporary-directory cleanup (CRW-598).
+func telemetryOffWriteMode(t *testing.T, env []string) {
+	t.Helper()
+	dir := telemetryOffDir(env)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "mode"), []byte("off "+time.Now().UTC().Format("2006-01-02")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// telemetryOffForbidLocal waits out the go tool's asynchronous telemetry writer and then requires
+// that it never created go/telemetry/local under the environment's config directory (CRW-598).
+func telemetryOffForbidLocal(t *testing.T, env []string) {
+	t.Helper()
+	time.Sleep(2 * time.Second)
+	local := filepath.Join(telemetryOffDir(env), "local")
+	entries, err := os.ReadDir(local)
+	switch {
+	case err == nil:
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Errorf("the go tool wrote telemetry below the caller's config directory: %s holds %v", local, names)
+	case !errors.Is(err, fs.ErrNotExist):
+		t.Errorf("cannot tell whether %s exists: %v", local, err)
+	}
 }
 
 // The cache read darwin needs runs under the check's own context: a go env that stalls is cut off
