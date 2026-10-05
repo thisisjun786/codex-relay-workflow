@@ -14,6 +14,7 @@
 package metric
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -405,6 +406,11 @@ func RecordMetricsFromText(cwd string, in TextInput) ([]Record, error) {
 		records = append(records, rec)
 	}
 	return records, nil
+}
+
+// RecordMetricsFromTextContext is a stub that ignores ctx (CRW-627, red state).
+func RecordMetricsFromTextContext(_ context.Context, cwd string, in TextInput) ([]Record, error) {
+	return RecordMetricsFromText(cwd, in)
 }
 
 // CheckObjectivePlateau judges the latest row's metric within its work phase: the last MinRecords rows of it are flat when none beats

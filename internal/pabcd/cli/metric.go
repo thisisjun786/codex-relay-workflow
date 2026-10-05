@@ -5,6 +5,7 @@ package cli
 // registers nothing and does no work at program start (no init, no package-level variable initializers).
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -310,4 +311,9 @@ func RunMetricCLI(argv []string, cwd, stdin string) (CliResult, error) {
 		return CliResult{Code: 0, Output: `{"metricName":` + metricCliQuote(name) + `,"value":` + metricCliNumberText(value) + "}"}, nil
 	}
 	return CliResult{Code: 1, Output: metricCliUsage}, nil
+}
+
+// RunMetricCLIContext is a stub that ignores ctx (CRW-627, red state).
+func RunMetricCLIContext(_ context.Context, argv []string, cwd, stdin string) (CliResult, error) {
+	return RunMetricCLI(argv, cwd, stdin)
 }
