@@ -23,8 +23,9 @@
 // separator to a root that already ends with one); and a document nested deeper than the Go
 // reader's limit is refused. Two behaviours are repaired, as answers to Devin's security
 // findings (port: fixed): the manifest goes through the same containment check as a hook file,
-// and a file is verified again once it is open, so a symlink swapped in after the check is not
-// followed (hookTrustEntriesReadContained).
+// and each file is opened through an os.Root of the plugin root and read from the opened handle,
+// so a link swapped in once the root is open cannot lead outside it
+// (hookTrustEntriesReadContained).
 package doctor
 
 import (
@@ -33,6 +34,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"math"
 	"os"
 	"path/filepath"
@@ -40,6 +42,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
@@ -68,7 +71,7 @@ func ListHookTrustEntries(pluginRoot, pluginKey string) ([]HookTrustEntry, error
 	if err := hookTrustEntriesSafeValue(pluginKey, "plugin key"); err != nil {
 		return nil, err
 	}
-	manifestBytes, err := hookTrustEntriesReadContained(pluginRoot, ".codex-plugin/plugin.json")
+	manifestBytes, err := hookTrustEntriesReadContained(pluginRoot, ".codex-plugin/plugin.json", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -94,7 +97,7 @@ func ListHookTrustEntries(pluginRoot, pluginKey string) ([]HookTrustEntry, error
 		if err := hookTrustEntriesSafeValue(relative, "hook path"); err != nil {
 			return nil, err
 		}
-		raw, err := hookTrustEntriesReadContained(pluginRoot, relative)
+		raw, err := hookTrustEntriesReadContained(pluginRoot, relative, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -280,15 +283,27 @@ func hookTrustEntriesSafeValue(value, label string) error {
 	return nil
 }
 
+// hookTrustEntriesRootEscape is the text of the error os.Root returns for a name or a link that
+// leaves the root (os.errPathEscapes, which the os package does not export). The tests assert the
+// oracle text this produces, so a change of the os text fails them.
+const hookTrustEntriesRootEscape = "path escapes from parent"
+
 // hookTrustEntriesReadContained is containedPluginFile (hook-trust.ts:144-156) and the read that
 // follows it: the file reference names has to lie inside the real path of the plugin root, both
 // lexically and after symlinks. The reference is stripped of "./" a second time before it is
 // resolved, and an absolute result of that resolves to itself, as path.resolve does. Two things
 // differ from the oracle on purpose, answers to Devin's security findings on this port
 // (docs/port-cxc/known-defects.md, port: fixed): the manifest goes through the same check, and
-// once the file is open the path is resolved again and has to name the file that was opened,
-// still inside the root, so a symlink swapped in after the check is not followed.
-func hookTrustEntriesReadContained(pluginRoot, reference string) ([]byte, error) {
+// the file is opened through an os.Root of the real plugin root and read from that handle. The
+// guarantee covers what happens under the root once it is open: a link that stays inside is
+// followed and one that leaves it, however it is swapped around the check, is refused at the
+// open. The root path itself is resolved once by EvalSymlinks and opened by os.OpenRoot, which
+// follows links in the root's own name. The Root also refuses an absolute link, even when it
+// points inside, a link that leaves the root and comes back, and a chain of more than 8 links.
+// The type of the opened file then decides what it is: a directory is EISDIR and any other file
+// that is not regular is refused. observe is a test seam, called with "open" just before the
+// open; production passes nil.
+func hookTrustEntriesReadContained(pluginRoot, reference string, observe func(stage string)) ([]byte, error) {
 	absolute, err := filepath.Abs(pluginRoot)
 	if err != nil {
 		return nil, err
@@ -308,35 +323,36 @@ func hookTrustEntriesReadContained(pluginRoot, reference string) ([]byte, error)
 	if !hookTrustEntriesInside(root, candidate) {
 		return nil, errors.New("plugin manifest path escapes plugin root: " + reference)
 	}
-	real, err := filepath.EvalSymlinks(candidate)
+	within, err := filepath.Rel(root, candidate)
 	if err != nil {
 		return nil, err
 	}
-	if !hookTrustEntriesInside(root, real) {
-		return nil, errors.New("plugin manifest symlink escapes plugin root: " + reference)
-	}
-	file, err := os.Open(real)
+	rooted, err := os.OpenRoot(root)
 	if err != nil {
+		return nil, err
+	}
+	defer rooted.Close()
+	if observe != nil {
+		observe("open")
+	}
+	file, err := rooted.Open(within)
+	if err != nil {
+		var pathErr *fs.PathError
+		if errors.As(err, &pathErr) && pathErr.Err.Error() == hookTrustEntriesRootEscape {
+			return nil, errors.New("plugin manifest symlink escapes plugin root: " + reference)
+		}
 		return nil, err
 	}
 	defer file.Close()
-	opened, err := file.Stat()
-	if err != nil {
-		return nil, err
-	}
-	again, err := filepath.EvalSymlinks(candidate)
-	if err != nil {
-		return nil, err
-	}
-	current, err := os.Stat(again)
+	info, err := file.Stat()
 	if err != nil {
 		return nil, err
 	}
 	switch {
-	case !hookTrustEntriesInside(root, again):
-		return nil, errors.New("plugin manifest symlink escapes plugin root: " + reference)
-	case !os.SameFile(opened, current):
-		return nil, errors.New("plugin manifest path changed while it was read: " + reference)
+	case info.IsDir():
+		return nil, &fs.PathError{Op: "read", Path: candidate, Err: syscall.EISDIR}
+	case !info.Mode().IsRegular():
+		return nil, &fs.PathError{Op: "read", Path: candidate, Err: errors.New("not a regular file")}
 	}
 	return io.ReadAll(file)
 }
