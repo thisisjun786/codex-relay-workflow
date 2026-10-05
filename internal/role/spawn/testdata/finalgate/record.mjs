@@ -32,6 +32,9 @@ const MOVED = { kind: 'resolved', commitSha: 'bbbbbbb', dirty: false };
 const NO_GIT = { kind: 'unavailable', commitSha: '', dirty: false };
 const SRC = { ...HERE, sourceRoot: '/src/tree' };
 const STATE = '.codexclaw/sessions/', PLAN = '.codexclaw/goalplans/' + SLUG + '/goalplan.json', EVID = '.codexclaw/evidence/';
+const DEEP = n => '{"d":' + '['.repeat(n) + ']'.repeat(n) + ',"finalGate":{},"criteria":[]}';
+const GATE = JSON.stringify({ criteria: [], finalGate: {} });
+const OUT = '../outside-receipt.json', OUTSIDE = JSON.stringify({ kind: 'test', sourceIdentity: HERE });
 
 // fixture() builds the three real files the oracle suite builds (session state, goalplan, receipts) and what the check is
 // given. A receipt spec is an identity, 'missing', 'empty', 'dir' or raw text; an option named testPath replaces the path
@@ -58,7 +61,7 @@ const fixture = (o = {}) => {
     });
   }
   Object.assign(files, o.files);
-  return { packet: o.packet ?? PACKET, session: o.session ?? SESSION, capture: 'capture' in o ? o.capture : HERE, files, dirs, symlinks };
+  return { packet: o.packet ?? PACKET, session: o.session ?? SESSION, capture: 'capture' in o ? o.capture : HERE, files, dirs, symlinks, pad: o.pad };
 };
 
 const NOREC = /missing, empty or unreadable/;
@@ -140,39 +143,67 @@ const cases = [
   ['a session id that is not canonical refuses with SOURCE-ROOT', { testReceipt: HERE, session: 'sess 1' }, [false, /SOURCE-ROOT/]],
   ['a session id that is not canonical and has no state fails open', { testReceipt: HERE, session: 'sess 2' }, [true]],
   ['without a capture function a directory without git has no identity and is never stale', { testReceipt: MOVED, capture: undefined }, [true]],
+  // The reads a security review asked to keep inside the working directory: the port answers differently from the oracle for these, so
+  // the fourth element names the reason and the files the oracle's answer is recomputed without (what the port sees as unreadable).
+  ['a goalplan nested 9000 levels still parses', { testReceipt: 'missing', planRaw: DEEP(9000) }, [false, /test receipt path is not recorded/]],
+  ['a goalplan nested past 10000 levels is unreadable', { testReceipt: 'missing', planRaw: DEEP(12000) }, [false, /test receipt path is not recorded/], { without: [PLAN], reason: 'Security finding: a hostile or corrupt file must not exhaust the hook, so a document nested past pyjson.MaxDepth (10,000) levels is unreadable, where the oracle\'s JSON.parse reads it.' }],
+  ['a goalplan over 4 MiB is unreadable', { testReceipt: 'missing', pad: { file: PLAN, bytes: 4 << 20 } }, [false, /test receipt path is not recorded/], { without: [PLAN], reason: 'Security finding: a file over 4 MiB is unreadable, where the oracle reads it.' }],
+  ['a slug that climbs out of the goalplans directory is not followed', { testReceipt: 'missing', slug: '../../elsewhere', files: { 'elsewhere/goalplan.json': GATE } }, [false, /test receipt path is not recorded/], { without: ['elsewhere/goalplan.json'], reason: 'Security finding: the slug must be a goalplan slug (goalplan.ValidateGoalplanSlug), where the oracle joins the session state\'s slug into the path as it is.' }],
+  ['a slug with a path separator is not followed', { testReceipt: 'missing', slug: 'a/b', files: { '.codexclaw/goalplans/a/b/goalplan.json': GATE } }, [false, /test receipt path is not recorded/], { without: ['.codexclaw/goalplans/a/b/goalplan.json'], reason: 'Security finding: the slug must be a goalplan slug, where the oracle joins it into the path as it is.' }],
+  ['a slug that climbs out of the working directory is not followed', { testReceipt: 'missing', slug: '../../../outside-goalplan', files: { '../outside-goalplan/goalplan.json': GATE } }, [false, /test receipt path is not recorded/], { without: ['../outside-goalplan/goalplan.json'], reason: 'Security finding: the slug must be a goalplan slug, where the oracle reads a goalplan outside the working directory.' }],
+  ['a receipt path that climbs out of the working directory is not read', { testPath: OUT, files: { [OUT]: OUTSIDE } }, [true], { without: [OUT], reason: 'Security finding: every read stays below the working directory (os.Root), where the oracle reads the receipt wherever the path leads.' }],
+  ['an absolute receipt path outside the working directory is not read', { testPath: WS + '/' + OUT, files: { [OUT]: OUTSIDE } }, [true], { without: [OUT], reason: 'Security finding: every read stays below the working directory (os.Root), where the oracle reads the receipt wherever the path leads.' }],
+  ['a link that leaves the working directory is not followed', { testPath: EVID + 'link.json', link: '../../../' + OUT.slice(3), files: { [OUT]: OUTSIDE } }, [true], { without: [OUT], reason: 'Security finding: every read stays below the working directory (os.Root), where the oracle follows a link wherever it leads.' }],
+  ['an absolute link to a file below the working directory is not followed', { testReceipt: HERE, testPath: EVID + 'link.json', link: WS + '/' + EVID + 'test.json' }, [true], { without: [EVID + 'link.json'], reason: 'os.Root refuses an absolute link even when its target lies below the root, where the oracle follows it (a consequence of the security fix above).' }],
 ];
 
-const results = [];
-for (const [name, options, want] of cases) {
-  const f = fixture(options);
+// execute builds the case in a fresh directory, leaving out the files (and links) named in drop, and runs the oracle on it.
+const execute = (f, capture, drop = []) => {
   const cwd = fs.mkdtempSync(path.join(scratch, 'fg-'));
   const put = text => text.split(WS).join(cwd);
-  const back = text => text.split(cwd).join(WS);
+  const outside = [];
   for (const d of f.dirs) fs.mkdirSync(path.join(cwd, d), { recursive: true });
   for (const [rel, body] of Object.entries(f.files)) {
-    fs.mkdirSync(path.dirname(path.join(cwd, rel)), { recursive: true });
-    fs.writeFileSync(path.join(cwd, rel), put(body));
+    if (drop.includes(rel)) continue;
+    const file = path.join(cwd, rel);
+    if (rel.startsWith('../')) outside.push(path.join(path.dirname(cwd), rel.slice(3).split('/')[0]));
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, put(body));
   }
-  for (const [rel, target] of Object.entries(f.symlinks)) fs.symlinkSync(target, path.join(cwd, rel));
-  const capture = f.capture === undefined ? undefined : f.capture === 'throw' ? () => { throw new Error('boom'); } : () => f.capture;
+  if (f.pad && !drop.includes(f.pad.file)) fs.appendFileSync(path.join(cwd, f.pad.file), ' '.repeat(f.pad.bytes));
+  for (const [rel, target] of Object.entries(f.symlinks)) if (!drop.includes(rel)) fs.symlinkSync(put(target), path.join(cwd, rel));
   const answer = guard.checkFinalGatePrereqs(put(f.packet), f.session, cwd, capture);
-  assert.equal(answer.ok, want[0], name);
-  if (want[1]) assert.match(answer.reason ?? '', want[1], name);
-  const oracleAnswer = { ok: answer.ok, ...(answer.reason === undefined ? {} : { reason: back(answer.reason) }) };
-  const expected = { ok: answer.ok, ...(answer.reason === undefined ? {} : { reason: rename(back(answer.reason)) }) };
+  for (const file of outside) fs.rmSync(file, { recursive: true, force: true });
+  fs.rmSync(cwd, { recursive: true, force: true });
+  const back = text => text.split(cwd).join(WS);
+  return { ok: answer.ok, ...(answer.reason === undefined ? {} : { reason: back(answer.reason) }) };
+};
+
+const results = [];
+for (const [name, options, want, change] of cases) {
+  const f = fixture(options);
+  const capture = f.capture === undefined ? undefined : f.capture === 'throw' ? () => { throw new Error('boom'); } : () => f.capture;
+  const oracleAnswer = execute(f, capture);
+  assert.equal(oracleAnswer.ok, want[0], name);
+  if (want[1]) assert.match(oracleAnswer.reason ?? '', want[1], name);
+  const expected = change ? execute(f, capture, change.without) : { ok: oracleAnswer.ok, ...(oracleAnswer.reason === undefined ? {} : { reason: rename(oracleAnswer.reason) }) };
+  if (change) expected.reason = rename(expected.reason ?? '') || undefined;
+  if (expected.reason === undefined) delete expected.reason;
   const same = JSON.stringify(oracleAnswer) === JSON.stringify(expected);
+  const renamed = { ok: oracleAnswer.ok, ...(oracleAnswer.reason === undefined ? {} : { reason: rename(oracleAnswer.reason) }) };
+  assert.equal(JSON.stringify(expected) === JSON.stringify(renamed), !change, name);
   results.push({
     name, packet: rename(f.packet), session: f.session,
     files: Object.fromEntries(Object.entries(f.files).map(([k, v]) => [rename(k), rename(v)])),
-    dirs: f.dirs.map(rename), symlinks: Object.fromEntries(Object.entries(f.symlinks).map(([k, v]) => [rename(k), v])),
+    dirs: f.dirs.map(rename), symlinks: Object.fromEntries(Object.entries(f.symlinks).map(([k, v]) => [rename(k), rename(v)])),
+    ...(f.pad ? { pad: { file: rename(f.pad.file), bytes: f.pad.bytes } } : {}),
     capture: f.capture === undefined ? null : f.capture,
     oracle: oracleAnswer, expected, classification: same ? 'identical' : 'intentionally-changed',
-    ...(same ? {} : { reason: 'CRW names: the refusal prefix "[crw — final gate]" (R23) and the evidence path ".crw/evidence/" (R26).' }),
+    ...(same ? {} : { reason: change?.reason ?? 'CRW names: the refusal prefix "[crw — final gate]" (R23) and the evidence path ".crw/evidence/" (R26).' }),
   });
-  fs.rmSync(cwd, { recursive: true, force: true });
 }
 fs.writeFileSync(output, JSON.stringify({
   oracle: 'CXC v0.2.40 (3c1459ac)', source: 'subagent-config/src/final-gate-guard.ts:1-189',
   tests: 'subagent-config/test/final-gate-guard.test.ts:88-229', cases: results,
 }, null, 2) + '\n');
-console.log(results.length + ' cases recorded; ' + results.filter(r => r.classification !== 'identical').length + ' differ by name substitution.');
+console.log(results.length + ' cases recorded; ' + results.filter(r => r.classification !== 'identical').length + ' differ from the oracle.');

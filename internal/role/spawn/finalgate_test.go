@@ -6,7 +6,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	sourcesession "github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source/session"
@@ -98,17 +100,22 @@ func spawnFinalGateTestPlan(t *testing.T, cwd string, identity source.Identity) 
 
 // The cases are the answers of the oracle (record.mjs ran the real final-gate-guard.ts): the 15 identity-injected cases of
 // final-gate-guard.test.ts, whose two hook-route tests wait for the hook leg, and one case for each further branch. A case holds
-// its inputs under the CRW names, the oracle's answer and the answer expected here, which differs only by the name substitution.
+// its inputs under the CRW names, the oracle's answer and the answer expected here, which differs by the name substitution and, in the
+// nine cases that keep a read inside the working directory, by the security fixes the reason of the case names.
 func TestCheckFinalGatePrereqsMatchesTheOracle(t *testing.T) {
 	var fixture struct {
 		Cases []struct {
 			Name, Packet, Session string
 			Files, Symlinks       map[string]string
 			Dirs                  []string
-			Capture               json.RawMessage
-			Expected              FinalGateCheck
-			Classification        string
-			Reason                string
+			Pad                   struct {
+				File  string
+				Bytes int
+			}
+			Capture        json.RawMessage
+			Expected       FinalGateCheck
+			Classification string
+			Reason         string
 		}
 	}
 	raw, err := os.ReadFile("testdata/finalgate/oracle.json")
@@ -118,8 +125,8 @@ func TestCheckFinalGatePrereqsMatchesTheOracle(t *testing.T) {
 	if err := json.Unmarshal(raw, &fixture); err != nil {
 		t.Fatal(err)
 	}
-	if len(fixture.Cases) != 71 {
-		t.Fatalf("got %d recorded cases, want 71", len(fixture.Cases))
+	if len(fixture.Cases) != 81 {
+		t.Fatalf("got %d recorded cases, want 81", len(fixture.Cases))
 	}
 	for _, c := range fixture.Cases {
 		t.Run(c.Name, func(t *testing.T) {
@@ -136,8 +143,15 @@ func TestCheckFinalGatePrereqsMatchesTheOracle(t *testing.T) {
 			for rel, body := range c.Files {
 				spawnFinalGateTestWrite(t, cwd, rel, expand(body))
 			}
+			if c.Pad.File != "" {
+				prior, err := os.ReadFile(filepath.Join(cwd, c.Pad.File))
+				if err != nil {
+					t.Fatal(err)
+				}
+				spawnFinalGateTestWrite(t, cwd, c.Pad.File, string(prior)+strings.Repeat(" ", c.Pad.Bytes))
+			}
 			for rel, target := range c.Symlinks {
-				if err := os.Symlink(target, filepath.Join(cwd, rel)); err != nil {
+				if err := os.Symlink(expand(target), filepath.Join(cwd, rel)); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -209,5 +223,26 @@ func TestCheckFinalGatePrereqsComparesTheBoundWorktree(t *testing.T) {
 		if want := "test receipt was produced against " + head[:7] + ", but the tree is now " + head[:7]; got.OK || !strings.Contains(got.Reason, want) {
 			t.Errorf("%s: a receipt without the source root was not refused as stale: %+v", name, got)
 		}
+	}
+}
+
+// A named pipe at a state path is refused without being opened for reading, which would wait for a writer forever (the oracle waits).
+func TestCheckFinalGatePrereqsDoesNotWaitOnANamedPipe(t *testing.T) {
+	cwd := spawnFinalGateTestTree(t)
+	if err := os.MkdirAll(filepath.Join(cwd, ".crw", "sessions"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(filepath.Join(cwd, ".crw", "sessions", "sess-1.json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	answered := make(chan FinalGateCheck, 1)
+	go func() { answered <- CheckFinalGatePrereqs(spawnFinalGateTestPacket, "sess-1", cwd, nil) }()
+	select {
+	case got := <-answered:
+		if !got.OK {
+			t.Fatalf("a named pipe in place of the session state was not fail-open: %+v", got)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the check is waiting on the named pipe")
 	}
 }

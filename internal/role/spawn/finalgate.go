@@ -1,10 +1,12 @@
 package spawn
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
@@ -18,9 +20,13 @@ import (
 // check that refuses a spawn packet which marks itself as the final-gate reviewer while no fresh test receipt (and, for a web, tui
 // or desktop criterion, QA receipt) exists. It is an early warning and not the enforcement layer: the marker, the session state, a
 // goalplan with a finalGate and a readable source tree all have to be there, and every other failure lets the spawn through. It
-// reads files below cwd and the receipts the goalplan names, and writes nothing. The route that calls it is a later issue; nothing
-// here registers a hook. The names are those of contract/schema/cxc/name-substitution.json. Each way the port differs from the
-// oracle, and each defect it keeps, is recorded in docs/port-cxc/known-defects.md.
+// reads files and writes nothing. The route that calls it is a later issue; nothing here registers a hook. The names are those of
+// contract/schema/cxc/name-substitution.json. Each way the port differs from the oracle, and each defect it keeps, is recorded in
+// docs/port-cxc/known-defects.md; the differences are the three a security review asked for, which keep every read inside cwd:
+//   - the slug must be a goalplan slug, where the oracle joins whatever the session state holds into the path;
+//   - every file is opened through an os.Root of cwd, so a receipt path, an absolute one included, or a link that leaves cwd is
+//     unreadable, where the oracle reads it;
+//   - a file over spawnFinalGateMaxFile, or nested past pyjson.MaxDepth levels, is unreadable, where the oracle's JSON.parse reads it.
 
 const (
 	spawnFinalGateMarker = "[CRW-FINAL-GATE]"
@@ -28,6 +34,9 @@ const (
 	spawnFinalGateSource = spawnFinalGatePrefix + " SOURCE-ROOT: source identity is unavailable; inspect the binding and installed modules before review."
 	spawnFinalGateHeader = spawnFinalGatePrefix + " This spawn is marked as the final gate, but its prerequisites are not in place:"
 	spawnFinalGateFooter = "Run the checks, record their receipts under " + crwdir.DirName + "/evidence/, then dispatch the gate reviewer."
+
+	// spawnFinalGateMaxFile is the largest state, goalplan or receipt file that is read: the bound of the hook's own input.
+	spawnFinalGateMaxFile = 4 << 20
 )
 
 // FinalGateCheck is the answer of CheckFinalGatePrereqs: OK, or a refusal and the text to deny the spawn with.
@@ -57,11 +66,16 @@ func CheckFinalGatePrereqs(packetText, sessionID, cwd string, capture func(cwd s
 	if !strings.Contains(packetText, spawnFinalGateMarker) || sessionID == "" {
 		return allow
 	}
-	slug, _ := spawnFinalGateObject(state.StatePath(cwd, sessionID))["slug"].(string)
-	if slug == "" {
+	root, err := os.OpenRoot(cwd)
+	if err != nil {
 		return allow
 	}
-	plan := spawnFinalGateObject(filepath.Join(cwd, crwdir.DirName, goalplan.GoalplansSubdir, slug, goalplan.GoalplanFile))
+	defer root.Close()
+	slug, _ := spawnFinalGateObject(root, filepath.Join(crwdir.DirName, state.SessionsSubdir, state.SanitizeKey(sessionID)+".json"))["slug"].(string)
+	if _, err := goalplan.ValidateGoalplanSlug(slug); err != nil {
+		return allow
+	}
+	plan := spawnFinalGateObject(root, filepath.Join(crwdir.DirName, goalplan.GoalplansSubdir, slug, goalplan.GoalplanFile))
 	var gate map[string]any
 	switch g := plan["finalGate"].(type) {
 	case map[string]any:
@@ -88,7 +102,7 @@ func CheckFinalGatePrereqs(packetText, sessionID, cwd string, capture func(cwd s
 		path, _ := slot.path.(string)
 		if path == "" {
 			missing = append(missing, slot.label+" receipt path is not recorded in finalGate")
-		} else if identity, readable := spawnFinalGateReceipt(cwd, path); !readable {
+		} else if identity, readable := spawnFinalGateReceipt(root, cwd, path); !readable {
 			missing = append(missing, slot.label+" receipt is missing, empty or unreadable: "+path)
 		} else if source.Compare(identity, current).Kind == source.ComparisonDifferent {
 			stale = append(stale, slot.label+" receipt was produced against "+spawnFinalGateShort(identity)+", but the tree is now "+spawnFinalGateShort(current))
@@ -127,17 +141,18 @@ func spawnFinalGateCurrent(cwd, sessionID string, capture func(cwd string) sourc
 	return current, true
 }
 
-// spawnFinalGateReceipt is the source identity a receipt file holds. The path is read as written when it is absolute and below cwd
-// otherwise, links followed; a file that is not a regular non-empty one, or holds no readable identity, is not readable.
-func spawnFinalGateReceipt(cwd, path string) (source.Identity, bool) {
-	abs := filepath.Join(cwd, path)
-	if filepath.IsAbs(path) {
-		abs = filepath.Clean(path)
+// spawnFinalGateReceipt is the source identity a receipt file holds. An absolute path is read as a path below cwd, a relative one
+// from cwd; a path that leaves cwd, by name or by a link, is not readable, nor is a file that is not a regular non-empty one or holds
+// no readable identity.
+func spawnFinalGateReceipt(root *os.Root, cwd, path string) (source.Identity, bool) {
+	rel := filepath.Clean(path)
+	if filepath.IsAbs(rel) {
+		var err error
+		if rel, err = filepath.Rel(cwd, rel); err != nil {
+			return source.Identity{}, false
+		}
 	}
-	if info, err := os.Stat(abs); err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
-		return source.Identity{}, false
-	}
-	return spawnFinalGateIdentity(spawnFinalGateObject(abs)["sourceIdentity"])
+	return spawnFinalGateIdentity(spawnFinalGateObject(root, rel)["sourceIdentity"])
 }
 
 // spawnFinalGateIdentity is readIdentity: a kind that is resolved or unavailable, a string commitSha and a boolean dirty, a treeHash
@@ -162,14 +177,24 @@ func spawnFinalGateIdentity(raw any) (source.Identity, bool) {
 	return identity, true
 }
 
-// spawnFinalGateObject is readJson: the object a file holds as JSON.parse reads it, or nil when the file cannot be read, is not JSON
-// or is not an object. Links are followed.
-func spawnFinalGateObject(path string) map[string]any {
-	data, err := os.ReadFile(path)
+// spawnFinalGateObject is readJson: the object the file at rel holds as JSON.parse reads it, or nil when the file cannot be opened
+// below root, is not a regular file, is empty or larger than spawnFinalGateMaxFile, is not JSON or nested past pyjson.MaxDepth, or is
+// not an object. Links that stay below root are followed. The file is opened without blocking, so a named pipe is refused, and what
+// is read is the file that was opened.
+func spawnFinalGateObject(root *os.Root, rel string) map[string]any {
+	file, err := root.OpenFile(rel, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil
 	}
-	value, err := pyjson.Loads(source.DecodeUTF8(data), pyjson.LoadOptions{Map: true, Surrogates: true, Numbers: pyjson.SpelledNumbers, Deep: true})
+	defer file.Close()
+	if info, err := file.Stat(); err != nil || !info.Mode().IsRegular() || info.Size() == 0 || info.Size() > spawnFinalGateMaxFile {
+		return nil
+	}
+	data, err := io.ReadAll(io.LimitReader(file, spawnFinalGateMaxFile))
+	if err != nil {
+		return nil
+	}
+	value, err := pyjson.Loads(source.DecodeUTF8(data), pyjson.LoadOptions{Map: true, Surrogates: true, Numbers: pyjson.SpelledNumbers})
 	if err != nil {
 		return nil
 	}
