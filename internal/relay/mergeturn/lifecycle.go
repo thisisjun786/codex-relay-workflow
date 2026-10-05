@@ -154,7 +154,8 @@ func (s *Service) Release(ctx context.Context, turn, actor, disposition, reason,
 // reports of the turn's relationship (headCompareVerdict), because nothing the turn records says which head belongs to
 // which pull request. When there is nothing to compare it with, the call is refused. Withdrawing readiness on a head that
 // did not move asserts nothing about the head and compares nothing, and neither does a turn that records no pull request
-// and no relationship, or a relay with no pull request reader reading a forge pull request.
+// and no relationship. A forge pull request is read through Service.Pulls: a Service without one refuses it
+// merge_target_unreadable, moved head or not, instead of deciding it by the turn's record (CRW-608).
 func (s *Service) Ready(ctx context.Context, turn, actor string, ready bool, head, cause string) (map[string]any, error) {
 	var read *pullRequestRead
 	if s.Pulls != nil && (head != "" || ready) {

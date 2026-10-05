@@ -2,8 +2,6 @@ package role
 
 import (
 	"errors"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
-	"os"
 	"path/filepath"
 	"regexp"
 )
@@ -60,17 +58,18 @@ func IssueManagedSpawn(cwd, session, message string, toolUseID *string) (*Manage
 	if err != nil {
 		return nil, err
 	}
-	dir, err := dispatchDirectory(root, session)
+	dir, err := dispatchDirectory(root, session, nil)
 	if err != nil {
 		return nil, err
 	}
-	path := filepath.Join(dir, match[1]+".json")
-	lock := path + ".lock"
-	if err := os.Mkdir(lock, 0700); err != nil {
+	defer dir.Close()
+	name := match[1] + ".json"
+	release, err := dir.lock(name)
+	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(lock)
-	d, err := dispatchRead(path, session, match[1])
+	defer release()
+	d, err := dispatchPinnedRead(dir, name, session, match[1])
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +84,7 @@ func IssueManagedSpawn(cwd, session, message string, toolUseID *string) (*Manage
 	// The ledger marshaler overlays only the fields its own operations mutate.
 	a.raw.set("spawnIssued", true)
 	a.raw.set("toolUseId", toolUseID)
-	if err := dispatchSave(path, &d, crwdir.Rename); err != nil {
+	if err := dispatchSave(dir, name, &d, nil); err != nil {
 		return nil, err
 	}
 	return resolved, nil

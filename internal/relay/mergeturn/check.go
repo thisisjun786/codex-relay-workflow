@@ -80,8 +80,9 @@ func (s *Service) Check(ctx context.Context, turn, actor, head, base string, che
 	var moved *moveReading
 	// A turn that records a pull request or a relationship also has the head restated here compared with what it is bound to
 	// (headCompareVerdict): the check is where a head that was declared wrongly (CRW-538, CRW-586) is stopped before it is
-	// merged. The forge is read before the transaction; a reader that cannot read pull requests leaves a forge pull request
-	// decided by the record, as before, and the work report of a relationship is compared whatever the reader.
+	// merged. The forge is read before the transaction, through the reader passed to this call (Service.Pulls is not used here):
+	// a forge pull request checked with a reader that cannot read pull requests is refused merge_target_unreadable, never decided
+	// by the record (CRW-608), and the work report of a relationship that is not on a forge pull request is compared whatever the reader.
 	pulls, canReadPulls := reader.(PullRequestHeadReader)
 	var pulled *pullRequestRead
 	if err == nil && early.HolderTaskID == actor && early.State == Holding && early.DeclaredReady == 1 && early.CandidateHead == head {
