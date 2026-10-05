@@ -29,7 +29,10 @@ func TestWorktreeDelJoinContinuations(t *testing.T) {
 		{"echo a <BS><NL># c <BS><NL>d", "echo a # c <BS><NL>d"},
 		{"echo a<BS> <BS><NL>#b <BS><NL>c", "echo a<BS> #b c"},
 		{"echo ''#b <BS><NL>c", "echo ''#b c"},
+		{"echo \"a\"#b <BS><NL>c", "echo \"a\"#b c"},
 		{"echo '' #b <BS><NL>c", ""},
+		{"echo a # c<NL># d <BS><NL>e", ""},                          // the newline ends a comment and a # at the start of the next line opens another
+		{"echo a # c<NL>rm -rf <BS><NL>.", "echo a # c<NL>rm -rf ."}, // and the line after it continues as usual
 		{"# c <BS><NL>d", ""},
 		{"(echo a)#c <BS><NL>rm -rf ../repo", ""},
 		{"sleep 1&#c <BS><NL>d", ""},
