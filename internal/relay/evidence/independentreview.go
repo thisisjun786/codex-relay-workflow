@@ -73,13 +73,15 @@ type reviewItem struct {
 	dispositions                      []int // the findings that have an entry, in the order stated
 }
 
-// IndependentReviewCoverage reads the item of a handoff record against the artifact it names and
-// the head the record is about. head is the candidate's head. An item that is not well formed is
-// all it says; a file that cannot be read, or whose bytes are not the stated sha256, ends the
-// comparison with that one warning, because nothing read from other bytes would describe the file the
-// child meant. What the file holds, a validator's message and an operating-system error are never
-// repeated in a warning.
-func IndependentReviewCoverage(head string, record any, read ArtifactReader) ReviewCoverage {
+// IndependentReviewCoverage reads the item of a handoff record against the artifact it names, the
+// head the record is about and the candidate's head. head is the head the coverage compares (the
+// forge's current candidate head); recordHead is the head the record itself is about, and an item's
+// headPatchId describes that head alone, so it cannot vouch for a candidate the record does not
+// describe. An item that is not well formed is all it says; a file that cannot be read, or whose
+// bytes are not the stated sha256, ends the comparison with that one warning, because nothing read
+// from other bytes would describe the file the child meant. What the file holds, a validator's
+// message and an operating-system error are never repeated in a warning.
+func IndependentReviewCoverage(head, recordHead string, record any, read ArtifactReader) ReviewCoverage {
 	var value any
 	var stated bool
 	if o, isObject := Object(record); isObject {
@@ -131,12 +133,21 @@ func IndependentReviewCoverage(head string, record any, read ArtifactReader) Rev
 		warn(ReviewStatusDiffers, "the item states status "+quote.Value(item.status)+" and the artifact says "+quote.Value(string(artifact.Status)))
 	}
 	if artifact.Head != head {
+		// The compared head and the record's head can each be any string the record or the forge names;
+		// a warning names one only when it is a commit. The comparison is made on the values themselves.
+		comparedHead := head
 		if !shaPattern.MatchString(head) {
 			head = "the head under restatement" // a record can name any string as its head
+		}
+		recordHeadText := recordHead
+		if !shaPattern.MatchString(recordHeadText) {
+			recordHeadText = "the head under restatement"
 		}
 		switch {
 		case item.headPatchID == "":
 			warn(ReviewHeadDiffers, "the review covered head "+artifact.Head+", not "+head+", and the item states no headPatchId for it, so a base refresh cannot be told from changed code")
+		case recordHead != "" && recordHead != comparedHead:
+			warn(ReviewHeadDiffers, "the review covered head "+artifact.Head+" and the item states patch-id "+item.headPatchID+" for "+recordHeadText+", not for the candidate head "+head+", so the patch-id describes the record's head and cannot tell a base refresh from changed code")
 		case item.headPatchID != artifact.PatchID:
 			warn(ReviewHeadDiffers, "the review covered head "+artifact.Head+" with patch-id "+artifact.PatchID+" and the item states patch-id "+item.headPatchID+" for "+head+", so the code changed after the review")
 		}
