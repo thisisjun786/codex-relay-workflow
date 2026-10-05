@@ -1170,4 +1170,3 @@ Source: `plugins/codexclaw/components/cxc-ops/src/hook-trust.ts` (`TomlSection` 
   difference in the reporting path itself is the divergence-CLI section's line above), and this
   conversion is not applied there, because this issue's criteria keep every other divergence output
   unchanged; port: kept (follow-up: apply the same conversion at that boundary with its own test).
-
