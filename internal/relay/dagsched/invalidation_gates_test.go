@@ -16,7 +16,7 @@ import (
 // and I, which consumed U's accepted result, stale with it.
 func invJudgeKitBelow(t *testing.T) *judgeKit {
 	t.Helper()
-	k := &judgeKit{integrationKit: newIntegrationKit(t)}
+	k := &judgeKit{integrationKit: newForgeIntegrationKit(t)}
 	repo := k.repo
 	k.putPlan("g", int(k.snapshot("g").Revision), "g-r2", addRelNode("U", dag.NodeNonPR), addEdge("ui", "U", "I", dag.EdgeArtifactVerified, nil))
 	k.invSettle("g", "U")
@@ -24,7 +24,7 @@ func invJudgeKitBelow(t *testing.T) *judgeKit {
 	k.feature = repo.commit("feature.txt", "feature")
 	repo.git("checkout", "-q", "dev")
 	k.declare("g", "I", "feature.txt")
-	k.acceptNode("g", "I", acceptOpts{HeadSHA: k.feature, PR: 5, Forge: "owner/repo", Repository: repo.path, Inputs: invRealInputs(k.releaseKit, "g", "I")})
+	k.acceptOnForge("g", "I", acceptOpts{HeadSHA: k.feature, PR: 5, Inputs: invRealInputs(k.releaseKit, "g", "I")})
 	k.pr = PullRequest{Repository: "owner/repo", Number: 5, State: "open", HeadSHA: k.feature, BaseRef: "dev", BaseSHA: repo.git("rev-parse", "dev"), Verdict: "ready", RequiredDeclared: []string{"A", "B"}, RequiredReadable: true}
 	k.setChecks("A:1:1:success", "B:2:1:success")
 	return k
@@ -174,19 +174,19 @@ func TestCriteriaRolledBackAfterAReverificationIsStillStale(t *testing.T) {
 // U is then revised: U is stale, so the edge ui no longer opens, and I, whose consumed value is the landing of a result the plan no longer stands behind, is stale with it: nothing is released onto
 // it (its code-pinned successor T) and its pull request is not judged for the merge lane. Once U has landed everywhere it is exempt (E-20) and I is current again.
 func TestAConsumerOfAStaleIntegratedResultIsStaleToo(t *testing.T) {
-	k := &judgeKit{integrationKit: newIntegrationKit(t)}
+	k := &judgeKit{integrationKit: newForgeIntegrationKit(t)}
 	repo := k.repo
 	k.putPlan("g", int(k.snapshot("g").Revision), "g-r2", addRelNode("U", dag.NodeImplementation), addRelNode("X", dag.NodeNonPR), addRelNode("T", dag.NodeNonPR),
-		addEdge("ui", "U", "I", dag.EdgeIntegrated, doc{"target_repository": repo.path}),
-		addEdge("ux", "U", "X", dag.EdgeIntegrated, doc{"target_repository": repo.path, "target_base_ref": "release"}),
-		addEdge("it", "I", "T", dag.EdgeArtifactVerified, doc{"pins_code_head": true, "target_repository": repo.path, "target_base_ref": "dev"}))
-	u := k.acceptNode("g", "U", acceptOpts{HeadSHA: repo.git("rev-parse", "dev"), PR: 6, Forge: "owner/repo", Repository: repo.path})
-	k.integrate(u, repo.path, "dev", true, true)
+		addEdge("ui", "U", "I", dag.EdgeIntegrated, doc{"target_repository": forgeKitRepository}),
+		addEdge("ux", "U", "X", dag.EdgeIntegrated, doc{"target_repository": forgeKitRepository, "target_base_ref": "release"}),
+		addEdge("it", "I", "T", dag.EdgeArtifactVerified, doc{"pins_code_head": true, "target_repository": forgeKitRepository, "target_base_ref": "dev"}))
+	u := k.acceptOnForge("g", "U", acceptOpts{HeadSHA: repo.git("rev-parse", "dev"), PR: 6})
+	k.integrate(u, forgeKitRepository, "dev", true, true)
 	repo.git("checkout", "-q", "-b", "feature")
 	k.feature = repo.commit("feature.txt", "feature")
 	repo.git("checkout", "-q", "dev")
 	k.declare("g", "I", "feature.txt")
-	k.acceptNode("g", "I", acceptOpts{HeadSHA: k.feature, PR: 5, Forge: "owner/repo", Repository: repo.path, Inputs: invRealInputs(k.releaseKit, "g", "I")})
+	k.acceptOnForge("g", "I", acceptOpts{HeadSHA: k.feature, PR: 5, Inputs: invRealInputs(k.releaseKit, "g", "I")})
 	k.pr = PullRequest{Repository: "owner/repo", Number: 5, State: "open", HeadSHA: k.feature, BaseRef: "dev", BaseSHA: repo.git("rev-parse", "dev"), Verdict: "ready", RequiredDeclared: []string{"A", "B"}, RequiredReadable: true}
 	k.setChecks("A:1:1:success", "B:2:1:success")
 	if before := k.read("g"); len(invStaleIDs(before)) != 0 || before.node("I").Reason != DoneAccepted || !k.judge().Eligible() {
@@ -213,7 +213,7 @@ func TestAConsumerOfAStaleIntegratedResultIsStaleToo(t *testing.T) {
 		t.Fatal("a judgement or a turn was written for a stale consumer")
 	}
 	// U lands in its other target: it is never stale again, and what rests on its landing is current
-	k.integrate(u, repo.path, "release", true, true)
+	k.integrate(u, forgeKitRepository, "release", true, true)
 	landed := k.read("g")
 	if got := invStaleIDs(landed); len(got) != 0 {
 		t.Fatalf("after U landed everywhere %v are stale: %s", got, landed.brief())

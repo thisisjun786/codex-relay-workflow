@@ -1070,6 +1070,23 @@ Source: `plugins/codexclaw/components/subagent-config/src/spawn-attach-hook.ts` 
 - The oracle creates a missing temp root itself, because `mkdirSync` with `recursive: true` makes every missing parent of `<tmpdir>/codexclaw-subspawn-<uid>/<key>`, so a call whose `os.tmpdir()` names a directory that does not exist still mints (source `spawn-attach-hook.ts:380`; reproduced with Node); `MintRecursionGrant` opens the temp root it is given as an `os.Root` and answers no grant when it does not exist, and `ConsumeRecursionGrant` answers false; port: pending (`os.TempDir` and Node's `os.tmpdir()` name an existing directory in every normal run, and the hook issue that passes the root decides whether it must be created first).
 - `JSON.parse` of a claimed grant has no nesting limit of its own, so a grant file whose `expiresAt` is in the future and that also holds an ignored array nested 10,001 levels deep is consumed; Go's `encoding/json` refuses nesting beyond 10,000 levels, so `ConsumeRecursionGrant` answers false for that file (reproduced with Node and with the Go decoder; the minting hook writes only `{"expiresAt":<ms>}`); port: pending.
 
+## Found by the CRW-367 spawn classifier port
+
+Source: `plugins/codexclaw/components/subagent-config/src/spawn-attach-hook.ts` at v0.2.40, through the
+recorder and replay in `internal/role/spawn/testdata/classify/`.
+
+- `stripControlMarkers` collapses only runs of three or more LF, so a CRLF-separated message keeps
+  its blank-line runs (source `subagent-config/src/spawn-attach-hook.ts:409-414`; the CRLF case is
+  recorded in `internal/role/spawn/testdata/classify/oracle.json`); port: kept.
+- The spawn tool-name set accepts `collaboration.spawn_agent` and `collaboration_spawn_agent`,
+  spellings codex-rs never emits, as defensive aliases (source
+  `subagent-config/src/spawn-attach-hook.ts:579-584`; recorded in
+  `internal/role/spawn/testdata/classify/oracle.json`); port: kept.
+- The review-keyword fallback is a substring search, so a task that merely contains a keyword
+  fragment ("preview the diff") infers reviewer (source
+  `subagent-config/src/spawn-attach-hook.ts:511-516`; recorded in
+  `internal/role/spawn/testdata/classify/oracle.json`); port: kept.
+
 ## Found by the CRW-623 session lock for created reports
 
 - The replay guard of the created check held only the per-dispatch lock, so two dispatches of one session that reported the same new id at the same instant could both pass, and the id of an attempt that the stopped close had closed stayed held by its record, so the dispatch that really spawned that child could never report it and only an operator editing the ledger could free it (source `internal/role/created_check.go` `createdArchivedReplay` and `createdCheckStop`, and `internal/role/dispatch_ledger.go` `dispatchPinnedRun`, at the base of CRW-623; code of this repository with no oracle counterpart, because the oracle's dispatch has no created check, and no corpus fixture drives either case); this supersedes the locking remark of the CRW-574 section and the first two parts of its replay-guard line (its named-pipe part was already superseded by the CRW-559 section); port: fixed by CRW-623 (a created report and the stopped close also take a `.session.lock` directory in the pinned session directory, before the lock of their own record and until after their write, and a held lock is the same immediate busy answer, never stolen; `createdArchivedReplay` skips the last attempt of a stopped dispatch that failed with a reconciliation, which only the stopped close writes, and the record keeps that id as evidence; the refusal says whether a close can free the id; `TestCreatedSessionLockAdmitsOneReportOfAnAgent`, `TestCreatedSessionLockStoppedCloseFreesTheAgent`, `TestCreatedSessionLockEarlierAttemptKeepsItsAgent`, `TestCreatedSessionLockOtherEndsKeepTheirAgent` and `TestCreatedSessionLockBusyAndReleased` pin it); two limits come with it and stay: a process that dies while it holds the session lock leaves `.session.lock` behind and nothing removes it, so every created report and stopped close of that session is refused until an operator removes the directory by hand, a wider reach than a stale record lock, which stops one dispatch; and the stopped close frees the id on the caller's reconciliation, which the native check cannot confirm against the runtime (the CRW-574 line on the missing runtime status stays kept).
