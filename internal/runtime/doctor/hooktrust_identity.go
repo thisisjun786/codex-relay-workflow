@@ -62,6 +62,7 @@ func HookTrustIdentityHash(event string, matcher *string, handler map[string]any
 		if text, literal := value.(string); !literal || text != "command" {
 			spelled, ok := hookTrustIdentityJSString(value)
 			if !ok {
+				//lint:ignore ST1005 Preserve the oracle's exact TypeError text.
 				return "", errors.New("Cannot convert object to primitive value")
 			}
 			return "", errors.New("unsupported hook handler type: " + spelled)
