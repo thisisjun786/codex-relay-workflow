@@ -1095,3 +1095,12 @@ recorder and replay in `internal/role/spawn/testdata/classify/`.
 
 - The oracle has no SIGINT handler, so its process dies on the first interrupt and a `metric ingest` that is still waiting for its input records nothing; the port's row ignored the invocation's context, kept the stdin read running and wrote the METRIC records once stdin closed (source `pabcd-state/src/cli.ts:156-181` at v0.2.40; tests `TestPabcdMetricIngestEndsOnTheFirstInterrupt`, `TestPabcdMetricIngestStopsOnContextEndWhileWaiting` and `TestPabcdMetricIngestChecksTheContextWhenTheReadHasEnded`); port: fixed (port-introduced, not an upstream defect: the ingest read runs in a goroutine under the invocation's context, as the hook leg's interrupted read does, and the row answers `Interrupted` (130) with nothing written and nothing recorded when the interrupt lands first or the read finishes as it arrives; the other metric rows and every uninterrupted run are unchanged). No corpus fixture drives an interrupt, so no recorded case is claimed for it.
 - The last check sits before `cli.RunMetricCLI`, where the issue's criteria put it, so an interrupt that lands while the ingest records is not observed: the row waits out `appendRow`'s exclusive lock (source `internal/pabcd/metric/metrics.go:237`), appends the rows, answers 0 and prints `metric ingest: recorded N METRIC line(s)` where the oracle's process would have died at the signal (the oracle reads and does one lock-free `appendFileSync`, `pabcd-state/src/metrics.ts:119-137`, so its own write window is unordered; the port's ledger lock is what makes the window long); port: kept (raised as a red finding and a P1 in this pull request's review; follow-up: give `RunMetricCLI` and `RecordMetricsFromText`/`appendRow` the invocation's context, with a cancellable lock wait and a rule for the rows already appended when the interrupt lands between them, in the issue that owns that library).
+
+## CRW-346 — the doctor text renderer stderr slice
+
+- The 160-unit slice of a features-probe stderr can end inside a surrogate pair: the oracle text
+  report writes U+FFFD there while its `--json` report keeps the lone surrogate escape, and the
+  port holds U+FFFD in both, the same platform difference the lone-surrogate lines of the
+  manifest-targets section record (source `plugins/codexclaw/components/cxc-ops/src/doctor.ts:137`
+  with the JSON writer `plugins/codexclaw/components/cxc-ops/src/cli.ts:84-86`; the recorded case
+  `stderr_slice_cuts_a_surrogate_pair` of the CRW-346 recorder, checked on Node 24); port: kept.
