@@ -344,6 +344,11 @@ func worktreeDelJoinContinuations(command string) string {
 	return out.String()
 }
 
+// worktreeDelReadings is the texts the extended walk judges for a command.
+func worktreeDelReadings(command string) []string {
+	return []string{worktreeDelJoinContinuations(command)}
+}
+
 // walk is evaluateCommand's loop: the segments in order, a cd moving the directory later segments run in, and the
 // conservative fallback when a destructive verb was seen and the command mentions the worktree but no target resolved.
 // The extended walk first joins continued lines where bash does, so that the cuts, the braces and the mention test see the command the shell reads.

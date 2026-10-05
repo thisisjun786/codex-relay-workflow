@@ -1,6 +1,7 @@
 package hook
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -12,8 +13,8 @@ func worktreeDelSpell(s string) string {
 
 // The extended walk removes a backslash-newline only where bash continues a line. The expected texts were checked
 // against bash 5.3.9 through a stand-in command that prints its arguments, not derived from the scanner. An empty want
-// means nothing is removed. A command with a here-document operator or a backtick keeps the plain removal of every pair
-// (a body is not shell text, and bash reads a backtick body in a pass of its own: the scan cannot tell).
+// means nothing is removed. A here-document body, a backtick body and a parameter expansion are read as the same flat
+// text; TestWorktreeDelReadings covers the second reading a command with such a construct also gets.
 func TestWorktreeDelJoinContinuations(t *testing.T) {
 	for _, c := range []struct{ in, want string }{
 		// outside quotes: a backslash escapes the next byte, only backslash-newline goes
@@ -53,12 +54,12 @@ func TestWorktreeDelJoinContinuations(t *testing.T) {
 		{"echo $$'a<BS>'; rm -rf .<BS><NL>; echo 'x' <BS>'", "echo $$'a<BS>'; rm -rf .; echo 'x' <BS>'"},
 		{"echo <BS>$$'a<BS><NL>b'", ""},
 		{"echo $$$'a<BS><NL>b'", ""},
-		// a here-document operator, even one a continued line completes, keeps the plain removal
-		{"echo <<'EOF'<NL>$'x<BS>'<NL>EOF<NL>rm -rf ../repo<BS><NL>; # '", "echo <<'EOF'<NL>$'x<BS>'<NL>EOF<NL>rm -rf ../repo; # '"},
+		// a here-document or backtick command is scanned like any other, the body read as shell text
+		{"echo <<'EOF'<NL>$'x<BS>'<NL>EOF<NL>rm -rf ../repo<BS><NL>; # '", ""},
 		{"cat <<EOF<NL>a<BS><NL>b<NL>EOF", "cat <<EOF<NL>ab<NL>EOF"},
-		{"echo <BS><BS><NL>rm -rf ../repo <<EOF", "echo <BS>rm -rf ../repo <<EOF"},
-		{"cat <<BS><NL><EOF<NL>$'x<BS>'<NL>EOF<NL>rm -rf ../repo<BS><NL>", "cat <<EOF<NL>$'x<BS>'<NL>EOF<NL>rm -rf ../repo"},
-		{"echo <BQ>echo safe; rm -rf '../repo<BS><NL>'; echo done<BQ>", "echo <BQ>echo safe; rm -rf '../repo'; echo done<BQ>"},
+		{"echo <BS><BS><NL>rm -rf ../repo <<EOF", ""},
+		{"cat <<BS><NL><EOF<NL>$'x<BS>'<NL>EOF<NL>rm -rf ../repo<BS><NL>", "cat <<EOF<NL>$'x<BS>'<NL>EOF<NL>rm -rf ../repo<BS><NL>"},
+		{"echo <BQ>echo safe; rm -rf '../repo<BS><NL>'; echo done<BQ>", ""},
 		{"echo '<BQ>' <BS><NL>x", "echo '<BQ>' x"},
 	} {
 		in, want := worktreeDelSpell(c.in), worktreeDelSpell(c.want)
@@ -67,6 +68,38 @@ func TestWorktreeDelJoinContinuations(t *testing.T) {
 		}
 		if got := worktreeDelJoinContinuations(in); got != want {
 			t.Errorf("worktreeDelJoinContinuations(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// A command with a here-document operator or a backtick in its plain-removal text is judged on two readings, the scan's and
+// the plain removal of every pair, and denied when either denies; any other command has the scan reading only. An empty
+// scan means the reading is the command itself, an empty plain means a single reading.
+func TestWorktreeDelReadings(t *testing.T) {
+	for _, c := range []struct{ in, scan, plain string }{
+		{"echo <BQ>true<BQ>; echo <BS><BS><NL>rm -rf ../repo", "", "echo <BQ>true<BQ>; echo <BS>rm -rf ../repo"},
+		{"echo <BS><BS><NL>rm -rf ../repo <<EOF<NL>x<NL>EOF", "", "echo <BS>rm -rf ../repo <<EOF<NL>x<NL>EOF"},
+		{"echo a # <BQ> <BS><NL>rm -rf ../repo", "", "echo a # <BQ> rm -rf ../repo"},
+		{"cat <<BS><NL><EOF<NL>$'x<BS>'<NL>EOF<NL>rm -rf ../repo<BS><NL>", "cat <<EOF<NL>$'x<BS>'<NL>EOF<NL>rm -rf ../repo<BS><NL>", "cat <<EOF<NL>$'x<BS>'<NL>EOF<NL>rm -rf ../repo"},
+		{"echo <<'EOF'<NL>$'x<BS>'<NL>EOF<NL>rm -rf ../repo<BS><NL>; # '", "", "echo <<'EOF'<NL>$'x<BS>'<NL>EOF<NL>rm -rf ../repo; # '"},
+		{"echo <BQ>echo safe; rm -rf '../repo<BS><NL>'; echo done<BQ>", "", "echo <BQ>echo safe; rm -rf '../repo'; echo done<BQ>"},
+		{"echo '<BQ>'; echo ${v:-a # <BS><NL>rm -rf ../repo }", "", "echo '<BQ>'; echo ${v:-a # rm -rf ../repo }"}, // a # in a parameter expansion is not a comment: an extra block
+		{"cat <<EOF<NL>a<BS><NL>b<NL>EOF", "cat <<EOF<NL>ab<NL>EOF", ""},                                           // both readings agree: one
+		{"echo '<BQ>' <BS><NL>x", "echo '<BQ>' x", ""},
+		{"echo <BS><BS><NL>rm -rf ../repo", "", ""}, // neither << nor a backtick: the scan reading only
+		{"rm -rf '.<BS><NL>'", "", ""},
+		{"cat <<EOF<NL>x<NL>EOF", "", ""}, // nothing to remove
+	} {
+		in, scan := worktreeDelSpell(c.in), worktreeDelSpell(c.scan)
+		if c.scan == "" {
+			scan = in
+		}
+		want := []string{scan}
+		if c.plain != "" {
+			want = append(want, worktreeDelSpell(c.plain))
+		}
+		if got := worktreeDelReadings(in); !slices.Equal(got, want) {
+			t.Errorf("worktreeDelReadings(%q) = %q, want %q", in, got, want)
 		}
 	}
 }
@@ -85,6 +118,10 @@ func TestWorktreeDelContinuationVerdicts(t *testing.T) {
 		{"echo <<'EOF'<NL>$'x<BS>'<NL>EOF<NL>rm -rf ../repo<BS><NL>; # '", "rm -r ../repo"}, // a here-document keeps the plain removal
 		{"cat <<BS><NL><EOF<NL>$'x<BS>'<NL>EOF<NL>rm -rf ../repo<BS><NL>", "rm -r ../repo"},
 		{"echo <BQ>echo safe; rm -rf '../repo<BS><NL>'; echo done<BQ>", "rm -r ../repo"}, // bash removes the pair while it reads the backtick body
+		{"echo <BQ>true<BQ>; echo <BS><BS><NL>rm -rf ../repo", "rm -r ../repo"},          // a backtick elsewhere does not bring the plain reading's bypass back
+		{"echo <BS><BS><NL>rm -rf ../repo <<EOF<NL>x<NL>EOF", "rm -r ../repo"},
+		{"echo a # <BQ> <BS><NL>rm -rf ../repo", "rm -r ../repo"},
+		{"echo <BQ>x<BQ>; rm -rf '.<BS><NL>'", "rm -r ."}, // the plain reading's false block, kept as before this correction
 	} {
 		r.denied(t, worktreeDelSpell(c.cmd), c.what)
 	}
@@ -96,6 +133,9 @@ func TestWorktreeDelContinuationVerdicts(t *testing.T) {
 		"echo $$'a<BS>'; rm -rf ./build<BS><NL>; echo 'x' <BS>'",
 		"echo <<'EOF'<NL>$'x<BS>'<NL>EOF<NL>rm -rf ../other<BS><NL>; # '",
 		"echo <BQ>echo safe; rm -rf '../other<BS><NL>'; echo done<BQ>",
+		"echo <BQ>true<BQ>; echo <BS><BS><NL>rm -rf ../other",
+		"echo <BS><BS><NL>rm -rf ../other <<EOF<NL>x<NL>EOF",
+		"echo a # <BQ> <BS><NL>rm -rf ../other",
 	} {
 		r.allowed(t, worktreeDelSpell(cmd))
 	}
