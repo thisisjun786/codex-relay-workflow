@@ -21,6 +21,11 @@
     "hook__pre-tool-use-guarding-goal-complete__baseline_empty_workspace",
     "hook__pre-tool-use-guarding-goal-complete__blocked_allowed",
     "hook__pre-tool-use-guarding-goal-complete__bound_plan_with_open_work_denied",
-    "hook__pre-tool-use-guarding-goal-complete__mid_cycle_complete_denied"
+    "hook__pre-tool-use-guarding-goal-complete__mid_cycle_complete_denied",
+    "cli__orchestrate__bound_c_to_d_requires_test_receipt",
+    "cli__orchestrate__bound_goalplan_requires_work_phase_id",
+    "cli__review-round__open_signoff_and_binding_verdict",
+    "cli__review-round__unparsed_signoff_noted_and_abort",
+    "hook__stop-checking-pabcd-continuation__idle_goal_with_bound_plan_arms"
   ]
 }
