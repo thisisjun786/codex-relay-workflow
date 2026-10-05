@@ -290,6 +290,8 @@ func TestAccountUnavailable(t *testing.T) {
 		{"quota and a time limit", u, []string{"review/unavailable/quota", "review/invalid/time_limit_exceeded"}, ""},
 		{"content filter", u, []string{"review/unavailable/content_filter"}, ""},
 		{"lock wait expired", u, []string{"review/unavailable/lock_wait_expired"}, ""},
+		{"a lock wait beside a quota call", u, []string{"review/unavailable/lock_wait_expired", "review/unavailable/quota"}, "quota"},
+		{"a lock wait beside a crash", u, []string{"review/unavailable/lock_wait_expired", "review/unavailable/crash"}, "crash"},
 		{"no review call", u, nil, ""},
 		{"partial", review.StatusPartial, []string{"review/unavailable/quota"}, ""},
 	} {
@@ -333,6 +335,8 @@ func TestLockWaitExpiredAndAgyCalled(t *testing.T) {
 		{"every review call waited for the lock", art(u, "review/unavailable/lock_wait_expired", "review/unavailable/lock_wait_expired"), true, "false"},
 		{"an auxiliary call does not count", art(u, "review/unavailable/lock_wait_expired", "group/unavailable/crash"), true, "false"},
 		{"a lock wait beside a quota call", art(u, "review/unavailable/lock_wait_expired", "review/unavailable/quota"), false, "true"},
+		{"a quota call beside a crash", art(u, "review/unavailable/quota", "review/unavailable/crash"), false, "true"},
+		{"a crash beside a quota call", art(u, "review/unavailable/crash", "review/unavailable/quota"), false, "true"},
 		{"a quota run", art(u, "review/unavailable/quota"), false, "true"},
 		{"agy was not started", art(u, "review/unavailable/not_started"), false, "false"},
 		{"a crash", art(u, "review/unavailable/crash"), false, "unknown"},
@@ -385,5 +389,31 @@ func TestLockWaitExpiredDoesNotSpendTheRetry(t *testing.T) {
 	f.on("2026-10-06", okResult)
 	if code, sum, errOut := f.run(head); code != 0 || sum.Outcome != OutcomeReviewed || sum.Status != "complete" {
 		t.Fatalf("the one more attempt survived the lock waits: %d %+v %s", code, sum, errOut)
+	}
+}
+
+// A lock wait beside a retryable failure is still a run that may be tried once more: the lock wait is not a review call and does not turn the run into a result.
+func TestLockWaitBesideARetryableFailureStaysRetryable(t *testing.T) {
+	f := newFixture(t)
+	head := f.repo.change(f.base, 2)
+	var reviews int
+	f.s.answer = func(prompt []byte) agy.Result {
+		if stage, _, _ := bytes.Cut(prompt, []byte("\n")); string(stage) != "review" {
+			return okResult
+		}
+		reviews++
+		if reviews == 1 {
+			return lockWaitResult
+		}
+		return quotaResult
+	}
+	f.on("2026-10-04", okResult)
+	if _, sum, _ := f.run(head); sum.Outcome != OutcomeReviewed || sum.Status != string(review.StatusUnavailable) || sum.RetryNotBefore != "2026-10-05" {
+		t.Fatalf("a lock wait beside a quota failure must leave the retry open: %+v", sum)
+	}
+	f.s.answer = nil
+	f.on("2026-10-05", okResult)
+	if code, sum, errOut := f.run(head); code != 0 || sum.Outcome != OutcomeReviewed || sum.Status != "complete" {
+		t.Fatalf("the retry after a mixed run: %d %+v %s", code, sum, errOut)
 	}
 }

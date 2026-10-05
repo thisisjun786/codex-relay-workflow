@@ -15,14 +15,15 @@ import (
 var retryReasons = []agy.Reason{agy.ReasonQuota, agy.ReasonAuthentication, agy.ReasonUnknownModel, agy.ReasonNotStarted, agy.ReasonCrash, agy.Reason(reasonRunnerError)}
 
 // retryableUnavailable reports whether a is an unavailable review whose every review call failed as unavailable with one of retryReasons (one call of another kind decides against); reasons lists them,
-// sorted and joined by commas. Calls of the auxiliary stages do not count.
+// sorted and joined by commas. Calls of the auxiliary stages do not count, and neither does a lock wait: agy was never started for it, so it is not a review call and does not decide against a run whose
+// other calls are retryable.
 func retryableUnavailable(a *review.Artifact) (reasons string, ok bool) {
 	if a.Status != review.StatusUnavailable {
 		return "", false
 	}
 	var seen []string
 	for _, c := range a.Calls {
-		if c.Stage != "review" {
+		if c.Stage != "review" || agy.Reason(c.Reason) == agy.ReasonLockWaitExpired {
 			continue
 		}
 		if c.Class != string(agy.ClassUnavailable) || !slices.Contains(retryReasons, agy.Reason(c.Reason)) {
@@ -65,30 +66,38 @@ func lockWaitExpired(a *review.Artifact) bool {
 	return seen
 }
 
-// agyCalledOf reports whether agy was actually called for this review, when that can be told: false when every review call is one where agy never started (a lock wait, agy that could not be started),
-// true when agy ran and reported the failure itself, and nil when it cannot be told (a crash, a runner error, or a review that did not end as unavailable).
+// agyCalledOf reports whether agy was actually called for this review, when that can be told: true as soon as one review call is one where agy ran and reported the failure itself, false when every
+// review call is one where agy never started (a lock wait, agy that could not be started), and nil when none proves agy ran and at least one is a crash or a runner error (or the review did not end as
+// unavailable).
 func agyCalledOf(a *review.Artifact) *bool {
 	if a.Status != review.StatusUnavailable {
 		return nil
 	}
-	var called *bool
+	var ran, stopped, unknown bool
 	for _, c := range a.Calls {
 		if c.Stage != "review" {
 			continue
 		}
 		switch r := agy.Reason(c.Reason); {
-		case slices.Contains(agyNeverStarted, r):
-			if called == nil {
-				called = new(bool)
-			}
 		case slices.Contains(agyReported, r):
-			ran := true
-			called = &ran
+			ran = true
+		case slices.Contains(agyNeverStarted, r):
+			stopped = true
 		default:
-			return nil
+			unknown = true
 		}
 	}
-	return called
+	switch {
+	case ran:
+		called := true
+		return &called
+	case unknown:
+		return nil
+	case stopped:
+		called := false
+		return &called
+	}
+	return nil
 }
 
 // nextDay is the UTC day after day (2006-01-02).
