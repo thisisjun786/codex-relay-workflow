@@ -16,6 +16,15 @@ import (
 type scriptedForge struct {
 	unresolved bool
 	late       bool
+	noHead     bool // the pull request reports no head commit at all
+}
+
+// reportedHead is the head sha the scripted forge reports for the pull request.
+func (s scriptedForge) reportedHead() string {
+	if s.noHead {
+		return ""
+	}
+	return lateHead
 }
 
 func (s scriptedForge) run(argv []string, _ time.Duration) (int, string, string, error) {
@@ -48,7 +57,7 @@ func (s scriptedForge) run(argv []string, _ time.Duration) (int, string, string,
 	}
 	switch {
 	case bytes.Contains([]byte(last), []byte("/pulls/")):
-		return 0, `{"number":7,"html_url":"u","state":"open","merged":false,"draft":false,"head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"base":{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","ref":"dev"},"mergeable":true,"mergeable_state":"clean"}`, "", nil
+		return 0, `{"number":7,"html_url":"u","state":"open","merged":false,"draft":false,"head":{"sha":"` + s.reportedHead() + `"},"base":{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","ref":"dev"},"mergeable":true,"mergeable_state":"clean"}`, "", nil
 	case bytes.Contains([]byte(last), []byte("/git/ref/")):
 		return 0, `{"ref":"refs/heads/dev"}`, "", nil
 	case bytes.Contains([]byte(last), []byte("/rules/branches/")):
