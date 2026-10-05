@@ -173,9 +173,11 @@ settings is lowered once instead of waiting, but only when its immediately prece
 failure is the structured `settings_not_preserved` refusal and the same read reports it `idle`:
 the gate rechecks that idle state, calls `thread/archive` then `thread/unarchive`, requires
 `notLoaded` and the standby-only history again, and only then resends with the recorded profile.
-That unload is the one automatic archive the relay performs, and it is bounded to one per business
-attempt inside the existing successor chain. An `active` child, one whose history shows a foreign
-turn and one whose preceding failure is not that refusal are never archived and hold as before.
+That unload is the one automatic archive the relay performs, and it is bounded to one lowering per
+business attempt inside the existing successor chain: a replay reconstructs the same attempt from
+the retained failure, so the journal row an earlier lowering wrote is what stops the next one. An
+`active` child, one whose history shows a foreign turn and one whose preceding failure is not that
+refusal are never archived and hold as before.
 An archive error answers incomplete `recipient_not_idle` with no unarchive and no send; an
 unarchive that fails twice answers incomplete `lifecycle_unknown`, naming the archived thread for
 an operator in the journal; a child still loaded afterwards answers `recipient_not_idle`. Every

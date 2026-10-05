@@ -171,6 +171,29 @@ func (r *startRun) businessResendUnload(ctx context.Context) (string, error) {
 	if status != "idle" {
 		return "recipient_not_idle", nil
 	}
+	// One lowering per business attempt is a durable bound, not a per-invocation one: a replay of
+	// an attempt whose unload did not unload the child reconstructs the same attempt from the
+	// retained failure, so the row an earlier lowering wrote is what stops the second one. A
+	// failed archive wrote no row, because it lowered nothing.
+	lowered, err := r.resendUnloadLowered(ctx)
+	if err != nil {
+		return "", err
+	}
+	if lowered {
+		return "recipient_not_idle", nil
+	}
+	// The engine's contract is that readiness is asked again before each host effect, and the
+	// archive below is one. The ledger is asked with it, as the business send asks it.
+	readiness, err := r.m.ready(ctx, r.req)
+	if err != nil {
+		return "", err
+	}
+	if readiness != "" {
+		return readiness, nil
+	}
+	if err := r.m.Adapter.RequireLedger(ctx, r.ledger); err != nil {
+		return "", err
+	}
 	detail := map[string]any{"threadId": r.task, "attempt": r.businessAttempt}
 	if _, err := r.m.Adapter.HostCall(ctx, "thread/archive", map[string]any{"threadId": r.task}); err != nil {
 		if ctx.Err() != nil {
@@ -229,4 +252,16 @@ func (r *startRun) recordResendUnload(ctx context.Context, detail map[string]any
 	}
 	_, err = r.m.Store.Querier(ctx).ExecContext(ctx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,?,?,?)", r.m.now(), "managed_resend_unloaded", r.identity.RequestID, string(encoded))
 	return err
+}
+
+// resendUnloadLowered reports whether this business attempt already lowered the child, read from
+// the row the lowering wrote. The detail is the compact, key-sorted object recordResendUnload
+// writes, so the attempt is the field "attempt":<n> followed by its separator.
+func (r *startRun) resendUnloadLowered(ctx context.Context) (bool, error) {
+	var rows int
+	err := r.m.Store.Querier(ctx).QueryRowContext(ctx, "SELECT COUNT(*) FROM journal WHERE kind='managed_resend_unloaded' AND subject=? AND detail LIKE ?", r.identity.RequestID, `%"attempt":`+strconv.Itoa(r.businessAttempt)+`,%`).Scan(&rows)
+	if err != nil {
+		return false, err
+	}
+	return rows > 0, nil
 }

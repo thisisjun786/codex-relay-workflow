@@ -483,7 +483,30 @@ func TestBusinessResendUnloadStillLoadedHolds(t *testing.T) {
 	if !reflect.DeepEqual(app.archiveCalls, []string{"t-1"}) || !reflect.DeepEqual(app.unarchiveCalls, []string{"t-1"}) || k.host.sent != 0 || len(k.host.sends) != 0 || k.host.operations[businessResendID("managed-1", business, 1)] != nil {
 		t.Fatalf("still loaded case sent: %v %v sent=%d", app.archiveCalls, app.unarchiveCalls, k.host.sent)
 	}
+	// A replay reconstructs the same attempt, so the one-lowering-per-attempt bound has to be
+	// durable: the row the first lowering wrote is what stops the second one.
+	k.expect(k.run(), "incomplete", "recipient_not_idle", "")
+	if !reflect.DeepEqual(app.archiveCalls, []string{"t-1"}) || !reflect.DeepEqual(app.unarchiveCalls, []string{"t-1"}) {
+		t.Fatalf("replay lowered the child again: %v %v", app.archiveCalls, app.unarchiveCalls)
+	}
 	if n := businessResendJournalCount(t, k, "managed_resend_unloaded"); n != 1 {
 		t.Fatalf("unload journal rows: %d", n)
+	}
+}
+
+// The archive is a host effect, and the engine asks readiness again before each one: a policy
+// that went away while the gate was reading withholds the archive and answers its code.
+func TestBusinessResendUnloadRechecksReadinessBeforeArchive(t *testing.T) {
+	k, _, _ := businessResendKit(t)
+	app := &businessResendUnloadApp{Adapter: k.host, host: k.host}
+	k.host.threads["t-1"].status = "idle"
+	k.start.Adapter = app
+	k.start.Readiness = func(context.Context, map[string]any) (string, error) { return "worker_policy_unconfigured", nil }
+	r := &startRun{m: k.start, task: "t-1", standby: "standby", businessAttempt: 1, resendFailure: businessResendLegacyReceipt("t-1")}
+	if code, err := r.businessResendUnload(t.Context()); code != "worker_policy_unconfigured" || err != nil {
+		t.Fatalf("readiness recheck: %q %v", code, err)
+	}
+	if len(app.archiveCalls) != 0 || len(app.unarchiveCalls) != 0 {
+		t.Fatalf("archive ran without readiness: %v %v", app.archiveCalls, app.unarchiveCalls)
 	}
 }
