@@ -50,7 +50,7 @@
    "after": {
     "objective": "review binding",
     "slug": "review-binding-probe",
-    "createdAt": "<TS>",
+    "createdAt": "2026-01-01T00:00:00.000Z",
     "updatedAt": "<TS>",
     "activeWorkPhaseId": "wp1",
     "workPhases": [
@@ -122,7 +122,7 @@
    "after": {
     "objective": "review binding",
     "slug": "review-binding-probe",
-    "createdAt": "<TS>",
+    "createdAt": "2026-01-01T00:00:00.000Z",
     "updatedAt": "<TS>",
     "activeWorkPhaseId": "wp1",
     "workPhases": [
@@ -211,7 +211,7 @@
    "after": {
     "objective": "review binding",
     "slug": "review-binding-probe",
-    "createdAt": "<TS>",
+    "createdAt": "2026-01-01T00:00:00.000Z",
     "updatedAt": "<TS>",
     "activeWorkPhaseId": "wp1",
     "workPhases": [
@@ -310,7 +310,7 @@
    "after": {
     "objective": "review binding",
     "slug": "review-binding-probe",
-    "createdAt": "<TS>",
+    "createdAt": "2026-01-01T00:00:00.000Z",
     "updatedAt": "<TS>",
     "activeWorkPhaseId": "wp1",
     "workPhases": [
@@ -438,7 +438,7 @@
    "after": {
     "objective": "review binding",
     "slug": "review-binding-probe",
-    "createdAt": "<TS>",
+    "createdAt": "2026-01-01T00:00:00.000Z",
     "updatedAt": "<TS>",
     "activeWorkPhaseId": "wp1",
     "workPhases": [
@@ -544,7 +544,7 @@
    "after": {
     "objective": "review binding",
     "slug": "review-binding-probe",
-    "createdAt": "<TS>",
+    "createdAt": "2026-01-01T00:00:00.000Z",
     "updatedAt": "<TS>",
     "activeWorkPhaseId": "wp1",
     "workPhases": [
@@ -626,7 +626,7 @@
    "after": {
     "objective": "review binding",
     "slug": "review-binding-probe",
-    "createdAt": "<TS>",
+    "createdAt": "2026-01-01T00:00:00.000Z",
     "updatedAt": "<TS>",
     "activeWorkPhaseId": "wp1",
     "workPhases": [
@@ -709,7 +709,7 @@
    "after": {
     "objective": "review binding",
     "slug": "review-binding-probe",
-    "createdAt": "<TS>",
+    "createdAt": "2026-01-01T00:00:00.000Z",
     "updatedAt": "<TS>",
     "activeWorkPhaseId": "wp1",
     "workPhases": [
@@ -737,7 +737,7 @@
       "lane": {
        "launchId": "r1-<STAMP>"
       },
-      "openedAt": "<TS>",
+      "openedAt": "2026-01-01T00:00:00.000Z",
       "ownerSessionId": "rb",
       "workPhaseId": "wp1",
       "planUnit": "devlog/_plan/260815_probe",
@@ -781,8 +781,8 @@
     "objective": "review binding",
     "slug": "review-binding-probe",
     "schemaVersion": 1,
-    "createdAt": "<TS>",
-    "updatedAt": "<TS>",
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "updatedAt": "2026-01-01T00:00:00.000Z",
     "activeWorkPhaseId": "wp1",
     "workPhases": [
      {
@@ -809,7 +809,7 @@
       "lane": {
        "launchId": "r1-<STAMP>"
       },
-      "openedAt": "<TS>"
+      "openedAt": "2026-01-01T00:00:00.000Z"
      },
      {
       "roundId": "r2",
@@ -820,8 +820,8 @@
       "lane": {
        "launchId": "r2-<STAMP>"
       },
-      "openedAt": "<TS>",
-      "closedAt": "<TS>"
+      "openedAt": "2026-01-01T00:00:00.000Z",
+      "closedAt": "2026-01-01T00:00:00.000Z"
      }
     ],
     "activePlanAuditRoundId": "r1"
@@ -865,7 +865,7 @@
    "after": {
     "objective": "review binding",
     "slug": "review-binding-probe",
-    "createdAt": "<TS>",
+    "createdAt": "2026-01-01T00:00:00.000Z",
     "updatedAt": "<TS>",
     "activeWorkPhaseId": "wp1",
     "workPhases": [
@@ -894,8 +894,8 @@
        "launchId": "r1-<STAMP>",
        "verdict": "fail"
       },
-      "openedAt": "<TS>",
-      "closedAt": "<TS>"
+      "openedAt": "2026-01-01T00:00:00.000Z",
+      "closedAt": "2026-01-01T00:00:00.000Z"
      },
      {
       "roundId": "r2",
@@ -950,8 +950,8 @@
     "objective": "review binding",
     "slug": "review-binding-probe",
     "schemaVersion": 1,
-    "createdAt": "<TS>",
-    "updatedAt": "<TS>",
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "updatedAt": "2026-01-01T00:00:00.000Z",
     "activeWorkPhaseId": "wp1",
     "workPhases": [
      {
@@ -997,8 +997,8 @@
     "objective": "review binding",
     "slug": "review-binding-probe",
     "schemaVersion": 1,
-    "createdAt": "<TS>",
-    "updatedAt": "<TS>",
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "updatedAt": "2026-01-01T00:00:00.000Z",
     "activeWorkPhaseId": "wp1",
     "workPhases": [
      {
@@ -1068,8 +1068,8 @@
     "objective": "review binding",
     "slug": "review-binding-probe",
     "schemaVersion": 1,
-    "createdAt": "<TS>",
-    "updatedAt": "<TS>",
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "updatedAt": "2026-01-01T00:00:00.000Z",
     "activeWorkPhaseId": "wp1",
     "workPhases": [
      {
@@ -1115,8 +1115,8 @@
     "objective": "review binding",
     "slug": "review-binding-probe",
     "schemaVersion": 1,
-    "createdAt": "<TS>",
-    "updatedAt": "<TS>",
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "updatedAt": "2026-01-01T00:00:00.000Z",
     "activeWorkPhaseId": "wp1",
     "workPhases": [
      {
@@ -1162,8 +1162,8 @@
     "objective": "review binding",
     "slug": "review-binding-probe",
     "schemaVersion": 1,
-    "createdAt": "<TS>",
-    "updatedAt": "<TS>",
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "updatedAt": "2026-01-01T00:00:00.000Z",
     "activeWorkPhaseId": "wp1",
     "workPhases": [
      {
@@ -1207,8 +1207,8 @@
     "objective": "review binding",
     "slug": "review-binding-probe",
     "schemaVersion": 1,
-    "createdAt": "<TS>",
-    "updatedAt": "<TS>",
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "updatedAt": "2026-01-01T00:00:00.000Z",
     "activeWorkPhaseId": "wp1",
     "workPhases": [
      {
@@ -1255,8 +1255,8 @@
     "objective": "review binding",
     "slug": "review-binding-probe",
     "schemaVersion": 1,
-    "createdAt": "<TS>",
-    "updatedAt": "<TS>",
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "updatedAt": "2026-01-01T00:00:00.000Z",
     "activeWorkPhaseId": "wp1",
     "workPhases": [
      {
@@ -1304,8 +1304,8 @@
     "objective": "review binding",
     "slug": "review-binding-probe",
     "schemaVersion": 1,
-    "createdAt": "<TS>",
-    "updatedAt": "<TS>",
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "updatedAt": "2026-01-01T00:00:00.000Z",
     "activeWorkPhaseId": "wp1",
     "workPhases": [
      {
@@ -1351,8 +1351,8 @@
     "objective": "review binding",
     "slug": "review-binding-probe",
     "schemaVersion": 1,
-    "createdAt": "<TS>",
-    "updatedAt": "<TS>",
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "updatedAt": "2026-01-01T00:00:00.000Z",
     "activeWorkPhaseId": "wp1",
     "workPhases": [
      {
@@ -1398,8 +1398,8 @@
     "objective": "review binding",
     "slug": "review-binding-probe",
     "schemaVersion": 1,
-    "createdAt": "<TS>",
-    "updatedAt": "<TS>",
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "updatedAt": "2026-01-01T00:00:00.000Z",
     "activeWorkPhaseId": "wp1",
     "workPhases": [
      {
@@ -1445,8 +1445,8 @@
     "objective": "review binding",
     "slug": "review-binding-probe",
     "schemaVersion": 1,
-    "createdAt": "<TS>",
-    "updatedAt": "<TS>",
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "updatedAt": "2026-01-01T00:00:00.000Z",
     "activeWorkPhaseId": "wp1",
     "workPhases": [
      {
@@ -1503,7 +1503,7 @@
    "after": {
     "objective": "review binding",
     "slug": "review-binding-probe",
-    "createdAt": "<TS>",
+    "createdAt": "2026-01-01T00:00:00.000Z",
     "updatedAt": "<TS>",
     "activeWorkPhaseId": "wp1",
     "workPhases": [
@@ -1593,7 +1593,7 @@
    "after": {
     "objective": "review binding",
     "slug": "review-binding-probe",
-    "createdAt": "<TS>",
+    "createdAt": "2026-01-01T00:00:00.000Z",
     "updatedAt": "<TS>",
     "activeWorkPhaseId": "wp2",
     "workPhases": [
@@ -1686,7 +1686,7 @@
    "after": {
     "objective": "review binding",
     "slug": "review-binding-probe",
-    "createdAt": "<TS>",
+    "createdAt": "2026-01-01T00:00:00.000Z",
     "updatedAt": "<TS>",
     "activeWorkPhaseId": null,
     "workPhases": [
@@ -1799,7 +1799,7 @@
    "after": {
     "objective": "review binding",
     "slug": "review-binding-probe",
-    "createdAt": "<TS>",
+    "createdAt": "2026-01-01T00:00:00.000Z",
     "updatedAt": "<TS>",
     "activeWorkPhaseId": "wp1",
     "workPhases": [
@@ -1844,8 +1844,8 @@
        "launchId": "r1-<STAMP>",
        "verdict": "pass"
       },
-      "openedAt": "<TS>",
-      "closedAt": "<TS>"
+      "openedAt": "2026-01-01T00:00:00.000Z",
+      "closedAt": "2026-01-01T00:00:00.000Z"
      },
      {
       "roundId": "r2",
@@ -1912,7 +1912,7 @@
    "after": {
     "objective": "review binding",
     "slug": "review-binding-probe",
-    "createdAt": "<TS>",
+    "createdAt": "2026-01-01T00:00:00.000Z",
     "updatedAt": "<TS>",
     "activeWorkPhaseId": "wp1",
     "workPhases": [
@@ -1940,8 +1940,8 @@
       "lane": {
        "launchId": "r1-<STAMP>"
       },
-      "openedAt": "<TS>",
-      "closedAt": "<TS>"
+      "openedAt": "2026-01-01T00:00:00.000Z",
+      "closedAt": "2026-01-01T00:00:00.000Z"
      },
      {
       "roundId": "r2",
@@ -2005,7 +2005,7 @@
    "after": {
     "objective": "review binding",
     "slug": "review-binding-probe",
-    "createdAt": "<TS>",
+    "createdAt": "2026-01-01T00:00:00.000Z",
     "updatedAt": "<TS>",
     "activeWorkPhaseId": "wp1",
     "workPhases": [
@@ -2034,7 +2034,7 @@
        "launchId": "r1-<STAMP>",
        "reviewerSession": "aborted: aborted by the agent"
       },
-      "openedAt": "<TS>",
+      "openedAt": "2026-01-01T00:00:00.000Z",
       "closedAt": "<TS>"
      }
     ],
@@ -2091,7 +2091,7 @@
    "after": {
     "objective": "review binding",
     "slug": "review-binding-probe",
-    "createdAt": "<TS>",
+    "createdAt": "2026-01-01T00:00:00.000Z",
     "updatedAt": "<TS>",
     "activeWorkPhaseId": "wp1",
     "workPhases": [
@@ -2174,7 +2174,7 @@
    "after": {
     "objective": "review binding",
     "slug": "review-binding-probe",
-    "createdAt": "<TS>",
+    "createdAt": "2026-01-01T00:00:00.000Z",
     "updatedAt": "<TS>",
     "activeWorkPhaseId": "wp1",
     "workPhases": [
@@ -2259,7 +2259,7 @@
    "after": {
     "objective": "review binding",
     "slug": "review-binding-probe",
-    "createdAt": "<TS>",
+    "createdAt": "2026-01-01T00:00:00.000Z",
     "updatedAt": "<TS>",
     "activeWorkPhaseId": "wp1",
     "workPhases": [
@@ -2331,7 +2331,7 @@
    "after": {
     "objective": "review binding",
     "slug": "review-binding-probe",
-    "createdAt": "<TS>",
+    "createdAt": "2026-01-01T00:00:00.000Z",
     "updatedAt": "<TS>",
     "activeWorkPhaseId": "wp1",
     "workPhases": [
@@ -2360,7 +2360,7 @@
        "launchId": "r1-<STAMP>",
        "reviewerSession": "seeded"
       },
-      "openedAt": "<TS>",
+      "openedAt": "2026-01-01T00:00:00.000Z",
       "closedAt": "<TS>"
      }
     ],
@@ -2392,8 +2392,8 @@
     "objective": "review binding",
     "slug": "review-binding-probe",
     "schemaVersion": 1,
-    "createdAt": "<TS>",
-    "updatedAt": "<TS>",
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "updatedAt": "2026-01-01T00:00:00.000Z",
     "activeWorkPhaseId": "wp1",
     "workPhases": [
      {
@@ -2460,7 +2460,7 @@
    "after": {
     "objective": "review binding",
     "slug": "review-binding-probe",
-    "createdAt": "<TS>",
+    "createdAt": "2026-01-01T00:00:00.000Z",
     "updatedAt": "<TS>",
     "activeWorkPhaseId": "wp1",
     "workPhases": [
@@ -2587,8 +2587,8 @@
     "objective": "review binding",
     "slug": "review-binding-probe",
     "schemaVersion": 1,
-    "createdAt": "<TS>",
-    "updatedAt": "<TS>",
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "updatedAt": "2026-01-01T00:00:00.000Z",
     "activeWorkPhaseId": "wp1",
     "workPhases": [
      {
@@ -2717,7 +2717,7 @@
    "after": {
     "objective": "review binding",
     "slug": "review-binding-probe",
-    "createdAt": "<TS>",
+    "createdAt": "2026-01-01T00:00:00.000Z",
     "updatedAt": "<TS>",
     "activeWorkPhaseId": "wp1",
     "workPhases": [
@@ -2806,7 +2806,7 @@
    "after": {
     "objective": "review binding",
     "slug": "review-binding-probe",
-    "createdAt": "<TS>",
+    "createdAt": "2026-01-01T00:00:00.000Z",
     "updatedAt": "<TS>",
     "activeWorkPhaseId": "wp1",
     "workPhases": [
@@ -2905,7 +2905,7 @@
    "after": {
     "objective": "review binding",
     "slug": "review-binding-probe",
-    "createdAt": "<TS>",
+    "createdAt": "2026-01-01T00:00:00.000Z",
     "updatedAt": "<TS>",
     "activeWorkPhaseId": "wp1",
     "workPhases": [
@@ -3005,8 +3005,8 @@
    "after": {
     "objective": "review binding",
     "slug": "review-binding-probe",
-    "createdAt": "<TS>",
-    "updatedAt": "<TS>",
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "updatedAt": "2026-01-01T00:00:00.000Z",
     "activeWorkPhaseId": "wp1",
     "workPhases": [
      {
@@ -3035,7 +3035,7 @@
        "verdict": "fail",
        "reviewerSession": "rv"
       },
-      "openedAt": "<TS>",
+      "openedAt": "2026-01-01T00:00:00.000Z",
       "ownerSessionId": "rb",
       "workPhaseId": "wp1",
       "planUnit": "devlog/_plan/260815_probe",
@@ -3046,7 +3046,7 @@
         "sha256": "043e84e9c05567c907905179c3c16ed31f46b1b53f0d1bd9f47b3d78ba08a2b9"
        }
       ],
-      "closedAt": "<TS>"
+      "closedAt": "2026-01-01T00:00:00.000Z"
      }
     ],
     "schemaVersion": 1
@@ -3110,8 +3110,8 @@
    "after": {
     "objective": "review binding",
     "slug": "review-binding-probe",
-    "createdAt": "<TS>",
-    "updatedAt": "<TS>",
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "updatedAt": "2026-01-01T00:00:00.000Z",
     "activeWorkPhaseId": "wp1",
     "workPhases": [
      {
@@ -3140,7 +3140,7 @@
        "verdict": "pass",
        "reviewerSession": "rv"
       },
-      "openedAt": "<TS>",
+      "openedAt": "2026-01-01T00:00:00.000Z",
       "ownerSessionId": "rb",
       "workPhaseId": "wp1",
       "planUnit": "devlog/_plan/260815_probe",
@@ -3151,7 +3151,7 @@
         "sha256": "043e84e9c05567c907905179c3c16ed31f46b1b53f0d1bd9f47b3d78ba08a2b9"
        }
       ],
-      "closedAt": "<TS>"
+      "closedAt": "2026-01-01T00:00:00.000Z"
      }
     ],
     "schemaVersion": 1
@@ -3194,8 +3194,8 @@
     "objective": "review binding",
     "slug": "review-binding-probe",
     "schemaVersion": 1,
-    "createdAt": "<TS>",
-    "updatedAt": "<TS>",
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "updatedAt": "2026-01-01T00:00:00.000Z",
     "activeWorkPhaseId": "wp1",
     "workPhases": [
      {
@@ -3223,8 +3223,8 @@
        "launchId": "r1-<STAMP>",
        "verdict": "near-pass"
       },
-      "openedAt": "<TS>",
-      "closedAt": "<TS>"
+      "openedAt": "2026-01-01T00:00:00.000Z",
+      "closedAt": "2026-01-01T00:00:00.000Z"
      }
     ]
    }
@@ -3267,7 +3267,7 @@
    "after": {
     "objective": "review binding",
     "slug": "review-binding-probe",
-    "createdAt": "<TS>",
+    "createdAt": "2026-01-01T00:00:00.000Z",
     "updatedAt": "<TS>",
     "activeWorkPhaseId": "wp<&>é ",
     "workPhases": [
@@ -3337,8 +3337,8 @@
     "objective": "review binding",
     "slug": "review-binding-probe",
     "schemaVersion": 1,
-    "createdAt": "<TS>",
-    "updatedAt": "<TS>",
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "updatedAt": "2026-01-01T00:00:00.000Z",
     "activeWorkPhaseId": "wp1",
     "workPhases": [
      {
@@ -3365,8 +3365,8 @@
       "lane": {
        "launchId": "r2-<STAMP>"
       },
-      "openedAt": "<TS>",
-      "closedAt": "<TS>"
+      "openedAt": "2026-01-01T00:00:00.000Z",
+      "closedAt": "2026-01-01T00:00:00.000Z"
      },
      {
       "roundId": "r10",
@@ -3378,8 +3378,8 @@
        "launchId": "r10-<STAMP>",
        "verdict": "pass"
       },
-      "openedAt": "<TS>",
-      "closedAt": "<TS>"
+      "openedAt": "2026-01-01T00:00:00.000Z",
+      "closedAt": "2026-01-01T00:00:00.000Z"
      },
      {
       "roundId": "r9",
@@ -3390,8 +3390,8 @@
       "lane": {
        "launchId": "r9-<STAMP>"
       },
-      "openedAt": "<TS>",
-      "closedAt": "<TS>"
+      "openedAt": "2026-01-01T00:00:00.000Z",
+      "closedAt": "2026-01-01T00:00:00.000Z"
      }
     ]
    }
@@ -3436,8 +3436,8 @@
     "objective": "review binding",
     "slug": "review-binding-probe",
     "schemaVersion": 1,
-    "createdAt": "<TS>",
-    "updatedAt": "<TS>",
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "updatedAt": "2026-01-01T00:00:00.000Z",
     "activeWorkPhaseId": "wp1",
     "workPhases": [
      {
@@ -3490,8 +3490,8 @@
     "objective": "review binding",
     "slug": "review-binding-probe",
     "schemaVersion": 1,
-    "createdAt": "<TS>",
-    "updatedAt": "<TS>",
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "updatedAt": "2026-01-01T00:00:00.000Z",
     "activeWorkPhaseId": "wp1",
     "workPhases": [
      {

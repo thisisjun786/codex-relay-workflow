@@ -3,9 +3,10 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
-	"path/filepath"
 	"slices"
+	"syscall"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
@@ -83,24 +84,57 @@ func reviewRoundRunActiveWorkPhase(plan *goalplan.Goalplan) string {
 
 // reviewRoundRunRoundsIntact reports whether every review round stored in the goalplan survived revival. Revival drops a round it
 // cannot read and the write that follows would delete it from the file, which the oracle does silently (known-defects.md, a record
-// data-loss defect fixed here by refusing). The stored rounds are counted as the reader decodes the file; the caller holds the lock.
+// data-loss defect fixed here by refusing). The stored rounds are counted from the file as the reader decodes it (exact key, last
+// duplicate wins), read through a handle on the plan directory without following a link and without waiting on a special file; the
+// caller holds the lock. Anything it cannot read counts as not intact.
 func reviewRoundRunRoundsIntact(cwd, slug string, plan *goalplan.Goalplan) bool {
 	dir, err := goalplan.GoalplanDir(cwd, slug)
 	if err != nil {
 		return false
 	}
-	raw, err := os.ReadFile(filepath.Join(dir, goalplan.GoalplanFile))
+	root, err := os.OpenRoot(dir)
 	if err != nil {
 		return false
 	}
-	var stored struct {
-		ReviewRounds json.RawMessage `json:"reviewRounds"`
+	defer root.Close()
+	if info, err := root.Lstat(goalplan.GoalplanFile); err != nil || !info.Mode().IsRegular() {
+		return false
 	}
+	file, err := root.OpenFile(goalplan.GoalplanFile, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+	if info, err := file.Stat(); err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	raw, err := io.ReadAll(file)
+	if err != nil {
+		return false
+	}
+	var stored map[string]json.RawMessage
 	var rounds []json.RawMessage
-	if json.Unmarshal([]byte(source.DecodeUTF8(raw)), &stored) != nil || (len(stored.ReviewRounds) > 0 && json.Unmarshal(stored.ReviewRounds, &rounds) != nil) {
+	if json.Unmarshal([]byte(source.DecodeUTF8(raw)), &stored) != nil {
+		return false
+	}
+	if value, present := stored["reviewRounds"]; present && string(value) != "null" && json.Unmarshal(value, &rounds) != nil {
 		return false
 	}
 	return len(rounds) == len(plan.ReviewRounds)
+}
+
+// reviewRoundRunBound is the plan with the binding of REVIEW-BINDING-01 on the opened round. Only the entry the library selects by
+// purpose and launch id changes; the oracle matches by roundId alone (review-round-cli.ts:246), which also rewrites every other entry
+// that shares the id (known-defects.md, a record data-loss defect fixed here). The plan it is given is not touched.
+func reviewRoundRunBound(plan *goalplan.Goalplan, launch, session, workPhase, unit, epoch string, files []goalplan.PlanFileHash) (*goalplan.Goalplan, bool) {
+	bound := *plan
+	bound.ReviewRounds = slices.Clone(plan.ReviewRounds)
+	round := review.RoundByLaunchID(&bound, goalplan.PurposePlanAudit, launch)
+	if round == nil {
+		return nil, false
+	}
+	round.OwnerSessionID, round.WorkPhaseID, round.PlanUnit, round.PlanEpoch, round.PlanFiles = session, workPhase, unit, epoch, files
+	return &bound, true
 }
 
 // reviewRoundRunLocked runs fn on the bound goalplan under its write lock. A lock that cannot be taken and a plan that cannot be read
@@ -152,15 +186,11 @@ func reviewRoundRunOpen(args ReviewRoundCliArgs, session string, st state.State,
 			return reviewRoundRunRefuse(prefix + reviewRoundRunReason(opened)), nil
 		}
 		round := *opened.Round
-		rounds := slices.Clone(opened.Plan.ReviewRounds)
-		for i := range rounds {
-			if rounds[i].RoundID == round.RoundID {
-				rounds[i].OwnerSessionID, rounds[i].WorkPhaseID, rounds[i].PlanUnit, rounds[i].PlanEpoch, rounds[i].PlanFiles = session, workPhase, unit, epoch, files
-			}
+		bound, ok := reviewRoundRunBound(opened.Plan, round.Lane.LaunchID, session, workPhase, unit, epoch, files)
+		if !ok {
+			return reviewRoundRunRefuse(prefix + "no plan_audit round for launch " + round.Lane.LaunchID), nil
 		}
-		bound := *opened.Plan
-		bound.ReviewRounds = rounds
-		launching := review.MarkLaunching(&bound, goalplan.PurposePlanAudit, round.RoundID, round.Lane.LaunchID, nil)
+		launching := review.MarkLaunching(bound, goalplan.PurposePlanAudit, round.RoundID, round.Lane.LaunchID, nil)
 		if launching.Kind != review.OK {
 			return reviewRoundRunRefuse(prefix + reviewRoundRunReason(launching)), nil
 		}

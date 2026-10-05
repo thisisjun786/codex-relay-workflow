@@ -14,7 +14,7 @@ mkdirSync(out, {recursive: true});
 const home = mkdtempSync(join(out, 'home-'));
 Object.assign(process.env, {HOME: home, CODEX_HOME: join(home, '.codex')});
 const FIXED = '2026-01-01T00:00:00.000Z', UNIT = 'devlog/_plan/260815_probe', DOC = UNIT + '/000_plan.md', SLUG = 'review-binding-probe';
-const mask = (s) => s.replace(/r(\d+)-\d{14}/g, 'r$1-<STAMP>').replace(/\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z/g, '<TS>');
+const mask = (s) => s.replace(/r(\d+)-\d{14}/g, 'r$1-<STAMP>').replace(/\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z/g, (ts) => ts === '2026-01-01T00:00:00.000Z' ? ts : '<TS>'); // the pinned seed time stays literal
 const pin = (s) => s.replace(/\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z/g, FIXED);
 const phase = (id, status, extra = {}) => ({id, title: id, status, tasks: [], criteriaIds: [], ...extra});
 const round = (id, status, extra = {}) => { const {lane = {}, ...rest} = extra; return {roundId: id, purpose: 'plan_audit', planPath: UNIT, planSha256: 'x', status, lane: {launchId: id + '-20260101000000', ...lane}, openedAt: FIXED, ...rest}; };
@@ -37,7 +37,7 @@ function recordCase(id, {session = 'rb', state = {}, plan = {}, docs = {}, steps
   }
   ST.writeState(cwd, {...ST.defaultState(session), phase: 'A', slug, planUnit: UNIT, planEpoch: 'e-probe-1', flags: {interview: false, auditPassed: false, checkPassed: false}, ...state});
   const files = {};
-  for (const f of walk(cwd)) files[relative(cwd, f)] = pin(readFileSync(f, 'utf8'));
+  for (const f of walk(cwd)) { files[relative(cwd, f)] = pin(readFileSync(f, 'utf8')); writeFileSync(f, files[relative(cwd, f)]); } // the run starts from the pinned bytes the replay is given
   const goalplanPath = '.codexclaw/goalplans/' + slug + '/goalplan.json';
   const read = () => { try { return readFileSync(join(cwd, goalplanPath), 'utf8'); } catch { return null; } };
   const recorded = [];
@@ -49,7 +49,9 @@ function recordCase(id, {session = 'rb', state = {}, plan = {}, docs = {}, steps
       const done = RR.recordVerdict(g, {purpose: 'plan_audit', roundId: r.roundId, launchId: r.lane.launchId, verdict: step.verdict, reviewerSession: 'rv', now: () => FIXED});
       if (done.kind !== 'ok') throw new Error(id + ': ' + done.kind);
       GP.writeGoalplan(cwd, done.plan);
-      recorded.push({write: {[goalplanPath]: pin(read()).replace(/r(\d+)-\d{14}/g, 'r$1-20260101000000')}}); continue;
+      const pinned = pin(read()).replace(/r(\d+)-\d{14}/g, 'r$1-20260101000000');
+      writeFileSync(join(cwd, goalplanPath), pinned); // the oracle carries on from the bytes the replay writes
+      recorded.push({write: {[goalplanPath]: pinned}}); continue;
     }
     const parsed = CLI.parseReviewRoundCliArgs(step.argv, cwd);
     const res = 'error' in parsed ? {code: 1, output: parsed.error} : CLI.runReviewRoundCli(parsed);

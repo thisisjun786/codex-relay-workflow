@@ -7,7 +7,9 @@ import (
 	"reflect"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
@@ -384,6 +386,72 @@ func TestReviewRoundRunRefusesToDropAStoredRound(t *testing.T) {
 	}
 }
 
+// The stored rounds are counted under the reader's exact key: a differently cased key neither hides an unreadable round (the reader
+// reads "reviewRounds" only) nor counts as one.
+func TestReviewRoundRunCountsTheExactKey(t *testing.T) {
+	cwd := reviewRoundRunSeed(t)
+	dir, err := goalplan.GoalplanDir(cwd, reviewRoundRunSlug)
+	reviewRoundRunMust(t, err)
+	base := reviewRoundRunBytes(t, cwd)
+	put := func(extra string) {
+		reviewRoundRunPut(t, filepath.Join(dir, goalplan.GoalplanFile), strings.Replace(base, "\"schemaVersion\"", extra+", \"schemaVersion\"", 1))
+	}
+	hidden := "\"reviewRounds\": [{\"roundId\": \"r0\", \"status\": \"bogus\"}], \"ReviewRounds\": []"
+	put(hidden)
+	if res := reviewRoundRunDo(t, cwd, "abort", "--session", "rb"); res.Code != 1 || !strings.Contains(res.Output, "refusing to rewrite") {
+		t.Errorf("a cased twin must not hide an unreadable round: %+v", res)
+	}
+	put("\"ReviewRounds\": [1]")
+	if res := reviewRoundRunDo(t, cwd, "abort", "--session", "rb"); res.Code != 1 || strings.Contains(res.Output, "refusing") {
+		t.Errorf("a key the reader ignores holds no round: %+v", res)
+	}
+}
+
+// The count reads the file through a handle that follows no link and waits on no special file; whatever it cannot read is not intact.
+func TestReviewRoundRunCountRefusesLinksAndSpecialFiles(t *testing.T) {
+	cwd := reviewRoundRunSeed(t)
+	plan := reviewRoundRunPlan(t, cwd)
+	dir, err := goalplan.GoalplanDir(cwd, reviewRoundRunSlug)
+	reviewRoundRunMust(t, err)
+	file := filepath.Join(dir, goalplan.GoalplanFile)
+	if !reviewRoundRunRoundsIntact(cwd, reviewRoundRunSlug, plan) {
+		t.Fatal("a regular file with no rounds is intact")
+	}
+	reviewRoundRunMust(t, os.Rename(file, file+".real"))
+	reviewRoundRunMust(t, os.Symlink(file+".real", file))
+	if reviewRoundRunRoundsIntact(cwd, reviewRoundRunSlug, plan) {
+		t.Error("a link was followed")
+	}
+	reviewRoundRunMust(t, os.Remove(file))
+	reviewRoundRunMust(t, syscall.Mkfifo(file, 0o600))
+	if reviewRoundRunRoundsIntact(cwd, reviewRoundRunSlug, plan) {
+		t.Error("a FIFO was read")
+	}
+}
+
+// Two stored entries share the round id r1; the binding lands on the entry selected by purpose and launch id and on no other
+// (review-round-cli.ts:246 matches by roundId alone and rewrites both).
+func TestReviewRoundRunBindsOnlyTheSelectedRound(t *testing.T) {
+	entry := func(purpose goalplan.ReviewPurpose, launch string) goalplan.ReviewRoundState {
+		return goalplan.ReviewRoundState{RoundID: "r1", Purpose: purpose, PlanPath: "p", PlanSha256: "x", Status: goalplan.ReviewApproved, OwnerSessionID: "other",
+			WorkPhaseID: "wp9", PlanFiles: []goalplan.PlanFileHash{{Path: "old", Sha256: "y"}}, Lane: goalplan.ReviewLane{LaunchID: launch}}
+	}
+	plan := &goalplan.Goalplan{ReviewRounds: []goalplan.ReviewRoundState{
+		entry(goalplan.PurposeFinalGate, "r1-A"), entry(goalplan.PurposePlanAudit, "r1-B"), entry(goalplan.PurposePlanAudit, "r1-C")}}
+	before := slices.Clone(plan.ReviewRounds)
+	files := []goalplan.PlanFileHash{{Path: reviewRoundRunDoc, Sha256: "z"}}
+	bound, ok := reviewRoundRunBound(plan, "r1-C", "rb", "wp1", reviewRoundRunUnit, "e1", files)
+	if !ok || !reflect.DeepEqual(plan.ReviewRounds, before) || !reflect.DeepEqual(bound.ReviewRounds[:2], before[:2]) {
+		t.Fatalf("only the selected entry may change, and not in the plan given: %+v", bound)
+	}
+	if got := bound.ReviewRounds[2]; got.OwnerSessionID != "rb" || got.WorkPhaseID != "wp1" || got.PlanUnit != reviewRoundRunUnit || got.PlanEpoch != "e1" || !reflect.DeepEqual(got.PlanFiles, files) || got.Lane.LaunchID != "r1-C" {
+		t.Errorf("selected entry: %+v", got)
+	}
+	if _, ok := reviewRoundRunBound(plan, "r1-A", "rb", "wp1", reviewRoundRunUnit, "e1", files); ok {
+		t.Error("a final_gate launch is no plan_audit round")
+	}
+}
+
 // effectiveActiveWorkPhaseId (goalplan.ts:2249-2267).
 func TestReviewRoundRunActiveWorkPhase(t *testing.T) {
 	phase := func(id string, status goalplan.WorkPhaseStatus, deps ...string) goalplan.GoalplanWorkPhase {
@@ -443,8 +511,15 @@ var (
 	reviewRoundRunTime  = regexp.MustCompile(`\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z`)
 )
 
+// reviewRoundRunMask hides what the clock makes: launch stamps and every timestamp except the pinned one the seeds carry, so a seeded
+// createdAt or openedAt that a write altered still shows.
 func reviewRoundRunMask(s string) string {
-	return reviewRoundRunTime.ReplaceAllString(reviewRoundRunStamp.ReplaceAllString(s, "r$1-<STAMP>"), "<TS>")
+	return reviewRoundRunTime.ReplaceAllStringFunc(reviewRoundRunStamp.ReplaceAllString(s, "r$1-<STAMP>"), func(ts string) string {
+		if ts == "2026-01-01T00:00:00.000Z" {
+			return ts
+		}
+		return "<TS>"
+	})
 }
 
 func TestReviewRoundRunOracle(t *testing.T) {
