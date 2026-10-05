@@ -1,0 +1,2262 @@
+{
+  "oracle": "CXC v0.2.40 (3c1459ac)",
+  "source": "subagent-config/src/final-gate-guard.ts:1-189",
+  "tests": "subagent-config/test/final-gate-guard.test.ts:88-229",
+  "cases": [
+    {
+      "name": "a spawn without the marker is none of the guard's business",
+      "packet": "please review this plan",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": true
+      },
+      "expected": {
+        "ok": true
+      },
+      "classification": "identical"
+    },
+    {
+      "name": "a marked spawn with a fresh test receipt and no visual criteria is allowed",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/evidence/test.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":\"aaaaaaa\",\"dirty\":false}}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false,\"testReceiptPath\":\".crw/evidence/test.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": true
+      },
+      "expected": {
+        "ok": true
+      },
+      "classification": "identical"
+    },
+    {
+      "name": "a marked spawn with no test receipt is denied and names the gap",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": false,
+        "reason": "[codexclaw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt path is not recorded in finalGate\nRun the checks, record their receipts under .codexclaw/evidence/, then dispatch the gate reviewer."
+      },
+      "expected": {
+        "ok": false,
+        "reason": "[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt path is not recorded in finalGate\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer."
+      },
+      "classification": "intentionally-changed",
+      "reason": "CRW names: the refusal prefix \"[crw — final gate]\" (R23) and the evidence path \".crw/evidence/\" (R26)."
+    },
+    {
+      "name": "an empty test receipt is denied",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/evidence/test.json": "",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false,\"testReceiptPath\":\".crw/evidence/test.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": false,
+        "reason": "[codexclaw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt is missing, empty or unreadable: .codexclaw/evidence/test.json\nRun the checks, record their receipts under .codexclaw/evidence/, then dispatch the gate reviewer."
+      },
+      "expected": {
+        "ok": false,
+        "reason": "[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt is missing, empty or unreadable: .crw/evidence/test.json\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer."
+      },
+      "classification": "intentionally-changed",
+      "reason": "CRW names: the refusal prefix \"[crw — final gate]\" (R23) and the evidence path \".crw/evidence/\" (R26)."
+    },
+    {
+      "name": "a web criterion demands a QA receipt",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/evidence/test.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":\"aaaaaaa\",\"dirty\":false}}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\",\"surface\":\"web\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":true,\"testReceiptPath\":\".crw/evidence/test.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": false,
+        "reason": "[codexclaw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - QA receipt path is not recorded in finalGate\nRun the checks, record their receipts under .codexclaw/evidence/, then dispatch the gate reviewer."
+      },
+      "expected": {
+        "ok": false,
+        "reason": "[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - QA receipt path is not recorded in finalGate\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer."
+      },
+      "classification": "intentionally-changed",
+      "reason": "CRW names: the refusal prefix \"[crw — final gate]\" (R23) and the evidence path \".crw/evidence/\" (R26)."
+    },
+    {
+      "name": "a tui criterion demands a QA receipt",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/evidence/test.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":\"aaaaaaa\",\"dirty\":false}}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\",\"surface\":\"tui\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":true,\"testReceiptPath\":\".crw/evidence/test.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": false,
+        "reason": "[codexclaw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - QA receipt path is not recorded in finalGate\nRun the checks, record their receipts under .codexclaw/evidence/, then dispatch the gate reviewer."
+      },
+      "expected": {
+        "ok": false,
+        "reason": "[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - QA receipt path is not recorded in finalGate\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer."
+      },
+      "classification": "intentionally-changed",
+      "reason": "CRW names: the refusal prefix \"[crw — final gate]\" (R23) and the evidence path \".crw/evidence/\" (R26)."
+    },
+    {
+      "name": "a desktop criterion demands a QA receipt",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/evidence/test.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":\"aaaaaaa\",\"dirty\":false}}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\",\"surface\":\"desktop\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":true,\"testReceiptPath\":\".crw/evidence/test.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": false,
+        "reason": "[codexclaw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - QA receipt path is not recorded in finalGate\nRun the checks, record their receipts under .codexclaw/evidence/, then dispatch the gate reviewer."
+      },
+      "expected": {
+        "ok": false,
+        "reason": "[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - QA receipt path is not recorded in finalGate\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer."
+      },
+      "classification": "intentionally-changed",
+      "reason": "CRW names: the refusal prefix \"[crw — final gate]\" (R23) and the evidence path \".crw/evidence/\" (R26)."
+    },
+    {
+      "name": "surface logic needs no QA receipt",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/evidence/test.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":\"aaaaaaa\",\"dirty\":false}}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\",\"surface\":\"logic\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false,\"testReceiptPath\":\".crw/evidence/test.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": true
+      },
+      "expected": {
+        "ok": true
+      },
+      "classification": "identical"
+    },
+    {
+      "name": "surface api is not treated as visual",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/evidence/test.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":\"aaaaaaa\",\"dirty\":false}}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\",\"surface\":\"api\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false,\"testReceiptPath\":\".crw/evidence/test.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": true
+      },
+      "expected": {
+        "ok": true
+      },
+      "classification": "identical"
+    },
+    {
+      "name": "a web criterion with both receipts fresh is allowed",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/evidence/test.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":\"aaaaaaa\",\"dirty\":false}}",
+        ".crw/evidence/qa.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":\"aaaaaaa\",\"dirty\":false}}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\",\"surface\":\"web\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":true,\"testReceiptPath\":\".crw/evidence/test.json\",\"qaReceiptPath\":\".crw/evidence/qa.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": true
+      },
+      "expected": {
+        "ok": true
+      },
+      "classification": "identical"
+    },
+    {
+      "name": "a receipt from a different tree is denied and shows both shas",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/evidence/test.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":\"bbbbbbb\",\"dirty\":false}}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false,\"testReceiptPath\":\".crw/evidence/test.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": false,
+        "reason": "[codexclaw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt was produced against bbbbbbb, but the tree is now aaaaaaa\nRun the checks, record their receipts under .codexclaw/evidence/, then dispatch the gate reviewer."
+      },
+      "expected": {
+        "ok": false,
+        "reason": "[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt was produced against bbbbbbb, but the tree is now aaaaaaa\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer."
+      },
+      "classification": "intentionally-changed",
+      "reason": "CRW names: the refusal prefix \"[crw — final gate]\" (R23) and the evidence path \".crw/evidence/\" (R26)."
+    },
+    {
+      "name": "compare: unavailable wins over a sha difference",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/evidence/test.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":\"bbbbbbb\",\"dirty\":false}}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false,\"testReceiptPath\":\".crw/evidence/test.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "unavailable",
+        "commitSha": "",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": true
+      },
+      "expected": {
+        "ok": true
+      },
+      "classification": "identical"
+    },
+    {
+      "name": "compare: a sha mismatch denies",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/evidence/test.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":\"bbbbbbb\",\"dirty\":false}}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false,\"testReceiptPath\":\".crw/evidence/test.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": false,
+        "reason": "[codexclaw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt was produced against bbbbbbb, but the tree is now aaaaaaa\nRun the checks, record their receipts under .codexclaw/evidence/, then dispatch the gate reviewer."
+      },
+      "expected": {
+        "ok": false,
+        "reason": "[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt was produced against bbbbbbb, but the tree is now aaaaaaa\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer."
+      },
+      "classification": "intentionally-changed",
+      "reason": "CRW names: the refusal prefix \"[crw — final gate]\" (R23) and the evidence path \".crw/evidence/\" (R26)."
+    },
+    {
+      "name": "compare: clean against dirty denies",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/evidence/test.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":\"aaaaaaa\",\"dirty\":true}}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false,\"testReceiptPath\":\".crw/evidence/test.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": false,
+        "reason": "[codexclaw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt was produced against aaaaaaa+dirty, but the tree is now aaaaaaa\nRun the checks, record their receipts under .codexclaw/evidence/, then dispatch the gate reviewer."
+      },
+      "expected": {
+        "ok": false,
+        "reason": "[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt was produced against aaaaaaa+dirty, but the tree is now aaaaaaa\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer."
+      },
+      "classification": "intentionally-changed",
+      "reason": "CRW names: the refusal prefix \"[crw — final gate]\" (R23) and the evidence path \".crw/evidence/\" (R26)."
+    },
+    {
+      "name": "compare: a treeHash mismatch denies",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/evidence/test.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":\"aaaaaaa\",\"dirty\":true,\"treeHash\":\"x\"}}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false,\"testReceiptPath\":\".crw/evidence/test.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": true,
+        "treeHash": "y"
+      },
+      "oracle": {
+        "ok": false,
+        "reason": "[codexclaw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt was produced against aaaaaaa+dirty, but the tree is now aaaaaaa+dirty\nRun the checks, record their receipts under .codexclaw/evidence/, then dispatch the gate reviewer."
+      },
+      "expected": {
+        "ok": false,
+        "reason": "[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt was produced against aaaaaaa+dirty, but the tree is now aaaaaaa+dirty\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer."
+      },
+      "classification": "intentionally-changed",
+      "reason": "CRW names: the refusal prefix \"[crw — final gate]\" (R23) and the evidence path \".crw/evidence/\" (R26)."
+    },
+    {
+      "name": "compare: identical allows",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/evidence/test.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":\"aaaaaaa\",\"dirty\":false}}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false,\"testReceiptPath\":\".crw/evidence/test.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": true
+      },
+      "expected": {
+        "ok": true
+      },
+      "classification": "identical"
+    },
+    {
+      "name": "no session state fails open",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": true
+      },
+      "expected": {
+        "ok": true
+      },
+      "classification": "identical"
+    },
+    {
+      "name": "an empty slug fails open",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"\"}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": true
+      },
+      "expected": {
+        "ok": true
+      },
+      "classification": "identical"
+    },
+    {
+      "name": "no goalplan fails open",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": true
+      },
+      "expected": {
+        "ok": true
+      },
+      "classification": "identical"
+    },
+    {
+      "name": "no finalGate fails open",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}]}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": true
+      },
+      "expected": {
+        "ok": true
+      },
+      "classification": "identical"
+    },
+    {
+      "name": "no session id fails open",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": true
+      },
+      "expected": {
+        "ok": true
+      },
+      "classification": "identical"
+    },
+    {
+      "name": "a corrupt goalplan fails open",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/goalplans/demo/goalplan.json": "{not json"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": true
+      },
+      "expected": {
+        "ok": true
+      },
+      "classification": "identical"
+    },
+    {
+      "name": "the marker counts anywhere in the packet",
+      "packet": "x [CRW-FINAL-GATE] y",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": false,
+        "reason": "[codexclaw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt path is not recorded in finalGate\nRun the checks, record their receipts under .codexclaw/evidence/, then dispatch the gate reviewer."
+      },
+      "expected": {
+        "ok": false,
+        "reason": "[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt path is not recorded in finalGate\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer."
+      },
+      "classification": "intentionally-changed",
+      "reason": "CRW names: the refusal prefix \"[crw — final gate]\" (R23) and the evidence path \".crw/evidence/\" (R26)."
+    },
+    {
+      "name": "a lower-case marker is not the marker",
+      "packet": "[crw-final-gate]",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": true
+      },
+      "expected": {
+        "ok": true
+      },
+      "classification": "identical"
+    },
+    {
+      "name": "a slug that is not a string fails open",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":5}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": true
+      },
+      "expected": {
+        "ok": true
+      },
+      "classification": "identical"
+    },
+    {
+      "name": "a session state that is an array fails open",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "[]",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": true
+      },
+      "expected": {
+        "ok": true
+      },
+      "classification": "identical"
+    },
+    {
+      "name": "a goalplan that is an array fails open",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/goalplans/demo/goalplan.json": "[]"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": true
+      },
+      "expected": {
+        "ok": true
+      },
+      "classification": "identical"
+    },
+    {
+      "name": "a goalplan with trailing data fails open",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/goalplans/demo/goalplan.json": "{\"finalGate\":{}} x"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": true
+      },
+      "expected": {
+        "ok": true
+      },
+      "classification": "identical"
+    },
+    {
+      "name": "a goalplan with NaN fails open",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/goalplans/demo/goalplan.json": "{\"n\":NaN,\"finalGate\":{},\"criteria\":[]}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": true
+      },
+      "expected": {
+        "ok": true
+      },
+      "classification": "identical"
+    },
+    {
+      "name": "a goalplan number past the double range still parses",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/goalplans/demo/goalplan.json": "{\"n\":1e999,\"finalGate\":{},\"criteria\":[]}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": false,
+        "reason": "[codexclaw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt path is not recorded in finalGate\nRun the checks, record their receipts under .codexclaw/evidence/, then dispatch the gate reviewer."
+      },
+      "expected": {
+        "ok": false,
+        "reason": "[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt path is not recorded in finalGate\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer."
+      },
+      "classification": "intentionally-changed",
+      "reason": "CRW names: the refusal prefix \"[crw — final gate]\" (R23) and the evidence path \".crw/evidence/\" (R26)."
+    },
+    {
+      "name": "a null finalGate fails open",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":null}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": true
+      },
+      "expected": {
+        "ok": true
+      },
+      "classification": "identical"
+    },
+    {
+      "name": "a finalGate that is a string fails open",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":\"x\"}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": true
+      },
+      "expected": {
+        "ok": true
+      },
+      "classification": "identical"
+    },
+    {
+      "name": "a finalGate that is an array passes the typeof test and records no path",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":[]}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": false,
+        "reason": "[codexclaw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt path is not recorded in finalGate\nRun the checks, record their receipts under .codexclaw/evidence/, then dispatch the gate reviewer."
+      },
+      "expected": {
+        "ok": false,
+        "reason": "[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt path is not recorded in finalGate\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer."
+      },
+      "classification": "intentionally-changed",
+      "reason": "CRW names: the refusal prefix \"[crw — final gate]\" (R23) and the evidence path \".crw/evidence/\" (R26)."
+    },
+    {
+      "name": "criteria that is not an array needs no QA receipt",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/evidence/test.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":\"aaaaaaa\",\"dirty\":false}}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":{\"surface\":\"web\"},\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false,\"testReceiptPath\":\".crw/evidence/test.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": true
+      },
+      "expected": {
+        "ok": true
+      },
+      "classification": "identical"
+    },
+    {
+      "name": "criteria elements that are not objects are skipped and a visual one among them demands QA",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/evidence/test.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":\"aaaaaaa\",\"dirty\":false}}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[null,5,\"web\",[],{\"surface\":\"web\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false,\"testReceiptPath\":\".crw/evidence/test.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": false,
+        "reason": "[codexclaw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - QA receipt path is not recorded in finalGate\nRun the checks, record their receipts under .codexclaw/evidence/, then dispatch the gate reviewer."
+      },
+      "expected": {
+        "ok": false,
+        "reason": "[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - QA receipt path is not recorded in finalGate\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer."
+      },
+      "classification": "intentionally-changed",
+      "reason": "CRW names: the refusal prefix \"[crw — final gate]\" (R23) and the evidence path \".crw/evidence/\" (R26)."
+    },
+    {
+      "name": "a surface that is not a string is not visual",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/evidence/test.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":\"aaaaaaa\",\"dirty\":false}}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"surface\":[\"web\"]}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false,\"testReceiptPath\":\".crw/evidence/test.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": true
+      },
+      "expected": {
+        "ok": true
+      },
+      "classification": "identical"
+    },
+    {
+      "name": "finalGate.qaRequired does not decide, the criteria do",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/evidence/test.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":\"aaaaaaa\",\"dirty\":false}}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"qaRequired\":true,\"testReceiptPath\":\".crw/evidence/test.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": true
+      },
+      "expected": {
+        "ok": true
+      },
+      "classification": "identical"
+    },
+    {
+      "name": "a test receipt path that is not a string is not recorded",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false,\"testReceiptPath\":5}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": false,
+        "reason": "[codexclaw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt path is not recorded in finalGate\nRun the checks, record their receipts under .codexclaw/evidence/, then dispatch the gate reviewer."
+      },
+      "expected": {
+        "ok": false,
+        "reason": "[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt path is not recorded in finalGate\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer."
+      },
+      "classification": "intentionally-changed",
+      "reason": "CRW names: the refusal prefix \"[crw — final gate]\" (R23) and the evidence path \".crw/evidence/\" (R26)."
+    },
+    {
+      "name": "an empty test receipt path is not recorded",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false,\"testReceiptPath\":\"\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": false,
+        "reason": "[codexclaw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt path is not recorded in finalGate\nRun the checks, record their receipts under .codexclaw/evidence/, then dispatch the gate reviewer."
+      },
+      "expected": {
+        "ok": false,
+        "reason": "[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt path is not recorded in finalGate\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer."
+      },
+      "classification": "intentionally-changed",
+      "reason": "CRW names: the refusal prefix \"[crw — final gate]\" (R23) and the evidence path \".crw/evidence/\" (R26)."
+    },
+    {
+      "name": "a receipt that is a directory is unreadable",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false,\"testReceiptPath\":\".crw/evidence/test.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/",
+        ".crw/evidence/test.json"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": false,
+        "reason": "[codexclaw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt is missing, empty or unreadable: .codexclaw/evidence/test.json\nRun the checks, record their receipts under .codexclaw/evidence/, then dispatch the gate reviewer."
+      },
+      "expected": {
+        "ok": false,
+        "reason": "[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt is missing, empty or unreadable: .crw/evidence/test.json\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer."
+      },
+      "classification": "intentionally-changed",
+      "reason": "CRW names: the refusal prefix \"[crw — final gate]\" (R23) and the evidence path \".crw/evidence/\" (R26)."
+    },
+    {
+      "name": "a receipt that is not JSON is unreadable",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/evidence/test.json": "{nope",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false,\"testReceiptPath\":\".crw/evidence/test.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": false,
+        "reason": "[codexclaw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt is missing, empty or unreadable: .codexclaw/evidence/test.json\nRun the checks, record their receipts under .codexclaw/evidence/, then dispatch the gate reviewer."
+      },
+      "expected": {
+        "ok": false,
+        "reason": "[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt is missing, empty or unreadable: .crw/evidence/test.json\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer."
+      },
+      "classification": "intentionally-changed",
+      "reason": "CRW names: the refusal prefix \"[crw — final gate]\" (R23) and the evidence path \".crw/evidence/\" (R26)."
+    },
+    {
+      "name": "a receipt that is an array is unreadable",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/evidence/test.json": "[]",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false,\"testReceiptPath\":\".crw/evidence/test.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": false,
+        "reason": "[codexclaw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt is missing, empty or unreadable: .codexclaw/evidence/test.json\nRun the checks, record their receipts under .codexclaw/evidence/, then dispatch the gate reviewer."
+      },
+      "expected": {
+        "ok": false,
+        "reason": "[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt is missing, empty or unreadable: .crw/evidence/test.json\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer."
+      },
+      "classification": "intentionally-changed",
+      "reason": "CRW names: the refusal prefix \"[crw — final gate]\" (R23) and the evidence path \".crw/evidence/\" (R26)."
+    },
+    {
+      "name": "a receipt without sourceIdentity is unreadable",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/evidence/test.json": "{\"kind\":\"test\"}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false,\"testReceiptPath\":\".crw/evidence/test.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": false,
+        "reason": "[codexclaw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt is missing, empty or unreadable: .codexclaw/evidence/test.json\nRun the checks, record their receipts under .codexclaw/evidence/, then dispatch the gate reviewer."
+      },
+      "expected": {
+        "ok": false,
+        "reason": "[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt is missing, empty or unreadable: .crw/evidence/test.json\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer."
+      },
+      "classification": "intentionally-changed",
+      "reason": "CRW names: the refusal prefix \"[crw — final gate]\" (R23) and the evidence path \".crw/evidence/\" (R26)."
+    },
+    {
+      "name": "an identity with an unknown kind is unreadable",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/evidence/test.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"bogus\",\"commitSha\":\"aaaaaaa\",\"dirty\":false}}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false,\"testReceiptPath\":\".crw/evidence/test.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": false,
+        "reason": "[codexclaw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt is missing, empty or unreadable: .codexclaw/evidence/test.json\nRun the checks, record their receipts under .codexclaw/evidence/, then dispatch the gate reviewer."
+      },
+      "expected": {
+        "ok": false,
+        "reason": "[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt is missing, empty or unreadable: .crw/evidence/test.json\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer."
+      },
+      "classification": "intentionally-changed",
+      "reason": "CRW names: the refusal prefix \"[crw — final gate]\" (R23) and the evidence path \".crw/evidence/\" (R26)."
+    },
+    {
+      "name": "an identity whose commitSha is not a string is unreadable",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/evidence/test.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":5,\"dirty\":false}}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false,\"testReceiptPath\":\".crw/evidence/test.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": false,
+        "reason": "[codexclaw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt is missing, empty or unreadable: .codexclaw/evidence/test.json\nRun the checks, record their receipts under .codexclaw/evidence/, then dispatch the gate reviewer."
+      },
+      "expected": {
+        "ok": false,
+        "reason": "[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt is missing, empty or unreadable: .crw/evidence/test.json\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer."
+      },
+      "classification": "intentionally-changed",
+      "reason": "CRW names: the refusal prefix \"[crw — final gate]\" (R23) and the evidence path \".crw/evidence/\" (R26)."
+    },
+    {
+      "name": "an identity whose dirty is not a boolean is unreadable",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/evidence/test.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":\"aaaaaaa\",\"dirty\":\"no\"}}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false,\"testReceiptPath\":\".crw/evidence/test.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": false,
+        "reason": "[codexclaw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt is missing, empty or unreadable: .codexclaw/evidence/test.json\nRun the checks, record their receipts under .codexclaw/evidence/, then dispatch the gate reviewer."
+      },
+      "expected": {
+        "ok": false,
+        "reason": "[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt is missing, empty or unreadable: .crw/evidence/test.json\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer."
+      },
+      "classification": "intentionally-changed",
+      "reason": "CRW names: the refusal prefix \"[crw — final gate]\" (R23) and the evidence path \".crw/evidence/\" (R26)."
+    },
+    {
+      "name": "an identity with a null sourceRoot is unreadable",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/evidence/test.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":\"aaaaaaa\",\"dirty\":false,\"sourceRoot\":null}}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false,\"testReceiptPath\":\".crw/evidence/test.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": false,
+        "reason": "[codexclaw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt is missing, empty or unreadable: .codexclaw/evidence/test.json\nRun the checks, record their receipts under .codexclaw/evidence/, then dispatch the gate reviewer."
+      },
+      "expected": {
+        "ok": false,
+        "reason": "[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt is missing, empty or unreadable: .crw/evidence/test.json\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer."
+      },
+      "classification": "intentionally-changed",
+      "reason": "CRW names: the refusal prefix \"[crw — final gate]\" (R23) and the evidence path \".crw/evidence/\" (R26)."
+    },
+    {
+      "name": "an identity with a relative sourceRoot is unreadable",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/evidence/test.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":\"aaaaaaa\",\"dirty\":false,\"sourceRoot\":\"rel/tree\"}}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false,\"testReceiptPath\":\".crw/evidence/test.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": false,
+        "reason": "[codexclaw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt is missing, empty or unreadable: .codexclaw/evidence/test.json\nRun the checks, record their receipts under .codexclaw/evidence/, then dispatch the gate reviewer."
+      },
+      "expected": {
+        "ok": false,
+        "reason": "[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt is missing, empty or unreadable: .crw/evidence/test.json\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer."
+      },
+      "classification": "intentionally-changed",
+      "reason": "CRW names: the refusal prefix \"[crw — final gate]\" (R23) and the evidence path \".crw/evidence/\" (R26)."
+    },
+    {
+      "name": "a receipt path that is absolute is read as written",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/evidence/test.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":\"aaaaaaa\",\"dirty\":false}}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false,\"testReceiptPath\":\"${WS}/.crw/evidence/test.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": true
+      },
+      "expected": {
+        "ok": true
+      },
+      "classification": "identical"
+    },
+    {
+      "name": "a receipt path with dot segments is cleaned",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/evidence/test.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":\"aaaaaaa\",\"dirty\":false}}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false,\"testReceiptPath\":\".crw/evidence/../evidence/test.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": true
+      },
+      "expected": {
+        "ok": true
+      },
+      "classification": "identical"
+    },
+    {
+      "name": "a receipt that is a symlink is followed",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/evidence/test.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":\"aaaaaaa\",\"dirty\":false}}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false,\"testReceiptPath\":\".crw/evidence/link.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {
+        ".crw/evidence/link.json": "test.json"
+      },
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": true
+      },
+      "expected": {
+        "ok": true
+      },
+      "classification": "identical"
+    },
+    {
+      "name": "a receipt path outside the working directory is looked for there",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false,\"testReceiptPath\":\"../outside.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": false,
+        "reason": "[codexclaw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt is missing, empty or unreadable: ../outside.json\nRun the checks, record their receipts under .codexclaw/evidence/, then dispatch the gate reviewer."
+      },
+      "expected": {
+        "ok": false,
+        "reason": "[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt is missing, empty or unreadable: ../outside.json\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer."
+      },
+      "classification": "intentionally-changed",
+      "reason": "CRW names: the refusal prefix \"[crw — final gate]\" (R23) and the evidence path \".crw/evidence/\" (R26)."
+    },
+    {
+      "name": "an unavailable receipt identity is never stale",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/evidence/test.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"unavailable\",\"commitSha\":\"\",\"dirty\":false}}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false,\"testReceiptPath\":\".crw/evidence/test.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": true
+      },
+      "expected": {
+        "ok": true
+      },
+      "classification": "identical"
+    },
+    {
+      "name": "a receipt with a source root against a tree without one is stale",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/evidence/test.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":\"aaaaaaa\",\"dirty\":false,\"sourceRoot\":\"/src/tree\"}}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false,\"testReceiptPath\":\".crw/evidence/test.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": false,
+        "reason": "[codexclaw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt was produced against aaaaaaa, but the tree is now aaaaaaa\nRun the checks, record their receipts under .codexclaw/evidence/, then dispatch the gate reviewer."
+      },
+      "expected": {
+        "ok": false,
+        "reason": "[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt was produced against aaaaaaa, but the tree is now aaaaaaa\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer."
+      },
+      "classification": "intentionally-changed",
+      "reason": "CRW names: the refusal prefix \"[crw — final gate]\" (R23) and the evidence path \".crw/evidence/\" (R26)."
+    },
+    {
+      "name": "the same source root on both sides is not stale",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/evidence/test.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":\"aaaaaaa\",\"dirty\":false,\"sourceRoot\":\"/src/tree\"}}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false,\"testReceiptPath\":\".crw/evidence/test.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false,
+        "sourceRoot": "/src/tree"
+      },
+      "oracle": {
+        "ok": true
+      },
+      "expected": {
+        "ok": true
+      },
+      "classification": "identical"
+    },
+    {
+      "name": "different source roots are stale",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/evidence/test.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":\"aaaaaaa\",\"dirty\":false,\"sourceRoot\":\"/src/tree\"}}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false,\"testReceiptPath\":\".crw/evidence/test.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false,
+        "sourceRoot": "/src/other"
+      },
+      "oracle": {
+        "ok": false,
+        "reason": "[codexclaw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt was produced against aaaaaaa, but the tree is now aaaaaaa\nRun the checks, record their receipts under .codexclaw/evidence/, then dispatch the gate reviewer."
+      },
+      "expected": {
+        "ok": false,
+        "reason": "[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt was produced against aaaaaaa, but the tree is now aaaaaaa\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer."
+      },
+      "classification": "intentionally-changed",
+      "reason": "CRW names: the refusal prefix \"[crw — final gate]\" (R23) and the evidence path \".crw/evidence/\" (R26)."
+    },
+    {
+      "name": "a dirty receipt and a dirty tree show +dirty on both sides",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/evidence/test.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":\"bbbbbbb\",\"dirty\":true}}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false,\"testReceiptPath\":\".crw/evidence/test.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": true,
+        "treeHash": "t"
+      },
+      "oracle": {
+        "ok": false,
+        "reason": "[codexclaw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt was produced against bbbbbbb+dirty, but the tree is now aaaaaaa+dirty\nRun the checks, record their receipts under .codexclaw/evidence/, then dispatch the gate reviewer."
+      },
+      "expected": {
+        "ok": false,
+        "reason": "[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt was produced against bbbbbbb+dirty, but the tree is now aaaaaaa+dirty\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer."
+      },
+      "classification": "intentionally-changed",
+      "reason": "CRW names: the refusal prefix \"[crw — final gate]\" (R23) and the evidence path \".crw/evidence/\" (R26)."
+    },
+    {
+      "name": "a short commit sha is shown whole",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/evidence/test.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":\"abc\",\"dirty\":false}}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false,\"testReceiptPath\":\".crw/evidence/test.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": false,
+        "reason": "[codexclaw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt was produced against abc, but the tree is now aaaaaaa\nRun the checks, record their receipts under .codexclaw/evidence/, then dispatch the gate reviewer."
+      },
+      "expected": {
+        "ok": false,
+        "reason": "[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt was produced against abc, but the tree is now aaaaaaa\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer."
+      },
+      "classification": "intentionally-changed",
+      "reason": "CRW names: the refusal prefix \"[crw — final gate]\" (R23) and the evidence path \".crw/evidence/\" (R26)."
+    },
+    {
+      "name": "an empty commit sha is shown empty",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/evidence/test.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":\"\",\"dirty\":false}}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false,\"testReceiptPath\":\".crw/evidence/test.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": false,
+        "reason": "[codexclaw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt was produced against , but the tree is now aaaaaaa\nRun the checks, record their receipts under .codexclaw/evidence/, then dispatch the gate reviewer."
+      },
+      "expected": {
+        "ok": false,
+        "reason": "[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt was produced against , but the tree is now aaaaaaa\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer."
+      },
+      "classification": "intentionally-changed",
+      "reason": "CRW names: the refusal prefix \"[crw — final gate]\" (R23) and the evidence path \".crw/evidence/\" (R26)."
+    },
+    {
+      "name": "a long commit sha is cut at seven characters",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/evidence/test.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":\"0123456789abcdef0123456789abcdef01234567\",\"dirty\":false}}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false,\"testReceiptPath\":\".crw/evidence/test.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": false,
+        "reason": "[codexclaw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt was produced against 0123456, but the tree is now aaaaaaa\nRun the checks, record their receipts under .codexclaw/evidence/, then dispatch the gate reviewer."
+      },
+      "expected": {
+        "ok": false,
+        "reason": "[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt was produced against 0123456, but the tree is now aaaaaaa\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer."
+      },
+      "classification": "intentionally-changed",
+      "reason": "CRW names: the refusal prefix \"[crw — final gate]\" (R23) and the evidence path \".crw/evidence/\" (R26)."
+    },
+    {
+      "name": "astral characters in a sha count as two code units each",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/evidence/test.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":\"😀😀😀abcdef\",\"dirty\":false}}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false,\"testReceiptPath\":\".crw/evidence/test.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": false,
+        "reason": "[codexclaw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt was produced against 😀😀😀a, but the tree is now aaaaaaa\nRun the checks, record their receipts under .codexclaw/evidence/, then dispatch the gate reviewer."
+      },
+      "expected": {
+        "ok": false,
+        "reason": "[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt was produced against 😀😀😀a, but the tree is now aaaaaaa\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer."
+      },
+      "classification": "intentionally-changed",
+      "reason": "CRW names: the refusal prefix \"[crw — final gate]\" (R23) and the evidence path \".crw/evidence/\" (R26)."
+    },
+    {
+      "name": "a missing line comes before a stale line whatever the slot order",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/evidence/test.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":\"bbbbbbb\",\"dirty\":false}}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\",\"surface\":\"web\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":true,\"testReceiptPath\":\".crw/evidence/test.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": false,
+        "reason": "[codexclaw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - QA receipt path is not recorded in finalGate\n  - test receipt was produced against bbbbbbb, but the tree is now aaaaaaa\nRun the checks, record their receipts under .codexclaw/evidence/, then dispatch the gate reviewer."
+      },
+      "expected": {
+        "ok": false,
+        "reason": "[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - QA receipt path is not recorded in finalGate\n  - test receipt was produced against bbbbbbb, but the tree is now aaaaaaa\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer."
+      },
+      "classification": "intentionally-changed",
+      "reason": "CRW names: the refusal prefix \"[crw — final gate]\" (R23) and the evidence path \".crw/evidence/\" (R26)."
+    },
+    {
+      "name": "a missing test receipt comes before a stale QA receipt",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/evidence/qa.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":\"bbbbbbb\",\"dirty\":false}}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\",\"surface\":\"web\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":true,\"qaReceiptPath\":\".crw/evidence/qa.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": false,
+        "reason": "[codexclaw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt path is not recorded in finalGate\n  - QA receipt was produced against bbbbbbb, but the tree is now aaaaaaa\nRun the checks, record their receipts under .codexclaw/evidence/, then dispatch the gate reviewer."
+      },
+      "expected": {
+        "ok": false,
+        "reason": "[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt path is not recorded in finalGate\n  - QA receipt was produced against bbbbbbb, but the tree is now aaaaaaa\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer."
+      },
+      "classification": "intentionally-changed",
+      "reason": "CRW names: the refusal prefix \"[crw — final gate]\" (R23) and the evidence path \".crw/evidence/\" (R26)."
+    },
+    {
+      "name": "stale lines keep the slot order",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/evidence/test.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":\"bbbbbbb\",\"dirty\":false}}",
+        ".crw/evidence/qa.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":\"ccccccc\",\"dirty\":false}}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\",\"surface\":\"web\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":true,\"testReceiptPath\":\".crw/evidence/test.json\",\"qaReceiptPath\":\".crw/evidence/qa.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": false,
+        "reason": "[codexclaw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt was produced against bbbbbbb, but the tree is now aaaaaaa\n  - QA receipt was produced against ccccccc, but the tree is now aaaaaaa\nRun the checks, record their receipts under .codexclaw/evidence/, then dispatch the gate reviewer."
+      },
+      "expected": {
+        "ok": false,
+        "reason": "[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt was produced against bbbbbbb, but the tree is now aaaaaaa\n  - QA receipt was produced against ccccccc, but the tree is now aaaaaaa\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer."
+      },
+      "classification": "intentionally-changed",
+      "reason": "CRW names: the refusal prefix \"[crw — final gate]\" (R23) and the evidence path \".crw/evidence/\" (R26)."
+    },
+    {
+      "name": "a corrupt source binding refuses with SOURCE-ROOT",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/evidence/test.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":\"aaaaaaa\",\"dirty\":false}}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false,\"testReceiptPath\":\".crw/evidence/test.json\"}}",
+        ".crw/sources/sess-1.json": "{not json\n"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": false,
+        "reason": "[codexclaw — final gate] SOURCE-ROOT: source identity is unavailable; inspect the binding and installed modules before review."
+      },
+      "expected": {
+        "ok": false,
+        "reason": "[crw — final gate] SOURCE-ROOT: source identity is unavailable; inspect the binding and installed modules before review."
+      },
+      "classification": "intentionally-changed",
+      "reason": "CRW names: the refusal prefix \"[crw — final gate]\" (R23) and the evidence path \".crw/evidence/\" (R26)."
+    },
+    {
+      "name": "SOURCE-ROOT is decided before any receipt is read",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false}}",
+        ".crw/sources/sess-1.json": "{not json\n"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": false,
+        "reason": "[codexclaw — final gate] SOURCE-ROOT: source identity is unavailable; inspect the binding and installed modules before review."
+      },
+      "expected": {
+        "ok": false,
+        "reason": "[crw — final gate] SOURCE-ROOT: source identity is unavailable; inspect the binding and installed modules before review."
+      },
+      "classification": "intentionally-changed",
+      "reason": "CRW names: the refusal prefix \"[crw — final gate]\" (R23) and the evidence path \".crw/evidence/\" (R26)."
+    },
+    {
+      "name": "a pinned worktree without its binding refuses with SOURCE-ROOT",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\",\"phase\":\"B\",\"boundSourceRoot\":\"/src/tree\"}",
+        ".crw/evidence/test.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":\"aaaaaaa\",\"dirty\":false}}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false,\"testReceiptPath\":\".crw/evidence/test.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": false,
+        "reason": "[codexclaw — final gate] SOURCE-ROOT: source identity is unavailable; inspect the binding and installed modules before review."
+      },
+      "expected": {
+        "ok": false,
+        "reason": "[crw — final gate] SOURCE-ROOT: source identity is unavailable; inspect the binding and installed modules before review."
+      },
+      "classification": "intentionally-changed",
+      "reason": "CRW names: the refusal prefix \"[crw — final gate]\" (R23) and the evidence path \".crw/evidence/\" (R26)."
+    },
+    {
+      "name": "a capture that throws refuses with SOURCE-ROOT",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/evidence/test.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":\"aaaaaaa\",\"dirty\":false}}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false,\"testReceiptPath\":\".crw/evidence/test.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": "throw",
+      "oracle": {
+        "ok": false,
+        "reason": "[codexclaw — final gate] SOURCE-ROOT: source identity is unavailable; inspect the binding and installed modules before review."
+      },
+      "expected": {
+        "ok": false,
+        "reason": "[crw — final gate] SOURCE-ROOT: source identity is unavailable; inspect the binding and installed modules before review."
+      },
+      "classification": "intentionally-changed",
+      "reason": "CRW names: the refusal prefix \"[crw — final gate]\" (R23) and the evidence path \".crw/evidence/\" (R26)."
+    },
+    {
+      "name": "a session id that is not canonical refuses with SOURCE-ROOT",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess 1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/evidence/test.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":\"aaaaaaa\",\"dirty\":false}}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false,\"testReceiptPath\":\".crw/evidence/test.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": false,
+        "reason": "[codexclaw — final gate] SOURCE-ROOT: source identity is unavailable; inspect the binding and installed modules before review."
+      },
+      "expected": {
+        "ok": false,
+        "reason": "[crw — final gate] SOURCE-ROOT: source identity is unavailable; inspect the binding and installed modules before review."
+      },
+      "classification": "intentionally-changed",
+      "reason": "CRW names: the refusal prefix \"[crw — final gate]\" (R23) and the evidence path \".crw/evidence/\" (R26)."
+    },
+    {
+      "name": "a session id that is not canonical and has no state fails open",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess 2",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/evidence/test.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":\"aaaaaaa\",\"dirty\":false}}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false,\"testReceiptPath\":\".crw/evidence/test.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": true
+      },
+      "expected": {
+        "ok": true
+      },
+      "classification": "identical"
+    },
+    {
+      "name": "without a capture function a directory without git has no identity and is never stale",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/evidence/test.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":\"bbbbbbb\",\"dirty\":false}}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false,\"testReceiptPath\":\".crw/evidence/test.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": null,
+      "oracle": {
+        "ok": true
+      },
+      "expected": {
+        "ok": true
+      },
+      "classification": "identical"
+    },
+    {
+      "name": "a goalplan nested 9000 levels still parses",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/goalplans/demo/goalplan.json": "{\"d\":[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]],\"finalGate\":{},\"criteria\":[]}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": false,
+        "reason": "[codexclaw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt path is not recorded in finalGate\nRun the checks, record their receipts under .codexclaw/evidence/, then dispatch the gate reviewer."
+      },
+      "expected": {
+        "ok": false,
+        "reason": "[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt path is not recorded in finalGate\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer."
+      },
+      "classification": "intentionally-changed",
+      "reason": "CRW names: the refusal prefix \"[crw — final gate]\" (R23) and the evidence path \".crw/evidence/\" (R26)."
+    },
+    {
+      "name": "a goalplan nested past 10000 levels is unreadable",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/goalplans/demo/goalplan.json": "{\"d\":[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]],\"finalGate\":{},\"criteria\":[]}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": false,
+        "reason": "[codexclaw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt path is not recorded in finalGate\nRun the checks, record their receipts under .codexclaw/evidence/, then dispatch the gate reviewer."
+      },
+      "expected": {
+        "ok": true
+      },
+      "classification": "intentionally-changed",
+      "reason": "Security finding: a hostile or corrupt file must not exhaust the hook, so a document nested past pyjson.MaxDepth (10,000) levels is unreadable, where the oracle's JSON.parse reads it."
+    },
+    {
+      "name": "a goalplan over 4 MiB is unreadable",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "pad": {
+        "file": ".crw/goalplans/demo/goalplan.json",
+        "bytes": 4194304
+      },
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": false,
+        "reason": "[codexclaw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt path is not recorded in finalGate\nRun the checks, record their receipts under .codexclaw/evidence/, then dispatch the gate reviewer."
+      },
+      "expected": {
+        "ok": true
+      },
+      "classification": "intentionally-changed",
+      "reason": "Security finding: a file over 4 MiB is unreadable, where the oracle reads it."
+    },
+    {
+      "name": "a slug that climbs out of the goalplans directory is not followed",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"../../elsewhere\"}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false}}",
+        "elsewhere/goalplan.json": "{\"criteria\":[],\"finalGate\":{}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": false,
+        "reason": "[codexclaw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt path is not recorded in finalGate\nRun the checks, record their receipts under .codexclaw/evidence/, then dispatch the gate reviewer."
+      },
+      "expected": {
+        "ok": true
+      },
+      "classification": "intentionally-changed",
+      "reason": "Security finding: the slug must be a goalplan slug (goalplan.ValidateGoalplanSlug), where the oracle joins the session state's slug into the path as it is."
+    },
+    {
+      "name": "a slug with a path separator is not followed",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"a/b\"}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false}}",
+        ".crw/goalplans/a/b/goalplan.json": "{\"criteria\":[],\"finalGate\":{}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": false,
+        "reason": "[codexclaw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt path is not recorded in finalGate\nRun the checks, record their receipts under .codexclaw/evidence/, then dispatch the gate reviewer."
+      },
+      "expected": {
+        "ok": true
+      },
+      "classification": "intentionally-changed",
+      "reason": "Security finding: the slug must be a goalplan slug, where the oracle joins it into the path as it is."
+    },
+    {
+      "name": "a slug that climbs out of the working directory is not followed",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"../../../outside-goalplan\"}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false}}",
+        "../outside-goalplan/goalplan.json": "{\"criteria\":[],\"finalGate\":{}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": false,
+        "reason": "[codexclaw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt path is not recorded in finalGate\nRun the checks, record their receipts under .codexclaw/evidence/, then dispatch the gate reviewer."
+      },
+      "expected": {
+        "ok": true
+      },
+      "classification": "intentionally-changed",
+      "reason": "Security finding: the slug must be a goalplan slug, where the oracle reads a goalplan outside the working directory."
+    },
+    {
+      "name": "a receipt path that climbs out of the working directory is not read",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false,\"testReceiptPath\":\"../outside-receipt.json\"}}",
+        "../outside-receipt.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":\"aaaaaaa\",\"dirty\":false}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": true
+      },
+      "expected": {
+        "ok": false,
+        "reason": "[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt is missing, empty or unreadable: ../outside-receipt.json\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer."
+      },
+      "classification": "intentionally-changed",
+      "reason": "Security finding: every read stays below the working directory (os.Root), where the oracle reads the receipt wherever the path leads."
+    },
+    {
+      "name": "an absolute receipt path outside the working directory is not read",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false,\"testReceiptPath\":\"${WS}/../outside-receipt.json\"}}",
+        "../outside-receipt.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":\"aaaaaaa\",\"dirty\":false}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": true
+      },
+      "expected": {
+        "ok": false,
+        "reason": "[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt is missing, empty or unreadable: ${WS}/../outside-receipt.json\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer."
+      },
+      "classification": "intentionally-changed",
+      "reason": "Security finding: every read stays below the working directory (os.Root), where the oracle reads the receipt wherever the path leads."
+    },
+    {
+      "name": "a link that leaves the working directory is not followed",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false,\"testReceiptPath\":\".crw/evidence/link.json\"}}",
+        "../outside-receipt.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":\"aaaaaaa\",\"dirty\":false}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {
+        ".crw/evidence/link.json": "../../../outside-receipt.json"
+      },
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": true
+      },
+      "expected": {
+        "ok": false,
+        "reason": "[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt is missing, empty or unreadable: .crw/evidence/link.json\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer."
+      },
+      "classification": "intentionally-changed",
+      "reason": "Security finding: every read stays below the working directory (os.Root), where the oracle follows a link wherever it leads."
+    },
+    {
+      "name": "an absolute link to a file below the working directory is not followed",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/evidence/test.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":\"aaaaaaa\",\"dirty\":false}}",
+        ".crw/goalplans/demo/goalplan.json": "{\"objective\":\"o\",\"slug\":\"demo\",\"criteria\":[{\"id\":\"c-1\",\"scenario\":\"s\"}],\"finalGate\":{\"status\":\"in_flight\",\"qaRequired\":false,\"testReceiptPath\":\".crw/evidence/link.json\"}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {
+        ".crw/evidence/link.json": "${WS}/.crw/evidence/test.json"
+      },
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": true
+      },
+      "expected": {
+        "ok": false,
+        "reason": "[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt is missing, empty or unreadable: .crw/evidence/link.json\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer."
+      },
+      "classification": "intentionally-changed",
+      "reason": "os.Root refuses an absolute link even when its target lies below the root, where the oracle follows it (a consequence of the security fix above)."
+    },
+    {
+      "name": "a receipt path with an escaped lone surrogate is read as U+FFFD",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/goalplans/demo/goalplan.json": "{\"criteria\":[],\"finalGate\":{\"testReceiptPath\":\".crw/evidence/\\ud800.json\"}}",
+        ".crw/evidence/�.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":\"aaaaaaa\",\"dirty\":false}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": true
+      },
+      "expected": {
+        "ok": true
+      },
+      "classification": "identical"
+    }
+  ]
+}
