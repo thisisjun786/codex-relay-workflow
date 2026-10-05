@@ -98,6 +98,8 @@ func TestShellWriteEscapePythonPaths(t *testing.T) {
 		{command: "python3 -c 'open(b\"\\x2fm/a\",\"w\")'", has: []string{"/m/a"}},
 		{command: "python3 -c 'open(\"/m/a\",\"\\x77\")'", has: []string{"/m/a"}},
 		{command: "python3 -c 'open(\"/m/a\",\"\\162\")'", lacks: []string{"/m/a"}},
+		{command: "python3 -c 'open(\"/m/a\",\"\\167\")'", has: []string{"/m/a"}}, // octal for w: only the decoded reading sees the mode
+		{command: "python3 -c 'open(\"/m/a\",\"\\x72\")'", has: []string{"/m/a"}}, // the earlier reading took the x of the escape text as a mode
 		{command: "python3 -c 'open(r\"\\x2fm/a\",\"w\")'", has: []string{"\\x2fm/a"}, lacks: []string{"/m/a"}, same: true},
 		{command: "python3 -c 'open(\"\\N{SOLIDUS}m/a\",\"w\")'", lacks: []string{"/m/a"}, same: true},
 		{command: "python3 -c 'open(\"/m/a\",\"\\N{LATIN SMALL LETTER W}\")'", has: []string{"/m/a"}},

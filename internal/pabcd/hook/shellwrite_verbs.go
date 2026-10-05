@@ -719,9 +719,7 @@ func shellVerbOpenWrites(script string) []string {
 			top := stack[len(stack)-1]
 			stack = stack[:len(stack)-1]
 			if spans := append(top.args, [2]int{top.start, i}); top.kind == 'o' && c == ')' {
-				if path, ok := shellVerbOpenCall(rs, spans); ok {
-					out = append(out, path)
-				}
+				out = append(out, shellVerbOpenCall(rs, spans)...)
 			} else if top.kind == 'p' && c == ')' && shellVerbWriteMethod(rs, i+1) {
 				out = append(out, shellWriteEscapePath(rs, spans)...)
 			}
@@ -808,9 +806,11 @@ func shellVerbSpaceRune(r rune) bool {
 	return text.Trim(string(r)) == ""
 }
 
-// shellVerbOpenCall decides one call from its argument spans: whether its mode opens for writing, and its path. A mode written
-// with a \N{name} escape cannot be decoded (it needs the Unicode name table), so it counts as writing: the gate fails closed.
-func shellVerbOpenCall(rs []rune, spans [][2]int) (string, bool) {
+// shellVerbOpenCall decides one call from its argument spans: whether its mode opens for writing, and its path. The decoded
+// reading (shellVerbLiteral) is added to the earlier one, which kept escapes other than a backslash and the quote as written, and
+// neither replaces the other: the call names the path of each reading that reads as a literal. A mode that either reading finds
+// writing counts, and so does one written with a \N{name} escape, which cannot be decoded (it needs the Unicode name table).
+func shellVerbOpenCall(rs []rune, spans [][2]int) []string {
 	var path, mode []rune
 	positional := 0
 	for _, span := range spans {
@@ -835,10 +835,18 @@ func shellVerbOpenCall(rs []rune, spans [][2]int) (string, bool) {
 		}
 		positional++
 	}
-	file, pathOK := shellVerbLiteral(path)
-	kind, modeOK := shellVerbLiteral(mode)
-	writes := modeOK && strings.ContainsAny(kind, "wax+") || !modeOK && strings.Contains(string(mode), "\\N{")
-	return file, pathOK && file != "" && writes
+	kept, keptOK := shellWriteEscapeLiteral(mode, true)
+	decoded, decodedOK := shellVerbLiteral(mode)
+	names := []string{}
+	if !(keptOK && strings.ContainsAny(kept, "wax+") || decodedOK && strings.ContainsAny(decoded, "wax+") || !decodedOK && strings.Contains(string(mode), "\\N{")) {
+		return names
+	}
+	for _, earlier := range []bool{true, false} {
+		if file, ok := shellWriteEscapeLiteral(path, earlier); ok && file != "" && !slices.Contains(names, file) {
+			names = append(names, file)
+		}
+	}
+	return names
 }
 
 // shellVerbKeywordArg splits name=value (not ==) off an argument.
@@ -864,7 +872,11 @@ func shellVerbKeywordArg(arg []rune) (string, []rune, bool) {
 // shellVerbLiteral is the value of a Python string literal argument: a quoted string with an optional r, u, b or f prefix, whose
 // escapes are decoded unless it is raw (shellWriteEscapePython). Anything else around the quotes (a concatenation, a name), and a
 // literal Python would reject or whose value holds NUL, makes it no literal.
-func shellVerbLiteral(arg []rune) (string, bool) {
+func shellVerbLiteral(arg []rune) (string, bool) { return shellWriteEscapeLiteral(arg, false) }
+
+// shellWriteEscapeLiteral reads a Python string literal; earlier selects the reading before escapes were decoded, which drops a
+// backslash only before the literal's own quote or another backslash and keeps every other escape as written.
+func shellWriteEscapeLiteral(arg []rune, earlier bool) (string, bool) {
 	i, raw, isBytes := 0, false, false
 	for i < len(arg) && shellVerbSpaceRune(arg[i]) {
 		i++
@@ -890,18 +902,36 @@ func shellVerbLiteral(arg []rune) (string, bool) {
 			if raw {
 				return string(arg[i+1 : k]), true
 			}
+			if earlier {
+				return shellWriteEscapeUnquote(arg[i+1:k], quote), true
+			}
 			return shellWriteEscapePython(arg[i+1:k], isBytes)
 		}
 	}
 	return "", false
 }
 
+// shellWriteEscapeUnquote is the earlier reading of a non-raw literal's body.
+func shellWriteEscapeUnquote(body []rune, quote rune) string {
+	out := make([]rune, 0, len(body))
+	for i := 0; i < len(body); i++ {
+		if body[i] == '\\' && i+1 < len(body) {
+			if i++; body[i] != quote && body[i] != '\\' {
+				out = append(out, '\\')
+			}
+		}
+		out = append(out, body[i])
+	}
+	return string(out)
+}
+
 // shellWriteEscapePath is what a Path(...) call names: posixpath.join of its string literal arguments (a trailing comma leaves a
 // blank). An absolute part discards the parts before it and nothing else is normalized, so Path("/m", "") is "/m/". An argument
 // that is no literal, or an f-string with a field, leaves the rest of the path unknown, so the call names the literal prefix, the
 // directory the write lands under (Path("/m", name) is "/m"), until an absolute literal part starts the path over; no known prefix
-// names nothing. Such a call also keeps the earlier reading, its first argument when that is a literal, so the join never names
-// fewer destinations than before. The path grows in one buffer, so the work is linear in the arguments.
+// names nothing. Such a call also keeps the earlier reading, its first argument when that is a literal, read as that reading did
+// (shellWriteEscapeLiteral), so the join never names fewer destinations than before. The path grows in one buffer, so the work is
+// linear in the arguments.
 func shellWriteEscapePath(rs []rune, spans [][2]int) []string {
 	var path []byte
 	known, dynamic, head, parts := true, false, "", 0
@@ -910,8 +940,8 @@ func shellWriteEscapePath(rs []rune, spans [][2]int) []string {
 			continue
 		}
 		part, ok := shellVerbLiteral(rs[span[0]:span[1]])
-		if parts++; parts == 1 && ok {
-			head = part
+		if parts++; parts == 1 {
+			head, _ = shellWriteEscapeLiteral(rs[span[0]:span[1]], true)
 		}
 		dynamic = dynamic || !ok || shellWriteEscapeField(rs[span[0]:span[1]])
 		switch {
