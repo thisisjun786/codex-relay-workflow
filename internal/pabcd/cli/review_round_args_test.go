@@ -577,19 +577,20 @@ func TestReviewRoundArgsKeyKeepsTheLinkOfTheUnit(t *testing.T) {
 	}
 }
 
-// A key that cannot be stored as text is refused: the entry is spelled through an alias of the working directory, so both spellings of
-// its key climb out, and the real path that is left names a directory whose name is not UTF-8.
+// A key that cannot be stored as text is refused: the plan unit's own parent, reached through a link, is a directory whose name
+// is the bytes "d" 0xFF, so the plan-unit spelling the key falls back to holds those bytes and the entry is refused. The plan
+// unit's base name cannot carry them itself: the entry is decoded as Node decodes argv, so a base name with those bytes would
+// read as U+FFFD there and the entry would fall outside the unit instead (CRW-649).
 func TestReviewRoundArgsKeyThatIsNotTextIsRefused(t *testing.T) {
 	root, bad := reviewRoundArgsRealTemp(t), "d\xff"
-	if err := os.MkdirAll(filepath.Join(root, "ws", bad), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "ws", bad, "u"), 0o755); err != nil {
 		t.Skip("the file system refuses a name that is not UTF-8")
 	}
-	reviewRoundArgsWrite(t, filepath.Join(root, "ws", bad, "000_plan.md"), "x\n")
+	reviewRoundArgsWrite(t, filepath.Join(root, "ws", bad, "u", "000_plan.md"), "x\n")
 	reviewRoundArgsMust(t, os.Symlink("ws", filepath.Join(root, "wslink")))
-	reviewRoundArgsMust(t, os.Symlink("ws", filepath.Join(root, "alias")))
-	reviewRoundArgsMust(t, os.Symlink(bad, filepath.Join(root, "ws", "unit")))
-	unit := filepath.Join(root, "alias", "unit")
-	files, refusal, err := reviewRoundArgsCollectPlanFiles(filepath.Join(root, "wslink"), unit, []string{unit + "/000_plan.md"})
+	reviewRoundArgsMust(t, os.Symlink(filepath.Join(root, "ws", bad), filepath.Join(root, "alias")))
+	unit := filepath.Join(root, "alias", "u")
+	files, refusal, err := reviewRoundArgsCollectPlanFiles(filepath.Join(root, "wslink"), filepath.Join("..", "alias", "u"), []string{unit + "/000_plan.md"})
 	if want := "plan path " + unit + "/000_plan.md is not a readable regular file"; err != nil || len(files) != 0 || refusal != want {
 		t.Errorf("%v %q %v, want refusal %q", files, refusal, err, want)
 	}

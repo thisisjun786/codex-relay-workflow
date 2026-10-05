@@ -83,11 +83,12 @@ type script struct {
 	calls        int
 	active, peak int
 	result       agy.Result
-	hold         chan struct{} // when set, a call waits until it is closed
-	entered      chan struct{} // when set, a call announces itself here
+	hold         chan struct{}                  // when set, a call waits until it is closed
+	entered      chan struct{}                  // when set, a call announces itself here
+	answer       func(prompt []byte) agy.Result // when set, every call is answered from the prompt (stageAnswers) instead of result
 }
 
-func (s *script) run(ctx context.Context, _ agy.Config, _ agy.Request) (agy.Result, error) {
+func (s *script) run(ctx context.Context, _ agy.Config, req agy.Request) (agy.Result, error) {
 	s.mu.Lock()
 	s.calls++
 	s.active++
@@ -104,6 +105,9 @@ func (s *script) run(ctx context.Context, _ agy.Config, _ agy.Request) (agy.Resu
 		case <-ctx.Done():
 			return agy.Result{}, ctx.Err()
 		}
+	}
+	if s.answer != nil {
+		return s.answer(req.Prompt), nil
 	}
 	return s.result, nil
 }
@@ -315,19 +319,74 @@ func TestInterruptRecordsAFailedReviewAndExits130(t *testing.T) {
 	}
 }
 
-// A publish failure leaves the review recorded: its slot is spent and the patch is never run again.
-func TestPublishFailureNeverFreesThePatchID(t *testing.T) {
+// A publish failure leaves the review recorded: its slot is spent and the patch is never run again. The result is kept with the record, so
+// once the fault is gone the same command writes the missing files from it, with no model call and no new ledger record.
+func TestPublishFailureIsRepairedFromTheKeptResult(t *testing.T) {
 	f := newFixture(t)
 	h := f.repo.change(f.base, 2)
-	if err := os.MkdirAll(filepath.Join(f.out, h+".json.sha256"), 0o755); err != nil { // a directory where a file belongs: Publish refuses it
+	artifact, checksum := filepath.Join(f.out, h+".json"), filepath.Join(f.out, h+".json.sha256")
+	if err := os.MkdirAll(checksum, 0o755); err != nil { // a directory where a file belongs: Publish refuses it
 		t.Fatal(err)
 	}
 	code, _, errOut := f.run(h)
 	if code != 1 || !strings.Contains(errOut, h+".json.sha256") || f.s.count() != 2 {
 		t.Fatalf("publish failure: %d %s (calls %d)", code, errOut, f.s.count())
 	}
-	if code, again, _ := f.run(h); code != 0 || again.Outcome != OutcomeAlreadyReviewed || f.s.count() != 2 {
-		t.Fatalf("run again: %d %+v (calls %d)", code, again, f.s.count())
+	records := len(f.ledger())
+	if code, _, errOut := f.run(h); code != 1 || !strings.Contains(errOut, h+".json.sha256") || f.s.count() != 2 || len(f.ledger()) != records { // the fault stays: the same failure, no model call
+		t.Fatalf("run again with the fault in place: %d %s (calls %d, records %d, were %d)", code, errOut, f.s.count(), len(f.ledger()), records)
+	}
+	if err := errors.Join(os.Remove(checksum), os.Remove(artifact)); err != nil { // the fault is gone and the artifact file is lost with it
+		t.Fatal(err)
+	}
+	code, again, errOut := f.run(h)
+	if code != 0 || again.Outcome != OutcomeAlreadyReviewed || again.ArtifactPresent == nil || !*again.ArtifactPresent || !slices.Equal(again.Restored, []string{artifact, checksum}) ||
+		f.s.count() != 2 || len(f.ledger()) != records {
+		t.Fatalf("repair: %d %+v %s (calls %d, records %d, were %d)", code, again, errOut, f.s.count(), len(f.ledger()), records)
+	}
+	data, _ := os.ReadFile(artifact)
+	sha, _ := os.ReadFile(checksum)
+	digest := fmt.Sprintf("%x", sha256.Sum256(data))
+	if recs := f.ledger(); recs[len(recs)-1].Event != "finished" || recs[len(recs)-1].SHA256 != digest || string(sha) != digest+"  "+h+".json\n" {
+		t.Fatalf("the restored files do not carry the recorded sha256: %s %q (ledger %+v)", digest, sha, f.ledger()[records-1])
+	}
+	if _, third, _ := f.run(h); len(third.Restored) != 0 || f.s.count() != 2 {
+		t.Fatalf("a repaired result is restored again: %+v", third)
+	}
+}
+
+// stageAnswers makes the scripted runner answer by the stage the prompt names (its first line, as testdata/fake-agy.sh reads it): every reviewer reports one finding at file:line,
+// which the group and verify stages confirm.
+func stageAnswers(file string, line int) func([]byte) agy.Result {
+	return func(prompt []byte) agy.Result {
+		stage, _, _ := bytes.Cut(prompt, []byte("\n"))
+		out := map[string]string{
+			"review": fmt.Sprintf(`{"findings":[{"file":%q,"line":%d,"endLine":%d,"title":"t","explanation":"e","severity":"P2","needsContext":false}]}`, file, line, line),
+			"group":  `{"groups":[[0,1]]}`,
+			"verify": `{"verdict":"confirmed","needsContext":false}`,
+		}[string(stage)]
+		return agy.Result{Class: agy.ClassNormal, StructuredOutput: json.RawMessage(out), Model: "Scripted"}
+	}
+}
+
+// Finding paths are relative to the repository root (the bundle reads a bare object view), so a run that names a subdirectory with --repo, as the default of the current directory does,
+// must check them against the root: a root file is found and a file of the same name in the subdirectory is never read in its place.
+func TestRunFromASubdirectoryChecksFindingsAgainstTheRoot(t *testing.T) {
+	f := newFixture(t)
+	f.repo.git("checkout", "-q", "--detach", f.base)
+	withSameName := f.repo.commit(map[string]string{"a.go": "package a\n\nfunc F() int { return 2 }\n", "sub/a.go": "package sub\n"}) // the root a.go has 3 lines, sub/a.go has 1
+	f.repo.git("checkout", "-q", "--detach", f.base)
+	rootOnly := f.repo.commit(map[string]string{"b.go": "package a\n\nvar B = 1\n", "sub/c.go": "package sub\n"}) // sub has no b.go
+	sub := filepath.Join(f.repo.dir, "sub")
+	for _, c := range []struct {
+		head, file string
+		line       int
+	}{{withSameName, "a.go", 3}, {rootOnly, "b.go", 3}} {
+		f.s.answer = stageAnswers(c.file, c.line)
+		code, sum, errOut := f.run(c.head, "--repo", sub)
+		if code != 0 || sum.Counts == nil || sum.Findings != 1 || sum.Dropped != 0 {
+			t.Errorf("finding at %s:%d from a subdirectory: %d %+v %s", c.file, c.line, code, sum, errOut)
+		}
 	}
 }
 
@@ -390,7 +449,8 @@ func TestUsageErrorsAndHelp(t *testing.T) {
 		{[]string{"--base", "a", "--head", "b", "--issue", "CRW-1", "--out", "o", "--daily-cap", "0"}, "", "the daily cap must be at least 1"},
 		{[]string{"--base", "a", "--head", "b", "--issue", "CRW-1", "--out", "o", "extra"}, "", `unrecognized argument "extra"`},
 		{[]string{"--base", "a", "--head", "b", "--issue", "CRW-1", "--out", "o", "--post-summary"}, "", "--post-summary needs --pr"},
-		{[]string{"--base", "a", "--head", "b", "--issue", "CRW-1", "--out", "o", "--pr", "7"}, "", "--pr is only used with --post-summary"},
+		{[]string{"--base", "a", "--head", "b", "--issue", "CRW-1", "--out", "o", "--post-only"}, "", "--post-only needs --pr"},
+		{[]string{"--base", "a", "--head", "b", "--issue", "CRW-1", "--out", "o", "--pr", "7"}, "", "--pr is only used with --post-summary or --post-only"},
 		{[]string{"--base", "a", "--head", "b", "--issue", "CRW-1", "--out", "o"}, "soon", "CRW_REVIEW_DAILY_CAP"},
 	} {
 		clearEnv(t)
