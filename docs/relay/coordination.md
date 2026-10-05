@@ -224,24 +224,26 @@ about declared that pull request's head on the live one (2026-10-04). It is refu
 
 - A request that states no pull request and no relationship is the replay of the live turn, as
   before (`alreadyClaimed: true`).
-- A request that states some is the replay when no stated identity contradicts what the turn
-  records (the same kind, recorded and different) and at least one agrees. Another pull request or
-  another relationship is refused `disposition_conflict`. So are identities the turn does not record at
-  all, unless the request names the turn's own candidate head: a request for another pull request
-  names its own head, and two pull requests do not share one. A refused request writes nothing to the
-  turns or their ledgers; the refusal is kept as a contest (`merge-turn-show` lists it). It names the
-  live turn, what it is bound to, its state, its place in the order and the step that frees the
-  target, and says whether the request contradicts the turn or only names what the turn does not
-  record.
+- A request that states some is the replay only when every identity it states is recorded on the turn
+  and equal (the pull request number, the relationship id). Another pull request or another
+  relationship is refused `disposition_conflict`. So is an identity the turn does not record at
+  all, whatever head the request states: two pull requests can point at one commit (2026-10-05), so
+  the head does not tell a request for the turn's own pull request from one for another. A refused
+  request writes nothing to the turns or their ledgers; the refusal is kept as a contest
+  (`merge-turn-show` lists it). It names the live turn, what it is bound to, its state, its place in
+  the order and the step that frees the target, says whether the request contradicts the turn or only
+  names what the turn does not record, and tells the caller to repeat the request with the arguments
+  the claim was made with, which adds or changes no identity of the turn.
 - The place is counted among the live claims on the target in the order the lane serves them: the
   claims that hold the target first, then the waiting ones by the time they were made, which is the
   order a released target promotes them in. A claim that closed is not counted.
-- The other pull request's turn is requested after the earlier one lands or is returned
-  (`merge-turn-release --disposition returned`; a waiting claim is withdrawn with
-  `merge-turn-withdraw`). A claim made with no pull request and no relationship records nothing to
-  compare, so it answers only requests that state nothing or name its own candidate head, and a claim
-  that records one kind only (a relationship but no pull request) answers a request that states the
-  other kind only at that head: state both on every claim.
+- The other pull request's turn, or the same pull request with other identities, is requested after
+  the earlier one lands or is returned (`merge-turn-release --disposition returned`; a waiting claim
+  is withdrawn with `merge-turn-withdraw`). A claim records the identities it was made with and never
+  gains one. A claim made with no pull request and no relationship records nothing to compare, so it
+  answers only a request that states nothing, and a claim that records one kind only (a relationship
+  but no pull request) answers only a request that states that relationship or nothing: state both on
+  every claim.
 - `dag-merge-request` applies a stricter comparison to the turn it is answered with (pull request,
   relationship, head and project) and refuses `disposition_conflict` as before.
 

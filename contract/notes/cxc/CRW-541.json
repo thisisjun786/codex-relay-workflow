@@ -1,0 +1,16 @@
+{
+  "issue": "CRW-541",
+  "pending": [],
+  "identical": [
+    "cli-help__config__interview_dashdash_help",
+    "cli__config-interview__show_set_and_reject",
+    "cli-help__scan__dash_h",
+    "cli-help__scan__dashdash_help",
+    "cli-help__scan__word_help",
+    "cli-help__scan__record_dashdash_help",
+    "cli-help__scan__show_dashdash_help",
+    "cli__scan__record_requires_session",
+    "cli__scan__unknown_dimension_rejected"
+  ],
+  "intentionally-changed": []
+}
