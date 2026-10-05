@@ -65,7 +65,8 @@ func counterUnspent(path string) bool {
 //
 // Changed from the oracle in two ways, each a fix. A loss of state: the oracle writes back the verdicts its read kept, so the
 // verdicts past the cap of 64 and the entries the read cannot parse vanish from the file, with only the corruption flag left.
-// Here nothing is written, and the call reports false, when the file holds more verdicts than the read kept. A security
+// Here nothing is written, and the call reports false, when the file holds more verdicts than the read kept, or when the read
+// changed one it kept (a receipt past 256 units, a field of the wrong type; state.RewriteKeepsUnverified). A security
 // weakness: the oracle ignores whether the identity is resolvable, so a receipt from an agent with no id removed every tombstone
 // with an empty agent id and the same turn, the verdicts of other agents whose ids were missing among them, which are marked
 // not resolvable because their owners cannot be told apart. Here an empty agent id resolves nothing: the call returns false
@@ -85,7 +86,7 @@ func resolveTombstone(cwd, sessionID string, p Payload, lock lockFunc) bool {
 		next := slices.DeleteFunc(slices.Clone(s.UnverifiedSubagents), func(e state.UnverifiedSubagent) bool {
 			return sameAgent(e, agentID, turnID)
 		})
-		if len(next) == len(s.UnverifiedSubagents) || storedVerdicts(cwd, sessionID) != len(s.UnverifiedSubagents) {
+		if len(next) == len(s.UnverifiedSubagents) || storedVerdicts(cwd, sessionID) != len(s.UnverifiedSubagents) || !rewriteGuardKeeps(cwd, sessionID, s.UnverifiedSubagents) {
 			return nil
 		}
 		s.SessionID, s.UnverifiedSubagents = sessionID, next
