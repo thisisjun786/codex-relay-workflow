@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/golden"
 )
@@ -104,9 +105,14 @@ func TestHookTrustIdentityHash_recordedCases(t *testing.T) {
 		if recorded.Document != "" {
 			continue // the live hook file has its own test
 		}
+		if recorded.Name == "command_lone_surrogate" {
+			continue // encoding/json reads its surrogate as U+FFFD; the reader test covers it
+		}
 		t.Run(recorded.Name, func(t *testing.T) {
-			if recorded.Canonical == (recorded.Name == "timeout_1e400") {
-				t.Fatalf("canonical=%v for %s: only the 1e400 literal cannot re-encode", recorded.Canonical, recorded.Name)
+			// Only a raw text holding a number past the double range cannot be the canonical
+			// re-encoding, because JSON.stringify writes that one as null.
+			if recorded.Canonical == strings.Contains(recorded.Handler, "1e400") {
+				t.Fatalf("canonical=%v for %s (handler %s)", recorded.Canonical, recorded.Name, recorded.Handler)
 			}
 			got, err := doctor.HookTrustIdentityHash(recorded.Event, recorded.Matcher, hookTrustIdentityHandler(t, recorded.Handler))
 			switch {
@@ -283,5 +289,28 @@ func TestHookTrustIdentityHash_goSideBranches(t *testing.T) {
 				t.Fatalf("got %q, %v; want %q", got, err, refusal.want)
 			}
 		})
+	}
+}
+
+// TestHookTrustIdentityHash_loneSurrogateCommand is the parity case a standard decoder cannot
+// replay: a lone surrogate escape survives a JSON document only through internal/pyjson, which
+// keeps the WTF-8 bytes the oracle's JSON.parse held, so the recorded answer is asserted through
+// that reader, and the standard reader is shown to read the same document differently.
+func TestHookTrustIdentityHash_loneSurrogateCommand(t *testing.T) {
+	recorded := hookTrustIdentityRecordedCase(t, "command_lone_surrogate")
+	value, err := pyjson.Loads(recorded.Handler, pyjson.LoadOptions{Surrogates: true, Map: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, ok := value.(map[string]any)
+	if !ok {
+		t.Fatalf("pyjson.Loads read %T, want an object", value)
+	}
+	if got := hookTrustIdentityHash(t, recorded.Event, recorded.Matcher, handler); got != recorded.Hash {
+		t.Fatalf("the pyjson reading hashes %s, the oracle recorded %s", got, recorded.Hash)
+	}
+	standard := hookTrustIdentityHandler(t, recorded.Handler)
+	if got := hookTrustIdentityHash(t, recorded.Event, recorded.Matcher, standard); got == recorded.Hash {
+		t.Fatal("encoding/json kept the lone surrogate; the doc comment says it reads U+FFFD")
 	}
 }

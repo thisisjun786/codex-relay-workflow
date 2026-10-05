@@ -6,10 +6,15 @@
 // package state and needs no Node.
 //
 // handler is one handler object of a hook document (hook-trust.ts:40-47). Its values are the
-// ones an encoding/json or pyjson reader produces: string, bool, nil, float64, json.Number or
-// the Go integer kinds for numbers (all read as the double JavaScript held), and map[string]any
-// or []any for containers; pyjson.Object is read as an object too. A Go value of any other
-// type is outside that input and is spelled with %v in a refusal.
+// ones an internal/pyjson or encoding/json reader produces: string, bool, nil, float64,
+// json.Number or the Go integer kinds for numbers (all read as the double JavaScript held),
+// and map[string]any or []any for containers; pyjson.Object is read as an object too. A Go
+// value of any other type is outside that input and is spelled with %v in a refusal. One
+// document reads differently in the two readers: a lone surrogate escape survives only
+// through pyjson.Loads with LoadOptions{Surrogates: true}, which keeps the WTF-8 bytes the
+// oracle's JSON.parse held, while encoding/json reads it as U+FFFD, and the identity of such
+// a handler then differs from the oracle's. A caller that must hash every valid hook document
+// reads it with pyjson; an identity read from U+FFFD is a different hook.
 //
 // Two CXC behaviours are kept as the oracle has them, not repaired (one line each in
 // docs/port-cxc/known-defects.md): an event that is a JavaScript Object.prototype member is
@@ -214,7 +219,10 @@ func hookTrustIdentityFloat(value any) (float64, bool) {
 		return float64(number), true
 	case json.Number:
 		read, err := number.Float64()
-		if err != nil {
+		// A range error is not a refusal: strconv returns the infinity a JSON number past
+		// the double range parses to, exactly as JavaScript does, and zero for one below it
+		// (a timeout that clamps to one, and a type refused as "0").
+		if err != nil && !errors.Is(err, strconv.ErrRange) {
 			return 0, false
 		}
 		return read, true

@@ -238,6 +238,13 @@
       "canonical": true
     },
     {
+      "name": "command_lone_surrogate",
+      "event": "Stop",
+      "handler": "{\"type\":\"command\",\"command\":\"echo \\ud800\"}",
+      "hash": "sha256:15a24d6f471b84f88bbd006ba80e5d1b25dcee043fdba1ec9e538dd8ee5ada86",
+      "canonical": true
+    },
+    {
       "name": "type_shell",
       "event": "Stop",
       "handler": "{\"type\":\"shell\",\"command\":\"echo ok\"}",
@@ -278,6 +285,20 @@
       "handler": "{\"type\":{},\"command\":\"echo ok\"}",
       "error": "unsupported hook handler type: [object Object]",
       "canonical": true
+    },
+    {
+      "name": "type_1e400",
+      "event": "Stop",
+      "handler": "{\"type\":1e400,\"command\":\"echo ok\"}",
+      "error": "unsupported hook handler type: Infinity",
+      "canonical": false
+    },
+    {
+      "name": "type_negative_1e400",
+      "event": "Stop",
+      "handler": "{\"type\":-1e400,\"command\":\"echo ok\"}",
+      "error": "unsupported hook handler type: -Infinity",
+      "canonical": false
     },
     {
       "name": "type_object_valueOf",
