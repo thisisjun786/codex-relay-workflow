@@ -27,14 +27,15 @@ func tempName(run string, seq int) string {
 	return tempPrefix + run + "-" + strconv.Itoa(seq) + tempSuffix
 }
 
-// tempRun returns the run of a name tempName could have produced.
+// tempRun returns the run of a name tempName could have produced: the sequence is a plain positive integer, as strconv.Itoa writes it.
 func tempRun(name string) (string, bool) {
 	rest, ok := strings.CutPrefix(name, tempPrefix)
 	if ok {
 		rest, ok = strings.CutSuffix(rest, tempSuffix)
 	}
 	run, seq, cut := strings.Cut(rest, "-")
-	ok = ok && cut && len(run) == runLen && strings.Trim(run, runAlphabet) == "" && seq != "" && strings.Trim(seq, "0123456789") == ""
+	n, err := strconv.Atoi(seq)
+	ok = ok && cut && len(run) == runLen && strings.Trim(run, runAlphabet) == "" && err == nil && n > 0 && strconv.Itoa(n) == seq
 	return run, ok
 }
 
