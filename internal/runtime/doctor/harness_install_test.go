@@ -168,12 +168,26 @@ func harnessInstallPabcdWorkspace(t *testing.T, root, name string) string {
 		}
 	case "deep_10001":
 		harnessInstallSessions(t, ws, map[string]string{"deep.json": strings.Repeat("[", 10001) + strings.Repeat("]", 10001)})
+	case "invalid_session_name":
+		// One ill-formed byte in the entry name, as Node's readdirSync sees it.
+		dir := filepath.Join(ws, ".crw", "sessions")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, string([]byte{'b', 0xff})+".json"), []byte("{oops}"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	case "unreadable":
 		harnessInstallSessions(t, ws, map[string]string{"rec-s1.json": harnessInstallValue(map[string]string{"phase": "P"})})
 		if err := os.Chmod(filepath.Join(ws, ".crw", "sessions"), 0o000); err != nil {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = os.Chmod(filepath.Join(ws, ".crw", "sessions"), 0o755) })
+		if _, err := os.ReadDir(filepath.Join(ws, ".crw", "sessions")); err == nil {
+			// root or CAP_DAC_OVERRIDE: mode 000 does not make the directory unreadable, so the
+			// recorded panic is unreachable in this environment.
+			t.Skip("the sessions directory stays readable despite mode 000 (privileged user)")
+		}
 	}
 	return ws
 }
@@ -405,6 +419,25 @@ func TestHarnessInstallRootRecorded(t *testing.T) {
 				t.Setenv("CODEX_HOME", harnessInstallHomeAt(t, root, name, [][]string{{"mkt", "crw", "0.4.0"}}))
 				t.Setenv("HOME", filepath.Join(root, "home-no-cache"))
 				check = HarnessInstalledRootCheck(payload(manifest), HarnessOptions{})
+			case "surrogate_name", "surrogate_missing":
+				// The manifest text holds the JSON escape for a lone surrogate; Go source cannot spell it
+				// as a unicode escape, so it is assembled. The cache directory is named with U+FFFD, which
+				// is the name Node asks the filesystem for.
+				surrogate := harnessInstallValue(map[string]string{"name": "SURROGATE", "version": "0.4.0"})
+				surrogate = strings.Replace(surrogate, "SURROGATE", "x"+string([]byte{0x5c})+"ud800", 1)
+				entries := [][]string{{"mkt", "x\uFFFD", "0.4.0"}}
+				if name == "surrogate_missing" {
+					entries = [][]string{{"mkt", "other", "0.4.0"}}
+				}
+				check = HarnessInstalledRootCheck(payload(surrogate), home(name, entries))
+			case "invalid_market_name":
+				// One ill-formed byte in the market segment: the oracle decodes it to U+FFFD and then
+				// misses the directory, so the plugin reads as not installed.
+				options := home(name, nil)
+				if err := os.MkdirAll(filepath.Join(options.CodexHome, "plugins", "cache", string([]byte{'m', 0xff}), "crw", "0.1.0"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				check = HarnessInstalledRootCheck(payload(manifest), options)
 			default:
 				t.Fatalf("no builder for %q", name)
 			}

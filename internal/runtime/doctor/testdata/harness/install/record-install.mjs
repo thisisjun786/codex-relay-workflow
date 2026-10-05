@@ -83,6 +83,13 @@ const pabcd = [
     mkdirSync(join(state, "sessions"), { recursive: true });
     writeFileSync(join(state, "sessions", "deep.json"), deep);
   }),
+  pabcdCase("invalid_session_name", (state) => {
+    // One ill-formed byte in the entry name: readdirSync decodes it to U+FFFD, and the lookup of
+    // that decoded name fails, so the file is corrupt.
+    mkdirSync(join(state, "sessions"), { recursive: true });
+    const name = Buffer.concat([Buffer.from([0x62, 0xff]), Buffer.from(".json")]);
+    writeFileSync(Buffer.concat([Buffer.from(join(state, "sessions") + "/"), name]), "{oops}");
+  }),
   pabcdCase("unreadable", (state) => {
     mkdirSync(join(state, "sessions"), { recursive: true });
     chmodSync(join(state, "sessions"), 0o000);
@@ -227,6 +234,17 @@ const installRoot = [
     try { return runInstalledRootCheck(payloadAt("env_wins_over_home", "0.4.0"), {}); }
     finally { process.env.HOME = savedHome; process.env.CODEX_HOME = savedCodex; }
   }),
+	installCase("surrogate_name", () =>
+		runInstalledRootCheck(payloadAt("surrogate_name", "0.4.0", JSON.stringify({ name: "x\ud800", version: "0.4.0" })), { codexHome: homeWith("surrogate_name", [["mkt", "x\ufffd", "0.4.0"]]) })),
+	installCase("surrogate_missing", () =>
+		runInstalledRootCheck(payloadAt("surrogate_missing", "0.4.0", JSON.stringify({ name: "x\ud800", version: "0.4.0" })), { codexHome: homeWith("surrogate_missing", [["mkt", "other", "0.4.0"]]) })),
+	installCase("invalid_market_name", () => {
+		const home = join(temp, "home-invalid_market_name");
+		mkdirSync(join(home, "plugins", "cache"), { recursive: true });
+		const market = Buffer.from([0x6d, 0xff]);
+		mkdirSync(Buffer.concat([Buffer.from(join(home, "plugins", "cache") + "/"), market, Buffer.from("/crw/0.1.0")]), { recursive: true });
+		return runInstalledRootCheck(payloadAt("invalid_market_name", "0.4.0"), { codexHome: home });
+	}),
 ];
 
 // A malformed install manifest: the oracle answers a V8 SyntaxError message the Go port cannot

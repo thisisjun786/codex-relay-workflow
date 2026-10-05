@@ -53,17 +53,18 @@ func HarnessPabcdCheck(projectRoot string) HarnessCheck {
 	total := 0
 	corrupt := []string{}
 	for _, entry := range entries {
-		if !strings.HasSuffix(entry.Name(), ".json") {
+		name := harnessInstallNodeName(entry.Name())
+		if !strings.HasSuffix(name, ".json") {
 			continue
 		}
 		total++
-		raw, err := os.ReadFile(filepath.Join(stateDir, entry.Name()))
+		raw, err := os.ReadFile(filepath.Join(stateDir, name))
 		if err != nil {
-			corrupt = append(corrupt, entry.Name())
+			corrupt = append(corrupt, name)
 			continue
 		}
 		if _, err := harnessInstallParseJSON(raw); err != nil {
-			corrupt = append(corrupt, entry.Name())
+			corrupt = append(corrupt, name)
 		}
 	}
 	if len(corrupt) > 0 {
@@ -168,6 +169,9 @@ func harnessInstallRootBody(pluginRoot, codexHome string, readFile func(string) 
 	if err != nil {
 		return HarnessCheck{}, err
 	}
+	// A lone surrogate escape in the name becomes U+FFFD when Node hands the string to the
+	// filesystem, so the cache lookup and the evidence both use the converted text.
+	name = targetNodeText(name)
 	version, err := harnessInstallManifestString(manifest, "version")
 	if err != nil {
 		return HarnessCheck{}, err
@@ -187,7 +191,7 @@ func harnessInstallRootBody(pluginRoot, codexHome string, readFile func(string) 
 	}
 	found := []string{}
 	for _, market := range markets {
-		dir := filepath.Join(cacheRoot, market.Name(), name)
+		dir := filepath.Join(cacheRoot, harnessInstallNodeName(market.Name()), name)
 		if _, err := os.Stat(dir); err != nil {
 			continue
 		}
@@ -196,7 +200,7 @@ func harnessInstallRootBody(pluginRoot, codexHome string, readFile func(string) 
 			return HarnessCheck{}, harnessInstallScandirError(err)
 		}
 		for _, entry := range versions {
-			found = append(found, filepath.Join(dir, entry.Name()))
+			found = append(found, filepath.Join(dir, harnessInstallNodeName(entry.Name())))
 		}
 	}
 	if len(found) == 0 {
@@ -253,6 +257,14 @@ func harnessInstallCodexHome(codexHome string, lookup record.Environ, passwdHome
 // reports HOME unset.
 func harnessInstallPasswdHome() (string, error) {
 	return record.Home(func(string) (string, bool) { return "", false })
+}
+
+// harnessInstallNodeName is a filesystem entry name as Node's readdirSync reads it: the raw bytes
+// decoded to UTF-8, each ill-formed sequence becoming U+FFFD. A valid name is unchanged, so the
+// sorted os.ReadDir order and the evidence text match what the oracle would print for the same
+// directory.
+func harnessInstallNodeName(name string) string {
+	return source.DecodeUTF8([]byte(name))
 }
 
 // harnessInstallParseJSON is JSON.parse over Node's UTF-8 decode. Unlike the hook-trust reader it

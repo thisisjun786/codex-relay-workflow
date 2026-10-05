@@ -41,6 +41,12 @@
       "repair": ""
     },
     {
+      "name": "invalid_session_name",
+      "severity": "WARN",
+      "evidence": "1 corrupt session file(s): b�.json",
+      "repair": "cxc reset --state"
+    },
+    {
       "name": "unreadable",
       "threw": "EACCES: permission denied, scandir '${TEMP}/ws-unreadable/.codexclaw/sessions'"
     }
@@ -260,6 +266,24 @@
       "name": "env_wins_over_home",
       "severity": "PASS",
       "evidence": "installed root matches this payload (0.4.0); 1 root(s) present",
+      "repair": ""
+    },
+    {
+      "name": "surrogate_name",
+      "severity": "PASS",
+      "evidence": "installed root matches this payload (0.4.0); 1 root(s) present",
+      "repair": ""
+    },
+    {
+      "name": "surrogate_missing",
+      "severity": "WARN",
+      "evidence": "x\ud800 is not installed under ${TEMP}/home-surrogate_missing/plugins/cache",
+      "repair": ""
+    },
+    {
+      "name": "invalid_market_name",
+      "severity": "WARN",
+      "evidence": "crw is not installed under ${TEMP}/home-invalid_market_name/plugins/cache",
       "repair": ""
     }
   ],
