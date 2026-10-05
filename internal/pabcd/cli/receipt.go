@@ -131,6 +131,13 @@ Notes:
 Example:
   crw pabcd receipt test --session <id> -- npm test`
 
+// receiptLateCancelHook, when non-nil, runs immediately before the late-cancellation check in a
+// receipt test. It is nil in production (an uninitialized variable, no package-level work at
+// start); receipt_late_cancel_test.go sets it to cancel the context at the one point where the
+// window the check closes is deterministic, after the command has returned and the source has been
+// captured again.
+var receiptLateCancelHook func()
+
 // RunReceiptCLI ports receipt-cli.ts:75-185: guard, unlink stale receipt, capture, execute argv without a shell, capture again
 // and publish only a successful unchanged-tree result. The receipt stays native while a bound command runs in its source.
 // A non-nil error models the oracle's thrown remove/before-capture/publication errors. Atomic publication intentionally fixes
@@ -192,6 +199,11 @@ func RunReceiptCLI(args ReceiptCLIArgs, options ReceiptRunOptions) (ReceiptCLIRe
 		return refuse("receipt test: the command changed the source while running (" + cmp.Detail + "); no receipt written — a check cannot certify a tree it rewrote.\nIf the check REGENERATES artifacts by design, declare them:\n  crw pabcd receipt test --session <id> --generated <path> -- <command>\n(repeatable; a path covers that file or that directory. Undeclared rewrites are still refused.)")
 	case source.ComparisonUnavailable:
 		return refuse("receipt test: git could not resolve the source identity (" + cmp.Reason + "); no receipt written")
+	}
+	// The last moment the publication can still be skipped: a cancellation that landed after the
+	// command returned refuses the receipt here, as the oracle's deferred signal refuses it.
+	if receiptLateCancelHook != nil {
+		receiptLateCancelHook()
 	}
 	record := receiptRecord{Kind: "test", SourceIdentity: after, Command: strings.Join(args.Command, " "), ExitCode: 0, CreatedAt: time.Now().UTC().Format("2006-01-02T15:04:05.000Z"), OwnerSessionID: sid, CheckEpoch: *st.CheckEpoch, GeneratedPaths: args.Generated}
 	if _, err = crwdir.EnsureDir(args.Cwd); err != nil {
