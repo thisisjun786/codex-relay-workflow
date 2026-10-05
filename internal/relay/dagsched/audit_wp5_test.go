@@ -46,7 +46,7 @@ func TestSlotWithSeveralTenuresIsReturnedByName(t *testing.T) {
 		}
 	})
 	t.Run("integration", func(t *testing.T) {
-		k := newForgeIntegrationKit(t)
+		k := newIntegrationKit(t)
 		repo := k.repo
 		repo.git("checkout", "-q", "-b", "feature")
 		feature := repo.commit("feature.txt", "feature")
@@ -93,7 +93,7 @@ func TestTargetsAreJudgedAgainstThePlanNow(t *testing.T) {
 		}
 	})
 	t.Run("integration", func(t *testing.T) {
-		k := newForgeIntegrationKit(t)
+		k := newIntegrationKit(t)
 		repo := k.repo
 		repo.git("checkout", "-q", "-b", "feature")
 		feature := repo.commit("feature.txt", "feature")

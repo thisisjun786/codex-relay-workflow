@@ -78,6 +78,18 @@ ledger tells whether its agent id is spent: a created report for an id that
 another attempt holds is refused, and only an attempt the stopped close closed
 (outcome stopped, executionState stopped, a reconciliation) gives its id back.
 
+A dispatch ledger lock (`.session.lock` or `<id>.json.lock` in `.crw/dispatches/<session>`) holds an
+`owner.json` with the pid, process start, host and creation time (ms) of the process that took it, and a
+process that dies while holding one leaves it behind. `crw role helper dispatch-lock-clear --session <id>
+(--dispatch <id> | --session-lock) --reason <text> [--cwd <dir>]` removes such a lock only when it is a real
+directory with a readable `owner.json` of a process on this host that no longer exists or whose start time
+differs (the pid was taken over), then appends the removal to `lock-clears.jsonl` in the session directory and
+prints that line (exit 0). It removes nothing and exits 1 when the owner is alive (a pid it cannot signal still
+counts), `owner.json` is missing or unreadable, the host differs, the start time cannot be compared, or the
+entry is a link or not a directory; usage errors exit 2. Clears of one session take turns, and a lock that turns
+out to have been replaced after the check is put back, or left at a `.clearing-` name that the error
+reports, and never removed.
+
 Each callback attempt has a thirty-second budget. Known running holds keep polling
 with the existing five-second to five-minute backoff, including mixed subtrees
 with an incomplete idle member. With no known running member, interrupted, failed,
@@ -135,6 +147,44 @@ subscriptions and observe `thread/read` reporting `notLoaded`. Other clients may
 and unloading is the host's decision. If it remains loaded, an operator can use `thread/archive` then
 `thread/unarchive`; the next relay delivery resumes under the recorded MCP profile. Never unload a
 never-run root. The relay performs no automatic archive or recovery operation.
+
+A managed start can retry the same complete request after a recorded business send
+failed before `turn/start`. It retains that failure under its original bridge operation
+ID and derives at most two successor operation IDs from the managed request and attempt.
+The managed request, fingerprint, slot, relationship, generation and routing dispatch ID
+stay unchanged. An accepted successor passes the bridge ledger's fingerprint-aware lookup
+for the exact packet before replaying admission, never starting a turn again; another
+operation or message occupying its ID is refused.
+Unknown outcomes, started or rejected deliveries, attempted `turn/start`, malformed
+effect evidence and failures without affirmative pre-turn evidence remain held. Older
+receipts without effect/delivery fields qualify only for the structured
+`thread/resume` / `settings_not_preserved` refusal.
+An explicit pre-turn effect trace must be empty or contain exactly one `thread/resume`;
+unknown, misspelled, duplicate or contradictory effects do not qualify.
+
+Before a resend, the host must list exactly the recorded standby turn with no continuation
+cursor, then report the same child as `notLoaded`. A loaded child returns incomplete
+`recipient_not_idle` without consuming a successor operation, even if its status is
+`idle` and its profile happens to match: this recovery gate conservatively waits for
+unloading. Empty, missing-rollout or unreadable history stays held as `lifecycle_unknown`;
+another turn refuses as `business_identity_unobserved`. The final business guard repeats
+the standby-only check after the recorded-profile resume.
+The recovery guard retains the complete archived scan and positive thread/goal reads,
+and skips the unnecessary unarchived listing, so its history check fits the existing
+ten-request deadline budget (at most seven calls).
+Live-context observation errors in that recovery guard withhold as retryable
+`not_attempted`; cancellation remains unknown.
+If another client loads the thread between the precheck and resume, the ordinary settings
+verifier still withholds `turn/start` and retains an honest failure; a later invocation
+can use the next bounded successor. No fourth operation is created. Initial guard failures
+recorded as `outcome_unknown` are not recovered by this path.
+
+The inspected bridge and relay resume paths transmit the profile; subscription retirement
+only unsubscribes, and their read paths do not issue an unprofiled resume. The copied
+incident receipts show profiled creation followed by an idle, unprofiled MCP status at
+business resume, with overrides transmitted and a settings refusal. They do not attribute
+the intervening load to a client. An external client's identity and the live same-request
+DAG recovery after runtime replacement remain separate operational verification.
 
 A thread-bridge fallback to an unloaded child must state its actual role and released
 `expected_settings.mcp_profile`. Without one the bridge refuses before resume when that role declares
