@@ -175,6 +175,30 @@ func TestRevivalLossRefusesSurrogatesAndInvalidUTF8(t *testing.T) {
 	}
 }
 
+// Decoding keeps the last value of a key an object states twice, so the earlier one would be erased by a write.
+func TestRevivalLossRefusesARepeatedKey(t *testing.T) {
+	for _, c := range []struct{ name, old, new, path string }{
+		{"a top-level key", `"objective":"o"`, `"objective":"first","objective":"o"`, "objective"},
+		{"the review rounds of a plan", `"decisions":[`, `"reviewRounds":[],"decisions":[`, "reviewRounds"},
+		{"a key of a task", `"id":"t1"`, `"id":"x","id":"t1"`, "workPhases[0].tasks[0].id"},
+		{"a key of a review round", `"roundId":"r1"`, `"roundId":"r0","roundId":"r1"`, "reviewRounds[0].roundId"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			raw := strings.Replace(revivalLossPlan, c.old, c.new, 1)
+			if raw == revivalLossPlan {
+				t.Fatal("the plan was not edited")
+			}
+			revivalLossRefused(t, raw, "goalplan 'demo' holds the repeated key "+c.path+" that this build cannot keep; refusing to rewrite it", true)
+		})
+	}
+	for text, want := range map[string]string{`{"a":1,"a":2}`: "a", `{"a":{"b":1,"b":2}}`: "a.b", `[{"a":1},{"a":1,"a":1}]`: "[1].a", `{"x.y":1,"x.y":2}`: `["x.y"]`,
+		`{"a":[1,{"b":1}],"c":{"b":1}}`: "", `[]`: "", `5`: ""} {
+		if got := revivalLossDuplicate(text); got != want {
+			t.Errorf("revivalLossDuplicate(%s) = %q, want %q", text, got, want)
+		}
+	}
+}
+
 func TestRevivalLossRefusesTheRecordedLosses(t *testing.T) {
 	want := map[string]string{"phase_criteriaIds_mixed": "workPhases[0].criteriaIds[1]", "extra_keys_dropped": "criteria[0].evil",
 		"decision_open_extra_keys_dropped": "decisions[0].evil", "decision_decided_evil_dropped": "decisions[0].evil"}

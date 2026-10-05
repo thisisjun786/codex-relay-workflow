@@ -12,10 +12,11 @@ import (
 )
 
 // revivalLossFile is what the write lock needs of a read besides the plan: the JSON value the file decoded to, which revivalLoss
-// judges, and badByte, 1 plus the offset of the first byte that is not valid UTF-8 (0 when there is none). Both are the zero value
-// whenever the read returned no plan.
+// judges, the text it was decoded from, which revivalLossDuplicate scans, and badByte, 1 plus the offset of the first byte that is
+// not valid UTF-8 (0 when there is none). All three are the zero value whenever the read returned no plan.
 type revivalLossFile struct {
 	parsed  any
+	text    string
 	badByte int
 }
 
@@ -37,6 +38,47 @@ func revivalLossBadByte(raw []byte) int {
 // revivalLossRefusal is the reason the write lock gives for a plan it will not hand to a writer.
 func revivalLossRefusal(slug, what string) string {
 	return fmt.Sprintf("goalplan '%s' holds %s that this build cannot keep; refusing to rewrite it", slug, what)
+}
+
+// revivalLossDuplicate is the path of the first key that an object of text states twice, "" when none does. Decoding keeps the last
+// value of a repeated key, so the earlier value, a whole review round list included, never reaches revivalLoss and a write would
+// erase it. text is valid JSON: the read decoded it already.
+func revivalLossDuplicate(text string) string {
+	dec := json.NewDecoder(strings.NewReader(text))
+	var walk func(path string) string
+	walk = func(path string) string {
+		tok, err := dec.Token()
+		switch {
+		case err != nil:
+			return ""
+		case tok == json.Delim('{'):
+			seen := map[string]bool{}
+			for dec.More() {
+				k, err := dec.Token()
+				if err != nil {
+					return ""
+				}
+				key, at := k.(string), revivalLossKey(path, k.(string))
+				if seen[key] {
+					return at
+				}
+				seen[key] = true
+				if lost := walk(at); lost != "" {
+					return lost
+				}
+			}
+			_, _ = dec.Token()
+		case tok == json.Delim('['):
+			for i := 0; dec.More(); i++ {
+				if lost := walk(fmt.Sprintf("%s[%d]", path, i)); lost != "" {
+					return lost
+				}
+			}
+			_, _ = dec.Token()
+		}
+		return ""
+	}
+	return walk("")
 }
 
 // revivalLoss is the first place of a stored plan that a write of its revived form would not keep, as a JSON path, or "" when

@@ -103,7 +103,7 @@ func revivalLossReadPlan(dir *os.File, real, path, slug string) (GoalplanReadRes
 		field := firstInvalidField(parsed)
 		return readFailure("invalid-shape", path, "the goalplan parsed as JSON but field '"+field+"' did not satisfy the schema", field), revivalLossFile{}
 	}
-	return GoalplanReadResult{Plan: plan}, revivalLossFile{parsed: parsed, badByte: revivalLossBadByte(raw)}
+	return GoalplanReadResult{Plan: plan}, revivalLossFile{parsed: parsed, text: decoded, badByte: revivalLossBadByte(raw)}
 }
 
 // Refuse valid JSON that encoding/json would decode lossily (data-loss exception).
