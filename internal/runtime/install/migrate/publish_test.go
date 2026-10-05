@@ -91,8 +91,9 @@ func TestPublishNeverReplaces(t *testing.T) {
 		res    Result
 		reason Reason
 	}{
-		"different bytes":         {func(d string) { put(t, d+"/leaf", "old", 0o640) }, ResultRefused, ReasonDiffers},
-		"equal bytes, other mode": {func(d string) { put(t, d+"/leaf", "data", 0o600) }, ResultAlreadyEqual, ""},
+		"different bytes":            {func(d string) { put(t, d+"/leaf", "old", 0o640) }, ResultRefused, ReasonDiffers},
+		"different bytes, same size": {func(d string) { put(t, d+"/leaf", "datb", 0o640) }, ResultRefused, ReasonDiffers},
+		"equal bytes, other mode":    {func(d string) { put(t, d+"/leaf", "data", 0o600) }, ResultAlreadyEqual, ""},
 		"link to an equal file": {func(d string) {
 			put(t, d+"/target", "data", 0o644)
 			must(t, os.Symlink("target", d+"/leaf"))
