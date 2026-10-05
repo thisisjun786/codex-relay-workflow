@@ -154,6 +154,12 @@ var receiptAfterPublishHook func()
 // captured again.
 var receiptLateCancelHook func()
 
+// receiptLockAfterCompareHook, when non-nil, runs inside a withdrawal after it has compared the receipt on
+// disk with its own bytes and found them equal, and before it unlinks them. It is nil in production;
+// receipt_withdraw_race_test.go uses it to let a second run publish at the one point where a withdrawal
+// that does not exclude other runs would remove that run's receipt.
+var receiptLockAfterCompareHook func()
+
 // RunReceiptCLI ports receipt-cli.ts:75-185: guard, unlink stale receipt, capture, execute argv without a shell, capture again
 // and publish only a successful unchanged-tree result. The receipt stays native while a bound command runs in its source.
 // A cancellation seen anywhere before the rename refuses the receipt, and one that lands after the publication check
@@ -289,6 +295,9 @@ func withdrawReceipt(path string, published []byte) error {
 	}
 	if !bytes.Equal(current, published) {
 		return nil
+	}
+	if receiptLockAfterCompareHook != nil {
+		receiptLockAfterCompareHook()
 	}
 	return removeReceipt(path)
 }
