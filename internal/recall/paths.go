@@ -5,11 +5,28 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
+
+// RecallPhysicalAbs resolves path as Node's path.resolve does: process.cwd() is the
+// kernel's getcwd, which names the physical directory and needs no permission on any
+// ancestor, while Go's os.Getwd honors a logical $PWD. A relative path therefore joins
+// syscall.Getwd; only that base is physical, and path itself may not exist and keeps
+// its own symlinks. The result of a failed lookup is "".
+func RecallPhysicalAbs(path string) (string, error) {
+	if filepath.IsAbs(path) {
+		return filepath.Clean(path), nil
+	}
+	cwd, err := syscall.Getwd()
+	if err != nil {
+		return "", os.NewSyscallError("getwd", err)
+	}
+	return filepath.Join(cwd, path), nil
+}
 
 func codexHome(env ...host.LookupEnv) (string, error) {
 	lookup := host.LookupEnv(os.LookupEnv)
@@ -17,7 +34,7 @@ func codexHome(env ...host.LookupEnv) (string, error) {
 		lookup = env[0]
 	}
 	if value, _ := lookup("CODEX_HOME"); text.Trim(value) != "" {
-		return filepath.Abs(source.DecodeUTF8([]byte(value)))
+		return RecallPhysicalAbs(source.DecodeUTF8([]byte(value)))
 	}
 	home, err := host.Home(os.LookupEnv)
 	if err != nil {

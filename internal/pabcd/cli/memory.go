@@ -1,8 +1,6 @@
 package cli
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -96,23 +94,20 @@ func RunMemoryCLI(a MemoryAllowWriteArgs) (string, int) {
 	return fmt.Sprintf("memory allow-write: session %s may perform ONE memory write; grant recorded for cwd %s; the next write consumes this grant.", a.SessionID, a.Cwd), 0
 }
 
-// cliVerdictsIntact prevents publishing a reconstructed list that discarded raw
-// records. The existing evidence owner's count helper is private; keeping this
-// scoped check here avoids changing that package's public API. Reads occur under
-// WithSessionLock. Absent/null lists are valid old-schema states; non-arrays are not.
+// cliVerdictsIntact prevents publishing a reconstructed list that discarded or changed
+// raw records: the list the reader rebuilds from the file must equal what the file
+// stores (state.RewriteKeepsUnverified), and hold the count the caller read. The existing
+// evidence owner's count helper is private; keeping this scoped check here avoids changing
+// that package's public API. Reads occur under WithSessionLock. Absent/null lists are
+// valid old-schema states; non-arrays are not.
 func cliVerdictsIntact(cwd, sessionID string, count int) bool {
 	raw, err := os.ReadFile(state.StatePath(cwd, sessionID))
 	if os.IsNotExist(err) {
 		return count == 0
 	}
-	var fields map[string]json.RawMessage
-	if err != nil || json.Unmarshal(raw, &fields) != nil {
+	if err != nil {
 		return false
 	}
-	value, present := fields["unverifiedSubagents"]
-	if !present || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
-		return count == 0
-	}
-	var records []json.RawMessage
-	return json.Unmarshal(value, &records) == nil && len(records) == count
+	s, unreadable := state.ReadStateStrict(cwd, sessionID)
+	return !unreadable && len(s.UnverifiedSubagents) == count && state.RewriteKeepsUnverified(raw, s.UnverifiedSubagents)
 }

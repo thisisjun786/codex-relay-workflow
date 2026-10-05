@@ -1,7 +1,10 @@
 package hook
 
 import (
+	"errors"
+	"io/fs"
 	"math"
+	"os"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
@@ -31,6 +34,19 @@ func IdleEditAdvisory(sessionID string, env host.LookupEnv) string {
 // unsafeCounterWrite marks states whose read-back value cannot preserve their records.
 func unsafeCounterWrite(s state.State) bool {
 	return s.UnverifiedCorrupt || (s.DcloseRecovery != nil && s.DcloseRecovery.Legacy)
+}
+
+// rewriteGuardLossy says whether writing fresh's unverified-subagent list over the session file would change a record the file
+// stores (a receipt past 256 units, a field of the wrong type; state.RewriteKeepsUnverified), which the reader's flag does not show.
+// It runs only on the state read inside the lock: the state read before the goal lookup may be older than the file, and comparing it
+// would refuse a record a participating writer stored meanwhile. A file that does not exist stores nothing; one that cannot be read
+// now is refused.
+func rewriteGuardLossy(cwd, sessionID string, kept []state.UnverifiedSubagent) bool {
+	raw, err := os.ReadFile(state.StatePath(cwd, sessionID))
+	if errors.Is(err, fs.ErrNotExist) {
+		return len(kept) != 0
+	}
+	return err != nil || !state.RewriteKeepsUnverified(raw, kept)
 }
 
 // HandleIdleEditAdvisory never denies. Like idle-edit.ts it neither trims JSON nor checks its event.
@@ -63,7 +79,7 @@ func HandleIdleEditAdvisory(raw string, env host.LookupEnv) string {
 		// Cosmetic failures stay fail-open; an unavailable lock uses the first read's count.
 		_ = state.WithSessionLock(cwd, sid, func() error {
 			fresh, bad := state.ReadStateStrict(cwd, sid)
-			if bad || unsafeCounterWrite(fresh) {
+			if bad || unsafeCounterWrite(fresh) || rewriteGuardLossy(cwd, sid, fresh.UnverifiedSubagents) {
 				return nil
 			}
 			if fresh.Phase != state.PhaseIdle || fresh.OrchestrationActive {
