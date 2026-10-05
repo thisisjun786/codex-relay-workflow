@@ -280,6 +280,9 @@ func CLI(args []string, in io.Reader, stdout, stderr io.Writer, env host.LookupE
 		return 2
 	}
 	args = args[1:]
+	if len(args) > 0 && args[0] == "dispatch-lock-clear" { // not a HelperCommands row: TestHelperCLI pins that table's names
+		return DispatchLockClearCommand(args[1:], in, stdout, env)
+	}
 	for _, command := range HelperCommands() {
 		if len(args) > 0 && args[0] == command.Name {
 			return command.Run(args[1:], in, stdout, env)

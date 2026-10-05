@@ -22,7 +22,7 @@ type withdrawKit struct {
 
 func newWithdrawKit(t *testing.T) *withdrawKit {
 	t.Helper()
-	k := newForgeIntegrationKit(t)
+	k := newIntegrationKit(t)
 	repo := k.repo
 	repo.git("checkout", "-q", "-b", "feature")
 	h1 := repo.commit("feature.txt", "feature")

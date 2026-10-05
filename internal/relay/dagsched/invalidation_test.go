@@ -468,7 +468,7 @@ func invAssertWhole(k *releaseKit, plan, node string) {
 // Observing the integration again after dev moved must change nothing K consumed: the same edge evidence, the same manifest digest, no stale node. Q is then revised to show the judgement
 // still names the real seed (the edge qk) and not the integrated edge.
 func TestUnrelatedDevMoveChangesNothing(t *testing.T) {
-	k := newIntegrationKit(t)
+	k := newLegacyLocalIntegrationKit(t)
 	repo := k.repo
 	k.putPlan("g", int(k.snapshot("g").Revision), "g-r2", addRelNode("Q", dag.NodeNonPR), addEdge("qk", "Q", "K", dag.EdgeArtifactVerified, nil))
 	repo.git("checkout", "-q", "-b", "feature")
@@ -541,7 +541,7 @@ func TestUnrelatedDevMoveChangesNothing(t *testing.T) {
 // Contract E-20: a node that landed is never invalidated: its result is in dev, and what rests on the landing keeps resting on it however the plan above it moves. U is the plan's node above I;
 // revising it makes U stale and reaches I (a descendant), which has landed, and K (built on the landing), whose consumed manifest is the one rebuilt now.
 func TestIntegratedNodeIsNeverStale(t *testing.T) {
-	k := newIntegrationKit(t)
+	k := newLegacyLocalIntegrationKit(t)
 	repo := k.repo
 	k.putPlan("g", int(k.snapshot("g").Revision), "g-r2", addRelNode("U", dag.NodeNonPR), addEdge("ui", "U", "I", dag.EdgeArtifactVerified, nil))
 	k.invSettle("g", "U")
@@ -579,7 +579,7 @@ func TestIntegratedNodeIsNeverStale(t *testing.T) {
 // current. A landed commit that no observation of the current run names is another landing, and K reads stale because of the edge ik.
 func TestALandedTipOfTheSameRunIsNotAChangedInput(t *testing.T) {
 	setup := func(t *testing.T, landed func(middle string) string) *integrationKit {
-		k := newIntegrationKit(t)
+		k := newLegacyLocalIntegrationKit(t)
 		repo := k.repo
 		k.putPlan("g", int(k.snapshot("g").Revision), "g-r2", addRelNode("S", dag.NodeNonPR), addEdge("sk", "S", "K", dag.EdgeDecision, nil))
 		repo.git("checkout", "-q", "-b", "feature")

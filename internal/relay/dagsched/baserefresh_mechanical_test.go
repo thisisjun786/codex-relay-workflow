@@ -24,10 +24,10 @@ func mechanicalRefreshAt(t *testing.T, rule string, mixed bool, target func(*git
 	var k *integrationKit
 	repository, checkout := forgeKitRepository, ""
 	if target == nil {
-		k = newForgeIntegrationKit(t)
+		k = newIntegrationKit(t)
 		checkout = k.repo.path
 	} else {
-		k = newIntegrationKit(t)
+		k = newLegacyLocalIntegrationKit(t)
 	}
 	r := k.repo
 	if target != nil {
