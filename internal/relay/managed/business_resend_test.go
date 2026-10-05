@@ -337,6 +337,7 @@ type businessResendUnloadApp struct {
 	host           *scriptedApp
 	archiveErr     error
 	unarchiveErr   error
+	onUnarchive    func()
 	stayLoaded     bool
 	archiveCalls   []string
 	unarchiveCalls []string
@@ -356,6 +357,9 @@ func (a *businessResendUnloadApp) HostCall(ctx context.Context, method string, p
 		return map[string]any{}, nil
 	case "thread/unarchive":
 		a.unarchiveCalls = append(a.unarchiveCalls, id)
+		if a.onUnarchive != nil {
+			a.onUnarchive()
+		}
 		if a.unarchiveErr != nil {
 			return nil, a.unarchiveErr
 		}
@@ -508,5 +512,30 @@ func TestBusinessResendUnloadRechecksReadinessBeforeArchive(t *testing.T) {
 	}
 	if len(app.archiveCalls) != 0 || len(app.unarchiveCalls) != 0 {
 		t.Fatalf("archive ran without readiness: %v %v", app.archiveCalls, app.unarchiveCalls)
+	}
+}
+
+// Once the archive has succeeded the child is archived, so the row recording it has to survive the
+// caller's cancellation: an archived child with no row leaves an operator nothing to read.
+func TestBusinessResendUnloadRecordsArchivedChildWhenCancelled(t *testing.T) {
+	k, _, _ := businessResendKit(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	app := &businessResendUnloadApp{Adapter: k.host, host: k.host, unarchiveErr: errors.New("thread/unarchive: cancelled"), onUnarchive: cancel}
+	k.host.threads["t-1"].status = "idle"
+	k.start.Adapter = app
+	r := &startRun{m: k.start, task: "t-1", standby: "standby", businessAttempt: 1, resendFailure: businessResendLegacyReceipt("t-1"), identity: Identity{RequestID: "managed-1"}, ledger: k.host.ledger}
+	if code, err := r.businessResendUnload(ctx); code != "" || !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled unarchive: %q %v", code, err)
+	}
+	if !reflect.DeepEqual(app.archiveCalls, []string{"t-1"}) || !reflect.DeepEqual(app.unarchiveCalls, []string{"t-1"}) {
+		t.Fatalf("archive/unarchive calls: %v %v", app.archiveCalls, app.unarchiveCalls)
+	}
+	var detail string
+	if err := k.start.Store.DB.QueryRow("SELECT detail FROM journal WHERE kind='managed_resend_unloaded'").Scan(&detail); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(detail, "t-1") || !strings.Contains(detail, "thread/unarchive t-1") {
+		t.Fatalf("cancelled unload detail: %s", detail)
 	}
 }

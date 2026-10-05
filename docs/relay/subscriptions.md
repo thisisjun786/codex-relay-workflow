@@ -182,7 +182,9 @@ An archive error answers incomplete `recipient_not_idle` with no unarchive and n
 unarchive that fails twice answers incomplete `lifecycle_unknown`, naming the archived thread for
 an operator in the journal; a child still loaded afterwards answers `recipient_not_idle`. Every
 unload writes one `managed_resend_unloaded` journal row naming the thread, the archive and
-unarchive results and the load state observed afterwards. Empty, missing-rollout or unreadable
+unarchive results and the load state observed afterwards; once the archive has succeeded the row
+is written with a context that survives the caller's cancellation, because an archived child with
+no row would leave an operator nothing to read. Empty, missing-rollout or unreadable
 history stays held as `lifecycle_unknown`; another turn refuses as
 `business_identity_unobserved`. The final business guard repeats the standby-only check after
 the recorded-profile resume.

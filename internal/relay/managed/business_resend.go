@@ -204,20 +204,28 @@ func (r *startRun) businessResendUnload(ctx context.Context) (string, error) {
 		return "recipient_not_idle", nil
 	}
 	detail["archive"] = "ok"
+	// From here the child is archived, and every way out records the lowering with a context that
+	// survives the caller's cancellation, as the creation attempt marker is: an archived child with
+	// no row would leave an operator nothing to read, and an unarchive whose outcome a cancellation
+	// made unknown is exactly that case.
+	record := func() error { return r.recordResendUnload(context.WithoutCancel(ctx), detail) }
 	var failure error
 	for attempt := 0; attempt < 2; attempt++ {
 		if _, failure = r.m.Adapter.HostCall(ctx, "thread/unarchive", map[string]any{"threadId": r.task}); failure == nil {
 			break
 		}
 		if ctx.Err() != nil {
-			return "", ctx.Err()
+			break
 		}
 	}
 	if failure != nil {
 		detail["unarchive"] = "failed"
 		detail["operator"] = "thread/unarchive " + r.task
-		if err := r.recordResendUnload(ctx, detail); err != nil {
+		if err := record(); err != nil {
 			return "", err
+		}
+		if ctx.Err() != nil {
+			return "", ctx.Err()
 		}
 		return "lifecycle_unknown", nil
 	}
@@ -225,12 +233,16 @@ func (r *startRun) businessResendUnload(ctx context.Context) (string, error) {
 	status, code, err = r.businessResendThreadStatus(ctx)
 	if err != nil {
 		if ctx.Err() != nil {
+			detail["after"] = "unknown"
+			if rerr := record(); rerr != nil {
+				return "", rerr
+			}
 			return "", ctx.Err()
 		}
 		status, code = "unknown", "lifecycle_unknown"
 	}
 	detail["after"] = status
-	if err := r.recordResendUnload(ctx, detail); err != nil {
+	if err := record(); err != nil {
 		return "", err
 	}
 	if code != "" {
