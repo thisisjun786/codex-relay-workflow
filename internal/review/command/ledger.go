@@ -15,19 +15,31 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// A record is one line of ledger.jsonl. Event is started (counts toward the daily cap), finished (the patch-id is reviewed from then on), unavailable (a review that could not run at all for a reason of the
-// account or the configuration: the patch-id is still open for one more attempt, see standing), failed (history only) or refused (the run rules stopped it).
+// A record is one line of ledger.jsonl. Event is started (counts toward the daily cap), finished (the patch-id is reviewed from then on), unavailable (a review that could not run at all for a reason of
+// the account or the configuration or because the runner failed: the patch-id is still open for one more attempt, see standing), lock_wait (the attempt's agy was never started because the host-wide lock
+// was not free: the attempt counts toward nothing and closes nothing), failed (history only) or refused (the run rules stopped it).
 type record struct {
-	Time     string `json:"time"`
-	Event    string `json:"event"`
-	PatchID  string `json:"patchId"`
-	Base     string `json:"base"`
-	Head     string `json:"head"`
-	Issue    string `json:"issue"`
-	Reason   string `json:"reason,omitempty"`
-	Artifact string `json:"artifact,omitempty"`
-	SHA256   string `json:"sha256,omitempty"`
-	Status   string `json:"status,omitempty"`
+	Time      string `json:"time"`
+	Event     string `json:"event"`
+	PatchID   string `json:"patchId"`
+	Base      string `json:"base"`
+	Head      string `json:"head"`
+	Issue     string `json:"issue"`
+	Reason    string `json:"reason,omitempty"`
+	Artifact  string `json:"artifact,omitempty"`
+	SHA256    string `json:"sha256,omitempty"`
+	Status    string `json:"status,omitempty"`
+	AgyCalled *bool  `json:"agyCalled,omitempty"` // whether agy was actually called, when that can be told: false for a lock wait or a runner that never started agy, true for a failure agy reported; absent when it cannot be told
+}
+
+// The ledger event a lock wait writes: the attempt was recorded as started and then agy was never started because the host-wide lock was not free. It closes nothing, counts toward nothing, and is
+// followed by the next attempt of the same patch whenever one is made.
+const eventLockWait = "lock_wait"
+
+// voided reports whether the started record at i was an attempt whose agy was never started, which the record that follows it (a lock_wait) says. Appends are made only under the run lock, so the record
+// after a started is the one that ended that attempt; the next attempt's started is not a lock_wait, so a bare started (a process that died) is not voided.
+func voided(recs []record, i int) bool {
+	return i+1 < len(recs) && recs[i+1].Event == eventLockWait
 }
 
 var errBusy = errors.New("another review holds the run lock")
@@ -71,17 +83,17 @@ func (l *ledger) read() ([]record, error) {
 	return recs, nil
 }
 
-// runsOn counts the reviews that started on the UTC day (2006-01-02).
+// runsOn counts the reviews that started on the UTC day (2006-01-02). An attempt whose agy was never started (a lock wait) is not a review and does not count.
 func runsOn(recs []record, day string) (n int) {
-	for _, r := range recs {
-		if r.Event == "started" && strings.HasPrefix(r.Time, day) {
+	for i, r := range recs {
+		if r.Event == "started" && strings.HasPrefix(r.Time, day) && !voided(recs, i) {
 			n++
 		}
 	}
 	return n
 }
 
-// standing is where one patch-id stands: a finished record closes it, an unavailable one leaves it open for one more attempt, which is spent as soon as a started record follows it.
+// standing is where one patch-id stands: a finished record closes it, an unavailable one leaves it open for one more attempt, which is spent as soon as a started record that is not a lock wait follows it.
 type standing struct {
 	finished, unavailable *record
 	retried               bool
@@ -95,7 +107,7 @@ func standingOf(recs []record, patchID string) (s standing) {
 			s.finished = &recs[i]
 		case r.Event == "unavailable":
 			s.unavailable, s.retried = &recs[i], false
-		case r.Event == "started" && s.unavailable != nil:
+		case r.Event == "started" && s.unavailable != nil && !voided(recs, i):
 			s.retried = true
 		}
 	}
