@@ -1,0 +1,349 @@
+{
+ "oracle": "CXC v0.2.40 (3c1459acadeb1906d97c00a598e1457327ae372d)",
+ "dist": "plugins/codexclaw/components/cxc-ops/dist/hook-trust.js",
+ "node": "v24.20.0",
+ "note": "Each case builds one plugin (a Stop or PreToolUse document at hooks/sample.json) and a config.toml (text, {base64} bytes, or none), then records readInstalledPluginKeys keys and one diagnoseHookTrust answer per entry (key, status, actual); a read that fails is recorded as error or errorClass.",
+ "cases": [
+  {
+   "name": "missing_config",
+   "noConfig": true,
+   "keys": [],
+   "diagnose": [
+    {
+     "key": "fixture@market:hooks/sample.json:stop:0:0",
+     "status": "untrusted",
+     "actual": null
+    }
+   ]
+  },
+  {
+   "name": "empty_config",
+   "config": "",
+   "keys": [],
+   "diagnose": [
+    {
+     "key": "fixture@market:hooks/sample.json:stop:0:0",
+     "status": "untrusted",
+     "actual": null
+    }
+   ]
+  },
+  {
+   "name": "enabled_candidates_and_disabled_sections",
+   "config": "[plugins.\"fixture@one\"]\nenabled = true\n[plugins.\"fixture@off\"]\nenabled = false # intentionally disabled\n[plugins.\"other@market\"]\nenabled = true\n[plugins.\"fixture@two\"]\nsource = \"dev\"\n",
+   "keys": [
+    "fixture@one",
+    "fixture@two"
+   ],
+   "diagnose": [
+    {
+     "key": "fixture@market:hooks/sample.json:stop:0:0",
+     "status": "untrusted",
+     "actual": null
+    }
+   ]
+  },
+  {
+   "name": "trailing_comments_on_headers",
+   "config": "[plugins.\"fixture@market\"] # installed from local marketplace\nenabled = true\n[hooks.state.\"fixture@market:hooks/sample.json:stop:0:0\"]  # retained by operator\ntrusted_hash = \"sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4\" # written by Codex\n",
+   "keys": [
+    "fixture@market"
+   ],
+   "diagnose": [
+    {
+     "key": "fixture@market:hooks/sample.json:stop:0:0",
+     "status": "trusted",
+     "actual": "sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4"
+    }
+   ]
+  },
+  {
+   "name": "crlf_trusted",
+   "config": "[plugins.\"fixture@market\"]\r\nenabled = true\r\n[hooks.state.\"fixture@market:hooks/sample.json:stop:0:0\"]\r\ntrusted_hash = \"sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4\"\r\n",
+   "keys": [
+    "fixture@market"
+   ],
+   "diagnose": [
+    {
+     "key": "fixture@market:hooks/sample.json:stop:0:0",
+     "status": "trusted",
+     "actual": "sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4"
+    }
+   ]
+  },
+  {
+   "name": "crlf_disabled_section",
+   "config": "[plugins.\"fixture@market\"]\r\nenabled = false\r\n",
+   "keys": [],
+   "diagnose": [
+    {
+     "key": "fixture@market:hooks/sample.json:stop:0:0",
+     "status": "untrusted",
+     "actual": null
+    }
+   ]
+  },
+  {
+   "name": "duplicate_headers",
+   "config": "[hooks.state.\"fixture@market:hooks/sample.json:stop:0:0\"]\ntrusted_hash = \"sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4\"\n\n[hooks.state.\"fixture@market:hooks/sample.json:stop:0:0\"]\ntrusted_hash = \"sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4\"\n",
+   "keys": [],
+   "diagnose": [
+    {
+     "key": "fixture@market:hooks/sample.json:stop:0:0",
+     "status": "untrusted",
+     "actual": null
+    }
+   ]
+  },
+  {
+   "name": "two_trusted_hash_lines",
+   "config": "[hooks.state.\"fixture@market:hooks/sample.json:stop:0:0\"]\ntrusted_hash = \"sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4\"\ntrusted_hash = \"sha256:stale\"\n",
+   "keys": [],
+   "diagnose": [
+    {
+     "key": "fixture@market:hooks/sample.json:stop:0:0",
+     "status": "untrusted",
+     "actual": null
+    }
+   ]
+  },
+  {
+   "name": "empty_trusted_hash_value",
+   "config": "[hooks.state.\"fixture@market:hooks/sample.json:stop:0:0\"]\ntrusted_hash = \"\"\n",
+   "keys": [],
+   "diagnose": [
+    {
+     "key": "fixture@market:hooks/sample.json:stop:0:0",
+     "status": "drifted",
+     "actual": ""
+    }
+   ]
+  },
+  {
+   "name": "escaped_quote_in_value_is_no_record",
+   "config": "[hooks.state.\"fixture@market:hooks/sample.json:stop:0:0\"]\ntrusted_hash = \"a\\\"b\"\n",
+   "keys": [],
+   "diagnose": [
+    {
+     "key": "fixture@market:hooks/sample.json:stop:0:0",
+     "status": "untrusted",
+     "actual": null
+    }
+   ]
+  },
+  {
+   "name": "escaped_quote_before_section",
+   "config": "note = \"say \\\"hi\\\"\"\n[hooks.state.\"fixture@market:hooks/sample.json:stop:0:0\"]\ntrusted_hash = \"sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4\"\n",
+   "keys": [],
+   "diagnose": [
+    {
+     "key": "fixture@market:hooks/sample.json:stop:0:0",
+     "status": "trusted",
+     "actual": "sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4"
+    }
+   ]
+  },
+  {
+   "name": "fake_section_in_basic_multiline",
+   "config": "payload = \"\"\"\n[hooks.state.\"fixture@market:hooks/sample.json:stop:0:0\"]\ntrusted_hash = \"sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4\"\n\"\"\"\n",
+   "keys": [],
+   "diagnose": [
+    {
+     "key": "fixture@market:hooks/sample.json:stop:0:0",
+     "status": "untrusted",
+     "actual": null
+    }
+   ]
+  },
+  {
+   "name": "fake_section_then_real_section_basic",
+   "config": "payload = \"\"\"\n[hooks.state.\"fixture@market:hooks/sample.json:stop:0:0\"]\ntrusted_hash = \"sha256:stale\"\n\"\"\"\n[hooks.state.\"fixture@market:hooks/sample.json:stop:0:0\"]\ntrusted_hash = \"sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4\"\n",
+   "keys": [],
+   "diagnose": [
+    {
+     "key": "fixture@market:hooks/sample.json:stop:0:0",
+     "status": "trusted",
+     "actual": "sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4"
+    }
+   ]
+  },
+  {
+   "name": "fake_section_in_literal_multiline",
+   "config": "plugin_note = '''\n[hooks.state.\"fixture@market:hooks/sample.json:stop:0:0\"]\ntrusted_hash = \"sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4\"\n'''\n[plugins.\"fixture@market\"]\nenabled = true\nplugin_note = '''\nenabled = false # string content must not disable the plugin\n'''\n",
+   "keys": [
+    "fixture@market"
+   ],
+   "diagnose": [
+    {
+     "key": "fixture@market:hooks/sample.json:stop:0:0",
+     "status": "untrusted",
+     "actual": null
+    }
+   ]
+  },
+  {
+   "name": "escaped_close_keeps_basic_multiline_open",
+   "config": "payload = \"\"\"\n\\\"\"\"\n[hooks.state.\"fixture@market:hooks/sample.json:stop:0:0\"]\ntrusted_hash = \"sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4\"\n\"\"\"\n",
+   "keys": [],
+   "diagnose": [
+    {
+     "key": "fixture@market:hooks/sample.json:stop:0:0",
+     "status": "untrusted",
+     "actual": null
+    }
+   ]
+  },
+  {
+   "name": "comment_line_separator_after_trusted_hash",
+   "config": "[hooks.state.\"fixture@market:hooks/sample.json:stop:0:0\"]\ntrusted_hash = \"sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4\" #x y\n",
+   "keys": [],
+   "diagnose": [
+    {
+     "key": "fixture@market:hooks/sample.json:stop:0:0",
+     "status": "untrusted",
+     "actual": null
+    }
+   ]
+  },
+  {
+   "name": "comment_carriage_return_after_trusted_hash",
+   "config": "[hooks.state.\"fixture@market:hooks/sample.json:stop:0:0\"]\ntrusted_hash = \"sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4\" #x\ry\n",
+   "keys": [],
+   "diagnose": [
+    {
+     "key": "fixture@market:hooks/sample.json:stop:0:0",
+     "status": "untrusted",
+     "actual": null
+    }
+   ]
+  },
+  {
+   "name": "comment_line_separator_on_section_header",
+   "config": "[hooks.state.\"fixture@market:hooks/sample.json:stop:0:0\"] # x y\ntrusted_hash = \"sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4\"\n",
+   "keys": [],
+   "diagnose": [
+    {
+     "key": "fixture@market:hooks/sample.json:stop:0:0",
+     "status": "untrusted",
+     "actual": null
+    }
+   ]
+  },
+  {
+   "name": "comment_line_separator_on_enabled_false",
+   "config": "[plugins.\"fixture@one\"]\nenabled = false # x y\n",
+   "keys": [
+    "fixture@one"
+   ],
+   "diagnose": [
+    {
+     "key": "fixture@market:hooks/sample.json:stop:0:0",
+     "status": "untrusted",
+     "actual": null
+    }
+   ]
+  },
+  {
+   "name": "invalid_utf8_before_section",
+   "configBase64": "77+9ID0g//4KW2hvb2tzLnN0YXRlLiJmaXh0dXJlQG1hcmtldDpob29rcy9zYW1wbGUuanNvbjpzdG9wOjA6MCJdCnRydXN0ZWRfaGFzaCA9ICJzaGEyNTY6NjFkODRkZGJlMzQ2ODYzNDRlMDVmZTVhMzZiZTdmOGQzNTQxM2JhMzM2YmE2ODQ1MmE5YmE2Y2NmMDE4MWZmNCIK",
+   "keys": [],
+   "diagnose": [
+    {
+     "key": "fixture@market:hooks/sample.json:stop:0:0",
+     "status": "trusted",
+     "actual": "sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4"
+    }
+   ]
+  },
+  {
+   "name": "multibyte_before_section",
+   "configBase64": "w78gPSDDvgpbaG9va3Muc3RhdGUuImZpeHR1cmVAbWFya2V0Omhvb2tzL3NhbXBsZS5qc29uOnN0b3A6MDowIl0KdHJ1c3RlZF9oYXNoID0gInNoYTI1Njo2MWQ4NGRkYmUzNDY4NjM0NGUwNWZlNWEzNmJlN2Y4ZDM1NDEzYmEzMzZiYTY4NDUyYTliYTZjY2YwMTgxZmY0Igo=",
+   "keys": [],
+   "diagnose": [
+    {
+     "key": "fixture@market:hooks/sample.json:stop:0:0",
+     "status": "trusted",
+     "actual": "sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4"
+    }
+   ]
+  },
+  {
+   "name": "config_is_directory",
+   "configDir": true,
+   "keysErrorClass": "EISDIR",
+   "diagnoseErrorClass": "EISDIR"
+  },
+  {
+   "name": "bom_before_first_plugin_header",
+   "config": "﻿[plugins.\"fixture@market\"]\nenabled = true\n[hooks.state.\"fixture@market:hooks/sample.json:stop:0:0\"]\ntrusted_hash = \"sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4\"\n",
+   "keys": [],
+   "diagnose": [
+    {
+     "key": "fixture@market:hooks/sample.json:stop:0:0",
+     "status": "trusted",
+     "actual": "sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4"
+    }
+   ]
+  },
+  {
+   "name": "cr_only_line_endings",
+   "config": "[hooks.state.\"fixture@market:hooks/sample.json:stop:0:0\"]\rtrusted_hash = \"sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4\"\r",
+   "keys": [],
+   "diagnose": [
+    {
+     "key": "fixture@market:hooks/sample.json:stop:0:0",
+     "status": "untrusted",
+     "actual": null
+    }
+   ]
+  },
+  {
+   "name": "plugin_name_is_escaped",
+   "pluginName": "a+b",
+   "config": "[plugins.\"aab@one\"]\nenabled = true\n[plugins.\"a+b@two\"]\nenabled = true\n",
+   "keys": [
+    "a+b@two"
+   ],
+   "diagnose": [
+    {
+     "key": "fixture@market:hooks/sample.json:stop:0:0",
+     "status": "untrusted",
+     "actual": null
+    }
+   ]
+  },
+  {
+   "name": "duplicate_enabled_sections_kept",
+   "config": "[plugins.\"fixture@one\"]\nenabled = true\n[plugins.\"fixture@one\"]\nenabled = 1\n",
+   "keys": [
+    "fixture@one",
+    "fixture@one"
+   ],
+   "diagnose": [
+    {
+     "key": "fixture@market:hooks/sample.json:stop:0:0",
+     "status": "untrusted",
+     "actual": null
+    }
+   ]
+  },
+  {
+   "name": "two_groups_second_trusted",
+   "document": "{\"hooks\":{\"PreToolUse\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"a\"}]},{\"matcher\":\"^x$\",\"hooks\":[{\"type\":\"command\",\"command\":\"b\"}]}]}}",
+   "config": "[hooks.state.\"fixture@market:hooks/sample.json:pre_tool_use:1:0\"]\ntrusted_hash = \"sha256:f2aa41dad0612e5c1689d4efec2d897ce087267da7ae352f30768aa715dd896a\"\n",
+   "keys": [],
+   "diagnose": [
+    {
+     "key": "fixture@market:hooks/sample.json:pre_tool_use:0:0",
+     "status": "untrusted",
+     "actual": null
+    },
+    {
+     "key": "fixture@market:hooks/sample.json:pre_tool_use:1:0",
+     "status": "trusted",
+     "actual": "sha256:f2aa41dad0612e5c1689d4efec2d897ce087267da7ae352f30768aa715dd896a"
+    }
+   ]
+  }
+ ]
+}
