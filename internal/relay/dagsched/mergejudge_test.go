@@ -19,13 +19,13 @@ type judgeKit struct {
 
 func newJudgeKit(t *testing.T) *judgeKit {
 	t.Helper()
-	k := &judgeKit{integrationKit: newIntegrationKit(t)}
+	k := &judgeKit{integrationKit: newForgeIntegrationKit(t)}
 	repo := k.repo
 	repo.git("checkout", "-q", "-b", "feature")
 	k.feature = repo.commit("feature.txt", "feature")
 	repo.git("checkout", "-q", "dev")
 	k.declare("g", "I", "feature.txt")
-	k.acceptNode("g", "I", acceptOpts{HeadSHA: k.feature, PR: 5, Forge: "owner/repo", Repository: repo.path})
+	k.acceptOnForge("g", "I", acceptOpts{HeadSHA: k.feature, PR: 5})
 	k.pr = PullRequest{Repository: "owner/repo", Number: 5, State: "open", HeadSHA: k.feature, BaseRef: "dev", BaseSHA: repo.git("rev-parse", "dev"), Verdict: "ready", RequiredDeclared: []string{"A", "B"}, RequiredReadable: true}
 	k.setChecks("A:1:1:success", "B:2:1:success")
 	return k
@@ -223,7 +223,7 @@ func TestMergeStaleBaseIsHeadContainsTip(t *testing.T) {
 	second := repo.commit("second.txt", "second")
 	repo.git("checkout", "-q", "dev")
 	k.declare("g", "D", "second.txt")
-	k.acceptNode("g", "D", acceptOpts{HeadSHA: second, PR: 6, Forge: "owner/repo", Repository: repo.path})
+	k.acceptOnForge("g", "D", acceptOpts{HeadSHA: second, PR: 6})
 	pr := k.pr
 	pr.Number, pr.HeadSHA, pr.BaseSHA = 6, second, strings.Repeat("0", 40)
 	pr.Checks = []Check{{Name: "A", RunID: "1", Attempt: 1, Conclusion: "success", HeadSHA: second}, {Name: "B", RunID: "2", Attempt: 1, Conclusion: "success", HeadSHA: second}}
@@ -264,7 +264,7 @@ func TestMergeEligibilityStaleAndOrder(t *testing.T) {
 		t.Run("a predecessor that has not landed ("+kind+")", func(t *testing.T) {
 			k := newJudgeKit(t)
 			repo := k.repo
-			extra := doc{"target_repository": repo.path, "target_base_ref": "dev"}
+			extra := doc{"target_repository": forgeKitRepository, "target_base_ref": "dev"}
 			edgeKind := "integrated"
 			if kind == "pinned" {
 				edgeKind = "artifact_verified"
@@ -277,7 +277,7 @@ func TestMergeEligibilityStaleAndOrder(t *testing.T) {
 			repo.git("checkout", "-q", "dev")
 			_ = tip
 			k.declare("g", "D", "stacked.txt")
-			a := k.acceptNode("g", "D", acceptOpts{HeadSHA: second, PR: 6, Forge: "owner/repo", Repository: repo.path})
+			a := k.acceptOnForge("g", "D", acceptOpts{HeadSHA: second, PR: 6})
 			pr := k.pr
 			pr.Number, pr.HeadSHA = 6, second
 			pr.Checks = []Check{{Name: "A", RunID: "1", Attempt: 1, Conclusion: "success", HeadSHA: second}, {Name: "B", RunID: "2", Attempt: 1, Conclusion: "success", HeadSHA: second}}
@@ -294,7 +294,7 @@ func TestMergeEligibilityStaleAndOrder(t *testing.T) {
 			}
 			_ = a
 			// the predecessor lands: its head is observed in the target and the parent marked it merged
-			k.integrate(accepted{Acceptance: mustActive(t, k.fixture, "g", "I"), Event: "evt-rel-g-I"}, repo.path, "dev", true, true)
+			k.integrate(accepted{Acceptance: mustActive(t, k.fixture, "g", "I"), Event: "evt-rel-g-I"}, forgeKitRepository, "dev", true, true)
 			if r := judgeD(); !r.Eligible() {
 				t.Fatalf("predecessor landed = %+v", r)
 			}
@@ -363,9 +363,8 @@ func mustActive(t *testing.T, f *fixture, plan, node string) Acceptance {
 // judgement refuses instead of counting retries on a falsified record.
 func TestEvidenceRowTamperIsBlocked(t *testing.T) {
 	k := newJudgeKit(t)
-	repo := k.repo
-	k.putPlan("g", int(k.snapshot("g").Revision), "g-r2", addEdge("id", "I", "D", "artifact_verified", doc{"pins_code_head": true, "target_repository": repo.path, "target_base_ref": "dev"}))
-	k.integrate(accepted{Acceptance: mustActive(t, k.fixture, "g", "I"), Event: "evt-rel-g-I"}, repo.path, "dev", true, true)
+	k.putPlan("g", int(k.snapshot("g").Revision), "g-r2", addEdge("id", "I", "D", "artifact_verified", doc{"pins_code_head": true, "target_repository": forgeKitRepository, "target_base_ref": "dev"}))
+	k.integrate(accepted{Acceptance: mustActive(t, k.fixture, "g", "I"), Event: "evt-rel-g-I"}, forgeKitRepository, "dev", true, true)
 	k.judge()
 	if st := k.status("g", "id"); !st.Satisfied {
 		t.Fatalf("before the tamper the edge is %+v", st)
@@ -394,7 +393,7 @@ func TestEvictionSurvivesAFreshAcceptanceOfTheSameHead(t *testing.T) {
 		t.Fatalf("second failure = %+v", r)
 	}
 	k.exec("UPDATE dag_acceptances SET state = 'superseded' WHERE node_id = 'I'")
-	k.acceptNode("g", "I", acceptOpts{HeadSHA: k.feature, PR: 5, Forge: "owner/repo", Repository: k.repo.path, Suffix: "b"})
+	k.acceptOnForge("g", "I", acceptOpts{HeadSHA: k.feature, PR: 5, Suffix: "b"})
 	k.setChecks("A:1:3:success", "B:2:1:success")
 	again := k.judge()
 	if again.Outcome != OutcomeEvicted || again.Round != 2 {
@@ -421,7 +420,7 @@ func TestEvictionSurvivesAFreshAcceptanceOfTheSameHead(t *testing.T) {
 func TestMergeRequestIsNotAnsweredByAnotherNodesTurnAtTheSameHead(t *testing.T) {
 	k := newJudgeKit(t)
 	k.declare("g", "D", "d.txt")
-	k.acceptNode("g", "D", acceptOpts{HeadSHA: k.feature, PR: 6, Forge: "owner/repo", Repository: k.repo.path})
+	k.acceptOnForge("g", "D", acceptOpts{HeadSHA: k.feature, PR: 6})
 	pr := k.pr
 	pr.Number = 6
 	k.forge.by["owner/repo#6"] = pr
@@ -485,7 +484,7 @@ func TestEvictionIsOfTheCommitNotOfTheSpellingOrThePullRequest(t *testing.T) {
 		t.Fatalf("second failure = %+v", r)
 	}
 	k.exec("UPDATE dag_acceptances SET state = 'superseded' WHERE node_id = 'I'")
-	k.acceptNode("g", "I", acceptOpts{HeadSHA: k.feature, PR: 9, Forge: "OWNER/REPO", Repository: k.repo.path, Suffix: "c"})
+	k.acceptNode("g", "I", acceptOpts{HeadSHA: k.feature, PR: 9, Forge: "OWNER/REPO", Repository: forgeKitRepository, Suffix: "c"})
 	pr := k.pr
 	pr.Number, pr.Repository = 9, "OWNER/REPO"
 	pr.Checks = []Check{{Name: "A", RunID: "1", Attempt: 3, Conclusion: "success", HeadSHA: k.feature}, {Name: "B", RunID: "2", Attempt: 1, Conclusion: "success", HeadSHA: k.feature}}
@@ -534,8 +533,8 @@ func TestMergeRequestCheckedAgainInTheTransactionThatCreatesTheTurn(t *testing.T
 	t.Run("a predecessor appears", func(t *testing.T) {
 		k := newJudgeKit(t)
 		k.sched.testBetweenJudgeAndAsk = func() {
-			k.putPlan("g", int(k.snapshot("g").Revision), "g-r2", addEdge("di", "D", "I", "integrated", doc{"target_repository": k.repo.path, "target_base_ref": "dev"}))
-			k.acceptNode("g", "D", acceptOpts{HeadSHA: strings.Repeat("3", 40), PR: 6, Forge: "owner/repo", Repository: k.repo.path})
+			k.putPlan("g", int(k.snapshot("g").Revision), "g-r2", addEdge("di", "D", "I", "integrated", doc{"target_repository": forgeKitRepository, "target_base_ref": "dev"}))
+			k.acceptOnForge("g", "D", acceptOpts{HeadSHA: strings.Repeat("3", 40), PR: 6})
 		}
 		if err := ask(k); refusalReason(err) != "disposition_conflict" || !strings.Contains(err.Error(), "has not landed") {
 			t.Fatalf("request = %v", err)
@@ -554,7 +553,7 @@ func TestMergeRequestCheckedAgainInTheTransactionThatCreatesTheTurn(t *testing.T
 	})
 	t.Run("the lane fails its own integrity check after writing part of the turn", func(t *testing.T) {
 		k := newJudgeKit(t)
-		target, err := mergeturn.TargetKey(k.repo.path, "dev")
+		target, err := mergeturn.TargetKey(forgeKitRepository, "dev")
 		if err != nil {
 			t.Fatal(err)
 		}

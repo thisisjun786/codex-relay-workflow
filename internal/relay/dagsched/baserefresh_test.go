@@ -30,7 +30,7 @@ func TestBaseRefreshIntegratesTheNodeAndReturnsItsSlot(t *testing.T) {
 
 	res, err := s.record("shared.json")
 	if err != nil || res.Replayed || res.Seq != 1 || res.Generation != 2 || res.HeadSHA != s.head || res.EventID != s.event2 || res.RevisionHash != s.revision2 || res.AcceptanceID != s.accepted.Acceptance.AcceptanceID ||
-		len(res.Steps) != 3 || strings.Join(res.Resolved, ",") != "shared.json" || !strings.HasPrefix(res.RefreshID, "dbr-") || res.BaseRef != "dev" || res.BaseRepository != s.repo.path {
+		len(res.Steps) != 3 || strings.Join(res.Resolved, ",") != "shared.json" || !strings.HasPrefix(res.RefreshID, "dbr-") || res.BaseRef != "dev" || res.BaseRepository != s.target() {
 		t.Fatalf("record = %v %+v", err, res)
 	}
 	if res.Steps[0].Previous != s.h1 || res.Steps[2].Head != s.head || res.Steps[0].Head != res.Steps[1].Previous || res.Steps[1].Head != res.Steps[2].Previous || len(res.Steps[0].Resolved) != 0 || len(res.Steps[2].Resolved) != 0 {
@@ -357,7 +357,7 @@ func TestBaseRefreshRowsAreTrustedOnlyWhenTheyDigestToTheirId(t *testing.T) {
 	forge := func(s *refreshScenario, seq int, id, head string) {
 		s.exec("INSERT INTO dag_base_refreshes (refresh_id, acceptance_id, refresh_seq, relationship_id, execution_generation, event_id, revision_hash, head_sha, base_repository, base_ref, base_tip_sha, proof_json, resolved_paths_json,"+
 			" recorded_by_task_id, coordinator_epoch, recorded_at) VALUES (?, ?, ?, ?, 2, ?, ?, ?, ?, 'dev', ?, '{}', '[]', 'someone', 0, 't')",
-			id, s.accepted.Acceptance.AcceptanceID, seq, s.rid, s.event2, s.revision2, head, s.repo.path, head)
+			id, s.accepted.Acceptance.AcceptanceID, seq, s.rid, s.event2, s.revision2, head, s.target(), head)
 	}
 	t.Run("a row written by hand opens nothing", func(t *testing.T) {
 		s := newRefreshScenario(t)
@@ -621,7 +621,7 @@ func TestBaseRefreshThenAStaleNodeIsCorrectedAsAnyOther(t *testing.T) {
 		t.Fatalf("the artifact roots of the child: %v %v", roots, err)
 	}
 	notes := writeFile(t, roots[0], "rework-notes.md", "the notes of the rework")
-	prepared, err := s.sched.PrepareCorrection(context.Background(), "g", "I", "parent", ManifestInput{Base: &BaseRef{Repository: s.repo.path, Ref: "dev"}, RuleVersion: s.request(false).RuleVersion,
+	prepared, err := s.sched.PrepareCorrection(context.Background(), "g", "I", "parent", ManifestInput{Base: &BaseRef{Repository: s.target(), Ref: "dev"}, RuleVersion: s.request(false).RuleVersion,
 		Volatile: []Volatile{{Source: "linear:comment", SnapshotURI: notes, SHA256: shaOf([]byte("the notes of the rework")), CapturedAt: "2026-10-02T00:00:00Z"}}}, VerifyOptions{ArtifactRoots: roots})
 	if err != nil {
 		t.Fatalf("prepare I: %v", err)

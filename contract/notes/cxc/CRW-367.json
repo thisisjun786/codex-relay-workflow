@@ -1,0 +1,14 @@
+{
+  "issue": "CRW-367",
+  "pending": [
+    "hook__pre-tool-use-attaching-skills__default_mode_injects_effort_only",
+    "hook__pre-tool-use-attaching-skills__full_history_fork_skips_model_keeps_prompt",
+    "hook__pre-tool-use-attaching-skills__global_model_effort_injection_and_caller_fields",
+    "hook__pre-tool-use-attaching-skills__items_control_token_whitespace",
+    "hook__pre-tool-use-attaching-skills__recursion_denied_without_grant",
+    "hook__pre-tool-use-attaching-skills__role_inference_routes_config",
+    "hook__pre-tool-use-attaching-skills__v2_ciphertext_preserved_with_routing"
+  ],
+  "identical": [],
+  "intentionally-changed": []
+}

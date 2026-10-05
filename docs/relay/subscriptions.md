@@ -73,6 +73,11 @@ archive, cleanup rechecks the root, reads the descendant's newest turn, then
 re-reads its identity and status with `thread/read`. Only idle descendants whose
 latest turn completed are archived, deepest first. The root is never archived.
 
+An archived child stays a real child of its session, so only the managed dispatch
+ledger tells whether its agent id is spent: a created report for an id that
+another attempt holds is refused, and only an attempt the stopped close closed
+(outcome stopped, executionState stopped, a reconciliation) gives its id back.
+
 Each callback attempt has a thirty-second budget. Known running holds keep polling
 with the existing five-second to five-minute backoff, including mixed subtrees
 with an incomplete idle member. With no known running member, interrupted, failed,

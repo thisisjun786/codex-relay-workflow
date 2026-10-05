@@ -9,7 +9,8 @@ import (
 )
 
 // A real landing whose second parent is an accepted node, not a fabricated
-// provenance answer. The scheduler and store remain the synthetic integration kit.
+// provenance answer. The scheduler and store remain the synthetic integration kit;
+// the contributor is accepted on the repository the scenario lands on.
 func contributorMerge(t *testing.T, s *refreshScenario, regions []Region, known bool) {
 	t.Helper()
 	r := s.repo
@@ -17,12 +18,12 @@ func contributorMerge(t *testing.T, s *refreshScenario, regions []Region, known 
 	head := r.commit("shared.json", "base\ndev\n")
 	if known {
 		for i := range regions {
-			regions[i].Repository = r.path
+			regions[i].Repository = s.target()
 		}
 		if _, err := s.sched.DeclareRegions(context.Background(), "g", "D", "parent", regions); err != nil {
 			t.Fatal(err)
 		}
-		s.acceptNode("g", "D", acceptOpts{HeadSHA: head, PR: 8, Forge: "owner/repo", Repository: r.path})
+		s.acceptRefreshNode("D", acceptOpts{HeadSHA: head, PR: 8})
 	}
 	r.git("checkout", "-q", "dev")
 	r.git("merge", "-q", "--no-ff", "-m", "land contributor", "contributor")
@@ -44,11 +45,11 @@ func TestBaseRefreshContributorsAcrossHops(t *testing.T) {
 				rule = RuleUnion
 			}
 			region := gr("shared.json", grade, rule)
-			region.Repository = r.path
+			region.Repository = s.target()
 			if _, err := s.sched.DeclareRegions(context.Background(), "g", "E", "parent", []Region{region}); err != nil {
 				t.Fatal(err)
 			}
-			s.acceptNode("g", "E", acceptOpts{HeadSHA: head, PR: 9, Forge: "owner/repo", Repository: r.path})
+			s.acceptRefreshNode("E", acceptOpts{HeadSHA: head, PR: 9})
 			r.git("checkout", "-q", "dev")
 			r.git("merge", "-q", "--no-ff", "-m", "land second contributor", "second-contributor")
 			s.head = s.mergeDev("second refresh", "shared.json", "base\nchild\nsecond\ndev\n")
@@ -99,7 +100,7 @@ func TestBaseRefreshUnknownDeltaVetoesKnownContributor(t *testing.T) {
 func TestBaseRefreshRegenerateEligibilityRecord(t *testing.T) {
 	for _, kind := range []string{"generated", "owner loss", "partial updater", "failed command"} {
 		t.Run(kind, func(t *testing.T) {
-			k := newIntegrationKit(t)
+			k := newForgeIntegrationKit(t)
 			r := k.repo
 			rule := "regenerate:cat left.txt right.txt > shared.json"
 			if kind == "partial updater" {
@@ -120,20 +121,20 @@ func TestBaseRefreshRegenerateEligibilityRecord(t *testing.T) {
 			}
 			head := r.commit("shared.json", ours)
 			region := gr("shared.json", GradeMechanical, rule)
-			region.Repository = r.path
+			region.Repository = forgeKitRepository
 			for _, node := range []string{"I", "D"} {
 				if _, err := k.sched.DeclareRegions(context.Background(), "g", node, "parent", []Region{region}); err != nil {
 					t.Fatal(err)
 				}
 			}
-			a := k.acceptNode("g", "I", acceptOpts{HeadSHA: head, PR: 7, Forge: "owner/repo", Repository: r.path})
+			a := k.acceptOnForge("g", "I", acceptOpts{HeadSHA: head, PR: 7})
 			n, _ := nodeOf(k.snapshot("g"), "I")
-			s := &refreshScenario{integrationKit: k, rid: a.Acceptance.RelationshipID, accepted: a, h1: head, head: head, criteria: n.CriteriaSetDigest}
+			s := &refreshScenario{integrationKit: k, rid: a.Acceptance.RelationshipID, accepted: a, h1: head, head: head, criteria: n.CriteriaSetDigest, checkout: r.path}
 			s.openGeneration()
 			r.git("checkout", "-q", "-b", "generated-contributor", "dev")
 			r.commit("right.txt", "dev\n")
 			dev := r.commit("shared.json", theirs)
-			k.acceptNode("g", "D", acceptOpts{HeadSHA: dev, PR: 8, Forge: "owner/repo", Repository: r.path})
+			k.acceptOnForge("g", "D", acceptOpts{HeadSHA: dev, PR: 8})
 			r.git("checkout", "-q", "dev")
 			r.git("merge", "-q", "--no-ff", "-m", "land generated contributor", "generated-contributor")
 			s.head = s.mergeDev("regenerated refresh", "shared.json", "child\ndev\n")

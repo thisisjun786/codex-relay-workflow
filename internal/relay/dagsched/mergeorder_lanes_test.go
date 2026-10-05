@@ -56,7 +56,7 @@ func TestMergeOrderDropsOutWhenTheEarlierNodeLands(t *testing.T) {
 	k.exec("INSERT INTO dag_conflict_observations (observation_id, plan_id, left_node_id, right_node_id, repository, left_head, right_head, base_sha, conflict_count, method, observed_by, observed_at)" +
 		" SELECT 'unused', 'g', 'D', 'E', 'x', 'a', 'b', 'c', 0, 'm', 'p', 't' WHERE 0")
 	w.running("E")
-	a := k.acceptNode("g", "D", acceptOpts{HeadSHA: w.head["D"], PR: 20, Forge: "owner/repo", Repository: k.repo.path})
+	a := k.acceptOnForge("g", "D", acceptOpts{HeadSHA: w.head["D"], PR: 20})
 	w.measure(w.heads("D", "E"))
 	reading := k.read("g")
 	if row := reading.node("E").MergeOrder.After; len(row) != 1 || row[0].NodeID != "D" || row[0].Lane != LaneAccepted {
@@ -65,7 +65,7 @@ func TestMergeOrderDropsOutWhenTheEarlierNodeLands(t *testing.T) {
 	// D lands: its head is contained in dev, the parent marked it merged, the landing is observed
 	k.repo.git("merge", "-q", "-s", "ours", "-m", "land D", "b-D")
 	k.mark(a)
-	if res, err := k.sched.ObserveIntegration(context.Background(), "g", "D", "parent", []Target{{Repository: k.repo.path, BaseRef: "dev"}}); err != nil || !res.Integrated {
+	if res, err := k.sched.ObserveIntegration(context.Background(), "g", "D", "parent", []Target{k.forgeTarget("dev")}); err != nil || !res.Integrated {
 		t.Fatalf("landing = %v %+v", err, res)
 	}
 	reading = k.read("g")
@@ -92,7 +92,7 @@ func TestMergeOrderFollowsTheMergeLane(t *testing.T) {
 	t.Run("an accepted result goes before a working node that began earlier", func(t *testing.T) {
 		w := orderWorld(t)
 		w.running("E") // began first
-		w.k.acceptNode("g", "D", acceptOpts{HeadSHA: w.head["D"], PR: 20, Forge: "owner/repo", Repository: w.k.repo.path})
+		w.k.acceptOnForge("g", "D", acceptOpts{HeadSHA: w.head["D"], PR: 20})
 		if got := first(w, "D", "E"); !reflect.DeepEqual(got, []string{"E<[D]"}) {
 			t.Fatalf("order = %v", got)
 		}
@@ -194,8 +194,8 @@ func TestMergeOrderFollowsTheMergeLane(t *testing.T) {
 	})
 	t.Run("a paused accepted node is working and goes after an accepted one that began later", func(t *testing.T) {
 		w := orderWorld(t)
-		w.k.acceptNode("g", "D", acceptOpts{HeadSHA: w.head["D"], PR: 20, Forge: "owner/repo", Repository: w.k.repo.path, Status: "paused"})
-		w.k.acceptNode("g", "E", acceptOpts{HeadSHA: w.head["E"], PR: 21, Forge: "owner/repo", Repository: w.k.repo.path})
+		w.k.acceptOnForge("g", "D", acceptOpts{HeadSHA: w.head["D"], PR: 20, Status: "paused"})
+		w.k.acceptOnForge("g", "E", acceptOpts{HeadSHA: w.head["E"], PR: 21})
 		if got := first(w, "D", "E"); !reflect.DeepEqual(got, []string{"D<[E]"}) {
 			t.Fatalf("order = %v", got)
 		}

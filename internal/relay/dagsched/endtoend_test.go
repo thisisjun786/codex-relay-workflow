@@ -9,20 +9,20 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
-	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 )
 
 // forkJoin is the real Go bridge adapter and managed engine talking to a fake App Server that creates a thread per child, over the real store, with a real git repository as the base branch,
-// the real merge lane and the real ancestry check. Only the forge (the pull requests and their checks) and the children's reports are scripted.
+// the real merge lane and the real ancestry check, which the nodes' forge repository stands for (the forge kit's readers map it to the repository). Only the forge (the pull requests, their checks and
+// the heads the lane compares with) and the children's reports are scripted.
 type forkJoin struct {
 	*realKit
 	repo    *gitRepo
 	heads   map[string]string
 	prs     map[string]PullRequest
 	service *mergeturn.Service
+	pulls   *forgeLanePulls
 	started int
 	mu      sync.Mutex
 	perThr  map[string]int
@@ -31,8 +31,11 @@ type forkJoin struct {
 func newForkJoin(t *testing.T) *forkJoin {
 	t.Helper()
 	f := &forkJoin{realKit: newRealKit(t), repo: newGitRepo(t), heads: map[string]string{}, prs: map[string]PullRequest{}, perThr: map[string]int{}}
-	f.sched.Tips, f.sched.Ancestry = mergeturn.TargetReader{}, GitAncestry{}.Ancestry
-	f.service = &mergeturn.Service{Store: f.s, Registry: &registry.Registry{Store: f.s}, Now: f.sched.now, Delivery: mergeturn.StoreDelivery{Store: f.s}}
+	readers := newForgeKitReaders(t)
+	readers.mapTo(forgeKitRepository, f.repo.path)
+	f.sched.Tips, f.sched.Ancestry = readers, readers.Ancestry
+	f.pulls = newForgeLanePulls(readers)
+	f.service = forgeLaneService(f.sched, f.s, f.pulls)
 	settings := f.settings()
 	environments := settings["environments"]
 	f.host.Handle("thread/start", func(json.RawMessage) fakehost.Reply {
@@ -102,6 +105,7 @@ func (f *forkJoin) report(plan, node string, res ReleaseResult, number int64) {
 		Checks: []Check{{Name: "A", RunID: "1", Attempt: 1, Conclusion: "success", HeadSHA: f.heads[node]}, {Name: "B", RunID: "2", Attempt: 1, Conclusion: "success", HeadSHA: f.heads[node]}}}
 	f.prs[node] = pr
 	f.forge.by[fmt.Sprintf("owner/repo#%d", number)] = pr
+	f.pulls.show(number, f.heads[node])
 }
 
 func (f *forkJoin) accept(plan, node string, number int64) AcceptResult {
@@ -128,17 +132,9 @@ func (f *forkJoin) land(plan, node string, explicit ...Target) IntegrationResult
 		}
 	}
 	pr := f.prs[node]
-	var list []any
-	for _, c := range pr.Checks {
-		list = append(list, contract.OrderedObject{{Key: "runId", Value: c.RunID}, {Key: "name", Value: c.Name}, {Key: "headSha", Value: c.HeadSHA}, {Key: "conclusion", Value: c.Conclusion}, {Key: "attempt", Value: json.Number("1")}})
-	}
-	green := contract.OrderedObject{{Key: "hasNextPage", Value: false}, {Key: "pagesRead", Value: json.Number("1")}, {Key: "totalCount", Value: json.Number("0")}, {Key: "threadsSeen", Value: []any{}}, {Key: "unresolved", Value: json.Number("0")}}
-	headCompareReportForTurn(f.t, f.s, id, f.heads[node])
-	if _, err := f.service.Check(ctx, id, "parent", f.heads[node], f.repo.git("rev-parse", "dev"), list, green, []string{"A", "B"}, mergeturn.TargetReader{}); err != nil {
-		f.t.Fatalf("lane check of %s: %v", node, err)
-	}
+	forgeLaneCheck(f.t, f.service, f.pulls, id, f.heads[node], f.repo.git("rev-parse", "dev"), forgeLaneChecks(pr.Checks), forgeLaneGreen(), []string{"A", "B"})
 	f.repo.git("merge", "-q", "--no-ff", "-m", "merge "+node, "branch-"+node)
-	if _, err := f.service.Land(ctx, id, "parent", f.repo.git("rev-parse", "dev"), "", "merged by the forge", mergeturn.TargetReader{}); err != nil {
+	if _, err := f.service.Land(ctx, id, "parent", f.repo.git("rev-parse", "dev"), "", "merged by the forge", f.pulls); err != nil {
 		f.t.Fatalf("landing %s: %v", node, err)
 	}
 	a, found, err := loadActiveAcceptance(ctx, f.s.Q(ctx), plan, node)
@@ -150,6 +146,12 @@ func (f *forkJoin) land(plan, node string, explicit ...Target) IntegrationResult
 	obs, err := f.sched.ObserveIntegration(ctx, plan, node, "parent", explicit)
 	if err != nil || !obs.Integrated {
 		f.t.Fatalf("observe %s = %v %+v", node, err, obs)
+	}
+	// what was observed is the forge repository, carried by the turn that landed it
+	for _, o := range obs.Observations {
+		if o.Repository != forgeKitRepository || o.MergeTurnID != id {
+			f.t.Fatalf("the observation of %s = %+v, want one under the forge carried by the landed turn %s", node, o, id)
+		}
 	}
 	return obs
 }
@@ -180,7 +182,7 @@ func TestForkJoinEndToEnd(t *testing.T) {
 	f := newForkJoin(t)
 	repo := f.repo
 	edge := func(id, from, to string) doc {
-		return addEdge(id, from, to, dag.EdgeIntegrated, doc{"target_repository": repo.path, "target_base_ref": "dev"})
+		return addEdge(id, from, to, dag.EdgeIntegrated, doc{"target_repository": forgeKitRepository, "target_base_ref": "dev"})
 	}
 	f.putPlan("fj", 0, "fj-r1", addRelNode("A", dag.NodeImplementation), addRelNode("B", dag.NodeImplementation), addRelNode("C", dag.NodeImplementation), addRelNode("D", dag.NodeImplementation),
 		addRelNode("E", dag.NodeNonPR), edge("ab", "A", "B"), edge("ac", "A", "C"), edge("bd", "B", "D"), edge("cd", "C", "D"), edge("de", "D", "E"))
@@ -283,6 +285,9 @@ func TestForkJoinEndToEnd(t *testing.T) {
 	}
 	if f.count("SELECT COUNT(*) FROM dag_releases") != 4 || f.count("SELECT COUNT(*) FROM dag_node_executions") != 4 {
 		t.Fatal("a node has more than one release or execution")
+	}
+	if f.count("SELECT COUNT(*) FROM merge_turns WHERE repository <> ?", forgeKitRepository) != 0 || f.count("SELECT COUNT(*) FROM merge_turns WHERE state = 'landed'") != 4 {
+		t.Fatal("the four landings were not all taken on the forge repository")
 	}
 	for _, node := range []string{"A", "B", "C", "D"} {
 		if n := f.read("fj").node(node); n.State != StateIntegrated {
