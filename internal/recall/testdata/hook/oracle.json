@@ -1,0 +1,1786 @@
+{
+  "oracle": "CXC v0.2.40 3c1459ac hook.ts:40-220,599-788",
+  "rows": [
+    {
+      "kind": "detect",
+      "input": "그때 그 작업 이어서 해줘",
+      "out": true
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "그때 그 작업 이어서 해줘"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\"[crw-recall] The prompt references past work. Before asking the user to re-explain,\\nsearch prior sessions (read-only):\\n  crw recall chat search \\\"<distinctive terms>\\\" --days 0   # full-history FTS over ~/.codex\\n  crw recall memory search \\\"<topic>\\\"                      # durable per-thread summaries\\nAdd --context 2 to read around a hit, --cwd <repo> to scope. Details: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "detect",
+      "input": "지난번에 하던 리팩토링 계속",
+      "out": true
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "지난번에 하던 리팩토링 계속"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\"[crw-recall] The prompt references past work. Before asking the user to re-explain,\\nsearch prior sessions (read-only):\\n  crw recall chat search \\\"<distinctive terms>\\\" --days 0   # full-history FTS over ~/.codex\\n  crw recall memory search \\\"<topic>\\\"                      # durable per-thread summaries\\nAdd --context 2 to read around a hit, --cwd <repo> to scope. Details: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "detect",
+      "input": "저번 세션에서 결정한 스키마 뭐였지",
+      "out": true
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "저번 세션에서 결정한 스키마 뭐였지"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\"[crw-recall] The prompt references past work. Before asking the user to re-explain,\\nsearch prior sessions (read-only):\\n  crw recall chat search \\\"<distinctive terms>\\\" --days 0   # full-history FTS over ~/.codex\\n  crw recall memory search \\\"<topic>\\\"                      # durable per-thread summaries\\nAdd --context 2 to read around a hit, --cwd <repo> to scope. Details: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "detect",
+      "input": "예전에 만든 스크립트 찾아줘",
+      "out": true
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "예전에 만든 스크립트 찾아줘"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\"[crw-recall] The prompt references past work. Before asking the user to re-explain,\\nsearch prior sessions (read-only):\\n  crw recall chat search \\\"<distinctive terms>\\\" --days 0   # full-history FTS over ~/.codex\\n  crw recall memory search \\\"<topic>\\\"                      # durable per-thread summaries\\nAdd --context 2 to read around a hit, --cwd <repo> to scope. Details: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "detect",
+      "input": "트라이그램 인덱스 어디까지 했지?",
+      "out": true
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "트라이그램 인덱스 어디까지 했지?"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\"[crw-recall] The prompt references past work. Before asking the user to re-explain,\\nsearch prior sessions (read-only):\\n  crw recall chat search \\\"<distinctive terms>\\\" --days 0   # full-history FTS over ~/.codex\\n  crw recall memory search \\\"<topic>\\\"                      # durable per-thread summaries\\nAdd --context 2 to read around a hit, --cwd <repo> to scope. Details: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "detect",
+      "input": "그 플래그 기억나?",
+      "out": true
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "그 플래그 기억나?"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\"[crw-recall] The prompt references past work. Before asking the user to re-explain,\\nsearch prior sessions (read-only):\\n  crw recall chat search \\\"<distinctive terms>\\\" --days 0   # full-history FTS over ~/.codex\\n  crw recall memory search \\\"<topic>\\\"                      # durable per-thread summaries\\nAdd --context 2 to read around a hit, --cwd <repo> to scope. Details: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "detect",
+      "input": "continue what we did last session",
+      "out": true
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "continue what we did last session"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\"[crw-recall] The prompt references past work. Before asking the user to re-explain,\\nsearch prior sessions (read-only):\\n  crw recall chat search \\\"<distinctive terms>\\\" --days 0   # full-history FTS over ~/.codex\\n  crw recall memory search \\\"<topic>\\\"                      # durable per-thread summaries\\nAdd --context 2 to read around a hit, --cwd <repo> to scope. Details: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "detect",
+      "input": "what did we decide about the schema?",
+      "out": true
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "what did we decide about the schema?"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\"[crw-recall] The prompt references past work. Before asking the user to re-explain,\\nsearch prior sessions (read-only):\\n  crw recall chat search \\\"<distinctive terms>\\\" --days 0   # full-history FTS over ~/.codex\\n  crw recall memory search \\\"<topic>\\\"                      # durable per-thread summaries\\nAdd --context 2 to read around a hit, --cwd <repo> to scope. Details: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "detect",
+      "input": "remember when we fixed the ingest race?",
+      "out": true
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "remember when we fixed the ingest race?"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\"[crw-recall] The prompt references past work. Before asking the user to re-explain,\\nsearch prior sessions (read-only):\\n  crw recall chat search \\\"<distinctive terms>\\\" --days 0   # full-history FTS over ~/.codex\\n  crw recall memory search \\\"<topic>\\\"                      # durable per-thread summaries\\nAdd --context 2 to read around a hit, --cwd <repo> to scope. Details: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "detect",
+      "input": "as discussed earlier, ship the index",
+      "out": true
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "as discussed earlier, ship the index"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\"[crw-recall] The prompt references past work. Before asking the user to re-explain,\\nsearch prior sessions (read-only):\\n  crw recall chat search \\\"<distinctive terms>\\\" --days 0   # full-history FTS over ~/.codex\\n  crw recall memory search \\\"<topic>\\\"                      # durable per-thread summaries\\nAdd --context 2 to read around a hit, --cwd <repo> to scope. Details: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "detect",
+      "input": "previously we capped tool output — why?",
+      "out": true
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "previously we capped tool output — why?"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\"[crw-recall] The prompt references past work. Before asking the user to re-explain,\\nsearch prior sessions (read-only):\\n  crw recall chat search \\\"<distinctive terms>\\\" --days 0   # full-history FTS over ~/.codex\\n  crw recall memory search \\\"<topic>\\\"                      # durable per-thread summaries\\nAdd --context 2 to read around a hit, --cwd <repo> to scope. Details: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "detect",
+      "input": "revert the previous commit",
+      "out": false
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "revert the previous commit"
+      },
+      "out": ""
+    },
+    {
+      "kind": "detect",
+      "input": "기억해줘",
+      "out": false
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "기억해줘"
+      },
+      "out": ""
+    },
+    {
+      "kind": "detect",
+      "input": "이전 작업 이어서",
+      "out": true
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "이전 작업 이어서"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\"[crw-recall] The prompt references past work. Before asking the user to re-explain,\\nsearch prior sessions (read-only):\\n  crw recall chat search \\\"<distinctive terms>\\\" --days 0   # full-history FTS over ~/.codex\\n  crw recall memory search \\\"<topic>\\\"                      # durable per-thread summaries\\nAdd --context 2 to read around a hit, --cwd <repo> to scope. Details: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "detect",
+      "input": "리콜해줘",
+      "out": true
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "리콜해줘"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\"[crw-recall] The prompt references past work. Before asking the user to re-explain,\\nsearch prior sessions (read-only):\\n  crw recall chat search \\\"<distinctive terms>\\\" --days 0   # full-history FTS over ~/.codex\\n  crw recall memory search \\\"<topic>\\\"                      # durable per-thread summaries\\nAdd --context 2 to read around a hit, --cwd <repo> to scope. Details: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "detect",
+      "input": "메모리에서 찾아줘",
+      "out": true
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "메모리에서 찾아줘"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\"[crw-recall] The prompt references past work. Before asking the user to re-explain,\\nsearch prior sessions (read-only):\\n  crw recall chat search \\\"<distinctive terms>\\\" --days 0   # full-history FTS over ~/.codex\\n  crw recall memory search \\\"<topic>\\\"                      # durable per-thread summaries\\nAdd --context 2 to read around a hit, --cwd <repo> to scope. Details: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "detect",
+      "input": "리콜",
+      "out": true
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "리콜"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\"[crw-recall] The prompt references past work. Before asking the user to re-explain,\\nsearch prior sessions (read-only):\\n  crw recall chat search \\\"<distinctive terms>\\\" --days 0   # full-history FTS over ~/.codex\\n  crw recall memory search \\\"<topic>\\\"                      # durable per-thread summaries\\nAdd --context 2 to read around a hit, --cwd <repo> to scope. Details: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "detect",
+      "input": "이전작업",
+      "out": true
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "이전작업"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\"[crw-recall] The prompt references past work. Before asking the user to re-explain,\\nsearch prior sessions (read-only):\\n  crw recall chat search \\\"<distinctive terms>\\\" --days 0   # full-history FTS over ~/.codex\\n  crw recall memory search \\\"<topic>\\\"                      # durable per-thread summaries\\nAdd --context 2 to read around a hit, --cwd <repo> to scope. Details: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "detect",
+      "input": "기억 안 나",
+      "out": true
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "기억 안 나"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\"[crw-recall] The prompt references past work. Before asking the user to re-explain,\\nsearch prior sessions (read-only):\\n  crw recall chat search \\\"<distinctive terms>\\\" --days 0   # full-history FTS over ~/.codex\\n  crw recall memory search \\\"<topic>\\\"                      # durable per-thread summaries\\nAdd --context 2 to read around a hit, --cwd <repo> to scope. Details: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "detect",
+      "input": "기억하니",
+      "out": true
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "기억하니"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\"[crw-recall] The prompt references past work. Before asking the user to re-explain,\\nsearch prior sessions (read-only):\\n  crw recall chat search \\\"<distinctive terms>\\\" --days 0   # full-history FTS over ~/.codex\\n  crw recall memory search \\\"<topic>\\\"                      # durable per-thread summaries\\nAdd --context 2 to read around a hit, --cwd <repo> to scope. Details: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "detect",
+      "input": "기억하냐",
+      "out": true
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "기억하냐"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\"[crw-recall] The prompt references past work. Before asking the user to re-explain,\\nsearch prior sessions (read-only):\\n  crw recall chat search \\\"<distinctive terms>\\\" --days 0   # full-history FTS over ~/.codex\\n  crw recall memory search \\\"<topic>\\\"                      # durable per-thread summaries\\nAdd --context 2 to read around a hit, --cwd <repo> to scope. Details: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "detect",
+      "input": "previous session",
+      "out": true
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "previous session"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\"[crw-recall] The prompt references past work. Before asking the user to re-explain,\\nsearch prior sessions (read-only):\\n  crw recall chat search \\\"<distinctive terms>\\\" --days 0   # full-history FTS over ~/.codex\\n  crw recall memory search \\\"<topic>\\\"                      # durable per-thread summaries\\nAdd --context 2 to read around a hit, --cwd <repo> to scope. Details: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "detect",
+      "input": "previous work",
+      "out": true
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "previous work"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\"[crw-recall] The prompt references past work. Before asking the user to re-explain,\\nsearch prior sessions (read-only):\\n  crw recall chat search \\\"<distinctive terms>\\\" --days 0   # full-history FTS over ~/.codex\\n  crw recall memory search \\\"<topic>\\\"                      # durable per-thread summaries\\nAdd --context 2 to read around a hit, --cwd <repo> to scope. Details: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "detect",
+      "input": "previous conversation",
+      "out": true
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "previous conversation"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\"[crw-recall] The prompt references past work. Before asking the user to re-explain,\\nsearch prior sessions (read-only):\\n  crw recall chat search \\\"<distinctive terms>\\\" --days 0   # full-history FTS over ~/.codex\\n  crw recall memory search \\\"<topic>\\\"                      # durable per-thread summaries\\nAdd --context 2 to read around a hit, --cwd <repo> to scope. Details: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "detect",
+      "input": "previous discussion",
+      "out": true
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "previous discussion"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\"[crw-recall] The prompt references past work. Before asking the user to re-explain,\\nsearch prior sessions (read-only):\\n  crw recall chat search \\\"<distinctive terms>\\\" --days 0   # full-history FTS over ~/.codex\\n  crw recall memory search \\\"<topic>\\\"                      # durable per-thread summaries\\nAdd --context 2 to read around a hit, --cwd <repo> to scope. Details: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "detect",
+      "input": "previous chat",
+      "out": true
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "previous chat"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\"[crw-recall] The prompt references past work. Before asking the user to re-explain,\\nsearch prior sessions (read-only):\\n  crw recall chat search \\\"<distinctive terms>\\\" --days 0   # full-history FTS over ~/.codex\\n  crw recall memory search \\\"<topic>\\\"                      # durable per-thread summaries\\nAdd --context 2 to read around a hit, --cwd <repo> to scope. Details: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "detect",
+      "input": "previously discussed the cap",
+      "out": true
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "previously discussed the cap"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\"[crw-recall] The prompt references past work. Before asking the user to re-explain,\\nsearch prior sessions (read-only):\\n  crw recall chat search \\\"<distinctive terms>\\\" --days 0   # full-history FTS over ~/.codex\\n  crw recall memory search \\\"<topic>\\\"                      # durable per-thread summaries\\nAdd --context 2 to read around a hit, --cwd <repo> to scope. Details: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "detect",
+      "input": "prior discussion",
+      "out": true
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "prior discussion"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\"[crw-recall] The prompt references past work. Before asking the user to re-explain,\\nsearch prior sessions (read-only):\\n  crw recall chat search \\\"<distinctive terms>\\\" --days 0   # full-history FTS over ~/.codex\\n  crw recall memory search \\\"<topic>\\\"                      # durable per-thread summaries\\nAdd --context 2 to read around a hit, --cwd <repo> to scope. Details: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "detect",
+      "input": "리콜 기능 구현해줘",
+      "out": false
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "리콜 기능 구현해줘"
+      },
+      "out": ""
+    },
+    {
+      "kind": "detect",
+      "input": "메모리에서 찾는 코드를 고쳐줘",
+      "out": false
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "메모리에서 찾는 코드를 고쳐줘"
+      },
+      "out": ""
+    },
+    {
+      "kind": "detect",
+      "input": "recall 훅 테스트 추가해줘",
+      "out": false
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "recall 훅 테스트 추가해줘"
+      },
+      "out": ""
+    },
+    {
+      "kind": "detect",
+      "input": "chat search UX 개선해줘",
+      "out": false
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "chat search UX 개선해줘"
+      },
+      "out": ""
+    },
+    {
+      "kind": "detect",
+      "input": "memory search 랭킹 고쳐줘",
+      "out": false
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "memory search 랭킹 고쳐줘"
+      },
+      "out": ""
+    },
+    {
+      "kind": "detect",
+      "input": "the previous time CI failed",
+      "out": false
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "the previous time CI failed"
+      },
+      "out": ""
+    },
+    {
+      "kind": "detect",
+      "input": "I recall seeing this in the Node docs",
+      "out": false
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "I recall seeing this in the Node docs"
+      },
+      "out": ""
+    },
+    {
+      "kind": "detect",
+      "input": "prior art for this API",
+      "out": false
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "prior art for this API"
+      },
+      "out": ""
+    },
+    {
+      "kind": "detect",
+      "input": "the previous test failed",
+      "out": false
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "the previous test failed"
+      },
+      "out": ""
+    },
+    {
+      "kind": "detect",
+      "input": "previous commit",
+      "out": false
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "previous commit"
+      },
+      "out": ""
+    },
+    {
+      "kind": "detect",
+      "input": "bump the previous version",
+      "out": false
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "bump the previous version"
+      },
+      "out": ""
+    },
+    {
+      "kind": "detect",
+      "input": "기억해",
+      "out": false
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "기억해"
+      },
+      "out": ""
+    },
+    {
+      "kind": "detect",
+      "input": "기억해둬",
+      "out": false
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "기억해둬"
+      },
+      "out": ""
+    },
+    {
+      "kind": "detect",
+      "input": "기억해서 둬",
+      "out": false
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "기억해서 둬"
+      },
+      "out": ""
+    },
+    {
+      "kind": "detect",
+      "input": "remember this",
+      "out": false
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "remember this"
+      },
+      "out": ""
+    },
+    {
+      "kind": "detect",
+      "input": "메모리에 남겨줘",
+      "out": false
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "메모리에 남겨줘"
+      },
+      "out": ""
+    },
+    {
+      "kind": "detect",
+      "input": "빌드 돌리고 테스트 고쳐줘",
+      "out": false
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "빌드 돌리고 테스트 고쳐줘"
+      },
+      "out": ""
+    },
+    {
+      "kind": "detect",
+      "input": "",
+      "out": false
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": ""
+      },
+      "out": ""
+    },
+    {
+      "kind": "detect",
+      "input": "run crw recall chat search \"trigram\" --days 0 and summarize",
+      "out": false
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "run crw recall chat search \"trigram\" --days 0 and summarize"
+      },
+      "out": ""
+    },
+    {
+      "kind": "detect",
+      "input": "use $crw-recall on this",
+      "out": false
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "use $crw-recall on this"
+      },
+      "out": ""
+    },
+    {
+      "kind": "detect",
+      "input": "그때 run chat search \"x\"",
+      "out": false
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "그때 run chat search \"x\""
+      },
+      "out": ""
+    },
+    {
+      "kind": "detect",
+      "input": "그때 CXC chat search \"x\"",
+      "out": false
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "그때 CXC chat search \"x\""
+      },
+      "out": ""
+    },
+    {
+      "kind": "detect",
+      "input": "이전에 했던 배포 스크립트 다시 보자",
+      "out": true
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "이전에 했던 배포 스크립트 다시 보자"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\"[crw-recall] The prompt references past work. Before asking the user to re-explain,\\nsearch prior sessions (read-only):\\n  crw recall chat search \\\"<distinctive terms>\\\" --days 0   # full-history FTS over ~/.codex\\n  crw recall memory search \\\"<topic>\\\"                      # durable per-thread summaries\\nAdd --context 2 to read around a hit, --cwd <repo> to scope. Details: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "detect",
+      "input": "그 세션에서 정한 예산이 뭐지",
+      "out": true
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "그 세션에서 정한 예산이 뭐지"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\"[crw-recall] The prompt references past work. Before asking the user to re-explain,\\nsearch prior sessions (read-only):\\n  crw recall chat search \\\"<distinctive terms>\\\" --days 0   # full-history FTS over ~/.codex\\n  crw recall memory search \\\"<topic>\\\"                      # durable per-thread summaries\\nAdd --context 2 to read around a hit, --cwd <repo> to scope. Details: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "detect",
+      "input": "prior work on ingest?",
+      "out": true
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "prior work on ingest?"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\"[crw-recall] The prompt references past work. Before asking the user to re-explain,\\nsearch prior sessions (read-only):\\n  crw recall chat search \\\"<distinctive terms>\\\" --days 0   # full-history FTS over ~/.codex\\n  crw recall memory search \\\"<topic>\\\"                      # durable per-thread summaries\\nAdd --context 2 to read around a hit, --cwd <repo> to scope. Details: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "detect",
+      "input": "we shipped that a while ago, right?",
+      "out": true
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "we shipped that a while ago, right?"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\"[crw-recall] The prompt references past work. Before asking the user to re-explain,\\nsearch prior sessions (read-only):\\n  crw recall chat search \\\"<distinctive terms>\\\" --days 0   # full-history FTS over ~/.codex\\n  crw recall memory search \\\"<topic>\\\"                      # durable per-thread summaries\\nAdd --context 2 to read around a hit, --cwd <repo> to scope. Details: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "detect",
+      "input": "그때 봤어",
+      "out": false
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "그때 봤어"
+      },
+      "out": ""
+    },
+    {
+      "kind": "detect",
+      "input": "그때에도",
+      "out": true
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "그때에도"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\"[crw-recall] The prompt references past work. Before asking the user to re-explain,\\nsearch prior sessions (read-only):\\n  crw recall chat search \\\"<distinctive terms>\\\" --days 0   # full-history FTS over ~/.codex\\n  crw recall memory search \\\"<topic>\\\"                      # durable per-thread summaries\\nAdd --context 2 to read around a hit, --cwd <repo> to scope. Details: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "detect",
+      "input": "LaSt SeSsIoN",
+      "out": true
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "LaSt SeSsIoN"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\"[crw-recall] The prompt references past work. Before asking the user to re-explain,\\nsearch prior sessions (read-only):\\n  crw recall chat search \\\"<distinctive terms>\\\" --days 0   # full-history FTS over ~/.codex\\n  crw recall memory search \\\"<topic>\\\"                      # durable per-thread summaries\\nAdd --context 2 to read around a hit, --cwd <repo> to scope. Details: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "detect",
+      "input": "laſt session",
+      "out": false
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "laſt session"
+      },
+      "out": ""
+    },
+    {
+      "kind": "detect",
+      "input": "그때﻿그 작업",
+      "out": true
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "그때﻿그 작업"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\"[crw-recall] The prompt references past work. Before asking the user to re-explain,\\nsearch prior sessions (read-only):\\n  crw recall chat search \\\"<distinctive terms>\\\" --days 0   # full-history FTS over ~/.codex\\n  crw recall memory search \\\"<topic>\\\"                      # durable per-thread summaries\\nAdd --context 2 to read around a hit, --cwd <repo> to scope. Details: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "detect",
+      "input": "previous session",
+      "out": true
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "previous session"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\"[crw-recall] The prompt references past work. Before asking the user to re-explain,\\nsearch prior sessions (read-only):\\n  crw recall chat search \\\"<distinctive terms>\\\" --days 0   # full-history FTS over ~/.codex\\n  crw recall memory search \\\"<topic>\\\"                      # durable per-thread summaries\\nAdd --context 2 to read around a hit, --cwd <repo> to scope. Details: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "detect",
+      "input": "previoussession",
+      "out": false
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "previoussession"
+      },
+      "out": ""
+    },
+    {
+      "kind": "ups",
+      "input": {},
+      "out": ""
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "prompt": 13,
+        "hook_event_name": "UserPromptSubmit"
+      },
+      "out": ""
+    },
+    {
+      "kind": "ups",
+      "input": {
+        "prompt": "지난번",
+        "hook_event_name": "Stop"
+      },
+      "out": ""
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "지난번 2.49.0 provenance와 hook.ts, 그리고 SessionStart",
+        "cap": 0
+      },
+      "out": []
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "지난번 2.49.0 provenance와 hook.ts, 그리고 SessionStart",
+        "cap": 1
+      },
+      "out": [
+        "2.49.0"
+      ]
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "지난번 2.49.0 provenance와 hook.ts, 그리고 SessionStart",
+        "cap": 4
+      },
+      "out": [
+        "2.49.0",
+        "hook.ts",
+        "SessionStart"
+      ]
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "지난번 2.49.0 provenance와 hook.ts, 그리고 SessionStart",
+        "cap": -1
+      },
+      "out": [
+        "2.49.0",
+        "hook.ts"
+      ]
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "그때 \"the ingest race\" 얘기했잖아",
+        "cap": 0
+      },
+      "out": []
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "그때 \"the ingest race\" 얘기했잖아",
+        "cap": 1
+      },
+      "out": [
+        "the ingest race"
+      ]
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "그때 \"the ingest race\" 얘기했잖아",
+        "cap": 4
+      },
+      "out": [
+        "the ingest race"
+      ]
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "그때 \"the ingest race\" 얘기했잖아",
+        "cap": -1
+      },
+      "out": []
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "지난번 그 작업 이어서",
+        "cap": 0
+      },
+      "out": []
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "지난번 그 작업 이어서",
+        "cap": 1
+      },
+      "out": []
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "지난번 그 작업 이어서",
+        "cap": 4
+      },
+      "out": []
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "지난번 그 작업 이어서",
+        "cap": -1
+      },
+      "out": []
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "2.1 2.2 2.3 2.4 2.5 2.6",
+        "cap": 0
+      },
+      "out": []
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "2.1 2.2 2.3 2.4 2.5 2.6",
+        "cap": 1
+      },
+      "out": [
+        "2.1"
+      ]
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "2.1 2.2 2.3 2.4 2.5 2.6",
+        "cap": 4
+      },
+      "out": [
+        "2.1",
+        "2.2",
+        "2.3",
+        "2.4"
+      ]
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "2.1 2.2 2.3 2.4 2.5 2.6",
+        "cap": -1
+      },
+      "out": [
+        "2.1",
+        "2.2",
+        "2.3",
+        "2.4",
+        "2.5"
+      ]
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "SessionStart hook.ts hook.ts FooBar fooBar ERR_X CRW-XYZ",
+        "cap": 0
+      },
+      "out": []
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "SessionStart hook.ts hook.ts FooBar fooBar ERR_X CRW-XYZ",
+        "cap": 1
+      },
+      "out": [
+        "hook.ts"
+      ]
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "SessionStart hook.ts hook.ts FooBar fooBar ERR_X CRW-XYZ",
+        "cap": 4
+      },
+      "out": [
+        "hook.ts",
+        "ERR_X",
+        "CRW-XYZ",
+        "SessionStart"
+      ]
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "SessionStart hook.ts hook.ts FooBar fooBar ERR_X CRW-XYZ",
+        "cap": -1
+      },
+      "out": [
+        "hook.ts",
+        "ERR_X",
+        "CRW-XYZ",
+        "SessionStart",
+        "FooBar",
+        "CRW"
+      ]
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "\"last\" 'time' `session`",
+        "cap": 0
+      },
+      "out": []
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "\"last\" 'time' `session`",
+        "cap": 1
+      },
+      "out": []
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "\"last\" 'time' `session`",
+        "cap": 4
+      },
+      "out": []
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "\"last\" 'time' `session`",
+        "cap": -1
+      },
+      "out": []
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "\"😀\"",
+        "cap": 0
+      },
+      "out": []
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "\"😀\"",
+        "cap": 1
+      },
+      "out": []
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "\"😀\"",
+        "cap": 4
+      },
+      "out": []
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "\"😀\"",
+        "cap": -1
+      },
+      "out": []
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "\"😀a\"",
+        "cap": 0
+      },
+      "out": []
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "\"😀a\"",
+        "cap": 1
+      },
+      "out": [
+        "😀a"
+      ]
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "\"😀a\"",
+        "cap": 4
+      },
+      "out": [
+        "😀a"
+      ]
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "\"😀a\"",
+        "cap": -1
+      },
+      "out": []
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "\"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\"",
+        "cap": 0
+      },
+      "out": []
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "\"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\"",
+        "cap": 1
+      },
+      "out": [
+        "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+      ]
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "\"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\"",
+        "cap": 4
+      },
+      "out": [
+        "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+      ]
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "\"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\"",
+        "cap": -1
+      },
+      "out": []
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "\"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\"",
+        "cap": 0
+      },
+      "out": []
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "\"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\"",
+        "cap": 1
+      },
+      "out": []
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "\"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\"",
+        "cap": 4
+      },
+      "out": []
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "\"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\"",
+        "cap": -1
+      },
+      "out": []
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "`abc`def`",
+        "cap": 0
+      },
+      "out": []
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "`abc`def`",
+        "cap": 1
+      },
+      "out": [
+        "abc`def"
+      ]
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "`abc`def`",
+        "cap": 4
+      },
+      "out": [
+        "abc`def"
+      ]
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "`abc`def`",
+        "cap": -1
+      },
+      "out": []
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "2026.10.04 1.2.3.4 x.TS",
+        "cap": 0
+      },
+      "out": []
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "2026.10.04 1.2.3.4 x.TS",
+        "cap": 1
+      },
+      "out": [
+        "2026.10.04"
+      ]
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "2026.10.04 1.2.3.4 x.TS",
+        "cap": 4
+      },
+      "out": [
+        "2026.10.04",
+        "1.2.3",
+        "TS"
+      ]
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "2026.10.04 1.2.3.4 x.TS",
+        "cap": -1
+      },
+      "out": [
+        "2026.10.04",
+        "1.2.3"
+      ]
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "\"İSTANBUL\" \"İstanbul\"",
+        "cap": 0
+      },
+      "out": []
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "\"İSTANBUL\" \"İstanbul\"",
+        "cap": 1
+      },
+      "out": [
+        "STANBUL"
+      ]
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "\"İSTANBUL\" \"İstanbul\"",
+        "cap": 4
+      },
+      "out": [
+        "STANBUL",
+        "İSTANBUL"
+      ]
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "\"İSTANBUL\" \"İstanbul\"",
+        "cap": -1
+      },
+      "out": [
+        "STANBUL"
+      ]
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "지난번 \"last|time\"",
+        "cap": 0
+      },
+      "out": []
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "지난번 \"last|time\"",
+        "cap": 1
+      },
+      "out": [
+        "last|time"
+      ]
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "지난번 \"last|time\"",
+        "cap": 4
+      },
+      "out": [
+        "last|time"
+      ]
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "지난번 \"last|time\"",
+        "cap": -1
+      },
+      "out": []
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "지난번 \"x\ud800y\" \"x\ud801y\"",
+        "cap": 0
+      },
+      "out": []
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "지난번 \"x\ud800y\" \"x\ud801y\"",
+        "cap": 1
+      },
+      "out": [
+        "x\ud800y"
+      ]
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "지난번 \"x\ud800y\" \"x\ud801y\"",
+        "cap": 4
+      },
+      "out": [
+        "x\ud800y",
+        "x\ud801y"
+      ]
+    },
+    {
+      "kind": "extract",
+      "input": {
+        "prompt": "지난번 \"x\ud800y\" \"x\ud801y\"",
+        "cap": -1
+      },
+      "out": [
+        "x\ud800y"
+      ]
+    },
+    {
+      "kind": "session",
+      "input": {
+        "source": "",
+        "dedicated": false,
+        "status": "",
+        "notice": "memory pipeline: 2 exhausted"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"memory pipeline: 2 exhausted\\n\\n[crw-recall] Past-session recall is available (read-only). Before asking the user\\nabout prior work — unfamiliar terms, lost context, \\\"그때/지난번/last time\\\" — recover it.\\nRecall: crw recall chat search \\\"<terms>\\\" --days 0  |  crw recall memory search \\\"<topic>\\\"\\nDetails: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "session",
+      "input": {
+        "source": "",
+        "dedicated": false,
+        "status": "4 files / 20 messages, 5 source, 1 stale, last ingest X",
+        "notice": "memory pipeline: 2 exhausted"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"memory pipeline: 2 exhausted\\n\\n[crw-recall] Past-session recall is available (read-only). Before asking the user\\nabout prior work — unfamiliar terms, lost context, \\\"그때/지난번/last time\\\" — recover it.\\nRecall: crw recall chat search \\\"<terms>\\\" --days 0  |  crw recall memory search \\\"<topic>\\\"\\nIndex: 4 files / 20 messages, 5 source, 1 stale, last ingest X. Details: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "session",
+      "input": {
+        "source": "",
+        "dedicated": true,
+        "status": "",
+        "notice": "memory pipeline: 2 exhausted"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"memory pipeline: 2 exhausted\\n\\n[crw-recall] Past-session recall is available (read-only). Before asking the user\\nabout prior work — unfamiliar terms, lost context, \\\"그때/지난번/last time\\\" — recover it.\\nRecall: memories.search \\\"<topic>\\\" (native tool). Also: crw recall memory search \\\"<topic>\\\"\\nDetails: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "session",
+      "input": {
+        "source": "",
+        "dedicated": true,
+        "status": "4 files / 20 messages, 5 source, 1 stale, last ingest X",
+        "notice": "memory pipeline: 2 exhausted"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"memory pipeline: 2 exhausted\\n\\n[crw-recall] Past-session recall is available (read-only). Before asking the user\\nabout prior work — unfamiliar terms, lost context, \\\"그때/지난번/last time\\\" — recover it.\\nRecall: memories.search \\\"<topic>\\\" (native tool). Also: crw recall memory search \\\"<topic>\\\"\\nIndex: 4 files / 20 messages, 5 source, 1 stale, last ingest X. Details: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "session",
+      "input": {
+        "source": "startup",
+        "dedicated": false,
+        "status": "",
+        "notice": "memory pipeline: 2 exhausted"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"memory pipeline: 2 exhausted\\n\\n[crw-recall] Past-session recall is available (read-only). Before asking the user\\nabout prior work — unfamiliar terms, lost context, \\\"그때/지난번/last time\\\" — recover it.\\nRecall: crw recall chat search \\\"<terms>\\\" --days 0  |  crw recall memory search \\\"<topic>\\\"\\nDetails: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "session",
+      "input": {
+        "source": "startup",
+        "dedicated": false,
+        "status": "4 files / 20 messages, 5 source, 1 stale, last ingest X",
+        "notice": "memory pipeline: 2 exhausted"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"memory pipeline: 2 exhausted\\n\\n[crw-recall] Past-session recall is available (read-only). Before asking the user\\nabout prior work — unfamiliar terms, lost context, \\\"그때/지난번/last time\\\" — recover it.\\nRecall: crw recall chat search \\\"<terms>\\\" --days 0  |  crw recall memory search \\\"<topic>\\\"\\nIndex: 4 files / 20 messages, 5 source, 1 stale, last ingest X. Details: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "session",
+      "input": {
+        "source": "startup",
+        "dedicated": true,
+        "status": "",
+        "notice": "memory pipeline: 2 exhausted"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"memory pipeline: 2 exhausted\\n\\n[crw-recall] Past-session recall is available (read-only). Before asking the user\\nabout prior work — unfamiliar terms, lost context, \\\"그때/지난번/last time\\\" — recover it.\\nRecall: memories.search \\\"<topic>\\\" (native tool). Also: crw recall memory search \\\"<topic>\\\"\\nDetails: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "session",
+      "input": {
+        "source": "startup",
+        "dedicated": true,
+        "status": "4 files / 20 messages, 5 source, 1 stale, last ingest X",
+        "notice": "memory pipeline: 2 exhausted"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"memory pipeline: 2 exhausted\\n\\n[crw-recall] Past-session recall is available (read-only). Before asking the user\\nabout prior work — unfamiliar terms, lost context, \\\"그때/지난번/last time\\\" — recover it.\\nRecall: memories.search \\\"<topic>\\\" (native tool). Also: crw recall memory search \\\"<topic>\\\"\\nIndex: 4 files / 20 messages, 5 source, 1 stale, last ingest X. Details: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "session",
+      "input": {
+        "source": "resume",
+        "dedicated": false,
+        "status": "",
+        "notice": "memory pipeline: 2 exhausted"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"memory pipeline: 2 exhausted\\n\\n[crw-recall] Past-session recall is available (read-only). Before asking the user\\nabout prior work — unfamiliar terms, lost context, \\\"그때/지난번/last time\\\" — recover it.\\nThis session was resumed after a pause, so earlier turns may be missing here.\\nRecall: crw recall chat search \\\"<terms>\\\" --days 0  |  crw recall memory search \\\"<topic>\\\"\\nDetails: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "session",
+      "input": {
+        "source": "resume",
+        "dedicated": false,
+        "status": "4 files / 20 messages, 5 source, 1 stale, last ingest X",
+        "notice": "memory pipeline: 2 exhausted"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"memory pipeline: 2 exhausted\\n\\n[crw-recall] Past-session recall is available (read-only). Before asking the user\\nabout prior work — unfamiliar terms, lost context, \\\"그때/지난번/last time\\\" — recover it.\\nThis session was resumed after a pause, so earlier turns may be missing here.\\nRecall: crw recall chat search \\\"<terms>\\\" --days 0  |  crw recall memory search \\\"<topic>\\\"\\nIndex: 4 files / 20 messages, 5 source, 1 stale, last ingest X. Details: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "session",
+      "input": {
+        "source": "resume",
+        "dedicated": true,
+        "status": "",
+        "notice": "memory pipeline: 2 exhausted"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"memory pipeline: 2 exhausted\\n\\n[crw-recall] Past-session recall is available (read-only). Before asking the user\\nabout prior work — unfamiliar terms, lost context, \\\"그때/지난번/last time\\\" — recover it.\\nThis session was resumed after a pause, so earlier turns may be missing here.\\nRecall: memories.search \\\"<topic>\\\" (native tool). Also: crw recall memory search \\\"<topic>\\\"\\nDetails: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "session",
+      "input": {
+        "source": "resume",
+        "dedicated": true,
+        "status": "4 files / 20 messages, 5 source, 1 stale, last ingest X",
+        "notice": "memory pipeline: 2 exhausted"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"memory pipeline: 2 exhausted\\n\\n[crw-recall] Past-session recall is available (read-only). Before asking the user\\nabout prior work — unfamiliar terms, lost context, \\\"그때/지난번/last time\\\" — recover it.\\nThis session was resumed after a pause, so earlier turns may be missing here.\\nRecall: memories.search \\\"<topic>\\\" (native tool). Also: crw recall memory search \\\"<topic>\\\"\\nIndex: 4 files / 20 messages, 5 source, 1 stale, last ingest X. Details: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "session",
+      "input": {
+        "source": "clear",
+        "dedicated": false,
+        "status": "",
+        "notice": "memory pipeline: 2 exhausted"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"memory pipeline: 2 exhausted\\n\\n[crw-recall] Past-session recall is available (read-only). Before asking the user\\nabout prior work — unfamiliar terms, lost context, \\\"그때/지난번/last time\\\" — recover it.\\nRecall: crw recall chat search \\\"<terms>\\\" --days 0  |  crw recall memory search \\\"<topic>\\\"\\nDetails: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "session",
+      "input": {
+        "source": "clear",
+        "dedicated": false,
+        "status": "4 files / 20 messages, 5 source, 1 stale, last ingest X",
+        "notice": "memory pipeline: 2 exhausted"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"memory pipeline: 2 exhausted\\n\\n[crw-recall] Past-session recall is available (read-only). Before asking the user\\nabout prior work — unfamiliar terms, lost context, \\\"그때/지난번/last time\\\" — recover it.\\nRecall: crw recall chat search \\\"<terms>\\\" --days 0  |  crw recall memory search \\\"<topic>\\\"\\nIndex: 4 files / 20 messages, 5 source, 1 stale, last ingest X. Details: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "session",
+      "input": {
+        "source": "clear",
+        "dedicated": true,
+        "status": "",
+        "notice": "memory pipeline: 2 exhausted"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"memory pipeline: 2 exhausted\\n\\n[crw-recall] Past-session recall is available (read-only). Before asking the user\\nabout prior work — unfamiliar terms, lost context, \\\"그때/지난번/last time\\\" — recover it.\\nRecall: memories.search \\\"<topic>\\\" (native tool). Also: crw recall memory search \\\"<topic>\\\"\\nDetails: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "session",
+      "input": {
+        "source": "clear",
+        "dedicated": true,
+        "status": "4 files / 20 messages, 5 source, 1 stale, last ingest X",
+        "notice": "memory pipeline: 2 exhausted"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"memory pipeline: 2 exhausted\\n\\n[crw-recall] Past-session recall is available (read-only). Before asking the user\\nabout prior work — unfamiliar terms, lost context, \\\"그때/지난번/last time\\\" — recover it.\\nRecall: memories.search \\\"<topic>\\\" (native tool). Also: crw recall memory search \\\"<topic>\\\"\\nIndex: 4 files / 20 messages, 5 source, 1 stale, last ingest X. Details: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "session",
+      "input": {
+        "source": "compact",
+        "dedicated": false,
+        "status": "",
+        "notice": "memory pipeline: 2 exhausted"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"memory pipeline: 2 exhausted\\n\\n[crw-recall] Context was just compacted. If any earlier detail is now missing,\\nrecover it from past sessions before asking the user to repeat themselves.\\nRecall: crw recall chat search \\\"<terms>\\\" --days 0  |  crw recall memory search \\\"<topic>\\\"\\nDetails: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "session",
+      "input": {
+        "source": "compact",
+        "dedicated": false,
+        "status": "4 files / 20 messages, 5 source, 1 stale, last ingest X",
+        "notice": "memory pipeline: 2 exhausted"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"memory pipeline: 2 exhausted\\n\\n[crw-recall] Context was just compacted. If any earlier detail is now missing,\\nrecover it from past sessions before asking the user to repeat themselves.\\nRecall: crw recall chat search \\\"<terms>\\\" --days 0  |  crw recall memory search \\\"<topic>\\\"\\nIndex: 4 files / 20 messages, 5 source, 1 stale, last ingest X. Details: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "session",
+      "input": {
+        "source": "compact",
+        "dedicated": true,
+        "status": "",
+        "notice": "memory pipeline: 2 exhausted"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"memory pipeline: 2 exhausted\\n\\n[crw-recall] Context was just compacted. If any earlier detail is now missing,\\nrecover it from past sessions before asking the user to repeat themselves.\\nRecall: memories.search \\\"<topic>\\\" (native tool). Also: crw recall memory search \\\"<topic>\\\"\\nDetails: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "session",
+      "input": {
+        "source": "compact",
+        "dedicated": true,
+        "status": "4 files / 20 messages, 5 source, 1 stale, last ingest X",
+        "notice": "memory pipeline: 2 exhausted"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"memory pipeline: 2 exhausted\\n\\n[crw-recall] Context was just compacted. If any earlier detail is now missing,\\nrecover it from past sessions before asking the user to repeat themselves.\\nRecall: memories.search \\\"<topic>\\\" (native tool). Also: crw recall memory search \\\"<topic>\\\"\\nIndex: 4 files / 20 messages, 5 source, 1 stale, last ingest X. Details: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "session",
+      "input": {
+        "source": "other",
+        "dedicated": false,
+        "status": "",
+        "notice": "memory pipeline: 2 exhausted"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"memory pipeline: 2 exhausted\\n\\n[crw-recall] Past-session recall is available (read-only). Before asking the user\\nabout prior work — unfamiliar terms, lost context, \\\"그때/지난번/last time\\\" — recover it.\\nRecall: crw recall chat search \\\"<terms>\\\" --days 0  |  crw recall memory search \\\"<topic>\\\"\\nDetails: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "session",
+      "input": {
+        "source": "other",
+        "dedicated": false,
+        "status": "4 files / 20 messages, 5 source, 1 stale, last ingest X",
+        "notice": "memory pipeline: 2 exhausted"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"memory pipeline: 2 exhausted\\n\\n[crw-recall] Past-session recall is available (read-only). Before asking the user\\nabout prior work — unfamiliar terms, lost context, \\\"그때/지난번/last time\\\" — recover it.\\nRecall: crw recall chat search \\\"<terms>\\\" --days 0  |  crw recall memory search \\\"<topic>\\\"\\nIndex: 4 files / 20 messages, 5 source, 1 stale, last ingest X. Details: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "session",
+      "input": {
+        "source": "other",
+        "dedicated": true,
+        "status": "",
+        "notice": "memory pipeline: 2 exhausted"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"memory pipeline: 2 exhausted\\n\\n[crw-recall] Past-session recall is available (read-only). Before asking the user\\nabout prior work — unfamiliar terms, lost context, \\\"그때/지난번/last time\\\" — recover it.\\nRecall: memories.search \\\"<topic>\\\" (native tool). Also: crw recall memory search \\\"<topic>\\\"\\nDetails: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "session",
+      "input": {
+        "source": "other",
+        "dedicated": true,
+        "status": "4 files / 20 messages, 5 source, 1 stale, last ingest X",
+        "notice": "memory pipeline: 2 exhausted"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"memory pipeline: 2 exhausted\\n\\n[crw-recall] Past-session recall is available (read-only). Before asking the user\\nabout prior work — unfamiliar terms, lost context, \\\"그때/지난번/last time\\\" — recover it.\\nRecall: memories.search \\\"<topic>\\\" (native tool). Also: crw recall memory search \\\"<topic>\\\"\\nIndex: 4 files / 20 messages, 5 source, 1 stale, last ingest X. Details: $crw-recall.\"}}\n"
+    },
+    {
+      "kind": "config",
+      "input": "",
+      "out": false
+    },
+    {
+      "kind": "config",
+      "input": "[other]\nx=1\n",
+      "out": false
+    },
+    {
+      "kind": "config",
+      "input": "[memories]\ndedicated_tools = true\n\n[other]\nx=1\n",
+      "out": true
+    },
+    {
+      "kind": "config",
+      "input": "[tools]\ndedicated_tools=true\n",
+      "out": false
+    },
+    {
+      "kind": "config",
+      "input": "[memories] # comment\r\n dedicated_tools = true # comment\r\n",
+      "out": true
+    },
+    {
+      "kind": "config",
+      "input": "[memories]\ndedicated_tools = \"true\"\n",
+      "out": false
+    },
+    {
+      "kind": "config",
+      "input": "[memories]\ndedicated_tools = false\n[other]\ndedicated_tools = true\n",
+      "out": false
+    },
+    {
+      "kind": "config",
+      "input": "[memories]\ndedicated_tools = true\r",
+      "out": true
+    },
+    {
+      "kind": "config",
+      "input": "[memories]\ndedicated_tools = true ",
+      "out": true
+    },
+    {
+      "kind": "envelope",
+      "input": {
+        "ctx": ""
+      },
+      "out": ""
+    },
+    {
+      "kind": "envelope",
+      "input": {
+        "ctx": " ﻿\r\nhello\rworld\t "
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"hello\\nworld\"}}\n"
+    },
+    {
+      "kind": "envelope",
+      "input": {
+        "ctx": "<>&  "
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"<>&\"}}\n"
+    },
+    {
+      "kind": "envelope",
+      "input": {
+        "ctx": "\ud800x\udc00"
+      },
+      "out": "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"\\ud800x\\udc00\"}}\n"
+    },
+    {
+      "kind": "envelopeLong",
+      "input": {
+        "prefix": 32703,
+        "emoji": true,
+        "tail": 100
+      },
+      "out": {
+        "sum": [
+          "de756ed9",
+          "7f6732b4",
+          "31e43aa0",
+          "f12a84c5",
+          "712a1162",
+          "6f824280",
+          "1a649f5c",
+          "35b452cd"
+        ],
+        "chars": 32803
+      }
+    },
+    {
+      "kind": "envelopeLong",
+      "input": {
+        "prefix": 32768,
+        "emoji": false,
+        "tail": 0
+      },
+      "out": {
+        "sum": [
+          "d39b76e2",
+          "b8e5cc20",
+          "eb6ca650",
+          "fc616bef",
+          "d0e5126f",
+          "8cc31210",
+          "1ca423bd",
+          "4fb418fe"
+        ],
+        "chars": 32847
+      }
+    },
+    {
+      "kind": "envelopeLong",
+      "input": {
+        "prefix": 32769,
+        "emoji": false,
+        "tail": 0
+      },
+      "out": {
+        "sum": [
+          "4fb1e069",
+          "ce84a6d5",
+          "4cb408f1",
+          "eccddd2e",
+          "84e08a0f",
+          "53b106d4",
+          "48d5a444",
+          "42aa4a06"
+        ],
+        "chars": 32798
+      }
+    },
+    {
+      "kind": "recovery",
+      "input": {
+        "inv": "crw",
+        "dedicated": false
+      },
+      "out": "Recall: crw recall chat search \"<terms>\" --days 0  |  crw recall memory search \"<topic>\""
+    },
+    {
+      "kind": "recovery",
+      "input": {
+        "inv": "crw",
+        "dedicated": true
+      },
+      "out": "Recall: memories.search \"<topic>\" (native tool). Also: crw recall memory search \"<topic>\""
+    },
+    {
+      "kind": "recovery",
+      "input": {
+        "inv": "\"long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/crw\"",
+        "dedicated": false
+      },
+      "out": "Recall: \"long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/l"
+    },
+    {
+      "kind": "recovery",
+      "input": {
+        "inv": "\"long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/crw\"",
+        "dedicated": true
+      },
+      "out": "Recall: memories.search \"<topic>\" (native tool). Also: \"long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long/long"
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "issue": "CRW-540",
+  "identical": [],
+  "intentionally-changed": [],
+  "pending": [
+    "cli__scan__derive_from_captured_answers",
+    "cli__scan__record_requires_session",
+    "cli__scan__record_round_updates_tracker",
+    "cli__scan__unknown_dimension_rejected",
+    "cli-help__scan__dash_h",
+    "cli-help__scan__dashdash_help",
+    "cli-help__scan__word_help",
+    "cli-help__scan__record_dashdash_help",
+    "cli-help__scan__show_dashdash_help"
+  ]
+}

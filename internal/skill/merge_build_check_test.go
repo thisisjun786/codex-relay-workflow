@@ -1,6 +1,7 @@
 package skill
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"os"
@@ -294,6 +295,109 @@ func TestMergeBuildCheckVetsADarwinOnlyPackageAndBuildsAMainPackage(t *testing.T
 		"refused: vet_darwin_failed:", "undefinedName", "skipped: example.test/m/dn steps=build,vet,test_compile reason=not_built_on_host")
 }
 
+// A -tags the caller carries must not decide the untagged pass: a tag named by GOFLAGS, and again a
+// tag named by the caller's go settings file, must leave the two //go:build !dev files of the merge
+// in the untagged pass and turn their clash into a build_failed refusal. Without an explicit empty
+// tag set both passes run tagged and the check answers ok (CRW-562).
+func TestMergeBuildCheckIgnoresATagTheCallerCarries(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		use  func(t *testing.T)
+	}{
+		{"GOFLAGS", func(t *testing.T) { t.Setenv("GOFLAGS", "-tags=dev") }},
+		{"the go settings file", func(t *testing.T) {
+			mbcNoGoFlags(t)
+			settings := filepath.Join(t.TempDir(), "goenv")
+			if err := os.WriteFile(settings, []byte("GOFLAGS=-tags=dev\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("GOENV", settings)
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			m := newMbcRepo(t)
+			clash := "//go:build !dev\n\npackage p\n\nfunc Clash() {}\n"
+			m.sibling("s1", map[string]string{"p/b.go": clash})
+			head := m.sibling("s2", map[string]string{"p/c.go": clash})
+			m.land("s1")
+			c.use(t)
+			mbcExpect(t, m.check(t, "--head", head, "--base", "dev"), 1,
+				"refused: build_failed:", "Clash redeclared in this block", "example.test/m/p", "step=build")
+		})
+	}
+}
+
+// mbcNoGoFlags takes GOFLAGS out of this process's environment, where it would mask the value the
+// caller's go settings file names.
+func mbcNoGoFlags(t *testing.T) {
+	t.Helper()
+	if value, ok := os.LookupEnv("GOFLAGS"); ok {
+		os.Unsetenv("GOFLAGS")
+		t.Cleanup(func() { os.Setenv("GOFLAGS", value) })
+	}
+}
+
+// Every step of the untagged pass names the empty tag set on its command line, so a -tags the
+// caller carries cannot decide it: with GOFLAGS=-tags=dev a shim that logs each go invocation and
+// then runs the real go shows list, build, vet and test asked both tagged and untagged (CRW-562).
+func TestMergeBuildCheckNamesTheEmptyTagSetOnEveryStep(t *testing.T) {
+	realGo, err := exec.LookPath("go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	git, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	trueTool, err := exec.LookPath("true")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := newMbcRepo(t)
+	head := m.sibling("s1", map[string]string{
+		"p/b.go":      mbcTokenize,
+		"p/b_test.go": "package p\n\nimport \"testing\"\n\nfunc TestB(t *testing.T) { tokenize() }\n",
+	})
+	bin := t.TempDir()
+	for name, path := range map[string]string{"git": git, "true": trueTool} {
+		if err := os.Symlink(path, filepath.Join(bin, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	log := filepath.Join(t.TempDir(), "go.log")
+	shim := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$MBC_SHIM_LOG\"\nexec " + realGo + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "go"), []byte(shim), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	t.Setenv("MBC_SHIM_LOG", log)
+	t.Setenv("GOFLAGS", "-tags=dev")
+	mbcExpect(t, m.check(t, "--head", head, "--base", "dev"), 0, "ok: ")
+	raw, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]map[string]bool{}
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		step, _, _ := strings.Cut(line, " ")
+		if seen[step] == nil {
+			seen[step] = map[string]bool{}
+		}
+		for _, form := range []string{"-tags=", "-tags dev"} {
+			if strings.Contains(line, form+" ") {
+				seen[step][form] = true
+			}
+		}
+	}
+	for _, step := range []string{"list", "build", "vet", "test"} {
+		for _, form := range []string{"-tags=", "-tags dev"} {
+			if !seen[step][form] {
+				t.Errorf("go %s was never asked with %q: %q", step, form, strings.Split(string(raw), "\n"))
+			}
+		}
+	}
+}
+
 // The go tool runs with a home, a temporary directory and a telemetry setting of its own, below the
 // directory the check removes, and with the caller's caches. A check that outran its time is cut off:
 // the go process is gone, exit 3, and nothing is left, not even the go tool's own temporary files.
@@ -332,15 +436,21 @@ func TestMergeBuildCheckKeepsTheGoToolInsideItsOwnScratchAndEndsItOnTimeout(t *t
 		key, value, _ := strings.Cut(line, "=")
 		seen[key] = value
 	}
-	if !strings.HasPrefix(seen["args"], "list -e -p=4 ") {
-		t.Errorf("go list does not carry -p: %q", seen["args"])
+	// On darwin the check reads the caller's caches first, with the go tool's HOME inside its own
+	// scratch directory; elsewhere the first command it runs is the list.
+	firstArgs, firstHomeOK := "list -e -p=4 ", seen["home"] == realHome
+	if runtime.GOOS == "darwin" {
+		firstArgs, firstHomeOK = "env GOCACHE GOMODCACHE GOPATH", strings.HasPrefix(seen["home"], m.scratch)
+	}
+	if !strings.HasPrefix(seen["args"], firstArgs) {
+		t.Errorf("the first go command is %q, want %q", seen["args"], firstArgs)
 	}
 	for _, key := range []string{"tmpdir", "gotmpdir", "xdg"} {
 		if !strings.HasPrefix(seen[key], m.scratch) {
 			t.Errorf("%s of the go tool is %q, not below the scratch directory %s", key, seen[key], m.scratch)
 		}
 	}
-	if seen["home"] != realHome || seen["gocache"] != "/pinned/gocache" || seen["gowork"] != "off" || seen["goenv"] != filepath.Join(config, "go", "env") {
+	if !firstHomeOK || seen["gocache"] != "/pinned/gocache" || seen["gowork"] != "off" || seen["goenv"] != filepath.Join(config, "go", "env") {
 		t.Errorf("home %q, gocache %q, gowork %q, goenv %q", seen["home"], seen["gocache"], seen["gowork"], seen["goenv"])
 	}
 	pid, _ := strconv.Atoi(seen["pid"])
@@ -398,7 +508,7 @@ func TestMergeBuildEnvKeepsTheCallersGoSettingsFile(t *testing.T) {
 		{"off", ""},
 	} {
 		t.Setenv("GOENV", c.set)
-		env, err := mergeBuildEnv([]string{"A=1"}, t.TempDir())
+		env, err := mergeBuildEnv(context.Background(), []string{"A=1", "HOME=" + t.TempDir()}, t.TempDir())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -413,4 +523,117 @@ func TestMergeBuildEnvKeepsTheCallersGoSettingsFile(t *testing.T) {
 			t.Errorf("GOENV=%q: the environment names %v, want %q", c.set, got, c.want)
 		}
 	}
+}
+
+// The go tool on darwin reads the directory it keeps telemetry in from HOME, not from
+// XDG_CONFIG_HOME, so the darwin environment moves HOME into the directory the run owns, reads the
+// three cache locations the caller's go environment holds without running a go command under the
+// caller's home either, and pins the caller's values. Linux keeps the caller's HOME (CRW-562).
+func TestMergeBuildEnvMovesOnlyTheDarwinHome(t *testing.T) {
+	callerHome := t.TempDir()
+	callerConfig := t.TempDir()
+	caller := append(os.Environ(), "HOME="+callerHome, "XDG_CONFIG_HOME="+callerConfig)
+	owned := t.TempDir()
+	darwinEnv, err := mergeBuildEnv(context.Background(), caller, owned, "darwin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := mbcLastEnv(darwinEnv)
+	home := filepath.Join(owned, "home")
+	if got["HOME"] != home {
+		t.Errorf("darwin: HOME=%q, want the owned %q", got["HOME"], home)
+	}
+	if info, err := os.Stat(home); err != nil || !info.IsDir() {
+		t.Errorf("darwin: the owned home is not a directory: %v", err)
+	}
+	if left, _ := os.ReadDir(callerHome); len(left) != 0 {
+		t.Errorf("darwin: the cache read wrote to the caller's home: %v", left)
+	}
+	if left, _ := os.ReadDir(callerConfig); len(left) != 0 {
+		t.Errorf("darwin: the cache read wrote to the caller's config directory: %v", left)
+	}
+	caches := mbcCallerGoEnv(t, caller)
+	for key, want := range map[string]string{"GOCACHE": caches[0], "GOMODCACHE": caches[1], "GOPATH": caches[2]} {
+		if got[key] != want {
+			t.Errorf("darwin: %s=%q, want the caller's %q", key, got[key], want)
+		}
+	}
+	linuxEnv, err := mergeBuildEnv(context.Background(), caller, t.TempDir(), "linux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := mbcLastEnv(linuxEnv)["HOME"], mbcLastEnv(caller)["HOME"]; got != want {
+		t.Errorf("linux: HOME=%q, want the caller's %q", got, want)
+	}
+}
+
+// What go env answers is a value in itself: a path that ends in a space is the path, not another
+// one trimmed into shape (CRW-562).
+func TestMergeBuildEnvKeepsWhatGoEnvAnswers(t *testing.T) {
+	bin := t.TempDir()
+	shim := "#!/bin/sh\nprintf '%s\\n' '/cache with space/ ' '/mod' '/gopath'\n"
+	if err := os.WriteFile(filepath.Join(bin, "go"), []byte(shim), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	env, err := mergeBuildEnv(context.Background(), []string{"HOME=/caller"}, t.TempDir(), "darwin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := mbcLastEnv(env)
+	for key, want := range map[string]string{"GOCACHE": "/cache with space/ ", "GOMODCACHE": "/mod", "GOPATH": "/gopath"} {
+		if got[key] != want {
+			t.Errorf("%s=%q, want %q", key, got[key], want)
+		}
+	}
+}
+
+// mbcCallerGoEnv reads the three cache locations a go env names for the caller's environment.
+func mbcCallerGoEnv(t *testing.T, base []string) [3]string {
+	t.Helper()
+	goTool, err := exec.LookPath("go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(goTool, "env", "GOCACHE", "GOMODCACHE", "GOPATH")
+	cmd.Env = base
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("go env GOCACHE GOMODCACHE GOPATH answered %q", out)
+	}
+	return [3]string{strings.TrimSpace(lines[0]), strings.TrimSpace(lines[1]), strings.TrimSpace(lines[2])}
+}
+
+// The cache read darwin needs runs under the check's own context: a go env that stalls is cut off
+// with the check instead of keeping merge-build-check running past --timeout (CRW-562).
+func TestMergeBuildEnvStopsAStalledCacheRead(t *testing.T) {
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "go"), []byte("#!/bin/sh\nexec sleep 60\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	start := time.Now()
+	if _, err := mergeBuildEnv(ctx, []string{"HOME=/caller"}, t.TempDir(), "darwin"); err == nil {
+		t.Error("a stalled go env was not cut off")
+	}
+	if elapsed := time.Since(start); elapsed > 30*time.Second {
+		t.Errorf("the stalled go env was not cut off promptly: %v", elapsed)
+	}
+}
+
+// mbcLastEnv folds an environment the way exec uses it: of duplicated keys the last value wins.
+func mbcLastEnv(env []string) map[string]string {
+	last := map[string]string{}
+	for _, kv := range env {
+		if key, value, ok := strings.Cut(kv, "="); ok {
+			last[key] = value
+		}
+	}
+	return last
 }

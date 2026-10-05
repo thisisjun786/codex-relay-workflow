@@ -1,0 +1,14 @@
+{
+  "id": "unlocked-update-data-loss",
+  "classification": "intentionally-changed",
+  "reason": "The state session lock serializes scan read/append/write, retaining every concurrent update.",
+  "oracle": {
+    "scanRounds": 1,
+    "knownCount": 1,
+    "rows": 2,
+    "roundIds": [
+      1,
+      1
+    ]
+  }
+}
