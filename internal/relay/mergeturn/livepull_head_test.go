@@ -296,11 +296,18 @@ func TestLivePullCheckFailsClosedWhenThePullRequestIsNotRead(t *testing.T) {
 	}
 }
 
-// A reader that cannot read pull requests (every fake before this change, a relay with no forge reader) leaves the check as it was.
-func TestLivePullCheckWithoutAPullRequestReaderIsUnchanged(t *testing.T) {
-	w, _, turn := livePullBound(t)
+// A reader that cannot read pull requests (a fake of the base only) is refused for a recorded forge pull request, even when the
+// service has a reader of its own and the relationship it is bound to is the one a work report would be read for (CRW-608).
+func TestLivePullCheckWithoutAPullRequestReaderIsRefused(t *testing.T) {
+	w, pulls, turn := livePullBound(t)
 	answer, err := w.check(turn, "head-500", "base-0", "")
-	if err != nil || answer["state"] != Merging || answer["pullRequestHead"] != nil {
-		t.Fatalf("%v %v", answer, err)
+	if answer != nil || reasonOf(err) != "merge_target_unreadable" || !strings.Contains(livePullDetail(err), "no pull request head reader for recorded pull request 500 of owner/repo") {
+		t.Fatalf("a check with a reader that cannot read pull requests was not refused: %v %v", answer, err)
+	}
+	if live := w.must(w.m.Turn(w.ctx, turn)); live["state"] != Holding {
+		t.Fatalf("a refused check moved the turn to %v", live["state"])
+	}
+	if pulls.readCount() != 0 {
+		t.Errorf("the check read the service's reader %d times", pulls.readCount())
 	}
 }

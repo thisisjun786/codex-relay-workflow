@@ -193,7 +193,7 @@ func TestACorrectionAfterAWithdrawalFollowsTheLiveGeneration(t *testing.T) {
 		t.Fatalf("roots = %v %v", roots, err)
 	}
 	notes := writeFile(t, roots[0], "notes.md", "the notes of the rework")
-	prepared, err := k.sched.PrepareCorrection(ctx, "g", "I", "parent", ManifestInput{Base: &BaseRef{Repository: k.repo.path, Ref: "dev", SHA: k.repo.git("rev-parse", "dev")}, RuleVersion: k.request(true).RuleVersion,
+	prepared, err := k.sched.PrepareCorrection(ctx, "g", "I", "parent", ManifestInput{Base: &BaseRef{Repository: forgeKitRepository, Ref: "dev", SHA: k.repo.git("rev-parse", "dev")}, RuleVersion: k.request(true).RuleVersion,
 		Volatile: []Volatile{{Source: "linear:comment", SnapshotURI: notes, SHA256: shaOf([]byte("the notes of the rework")), CapturedAt: "2026-10-02T00:00:00Z"}}}, VerifyOptions{ArtifactRoots: roots})
 	if err != nil {
 		t.Fatalf("prepare: %v", err)
