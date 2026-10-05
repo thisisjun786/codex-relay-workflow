@@ -114,6 +114,7 @@ func (w *withdrawKit) lane(expectedEvent string) IntegrationResult {
 		list = append(list, contract.OrderedObject{{Key: "runId", Value: c.RunID}, {Key: "name", Value: c.Name}, {Key: "headSha", Value: c.HeadSHA}, {Key: "conclusion", Value: c.Conclusion}, {Key: "attempt", Value: json.Number("1")}})
 	}
 	green := contract.OrderedObject{{Key: "hasNextPage", Value: false}, {Key: "pagesRead", Value: json.Number("1")}, {Key: "totalCount", Value: json.Number("0")}, {Key: "threadsSeen", Value: []any{}}, {Key: "unresolved", Value: json.Number("0")}}
+	headCompareReportForTurn(w.t, w.s, id, w.head)
 	if _, err := service.Check(ctx, id, "parent", w.head, w.repo.git("rev-parse", "dev"), list, green, []string{"A", "B"}, mergeturn.TargetReader{}); err != nil {
 		w.t.Fatalf("the lane's check: %v", err)
 	}

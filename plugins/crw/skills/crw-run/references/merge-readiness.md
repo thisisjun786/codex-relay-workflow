@@ -987,10 +987,13 @@ it is accepted and not recorded, and on a holding turn it issues a new grant. Th
 readiness is declared, so the order below is yours to keep. It does read the head of the pull request
 the turn is bound to: `merge-turn-ready --head N` is refused `merge_candidate_moved` when the forge reads
 another head for that pull request, and `merge_target_unreadable` when the forge cannot be read; `merge-turn-check`
-refuses the same two ways. The update that produced N can still be settling on the forge, so after a
+refuses the same two ways, and so does `merge-turn-ready --ready` on a head that did not move. The update that produced N can
+still be settling on the forge, so after a
 refresh read the pull request again and declare the head it shows; a repeated refusal is not an
 escalation, and no other pull request's head is ever declared on the turn you hold. The answer's
-`pullRequestHead` says whether the forge or the record decided the head.
+`pullRequestHead` says whether the forge or a work report decided the head. A claim on a repository that is not `owner/name`
+on a forge, or one that names only the assignment, is compared with the assignment's work report instead and is refused
+`merge_target_unreadable` when none names a head: claim with `--pr` on the forge repository.
 
 **A parent holds one live turn per target.** A second `merge-turn-request` for another pull request
 or another relationship is refused `disposition_conflict`, naming the live turn, its pull request and its place
@@ -1017,11 +1020,12 @@ in the answer: an undeclared head is `merge_candidate_moved`, an unanswered gran
 `merge_turn_not_held`, and a check that states another head than the turn holds is
 `merge_candidate_moved` again ([the lane's rules](../../../../../docs/relay/coordination.md#a-restated-head-is-a-new-candidate)).
 `merge-turn-check` states N and the required names read from the reading of N.
-It also compares N with the head of any work report recorded for the assignment, and refuses a
-different one as `merge_candidate_moved`. Nothing in the product records a work report
+A turn on the forge also has N compared with the head of any work report recorded for the assignment, and a
+different one is refused `merge_candidate_moved`. Nothing in the product records a work report
 (`docs/port/decisions.md`, section 53), so N has no report head to disagree with; a store that holds
 such a row naming P anyway refuses N there, when the turn is already held: return the turn and send
-the candidate back like any other refusal.
+the candidate back like any other refusal. A turn that does not name the pull request on the forge repository has only
+that report to be compared with, so it is refused until a report names the head.
 A merge made outside the lane needs no step from the parent that made it: the next
 `merge-turn-check` finds the base the last landing recorded behind the branch and records it again
 itself when it can confirm the move as merge commits no landing recorded

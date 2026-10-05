@@ -2,9 +2,11 @@ package recall
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -134,5 +136,79 @@ func TestRecallPhysicalAbsPlainDirectory(t *testing.T) {
 		if got, err := RecallPhysicalAbs(in); err != nil || got != want {
 			t.Errorf("RecallPhysicalAbs(%q)=%q err=%v, want %q", in, got, err, want)
 		}
+	}
+}
+
+// recallPhysicalLockedAncestor builds root/a/b, enters b and returns root with a lock
+// that removes the search permission of a. From then on a lookup of b by name fails
+// with EACCES while the kernel getcwd still answers, as it does for Node's process.cwd().
+// The permission returns in t.Cleanup before the temporary directory is removed.
+func recallPhysicalLockedAncestor(t *testing.T) (string, func()) {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses directory search permission")
+	}
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, b := filepath.Join(root, "a"), filepath.Join(root, "a", "b")
+	if err := os.MkdirAll(b, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"HOME", "CODEX_HOME", "CRW_HOME"} {
+		t.Setenv(key, t.TempDir())
+	}
+	t.Chdir(b)
+	return root, func() {
+		t.Cleanup(func() {
+			if err := os.Chmod(a, 0o700); err != nil {
+				t.Error(err)
+			}
+		})
+		if err := os.Chmod(a, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := filepath.EvalSymlinks(b); !errors.Is(err, syscall.EACCES) {
+			t.Skipf("premise: this host does not refuse the walk to %s: %v", b, err)
+		}
+		if got, err := syscall.Getwd(); err != nil || got != b {
+			t.Fatalf("premise: kernel getcwd=%q err=%v, want %q", got, err, b)
+		}
+	}
+}
+
+// The physical working directory comes from the kernel getcwd, so an ancestor without
+// search permission neither fails a relative path, nor empties the cwd the three recall
+// hook rows take from RecallPhysicalAbs("."), nor fails memory search --cwd.
+func TestRecallPhysicalAncestorWithoutSearch(t *testing.T) {
+	root, lock := recallPhysicalLockedAncestor(t)
+	b, store := filepath.Join(root, "a", "b"), filepath.Join(root, "a", "store")
+	check := func(when string) {
+		for _, c := range []struct{ in, want string }{
+			{"../store", store},
+			{"", b},
+			{".", b},
+			{"x/../y", filepath.Join(b, "y")},
+			{"/abs/../p", "/p"},
+		} {
+			if got, err := RecallPhysicalAbs(c.in); err != nil || got != c.want {
+				t.Errorf("%s: RecallPhysicalAbs(%q)=%q err=%v, want %q", when, c.in, got, err, c.want)
+			}
+		}
+	}
+	check("before the lock")
+	lock()
+	check("ancestor without search")
+
+	t.Setenv("CODEX_HOME", "../store")
+	if got, err := codexHome(); err != nil || got != store {
+		t.Errorf("codexHome()=%q err=%v, want %q", got, err, store)
+	}
+	var origin string
+	warnings := []string{}
+	scope, err := memorySearchBuildCwdScope(t.TempDir(), MemorySearchOptions{Cwd: memoryPtr("sub"), ReadOriginUrl: func(cwd string) string { origin = cwd; return "" }}, &warnings)
+	if want := NormalizeCwd(filepath.Join(b, "sub")); err != nil || scope == nil || scope.prefix != want || origin != want {
+		t.Errorf("memory search --cwd sub: scope=%+v origin=%q err=%v, want prefix %q", scope, origin, err, want)
 	}
 }
