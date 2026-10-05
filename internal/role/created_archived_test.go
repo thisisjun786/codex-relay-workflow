@@ -19,20 +19,28 @@ func createdArchivedHost(t *testing.T, env host.LookupEnv, parent, source string
 	native := t.TempDir()
 	createdCheckSeed(t, native, "child-a", parent)
 	file := filepath.Join(native, "state_5.sqlite")
-	db := must(sql.Open("sqlite", file))
-	_, err := db.Exec("UPDATE threads SET archived=?", archived)
-	check(t, err)
+	createdArchivedFlag(t, file, archived)
 	if source != "" {
-		_, err = db.Exec("UPDATE threads SET source=?", source)
+		db := must(sql.Open("sqlite", file))
+		_, err := db.Exec("UPDATE threads SET source=?", source)
 		check(t, err)
+		check(t, db.Close())
 	}
-	check(t, db.Close())
 	return func(k string) (string, bool) {
 		if k == "CODEX_HOME" {
 			return native, true
 		}
 		return env(k)
 	}, file
+}
+
+// createdArchivedFlag sets the archive flag of every row, as the host does when a child finishes.
+func createdArchivedFlag(t *testing.T, file string, archived int) {
+	t.Helper()
+	db := must(sql.Open("sqlite", file))
+	_, err := db.Exec("UPDATE threads SET archived=?", archived)
+	check(t, err)
+	check(t, db.Close())
 }
 
 // A finished child is archived by the host; the thread_spawn marker still proves who created it.
@@ -102,9 +110,11 @@ func TestCreatedArchivedRecoveryThenClose(t *testing.T) {
 	}
 	t.Run("created while live, closed after archive", func(t *testing.T) {
 		ws, env, start, file := dispatchTestFixture(t)
-		env, _ = createdArchivedHost(t, env, "session-test", "", 1)
+		env, db := createdArchivedHost(t, env, "session-test", "", 0)
 		dispatchTestCall(t, ws, env, map[string]any{"action": "claim", "attemptId": start.AttemptID})
-		dispatchTestCall(t, ws, env, map[string]any{"action": "report", "attemptId": start.AttemptID, "outcome": "created", "agentId": "child-a"})
+		_, err := CheckedDispatch(context.Background(), ws, createdCheckInput(start.AttemptID, "created"), env, nil)
+		check(t, err)
+		createdArchivedFlag(t, db, 1)
 		input := createdCheckInput(start.AttemptID, "stopped")
 		input["executionState"] = "stopped"
 		input["reconciliation"] = "child finished and archived; partial work inspected"
