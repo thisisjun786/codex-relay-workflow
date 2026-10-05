@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -229,7 +228,8 @@ func recallCLIChatIndex(args []string, stdout, stderr io.Writer) (code int) {
 		}
 	}()
 	if recallCLIBool(v, "rebuild") {
-		if err = db.Exec("DELETE FROM msgs; DELETE FROM files;"); err != nil {
+		// One transaction: a failed delete must not leave an empty msgs table beside the files fingerprints.
+		if err = ingestTransaction(db, func() error { return db.Exec("DELETE FROM msgs; DELETE FROM files;") }); err != nil {
 			return fail(err)
 		}
 	}
@@ -285,7 +285,7 @@ func recallCLIParseLax(args []string, stringKeys string) map[string]any {
 }
 func recallCLILaxHome(v map[string]any) (string, error) {
 	if s := recallCLIString(v, "home"); s != nil && *s != "" {
-		return filepath.Abs(*s)
+		return RecallPhysicalAbs(*s)
 	}
 	return codexHome()
 }

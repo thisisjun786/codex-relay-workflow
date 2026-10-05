@@ -220,8 +220,8 @@ func (s *Service) Request(ctx context.Context, repository, base, project, holder
 				asked = options[0]
 			}
 			// the holder has one live claim per target: a request for another pull request is refused, not answered with it
-			if !requestIsLiveClaim(live, asked, head) {
-				if refusal, e = s.otherPullRequestRefusal(tx, live, asked, head, holder); e != nil {
+			if !requestIsLiveClaim(live, asked) {
+				if refusal, e = s.otherPullRequestRefusal(tx, live, asked, holder); e != nil {
 					return e
 				}
 				return s.Registry.RecordCoordinationConflict(tx, *refusal, at)
