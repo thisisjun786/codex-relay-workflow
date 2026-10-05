@@ -22,15 +22,6 @@
     "cli__memory__status_unavailable_and_unsupported"
   ],
   "pending": [
-    "cli-help__memory__allow-write_dashdash_help",
-    "cli__chat__natural_language_query_relaxed",
-    "cli__chat__search_plain_envelope",
-    "cli__chat__search_refresh_builds_index",
-    "cli__chat__search_scan_json_and_plain",
-    "cli__memory__search_chat_fallback_and_no_chat",
-    "cli__memory__search_cwd_boost_filter_and_origin_federation",
-    "cli__memory__search_markdown_and_db",
-    "cli__memory__search_plain_envelope",
-    "cli__memory__status_text_and_json"
+    "cli-help__memory__allow-write_dashdash_help"
   ]
 }
