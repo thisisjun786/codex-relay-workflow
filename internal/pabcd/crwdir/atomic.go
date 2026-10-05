@@ -1,6 +1,7 @@
 package crwdir
 
 import (
+	"context"
 	"crypto/rand"
 	"errors"
 	"fmt"
@@ -44,6 +45,31 @@ const (
 // rename wins), and the directory is not fsynced: after a power failure the rename may not have happened, and then the previous
 // file is still there.
 func Publish(finalPath string, data []byte) error { return publish(finalPath, data, nil) }
+
+// PublishContext is Publish with the caller's cancellation: a context cancelled at any point before the rename, the last
+// step, is returned from the rename step instead of moving the temp file over finalPath, so the deferred removal leaves no
+// temp file and finalPath as it was. The context is checked once, at that step: a cancellation that lands between the check
+// and the rename still publishes, which is why the caller checks its context again after this returns. ctx must not be nil;
+// pass context.Background() for an uncancellable publish.
+func PublishContext(ctx context.Context, finalPath string, data []byte) error {
+	return publishContext(ctx, finalPath, data, nil)
+}
+
+// publishContext runs publish with the hook PublishContext installs; a test's fail hook runs first, so it can trigger a
+// cancellation at any step while the production path only consults the context at the rename step.
+func publishContext(ctx context.Context, finalPath string, data []byte, fail func(publishStep) error) error {
+	return publish(finalPath, data, func(at publishStep) error {
+		if fail != nil {
+			if err := fail(at); err != nil {
+				return err
+			}
+		}
+		if at == stepRename {
+			return ctx.Err()
+		}
+		return nil
+	})
+}
 
 // publish takes a hook that is called just before each step and fails it by returning an error.
 func publish(finalPath string, data []byte, fail func(publishStep) error) (err error) {

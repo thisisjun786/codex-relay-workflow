@@ -8,10 +8,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
@@ -242,5 +246,201 @@ func TestPabcdMetricIngestEndsOnTheFirstInterrupt(t *testing.T) {
 				t.Fatalf("the run changed the child's home listings\nbefore:\n%s\nafter:\n%s", before, after)
 			}
 		})
+	}
+}
+
+// CRW-627: the first interrupt also ends the record window. CRW-620 covered the stdin read; once the ingest records, the oracle's
+// process still dies at the signal (it has no lock and no handler) and keeps the lines it had appended, while the port waited for the
+// ledger lock without a deadline and then wrote every remaining line. These cases hold that lock from the test and end the run by the
+// invocation's context.
+
+// c627HoldLedger creates the workspace's ledger and locks it exclusively through a descriptor of this test, opened without O_APPEND
+// so that an append descriptor on the ledger can only be the ingest's (it is close-on-exec, so a child does not inherit it). The
+// cleanup releases the lock; the returned release does too.
+func c627HoldLedger(t *testing.T, root string) (release func()) {
+	t.Helper()
+	ledger := c620MetricRecord(root)
+	if err := os.MkdirAll(filepath.Dir(ledger), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile(ledger, os.O_WRONLY|os.O_CREATE, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX); err != nil {
+		t.Fatal(err)
+	}
+	var once sync.Once
+	release = func() { once.Do(func() { f.Close() }) } // closing drops the lock
+	t.Cleanup(release)
+	return release
+}
+
+// c627AppendOpen reports whether process pid holds a descriptor on path opened with O_APPEND, as /proc shows it (the flags are octal
+// and carry other bits too). The ingest opens the ledger that way only in appendRow, just before it asks for the lock.
+func c627AppendOpen(pid int, path string) bool {
+	dir := filepath.Join("/proc", strconv.Itoa(pid))
+	fds, err := os.ReadDir(filepath.Join(dir, "fd"))
+	if err != nil {
+		return false
+	}
+	for _, fd := range fds {
+		if target, err := os.Readlink(filepath.Join(dir, "fd", fd.Name())); err != nil || target != path {
+			continue
+		}
+		info, err := os.ReadFile(filepath.Join(dir, "fdinfo", fd.Name()))
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(info), "\n") {
+			if flags, ok := strings.CutPrefix(line, "flags:"); ok {
+				if n, err := strconv.ParseUint(strings.TrimSpace(flags), 8, 64); err == nil && n&unix.O_APPEND != 0 {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// TestPabcdMetricIngestEndsOnTheFirstInterruptWhileTheLedgerIsLocked runs the built crw while another writer holds the ledger lock and
+// sends the first SIGINT once the child has opened the ledger for its append, which is where it waits. The oracle's process would die
+// at the signal; the run must end with 130, print nothing and leave the ledger as the holder had it. Before the fix the wait ignored
+// the signal, and nothing after the stdin check looked at the context, so a signal sent from that state could not end with 130.
+func TestPabcdMetricIngestEndsOnTheFirstInterruptWhileTheLedgerIsLocked(t *testing.T) {
+	if _, err := os.Stat("/proc/self/fdinfo"); err != nil {
+		t.Skip("the case reads /proc to see the child reach the ledger lock")
+	}
+	crw := testsupport.CRW(t)
+	home := t.TempDir()
+	root := filepath.Join(home, "work")
+	c627HoldLedger(t, root)
+	ledger, err := filepath.EvalSymlinks(c620MetricRecord(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := c620HomeListings(t, home)
+	cmd := exec.Command(crw, "pabcd", "metric", "ingest", "--session", "s1")
+	cmd.Dir = root
+	cmd.Env = []string{
+		"HOME=" + home,
+		"CODEX_HOME=" + filepath.Join(home, "codex"),
+		"CRW_HOME=" + filepath.Join(home, "crw"),
+		"PATH=" + os.Getenv("PATH"),
+		testsupport.RefuseLiveStateEnv + "=1",
+	}
+	cmd.Stdin = strings.NewReader("METRIC a=1\nMETRIC b=2\n") // copied through a pipe that closes after the second line
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	ended := false
+	t.Cleanup(func() {
+		if !ended {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			<-done
+		}
+	})
+	for deadline := time.Now().Add(5 * time.Second); !c627AppendOpen(cmd.Process.Pid, ledger); time.Sleep(10 * time.Millisecond) {
+		select {
+		case <-done:
+			ended = true
+			t.Fatalf("the ingest ended before it reached the ledger lock\nstdout:\n%s\nstderr:\n%s", stdout.String(), stderr.String())
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the ingest did not reach the ledger lock within 5 s")
+		}
+	}
+	if err := cmd.Process.Signal(syscall.SIGINT); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-done:
+		ended = true
+	case <-time.After(5 * time.Second):
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		<-done
+		ended = true
+		t.Fatalf("the ingest still ran 5 s after the SIGINT\nstdout:\n%s\nstderr:\n%s", stdout.String(), stderr.String())
+	}
+	if code := cmd.ProcessState.ExitCode(); code != Interrupted {
+		t.Fatalf("exit code %d, want %d\nstdout:\n%s\nstderr:\n%s", code, Interrupted, stdout.String(), stderr.String())
+	}
+	if stdout.Len() != 0 || stderr.Len() != 0 {
+		t.Fatalf("the interrupted ingest wrote to its streams\nstdout:\n%q\nstderr:\n%q", stdout.String(), stderr.String())
+	}
+	if raw, err := os.ReadFile(c620MetricRecord(root)); err != nil || len(raw) != 0 {
+		t.Fatalf("the interrupted ingest changed the ledger the holder had: %v %q", err, raw)
+	}
+	if after := c620HomeListings(t, home); after != before {
+		t.Fatalf("the run changed the child's home listings\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
+// TestRunMetricCLIContextEndsWithTheContextWhileTheLedgerIsLocked pins the error the library gives the verb: it is the context's own,
+// so errors.Is recognises it. It is an identity and propagation check, not evidence of where the wait was: the settle only gives the
+// call time to reach the lock, and cancelling earlier gives the same error. A build that ignores ctx blocks and fails the bound.
+func TestRunMetricCLIContextEndsWithTheContextWhileTheLedgerIsLocked(t *testing.T) {
+	root := t.TempDir()
+	release := c627HoldLedger(t, root)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := cli.RunMetricCLIContext(ctx, []string{"ingest", "--session", "s1"}, root, "METRIC a=1\nMETRIC b=2\n")
+		done <- err
+	}()
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("ingest cancelled in the lock wait returned %v, want an error that is context.Canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		release()
+		<-done
+		t.Fatal("the ingest was still waiting for the ledger lock 5 s after its context ended")
+	}
+	if raw, err := os.ReadFile(c620MetricRecord(root)); err != nil || len(raw) != 0 {
+		t.Fatalf("the cancelled ingest changed the ledger the holder had: %v %q", err, raw)
+	}
+}
+
+// c627CancelAfterRows is a context that cancels itself the first time its Err is asked for once the ledger holds two rows: the
+// interrupt lands after the last row was recorded. Done is the wrapped context's, so Err never contradicts it.
+type c627CancelAfterRows struct {
+	context.Context
+	cancel context.CancelFunc
+	ledger string
+}
+
+func (c c627CancelAfterRows) Err() error {
+	if raw, _ := os.ReadFile(c.ledger); strings.Count(string(raw), "\n") >= 2 {
+		c.cancel()
+	}
+	return c.Context.Err()
+}
+
+// TestPabcdMetricIngestAnswersInterruptedWhenTheContextEndsAfterRecording pins the check after the run: an interrupt that lands once
+// every row is recorded still answers 130 with nothing printed, and the rows recorded before it stay. The lock is free here, so this
+// covers the post-run check, not a lock wait.
+func TestPabcdMetricIngestAnswersInterruptedWhenTheContextEndsAfterRecording(t *testing.T) {
+	root := pabcdCLITestHome(t)
+	base, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx := c627CancelAfterRows{Context: base, cancel: cancel, ledger: c620MetricRecord(root)}
+	var stdout, stderr bytes.Buffer
+	code := PabcdContext(ctx, []string{"metric", "ingest", "--session", "s1"}, strings.NewReader("METRIC a=1\nMETRIC b=2\n"), &stdout, &stderr, Verbs())
+	if code != Interrupted || stdout.Len() != 0 || stderr.Len() != 0 {
+		t.Fatalf("ingest whose context ended after the rows were recorded: code %d, stdout %q, stderr %q; want %d with nothing written", code, stdout.String(), stderr.String(), Interrupted)
+	}
+	if raw, err := os.ReadFile(c620MetricRecord(root)); err != nil || strings.Count(string(raw), "\n") != 2 {
+		t.Fatalf("the rows recorded before the interrupt did not stay: %v %q", err, raw)
 	}
 }
