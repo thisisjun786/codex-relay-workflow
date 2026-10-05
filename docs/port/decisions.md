@@ -4854,3 +4854,208 @@ Evidence: internal/relay/store/diagnostic_probe.go (`ProbeWith`, `judgeWrite`), 
 diagnostic_read.go; internal/relay/cli/doctor.go (`runDoctor`, `writeProbeRecord`); internal/relay/argparse/specs.json;
 probe_readonly_linux_test.go (the inotify observation, the judged table, the log-only values read through the three read paths, and a mutation
 of the read to `immutable=1` that those tests fail), doctor_readonly_linux_test.go (the built binary), descriptor_identity_test.go (both entries).
+
+## 77. Implementation DAG acceptances use forge targets; a missing PR reader refuses comparison (CRW-603)
+
+Decision (design only, 2026-10-05): choose C. A new implementation acceptance must
+name its pull request's forge repository as its integration target. A checkout
+remains a place to read Git objects, supplied with `dag-base-refresh --checkout`,
+not a second merge-lane identity. Separately, Ready and Check must refuse a
+recorded forge pull request when their PR head reader is absent. These changes
+belong to follow-up implementation slices; this section changes no running behavior.
+
+The reader is the coordinator assigning those slices. The operating lane is a
+forge repository with `--pr` and `--relationship`; its readers, grants, head
+comparison, base comparison and expected-head merge guard must behave as built.
+This decision does not restore a work-report writer, infer a forge from a remote,
+add a CLI flag, move an existing turn, or grant installation or merge authority.
+
+### The records explain why the local DAG lane cannot complete its check
+
+Source anchors below refer to baseline `682336b6e4e2490878ab455024177590587f514d`.
+They are evidence about that source, not an observation of an installed service.
+
+- `internal/relay/dagsched/accept.go:382` calls `acceptTarget`; at `:435` that
+  function accepts a single local edge target. The acceptance stores that target
+  at `:386`, while `:408` separately stores the PR identity in
+  `dag_acceptance_forge`. A terminal implementation node already uses the forge.
+- `internal/relay/dagsched/mergejudge.go:105` reads the recorded forge identity
+  for `Judge`, but `RequestMergeTurn` at `:387` claims `acc.Repository`, with the
+  acceptance's PR number and relationship. Its temporary readerless Service at
+  `:327` only requests a turn; Request is not a head comparison.
+- `internal/relay/mergeturn/pullhead.go:170` recognizes a forge PR only when
+  `merge_turns.repository` is owner/name. `headCompareVerdict` at `:187` otherwise
+  uses the relationship's work reports, and `:217` refuses a missing head with
+  `merge_target_unreadable`. Section 53 records removal of the product writer;
+  `internal/relay/dagsched/headcompare_seed_test.go:15` supplies synthetic rows.
+- Ready calls that verdict on a changed head or `--ready`, including an unchanged
+  candidate (`internal/relay/mergeturn/lifecycle.go:210`). Check compares before
+  entering the merge (`internal/relay/mergeturn/check.go:153`). A bare turn with
+  neither PR nor relationship, and an unchanged `--not-ready`, assert no identity
+  and retain their existing exemption (`pullhead.go:189`, `lifecycle.go:211`).
+- Today a readerless forge PR passes (`pullhead.go:192`), explicitly tested by
+  `internal/relay/mergeturn/headcompare_test.go:400`. Ready uses `Service.Pulls`;
+  Check uses its argument's `PullRequestHeadReader` capability (`check.go:85`),
+  not `Service.Pulls`. Production commands provide both
+  (`internal/relay/mergeturn/commands.go:16`, `headcompare_test.go:415`).
+
+The input's statement that forge integration observation uses `--checkout` does
+not describe the built CLI: `docs/relay/dag-scheduler.md:517` and
+`internal/relay/argparse/specs.json:856` use the forge compare API. `--checkout`
+belongs to base refresh (`specs.json:862`, `baserefresh.go:154`). Keep this
+separation; do not add an integration-observe checkout option for this decision.
+The frozen draft's acceptance/merge rules are read with its later decisions and
+[the built scheduler contract](../relay/dag-scheduler.md); its historical statement
+that a missing work report passes Check predates the fail-closed comparison.
+
+### A, B and C are compared against the same four constraints
+
+Estimates are changed source/test lines, excluding generated data and goldens;
+they are planning ranges, not measured patches. The readerless slice below is
+common to all three alternatives and is excluded from their estimates.
+
+| Yardstick | A: claim the recorded forge lane | B: record forge identity on the turn | C: refuse local implementation acceptance |
+| --- | --- | --- | --- |
+| Keep fail-closed head comparison | Existing forge comparison can be reused after all lane lookups are reconciled; missing acceptance identity must refuse. | Compare against the persisted forge identity; absent identity on old/local rows still refuses, never guesses. | Preserve comparison unchanged and reject the unsupported acceptance before a turn is requested. |
+| Use only identity held by records | Read `dag_acceptance_forge` inside the request transaction; never derive it from a path/remote. Local edge-to-lane lookup must use that same recorded association or stop. | Populate only from the recorded acceptance or an explicitly bound claim; a PR number alone cannot fill the new identity. | Require the sole outgoing integration/code-pinned target to equal the named forge repository. No new identity source. |
+| Preserve the operating forge lane | Already-forge claims keep the same target key; local claims now share that lane across parents. All carrier and in-flight predicates must move together. | Existing forge claims continue using their repository; local lane keys remain separate, so two checkouts and a forge can still claim separate lanes for one branch. | Existing matching forge targets and terminal-node forge defaults are unchanged. Local Git proof remains available through the existing base-refresh checkout argument. |
+| Smallest sufficient change | Roughly 120–220 product lines plus 220–360 test lines across scheduler lookup owners; substantial identity plumbing. | Roughly 220–360 product lines plus 300–500 test lines across store, merge-turn and scheduler/installation boundaries, before migration design. | Roughly 10–25 product lines in `acceptTarget`; roughly 450–900 test/fixture lines across about 12–20 scheduler files. Rejects a formerly accepted input. |
+
+| Consequence | A | B | C |
+| --- | --- | --- | --- |
+| Files/functions to change | `mergejudge.go:304` (`RequestMergeTurn`); `ready.go:270` (`resourceHold`); `edges.go:395` (`integratedAt`, including its carrier predicate at `:411` and landed diagnosis at `:428`); `integration.go:152` (`ObserveIntegration`'s carrier lookup). Audit `Judge`'s tip/ancestry at `mergejudge.go:134` and base-refresh target/checkout at `baserefresh.go:267` for split identity; `edges.go:334` must still match pinned acceptance and edge targets. `mergeorder_derive.go:44` uses relationship/head, so its lookup need not move. | `store/domain_rows.go:277` (`MergeTurnsRow`, columns, scanner); `store/mergeturn_capacity.go:12` (`InsertMergeTurn` and readers); `mergeturn/mergeturn.go:185` (`ClaimOptions`, `Request`); `pullhead.go` (`headCompareForge`, `readPullRequest`, verdict); `dagsched/mergejudge.go` (`RequestMergeTurn`). Register persistence in the owning schema and update installation compatibility. | `dagsched/accept.go:435` (`acceptTarget`) only for new product validation. Tests change target spelling and fake tip/ancestry routing; base-refresh tests supply `RefreshInput.Checkout`. No merge-turn lookup moves. |
+| Tests and estimated lines | `mergejudge_test.go`, `mergelane_test.go`, `ready_test.go`, `edges_test.go`, `integration_test.go`, `endtoend_test.go`: 220–360 lines. Cover two parents sharing a forge lane, `merging`/`unknown` hold for a local edge, exact landed carrier and squash diagnosis. | `store` row/schema tests, `mergeturn/headcompare_test.go`, `livepull_request_test.go`, `dagsched/mergelane_test.go`, and swap/install compatibility tests: about 8–12 files, 300–500 lines. Cover absent/mismatched identity, old rows, round trip, two target spellings, restart and rollback. | `accept_test.go` and shared helpers: 100–160 lines; integration/judge/refresh/scenario fixtures: 350–740 lines. The inventory and split below keep tests on temporary repositories and fake forge readings. |
+| Install impact | No schema or frozen CLI change; no state-backup release required for schema. Existing local turns remain on old keys; never silently relocate them. | A column in `merge_turns` changes frozen v1 SQL (`contract/schema/relay-sqlite.sql:732`) and requires reopening the no-migration decision 14. The current swap gate does **not** admit it merely because state is backed up: its additive exceptions are zones/indexes (section 74; `internal/runtime/swapgate/swapgate.go:246`). Requires explicit contract, compatibility and backup/rollback design. An additive turn-identity zone is a different B design, not permission to edit shipped SQL. | No schema, schema-version, row rewrite or backup-release change. Existing local acceptances and turns remain readable, with their existing comparison refusal. |
+| Remaining risk | A missed predicate can release a successor during an in-flight merge or lose the landed carrier; a local edge without a recorded forge association cannot be safely mapped. Existing target/base observations remain distinct. | Persisting PR identity solves comparison but not shared serialization; split lane targets retain the cross-parent collision risk. Old rows cannot acquire identity by inference, and frozen-schema installation can block. | Removes local targets from new implementation acceptance, including code-pinned edges. Historical rows/replays remain historical; old local plans need explicit coordinator replanning and a newly accepted output before using the supported lane. Test adapters must keep local proof real. |
+
+A's lookup risk is concrete: `ready.go:297` searches an incoming edge's literal
+target for `merging`/`unknown`; `edges.go:411` requires a landed carrier's repository
+to equal the observation target; `:428` diagnoses an unprovable landing by that
+repository; `integration.go:152` attaches the carrier by the same literal value.
+Changing only the request's repository loses these protections. The lookup of
+other parents' turns also needs the recorded association, not only this node's.
+
+Choose C because implementation output already requires a forge PR and a terminal
+implementation node already defaults to its forge. C may require more fixture edits than A; the smaller validation and
+persistence surface, rather than a claim of fewer total test lines, decides it.
+It closes an unusable new
+acceptance without widening the identity model or the swap gate. Local-target
+support can be reconsidered only as an explicit contract change with a complete
+shared-lane/observation mapping. The issue's operational store counts are a
+coordinator-provided snapshot, not live verification here, and are not a migration
+proof. C's compatibility cost remains real even if current operations use forge targets.
+
+### The readerless Service must fail closed without adding implicit I/O
+
+Choose `merge_target_unreadable` for a forge PR with no PR head reader. Do not
+fall back to a work report even if one exists: the recorded forge PR takes
+precedence. Do not create a default network reader inside Service or require one
+at construction: bare turns and local relationship comparisons still exist.
+Ready with a reader stays as built; Check must require the capability on the
+reader actually passed to Check, even if `Service.Pulls` is populated.
+Keep forge calls before the transaction and retain candidate/read freshness checks
+(`pullhead.go:114`, `:138`, `check.go:95`, `lifecycle.go:173`).
+
+### Follow-up interfaces are bounded by owner region and carry red-first tests
+
+No signature, reason registry, output field, CLI, SQL or golden changes in this
+PR. Follow-ups reuse registered reasons in `contract/schema/relay-exit-codes.json:43`
+and `:115`; any changed full JSON/golden answer must be recorded and explained in
+its own implementation PR, never accepted by disabling a replay.
+
+1. **Scheduler fixtures, then acceptance validation** (`internal/relay/dagsched`,
+   split into dependency-ordered fixture regions and the guard below; each
+   is at most about 600 source/test lines).
+   Keep `(*Scheduler).acceptTarget(ctx context.Context, q store.Querier,
+   snap dag.Snapshot, node, forge string) (string, error)` and
+   `(*Scheduler).Accept(ctx context.Context, plan, node, actor string,
+   in AcceptInput) (AcceptResult, error)` unchanged.
+   In the single-target branch, add `filepath.IsAbs(t)` before the existing
+   repository comparison. An absolute checkout is `disposition_conflict`:
+   `the outgoing edges of %s name local checkout %s as their target; an implementation node is accepted on its pull request's forge repository %s. Set target_repository to %s and use --checkout for dag-base-refresh when local Git objects are needed`.
+   The placeholders are node, target, forge, forge. After this guard require
+   `t == forge`, replacing the parse-success-only mismatch condition. Any other
+   target, including relative or malformed text, uses the existing
+   `disposition_conflict` detail: `the outgoing edges of %s land on %s and the pull request is in %s`
+   (node, target, forge). DAG decoding accepts target text without validating its
+   repository syntax (`internal/relay/dag/decode.go:282`, `dag/fold.go:297`), so
+   an absolute-path guard alone is insufficient. Keep the multiple-repository
+   refusal, terminal default, and non-PR path.
+   Run validation inside the acceptance transaction so a refused superseding
+   acceptance rolls back any earlier `superseded` update (`accept.go:371`).
+   Existing acceptance replay/revalidation occurs before `acceptTarget`
+   (`accept.go:314`); it does not rewrite or re-admit legacy local identity.
+   No `RequestMergeTurn`, `Judge`, `RecordBaseRefresh`, tip or ancestry signature changes.
+
+   - First, normalize supported scheduler fixtures to forge targets, about
+     350–740 lines across two bounded PRs: kit/readers (120–250 lines), then
+     lane/integration/refresh scenarios (230–490 lines). Read scope includes `integration_test.go`'s `newIntegrationKitOn`, `mergejudge_test.go`,
+     `mergelane_test.go`, `endtoend_test.go`, `withdraw_scenario_test.go`,
+     `invalidation_gates_test.go`, `revalidation_test.go`, `audit_wp5_test.go`,
+     `release_refusals_test.go`, `baserefresh_scenario_test.go` and
+     `baserefresh_mechanical_test.go`; inspect their shared helpers as well.
+     Fake readers explicitly map the synthetic forge identity to the test's
+     temporary repository for tip/ancestry; record observations under the forge
+     target. Base refresh alone names that repository as `RefreshInput.Checkout`.
+     Keep raw-SQL `acceptNode` seeds that explicitly test legacy local rows
+     (`helpers_test.go:281`) separate from new-acceptance controls. Audit
+     `livesweep_test.go`, `conflicts_test.go`, `sweep_hooks_test.go` and
+     `baserefresh_test.go` for this distinction: their measurement checkout
+     stays local even when acceptance/edge identity becomes forge.
+     Provide an explicit fake PR-head reader to lane Check; remove reliance on
+     `headCompareReportForTurn` for supported DAG claims. Preserve separate tests
+     of the generic local ancestry reader; never call a real forge or service.
+   - Then add the acceptance guard and its tests in `accept_test.go`, about
+     110–185 lines. Write red first: a new implementation with a local integrated
+     target; a local code-pinned artifact target; relative (`../checkout`), bare
+     (`checkout`) and malformed targets with no acceptance/forge rows; a refused replacement leaves
+     its prior acceptance active and writes neither acceptance nor forge row.
+     Green controls: matching forge target, terminal default, mismatching forge,
+     multiple targets and non-PR acceptance. Check the refusal text as well as
+     the reason and unchanged row counts. Test historical replay explicitly.
+
+2. **Readerless comparison** (`internal/relay/mergeturn`, about 15–35 product
+   lines plus 180–350 test/fixture lines; no storage region).
+   Keep `(*Service).Ready(ctx context.Context, turn, actor string, ready bool,
+   head, cause string) (map[string]any, error)`, `Check` and
+   `headCompareVerdict` signatures unchanged:
+   `Check(ctx context.Context, turn, actor, head, base string, checkList any,
+   review any, required []string, reader Reader) (map[string]any, error)`;
+   `headCompareVerdict(ctx context.Context, row store.MergeTurnsRow, actor,
+   verb, head string, read *pullRequestRead, pulls PullRequestHeadReader)
+   (*registry.CoordinationRefusal, map[string]any, error)`. Replace only the nil-pulls success
+   in the forge branch with `headCompareNothing` using this exact why text:
+   `this service has no pull request head reader for recorded pull request %d of %s; supply a pull request head reader and call again`.
+   The placeholders are the recorded PR number and repository; the existing
+   helper supplies `merge_target_unreadable`, the declares/restates verb, turn
+   identity and remediation (`pullhead.go:176`). Update explanatory comments in
+   `pullhead.go`, `check.go`, `lifecycle.go` and `mergeturn.go` together.
+   Write red first by replacing `TestHeadCompareForgePullRequestWithoutAReaderIsDecidedByTheRecord`:
+   Ready on unchanged `--ready`, Ready on a changed head, and Check on a
+   claim initially ready all refuse; turn, candidate, readiness, grant and merge
+   ledger remain unchanged (the coordination contest is still recorded).
+   Add a forge PR plus work report to prove no downgrade, and a Service with
+   `Pulls` but a base-only Check reader to prove no hidden fallback.
+   Keep unchanged `--not-ready`, bare claims, local relationship comparison,
+   and a real-capability fake forge reader as green controls. Update affected
+   explicit fake readers in `fixture_test.go`, `headcompare_seed_test.go` and
+   lane tests; budget by measured diff, splitting fixture preparation from the
+   guard if necessary. Seed expected PR heads independently of the candidate;
+   a fake that reads the turn's candidate would hide the regression.
+
+The scheduler slice updates `docs/relay/dag-scheduler.md`'s acceptance and base
+refresh explanation when the guard ships. The readerless slice updates
+`docs/relay/coordination.md:297` when that exception is removed. Today both pages
+correctly describe the built behavior and stay unchanged. No skill, installation,
+live-store test or operating forge-lane change belongs to this design PR.
+
+Status of item 2, the readerless comparison (2026-10-05): built by the pull request
+for CRW-608 (#564). `Service.Ready` and `Service.Check` now refuse a recorded forge
+pull request with `merge_target_unreadable` when no pull request head reader is
+available, with the why text above, no work-report fallback and no default reader,
+and `docs/relay/coordination.md` describes it. The baseline anchors in this section
+(`pullhead.go:192`, `headcompare_test.go:400`) describe the code before that change.
+Not part of that slice: the generic remediation tail of `headCompareNothing`, which
+still points a forge turn at work reports, and the readiness that
+`merge-turn-request --ready --pr` records at claim time without a comparison
+(`merge-turn-check` still gates the merge).

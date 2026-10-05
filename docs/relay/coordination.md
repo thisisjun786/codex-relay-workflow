@@ -294,11 +294,13 @@ turn's own candidate head, or no `--head`): a head recorded wrong from the start
 Withdrawing readiness (`--not-ready`) on a head that did not move asserts nothing about the head and compares nothing. No
 refusal changes the turn, its candidate head or its ledger; each is kept as a contest like the lane's other refusals, and a
 refused `merge-turn-check` as a check row. A claim that records neither a pull request nor a relationship records nothing to
-compare, and is not compared. A relay with no pull request reader (a service built by a test; the relay commands always
-supply one) decides a forge pull request by the turn's record, and a `merge-turn-check` given a reader that cannot read pull
-requests does the same. A branch update is asynchronous on the forge, so the first declaration after a refresh can still read
-the old head: the refusal says to read the pull request again and declare the head it shows, and a repeated refusal is not an
-escalation. A candidate that changes between the read of the forge and the transaction is not the candidate that was read
+compare, and is not compared. A recorded forge pull request is never decided by the turn's record: a relay with no pull request
+reader (a service built by a test; the relay commands always supply one) refuses it `merge_target_unreadable` at
+`merge-turn-ready`, moved head or not, and a `merge-turn-check` given a reader that cannot read pull requests refuses it the same
+way even when the relay has one. A work report does not stand in for the missing reader. A branch update is asynchronous on the
+forge, so the first declaration after a refresh can still read the old head: the refusal says to read the pull request again
+and declare the head it shows, and a repeated refusal is not an escalation. A candidate that changes between the read of the
+forge and the transaction is not the candidate that was read
 for: the call is refused `merge_target_unreadable` ("call again"), even when the forge agrees with the head. `merge-turn-check`
 compares the head it restates, before the merge begins and before the base is compared, and is what stops a turn that a relay
 older than this rule left holding another pull request's head. The head a claim states at `merge-turn-request --head` is
