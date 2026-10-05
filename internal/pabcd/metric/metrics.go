@@ -11,7 +11,9 @@
 // The oracle has no lock and no signal handler: its process dies at the first interrupt and keeps the lines it had appended.
 // RecordMetricsFromTextContext gives the record window that end: it checks its context before each METRIC line and asks for the
 // ledger lock without blocking, again every metricLockRetry, so a wait for another writer ends with the context and nothing more is
-// written; the rows already appended stay. A caller without a context, or with one that can never end, waits as it always did.
+// written; the rows already appended stay. A lock that wait took only after a refused attempt is checked once more before the row is
+// written, because the holder can release it into the hands of a waiter that has already been cancelled. A caller without a context,
+// or with one that can never end, waits as it always did.
 //
 // Not literal: a string with a lone surrogate (an escape such as \ud800 in a ledger row) can not exist in Go and reads as U+FFFD, and
 // the oracle's RangeError for a plateau window of more than about 1.2e5 rows is not reproduced. Rows are spelled as JSON.stringify
@@ -243,17 +245,25 @@ func recordObjectiveMetric(ctx context.Context, cwd string, in RecordInput) (Rec
 // unterminated tail, and neither is read again). A ledger that can not be read may end that way too, so it gets the newline as well
 // (a blank line is skipped by the reader). The check and the write run under a lock on the ledger, so a writer that fails after part
 // of a row is followed by one that sees the fragment.
-// The wait for the lock ends with ctx (metricLockWait): the file is closed without a write and the error is ctx's own.
+// The wait for the lock ends with ctx (metricLockWait): the file is closed without a write and the error is ctx's own. A lock the
+// wait took only after a refused attempt is checked once more, so a cancellation that landed while the holder had it leaves no row.
 func appendRow(ctx context.Context, path, row string) error {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o666)
 	if err != nil {
 		return err
 	}
-	if err = metricLockWait(ctx, f); err != nil { // dropped by the close
+	waited, err := metricLockWait(ctx, f)
+	if err != nil { // dropped by the close
 		if closeErr := f.Close(); err != ctx.Err() { // a wait that ctx ended returns its error as it is
 			err = errors.Join(err, closeErr)
 		}
 		return err
+	}
+	if waited {
+		if cerr := ctx.Err(); cerr != nil { // a lock taken after a wait that ctx ended writes nothing
+			_ = f.Close() // drops the lock; its error is dropped as the give-up above drops it
+			return cerr
+		}
 	}
 	line := row + "\n"
 	if raw, err := os.ReadFile(path); err != nil || len(raw) > 0 && raw[len(raw)-1] != '\n' {
@@ -263,25 +273,31 @@ func appendRow(ctx context.Context, path, row string) error {
 	return errors.Join(err, f.Close())
 }
 
-// metricLockWait takes the exclusive lock on the ledger. A context that can end is asked for it without blocking, and again every
-// metricLockRetry while another holder keeps it, so the wait ends with ctx and returns its error. One that can never end
-// (context.Background) blocks in the kernel, as every append did before there was a context. A free lock is taken even when ctx has
-// ended since the caller looked: the caller's check before each line is where cancellation takes effect.
-func metricLockWait(ctx context.Context, f *os.File) error {
+// metricLockWait takes the exclusive lock on the ledger and reports whether it had to wait for it. A context that can end is asked
+// for it without blocking, and again every metricLockRetry while another holder keeps it, so the wait ends with ctx and returns its
+// error. The context is read again after a sleep: the select takes any ready case, so a timer that won the race against a done
+// context still ends the wait before the next attempt. One context that can never end (context.Background) blocks in the kernel, as
+// every append did before there was a context. A free lock is taken even when ctx has ended since the caller looked: the caller's
+// check before each line is where cancellation takes effect.
+func metricLockWait(ctx context.Context, f *os.File) (waited bool, err error) {
 	if ctx.Done() == nil {
-		return unix.Flock(int(f.Fd()), unix.LOCK_EX)
+		return false, unix.Flock(int(f.Fd()), unix.LOCK_EX)
 	}
 	tick := time.NewTicker(metricLockRetry)
 	defer tick.Stop()
 	for {
 		err := unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB)
 		if !errors.Is(err, unix.EWOULDBLOCK) {
-			return err
+			return waited, err
 		}
+		waited = true
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return true, ctx.Err()
 		case <-tick.C:
+		}
+		if cerr := ctx.Err(); cerr != nil { // a timer that beat a done context gives up here, before the next attempt
+			return true, cerr
 		}
 	}
 }
