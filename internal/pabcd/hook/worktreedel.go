@@ -268,12 +268,17 @@ func destructiveHint(extended bool) *regexp.Regexp {
 		"|git[" + jsSpaceChars + "]+(-c[" + jsSpaceChars + "]+[^" + jsSpaceChars + "]+[" + jsSpaceChars + "]+)?worktree[" + jsSpaceChars + "]+remove")
 }
 
+// worktreeDelJoinContinuations is the removal of continued lines the extended walk reads the command through.
+func worktreeDelJoinContinuations(command string) string {
+	return strings.ReplaceAll(command, "\\\n", "")
+}
+
 // walk is evaluateCommand's loop: the segments in order, a cd moving the directory later segments run in, and the
 // conservative fallback when a destructive verb was seen and the command mentions the worktree but no target resolved.
 // The extended walk first joins continued lines, so that the cuts, the braces and the mention test see the command the shell reads.
 func walk(command, cwd string, id WorktreeIdentity, extended bool) GuardVerdict {
 	if extended { // the shell removes a backslash-newline pair before it reads a word
-		command = strings.ReplaceAll(command, "\\\n", "")
+		command = worktreeDelJoinContinuations(command)
 	}
 	hint := destructiveHint(extended)
 	segCwd, destructiveSeen := cwd, false
