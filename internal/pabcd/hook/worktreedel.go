@@ -275,15 +275,13 @@ func destructiveHint(extended bool) *regexp.Regexp {
 // backslash pair, so \" does not close them; a # that opens a word starts a comment, which keeps everything up to its
 // newline. prev is the last byte that decides the next one: a space at the start, the byte itself after a plain byte, a
 // backslash after an escaped pair, a quote after it closes, a newline after a comment, and x for the second dollar of a
-// pair ($$ is the process id, so only an odd run of dollars opens $'...'). A removed pair leaves it alone. Substitutions
-// and parameter expansions are read as the same flat text (a quote nested in them is not tracked). A command with a
-// here-document operator or a backtick keeps the plain removal of every pair, as it was read before this function: the scan
-// cannot tell a here-document body from shell text, and bash reads a backtick body in a pass of its own, where it removes a
-// pair even inside single quotes, so for those commands the scan could allow what the plain removal denied.
+// pair ($$ is the process id, so only an odd run of dollars opens $'...'). A removed pair leaves it alone. Here-document
+// bodies, substitutions, backtick bodies and parameter expansions are read as the same flat text (a quote nested in them
+// is not tracked): worktreeDelReadings adds the plain removal as a second reading for the commands that hold a
+// here-document operator or a backtick.
 func worktreeDelJoinContinuations(command string) string {
-	joined := strings.ReplaceAll(command, "\\\n", "")
-	if joined == command || strings.Contains(joined, "<<") || strings.Contains(joined, "`") {
-		return joined
+	if !strings.Contains(command, "\\\n") {
+		return command
 	}
 	const (
 		plain = iota
@@ -344,18 +342,41 @@ func worktreeDelJoinContinuations(command string) string {
 	return out.String()
 }
 
-// worktreeDelReadings is the texts the extended walk judges for a command.
+// worktreeDelReadings is the texts the extended walk judges for a command: the scan reading and, for a command whose plain
+// removal of every backslash-newline holds a here-document operator or a backtick, also that plain removal. The scan reads
+// a here-document body as shell text and a backtick body as part of the surrounding text, where bash reads the first as
+// data and removes a pair in the second even inside single quotes, so for such a command either reading can be the one
+// bash runs, and the walk denies when either denies: nothing the plain removal denies is allowed, and the scan still
+// catches what the plain removal misses (a pair after an escaped backslash, or in a comment).
 func worktreeDelReadings(command string) []string {
-	return []string{worktreeDelJoinContinuations(command)}
+	plain := strings.ReplaceAll(command, "\\\n", "")
+	if plain == command {
+		return []string{command}
+	}
+	scan := worktreeDelJoinContinuations(command)
+	if scan != plain && (strings.Contains(plain, "<<") || strings.Contains(plain, "`")) {
+		return []string{scan, plain}
+	}
+	return []string{scan}
 }
 
-// walk is evaluateCommand's loop: the segments in order, a cd moving the directory later segments run in, and the
-// conservative fallback when a destructive verb was seen and the command mentions the worktree but no target resolved.
-// The extended walk first joins continued lines where bash does, so that the cuts, the braces and the mention test see the command the shell reads.
+// walk judges a command: the oracle's walk reads it as it is, the extended walk reads each of its readings, where the
+// shell has removed the backslash-newline pairs it removes, and denies when any reading denies.
 func walk(command, cwd string, id WorktreeIdentity, extended bool) GuardVerdict {
-	if extended { // the shell removes a backslash-newline pair before it reads a word
-		command = worktreeDelJoinContinuations(command)
+	if !extended {
+		return worktreeDelWalk(command, cwd, id, false)
 	}
+	for _, reading := range worktreeDelReadings(command) {
+		if verdict := worktreeDelWalk(reading, cwd, id, true); verdict.Deny {
+			return verdict
+		}
+	}
+	return GuardVerdict{}
+}
+
+// worktreeDelWalk is walk's loop over one text: the segments in order, a cd moving the directory later segments run in, and
+// the conservative fallback when a destructive verb was seen and the command mentions the worktree but no target resolved.
+func worktreeDelWalk(command, cwd string, id WorktreeIdentity, extended bool) GuardVerdict {
 	hint := destructiveHint(extended)
 	segCwd, destructiveSeen := cwd, false
 	var scopes []string // the directories a subshell restores, extended walk only
