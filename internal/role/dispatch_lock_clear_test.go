@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -462,4 +463,50 @@ func TestDispatchLockWithAbandonsOnlyItsOwnLock(t *testing.T) {
 			t.Fatalf("error %v: the replacement was removed", err)
 		}
 	})
+}
+
+// A lock that takes the place of the one that was judged gone, after the judgment, is not removed: the clear puts it back, or
+// leaves it under the tombstone name when the name was taken again meanwhile, and writes no line.
+func TestDispatchLockClearKeepsALockReplacedAfterTheCheck(t *testing.T) {
+	for _, retaken := range []bool{false, true} {
+		t.Run(map[bool]string{false: "put back", true: "left at the tombstone"}[retaken], func(t *testing.T) {
+			ws := t.TempDir()
+			lock := lockClearHold(t, ws, dispatchSessionLock)
+			lockClearOwn(t, lock, lockClearDead(t))
+			var dir *dispatchPinnedDir
+			after := func(point string) {
+				switch {
+				case point == "judged": // a live process takes the lock the clear is about to remove
+					check(t, os.RemoveAll(lock))
+					_, err := dir.lock(dispatchSessionLock)
+					check(t, err)
+				case point == "claimed" && retaken: // and the name is taken again before the clear can put it back
+					check(t, os.Mkdir(lock, 0o700))
+				}
+			}
+			dir = must(dispatchDirectory(ws, lockClearSession, after))
+			defer dir.Close()
+			_, err := dispatchLockClear(dir, dispatchSessionLock+".lock", "test")
+			want, kept := "put back", lock
+			if retaken {
+				want, kept = "left at", ""
+				if tombs := must(filepath.Glob(lock + ".clearing-*")); len(tombs) == 1 {
+					kept = tombs[0]
+				}
+			}
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("clear of a replaced lock: %v, want %q", err, want)
+			}
+			owner, _ := os.ReadFile(filepath.Join(kept, "owner.json"))
+			if kept == "" || !strings.Contains(string(owner), "\"pid\":"+strconv.Itoa(os.Getpid())+",") {
+				t.Fatalf("the live lock is not at %q: %q", kept, owner)
+			}
+			if retaken && len(must(os.ReadDir(lock))) != 0 {
+				t.Error("the directory that took the name was touched")
+			}
+			if line, _ := os.ReadFile(filepath.Join(lockClearDir(ws), "lock-clears.jsonl")); len(line) != 0 {
+				t.Errorf("a clear that did not happen was written down: %q", line)
+			}
+		})
+	}
 }
