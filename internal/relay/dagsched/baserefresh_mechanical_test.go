@@ -20,9 +20,16 @@ func mechanicalRefresh(t *testing.T, rule string, mixed bool, declared ...Region
 
 func mechanicalRefreshAt(t *testing.T, rule string, mixed bool, target func(*gitRepo) string, declared ...Region) *refreshScenario {
 	t.Helper()
-	k := newIntegrationKit(t)
+	// the node lands on the forge, and the commits are read in the temporary repository; the one scenario with a target function is about a LEGACY local target (an alias of the checkout)
+	var k *integrationKit
+	repository, checkout := forgeKitRepository, ""
+	if target == nil {
+		k = newIntegrationKit(t)
+		checkout = k.repo.path
+	} else {
+		k = newLegacyLocalIntegrationKit(t)
+	}
 	r := k.repo
-	repository := r.path
 	if target != nil {
 		repository = target(r)
 		k.putPlan("g", 1, "local-target", doc{"op": "retire_edge", "edge_id": "ik"}, addEdge("ik-alias", "I", "K", "integrated", doc{"target_repository": repository}))
@@ -50,7 +57,7 @@ func mechanicalRefreshAt(t *testing.T, rule string, mixed bool, target func(*git
 	}
 	a := k.acceptNode("g", "I", acceptOpts{HeadSHA: head, PR: 7, Forge: "owner/repo", Repository: repository})
 	n, _ := nodeOf(k.snapshot("g"), "I")
-	s := &refreshScenario{integrationKit: k, rid: a.Acceptance.RelationshipID, accepted: a, h1: head, head: head, criteria: n.CriteriaSetDigest}
+	s := &refreshScenario{integrationKit: k, rid: a.Acceptance.RelationshipID, accepted: a, h1: head, head: head, criteria: n.CriteriaSetDigest, checkout: checkout}
 	s.openGeneration()
 	return s
 }
@@ -74,12 +81,12 @@ func mechanicalMerge(t *testing.T, s *refreshScenario, resolution string, mixed 
 		regions = append(regions, gr("manual.txt", GradeLocal, ""))
 	}
 	for i := range regions {
-		regions[i].Repository = r.path
+		regions[i].Repository = s.target()
 	}
 	if _, err := s.sched.DeclareRegions(context.Background(), "g", "D", "parent", regions); err != nil {
 		t.Fatal(err)
 	}
-	s.acceptNode("g", "D", acceptOpts{HeadSHA: r.git("rev-parse", "HEAD"), PR: 8, Forge: "owner/repo", Repository: r.path})
+	s.acceptRefreshNode("D", acceptOpts{HeadSHA: r.git("rev-parse", "HEAD"), PR: 8})
 	r.git("checkout", "-q", "dev")
 	r.git("merge", "-q", "--no-ff", "-m", "land mechanical contributor", "mechanical-landing")
 	r.git("checkout", "-q", "feature")
@@ -317,7 +324,7 @@ func TestBaseRefreshMechanicalSerialization(t *testing.T) {
 		t.Fatal(err)
 	}
 	data := output.Bytes()
-	opts := []golden.Option{golden.Substitute(res.AcceptanceID, "<ACCEPTANCE>"), golden.Substitute(res.RefreshID, "<REFRESH>"), golden.Substitute(res.EventID, "<EVENT>"), golden.Substitute(s.repo.path, "<REPOSITORY>")}
+	opts := []golden.Option{golden.Substitute(res.AcceptanceID, "<ACCEPTANCE>"), golden.Substitute(res.RefreshID, "<REFRESH>"), golden.Substitute(res.EventID, "<EVENT>"), golden.Substitute(s.target(), "<REPOSITORY>")}
 	for _, st := range res.Steps {
 		opts = append(opts, golden.Substitute(st.Previous, "<PREVIOUS>"), golden.Substitute(st.BaseParent, "<BASE>"), golden.Substitute(st.Head, "<HEAD>"), golden.Substitute(st.Tree, "<TREE>"))
 	}

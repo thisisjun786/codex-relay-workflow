@@ -96,16 +96,6 @@ func livePullDecision(t *testing.T, answer map[string]any, head string) {
 	}
 }
 
-// livePullRecordDecision is the answer of a turn whose pull request cannot be read: it says the record decided and why.
-func livePullRecordDecision(t *testing.T, answer map[string]any, number int64) {
-	t.Helper()
-	decided, _ := answer["pullRequestHead"].(map[string]any)
-	reason, _ := decided["reason"].(string)
-	if decided == nil || decided["decidedBy"] != "record" || decided["pullRequest"] != number || decided["head"] != nil || !strings.Contains(reason, "not an owner/name forge repository") {
-		t.Fatalf("the answer does not say the record decided: %v", answer["pullRequestHead"])
-	}
-}
-
 // The 2026-10-04 case: pull request 501's head declared on the turn of pull request 500.
 func TestLivePullReadyRefusesAnotherPullRequestsHead(t *testing.T) {
 	w, pulls, turn := livePullBound(t)
@@ -201,11 +191,13 @@ func TestLivePullReadyRefusesAHeadThatMovedAfterTheEarlyRead(t *testing.T) {
 	}
 }
 
-// Where the turn's own record decides, nothing is read: the head did not move, or the turn records no pull request.
-func TestLivePullReadyReadsNothingWhenTheRecordDecides(t *testing.T) {
+// Where nothing is compared nothing is read: a head that did not move without readiness being declared on it (a withdrawal
+// asserts nothing about the head), and a turn that records no pull request and no relationship. Declaring readiness on a
+// head that did not move is compared too (headcompare_test.go).
+func TestLivePullReadyReadsNothingWhenNothingIsCompared(t *testing.T) {
 	w, pulls, turn := livePullBound(t)
 	for _, head := range []string{"head-500", ""} {
-		answer, err := w.m.Ready(w.ctx, turn, alpha.TaskID, true, head, "")
+		answer, err := w.m.Ready(w.ctx, turn, alpha.TaskID, false, head, "")
 		if err != nil || answer["pullRequestHead"] != nil {
 			t.Fatalf("an unchanged head: %v %v", answer, err)
 		}
@@ -224,31 +216,9 @@ func TestLivePullReadyReadsNothingWhenTheRecordDecides(t *testing.T) {
 	}
 }
 
-// A pull request on a repository that is a local path has no forge to read from the turn alone: the record decides, and the answer says so.
-func TestLivePullLocalRepositoryIsDecidedByTheRecordAndSaysSo(t *testing.T) {
-	w := newFx(t)
-	pulls := newLivePullHeads()
-	w.m.Pulls = pulls
-	const local = "/srv/local/R.git"
-	w.target.set(local, fxBase, "base-0")
-	turn := w.must(w.m.Request(w.ctx, local, fxBase, fxA, alpha.TaskID, alpha.HostID, "head-local", true, livePullOptions(7, "")))["turnId"].(string)
-	w.answer(turn, alpha.TaskID)
-	answer := w.must(w.m.Ready(w.ctx, turn, alpha.TaskID, false, "head-local-2", ""))
-	if answer["candidateHead"] != "head-local-2" {
-		t.Fatalf("%v", answer)
-	}
-	livePullRecordDecision(t, answer, 7)
-	w.must(w.m.Ready(w.ctx, turn, alpha.TaskID, true, "head-local-2", ""))
-	w.answer(turn, alpha.TaskID)
-	checked, err := livePullCheck(w, turn, "head-local-2", livePullReader{target: w.target, pulls: pulls})
-	if err != nil || checked["state"] != Merging {
-		t.Fatalf("%v %v", checked, err)
-	}
-	livePullRecordDecision(t, checked, 7)
-	if pulls.readCount() != 0 {
-		t.Fatalf("a local repository read the forge %d times", pulls.readCount())
-	}
-}
+// A pull request on a repository that is a local path has no forge to read from the turn alone. The old answer was that
+// the record decided; now the work report of the turn's relationship decides, or the call is refused: see
+// TestHeadCompareLocalPathPullRequestReadyNeedsAWorkReport and the tests after it.
 
 // A claim that waits is bound to its pull request as well.
 func TestLivePullReadyChecksAWaitingClaimToo(t *testing.T) {
@@ -326,11 +296,18 @@ func TestLivePullCheckFailsClosedWhenThePullRequestIsNotRead(t *testing.T) {
 	}
 }
 
-// A reader that cannot read pull requests (every fake before this change, a relay with no forge reader) leaves the check as it was.
-func TestLivePullCheckWithoutAPullRequestReaderIsUnchanged(t *testing.T) {
-	w, _, turn := livePullBound(t)
+// A reader that cannot read pull requests (a fake of the base only) is refused for a recorded forge pull request, even when the
+// service has a reader of its own and the relationship it is bound to is the one a work report would be read for (CRW-608).
+func TestLivePullCheckWithoutAPullRequestReaderIsRefused(t *testing.T) {
+	w, pulls, turn := livePullBound(t)
 	answer, err := w.check(turn, "head-500", "base-0", "")
-	if err != nil || answer["state"] != Merging || answer["pullRequestHead"] != nil {
-		t.Fatalf("%v %v", answer, err)
+	if answer != nil || reasonOf(err) != "merge_target_unreadable" || !strings.Contains(livePullDetail(err), "no pull request head reader for recorded pull request 500 of owner/repo") {
+		t.Fatalf("a check with a reader that cannot read pull requests was not refused: %v %v", answer, err)
+	}
+	if live := w.must(w.m.Turn(w.ctx, turn)); live["state"] != Holding {
+		t.Fatalf("a refused check moved the turn to %v", live["state"])
+	}
+	if pulls.readCount() != 0 {
+		t.Errorf("the check read the service's reader %d times", pulls.readCount())
 	}
 }

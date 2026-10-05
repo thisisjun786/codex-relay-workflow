@@ -1,0 +1,516 @@
+{
+  "oracle": "CXC v0.2.40 (3c1459acadeb1906d97c00a598e1457327ae372d)",
+  "dist": "plugins/codexclaw/components/cxc-ops/dist/doctor.js",
+  "node": "v24.20.0",
+  "note": "Each group holds the oracle answer for the inputs beside it, with every recorded string passed through toWellFormed(): that is what the UTF-8 encoder does to a lone surrogate on the way to stdout, and the corpus fixtures hold the printed bytes. codexVersion cases are runDoctor(pluginRoot, stubRunner, {codexHome, wslDeps}) calls whose codexVersion field is detectCodexVersion, which doctor.ts does not export; the stub runner answers `codex features list` with all four declared flags true and the case `codex --version` behaviour.",
+  "rollup": [
+    {
+      "name": "empty_is_pass",
+      "checks": [],
+      "overall": "PASS"
+    },
+    {
+      "name": "single_pass",
+      "checks": [
+        {
+          "name": "a",
+          "severity": "PASS",
+          "evidence": "a evidence"
+        }
+      ],
+      "overall": "PASS"
+    },
+    {
+      "name": "warn_beats_pass",
+      "checks": [
+        {
+          "name": "a",
+          "severity": "PASS",
+          "evidence": "a evidence"
+        },
+        {
+          "name": "b",
+          "severity": "WARN",
+          "evidence": "b evidence"
+        }
+      ],
+      "overall": "WARN"
+    },
+    {
+      "name": "fail_beats_warn",
+      "checks": [
+        {
+          "name": "a",
+          "severity": "WARN",
+          "evidence": "a evidence"
+        },
+        {
+          "name": "b",
+          "severity": "FAIL",
+          "evidence": "b evidence"
+        }
+      ],
+      "overall": "FAIL"
+    },
+    {
+      "name": "fail_first",
+      "checks": [
+        {
+          "name": "a",
+          "severity": "FAIL",
+          "evidence": "a evidence"
+        },
+        {
+          "name": "b",
+          "severity": "WARN",
+          "evidence": "b evidence"
+        },
+        {
+          "name": "c",
+          "severity": "PASS",
+          "evidence": "c evidence"
+        }
+      ],
+      "overall": "FAIL"
+    },
+    {
+      "name": "foreign_severity_is_not_fail",
+      "checks": [
+        {
+          "name": "a",
+          "severity": "SKIPPED",
+          "evidence": "a evidence"
+        },
+        {
+          "name": "b",
+          "severity": "PASS",
+          "evidence": "b evidence"
+        }
+      ],
+      "overall": "PASS"
+    }
+  ],
+  "render": [
+    {
+      "name": "empty_report",
+      "report": {
+        "schemaVersion": 1,
+        "overall": "PASS",
+        "checks": []
+      },
+      "text": "overall: PASS"
+    },
+    {
+      "name": "headers_codex_then_plugin",
+      "report": {
+        "schemaVersion": 1,
+        "overall": "WARN",
+        "pluginVersion": "0.3.1",
+        "codexVersion": "1.2.3",
+        "checks": [
+          {
+            "name": "features",
+            "severity": "WARN",
+            "evidence": "1/4 enabled",
+            "repair": "cxc enable"
+          }
+        ]
+      },
+      "text": "codex v1.2.3\ncodexclaw v0.3.1\n[WARN] features: 1/4 enabled\n    repair: cxc enable\noverall: WARN"
+    },
+    {
+      "name": "repair_only_on_non_pass",
+      "report": {
+        "schemaVersion": 1,
+        "overall": "FAIL",
+        "checks": [
+          {
+            "name": "a",
+            "severity": "PASS",
+            "evidence": "fine",
+            "repair": "must not print"
+          },
+          {
+            "name": "b",
+            "severity": "FAIL",
+            "evidence": "broken",
+            "repair": "fix b"
+          },
+          {
+            "name": "c",
+            "severity": "WARN",
+            "evidence": "shaky",
+            "repair": "fix c"
+          }
+        ]
+      },
+      "text": "[PASS] a: fine\n[FAIL] b: broken\n    repair: fix b\n[WARN] c: shaky\n    repair: fix c\noverall: FAIL"
+    },
+    {
+      "name": "non_ascii_evidence",
+      "report": {
+        "schemaVersion": 1,
+        "overall": "PASS",
+        "checks": [
+          {
+            "name": "skills",
+            "severity": "PASS",
+            "evidence": "3 skill(s) · 세션 ✓ — café 😀"
+          }
+        ]
+      },
+      "text": "[PASS] skills: 3 skill(s) · 세션 ✓ — café 😀\noverall: PASS"
+    },
+    {
+      "name": "multiline_evidence_and_repair",
+      "report": {
+        "schemaVersion": 1,
+        "overall": "WARN",
+        "checks": [
+          {
+            "name": "manifest",
+            "severity": "WARN",
+            "evidence": "line one\nline two",
+            "repair": "run:\n  crw install"
+          }
+        ]
+      },
+      "text": "[WARN] manifest: line one\nline two\n    repair: run:\n  crw install\noverall: WARN"
+    },
+    {
+      "name": "plugin_version_only",
+      "report": {
+        "schemaVersion": 1,
+        "overall": "PASS",
+        "pluginVersion": "0.0.1",
+        "checks": [
+          {
+            "name": "manifest",
+            "severity": "PASS",
+            "evidence": "manifest evidence"
+          }
+        ]
+      },
+      "text": "codexclaw v0.0.1\n[PASS] manifest: manifest evidence\noverall: PASS"
+    }
+  ],
+  "featuresParsed": [
+    {
+      "name": "real_table",
+      "stdout": "multi_agent  stable  true\ngoals  stable  true\nhooks  stable  true\ndefault_mode_request_user_input  stable  true",
+      "parsed": {
+        "multi_agent": true,
+        "goals": true,
+        "hooks": true,
+        "default_mode_request_user_input": true
+      }
+    },
+    {
+      "name": "blank_and_whitespace_lines",
+      "stdout": "\n   \n\t\nmulti_agent  stable  true\ngoals  stable  true\nhooks  stable  true\ndefault_mode_request_user_input  stable  true\n\n",
+      "parsed": {
+        "multi_agent": true,
+        "goals": true,
+        "hooks": true,
+        "default_mode_request_user_input": true
+      }
+    },
+    {
+      "name": "unknown_keys_ignored",
+      "stdout": "web_search  stable  true\nplugin_hooks  removed  false\ngoals  stable  true",
+      "parsed": {
+        "goals": true
+      }
+    },
+    {
+      "name": "repeated_key_last_line_wins",
+      "stdout": "goals  stable  true\ngoals  experimental  false",
+      "parsed": {
+        "goals": false
+      }
+    },
+    {
+      "name": "repeated_key_reversed",
+      "stdout": "hooks  stable  false\nhooks  stable  true",
+      "parsed": {
+        "hooks": true
+      }
+    },
+    {
+      "name": "single_field_line_skipped",
+      "stdout": "goals\ngoals  stable  true",
+      "parsed": {
+        "goals": true
+      }
+    },
+    {
+      "name": "sibling_keys_do_not_satisfy",
+      "stdout": "multi_agent_v2  experimental  true\nmulti_agent  stable  false\nplugin_hooks  stable  true\nhooks  stable  false",
+      "parsed": {
+        "multi_agent": false,
+        "hooks": false
+      }
+    },
+    {
+      "name": "unparseable_last_token",
+      "stdout": "goals  stable  maybe",
+      "parsed": {}
+    },
+    {
+      "name": "last_field_is_not_the_state_field",
+      "stdout": "goals  stable  true  extra",
+      "parsed": {}
+    },
+    {
+      "name": "uppercase_state",
+      "stdout": "goals  stable  TRUE\nhooks  stable  False",
+      "parsed": {
+        "goals": true,
+        "hooks": false
+      }
+    },
+    {
+      "name": "crlf_lines",
+      "stdout": "goals  stable  true\r\nhooks  stable  false\r\n",
+      "parsed": {
+        "goals": true,
+        "hooks": false
+      }
+    },
+    {
+      "name": "tabs_and_runs_of_spaces",
+      "stdout": "goals\t\tstable\ttrue\nhooks      stable   false",
+      "parsed": {
+        "goals": true,
+        "hooks": false
+      }
+    },
+    {
+      "name": "nbsp_separated",
+      "stdout": "goals stable true",
+      "parsed": {
+        "goals": true
+      }
+    },
+    {
+      "name": "bom_prefixed_line",
+      "stdout": "﻿goals  stable  true",
+      "parsed": {
+        "goals": true
+      }
+    },
+    {
+      "name": "nel_is_not_javascript_whitespace",
+      "stdout": "goalsstabletrue",
+      "parsed": {}
+    }
+  ],
+  "featuresCheck": [
+    {
+      "name": "all_on",
+      "run": {
+        "status": 0,
+        "stdout": "multi_agent  stable  true\ngoals  stable  true\nhooks  stable  true\ndefault_mode_request_user_input  stable  true",
+        "stderr": ""
+      },
+      "severity": "PASS",
+      "evidence": "4/4 declared flag(s) enabled",
+      "repair": null
+    },
+    {
+      "name": "soft_off",
+      "run": {
+        "status": 0,
+        "stdout": "multi_agent  stable  true\ngoals  stable  true\nhooks  stable  true\ndefault_mode_request_user_input  stable  false",
+        "stderr": ""
+      },
+      "severity": "WARN",
+      "evidence": "3/4 enabled; optional [default_mode_request_user_input] off — request_user_input is not exposed in Default mode (Plan mode is unaffected)",
+      "repair": "codex features enable default_mode_request_user_input"
+    },
+    {
+      "name": "hard_off_goals",
+      "run": {
+        "status": 0,
+        "stdout": "multi_agent  stable  true\ngoals  stable  false\nhooks  stable  true\ndefault_mode_request_user_input  stable  true",
+        "stderr": ""
+      },
+      "severity": "FAIL",
+      "evidence": "3/4 enabled; codexclaw requires [goals]",
+      "repair": "cxc enable"
+    },
+    {
+      "name": "hard_and_soft_off",
+      "run": {
+        "status": 0,
+        "stdout": "multi_agent  stable  true\ngoals  stable  true\nhooks  stable  false\ndefault_mode_request_user_input  stable  false",
+        "stderr": ""
+      },
+      "severity": "FAIL",
+      "evidence": "2/4 enabled; codexclaw requires [hooks]",
+      "repair": "cxc enable"
+    },
+    {
+      "name": "all_off_empty_stdout",
+      "run": {
+        "status": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "severity": "FAIL",
+      "evidence": "0/4 enabled; codexclaw requires [multi_agent, goals, hooks]",
+      "repair": "cxc enable"
+    },
+    {
+      "name": "unparseable_only",
+      "run": {
+        "status": 0,
+        "stdout": "goals  stable  maybe\n",
+        "stderr": ""
+      },
+      "severity": "FAIL",
+      "evidence": "0/4 enabled; codexclaw requires [multi_agent, goals, hooks]",
+      "repair": "cxc enable"
+    },
+    {
+      "name": "exit_127_with_stderr",
+      "run": {
+        "status": 127,
+        "stdout": "",
+        "stderr": "command not found"
+      },
+      "severity": "WARN",
+      "evidence": "could not read 'codex features list' (exit 127): command not found",
+      "repair": "ensure the `codex` binary is on PATH, then re-run `cxc doctor`"
+    },
+    {
+      "name": "exit_1_trimmed_stderr",
+      "run": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "   boom   "
+      },
+      "severity": "WARN",
+      "evidence": "could not read 'codex features list' (exit 1): boom",
+      "repair": "ensure the `codex` binary is on PATH, then re-run `cxc doctor`"
+    },
+    {
+      "name": "stderr_sliced_to_160",
+      "run": {
+        "status": 3,
+        "stdout": "",
+        "stderr": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      },
+      "severity": "WARN",
+      "evidence": "could not read 'codex features list' (exit 3): xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "repair": "ensure the `codex` binary is on PATH, then re-run `cxc doctor`"
+    },
+    {
+      "name": "stderr_slice_cuts_a_surrogate_pair",
+      "run": {
+        "status": 3,
+        "stdout": "",
+        "stderr": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx😀y"
+      },
+      "severity": "WARN",
+      "evidence": "could not read 'codex features list' (exit 3): xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx�",
+      "repair": "ensure the `codex` binary is on PATH, then re-run `cxc doctor`"
+    },
+    {
+      "name": "status_null_stderr",
+      "run": {
+        "status": null,
+        "stdout": "",
+        "stderr": "EPERM"
+      },
+      "severity": "WARN",
+      "evidence": "could not read 'codex features list': EPERM",
+      "repair": "ensure the `codex` binary is on PATH, then re-run `cxc doctor`"
+    },
+    {
+      "name": "nonzero_without_stderr",
+      "run": {
+        "status": 2,
+        "stdout": "",
+        "stderr": ""
+      },
+      "severity": "WARN",
+      "evidence": "could not read 'codex features list' (exit 2)",
+      "repair": "ensure the `codex` binary is on PATH, then re-run `cxc doctor`"
+    }
+  ],
+  "codexVersion": [
+    {
+      "name": "semver",
+      "status": 0,
+      "stdout": "codex-cli 1.2.3\n",
+      "stderr": "",
+      "version": "1.2.3"
+    },
+    {
+      "name": "first_of_two_versions",
+      "status": 0,
+      "stdout": "codex-cli 1.2.3 (build 4.5.6)\n",
+      "stderr": "",
+      "version": "1.2.3"
+    },
+    {
+      "name": "version_without_prefix",
+      "status": 0,
+      "stdout": "1.2.3\n",
+      "stderr": "",
+      "version": "1.2.3"
+    },
+    {
+      "name": "fallback_trimmed",
+      "status": 0,
+      "stdout": "  nightly  \n",
+      "stderr": "",
+      "version": "nightly"
+    },
+    {
+      "name": "fallback_js_trim_nbsp",
+      "status": 0,
+      "stdout": " nightly ",
+      "stderr": "",
+      "version": "nightly"
+    },
+    {
+      "name": "nonzero_status",
+      "status": 1,
+      "stdout": "codex-cli 1.2.3\n",
+      "stderr": "boom",
+      "version": null
+    },
+    {
+      "name": "empty_stdout",
+      "status": 0,
+      "stdout": "",
+      "stderr": "",
+      "version": null
+    },
+    {
+      "name": "whitespace_only_stdout",
+      "status": 0,
+      "stdout": "   ",
+      "stderr": "",
+      "version": ""
+    },
+    {
+      "name": "null_status",
+      "status": null,
+      "stdout": "",
+      "stderr": "killed by signal",
+      "version": null
+    },
+    {
+      "name": "throws",
+      "throws": true,
+      "version": null
+    }
+  ],
+  "wsl": {
+    "severity": "PASS",
+    "evidence": "not running under WSL"
+  }
+}

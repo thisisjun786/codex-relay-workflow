@@ -73,6 +73,23 @@ archive, cleanup rechecks the root, reads the descendant's newest turn, then
 re-reads its identity and status with `thread/read`. Only idle descendants whose
 latest turn completed are archived, deepest first. The root is never archived.
 
+An archived child stays a real child of its session, so only the managed dispatch
+ledger tells whether its agent id is spent: a created report for an id that
+another attempt holds is refused, and only an attempt the stopped close closed
+(outcome stopped, executionState stopped, a reconciliation) gives its id back.
+
+A dispatch ledger lock (`.session.lock` or `<id>.json.lock` in `.crw/dispatches/<session>`) holds an
+`owner.json` with the pid, process start, host and creation time (ms) of the process that took it, and a
+process that dies while holding one leaves it behind. `crw role helper dispatch-lock-clear --session <id>
+(--dispatch <id> | --session-lock) --reason <text> [--cwd <dir>]` removes such a lock only when it is a real
+directory with a readable `owner.json` of a process on this host that no longer exists or whose start time
+differs (the pid was taken over), then appends the removal to `lock-clears.jsonl` in the session directory and
+prints that line (exit 0). It removes nothing and exits 1 when the owner is alive (a pid it cannot signal still
+counts), `owner.json` is missing or unreadable, the host differs, the start time cannot be compared, or the
+entry is a link or not a directory; usage errors exit 2. Clears of one session take turns, and a lock that turns
+out to have been replaced after the check is put back, or left at a `.clearing-` name that the error
+reports, and never removed.
+
 Each callback attempt has a thirty-second budget. Known running holds keep polling
 with the existing five-second to five-minute backoff, including mixed subtrees
 with an incomplete idle member. With no known running member, interrupted, failed,

@@ -293,7 +293,7 @@ func fencedPaths() []fencedPath {
 		{name: "an observation of integration", plan: "g", setup: func(t *testing.T) (*releaseKit, func(*Scheduler) error) {
 			k := newJudgeKit(t)
 			return k.releaseKit, func(s *Scheduler) error {
-				_, err := s.ObserveIntegration(context.Background(), "g", "I", "parent", []Target{{Repository: k.repo.path, BaseRef: "dev"}})
+				_, err := s.ObserveIntegration(context.Background(), "g", "I", "parent", []Target{k.forgeTarget("dev")})
 				return err
 			}
 		}},

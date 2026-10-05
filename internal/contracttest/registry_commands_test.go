@@ -54,6 +54,9 @@ func replayCLICases(t *testing.T, fixture string, targetKeys bool, commands []st
 		Argv  []string          `json:"argv"`
 		Files map[string]string `json:"files"`
 		SQL   string            `json:"sql"`
+		// Bin is executables put first on PATH from this step on (name -> script text, ${HOME} expanded), for a fixture that
+		// needs a program the relay runs, such as the gh that answers for a forge repository.
+		Bin map[string]string `json:"bin"`
 	}
 	if err := json.Unmarshal(golden.Fixture(t, fixture), &cases); err != nil {
 		t.Fatal(err)
@@ -71,7 +74,17 @@ func replayCLICases(t *testing.T, fixture string, targetKeys bool, commands []st
 			targetPattern := regexp.MustCompile(`tgt-[0-9a-f]{32}`)
 			state := filepath.Join(home, "state")
 			var answered []cliStep
+			var bin string
 			for _, step := range steps {
+				for name, script := range step.Bin {
+					bin = filepath.Join(home, "bin")
+					if err := os.MkdirAll(bin, 0o700); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(filepath.Join(bin, name), []byte(strings.ReplaceAll(script, "${HOME}", home)), 0o700); err != nil {
+						t.Fatal(err)
+					}
+				}
 				for file, text := range step.Files {
 					if err := os.WriteFile(filepath.Join(home, file), []byte(strings.ReplaceAll(text, "${HOME}", home)), 0o600); err != nil {
 						t.Fatal(err)
@@ -100,6 +113,9 @@ func replayCLICases(t *testing.T, fixture string, targetKeys bool, commands []st
 				command.Dir = home
 				command.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home+"/xs", "XDG_DATA_HOME="+home+"/xd",
 					"XDG_CONFIG_HOME="+home+"/xc", "CODEX_HOME="+home+"/ch", "CODEX_THREAD_BRIDGE_EXECUTION_POLICY=")
+				if bin != "" {
+					command.Env = append(command.Env, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "GH_HOST=")
+				}
 				var stdout, stderr bytes.Buffer
 				command.Stdout, command.Stderr = &stdout, &stderr
 				exit := 0

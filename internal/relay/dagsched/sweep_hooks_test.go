@@ -15,7 +15,7 @@ func TestLandingRunsTheSweepItOwes(t *testing.T) {
 	k := w.k
 	k.sched.Checkout = k.repo.path
 	w.accept("D", "E")
-	k.mark(k.acceptNode("g", "I", acceptOpts{HeadSHA: w.head["I"], PR: 30, Forge: "owner/repo", Repository: k.repo.path}))
+	k.mark(k.acceptOnForge("g", "I", acceptOpts{HeadSHA: w.head["I"], PR: 30}))
 
 	// the landing is recorded and the sweep dies inside its transaction: the landing stands and says so, nothing of the sweep was written
 	k.sched.testInSweepTx = func() error { return errors.New("the process died inside the sweep") }
@@ -59,11 +59,11 @@ func TestLandingWithNothingToSweep(t *testing.T) {
 	w := newSweepWorld(t)
 	k := w.k
 	w.accept("D")
-	res, err := k.sched.ObserveIntegration(context.Background(), "g", "D", "parent", []Target{{Repository: k.repo.path, BaseRef: "dev"}})
+	res, err := k.sched.ObserveIntegration(context.Background(), "g", "D", "parent", []Target{k.forgeTarget("dev")})
 	if err != nil || res.Integrated || res.Sweep != nil {
 		t.Fatalf("a head that did not land = %v %+v %+v", err, res, res.Sweep)
 	}
-	k.mark(k.acceptNode("g", "I", acceptOpts{HeadSHA: w.head["I"], PR: 30, Forge: "owner/repo", Repository: k.repo.path}))
+	k.mark(k.acceptOnForge("g", "I", acceptOpts{HeadSHA: w.head["I"], PR: 30}))
 	landed, err := k.observe()
 	if err != nil || !landed.Integrated || landed.Sweep == nil || landed.Sweep.State != SweepSkipped || landed.Sweep.Reason != "no_checkout" || k.count("SELECT COUNT(*) FROM dag_conflict_sweeps") != 0 {
 		t.Fatalf("landing with no checkout = %v %+v %+v", err, landed, landed.Sweep)
@@ -117,9 +117,9 @@ func TestLandingOnASecondTargetIsSweptToo(t *testing.T) {
 	k := w.k
 	k.sched.Checkout = k.repo.path
 	w.accept("D", "E")
-	k.mark(k.acceptNode("g", "I", acceptOpts{HeadSHA: w.head["I"], PR: 30, Forge: "owner/repo", Repository: k.repo.path}))
+	k.mark(k.acceptOnForge("g", "I", acceptOpts{HeadSHA: w.head["I"], PR: 30}))
 	k.repo.git("branch", "side", w.base) // side does not hold the head yet
-	targets := []Target{{Repository: k.repo.path, BaseRef: "dev"}, {Repository: k.repo.path, BaseRef: "side"}}
+	targets := []Target{k.forgeTarget("dev"), k.forgeTarget("side")}
 	first, err := k.observe(targets...)
 	if err != nil || first.Sweep == nil || first.Sweep.State != SweepRecorded || len(first.Sweep.Members) != 6 { // I has not landed on every target yet: it is still a live head
 		t.Fatalf("first = %v %+v", err, first.Sweep)

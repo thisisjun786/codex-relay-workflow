@@ -46,11 +46,18 @@ func buildSweepWorld(t *testing.T, k *integrationKit) *sweepWorld {
 	return w
 }
 
-// accept accepts nodes on their branch heads: the heads the relay itself would have read from the forge.
+// accept accepts nodes on their branch heads: the heads the relay itself would have read from the forge. The nodes land on the forge repository; only the CLI world (a kit on the real readers) lands on the
+// checkout. What is measured is the checkout in both.
 func (w *sweepWorld) accept(nodes ...string) {
 	w.k.t.Helper()
 	for i, n := range nodes {
-		w.k.acceptNode("g", n, acceptOpts{HeadSHA: w.head[n], PR: int64(10 + i), Forge: "owner/repo", Repository: w.k.repo.path})
+		o := acceptOpts{HeadSHA: w.head[n], PR: int64(10 + i)}
+		if w.k.readers != nil {
+			w.k.acceptOnForge("g", n, o)
+			continue
+		}
+		o.Forge, o.Repository = "owner/repo", w.k.repo.path
+		w.k.acceptNode("g", n, o)
 	}
 }
 
