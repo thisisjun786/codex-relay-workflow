@@ -1028,3 +1028,20 @@ Source: `plugins/codexclaw/components/pabcd-state/src/state.ts` (`reconstructUnv
 - The refusal covers the whole file, not only the records the guard compares, so a lone surrogate in a key the reader ignores, in the slug, or in a repeated key that a later one shadows also stops the rewrite of an otherwise intact list; the rewrite would have replaced it too, so this is over-refusal and never loss; port: kept.
 - The guard compared an `attempts` literal by value only when its exponent text had at most three characters, so `3e0000`, a form of the number 3 that the reader keeps and the writer prints, was read as a loss and the memory authorization, `scan record` and `evidence resolve` of an intact record were refused; the oracle has no guard (tests `TestRewriteLosslessComparesExponentFormsOfOneValue` and `TestMemoryGateSpendsOverTextTheDecoderKeeps`); port: fixed (a Go-port defect: the exponent digits are counted after the sign and the leading zeros, so `3e0000`, `3E+0000` and `3e` followed by sixty-two zeros reach the exact comparison, while `1e1000` and a literal over 64 bytes stay losses).
 - A writer of the session file that does not ask the guard still replaces a lone surrogate with U+FFFD, and the unknown keys of a record are dropped on every rewrite (source `state.ts:57-88`); port: kept (every caller of `state.WriteState` outside the state package asks the guard today; a later port that adds a writer, such as the orchestrate transitions, must ask `RewriteKeepsUnverified` too).
+
+## Found by the CRW-367 spawn classifier port
+
+Source: `plugins/codexclaw/components/subagent-config/src/spawn-attach-hook.ts` at v0.2.40, through the
+recorder and replay in `internal/role/spawn/testdata/classify/`.
+
+- `stripControlMarkers` collapses only runs of three or more LF, so a CRLF-separated message keeps
+  its blank-line runs (source `subagent-config/src/spawn-attach-hook.ts:409-414`; the CRLF case is
+  recorded in `internal/role/spawn/testdata/classify/oracle.json`); port: kept.
+- The spawn tool-name set accepts `collaboration.spawn_agent` and `collaboration_spawn_agent`,
+  spellings codex-rs never emits, as defensive aliases (source
+  `subagent-config/src/spawn-attach-hook.ts:579-584`; recorded in
+  `internal/role/spawn/testdata/classify/oracle.json`); port: kept.
+- The review-keyword fallback is a substring search, so a task that merely contains a keyword
+  fragment ("preview the diff") infers reviewer (source
+  `subagent-config/src/spawn-attach-hook.ts:511-516`; recorded in
+  `internal/role/spawn/testdata/classify/oracle.json`); port: kept.
