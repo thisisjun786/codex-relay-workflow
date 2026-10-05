@@ -148,6 +148,23 @@ func reviewRoundArgsAbs(cwd, p string) (string, error) {
 	return filepath.Join(wd, p), err
 }
 
+// reviewRoundCwdResolve is attest/plangate.go's resolve (plangate.go:147-156): an absolute p is used exactly as written — never
+// filepath.Clean'd — a relative p is joined to cwd, and a result still relative is made absolute against the kernel's working
+// directory (syscall.Getwd, which is what process.cwd() answers; os.Getwd would trust $PWD). The working directory is opened by
+// this spelling, not by path.resolve's cleaned one: cleaning an absolute cwd spelled "/r/alias/.." lands on "/r", so the boundary
+// was opened one level above the directory the OS reaches and a link's own ".." named a sibling of the workspace (CRW-649). The
+// error is where process.cwd() throws: the working directory cannot be read.
+func reviewRoundCwdResolve(cwd, p string) (string, error) {
+	if filepath.IsAbs(p) {
+		return p, nil
+	}
+	if p = filepath.Join(cwd, p); filepath.IsAbs(p) {
+		return p, nil
+	}
+	wd, err := syscall.Getwd()
+	return filepath.Join(wd, p), err
+}
+
 // reviewRoundArgsBase is the working directory opened once as an os.Root, so that every decision about an entry and every read is
 // bound to that one directory handle. This is the departure from the oracle, by decision (a review finding of kind security): the
 // oracle read a path as spelled, so a link inside the workspace made it hash a file outside. Here an entry is read only when its
@@ -163,7 +180,7 @@ type reviewRoundArgsBase struct {
 // directory its real path names (replaced while it was opened); every entry then reads as outside. The error is where Node throws:
 // a relative working directory that cannot be made absolute.
 func reviewRoundArgsOpenBase(cwd string) (*reviewRoundArgsBase, error) {
-	abs, err := reviewRoundArgsAbs("", cwd)
+	abs, err := reviewRoundCwdResolve("", cwd)
 	if err != nil {
 		return nil, err
 	}
@@ -214,6 +231,57 @@ func (b *reviewRoundArgsBase) readInside(abs string) (data []byte, below string,
 		data, err = b.read(below)
 	}
 	return data, below, inside, err
+}
+
+// reviewRoundCwdKey chooses the key a plan file is stored under (CRW-649). It is the oracle's own spelling when it is usable,
+// then the entry's spelling relative to the working directory's real path, then the plan-unit spelling (reviewRoundCwdUnitKey);
+// an entry none of the three can name is refused, and the physical spelling is never stored. The first two keep every existing
+// key; the third keeps the link of the plan unit the round is bound to where the working directory is a link or the entry is
+// spelled by its physical path.
+func reviewRoundCwdKey(base string, opened *reviewRoundArgsBase, cwd, unit, rel, abs string) (string, bool) {
+	if key, err := filepath.Rel(base, abs); err == nil && filepath.IsLocal(key) {
+		return key, true
+	}
+	if opened != nil {
+		if key, err := filepath.Rel(opened.real, abs); err == nil && filepath.IsLocal(key) {
+			return key, true
+		}
+	}
+	return reviewRoundCwdUnitKey(opened, cwd, unit, rel, abs)
+}
+
+// reviewRoundCwdUnitKey is the plan-unit spelling: Rel(real, EvalSymlinks(Dir(unit))) joined with Base(unit) and the entry's
+// path below the unit (rel). It is returned only when it is local and when resolving it against cwd reaches the entry's real
+// path, so the spelling a later read resolves names the document the collection read.
+func reviewRoundCwdUnitKey(opened *reviewRoundArgsBase, cwd, unit, rel, abs string) (string, bool) {
+	if opened == nil {
+		return "", false
+	}
+	dirReal, err := filepath.EvalSymlinks(filepath.Dir(unit))
+	if err != nil {
+		return "", false
+	}
+	prefix, err := filepath.Rel(opened.real, dirReal)
+	if err != nil || !filepath.IsLocal(prefix) {
+		return "", false
+	}
+	spelling := filepath.Join(prefix, filepath.Base(unit), rel)
+	if !filepath.IsLocal(spelling) {
+		return "", false
+	}
+	reached, err := reviewRoundArgsAbs(cwd, spelling)
+	if err != nil {
+		return "", false
+	}
+	got, err := filepath.EvalSymlinks(reached)
+	if err != nil {
+		return "", false
+	}
+	want, err := filepath.EvalSymlinks(abs)
+	if err != nil || got != want {
+		return "", false
+	}
+	return spelling, true
 }
 
 // reviewRoundArgsNumberedDoc is NUMBERED_DOC_RE, /^\d{3}_.+\.md$/ (review-round-cli.ts:34): three ASCII digits, an underscore, at
@@ -267,23 +335,15 @@ func reviewRoundArgsCollectPlanFiles(cwd, planUnit string, paths []string) ([]go
 		if info, err := os.Lstat(abs); err != nil || !info.Mode().IsRegular() {
 			return nil, unreadable, nil
 		}
-		data, below, inside, err := opened.readInside(abs)
+		data, _, inside, err := opened.readInside(abs)
 		if !inside {
 			return nil, unreadable, nil
 		}
 		if err != nil {
 			return nil, "", err
 		}
-		key, _ := filepath.Rel(base, abs)
-		if !filepath.IsLocal(key) {
-			// The key as the oracle stores it climbs out ("../ws/...") and the revival of a round's plan files drops a list holding
-			// such a key: the entry is spelled by the real path of a working directory that is a link, or by another alias of it.
-			// The first fallback keeps the links of the entry's own spelling, which the binding of the round depends on.
-			if key, _ = filepath.Rel(opened.real, abs); !filepath.IsLocal(key) {
-				key = below
-			}
-		}
-		if !utf8.ValidString(key) {
+		key, ok := reviewRoundCwdKey(base, opened, cwd, unit, rel, abs)
+		if !ok || !utf8.ValidString(key) {
 			return nil, unreadable, nil
 		}
 		if seen[key] {
@@ -301,7 +361,8 @@ func reviewRoundArgsCollectPlanFiles(cwd, planUnit string, paths []string) ([]go
 
 // Recomputed ports review-round-cli.ts:308-317: the files a round named, read again, each entry keeping its path and its place.
 // An unreadable file reads "missing", and so does an entry whose real path is outside the working directory
-// (reviewRoundArgsBase), which the oracle hashed.
+// (reviewRoundArgsBase), which the oracle hashed. An entry the kernel's own link resolution cannot reach (a chain past its link
+// limit, a dangling link, a missing file) reads "missing" too, as the oracle's readFileSync answers (CRW-649).
 func Recomputed(cwd string, files []goalplan.PlanFileHash) []goalplan.PlanFileHash {
 	out := make([]goalplan.PlanFileHash, len(files))
 	opened, err := reviewRoundArgsOpenBase(cwd)
@@ -313,6 +374,9 @@ func Recomputed(cwd string, files []goalplan.PlanFileHash) []goalplan.PlanFileHa
 		out[i] = goalplan.PlanFileHash{Path: f.Path, Sha256: "missing"}
 		abs, err := reviewRoundArgsAbs(cwd, f.Path)
 		if err != nil {
+			continue
+		}
+		if _, err := os.Stat(abs); err != nil {
 			continue
 		}
 		if data, _, inside, err := opened.readInside(abs); inside && err == nil {
