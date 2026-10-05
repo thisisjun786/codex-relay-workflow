@@ -1149,3 +1149,25 @@ Source: `plugins/codexclaw/components/cxc-ops/src/hook-trust.ts` (`TomlSection` 
 ## CRW-622 — the receipt test's publication window (port-introduced defect, fixed)
 
 - The oracle has no signal handler and no withdrawal: in the recorded interrupt its deferred SIGINT killed the process before the single in-place `writeFileSync`, and a kill during that write can only leave the truncated record already recorded at `:613`. The port refuses a cancellation it observes before publication (CRW-582), but a cancellation that landed after that check still published the receipt and returned its path with exit code 0, so a cancelled invocation could leave a success receipt where the oracle leaves none. `crwdir.PublishContext` now reports the context's error at the rename step, the last point at which the publish can still be skipped, so the existing cleanup removes the temp file and no final file appears; `RunReceiptCLI` publishes the receipt through it, maps that cancellation to the existing refusal, and after a successful publish checks the context once more and withdraws the receipt the rename beat it to, answering the same refusal; a withdrawal that fails returns its `unlink` `PathError` instead of the refusal, so a surviving receipt is never reported as "no receipt written" (tests `TestPublishContextCancelAtTheRenameStepLeavesNothing`, `TestPublishContextAlreadyCancelledLeavesNothing`, `TestPublishContextUncancelledMatchesPublish`, `TestReceiptPublishCancellationWithdrawsTheReceipt`, `TestReceiptPublishCancellationReturnsInterruptedRefusal`, `TestReceiptPublishCancellationWithdrawalFailure`); port: fixed.
+
+## CRW-594 — a failed divergence candidate save (port-introduced defect, fixed)
+
+- The candidate add branch printed Go's `*os.PathError` spelling where the oracle prints the Node
+  runtime's error message: with a regular file at the `--cwd` path, so `<cwd>/.crw` cannot be
+  created, the port answered `divergence candidate add: mkdir <cwd>/.crw: not a directory` where the
+  oracle answers `divergence candidate add: ENOTDIR: not a directory, mkdir '<cwd>/.crw'`, exit 1,
+  nothing written (source `pabcd-state/src/divergence-cli.ts:153`, the `err.message` of the
+  `mkdirSync` failure at `divergence.ts:197`; recorded with Node 24 for the PR, and no corpus fixture
+  drives a failed candidate save). `internal/pabcd/cli/nodeErrorMessage` now spells a
+  `*os.PathError` whose errno `planErrno` names as `<NAME>: <description>, <op> '<path>'`, with the
+  path left out for write and close, and `planFailure` and the candidate add branch both call it, so
+  plan init's output stays byte-identical (pinned by the recorded cases of `plan_test.go`);
+  port: fixed (port-introduced, not an oracle defect: the oracle text is the reference and the port
+  now matches it; no recorded case is retagged).
+- The divergence CLI's other error path keeps Go's spelling: the mode write (the oracle's one
+  uncaught path, `divergence-cli.ts:115`) is reported by its caller as `crw cli failed: <PathError
+  text>` where the oracle prints `codexclaw cli failed: <err.message>` (`src/cli.ts:530`; the
+  difference in the reporting path itself is the divergence-CLI section's line above), and this
+  conversion is not applied there, because this issue's criteria keep every other divergence output
+  unchanged; port: kept (follow-up: apply the same conversion at that boundary with its own test).
+
