@@ -1020,3 +1020,34 @@ func TestMergeBuildEnvProbeModuleRootStopsTheSearchAboveTheScratchRoot(t *testin
 		}
 	}
 }
+
+// A module above the scratch root that names a newer Go in its go directive must not reach the cache
+// read either (CRW-610): under GOTOOLCHAIN=auto the go command honours the go line the way it honours a
+// toolchain line, so the same upward search made the probe try to select a toolchain it cannot fetch.
+// The probe's own module root stops the search, and with no go line of its own it requires nothing.
+func TestMergeBuildEnvProbeStopsAtItsOwnDirectoryWhenTheModuleAboveNamesANewerGo(t *testing.T) {
+	callerModule := t.TempDir()
+	if err := os.WriteFile(filepath.Join(callerModule, "go.mod"), []byte("go 1.999.0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	owned := filepath.Join(callerModule, "tmp", "owned")
+	if err := os.MkdirAll(owned, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	caller := append(os.Environ(),
+		"HOME="+t.TempDir(), "XDG_CONFIG_HOME="+t.TempDir(),
+		"CODEX_HOME="+t.TempDir(), "CRW_HOME="+t.TempDir(),
+		"GOTOOLCHAIN=auto", "GOPROXY=off")
+	telemetryOffWriteMode(t, caller)
+	env, err := mergeBuildEnv(context.Background(), caller, owned, "darwin")
+	if err != nil {
+		t.Fatalf("the cache read failed with a newer go named above the scratch root: %v", err)
+	}
+	got := mbcLastEnv(env)
+	caches := mbcCallerGoEnv(t, caller)
+	for key, want := range map[string]string{"GOCACHE": caches[0], "GOMODCACHE": caches[1], "GOPATH": caches[2]} {
+		if got[key] != want {
+			t.Errorf("%s=%q, want the caller's %q", key, got[key], want)
+		}
+	}
+}
