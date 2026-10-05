@@ -82,13 +82,11 @@ func (p *Publisher) Publish(dir *Dir, leaf string, src io.ReaderAt, size int64, 
 	return ResultFailed, err
 }
 
-// refusal returns err as a refusal, or nil when it is anything else.
+// refusal returns err as a refusal, or nil when it is anything else, a refusal that came with another error included: a temporary
+// that could not be removed is a failure to report, never a plain conflict and never a reason to let a run go on.
 func refusal(err error) *RefusedError {
-	var r *RefusedError
-	if errors.As(err, &r) {
-		return r
-	}
-	return nil
+	r, _ := err.(*RefusedError)
+	return r
 }
 
 func (p *Publisher) publish(dir *Dir, leaf string, src io.ReaderAt, size int64, mode fs.FileMode) (_ Result, err error) {
@@ -191,11 +189,11 @@ func sum(r io.Reader) ([sha256.Size]byte, error) {
 	return [sha256.Size]byte(h.Sum(nil)), err
 }
 
-// EnsureProjectRoot returns the pinned W/.crw, created when absent, once its .gitignore holds crwdir.GitignoreText. The .gitignore
-// is published whenever it is absent, also in a root that already exists, so a run interrupted between the mkdir and the
+// EnsureProjectRoot returns the pinned W/.crw, created when absent, once its .gitignore is there: published as
+// crwdir.GitignoreText whenever it is absent, also in a root that already exists, so a run interrupted between the mkdir and the
 // publication is repaired by the next one before any state is copied (crwdir.EnsureDir stops at an existing root). An existing
-// regular .gitignore, one a racer made included, belongs to its owner and is kept; a link, directory, hard-linked or set-ID one is
-// refused, and one that cannot be read fails.
+// regular .gitignore, one a racer made included, belongs to its owner and is kept as it is; a link, directory, hard-linked or
+// set-ID one is refused, and one that cannot be read fails.
 func (p *Publisher) EnsureProjectRoot(pair *Pair) (*Dir, error) {
 	root, err := pair.EnsureDest(0o777)
 	if err == nil {
