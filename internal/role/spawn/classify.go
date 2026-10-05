@@ -192,8 +192,11 @@ func IsFullHistoryFork(toolInput map[string]any) bool {
 		return false
 	}
 	raw := toolInput["fork_turns"]
+	// JavaScript's typeof raw === "number": every Go numeric kind, so the caller's JSON
+	// decoder (float64 by default, json.Number with UseNumber, an integer type in a
+	// programmatic map) cannot change the fork classification.
 	switch raw.(type) {
-	case float64, json.Number:
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, uintptr, float32, float64, json.Number:
 		return false
 	}
 	value := ""

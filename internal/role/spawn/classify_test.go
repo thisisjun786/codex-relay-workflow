@@ -251,3 +251,20 @@ func TestSpawnClassifyDenyEnvelopeShape(t *testing.T) {
 		t.Fatalf("envelope fields are wrong: %+v", h)
 	}
 }
+
+// TestSpawnClassifyFullHistoryForkNumbers pins the number branch for every Go numeric kind a
+// caller's decoder can produce; the oracle answers false for a JS number (recorded as
+// fork_turns 3 with task_name t in testdata/classify/oracle.json).
+func TestSpawnClassifyFullHistoryForkNumbers(t *testing.T) {
+	numbers := []any{3, int8(3), int16(3), int32(3), int64(3), uint(3), uint8(3), uint16(3),
+		uint32(3), uint64(3), uintptr(3), float32(3), float64(3), json.Number("3")}
+	for _, number := range numbers {
+		input := map[string]any{"task_name": "t", "fork_turns": number}
+		if IsFullHistoryFork(input) {
+			t.Errorf("fork_turns %T should not be a full-history fork", number)
+		}
+		if !IsV2SpawnInput(input) {
+			t.Errorf("fork_turns %T keeps the payload a v2 input", number)
+		}
+	}
+}
