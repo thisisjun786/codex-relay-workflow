@@ -57,6 +57,18 @@ or inaccessible required evidence is unresolved. Accept skipped/neutral results
 only when the repository's gate semantics make them legitimate for this change;
 a green PR summary alone is insufficient. Resolve routine failures and recheck.
 
+A required check that is not a success has two readings, and they call for different
+actions. `checks_not_run` is the reading for a check that did not succeed because its
+workflow run holds a job that concluded cancelled without beginning a step: no runner ever
+picked it up, so the commit was never tested. The lane reruns the failed jobs of that run
+once on the same head (`gh run rerun <run id> --failed`) and waits. When the same head
+already has a queued run, it does not rerun and waits for that one. A `checks_not_run` that
+survives the one rerun is an infrastructure failure rather than a code failure, so the lane
+stops and reports it instead of rerunning again. `checks_stale` is the reading for every
+other non-success, a real failure, and the lane returns its turn as before. Neither reading
+is ready and neither permits a merge; `merge-evidence` names the run and the jobs that did
+not run in the problem's detail, so the rerun can be aimed at them.
+
 No configured CI is not a CI pass. Use the repository's permitted local validation
 route if one exists and report that distinction. Do not invent a new hosted CI
 requirement, waive an existing one, or claim readiness when necessary validation
