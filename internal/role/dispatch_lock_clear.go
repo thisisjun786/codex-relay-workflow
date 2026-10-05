@@ -237,8 +237,8 @@ func (d *dispatchPinnedDir) restoreLock(lock, tomb string) error {
 }
 
 // DispatchLockClearCommand is 'crw role helper dispatch-lock-clear'. Every outcome is one JSON line on stdout: the line that was
-// logged (exit 0), {"error": ...} for a refusal (exit 1; "cleared" holds a line that was removed but not written) or for
-// usage (exit 2).
+// logged (exit 0), {"error": ...} for a refusal (exit 1) or for usage (exit 2). A refusal that has a "cleared" member comes after
+// the lock was claimed: that is its line, whose write or whose tombstone removal then failed.
 func DispatchLockClearCommand(args []string, _ io.Reader, out io.Writer, _ host.LookupEnv) int {
 	answer, code := dispatchLockClearRun(args)
 	encoded, err := json.Marshal(answer)
