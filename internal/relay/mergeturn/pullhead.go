@@ -153,6 +153,8 @@ func verbOf(verb string) string { return strings.TrimSuffix(verb, "s") }
 // the pull request on a forge repository (owner/name), and otherwise the current work reports of the turn's relationship.
 // When there is neither, the call is refused instead of passed, so no path reaches merging with a head nothing vouches for.
 // A claim that records neither a pull request nor a relationship records nothing to compare, and keeps passing.
+// CRW-608. A recorded forge pull request is compared with the forge only: a relay that has no pull request reader refuses the
+// call too, and neither the turn's record nor a work report stands in for the reader that is missing.
 
 // headCompareRecorded is whether the turn records a pull request or a relationship, which a head can be compared with.
 func headCompareRecorded(row store.MergeTurnsRow) bool {
@@ -181,16 +183,18 @@ func headCompareNothing(row store.MergeTurnsRow, actor, verb, why string) *regis
 // pullRequestHead of the answer ("forge" or "work_report"). pulls is the reader of pull requests the relay has, nil when it
 // has none. Both Ready and Check call it, with the transaction's context, once the turn is the caller's to act on.
 //
-// A forge pull request is decided by the forge when the relay can read it. A relay with no pull request reader (a service
-// built by a test; the relay commands always supply one) decides it by the turn's record, as before, and leaves the work
-// report to the check. Every other turn that records a pull request or a relationship is decided by the work report.
+// A forge pull request is decided by the forge, and only by the forge. With no pull request reader (a Service built without
+// Pulls; a merge-turn-check given a Reader that cannot read pull requests, whatever Service.Pulls is) the call is refused
+// merge_target_unreadable: the turn's record never decides it and a work report of its relationship never stands in for the
+// reader. The Service does not build a reader of its own; the relay commands supply one. Every other turn that records a pull
+// request or a relationship is decided by the work report.
 func (s *Service) headCompareVerdict(ctx context.Context, row store.MergeTurnsRow, actor, verb, head string, read *pullRequestRead, pulls PullRequestHeadReader) (*registry.CoordinationRefusal, map[string]any, error) {
 	switch {
 	case !headCompareRecorded(row):
 		return nil, nil, nil
 	case headCompareForge(row):
 		if pulls == nil {
-			return nil, nil, nil
+			return headCompareNothing(row, actor, verb, fmt.Sprintf("this service has no pull request head reader for recorded pull request %d of %s; supply a pull request head reader and call again", row.PRNumber.Int64, row.Repository)), nil, nil
 		}
 		refusal, decided := pullRequestVerdict(row, actor, verb, head, read)
 		return refusal, decided, nil

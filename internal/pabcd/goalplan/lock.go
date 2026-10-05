@@ -211,13 +211,25 @@ func WithGoalplanWriteLock[T any](cwd, slug string, fn func(*Goalplan) (T, error
 	}
 	defer releaseLock(parent, lock, dir)
 	writeLockOwner(lock, dir, now)
-	read := readPlanAt(parent, real, filepath.Join(real, GoalplanFile), slug)
+	read, file := revivalLossReadPlan(parent, real, filepath.Join(real, GoalplanFile), slug)
 	if read.Plan == nil {
 		detail := "goalplan '" + slug + "' could not be read"
 		if d := read.Diagnostic; d != nil && d.Kind != "absent" {
 			detail = d.Detail
 		}
 		return GoalplanWriteLockResult[T]{Kind: "unreadable", Reason: detail}, nil
+	}
+	// A plan whose revival would drop or change stored data is not handed to a writer (revivalLoss); bytes that are not UTF-8 are
+	// refused first, because revival and its re-encoding would both read them as U+FFFD, and a key repeated in one object next,
+	// because decoding keeps only its last value.
+	if file.badByte > 0 {
+		return GoalplanWriteLockResult[T]{Kind: "unreadable", Reason: revivalLossRefusal(slug, fmt.Sprintf("invalid UTF-8 at byte %d", file.badByte-1))}, nil
+	}
+	if dup := revivalLossDuplicate(file.text); dup != "" {
+		return GoalplanWriteLockResult[T]{Kind: "unreadable", Reason: revivalLossRefusal(slug, "the repeated key "+dup)}, nil
+	}
+	if lost := revivalLoss(file.parsed); lost != "" {
+		return GoalplanWriteLockResult[T]{Kind: "unreadable", Reason: revivalLossRefusal(slug, lost)}, nil
 	}
 	value, err := fn(read.Plan)
 	if err != nil {
