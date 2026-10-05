@@ -147,7 +147,7 @@ func TestPabcdC6Verbs(t *testing.T) {
 	t.Run("metric_ingest_bounded_stdin", func(t *testing.T) {
 		root := pabcdCLITestHome(t)
 		line := "METRIC end=7\n"
-		in := io.MultiReader(&c6FillReader{left: int64(MaxStdinBytes - len(line))}, strings.NewReader(line))
+		in := io.MultiReader(&c6FillReader{left: int64(MaxStdinBytes - len(line) - 1)}, strings.NewReader("\n"+line))
 		code, out, errOut := c6Run([]string{"metric", "ingest", "--session", "s1", "--json"}, in)
 		if code != 0 || errOut != "" || !strings.HasPrefix(out, "{\"records\":[") || !strings.Contains(out, "\"metricName\":\"end\"") || !strings.Contains(out, "\"value\":7") {
 			t.Fatalf("limit-sized ingest: %d %q %q", code, out, errOut)
@@ -313,4 +313,3 @@ func TestPabcdC6Verbs(t *testing.T) {
 		}
 	})
 }
-

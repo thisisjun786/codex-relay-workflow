@@ -23,6 +23,9 @@ func Verbs() []Verb {
 		{Name: "reset", Run: resetVerb},
 		{Name: "config", Run: configVerb},
 		{Name: "scan", Run: scanVerb},
+		{Name: "review-round", Run: reviewRoundVerb},
+		{Name: "metric", Run: metricVerb},
+		{Name: "divergence", Run: divergenceVerb},
 	}
 }
 
