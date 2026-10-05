@@ -191,22 +191,24 @@ func TestShellWriteEscapeJSLiteral(t *testing.T) {
 	}
 }
 
-// The Path join costs time and memory linear in its arguments: a long run of literal parts must not copy the accumulated path again for
-// each one (the hook reads inputs of several MiB).
+// The Path join costs time and memory linear in its arguments: a long run of literal parts, with or without a trailing slash, must not
+// copy the accumulated path again for each one (the hook reads inputs of several MiB).
 func TestShellWriteEscapePathJoinIsLinear(t *testing.T) {
-	allocated := func(parts int) uint64 {
-		script := "Path(" + strings.Repeat("'a',", parts) + "'/m/x').write_text(1)"
-		var before, after runtime.MemStats
-		runtime.ReadMemStats(&before)
-		got := shellVerbOpenWrites(script)
-		runtime.ReadMemStats(&after)
-		if !slices.Equal(got, []string{"/m/x"}) {
-			t.Fatalf("%d parts: got %q", parts, got)
+	for _, part := range []string{"'a',", "'a/',"} {
+		allocated := func(parts int) uint64 {
+			script := "Path(" + strings.Repeat(part, parts) + "'/m/x').write_text(1)"
+			var before, after runtime.MemStats
+			runtime.ReadMemStats(&before)
+			got := shellVerbOpenWrites(script)
+			runtime.ReadMemStats(&after)
+			if !slices.Equal(got, []string{"/m/x"}) {
+				t.Fatalf("%d parts of %s: got %q", parts, part, got)
+			}
+			return after.TotalAlloc - before.TotalAlloc
 		}
-		return after.TotalAlloc - before.TotalAlloc
-	}
-	small, large := allocated(8000), allocated(32000)
-	if large > 8*small { // four times the input: about four times the allocation, sixteen when each part copies the path
-		t.Errorf("allocation grew from %d to %d bytes for four times the parts", small, large)
+		small, large := allocated(8000), allocated(32000)
+		if large > 8*small { // four times the input: about four times the allocation, sixteen when each part copies the path
+			t.Errorf("%s: allocation grew from %d to %d bytes for four times the parts", part, small, large)
+		}
 	}
 }
