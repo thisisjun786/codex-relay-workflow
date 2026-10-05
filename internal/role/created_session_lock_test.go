@@ -318,16 +318,24 @@ func TestCreatedSessionLockOtherEndsKeepTheirAgent(t *testing.T) {
 	}
 }
 
-// A lock that cannot be given back is an error of the call, not a silent leftover that refuses every later report of the session.
+// A lock that cannot be given back is an error of the call, not a silent leftover that refuses later reports.
 func TestCreatedSessionLockReleaseFailureIsReported(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("a read-only directory does not stop root")
 	}
-	for _, stop := range []bool{false, true} {
-		t.Run(map[bool]string{false: "created report", true: "stopped close"}[stop], func(t *testing.T) {
+	for _, tc := range []struct {
+		name, lock string
+		stop       bool
+	}{
+		{"created report, session lock", ".session.lock", false},
+		{"stopped close, session lock", ".session.lock", true},
+		{"created report, record lock", "task-one.json.lock", false},
+		{"stopped close, record lock", "task-one.json.lock", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			ws := t.TempDir()
 			env, _ := home(t)
-			stuck := filepath.Join(filepath.Dir(createdArchivedRecord(ws, "x")), ".session.lock", "stuck")
+			stuck := filepath.Join(filepath.Dir(createdArchivedRecord(ws, "x")), tc.lock, "stuck")
 			t.Cleanup(func() { _ = os.Chmod(stuck, 0o700) })
 			// While the call holds the lock, a file in a read-only directory inside it makes the removal of the lock fail.
 			h := &createdLockHost{status: "idle", onRead: func() {
@@ -337,7 +345,7 @@ func TestCreatedSessionLockReleaseFailureIsReported(t *testing.T) {
 			}}
 			one := createdArchivedSession(t, ws, env, "task-one")
 			input := createdArchivedReport("task-one", one, "child-a")
-			if stop {
+			if tc.stop {
 				_, err := CheckedDispatch(context.Background(), ws, input, env, &createdLockHost{status: "idle"})
 				check(t, err)
 				input = createdLockStop("task-one", one, "child-a")
