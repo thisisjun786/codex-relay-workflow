@@ -67,6 +67,19 @@ func reviewWarnings(t *testing.T, p map[string]any) []string {
 	return codes
 }
 
+func reviewDetail(t *testing.T, p map[string]any, code string) string {
+	t.Helper()
+	section := p[reviewMember].(map[string]any)
+	for _, raw := range section["warnings"].([]any) {
+		one := raw.(map[string]any)
+		if strings.TrimPrefix(one["code"].(string), "independent_review_") == code {
+			return one["detail"].(string)
+		}
+	}
+	t.Fatalf("no %s warning in %v", code, section)
+	return ""
+}
+
 func TestMergeEvidenceIndependentReview(t *testing.T) {
 	same := func(s string) string { return s }
 	t.Run("a record that states no item and no flag leaves the payload as it was", func(t *testing.T) {
@@ -105,6 +118,39 @@ func TestMergeEvidenceIndependentReview(t *testing.T) {
 		code, p := runMerge(t, scriptedForge{}, "--restate", reviewRecord(t, reviewItem(t, lateOtherHead, same)))
 		if code != 0 || strings.Join(reviewWarnings(t, p), ",") != "head_differs" {
 			t.Fatal(code, p)
+		}
+	})
+	t.Run("a candidate that moved after the review is compared with the candidate head", func(t *testing.T) {
+		// The record is about the reviewed head H1 and the forge reports H2. The restatement refuses
+		// with candidate_moved as before, and the coverage warns against H2, the head the forge
+		// reports now, even though the record and its artifact agree on H1.
+		_, first := runMerge(t, scriptedForge{})
+		first["pinned"].(map[string]any)["headSha"] = lateOtherHead
+		first["handoff"].(map[string]any)[reviewMember] = reviewItem(t, lateOtherHead, same)
+		record := lateWrite(t, "record.json", first)
+		code, p := runMerge(t, scriptedForge{}, "--restate", record)
+		rest := p["restatement"].(map[string]any)
+		if code != 2 || rest["current"] != false || !strings.Contains(lateCodes(t, p), "candidate_moved") {
+			t.Fatal(code, p)
+		}
+		if strings.Join(reviewWarnings(t, p), ",") != "head_differs" {
+			t.Fatal(code, p)
+		}
+		if detail := reviewDetail(t, p, "head_differs"); !strings.Contains(detail, lateHead) {
+			t.Fatalf("the detail does not name the candidate head: %s", detail)
+		}
+	})
+	t.Run("a forge that reports no head falls back to the record head", func(t *testing.T) {
+		// The record and its artifact are about the same head and the forge reports none, so the
+		// fallback keeps the earlier answer: the snapshot's unreadable problem refuses the
+		// restatement, and the coverage warns about no head at all.
+		code, p := runMerge(t, scriptedForge{noHead: true}, "--restate", reviewRecord(t, reviewItem(t, lateHead, same)))
+		rest := p["restatement"].(map[string]any)
+		if code != 2 || rest["current"] != false {
+			t.Fatal(code, p)
+		}
+		if found := strings.Join(reviewWarnings(t, p), ","); strings.Contains(found, "head_differs") {
+			t.Fatalf("the fallback warned about a head the record and the artifact agree on: %v", found)
 		}
 	})
 	t.Run("the flag grades a restated record and needs one", func(t *testing.T) {
