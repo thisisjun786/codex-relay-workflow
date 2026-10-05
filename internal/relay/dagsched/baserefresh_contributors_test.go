@@ -100,7 +100,7 @@ func TestBaseRefreshUnknownDeltaVetoesKnownContributor(t *testing.T) {
 func TestBaseRefreshRegenerateEligibilityRecord(t *testing.T) {
 	for _, kind := range []string{"generated", "owner loss", "partial updater", "failed command"} {
 		t.Run(kind, func(t *testing.T) {
-			k := newForgeIntegrationKit(t)
+			k := newIntegrationKit(t)
 			r := k.repo
 			rule := "regenerate:cat left.txt right.txt > shared.json"
 			if kind == "partial updater" {

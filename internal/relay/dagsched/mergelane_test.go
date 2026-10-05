@@ -22,7 +22,7 @@ type laneKit struct {
 
 func newLaneKit(t *testing.T) *laneKit {
 	t.Helper()
-	k := &laneKit{integrationKit: newForgeIntegrationKit(t), heads: map[string]string{}, prs: map[string]PullRequest{}}
+	k := &laneKit{integrationKit: newIntegrationKit(t), heads: map[string]string{}, prs: map[string]PullRequest{}}
 	k.pulls = k.lanePulls()
 	repo := k.repo
 	k.putPlan("g", int(k.snapshot("g").Revision), "g-lane", addRelNode("S", dag.NodeImplementation), addRelNode("V", dag.NodeImplementation))

@@ -7,17 +7,17 @@ import (
 
 // The sweep through the binary, as the parent runs it (CRW-410): JSON on stdout, exit 0 for an answer and 2 for a refusal with its reason, the tip read through the relay's own tip reader.
 
-// newIntegrationKitAt is newIntegrationKit over a store at a path the binary can open.
-func newIntegrationKitAt(t *testing.T, dbPath string) *integrationKit {
+// newLegacyLocalIntegrationKitAt is newLegacyLocalIntegrationKit over a store at a path the binary can open: the CLI world seeds its store through the legacy local kit, while the binary reads tips with its own production reader.
+func newLegacyLocalIntegrationKitAt(t *testing.T, dbPath string) *integrationKit {
 	t.Helper()
-	return newIntegrationKitOn(t, newReleaseKitOn(t, newFixtureAt(t, dbPath)))
+	return newLegacyLocalIntegrationKitOn(t, newReleaseKitOn(t, newFixtureAt(t, dbPath)))
 }
 
 // cliWorld is a sweep world over a store the binary opens: D accepted at its head, E running in a linked worktree of the repository whose HEAD is its head, I landed on dev; the parent works in the repository.
 func cliWorld(t *testing.T) (*sweepWorld, string) {
 	t.Helper()
 	state := filepath.Join(t.TempDir(), "state")
-	k := newIntegrationKitAt(t, filepath.Join(state, "relay.sqlite3"))
+	k := newLegacyLocalIntegrationKitAt(t, filepath.Join(state, "relay.sqlite3"))
 	w := buildSweepWorld(t, k)
 	w.accept("D")
 	k.startNode("g", "E")
