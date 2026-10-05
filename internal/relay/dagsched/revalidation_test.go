@@ -468,7 +468,7 @@ func rvMerged(t *testing.T) (*integrationKit, accepted) {
 	feature := repo.commit("feature.txt", "feature")
 	repo.git("checkout", "-q", "dev")
 	k.declare("g", "I", "feature.txt")
-	a := k.acceptNode("g", "I", acceptOpts{HeadSHA: feature, PR: 5, Forge: "owner/repo", Repository: repo.path, Inputs: invRealInputs(k.releaseKit, "g", "I")})
+	a := k.acceptOnForge("g", "I", acceptOpts{HeadSHA: feature, PR: 5, Inputs: invRealInputs(k.releaseKit, "g", "I")})
 	k.holdSlotsFor("g", "I")
 	repo.git("merge", "-q", "--no-ff", "-m", "merge feature", "feature")
 	k.mark(a)
@@ -522,7 +522,7 @@ func TestMergedNodeIsNeverRerunWhenItsUpstreamChanges(t *testing.T) {
 	unchanged("a release of the merged node")
 	// no correction is prepared for it, and a generation the relay opened for it is not recorded as an execution of the node
 	if _, err := k.sched.PrepareCorrection(context.Background(), "g", "I", "parent", ManifestInput{RuleVersion: k.request(true).RuleVersion,
-		Base: &BaseRef{Repository: repo.path, Ref: "dev", SHA: repo.git("rev-parse", "dev")}}, VerifyOptions{ArtifactRoots: []string{k.root}}); refusalReason(err) != "disposition_conflict" {
+		Base: &BaseRef{Repository: forgeKitRepository, Ref: "dev", SHA: repo.git("rev-parse", "dev")}}, VerifyOptions{ArtifactRoots: []string{k.root}}); refusalReason(err) != "disposition_conflict" {
 		t.Fatalf("prepare a correction of the merged node = %v, want disposition_conflict", err)
 	} else if !strings.Contains(err.Error(), "successor") {
 		t.Fatalf("the refusal does not name the way on: %v", err)
@@ -531,7 +531,7 @@ func TestMergedNodeIsNeverRerunWhenItsUpstreamChanges(t *testing.T) {
 
 	// the change is carried by successors in a new plan revision
 	k.putPlan("g", int(k.snapshot("g").Revision), "g-r5", addRelNode("N2", dag.NodeNonPR), addRelNode("N3", dag.NodeNonPR),
-		addEdge("in2", "I", "N2", dag.EdgeIntegrated, doc{"target_repository": repo.path}), addEdge("un3", "U", "N3", dag.EdgeArtifactVerified, nil))
+		addEdge("in2", "I", "N2", dag.EdgeIntegrated, doc{"target_repository": forgeKitRepository}), addEdge("un3", "U", "N3", dag.EdgeArtifactVerified, nil))
 	reading = k.read("g")
 	if n := reading.node("N2"); n.Disposition != DispReady {
 		t.Fatalf("N2, a successor of the merged node = %+v, want ready", n)
@@ -715,11 +715,11 @@ func TestAMergedNodeIsNotCorrectableWhateverItsKindBecomes(t *testing.T) {
 	head := repo.commit("d.txt", "d")
 	repo.git("checkout", "-q", "dev")
 	k.declare("g", "D", "d.txt")
-	a := k.acceptNode("g", "D", acceptOpts{HeadSHA: head, PR: 6, Forge: "owner/repo", Repository: repo.path})
+	a := k.acceptOnForge("g", "D", acceptOpts{HeadSHA: head, PR: 6})
 	k.holdSlotsFor("g", "D")
 	repo.git("merge", "-q", "--no-ff", "-m", "merge d", "feature-d")
 	k.mark(a)
-	if res, err := k.sched.ObserveIntegration(context.Background(), "g", "D", "parent", []Target{{Repository: repo.path, BaseRef: "dev"}}); err != nil || !res.Integrated {
+	if res, err := k.sched.ObserveIntegration(context.Background(), "g", "D", "parent", []Target{k.forgeTarget("dev")}); err != nil || !res.Integrated {
 		t.Fatalf("D did not integrate: %v %+v", err, res)
 	}
 	k.putPlan("g", int(k.snapshot("g").Revision), "g-r2", doc{"op": dag.OpUpdateNode, "node": relNode("D", dag.NodeNonPR)})

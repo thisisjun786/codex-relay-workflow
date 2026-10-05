@@ -207,11 +207,24 @@ func (d *dispatchPinnedDir) fail(op, name string, err error) error {
 func dispatchPinnedLinked() error { return errors.New("dispatch directory must not be a symlink") }
 
 // lock creates the record's lock directory in the pinned directory (it fails when one exists) and returns the release
-// that removes it.
+// that removes it. The lock records its owner in owner.json (dispatchLockOwner), which is what lets dispatch-lock-clear
+// tell a lock a dead process left from one that is held.
 func (d *dispatchPinnedDir) lock(name string) (func() error, error) {
+	return d.lockWith(name, d.writeOwner)
+}
+
+// lockWith is lock with the writer of the owner record as a parameter. A failed writer takes the lock away again (lockAbandon).
+func (d *dispatchPinnedDir) lockWith(name string, write func(lock string, created fs.FileInfo) error) (func() error, error) {
 	lock := name + ".lock"
 	if err := d.root.Mkdir(lock, 0o700); err != nil {
 		return nil, d.fail("mkdir", lock, err)
+	}
+	created, err := d.root.Lstat(lock)
+	if err == nil {
+		err = write(lock, created)
+	}
+	if err != nil {
+		return nil, d.lockAbandon(lock, created, err)
 	}
 	return func() error { return d.root.RemoveAll(lock) }, nil
 }
@@ -570,7 +583,18 @@ func dispatchRun(cwd string, input any, env host.LookupEnv, before func(string, 
 
 // dispatchPinnedRun is the ledger operation itself: the directory is pinned once and the lock, the read and the save all
 // work on it. check (nil: none) runs before each publication and after is the callback of dispatchPinnedDir.
-func dispatchPinnedRun(cwd string, input any, env host.LookupEnv, check dispatchPinnedCheck, after func(string)) (out DispatchResult, err error) {
+func dispatchPinnedRun(cwd string, input any, env host.LookupEnv, check dispatchPinnedCheck, after func(string)) (DispatchResult, error) {
+	return dispatchPinnedRunHeld(cwd, input, env, check, after, false)
+}
+
+// dispatchSessionLock names the lock of a whole session directory (dir.lock adds ".lock"). A created report holds it, before
+// the lock of its own record, from the scan of the sibling records to the write of its own, so that two dispatches of one
+// session cannot both pass the scan with one agent id. Start, claim and the other reports keep only the lock of their record.
+const dispatchSessionLock = ".session"
+
+// dispatchPinnedRunHeld is dispatchPinnedRun with lockSession: when set, the session lock is taken before the lock of the
+// record and given back after it. A held lock is the same immediate refusal as a held record lock; nothing is stolen.
+func dispatchPinnedRunHeld(cwd string, input any, env host.LookupEnv, check dispatchPinnedCheck, after func(string), lockSession bool) (out DispatchResult, err error) {
 	if env == nil {
 		env = os.LookupEnv
 	}
@@ -604,6 +628,13 @@ func dispatchPinnedRun(cwd string, input any, env host.LookupEnv, check dispatch
 		return out, err
 	}
 	defer dir.Close()
+	if lockSession {
+		releaseSession, e := dir.lock(dispatchSessionLock)
+		if e != nil {
+			return out, e
+		}
+		defer func() { err = errors.Join(err, releaseSession()) }()
+	}
 	name := id + ".json"
 	release, err := dir.lock(name)
 	if err != nil {

@@ -20,7 +20,13 @@ type DispatchHost interface {
 	Call(context.Context, string, map[string]any) (json.RawMessage, error)
 }
 
-const createdCheckCorrection = "; copy agentId from the native spawn result and ensure the native thread database is readable; close an old wrong-ID report with outcome stopped, executionState stopped and reconciliation"
+// The correction every created refusal ends with, in the two halves a refusal can use on its own. Their concatenation is the
+// text a recorded refusal of the dispatch CLI fixtures pins, so it does not change.
+const (
+	createdCheckCopy       = "; copy agentId from the native spawn result and ensure the native thread database is readable"
+	createdCheckClose      = "; close an old wrong-ID report with outcome stopped, executionState stopped and reconciliation"
+	createdCheckCorrection = createdCheckCopy + createdCheckClose
+)
 
 // CheckedDispatch is the product boundary. RunDispatch stays the parity ledger.
 // The created check runs after domain validation, inside the same lock, before
@@ -44,7 +50,7 @@ func dispatchPinnedChecked(ctx context.Context, cwd string, input any, env host.
 	if !dispatchIs(b["action"], "report") || !dispatchIs(b["outcome"], "created") {
 		return RunDispatch(cwd, input, env)
 	}
-	return dispatchPinnedRun(cwd, input, env, func(dir *dispatchPinnedDir, _, final string) error {
+	return dispatchPinnedRunHeld(cwd, input, env, func(dir *dispatchPinnedDir, _, final string) error {
 		session, _ := b["sessionId"].(string)
 		agent, _ := b["agentId"].(string)
 		attempt, _ := b["attemptId"].(string)
@@ -59,7 +65,7 @@ func dispatchPinnedChecked(ctx context.Context, cwd string, input any, env host.
 			return errors.New("agentId is not a real subagent thread parented by this session" + createdCheckCorrection)
 		}
 		return nil
-	}, after)
+	}, after, true)
 }
 
 // createdArchivedReplay refuses an agent id that another attempt of the session already holds. The
@@ -67,7 +73,8 @@ func dispatchPinnedChecked(ctx context.Context, cwd string, input any, env host.
 // ledger can tell that it was spawned for an earlier attempt. The attempt that reports its own id
 // again is not another attempt. A record that cannot be read as a regular dispatch file fails the
 // check, because it may be the one that holds the id. The directory is listed and every record read
-// through the pinned directory the report holds the lock in.
+// through the pinned directory the report holds the lock in. An attempt the stopped close closed does not hold its id any
+// more, though its record keeps it as evidence. The caller holds the session lock from the listing to its own write.
 func createdArchivedReplay(dir *dispatchPinnedDir, final, session, attempt, agent string) error {
 	entries, err := fs.ReadDir(dir.root.FS(), ".")
 	if err != nil {
@@ -86,13 +93,29 @@ func createdArchivedReplay(dir *dispatchPinnedDir, final, session, attempt, agen
 		if err != nil {
 			return errors.New("dispatch record " + name + " is unusable: " + err.Error())
 		}
-		for _, a := range d.Attempts {
-			if a.AgentID != nil && *a.AgentID == agent && (name != final || a.ID != attempt) {
-				return errors.New("agentId was already reported for dispatch " + d.ID + " attempt " + a.ID + createdCheckCorrection)
+		for i, a := range d.Attempts {
+			if a.AgentID != nil && *a.AgentID == agent && (name != final || a.ID != attempt) && !createdCheckClosed(&d, i) {
+				return errors.New("agentId was already reported for dispatch " + d.ID + " attempt " + a.ID + createdCheckCopy + createdCheckHeld(&d, i))
 			}
 		}
 	}
 	return nil
+}
+
+// createdCheckClosed reports whether attempt i is the one the stopped close closed: the last attempt of a stopped dispatch,
+// failed with a reconciliation. Nothing else writes that combination.
+func createdCheckClosed(d *Dispatch, i int) bool {
+	a := d.Attempts[i]
+	return i == len(d.Attempts)-1 && dispatchIs(d.Status, "stopped") && dispatchIs(a.Status, "failed") && a.Reconciliation != nil
+}
+
+// createdCheckHeld ends a refusal with the way out of it: the stopped close frees the id of the last attempt of a dispatch
+// that is still active; any other holder keeps it for good, and the caller needs a child of its own.
+func createdCheckHeld(d *Dispatch, i int) string {
+	if i == len(d.Attempts)-1 && dispatchIs(d.Status, "active") {
+		return createdCheckClose + "; once dispatch " + d.ID + " is closed that way its agentId is free"
+	}
+	return "; its agentId stays reserved, so spawn a new child for this attempt"
 }
 
 type createdCheckIdentity struct {
@@ -135,8 +158,8 @@ func createdCheckRead(ctx context.Context, env host.LookupEnv, h DispatchHost, a
 }
 
 // Closing reduces authority only. Caller reconciliation is recorded, never
-// presented as a host-authenticated termination receipt; the old ID is retained.
-func createdCheckStop(ctx context.Context, cwd string, b map[string]any, env host.LookupEnv, h DispatchHost, after func(string)) (DispatchResult, error) {
+// presented as a host-authenticated termination receipt; the old ID is retained in the record and no longer held.
+func createdCheckStop(ctx context.Context, cwd string, b map[string]any, env host.LookupEnv, h DispatchHost, after func(string)) (out DispatchResult, err error) {
 	status := map[string]any{"action": "status", "sessionId": b["sessionId"], "dispatchId": b["dispatchId"]}
 	if _, err := RunDispatch(cwd, status, env); err != nil {
 		return DispatchResult{}, err
@@ -152,12 +175,17 @@ func createdCheckStop(ctx context.Context, cwd string, b map[string]any, env hos
 		return DispatchResult{}, err
 	}
 	defer dir.Close()
+	releaseSession, err := dir.lock(dispatchSessionLock)
+	if err != nil {
+		return DispatchResult{}, err
+	}
+	defer func() { err = errors.Join(err, releaseSession()) }()
 	name := id + ".json"
 	release, err := dir.lock(name)
 	if err != nil {
 		return DispatchResult{}, err
 	}
-	defer release()
+	defer func() { err = errors.Join(err, release()) }()
 	d, err := dispatchPinnedRead(dir, name, session, id)
 	if err != nil {
 		return DispatchResult{}, err

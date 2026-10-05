@@ -2,6 +2,7 @@ package harness
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"syscall"
@@ -192,22 +193,54 @@ func reviewRoundVerb(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 // oversized ingest in a deleted cwd still reports the overflow. The bound and the overflow rule
 // are the repository's ReadStdin, the same one the hook envelope uses; every result goes to stdout
 // with its code, and a library error answers "crw cli failed: ".
-func metricVerb(args []string, in io.Reader, stdout, stderr io.Writer) int {
+//
+// The oracle's process dies on the first SIGINT and records nothing, so the ingest read runs as the
+// hook leg's interrupted read does (Hook): in a goroutine, under the invocation's context. An
+// interrupt that lands while the read still waits ends the row with Interrupted (130), with nothing
+// written and nothing recorded; one that lands as the read finishes meets the context check below
+// and gets the same answer, so a line that arrived just before the signal is not recorded either.
+//
+// The record window that follows is under the same context (CRW-627): the library ends its lock wait and its loop over the METRIC
+// lines with it, and an ingest whose run ends by cancellation, or after which the context has ended, answers Interrupted with nothing
+// printed too. The rows recorded before the signal stay, as the lines the oracle's process had appended do when it dies at the
+// signal. Every other metric row and every uninterrupted run answers as before.
+func metricVerb(ctx context.Context, args []string, in io.Reader, stdout, stderr io.Writer) int {
 	raw := ""
-	if len(args) > 0 && args[0] == "ingest" {
-		var overflow bool
-		raw, overflow = ReadStdin(in)
-		if overflow {
+	ingest := len(args) > 0 && args[0] == "ingest"
+	if ingest {
+		type stdinRead struct {
+			raw      string
+			overflow bool
+		}
+		done := make(chan stdinRead, 1)
+		go func() {
+			raw, overflow := ReadStdin(in)
+			done <- stdinRead{raw: raw, overflow: overflow}
+		}()
+		var stdin stdinRead
+		select {
+		case stdin = <-done:
+		case <-ctx.Done():
+			return Interrupted
+		}
+		if ctx.Err() != nil {
+			return Interrupted
+		}
+		if stdin.overflow {
 			fmt.Fprintf(stderr, "metric: stdin exceeds %d bytes\n", MaxStdinBytes)
 			return 1
 		}
+		raw = stdin.raw
 	}
 	cwd, err := syscall.Getwd()
 	if err != nil {
 		fmt.Fprintln(stderr, "crw cli failed: "+err.Error())
 		return 1
 	}
-	result, err := cli.RunMetricCLI(args, cwd, raw)
+	result, err := cli.RunMetricCLIContext(ctx, args, cwd, raw)
+	if ingest && (errors.Is(err, context.Canceled) || ctx.Err() != nil) {
+		return Interrupted
+	}
 	if err != nil {
 		fmt.Fprintln(stderr, "crw cli failed: "+err.Error())
 		return 1

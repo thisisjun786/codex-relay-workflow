@@ -2,29 +2,28 @@ package dagsched
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 	"testing"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/storeseed"
 )
 
-// laneKit has four implementation nodes accepted on real branches of one repository: I and D are cut from the current base and eligible, S was cut before the base moved (its head lacks the new
-// tip) and V is a node whose required check keeps failing. Their pull requests are scripted; the base branch, the ancestry, the merge turns and the landing are the real code.
+// laneKit has four implementation nodes accepted on real branches of one repository, which its forge repository stands for: I and D are cut from the current base and eligible, S was cut before the base
+// moved (its head lacks the new tip) and V is a node whose required check keeps failing. Their pull requests are scripted, and so are the heads the lane's check compares with (pulls, seeded from the
+// branch heads, never from a merge turn); the base branch, the ancestry, the merge turns and the landing are the real code.
 type laneKit struct {
 	*integrationKit
 	heads map[string]string
 	prs   map[string]PullRequest
+	pulls *forgeLanePulls
 }
 
 func newLaneKit(t *testing.T) *laneKit {
 	t.Helper()
 	k := &laneKit{integrationKit: newIntegrationKit(t), heads: map[string]string{}, prs: map[string]PullRequest{}}
+	k.pulls = k.lanePulls()
 	repo := k.repo
 	k.putPlan("g", int(k.snapshot("g").Revision), "g-lane", addRelNode("S", dag.NodeImplementation), addRelNode("V", dag.NodeImplementation))
 	cut := func(node string) {
@@ -40,7 +39,8 @@ func newLaneKit(t *testing.T) *laneKit {
 	for i, node := range []string{"I", "D", "S", "V"} {
 		number := int64(5 + i)
 		k.declare("g", node, strings.ToLower(node)+".txt")
-		k.acceptNode("g", node, acceptOpts{HeadSHA: k.heads[node], PR: number, Forge: "owner/repo", Repository: repo.path})
+		k.acceptOnForge("g", node, acceptOpts{HeadSHA: k.heads[node], PR: number})
+		k.pulls.show(number, k.heads[node])
 		k.prs[node] = PullRequest{Repository: "owner/repo", Number: number, State: "open", HeadSHA: k.heads[node], BaseRef: "dev", BaseSHA: repo.git("rev-parse", "dev"), Verdict: "ready",
 			RequiredDeclared: []string{"A", "B"}, RequiredReadable: true}
 		k.checks(node, "A:1:1:success", "B:2:1:success")
@@ -93,8 +93,8 @@ func TestMergeLaneStaysFIFOAndLandsOnlyJudgedTrees(t *testing.T) {
 	k.parentOf("P-B", "parent-b")
 	k.parentOf("P-C", "parent-c")
 	ctx := context.Background()
-	service := &mergeturn.Service{Store: k.s, Registry: &registry.Registry{Store: k.s}, Now: k.sched.now, Delivery: mergeturn.StoreDelivery{Store: k.s}}
-	other, err := service.Request(ctx, repo.path, "dev", "P-B", "parent-b", "host-b", strings.Repeat("b", 40), true)
+	service := forgeLaneService(k.sched, k.s, k.pulls)
+	other, err := service.Request(ctx, forgeKitRepository, "dev", "P-B", "parent-b", "host-b", strings.Repeat("b", 40), true)
 	if err != nil || other["state"] != "holding" {
 		t.Fatalf("the other project's turn = %v %v", err, other)
 	}
@@ -102,7 +102,7 @@ func TestMergeLaneStaysFIFOAndLandsOnlyJudgedTrees(t *testing.T) {
 	if err != nil || !firstJudged.Eligible() || first["state"] != "waiting" {
 		t.Fatalf("I = %v %+v %v", err, firstJudged, first)
 	}
-	third, err := service.Request(ctx, repo.path, "dev", "P-C", "parent-c", "host-c", strings.Repeat("c", 40), true)
+	third, err := service.Request(ctx, forgeKitRepository, "dev", "P-C", "parent-c", "host-c", strings.Repeat("c", 40), true)
 	if err != nil || third["state"] != "waiting" {
 		t.Fatalf("the third project's turn = %v %v", err, third)
 	}
@@ -124,23 +124,12 @@ func TestMergeLaneStaysFIFOAndLandsOnlyJudgedTrees(t *testing.T) {
 	if _, err := service.Acknowledge(ctx, first["turnId"].(string), "parent", grant["grantId"].(string), "re-read the store before merging"); err != nil {
 		t.Fatalf("acknowledging the grant: %v", err)
 	}
-	// the lane's own check: it reads the base itself and begins the merge
-	green := contract.OrderedObject{{Key: "hasNextPage", Value: false}, {Key: "pagesRead", Value: json.Number("1")}, {Key: "totalCount", Value: json.Number("0")}, {Key: "threadsSeen", Value: []any{}}, {Key: "unresolved", Value: json.Number("0")}}
-	checkList := func(node string) []any {
-		var list []any
-		for _, c := range k.prs[node].Checks {
-			list = append(list, contract.OrderedObject{{Key: "runId", Value: c.RunID}, {Key: "name", Value: c.Name}, {Key: "headSha", Value: c.HeadSHA}, {Key: "conclusion", Value: c.Conclusion}, {Key: "attempt", Value: json.Number(string(rune('0' + c.Attempt)))}})
-		}
-		return list
-	}
-	headCompareReportForTurn(t, k.s, first["turnId"].(string), k.heads["I"])
-	if _, err := service.Check(ctx, first["turnId"].(string), "parent", k.heads["I"], repo.git("rev-parse", "dev"), checkList("I"), green, []string{"A", "B"}, mergeturn.TargetReader{}); err != nil {
-		t.Fatalf("the lane's check of I: %v", err)
-	}
+	// the lane's own check: it reads the base itself, compares the head with the pull request the forge shows, and begins the merge
+	forgeLaneCheck(t, service, k.pulls, first["turnId"].(string), k.heads["I"], repo.git("rev-parse", "dev"), forgeLaneChecks(k.prs["I"].Checks), forgeLaneGreen(), []string{"A", "B"})
 	// the merge happens on the forge; here it is a merge commit on the base branch
 	repo.git("merge", "-q", "--no-ff", "-m", "merge I", "branch-I")
 	landedAt := repo.git("rev-parse", "dev")
-	landed, err := service.Land(ctx, first["turnId"].(string), "parent", landedAt, "", "merged by the forge", mergeturn.TargetReader{})
+	landed, err := service.Land(ctx, first["turnId"].(string), "parent", landedAt, "", "merged by the forge", k.pulls)
 	if err != nil {
 		t.Fatalf("landing I: %v", err)
 	}
@@ -161,6 +150,10 @@ func TestMergeLaneStaysFIFOAndLandsOnlyJudgedTrees(t *testing.T) {
 	}
 	if n := k.count("SELECT COUNT(*) FROM merge_turns WHERE candidate_head IN (?, ?)", k.heads["S"], k.heads["V"]); n != 0 {
 		t.Fatalf("%d merge turns for the stale-base and evicted heads", n)
+	}
+	// every turn of the lane is on the forge repository the acceptances name: none is on a checkout path
+	if n := k.count("SELECT COUNT(*) FROM merge_turns WHERE repository <> ?", forgeKitRepository); n != 0 {
+		t.Fatalf("%d merge turns on a repository other than the forge", n)
 	}
 }
 

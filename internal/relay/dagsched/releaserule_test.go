@@ -215,7 +215,7 @@ func TestReadingToleratesAZoneWithoutTheGradeTables(t *testing.T) {
 // dag-conflict-observe leaves the conflicted files with the observation, under each name the observed checkout is known by (its path with links resolved and, when its origin remote
 // names owner/name, that slug), and a repeat of the observation leaves the rows alone.
 func TestObserveConflictsRecordsTheConflictedFiles(t *testing.T) {
-	k := newIntegrationKit(t)
+	k := newLegacyLocalIntegrationKit(t)
 	repo := k.repo
 	repo.commit("c.txt", lines(12, nil))
 	repo.commit("d.txt", lines(12, nil))

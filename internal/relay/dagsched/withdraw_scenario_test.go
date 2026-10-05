@@ -3,13 +3,10 @@ package dagsched
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"strings"
 	"testing"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 )
 
@@ -20,6 +17,7 @@ type withdrawKit struct {
 	rid, event1 string
 	h1, head    string // the head the child reported and the head the pull request shows after the coordinator merged dev into it
 	criteria    string
+	pulls       *forgeLanePulls // what the lane compares the head with: the head the pull request shows, seeded by show
 }
 
 func newWithdrawKit(t *testing.T) *withdrawKit {
@@ -33,12 +31,12 @@ func newWithdrawKit(t *testing.T) *withdrawKit {
 	r := k.reportNode("g", "I", acceptOpts{})
 	k.holdSlotsFor("g", "I")
 	n, _ := nodeOf(k.snapshot("g"), "I")
-	w := &withdrawKit{integrationKit: k, rid: r.Acceptance.RelationshipID, event1: r.Event, h1: h1, head: h1, criteria: n.CriteriaSetDigest}
+	w := &withdrawKit{integrationKit: k, rid: r.Acceptance.RelationshipID, event1: r.Event, h1: h1, head: h1, criteria: n.CriteriaSetDigest, pulls: k.lanePulls()}
 	w.show(h1)
 	return w
 }
 
-// show scripts the forge: pull request 7 is open and ready at a head, with both required checks green on it.
+// show scripts the forge: pull request 7 is open and ready at a head, with both required checks green on it, and it is the head the lane's fake shows for it.
 func (w *withdrawKit) show(head string) {
 	w.t.Helper()
 	pr := openPR("owner/repo", 7, head)
@@ -46,6 +44,7 @@ func (w *withdrawKit) show(head string) {
 	pr.Checks = []Check{{RunID: "1", Name: "A", HeadSHA: head, Conclusion: "success", Attempt: 1}, {RunID: "2", Name: "B", HeadSHA: head, Conclusion: "success", Attempt: 1}}
 	pr.RequiredDeclared = []string{"A", "B"}
 	w.forge.by["owner/repo#7"] = pr
+	w.pulls.show(7, head)
 }
 
 // openUnsent is the coordinator opening generation 2 by hand for a base refresh (generation-open) and not sending it to the child, so it is never bound.
@@ -102,24 +101,16 @@ func (w *withdrawKit) lane(expectedEvent string) IntegrationResult {
 	if err != nil || !judged.Eligible() {
 		w.t.Fatalf("merge turn = %v %+v", err, judged)
 	}
-	service := &mergeturn.Service{Store: w.s, Registry: &registry.Registry{Store: w.s}, Now: w.sched.now, Delivery: mergeturn.StoreDelivery{Store: w.s}}
+	service := forgeLaneService(w.sched, w.s, w.pulls)
 	id := turn["turnId"].(string)
 	if grant, _ := turn["grant"].(map[string]any); grant != nil {
 		if _, err := service.Acknowledge(ctx, id, "parent", grant["grantId"].(string), "re-read the store before merging"); err != nil {
 			w.t.Fatalf("acknowledging the grant: %v", err)
 		}
 	}
-	var list []any
-	for _, c := range w.forge.by["owner/repo#7"].Checks {
-		list = append(list, contract.OrderedObject{{Key: "runId", Value: c.RunID}, {Key: "name", Value: c.Name}, {Key: "headSha", Value: c.HeadSHA}, {Key: "conclusion", Value: c.Conclusion}, {Key: "attempt", Value: json.Number("1")}})
-	}
-	green := contract.OrderedObject{{Key: "hasNextPage", Value: false}, {Key: "pagesRead", Value: json.Number("1")}, {Key: "totalCount", Value: json.Number("0")}, {Key: "threadsSeen", Value: []any{}}, {Key: "unresolved", Value: json.Number("0")}}
-	headCompareReportForTurn(w.t, w.s, id, w.head)
-	if _, err := service.Check(ctx, id, "parent", w.head, w.repo.git("rev-parse", "dev"), list, green, []string{"A", "B"}, mergeturn.TargetReader{}); err != nil {
-		w.t.Fatalf("the lane's check: %v", err)
-	}
+	forgeLaneCheck(w.t, service, w.pulls, id, w.head, w.repo.git("rev-parse", "dev"), forgeLaneChecks(w.forge.by["owner/repo#7"].Checks), forgeLaneGreen(), []string{"A", "B"})
 	w.repo.git("merge", "-q", "--no-ff", "-m", "merge the pull request", "feature")
-	if _, err := service.Land(ctx, id, "parent", w.repo.git("rev-parse", "dev"), "", "merged by the forge", mergeturn.TargetReader{}); err != nil {
+	if _, err := service.Land(ctx, id, "parent", w.repo.git("rev-parse", "dev"), "", "merged by the forge", w.pulls); err != nil {
 		w.t.Fatalf("landing: %v", err)
 	}
 	if _, err := registry.NewAssignmentView(&registry.Registry{Store: w.s}).Mark(ctx, w.rid, "merged", "merged, with the head the acceptance names", "parent", expectedEvent); err != nil {
@@ -128,6 +119,9 @@ func (w *withdrawKit) lane(expectedEvent string) IntegrationResult {
 	res, err := w.observe()
 	if err != nil {
 		w.t.Fatalf("dag-integration-observe: %v", err)
+	}
+	if len(res.Observations) != 1 || res.Observations[0].Repository != forgeKitRepository || res.Observations[0].MergeTurnID != id {
+		w.t.Fatalf("the observation = %+v, want one under the forge carried by the landed turn %s", res.Observations, id)
 	}
 	return res
 }
