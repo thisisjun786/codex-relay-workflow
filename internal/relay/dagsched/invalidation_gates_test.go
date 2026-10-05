@@ -16,7 +16,7 @@ import (
 // and I, which consumed U's accepted result, stale with it.
 func invJudgeKitBelow(t *testing.T) *judgeKit {
 	t.Helper()
-	k := &judgeKit{integrationKit: newForgeIntegrationKit(t)}
+	k := &judgeKit{integrationKit: newIntegrationKit(t)}
 	repo := k.repo
 	k.putPlan("g", int(k.snapshot("g").Revision), "g-r2", addRelNode("U", dag.NodeNonPR), addEdge("ui", "U", "I", dag.EdgeArtifactVerified, nil))
 	k.invSettle("g", "U")
@@ -174,7 +174,7 @@ func TestCriteriaRolledBackAfterAReverificationIsStillStale(t *testing.T) {
 // U is then revised: U is stale, so the edge ui no longer opens, and I, whose consumed value is the landing of a result the plan no longer stands behind, is stale with it: nothing is released onto
 // it (its code-pinned successor T) and its pull request is not judged for the merge lane. Once U has landed everywhere it is exempt (E-20) and I is current again.
 func TestAConsumerOfAStaleIntegratedResultIsStaleToo(t *testing.T) {
-	k := &judgeKit{integrationKit: newForgeIntegrationKit(t)}
+	k := &judgeKit{integrationKit: newIntegrationKit(t)}
 	repo := k.repo
 	k.putPlan("g", int(k.snapshot("g").Revision), "g-r2", addRelNode("U", dag.NodeImplementation), addRelNode("X", dag.NodeNonPR), addRelNode("T", dag.NodeNonPR),
 		addEdge("ui", "U", "I", dag.EdgeIntegrated, doc{"target_repository": forgeKitRepository}),

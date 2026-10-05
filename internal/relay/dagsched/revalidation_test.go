@@ -460,7 +460,7 @@ func TestOutputReworkGoesToTheSameChildAsANewGeneration(t *testing.T) {
 // rvMerged is the plan U -> I -> K over a real repository with U and K settled and I, an implementation node, accepted and landed on dev: it reads integrated, and K, which rests on its landing, is accepted.
 func rvMerged(t *testing.T) (*integrationKit, accepted) {
 	t.Helper()
-	k := newForgeIntegrationKit(t)
+	k := newIntegrationKit(t)
 	repo := k.repo
 	k.putPlan("g", int(k.snapshot("g").Revision), "g-r2", addRelNode("U", dag.NodeNonPR), addEdge("ui", "U", "I", dag.EdgeArtifactVerified, nil))
 	k.invSettle("g", "U")
@@ -709,7 +709,7 @@ func TestAMergedNodeIsRevalidatedNotRerunAfterACriteriaChange(t *testing.T) {
 // What landed is judged from the acceptance, not from what the plan now says the node is (contract 8.4, E-20): a revision that changes the kind of a node whose pull request merged does not make it
 // correctable, so no correction is prepared for it and it is not run again.
 func TestAMergedNodeIsNotCorrectableWhateverItsKindBecomes(t *testing.T) {
-	k := newForgeIntegrationKit(t)
+	k := newIntegrationKit(t)
 	repo := k.repo
 	repo.git("checkout", "-q", "-b", "feature-d")
 	head := repo.commit("d.txt", "d")

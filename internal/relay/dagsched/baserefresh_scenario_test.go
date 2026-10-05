@@ -65,7 +65,7 @@ func newRefreshScenario(t *testing.T) *refreshScenario { return newRefreshScenar
 // newRefreshScenarioWith is newRefreshScenario with a step on the branch of the pull request before the head the parent accepts is committed (a file to add, an attribute to commit).
 func newRefreshScenarioWith(t *testing.T, onBranch func(repo *gitRepo)) *refreshScenario {
 	t.Helper()
-	k := newForgeIntegrationKit(t)
+	k := newIntegrationKit(t)
 	repo := k.repo
 	repo.commit("shared.json", "version 0\n")
 	repo.git("checkout", "-q", "-b", "feature")

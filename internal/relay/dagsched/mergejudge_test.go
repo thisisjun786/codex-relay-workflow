@@ -19,7 +19,7 @@ type judgeKit struct {
 
 func newJudgeKit(t *testing.T) *judgeKit {
 	t.Helper()
-	k := &judgeKit{integrationKit: newForgeIntegrationKit(t)}
+	k := &judgeKit{integrationKit: newIntegrationKit(t)}
 	repo := k.repo
 	repo.git("checkout", "-q", "-b", "feature")
 	k.feature = repo.commit("feature.txt", "feature")
