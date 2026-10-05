@@ -268,14 +268,84 @@ func destructiveHint(extended bool) *regexp.Regexp {
 		"|git[" + jsSpaceChars + "]+(-c[" + jsSpaceChars + "]+[^" + jsSpaceChars + "]+[" + jsSpaceChars + "]+)?worktree[" + jsSpaceChars + "]+remove")
 }
 
-// worktreeDelJoinContinuations is the removal of continued lines the extended walk reads the command through.
+// worktreeDelJoinContinuations is what bash does with a backslash-newline pair before it reads a word: it removes the pair
+// where a line continues and keeps it where it does not, in one pass over the bytes. Outside quotes a backslash escapes the
+// next byte (both stay) and only backslash-newline goes; single quotes keep everything; $'...' keeps everything and a
+// backslash there escapes the next byte, so \' does not end it; double quotes drop only the pair and keep any other
+// backslash pair, so \" does not close them; a # that opens a word starts a comment, which keeps everything up to its
+// newline. prev is the last byte that decides the next one: a space at the start, the byte itself after a plain byte, a
+// backslash after an escaped pair, a quote after it closes, a newline after a comment, and x for the second dollar of a
+// pair ($$ is the process id, so only an odd run of dollars opens $'...'). A removed pair leaves it alone. Substitutions,
+// backticks and parameter expansions are read as the same flat text (a quote nested in them is not tracked). A command with
+// a here-document operator keeps the plain removal of every pair: the scan cannot tell a body from shell text, and such a
+// command is read as it was before this function.
 func worktreeDelJoinContinuations(command string) string {
-	return strings.ReplaceAll(command, "\\\n", "")
+	joined := strings.ReplaceAll(command, "\\\n", "")
+	if joined == command || strings.Contains(joined, "<<") {
+		return joined
+	}
+	const (
+		plain = iota
+		single
+		ansiC
+		double
+		comment
+	)
+	var out strings.Builder
+	out.Grow(len(command))
+	state, prev := plain, byte(' ')
+	for i := 0; i < len(command); i++ {
+		c := command[i]
+		escape := c == '\\' && i+1 < len(command) && state != single && state != comment
+		switch {
+		case escape && command[i+1] == '\n' && state != ansiC:
+			i++ // a continued line: both bytes go, prev stays
+		case escape: // the backslash and the byte it escapes stay
+			out.WriteString(command[i : i+2])
+			i++
+			if state == plain {
+				prev = '\\'
+			}
+		default:
+			out.WriteByte(c)
+			switch state {
+			case plain:
+				switch {
+				case c == '\'':
+					state = single
+					if prev == '$' {
+						state = ansiC
+					}
+				case c == '"':
+					state = double
+				case c == '#' && strings.IndexByte(" \t\n;&|()", prev) >= 0:
+					state = comment
+				case c == '$' && prev == '$':
+					prev = 'x'
+				default:
+					prev = c
+				}
+			case single, ansiC:
+				if c == '\'' {
+					state, prev = plain, c
+				}
+			case double:
+				if c == '"' {
+					state, prev = plain, c
+				}
+			case comment:
+				if c == '\n' {
+					state, prev = plain, c
+				}
+			}
+		}
+	}
+	return out.String()
 }
 
 // walk is evaluateCommand's loop: the segments in order, a cd moving the directory later segments run in, and the
 // conservative fallback when a destructive verb was seen and the command mentions the worktree but no target resolved.
-// The extended walk first joins continued lines, so that the cuts, the braces and the mention test see the command the shell reads.
+// The extended walk first joins continued lines where bash does, so that the cuts, the braces and the mention test see the command the shell reads.
 func walk(command, cwd string, id WorktreeIdentity, extended bool) GuardVerdict {
 	if extended { // the shell removes a backslash-newline pair before it reads a word
 		command = worktreeDelJoinContinuations(command)
