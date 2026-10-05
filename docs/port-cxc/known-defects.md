@@ -884,3 +884,8 @@ Source: `plugins/codexclaw/components/pabcd-state/src/memory-write-gate.ts` at v
 ## Found by the goalplan DAG query port (CRW-368)
 
 - With duplicate work-phase IDs, `nextOpenTask` can return the first phase's record paired with a pending task from a later phase because it re-finds the phase by ID after selecting the task (source `plugins/codexclaw/components/pabcd-state/src/goalplan.ts:1090-1094`; recorded case `first phase match and mismatched next pair` in `internal/pabcd/goalplan/testdata/query/oracle.json`); port: kept (the structural validator rejects the duplicate plan, while these selection queries remain direct derived views).
+## Found by the goalplan lifecycle port (CRW-542)
+
+- `complete-task` marks every task that carries the requested id done once any one of them is ready, so on a plan whose duplicate task ids slipped past validation a task whose own dependency is unmet is completed too, in every copy of a duplicated phase (source `plugins/codexclaw/components/pabcd-state/src/goalplan.ts:1359-1378`; recorded case `complete_ok_duplicate_task_ids` in `internal/pabcd/goalplan/testdata/lifecycle/oracle.json`); port: kept.
+- `decide` compares the stored answer untrimmed against the trimmed input, so a stored `" yes"` rejects the same `yes` as already having a different answer (source `plugins/codexclaw/components/pabcd-state/src/goalplan.ts:1297`; recorded case `decide_reject_padded_stored_answer`); port: kept.
+

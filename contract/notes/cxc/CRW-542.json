@@ -1,1 +1,20 @@
-{"issue":"CRW-542","identical":[],"intentionally-changed":[]}
+{
+  "issue": "CRW-542",
+  "identical": [],
+  "intentionally-changed": [],
+  "pending": [
+    "cli__loop__criteria_questions_and_steer",
+    "cli__loop__refusals",
+    "cli__loop__work_phases_tasks_and_completion",
+    "cli-help__loop__ask_dashdash_help",
+    "cli-help__loop__decide_dashdash_help",
+    "cli-help__loop__add-task_dashdash_help",
+    "cli-help__loop__complete-task_dashdash_help",
+    "cli-help__loop__meet-criterion_dashdash_help",
+    "hook__pre-tool-use-guarding-goal-complete__mid_cycle_complete_denied",
+    "hook__pre-tool-use-guarding-goal-complete__blocked_allowed",
+    "hook__pre-tool-use-guarding-goal-complete__bound_plan_with_open_work_denied",
+    "hook__pre-tool-use-guarding-goal-complete__baseline_empty_workspace"
+  ]
+}
+
