@@ -429,6 +429,7 @@ func Test26_MTW_1_whole_output(t *testing.T) {
 }
 func Test26_MTW_2_whole_output(t *testing.T) {
 	w := wakeFx(t)
+	reportWake(w, "event-hc", 1, "head-a")
 	held := w.claim(beta, fxB, "head-b")
 	waiter := w.must(w.m.Request(w.ctx, fxRepo, fxBase, fxA, alpha.TaskID, alpha.HostID, "head-a", false, ClaimOptions{Relationship: sql.NullString{String: "rel-a", Valid: true}}))
 	wakeNotices(w)

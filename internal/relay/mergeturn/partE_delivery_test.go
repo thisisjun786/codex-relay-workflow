@@ -374,6 +374,7 @@ func Test26_MTW_8_every_status_row_matches_python(t *testing.T) {
 			}
 			switch name {
 			case "regranted", "queued_regranted", "uncertain_regranted", "suppressed_regranted":
+				headCompareWakeReport(w, "head-a2")
 				w.must(w.m.Ready(w.ctx, turn, "task-alpha", true, "head-a2", ""))
 			}
 			switch name {
@@ -384,6 +385,7 @@ func Test26_MTW_8_every_status_row_matches_python(t *testing.T) {
 				checks := []any{contract.OrderedObject{{Key: "runId", Value: "run-1"}, {Key: "name", Value: "dev-gate"}, {Key: "headSha", Value: "head-a"}, {Key: "conclusion", Value: "success"}, {Key: "attempt", Value: json.Number("1")}}}
 				review := contract.OrderedObject{{Key: "hasNextPage", Value: false}, {Key: "pagesRead", Value: json.Number("1")}, {Key: "totalCount", Value: json.Number("1")}, {Key: "threadsSeen", Value: []any{"thread-1"}}, {Key: "unresolved", Value: json.Number("0")}}
 				reader := &wakeTarget{}
+				headCompareWakeReport(w, "head-a")
 				w.must(w.m.Check(w.ctx, turn, "task-alpha", "head-a", "base-0", checks, review, []string{"dev-gate"}, reader))
 				reader.tip = "base-1"
 				w.must(w.m.Land(w.ctx, turn, "task-alpha", "merge-1", "base-1", "merged; the base branch read afterwards", reader))
@@ -536,6 +538,7 @@ func Test26_MTW_8_whole_output(t *testing.T) {
 		w.step(reason, nil)
 	}
 	w.snapshot(event)
+	headCompareWakeReport(w, "head-a2")
 	w.must(w.m.Ready(w.ctx, turn, "task-alpha", true, "head-a2", ""))
 	reason, err = mergeturn.GrantSupersessionFor(w.ctx, w.store, receipt)
 	if err != nil {
@@ -548,6 +551,7 @@ func Test26_MTW_8_whole_output(t *testing.T) {
 func Test26_MTW_4_restated(t *testing.T) {
 	w := newWakeParity(t)
 	turn, event := w.promote()
+	headCompareWakeReport(w, "head-a2")
 	w.must(w.m.Ready(w.ctx, turn, "task-alpha", true, "head-a2", ""))
 	w.attempt(event)
 	w.step(w.host.sends, nil)
