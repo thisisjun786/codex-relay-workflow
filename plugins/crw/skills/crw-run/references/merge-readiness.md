@@ -382,12 +382,15 @@ text, the parent may run the review once more itself before it decides; that is 
 **A head the review did not see is usually a base refresh.** The review runs once per patch-id. A head
 that only merged the base has the patch-id of the head the review covered, so it is not reviewed again
 and no review is awaited for it ([a later head has no review of its own](#the-one-run-of-each-reviewer-awaited-before-the-receipt)).
-The item states the candidate's `headPatchId` when the artifact covers another head. The relay does not
+The item states `headPatchId`, the patch-id of the head the record is about. The relay does not
 compute it, so confirm it with `git patch-id --stable` over the diff the review bundle builds against
 `origin/dev` (its exact options are in `internal/review/bundle/gitdiff.go` and in the relay's coordination
 document, section "An independent review beside a restatement") and compare it with the artifact's
-`patchId`. A different patch-id means the code changed after the
-review; the changed part has had no independent look, which the verdict says.
+`patchId`. The patch-id clears the comparison only when the candidate head is the head the record is
+about; when the candidate head is another head the record does not describe, the relay warns instead of
+reusing the stated patch-id, and the parent reads the artifact against that candidate head. A different
+patch-id means the code changed after the review; the changed part has had no independent look, which the
+verdict says.
 
 **The warnings.** `merge-evidence --restate <record> --expect-independent-review` adds an
 `independentReview` object, `{stated, warnings}`, to its output; without the flag it appears only when
@@ -401,7 +404,7 @@ the record states the item. Every warning code starts `independent_review_`:
 | `sha256_mismatch` | the file's bytes are not the stated sha256 | the file changed after the child described it: read it as it is, and say so |
 | `artifact_invalid` | the file is not a schema v1 review artifact | treat the review as unusable |
 | `status_differs` | the item's status is not the artifact's | trust the artifact |
-| `head_differs` | the artifact covers another head and the stated patch-id is missing or different | run the patch-id check above |
+| `head_differs` | the artifact covers another head and the candidate head is not the head the record is about, or the stated patch-id is missing or different | run the patch-id check above |
 | `disposition_missing` | a P0, P1 or security finding of the artifact has no disposition | ask the child, or judge the finding yourself by its impact |
 | `disposition_unknown` | a disposition names a finding the artifact does not have | the item and the artifact disagree: trust the artifact |
 
