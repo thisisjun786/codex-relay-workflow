@@ -252,6 +252,11 @@ func notRunJobs(checks []any, run string, at *big.Int) []string {
 			continue
 		}
 		o, _ := Object(entry)
+		// Only a cancelled job can be one that began no step: the collector marks nothing else,
+		// and a restated record that says otherwise cannot steer the lane toward a rerun.
+		if o.Get("conclusion") != "cancelled" {
+			continue
+		}
 		flag, isBool := o.Get("notRun").(bool)
 		if !isBool || !flag {
 			continue
@@ -316,6 +321,19 @@ func ChecksProblemsWith(head string, required []string, checks []any, requireDec
 		}
 		return false
 	}
+	// Every newest required non-success is read before the answer is chosen, and the answer is
+	// checks_not_run only when every one of them is a job the runner never picked up. With more
+	// than one required check, returning on whichever the forge enumerated first would let the
+	// same set of results read as checks_not_run or as checks_stale by accident of order, and one
+	// required check that stands unexplained says the commit was tested and failed, whatever the
+	// others say. The named run is the lowest (run, name) pair, so the detail does not move with
+	// the enumeration either (CRW-661).
+	var firstRun, firstName string
+	var firstConclusion any
+	unexplained := false
+	var notRunKey, notRunRun, notRunName string
+	var notRunConclusion any
+	var notRunNames []string
 	for _, entry := range checks {
 		run := textField(entry, "runId")
 		if attempt(entry).Cmp(highest[run]) != 0 {
@@ -325,16 +343,31 @@ func ChecksProblemsWith(head string, required []string, checks []any, requireDec
 		if o.Get("headSha") != any(head) {
 			return stale("check run "+pyvalue.StrRepr(run)+" reports head "+pyvalue.Repr(o.Get("headSha"))+", not "+pyvalue.StrRepr(head), run)
 		}
-		if isRequired(textField(entry, "name")) && answers(entry, textField(entry, "name")) && o.Get("conclusion") != "success" {
-			// A required check that did not succeed because its runner never picked the jobs up is
-			// told apart from one that failed: the lane may rerun the newest run's failed jobs once
-			// on the same head instead of returning its turn. The reading is not a merge condition,
-			// so the answer stays not ready either way (CRW-661).
-			if jobs := notRunJobs(checks, workflowRun(run), attempt(entry)); len(jobs) > 0 {
-				return []Problem{{Code: ChecksNotRun, Detail: "required check " + pyvalue.Repr(o.Get("name")) + " (run " + pyvalue.StrRepr(run) + ") concluded " + pyvalue.Repr(o.Get("conclusion")) + " on its newest attempt, and workflow run " + pyvalue.StrRepr(workflowRun(run)) + " holds jobs that began no step, so no runner picked them up rather than the code failing: " + pyvalue.Repr(jobs) + ". Rerun the failed jobs of that run once on the same head", Incumbent: run}}
-			}
-			return stale("required check "+pyvalue.Repr(o.Get("name"))+" (run "+pyvalue.StrRepr(run)+") concluded "+pyvalue.Repr(o.Get("conclusion"))+" on its newest attempt", run)
+		name := textField(entry, "name")
+		if !isRequired(name) || !answers(entry, name) || o.Get("conclusion") == "success" {
+			continue
 		}
+		if firstRun == "" {
+			firstRun, firstName, firstConclusion = run, name, o.Get("conclusion")
+		}
+		// A required check that did not succeed because its runner never picked the jobs up is
+		// told apart from one that failed: the lane may rerun the newest run's failed jobs once
+		// on the same head instead of returning its turn. The reading is not a merge condition,
+		// so the answer stays not ready either way (CRW-661).
+		jobs := notRunJobs(checks, workflowRun(run), attempt(entry))
+		if len(jobs) == 0 {
+			unexplained = true
+			continue
+		}
+		if key := run + "\x00" + name; notRunKey == "" || key < notRunKey {
+			notRunKey, notRunRun, notRunName, notRunConclusion, notRunNames = key, run, name, o.Get("conclusion"), jobs
+		}
+	}
+	if notRunRun != "" && !unexplained {
+		return []Problem{{Code: ChecksNotRun, Detail: "required check " + pyvalue.Repr(notRunName) + " (run " + pyvalue.StrRepr(notRunRun) + ") concluded " + pyvalue.Repr(notRunConclusion) + " on its newest attempt, and workflow run " + pyvalue.StrRepr(workflowRun(notRunRun)) + " holds jobs that began no step, so no runner picked them up rather than the code failing: " + pyvalue.Repr(notRunNames) + ". Rerun the failed jobs of that run once on the same head", Incumbent: notRunRun}}
+	}
+	if firstRun != "" {
+		return stale("required check "+pyvalue.Repr(firstName)+" (run "+pyvalue.StrRepr(firstRun)+") concluded "+pyvalue.Repr(firstConclusion)+" on its newest attempt", firstRun)
 	}
 	present := map[string]bool{}
 	for _, entry := range checks {

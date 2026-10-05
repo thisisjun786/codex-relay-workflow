@@ -104,6 +104,46 @@ func TestCRW661NotRunOfAnOlderAttemptStaysChecksStale(t *testing.T) {
 	}
 }
 
+// Only a cancelled job can be one that began no step. A record that marks a job which succeeded
+// cannot steer the lane toward a rerun.
+func TestCRW661NotRunOnANonCancelledJobDoesNotSteer(t *testing.T) {
+	checks := []any{
+		crw661Entry("workflow-run:100:dev-gate#0", "dev-gate", "failure", 1, false),
+		crw661Entry("workflow-run:100:test-1#0", "test-1", "success", 1, true),
+	}
+	problems := ChecksProblems(crw661Head, []string{"dev-gate"}, checks)
+	if len(problems) != 1 || problems[0].Code != ChecksStale {
+		t.Fatalf("want one %s, got %v", ChecksStale, problems)
+	}
+}
+
+// Two required checks, one that failed and one whose run never started: the one that stands
+// unexplained says the commit was tested and failed, and the answer does not depend on the order
+// the forge enumerated them in.
+func TestCRW661MixedRequiredChecksDoNotDependOnOrder(t *testing.T) {
+	never := crw661Entry("workflow-run:200:never#0", "never", "cancelled", 1, true)
+	real := crw661Entry("workflow-run:100:real#0", "real", "failure", 1, false)
+	for _, checks := range [][]any{{real, never}, {never, real}} {
+		problems := ChecksProblems(crw661Head, []string{"real", "never"}, checks)
+		if len(problems) != 1 || problems[0].Code != ChecksStale {
+			t.Fatalf("want one %s in either order, got %v", ChecksStale, problems)
+		}
+	}
+}
+
+// With no required check that stands unexplained, a run that never started is still the whole
+// answer, whichever order the checks arrive in.
+func TestCRW661EveryRequiredNonSuccessNeverRan(t *testing.T) {
+	a := crw661Entry("workflow-run:200:a#0", "a", "cancelled", 1, true)
+	b := crw661Entry("workflow-run:100:b#0", "b", "cancelled", 1, true)
+	for _, checks := range [][]any{{a, b}, {b, a}} {
+		problems := ChecksProblems(crw661Head, []string{"a", "b"}, checks)
+		if len(problems) != 1 || problems[0].Code != ChecksNotRun {
+			t.Fatalf("want one %s in either order, got %v", ChecksNotRun, problems)
+		}
+	}
+}
+
 func TestCRW661AllSuccessStaysClean(t *testing.T) {
 	checks := []any{crw661Entry("workflow-run:100:dev-gate#0", "dev-gate", "success", 1, false)}
 	if problems := ChecksProblems(crw661Head, []string{"dev-gate"}, checks); len(problems) != 0 {
