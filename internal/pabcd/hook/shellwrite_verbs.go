@@ -810,7 +810,8 @@ func shellVerbSpaceRune(r rune) bool {
 	return text.Trim(string(r)) == ""
 }
 
-// shellVerbOpenCall decides one call from its argument spans: whether its mode opens for writing, and its path.
+// shellVerbOpenCall decides one call from its argument spans: whether its mode opens for writing, and its path. A mode written
+// with a \N{name} escape cannot be decoded (it needs the Unicode name table), so it counts as writing: the gate fails closed.
 func shellVerbOpenCall(rs []rune, spans [][2]int) (string, bool) {
 	var path, mode []rune
 	positional := 0
@@ -838,7 +839,8 @@ func shellVerbOpenCall(rs []rune, spans [][2]int) (string, bool) {
 	}
 	file, pathOK := shellVerbLiteral(path)
 	kind, modeOK := shellVerbLiteral(mode)
-	return file, pathOK && file != "" && modeOK && strings.ContainsAny(kind, "wax+")
+	writes := modeOK && strings.ContainsAny(kind, "wax+") || !modeOK && strings.Contains(string(mode), "\\N{")
+	return file, pathOK && file != "" && writes
 }
 
 // shellVerbKeywordArg splits name=value (not ==) off an argument.
