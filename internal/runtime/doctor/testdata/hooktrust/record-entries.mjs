@@ -31,6 +31,8 @@ const bytes = (...parts) => ({ base64: Buffer.concat(parts.map((p) => (typeof p 
 const withCommand = (command) => bytes('{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"', command, '"}]}]}}');
 const matcher = (name, m) => plug(name, ev("PreToolUse", [g([h()], m)]));
 
+const stopDocument = ev("Stop", [g([h()])]);
+const declaredManifest = JSON.stringify({ hooks: ["./hooks/a.json"] });
 const protoEvents = ["constructor", "toString", "valueOf", "hasOwnProperty", "isPrototypeOf", "propertyIsEnumerable", "toLocaleString", "__defineGetter__", "__defineSetter__", "__lookupGetter__", "__lookupSetter__"];
 const labels = ["PreToolUse", "PostToolUse", "SessionStart", "UserPromptSubmit", "Stop", "SubagentStart", "SubagentStop", "PreCompact", "PostCompact", "PermissionRequest"];
 
@@ -48,6 +50,9 @@ const cases = [
   plug("two_files_in_manifest_order", ev("Stop", [g([h({ command: "a" })])]), { refs: ["./hooks/b.json", "./hooks/a.json"], files: file("hooks/b.json", ev("PreToolUse", [g([h({ command: "b" })])])) }),
   plug("later_ref_failure_discards_earlier", ev("Stop", [g([h()])]), { refs: ["./hooks/a.json", "../outside/x.json"] }),
   plug("later_document_failure_discards_earlier", ev("Stop", [g([h()])]), { refs: ["./hooks/a.json", "./hooks/b.json"], files: file("hooks/b.json", ev("Unknown", [])) }),
+  { name: "manifest_symlink_inside_root", files: { ...file("hooks/a.json", stopDocument), "plugin/meta/plugin.json": declaredManifest }, links: { "plugin/.codex-plugin/plugin.json": "../meta/plugin.json" } },
+  { name: "intentionally_changed_manifest_symlink_outside_root", files: { ...file("hooks/a.json", stopDocument), "outside/plugin.json": declaredManifest }, links: { "plugin/.codex-plugin/plugin.json": "../../outside/plugin.json" } },
+  { name: "intentionally_changed_manifest_dir_symlink_outside_root", files: { ...file("hooks/a.json", stopDocument), "outside-meta/plugin.json": declaredManifest }, links: { "plugin/.codex-plugin": "../outside-meta" } },
   plug("ref_dot_slash", ev("Stop", [g([h()])]), { refs: ["./hooks/a.json"] }),
   plug("ref_double_dot_slash", ev("Stop", [g([h()])]), { refs: ["././hooks/a.json"] }),
   plug("ref_no_prefix", ev("Stop", [g([h()])]), { refs: ["hooks/a.json"] }),

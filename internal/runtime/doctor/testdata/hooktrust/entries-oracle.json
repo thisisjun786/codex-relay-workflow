@@ -365,6 +365,60 @@
    "error": "unsupported hook event: Unknown"
   },
   {
+   "name": "manifest_symlink_inside_root",
+   "key": "fixture@market",
+   "files": {
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}",
+    "plugin/meta/plugin.json": "{\"hooks\":[\"./hooks/a.json\"]}"
+   },
+   "links": {
+    "plugin/.codex-plugin/plugin.json": "../meta/plugin.json"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:stop:0:0",
+     "hash": "sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4",
+     "fileSha256": "922a1a9c92a1acf2676f25c11dcdbe159376b02d7963ffa370f8076d2dae9fa8"
+    }
+   ]
+  },
+  {
+   "name": "intentionally_changed_manifest_symlink_outside_root",
+   "key": "fixture@market",
+   "files": {
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}",
+    "outside/plugin.json": "{\"hooks\":[\"./hooks/a.json\"]}"
+   },
+   "links": {
+    "plugin/.codex-plugin/plugin.json": "../../outside/plugin.json"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:stop:0:0",
+     "hash": "sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4",
+     "fileSha256": "922a1a9c92a1acf2676f25c11dcdbe159376b02d7963ffa370f8076d2dae9fa8"
+    }
+   ]
+  },
+  {
+   "name": "intentionally_changed_manifest_dir_symlink_outside_root",
+   "key": "fixture@market",
+   "files": {
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}",
+    "outside-meta/plugin.json": "{\"hooks\":[\"./hooks/a.json\"]}"
+   },
+   "links": {
+    "plugin/.codex-plugin": "../outside-meta"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:stop:0:0",
+     "hash": "sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4",
+     "fileSha256": "922a1a9c92a1acf2676f25c11dcdbe159376b02d7963ffa370f8076d2dae9fa8"
+    }
+   ]
+  },
+  {
    "name": "ref_dot_slash",
    "key": "fixture@market",
    "files": {

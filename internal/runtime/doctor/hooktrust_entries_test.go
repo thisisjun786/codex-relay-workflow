@@ -1,9 +1,11 @@
 package doctor_test
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -137,8 +139,15 @@ func TestListHookTrustEntries_recordedCases(t *testing.T) {
 				if err == nil || err.Error() != want.Error {
 					t.Fatalf("error = %v, want %q", err, want.Error)
 				}
+			case strings.HasPrefix(want.Name, "intentionally_changed_"):
+				// The oracle follows a manifest symlink that leaves the plugin root; the port
+				// refuses it (Devin's security finding, port: fixed in known-defects.md).
+				if err == nil || err.Error() != "plugin manifest symlink escapes plugin root: .codex-plugin/plugin.json" {
+					t.Fatalf("error = %v, want the manifest refused as leaving the plugin root", err)
+				}
 			case want.ErrorClass == "ENOENT" && !errors.Is(err, fs.ErrNotExist),
 				want.ErrorClass == "EISDIR" && !errors.Is(err, syscall.EISDIR),
+				want.ErrorClass == "SyntaxError" && errors.As(err, new(*fs.PathError)),
 				want.ErrorClass != "" && err == nil:
 				t.Fatalf("error = %v, want an engine error of class %s", err, want.ErrorClass)
 			case want.ErrorClass != "":
@@ -169,6 +178,50 @@ func TestListHookTrustEntries_loneSurrogateReference(t *testing.T) {
 	got, err := doctor.ListHookTrustEntries(root, "fixture@market")
 	if err != nil || len(got) != 1 || got[0].Key != "fixture@market:hooks/\xed\xa0\x80.json:stop:0:0" {
 		t.Fatalf("ListHookTrustEntries = %+v, %v", got, err)
+	}
+}
+
+// TestListHookTrustEntries_swapAfterTheCheckIsNotFollowed swaps the hook file between a regular
+// file inside the plugin root and a symlink to a file outside it while the listing runs. Whatever
+// the listing answers, it never holds the outside file: the path is resolved again once the file
+// is open and has to name the file that was opened.
+func TestListHookTrustEntries_swapAfterTheCheckIsNotFollowed(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "plugin")
+	document := func(command string) []byte {
+		return []byte(fmt.Sprintf(`{"hooks":{"Stop":[{"hooks":[{"type":"command","command":%q}]}]}}`, command))
+	}
+	hookTrustEntriesWrite(t, filepath.Join(root, ".codex-plugin", "plugin.json"), []byte(`{"hooks":["h.json"]}`))
+	hookTrustEntriesWrite(t, filepath.Join(root, "h.json"), document("inside"))
+	outside := document("outside")
+	hookTrustEntriesWrite(t, filepath.Join(base, "outside.json"), outside)
+	forbidden := fmt.Sprintf("%x", sha256.Sum256(outside))
+	hook, safe, staged := filepath.Join(root, "h.json"), filepath.Join(root, "safe"), filepath.Join(root, "staged")
+	if err := os.Symlink("../outside.json", staged); err != nil {
+		t.Fatal(err)
+	}
+	stop, done := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			for _, move := range [][2]string{{hook, safe}, {staged, hook}, {hook, staged}, {safe, hook}} {
+				_ = os.Rename(move[0], move[1])
+			}
+		}
+	}()
+	defer func() { close(stop); <-done }()
+	for i := 0; i < 20000; i++ {
+		entries, _ := doctor.ListHookTrustEntries(root, "fixture@market")
+		for _, entry := range entries {
+			if entry.FileSha256 == forbidden {
+				t.Fatalf("iteration %d listed the file outside the plugin root", i)
+			}
+		}
 	}
 }
 

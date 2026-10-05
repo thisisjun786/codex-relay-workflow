@@ -19,7 +19,12 @@
 // approximates; an event name that Object.prototype defines passes the oracle's "in" guard and
 // is spelled into the key as the source of the inherited function; a "hooks" member that is a
 // non-empty string or array is read as an object with index keys; "./" is stripped twice before
-// the path is resolved; and a document nested deeper than the Go reader's limit is refused.
+// the path is resolved; a plugin root of "/" rejects every reference (the prefix test appends a
+// separator to a root that already ends with one); and a document nested deeper than the Go
+// reader's limit is refused. Two behaviours are repaired, as answers to Devin's security
+// findings (port: fixed): the manifest goes through the same containment check as a hook file,
+// and a file is verified again once it is open, so a symlink swapped in after the check is not
+// followed (hookTrustEntriesReadContained).
 package doctor
 
 import (
@@ -27,6 +32,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -62,7 +68,7 @@ func ListHookTrustEntries(pluginRoot, pluginKey string) ([]HookTrustEntry, error
 	if err := hookTrustEntriesSafeValue(pluginKey, "plugin key"); err != nil {
 		return nil, err
 	}
-	manifestBytes, err := os.ReadFile(filepath.Join(pluginRoot, ".codex-plugin", "plugin.json"))
+	manifestBytes, err := hookTrustEntriesReadContained(pluginRoot, ".codex-plugin/plugin.json")
 	if err != nil {
 		return nil, err
 	}
@@ -88,11 +94,7 @@ func ListHookTrustEntries(pluginRoot, pluginKey string) ([]HookTrustEntry, error
 		if err := hookTrustEntriesSafeValue(relative, "hook path"); err != nil {
 			return nil, err
 		}
-		file, err := hookTrustEntriesContainedFile(pluginRoot, relative)
-		if err != nil {
-			return nil, err
-		}
-		raw, err := os.ReadFile(file)
+		raw, err := hookTrustEntriesReadContained(pluginRoot, relative)
 		if err != nil {
 			return nil, err
 		}
@@ -278,21 +280,25 @@ func hookTrustEntriesSafeValue(value, label string) error {
 	return nil
 }
 
-// hookTrustEntriesContainedFile is containedPluginFile (hook-trust.ts:144-156): the real path of
-// the file reference names, which has to lie inside the real path of the plugin root both
+// hookTrustEntriesReadContained is containedPluginFile (hook-trust.ts:144-156) and the read that
+// follows it: the file reference names has to lie inside the real path of the plugin root, both
 // lexically and after symlinks. The reference is stripped of "./" a second time before it is
-// resolved, and an absolute result of that resolves to itself, as path.resolve does.
-func hookTrustEntriesContainedFile(pluginRoot, reference string) (string, error) {
+// resolved, and an absolute result of that resolves to itself, as path.resolve does. Two things
+// differ from the oracle on purpose, answers to Devin's security findings on this port
+// (docs/port-cxc/known-defects.md, port: fixed): the manifest goes through the same check, and
+// once the file is open the path is resolved again and has to name the file that was opened,
+// still inside the root, so a symlink swapped in after the check is not followed.
+func hookTrustEntriesReadContained(pluginRoot, reference string) ([]byte, error) {
 	absolute, err := filepath.Abs(pluginRoot)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	root, err := filepath.EvalSymlinks(absolute)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if filepath.IsAbs(reference) {
-		return "", errors.New("plugin manifest path must be relative: " + reference)
+		return nil, errors.New("plugin manifest path must be relative: " + reference)
 	}
 	stripped := hookTrustEntriesFSPath(hookTrustEntriesStrip(reference))
 	candidate := filepath.Join(root, stripped)
@@ -300,16 +306,39 @@ func hookTrustEntriesContainedFile(pluginRoot, reference string) (string, error)
 		candidate = filepath.Clean(stripped)
 	}
 	if !hookTrustEntriesInside(root, candidate) {
-		return "", errors.New("plugin manifest path escapes plugin root: " + reference)
+		return nil, errors.New("plugin manifest path escapes plugin root: " + reference)
 	}
 	real, err := filepath.EvalSymlinks(candidate)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if !hookTrustEntriesInside(root, real) {
-		return "", errors.New("plugin manifest symlink escapes plugin root: " + reference)
+		return nil, errors.New("plugin manifest symlink escapes plugin root: " + reference)
 	}
-	return real, nil
+	file, err := os.Open(real)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	again, err := filepath.EvalSymlinks(candidate)
+	if err != nil {
+		return nil, err
+	}
+	current, err := os.Stat(again)
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case !hookTrustEntriesInside(root, again):
+		return nil, errors.New("plugin manifest symlink escapes plugin root: " + reference)
+	case !os.SameFile(opened, current):
+		return nil, errors.New("plugin manifest path changed while it was read: " + reference)
+	}
+	return io.ReadAll(file)
 }
 
 // hookTrustEntriesInside is "path === root || path.startsWith(root + sep)".
