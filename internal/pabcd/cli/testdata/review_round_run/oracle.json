@@ -1,0 +1,3514 @@
+{
+ "oracle": "CXC v0.2.40 3c1459ac",
+ "cases": [
+  {
+   "id": "open_ok_then_show",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/goalplans/review-binding-probe/goalplan.json": "{\n  \"objective\": \"review binding\",\n  \"slug\": \"review-binding-probe\",\n  \"schemaVersion\": 1,\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"activeWorkPhaseId\": \"wp1\",\n  \"workPhases\": [\n    {\n      \"id\": \"wp1\",\n      \"title\": \"wp1\",\n      \"status\": \"in_progress\",\n      \"tasks\": [],\n      \"criteriaIds\": []\n    }\n  ],\n  \"criteria\": [],\n  \"host\": {\n    \"armed\": false,\n    \"armedAt\": null,\n    \"source\": \"none\"\n  }\n}",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"A\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"review-binding-probe\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": \"e-probe-1\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "open",
+      "--session",
+      "rb",
+      "--plan-path",
+      "devlog/_plan/260815_probe/000_plan.md"
+     ],
+     "want": {
+      "code": 0,
+      "output": "r1-<STAMP>\n\nRound r1 is in flight over 1 file(s).\nDispatch an independent reviewer (agent_type \"reviewer\" if exposed; otherwise agent_type \"explorer\" with CXC-ROLE: reviewer before TASK:; if the host has no agent_type field, omit agent_type and prepend CXC-ROLE: reviewer before TASK:) and require it to end its\nfinal message with exactly these two lines:\n\n  LAUNCH: r1-<STAMP>\n  VERDICT: PASS | NEAR-PASS | FAIL\n\nThe verdict is recorded when that reviewer exits. There is no way to write it here."
+     }
+    },
+    {
+     "argv": [
+      "show",
+      "--session",
+      "rb",
+      "--json"
+     ],
+     "want": {
+      "code": 0,
+      "output": "{\"roundId\":\"r1\",\"status\":\"in_flight\",\"staleness\":\"open\",\"launchId\":\"r1-<STAMP>\",\"verdict\":null,\"workPhaseId\":\"wp1\",\"planEpoch\":\"e-probe-1\"}"
+     }
+    },
+    {
+     "argv": [
+      "show",
+      "--session",
+      "rb"
+     ],
+     "want": {
+      "code": 0,
+      "output": "review-round r1: status=in_flight staleness=open verdict=- launch=r1-<STAMP>"
+     }
+    }
+   ],
+   "after": {
+    "objective": "review binding",
+    "slug": "review-binding-probe",
+    "createdAt": "<TS>",
+    "updatedAt": "<TS>",
+    "activeWorkPhaseId": "wp1",
+    "workPhases": [
+     {
+      "id": "wp1",
+      "title": "wp1",
+      "status": "in_progress",
+      "tasks": [],
+      "criteriaIds": []
+     }
+    ],
+    "criteria": [],
+    "host": {
+     "armed": false,
+     "armedAt": null,
+     "source": "none"
+    },
+    "schemaVersion": 1,
+    "reviewRounds": [
+     {
+      "roundId": "r1",
+      "purpose": "plan_audit",
+      "planPath": "devlog/_plan/260815_probe",
+      "planSha256": "6999a514f0f9423c49c6fba5fbaf6b295caee072eff210b0e55bc584b7445355",
+      "status": "in_flight",
+      "lane": {
+       "launchId": "r1-<STAMP>"
+      },
+      "openedAt": "<TS>",
+      "ownerSessionId": "rb",
+      "workPhaseId": "wp1",
+      "planUnit": "devlog/_plan/260815_probe",
+      "planEpoch": "e-probe-1",
+      "planFiles": [
+       {
+        "path": "devlog/_plan/260815_probe/000_plan.md",
+        "sha256": "043e84e9c05567c907905179c3c16ed31f46b1b53f0d1bd9f47b3d78ba08a2b9"
+       }
+      ]
+     }
+    ],
+    "activePlanAuditRoundId": "r1"
+   }
+  },
+  {
+   "id": "open_json_flag_is_ignored",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/goalplans/review-binding-probe/goalplan.json": "{\n  \"objective\": \"review binding\",\n  \"slug\": \"review-binding-probe\",\n  \"schemaVersion\": 1,\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"activeWorkPhaseId\": \"wp1\",\n  \"workPhases\": [\n    {\n      \"id\": \"wp1\",\n      \"title\": \"wp1\",\n      \"status\": \"in_progress\",\n      \"tasks\": [],\n      \"criteriaIds\": []\n    }\n  ],\n  \"criteria\": [],\n  \"host\": {\n    \"armed\": false,\n    \"armedAt\": null,\n    \"source\": \"none\"\n  }\n}",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"A\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"review-binding-probe\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": \"e-probe-1\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "open",
+      "--session",
+      "rb",
+      "--plan-path",
+      "devlog/_plan/260815_probe/000_plan.md",
+      "--json"
+     ],
+     "want": {
+      "code": 0,
+      "output": "r1-<STAMP>\n\nRound r1 is in flight over 1 file(s).\nDispatch an independent reviewer (agent_type \"reviewer\" if exposed; otherwise agent_type \"explorer\" with CXC-ROLE: reviewer before TASK:; if the host has no agent_type field, omit agent_type and prepend CXC-ROLE: reviewer before TASK:) and require it to end its\nfinal message with exactly these two lines:\n\n  LAUNCH: r1-<STAMP>\n  VERDICT: PASS | NEAR-PASS | FAIL\n\nThe verdict is recorded when that reviewer exits. There is no way to write it here."
+     }
+    }
+   ],
+   "after": {
+    "objective": "review binding",
+    "slug": "review-binding-probe",
+    "createdAt": "<TS>",
+    "updatedAt": "<TS>",
+    "activeWorkPhaseId": "wp1",
+    "workPhases": [
+     {
+      "id": "wp1",
+      "title": "wp1",
+      "status": "in_progress",
+      "tasks": [],
+      "criteriaIds": []
+     }
+    ],
+    "criteria": [],
+    "host": {
+     "armed": false,
+     "armedAt": null,
+     "source": "none"
+    },
+    "schemaVersion": 1,
+    "reviewRounds": [
+     {
+      "roundId": "r1",
+      "purpose": "plan_audit",
+      "planPath": "devlog/_plan/260815_probe",
+      "planSha256": "6999a514f0f9423c49c6fba5fbaf6b295caee072eff210b0e55bc584b7445355",
+      "status": "in_flight",
+      "lane": {
+       "launchId": "r1-<STAMP>"
+      },
+      "openedAt": "<TS>",
+      "ownerSessionId": "rb",
+      "workPhaseId": "wp1",
+      "planUnit": "devlog/_plan/260815_probe",
+      "planEpoch": "e-probe-1",
+      "planFiles": [
+       {
+        "path": "devlog/_plan/260815_probe/000_plan.md",
+        "sha256": "043e84e9c05567c907905179c3c16ed31f46b1b53f0d1bd9f47b3d78ba08a2b9"
+       }
+      ]
+     }
+    ],
+    "activePlanAuditRoundId": "r1"
+   }
+  },
+  {
+   "id": "open_two_files_sorted_and_deduplicated",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/goalplans/review-binding-probe/goalplan.json": "{\n  \"objective\": \"review binding\",\n  \"slug\": \"review-binding-probe\",\n  \"schemaVersion\": 1,\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"activeWorkPhaseId\": \"wp1\",\n  \"workPhases\": [\n    {\n      \"id\": \"wp1\",\n      \"title\": \"wp1\",\n      \"status\": \"in_progress\",\n      \"tasks\": [],\n      \"criteriaIds\": []\n    }\n  ],\n  \"criteria\": [],\n  \"host\": {\n    \"armed\": false,\n    \"armedAt\": null,\n    \"source\": \"none\"\n  }\n}",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"A\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"review-binding-probe\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": \"e-probe-1\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n",
+    "devlog/_plan/260815_probe/010_second.md": "# second\r\nwith crlf\r\n",
+    "devlog/_plan/260815_probe/notes.md": "notes\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "open",
+      "--session",
+      "rb",
+      "--plan-path",
+      "devlog/_plan/260815_probe/010_second.md",
+      "--plan-path",
+      "devlog/_plan/260815_probe/000_plan.md",
+      "--plan-path",
+      "./devlog/_plan/260815_probe/000_plan.md"
+     ],
+     "want": {
+      "code": 0,
+      "output": "r1-<STAMP>\n\nRound r1 is in flight over 2 file(s).\nDispatch an independent reviewer (agent_type \"reviewer\" if exposed; otherwise agent_type \"explorer\" with CXC-ROLE: reviewer before TASK:; if the host has no agent_type field, omit agent_type and prepend CXC-ROLE: reviewer before TASK:) and require it to end its\nfinal message with exactly these two lines:\n\n  LAUNCH: r1-<STAMP>\n  VERDICT: PASS | NEAR-PASS | FAIL\n\nThe verdict is recorded when that reviewer exits. There is no way to write it here."
+     }
+    },
+    {
+     "argv": [
+      "show",
+      "--session",
+      "rb",
+      "--json"
+     ],
+     "want": {
+      "code": 0,
+      "output": "{\"roundId\":\"r1\",\"status\":\"in_flight\",\"staleness\":\"open\",\"launchId\":\"r1-<STAMP>\",\"verdict\":null,\"workPhaseId\":\"wp1\",\"planEpoch\":\"e-probe-1\"}"
+     }
+    }
+   ],
+   "after": {
+    "objective": "review binding",
+    "slug": "review-binding-probe",
+    "createdAt": "<TS>",
+    "updatedAt": "<TS>",
+    "activeWorkPhaseId": "wp1",
+    "workPhases": [
+     {
+      "id": "wp1",
+      "title": "wp1",
+      "status": "in_progress",
+      "tasks": [],
+      "criteriaIds": []
+     }
+    ],
+    "criteria": [],
+    "host": {
+     "armed": false,
+     "armedAt": null,
+     "source": "none"
+    },
+    "schemaVersion": 1,
+    "reviewRounds": [
+     {
+      "roundId": "r1",
+      "purpose": "plan_audit",
+      "planPath": "devlog/_plan/260815_probe",
+      "planSha256": "970c7e98c48667fdc44af63e04ff8d7334f19cc0f2f2e74b17d4b0b11a028a78",
+      "status": "in_flight",
+      "lane": {
+       "launchId": "r1-<STAMP>"
+      },
+      "openedAt": "<TS>",
+      "ownerSessionId": "rb",
+      "workPhaseId": "wp1",
+      "planUnit": "devlog/_plan/260815_probe",
+      "planEpoch": "e-probe-1",
+      "planFiles": [
+       {
+        "path": "devlog/_plan/260815_probe/000_plan.md",
+        "sha256": "043e84e9c05567c907905179c3c16ed31f46b1b53f0d1bd9f47b3d78ba08a2b9"
+       },
+       {
+        "path": "devlog/_plan/260815_probe/010_second.md",
+        "sha256": "ed5415aa5e9ef3c632f5d50611c71b9119059eca684f0b5eba6d678d1e75478b"
+       }
+      ]
+     }
+    ],
+    "activePlanAuditRoundId": "r1"
+   }
+  },
+  {
+   "id": "open_twice_supersedes",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/goalplans/review-binding-probe/goalplan.json": "{\n  \"objective\": \"review binding\",\n  \"slug\": \"review-binding-probe\",\n  \"schemaVersion\": 1,\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"activeWorkPhaseId\": \"wp1\",\n  \"workPhases\": [\n    {\n      \"id\": \"wp1\",\n      \"title\": \"wp1\",\n      \"status\": \"in_progress\",\n      \"tasks\": [],\n      \"criteriaIds\": []\n    }\n  ],\n  \"criteria\": [],\n  \"host\": {\n    \"armed\": false,\n    \"armedAt\": null,\n    \"source\": \"none\"\n  }\n}",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"A\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"review-binding-probe\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": \"e-probe-1\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "open",
+      "--session",
+      "rb",
+      "--plan-path",
+      "devlog/_plan/260815_probe/000_plan.md"
+     ],
+     "want": {
+      "code": 0,
+      "output": "r1-<STAMP>\n\nRound r1 is in flight over 1 file(s).\nDispatch an independent reviewer (agent_type \"reviewer\" if exposed; otherwise agent_type \"explorer\" with CXC-ROLE: reviewer before TASK:; if the host has no agent_type field, omit agent_type and prepend CXC-ROLE: reviewer before TASK:) and require it to end its\nfinal message with exactly these two lines:\n\n  LAUNCH: r1-<STAMP>\n  VERDICT: PASS | NEAR-PASS | FAIL\n\nThe verdict is recorded when that reviewer exits. There is no way to write it here."
+     }
+    },
+    {
+     "argv": [
+      "open",
+      "--session",
+      "rb",
+      "--plan-path",
+      "devlog/_plan/260815_probe/000_plan.md"
+     ],
+     "want": {
+      "code": 0,
+      "output": "r2-<STAMP>\n\nRound r2 is in flight over 1 file(s).\nDispatch an independent reviewer (agent_type \"reviewer\" if exposed; otherwise agent_type \"explorer\" with CXC-ROLE: reviewer before TASK:; if the host has no agent_type field, omit agent_type and prepend CXC-ROLE: reviewer before TASK:) and require it to end its\nfinal message with exactly these two lines:\n\n  LAUNCH: r2-<STAMP>\n  VERDICT: PASS | NEAR-PASS | FAIL\n\nThe verdict is recorded when that reviewer exits. There is no way to write it here."
+     }
+    },
+    {
+     "argv": [
+      "show",
+      "--session",
+      "rb"
+     ],
+     "want": {
+      "code": 0,
+      "output": "review-round r2: status=in_flight staleness=open verdict=- launch=r2-<STAMP>"
+     }
+    }
+   ],
+   "after": {
+    "objective": "review binding",
+    "slug": "review-binding-probe",
+    "createdAt": "<TS>",
+    "updatedAt": "<TS>",
+    "activeWorkPhaseId": "wp1",
+    "workPhases": [
+     {
+      "id": "wp1",
+      "title": "wp1",
+      "status": "in_progress",
+      "tasks": [],
+      "criteriaIds": []
+     }
+    ],
+    "criteria": [],
+    "host": {
+     "armed": false,
+     "armedAt": null,
+     "source": "none"
+    },
+    "reviewRounds": [
+     {
+      "roundId": "r1",
+      "purpose": "plan_audit",
+      "planPath": "devlog/_plan/260815_probe",
+      "planSha256": "6999a514f0f9423c49c6fba5fbaf6b295caee072eff210b0e55bc584b7445355",
+      "status": "inconclusive",
+      "lane": {
+       "launchId": "r1-<STAMP>"
+      },
+      "openedAt": "<TS>",
+      "ownerSessionId": "rb",
+      "workPhaseId": "wp1",
+      "planUnit": "devlog/_plan/260815_probe",
+      "planEpoch": "e-probe-1",
+      "planFiles": [
+       {
+        "path": "devlog/_plan/260815_probe/000_plan.md",
+        "sha256": "043e84e9c05567c907905179c3c16ed31f46b1b53f0d1bd9f47b3d78ba08a2b9"
+       }
+      ],
+      "closedAt": "<TS>"
+     },
+     {
+      "roundId": "r2",
+      "purpose": "plan_audit",
+      "planPath": "devlog/_plan/260815_probe",
+      "planSha256": "6999a514f0f9423c49c6fba5fbaf6b295caee072eff210b0e55bc584b7445355",
+      "status": "in_flight",
+      "lane": {
+       "launchId": "r2-<STAMP>"
+      },
+      "openedAt": "<TS>",
+      "ownerSessionId": "rb",
+      "workPhaseId": "wp1",
+      "planUnit": "devlog/_plan/260815_probe",
+      "planEpoch": "e-probe-1",
+      "planFiles": [
+       {
+        "path": "devlog/_plan/260815_probe/000_plan.md",
+        "sha256": "043e84e9c05567c907905179c3c16ed31f46b1b53f0d1bd9f47b3d78ba08a2b9"
+       }
+      ]
+     }
+    ],
+    "activePlanAuditRoundId": "r2",
+    "schemaVersion": 1
+   }
+  },
+  {
+   "id": "open_abort_open",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/goalplans/review-binding-probe/goalplan.json": "{\n  \"objective\": \"review binding\",\n  \"slug\": \"review-binding-probe\",\n  \"schemaVersion\": 1,\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"activeWorkPhaseId\": \"wp1\",\n  \"workPhases\": [\n    {\n      \"id\": \"wp1\",\n      \"title\": \"wp1\",\n      \"status\": \"in_progress\",\n      \"tasks\": [],\n      \"criteriaIds\": []\n    }\n  ],\n  \"criteria\": [],\n  \"host\": {\n    \"armed\": false,\n    \"armedAt\": null,\n    \"source\": \"none\"\n  }\n}",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"A\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"review-binding-probe\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": \"e-probe-1\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "open",
+      "--session",
+      "rb",
+      "--plan-path",
+      "devlog/_plan/260815_probe/000_plan.md"
+     ],
+     "want": {
+      "code": 0,
+      "output": "r1-<STAMP>\n\nRound r1 is in flight over 1 file(s).\nDispatch an independent reviewer (agent_type \"reviewer\" if exposed; otherwise agent_type \"explorer\" with CXC-ROLE: reviewer before TASK:; if the host has no agent_type field, omit agent_type and prepend CXC-ROLE: reviewer before TASK:) and require it to end its\nfinal message with exactly these two lines:\n\n  LAUNCH: r1-<STAMP>\n  VERDICT: PASS | NEAR-PASS | FAIL\n\nThe verdict is recorded when that reviewer exits. There is no way to write it here."
+     }
+    },
+    {
+     "argv": [
+      "abort",
+      "--session",
+      "rb"
+     ],
+     "want": {
+      "code": 0,
+      "output": "review-round abort: r1 closed as inconclusive"
+     }
+    },
+    {
+     "argv": [
+      "open",
+      "--session",
+      "rb",
+      "--plan-path",
+      "devlog/_plan/260815_probe/000_plan.md"
+     ],
+     "want": {
+      "code": 0,
+      "output": "r2-<STAMP>\n\nRound r2 is in flight over 1 file(s).\nDispatch an independent reviewer (agent_type \"reviewer\" if exposed; otherwise agent_type \"explorer\" with CXC-ROLE: reviewer before TASK:; if the host has no agent_type field, omit agent_type and prepend CXC-ROLE: reviewer before TASK:) and require it to end its\nfinal message with exactly these two lines:\n\n  LAUNCH: r2-<STAMP>\n  VERDICT: PASS | NEAR-PASS | FAIL\n\nThe verdict is recorded when that reviewer exits. There is no way to write it here."
+     }
+    },
+    {
+     "argv": [
+      "show",
+      "--session",
+      "rb"
+     ],
+     "want": {
+      "code": 0,
+      "output": "review-round r2: status=in_flight staleness=open verdict=- launch=r2-<STAMP>"
+     }
+    }
+   ],
+   "after": {
+    "objective": "review binding",
+    "slug": "review-binding-probe",
+    "createdAt": "<TS>",
+    "updatedAt": "<TS>",
+    "activeWorkPhaseId": "wp1",
+    "workPhases": [
+     {
+      "id": "wp1",
+      "title": "wp1",
+      "status": "in_progress",
+      "tasks": [],
+      "criteriaIds": []
+     }
+    ],
+    "criteria": [],
+    "host": {
+     "armed": false,
+     "armedAt": null,
+     "source": "none"
+    },
+    "reviewRounds": [
+     {
+      "roundId": "r1",
+      "purpose": "plan_audit",
+      "planPath": "devlog/_plan/260815_probe",
+      "planSha256": "6999a514f0f9423c49c6fba5fbaf6b295caee072eff210b0e55bc584b7445355",
+      "status": "inconclusive",
+      "lane": {
+       "launchId": "r1-<STAMP>",
+       "reviewerSession": "aborted: aborted by the agent"
+      },
+      "openedAt": "<TS>",
+      "closedAt": "<TS>",
+      "ownerSessionId": "rb",
+      "workPhaseId": "wp1",
+      "planUnit": "devlog/_plan/260815_probe",
+      "planEpoch": "e-probe-1",
+      "planFiles": [
+       {
+        "path": "devlog/_plan/260815_probe/000_plan.md",
+        "sha256": "043e84e9c05567c907905179c3c16ed31f46b1b53f0d1bd9f47b3d78ba08a2b9"
+       }
+      ]
+     },
+     {
+      "roundId": "r2",
+      "purpose": "plan_audit",
+      "planPath": "devlog/_plan/260815_probe",
+      "planSha256": "6999a514f0f9423c49c6fba5fbaf6b295caee072eff210b0e55bc584b7445355",
+      "status": "in_flight",
+      "lane": {
+       "launchId": "r2-<STAMP>"
+      },
+      "openedAt": "<TS>",
+      "ownerSessionId": "rb",
+      "workPhaseId": "wp1",
+      "planUnit": "devlog/_plan/260815_probe",
+      "planEpoch": "e-probe-1",
+      "planFiles": [
+       {
+        "path": "devlog/_plan/260815_probe/000_plan.md",
+        "sha256": "043e84e9c05567c907905179c3c16ed31f46b1b53f0d1bd9f47b3d78ba08a2b9"
+       }
+      ]
+     }
+    ],
+    "schemaVersion": 1,
+    "activePlanAuditRoundId": "r2"
+   }
+  },
+  {
+   "id": "open_padded_session",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/goalplans/review-binding-probe/goalplan.json": "{\n  \"objective\": \"review binding\",\n  \"slug\": \"review-binding-probe\",\n  \"schemaVersion\": 1,\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"activeWorkPhaseId\": \"wp1\",\n  \"workPhases\": [\n    {\n      \"id\": \"wp1\",\n      \"title\": \"wp1\",\n      \"status\": \"in_progress\",\n      \"tasks\": [],\n      \"criteriaIds\": []\n    }\n  ],\n  \"criteria\": [],\n  \"host\": {\n    \"armed\": false,\n    \"armedAt\": null,\n    \"source\": \"none\"\n  }\n}",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"A\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"review-binding-probe\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": \"e-probe-1\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "open",
+      "--session",
+      " rb\t",
+      "--plan-path",
+      "devlog/_plan/260815_probe/000_plan.md"
+     ],
+     "want": {
+      "code": 0,
+      "output": "r1-<STAMP>\n\nRound r1 is in flight over 1 file(s).\nDispatch an independent reviewer (agent_type \"reviewer\" if exposed; otherwise agent_type \"explorer\" with CXC-ROLE: reviewer before TASK:; if the host has no agent_type field, omit agent_type and prepend CXC-ROLE: reviewer before TASK:) and require it to end its\nfinal message with exactly these two lines:\n\n  LAUNCH: r1-<STAMP>\n  VERDICT: PASS | NEAR-PASS | FAIL\n\nThe verdict is recorded when that reviewer exits. There is no way to write it here."
+     }
+    },
+    {
+     "argv": [
+      "show",
+      "--session",
+      "rb",
+      "--json"
+     ],
+     "want": {
+      "code": 0,
+      "output": "{\"roundId\":\"r1\",\"status\":\"in_flight\",\"staleness\":\"open\",\"launchId\":\"r1-<STAMP>\",\"verdict\":null,\"workPhaseId\":\"wp1\",\"planEpoch\":\"e-probe-1\"}"
+     }
+    }
+   ],
+   "after": {
+    "objective": "review binding",
+    "slug": "review-binding-probe",
+    "createdAt": "<TS>",
+    "updatedAt": "<TS>",
+    "activeWorkPhaseId": "wp1",
+    "workPhases": [
+     {
+      "id": "wp1",
+      "title": "wp1",
+      "status": "in_progress",
+      "tasks": [],
+      "criteriaIds": []
+     }
+    ],
+    "criteria": [],
+    "host": {
+     "armed": false,
+     "armedAt": null,
+     "source": "none"
+    },
+    "schemaVersion": 1,
+    "reviewRounds": [
+     {
+      "roundId": "r1",
+      "purpose": "plan_audit",
+      "planPath": "devlog/_plan/260815_probe",
+      "planSha256": "6999a514f0f9423c49c6fba5fbaf6b295caee072eff210b0e55bc584b7445355",
+      "status": "in_flight",
+      "lane": {
+       "launchId": "r1-<STAMP>"
+      },
+      "openedAt": "<TS>",
+      "ownerSessionId": "rb",
+      "workPhaseId": "wp1",
+      "planUnit": "devlog/_plan/260815_probe",
+      "planEpoch": "e-probe-1",
+      "planFiles": [
+       {
+        "path": "devlog/_plan/260815_probe/000_plan.md",
+        "sha256": "043e84e9c05567c907905179c3c16ed31f46b1b53f0d1bd9f47b3d78ba08a2b9"
+       }
+      ]
+     }
+    ],
+    "activePlanAuditRoundId": "r1"
+   }
+  },
+  {
+   "id": "open_unsafe_session_id",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/goalplans/review-binding-probe/goalplan.json": "{\n  \"objective\": \"review binding\",\n  \"slug\": \"review-binding-probe\",\n  \"schemaVersion\": 1,\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"activeWorkPhaseId\": \"wp1\",\n  \"workPhases\": [\n    {\n      \"id\": \"wp1\",\n      \"title\": \"wp1\",\n      \"status\": \"in_progress\",\n      \"tasks\": [],\n      \"criteriaIds\": []\n    }\n  ],\n  \"criteria\": [],\n  \"host\": {\n    \"armed\": false,\n    \"armedAt\": null,\n    \"source\": \"none\"\n  }\n}",
+    ".codexclaw/sessions/a-b.json": "{\n  \"phase\": \"A\",\n  \"sessionId\": \"a/b\",\n  \"slug\": \"review-binding-probe\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": \"e-probe-1\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "open",
+      "--session",
+      "a/b",
+      "--plan-path",
+      "devlog/_plan/260815_probe/000_plan.md"
+     ],
+     "want": {
+      "code": 0,
+      "output": "r1-<STAMP>\n\nRound r1 is in flight over 1 file(s).\nDispatch an independent reviewer (agent_type \"reviewer\" if exposed; otherwise agent_type \"explorer\" with CXC-ROLE: reviewer before TASK:; if the host has no agent_type field, omit agent_type and prepend CXC-ROLE: reviewer before TASK:) and require it to end its\nfinal message with exactly these two lines:\n\n  LAUNCH: r1-<STAMP>\n  VERDICT: PASS | NEAR-PASS | FAIL\n\nThe verdict is recorded when that reviewer exits. There is no way to write it here."
+     }
+    },
+    {
+     "argv": [
+      "show",
+      "--session",
+      "a/b"
+     ],
+     "want": {
+      "code": 0,
+      "output": "review-round r1: status=in_flight staleness=open verdict=- launch=r1-<STAMP>"
+     }
+    }
+   ],
+   "after": {
+    "objective": "review binding",
+    "slug": "review-binding-probe",
+    "createdAt": "<TS>",
+    "updatedAt": "<TS>",
+    "activeWorkPhaseId": "wp1",
+    "workPhases": [
+     {
+      "id": "wp1",
+      "title": "wp1",
+      "status": "in_progress",
+      "tasks": [],
+      "criteriaIds": []
+     }
+    ],
+    "criteria": [],
+    "host": {
+     "armed": false,
+     "armedAt": null,
+     "source": "none"
+    },
+    "schemaVersion": 1,
+    "reviewRounds": [
+     {
+      "roundId": "r1",
+      "purpose": "plan_audit",
+      "planPath": "devlog/_plan/260815_probe",
+      "planSha256": "6999a514f0f9423c49c6fba5fbaf6b295caee072eff210b0e55bc584b7445355",
+      "status": "in_flight",
+      "lane": {
+       "launchId": "r1-<STAMP>"
+      },
+      "openedAt": "<TS>",
+      "ownerSessionId": "a/b",
+      "workPhaseId": "wp1",
+      "planUnit": "devlog/_plan/260815_probe",
+      "planEpoch": "e-probe-1",
+      "planFiles": [
+       {
+        "path": "devlog/_plan/260815_probe/000_plan.md",
+        "sha256": "043e84e9c05567c907905179c3c16ed31f46b1b53f0d1bd9f47b3d78ba08a2b9"
+       }
+      ]
+     }
+    ],
+    "activePlanAuditRoundId": "r1"
+   }
+  },
+  {
+   "id": "open_refreshes_a_pending_round",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/goalplans/review-binding-probe/goalplan.json": "{\n  \"objective\": \"review binding\",\n  \"slug\": \"review-binding-probe\",\n  \"schemaVersion\": 1,\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"activeWorkPhaseId\": \"wp1\",\n  \"workPhases\": [\n    {\n      \"id\": \"wp1\",\n      \"title\": \"wp1\",\n      \"status\": \"in_progress\",\n      \"tasks\": [],\n      \"criteriaIds\": []\n    }\n  ],\n  \"criteria\": [],\n  \"host\": {\n    \"armed\": false,\n    \"armedAt\": null,\n    \"source\": \"none\"\n  },\n  \"reviewRounds\": [\n    {\n      \"roundId\": \"r1\",\n      \"purpose\": \"plan_audit\",\n      \"planPath\": \"devlog/_plan/260815_probe\",\n      \"planSha256\": \"x\",\n      \"status\": \"pending\",\n      \"lane\": {\n        \"launchId\": \"r1-20260101000000\"\n      },\n      \"openedAt\": \"2026-01-01T00:00:00.000Z\"\n    }\n  ],\n  \"activePlanAuditRoundId\": \"r1\"\n}",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"A\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"review-binding-probe\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": \"e-probe-1\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "open",
+      "--session",
+      "rb",
+      "--plan-path",
+      "devlog/_plan/260815_probe/000_plan.md"
+     ],
+     "want": {
+      "code": 0,
+      "output": "r1-<STAMP>\n\nRound r1 is in flight over 1 file(s).\nDispatch an independent reviewer (agent_type \"reviewer\" if exposed; otherwise agent_type \"explorer\" with CXC-ROLE: reviewer before TASK:; if the host has no agent_type field, omit agent_type and prepend CXC-ROLE: reviewer before TASK:) and require it to end its\nfinal message with exactly these two lines:\n\n  LAUNCH: r1-<STAMP>\n  VERDICT: PASS | NEAR-PASS | FAIL\n\nThe verdict is recorded when that reviewer exits. There is no way to write it here."
+     }
+    },
+    {
+     "argv": [
+      "show",
+      "--session",
+      "rb",
+      "--json"
+     ],
+     "want": {
+      "code": 0,
+      "output": "{\"roundId\":\"r1\",\"status\":\"in_flight\",\"staleness\":\"open\",\"launchId\":\"r1-<STAMP>\",\"verdict\":null,\"workPhaseId\":\"wp1\",\"planEpoch\":\"e-probe-1\"}"
+     }
+    }
+   ],
+   "after": {
+    "objective": "review binding",
+    "slug": "review-binding-probe",
+    "createdAt": "<TS>",
+    "updatedAt": "<TS>",
+    "activeWorkPhaseId": "wp1",
+    "workPhases": [
+     {
+      "id": "wp1",
+      "title": "wp1",
+      "status": "in_progress",
+      "tasks": [],
+      "criteriaIds": []
+     }
+    ],
+    "criteria": [],
+    "host": {
+     "armed": false,
+     "armedAt": null,
+     "source": "none"
+    },
+    "reviewRounds": [
+     {
+      "roundId": "r1",
+      "purpose": "plan_audit",
+      "planPath": "devlog/_plan/260815_probe",
+      "planSha256": "6999a514f0f9423c49c6fba5fbaf6b295caee072eff210b0e55bc584b7445355",
+      "status": "in_flight",
+      "lane": {
+       "launchId": "r1-<STAMP>"
+      },
+      "openedAt": "<TS>",
+      "ownerSessionId": "rb",
+      "workPhaseId": "wp1",
+      "planUnit": "devlog/_plan/260815_probe",
+      "planEpoch": "e-probe-1",
+      "planFiles": [
+       {
+        "path": "devlog/_plan/260815_probe/000_plan.md",
+        "sha256": "043e84e9c05567c907905179c3c16ed31f46b1b53f0d1bd9f47b3d78ba08a2b9"
+       }
+      ]
+     }
+    ],
+    "activePlanAuditRoundId": "r1",
+    "schemaVersion": 1
+   }
+  },
+  {
+   "id": "open_refuses_a_stale_reused_round",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/goalplans/review-binding-probe/goalplan.json": "{\n  \"objective\": \"review binding\",\n  \"slug\": \"review-binding-probe\",\n  \"schemaVersion\": 1,\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"activeWorkPhaseId\": \"wp1\",\n  \"workPhases\": [\n    {\n      \"id\": \"wp1\",\n      \"title\": \"wp1\",\n      \"status\": \"in_progress\",\n      \"tasks\": [],\n      \"criteriaIds\": []\n    }\n  ],\n  \"criteria\": [],\n  \"host\": {\n    \"armed\": false,\n    \"armedAt\": null,\n    \"source\": \"none\"\n  },\n  \"reviewRounds\": [\n    {\n      \"roundId\": \"r1\",\n      \"purpose\": \"plan_audit\",\n      \"planPath\": \"devlog/_plan/260815_probe\",\n      \"planSha256\": \"x\",\n      \"status\": \"pending\",\n      \"lane\": {\n        \"launchId\": \"r1-20260101000000\"\n      },\n      \"openedAt\": \"2026-01-01T00:00:00.000Z\"\n    },\n    {\n      \"roundId\": \"r2\",\n      \"purpose\": \"plan_audit\",\n      \"planPath\": \"devlog/_plan/260815_probe\",\n      \"planSha256\": \"x\",\n      \"status\": \"inconclusive\",\n      \"lane\": {\n        \"launchId\": \"r2-20260101000000\"\n      },\n      \"openedAt\": \"2026-01-01T00:00:00.000Z\",\n      \"closedAt\": \"2026-01-01T00:00:00.000Z\"\n    }\n  ],\n  \"activePlanAuditRoundId\": \"r1\"\n}",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"A\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"review-binding-probe\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": \"e-probe-1\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "open",
+      "--session",
+      "rb",
+      "--plan-path",
+      "devlog/_plan/260815_probe/000_plan.md"
+     ],
+     "want": {
+      "code": 1,
+      "output": "review-round open: round r1 was superseded before this verdict arrived"
+     }
+    }
+   ],
+   "after": {
+    "objective": "review binding",
+    "slug": "review-binding-probe",
+    "schemaVersion": 1,
+    "createdAt": "<TS>",
+    "updatedAt": "<TS>",
+    "activeWorkPhaseId": "wp1",
+    "workPhases": [
+     {
+      "id": "wp1",
+      "title": "wp1",
+      "status": "in_progress",
+      "tasks": [],
+      "criteriaIds": []
+     }
+    ],
+    "criteria": [],
+    "host": {
+     "armed": false,
+     "armedAt": null,
+     "source": "none"
+    },
+    "reviewRounds": [
+     {
+      "roundId": "r1",
+      "purpose": "plan_audit",
+      "planPath": "devlog/_plan/260815_probe",
+      "planSha256": "x",
+      "status": "pending",
+      "lane": {
+       "launchId": "r1-<STAMP>"
+      },
+      "openedAt": "<TS>"
+     },
+     {
+      "roundId": "r2",
+      "purpose": "plan_audit",
+      "planPath": "devlog/_plan/260815_probe",
+      "planSha256": "x",
+      "status": "inconclusive",
+      "lane": {
+       "launchId": "r2-<STAMP>"
+      },
+      "openedAt": "<TS>",
+      "closedAt": "<TS>"
+     }
+    ],
+    "activePlanAuditRoundId": "r1"
+   }
+  },
+  {
+   "id": "open_after_a_closed_round",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/goalplans/review-binding-probe/goalplan.json": "{\n  \"objective\": \"review binding\",\n  \"slug\": \"review-binding-probe\",\n  \"schemaVersion\": 1,\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"activeWorkPhaseId\": \"wp1\",\n  \"workPhases\": [\n    {\n      \"id\": \"wp1\",\n      \"title\": \"wp1\",\n      \"status\": \"in_progress\",\n      \"tasks\": [],\n      \"criteriaIds\": []\n    }\n  ],\n  \"criteria\": [],\n  \"host\": {\n    \"armed\": false,\n    \"armedAt\": null,\n    \"source\": \"none\"\n  },\n  \"reviewRounds\": [\n    {\n      \"roundId\": \"r1\",\n      \"purpose\": \"plan_audit\",\n      \"planPath\": \"devlog/_plan/260815_probe\",\n      \"planSha256\": \"x\",\n      \"status\": \"changes_requested\",\n      \"lane\": {\n        \"launchId\": \"r1-20260101000000\",\n        \"verdict\": \"fail\"\n      },\n      \"openedAt\": \"2026-01-01T00:00:00.000Z\",\n      \"closedAt\": \"2026-01-01T00:00:00.000Z\"\n    }\n  ]\n}",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"A\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"review-binding-probe\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": \"e-probe-1\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "open",
+      "--session",
+      "rb",
+      "--plan-path",
+      "devlog/_plan/260815_probe/000_plan.md"
+     ],
+     "want": {
+      "code": 0,
+      "output": "r2-<STAMP>\n\nRound r2 is in flight over 1 file(s).\nDispatch an independent reviewer (agent_type \"reviewer\" if exposed; otherwise agent_type \"explorer\" with CXC-ROLE: reviewer before TASK:; if the host has no agent_type field, omit agent_type and prepend CXC-ROLE: reviewer before TASK:) and require it to end its\nfinal message with exactly these two lines:\n\n  LAUNCH: r2-<STAMP>\n  VERDICT: PASS | NEAR-PASS | FAIL\n\nThe verdict is recorded when that reviewer exits. There is no way to write it here."
+     }
+    },
+    {
+     "argv": [
+      "show",
+      "--session",
+      "rb",
+      "--json"
+     ],
+     "want": {
+      "code": 0,
+      "output": "{\"roundId\":\"r2\",\"status\":\"in_flight\",\"staleness\":\"open\",\"launchId\":\"r2-<STAMP>\",\"verdict\":null,\"workPhaseId\":\"wp1\",\"planEpoch\":\"e-probe-1\"}"
+     }
+    }
+   ],
+   "after": {
+    "objective": "review binding",
+    "slug": "review-binding-probe",
+    "createdAt": "<TS>",
+    "updatedAt": "<TS>",
+    "activeWorkPhaseId": "wp1",
+    "workPhases": [
+     {
+      "id": "wp1",
+      "title": "wp1",
+      "status": "in_progress",
+      "tasks": [],
+      "criteriaIds": []
+     }
+    ],
+    "criteria": [],
+    "host": {
+     "armed": false,
+     "armedAt": null,
+     "source": "none"
+    },
+    "reviewRounds": [
+     {
+      "roundId": "r1",
+      "purpose": "plan_audit",
+      "planPath": "devlog/_plan/260815_probe",
+      "planSha256": "x",
+      "status": "changes_requested",
+      "lane": {
+       "launchId": "r1-<STAMP>",
+       "verdict": "fail"
+      },
+      "openedAt": "<TS>",
+      "closedAt": "<TS>"
+     },
+     {
+      "roundId": "r2",
+      "purpose": "plan_audit",
+      "planPath": "devlog/_plan/260815_probe",
+      "planSha256": "6999a514f0f9423c49c6fba5fbaf6b295caee072eff210b0e55bc584b7445355",
+      "status": "in_flight",
+      "lane": {
+       "launchId": "r2-<STAMP>"
+      },
+      "openedAt": "<TS>",
+      "ownerSessionId": "rb",
+      "workPhaseId": "wp1",
+      "planUnit": "devlog/_plan/260815_probe",
+      "planEpoch": "e-probe-1",
+      "planFiles": [
+       {
+        "path": "devlog/_plan/260815_probe/000_plan.md",
+        "sha256": "043e84e9c05567c907905179c3c16ed31f46b1b53f0d1bd9f47b3d78ba08a2b9"
+       }
+      ]
+     }
+    ],
+    "schemaVersion": 1,
+    "activePlanAuditRoundId": "r2"
+   }
+  },
+  {
+   "id": "open_not_at_A",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/goalplans/review-binding-probe/goalplan.json": "{\n  \"objective\": \"review binding\",\n  \"slug\": \"review-binding-probe\",\n  \"schemaVersion\": 1,\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"activeWorkPhaseId\": \"wp1\",\n  \"workPhases\": [\n    {\n      \"id\": \"wp1\",\n      \"title\": \"wp1\",\n      \"status\": \"in_progress\",\n      \"tasks\": [],\n      \"criteriaIds\": []\n    }\n  ],\n  \"criteria\": [],\n  \"host\": {\n    \"armed\": false,\n    \"armedAt\": null,\n    \"source\": \"none\"\n  }\n}",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"P\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"review-binding-probe\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": \"e-probe-1\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "open",
+      "--session",
+      "rb",
+      "--plan-path",
+      "devlog/_plan/260815_probe/000_plan.md"
+     ],
+     "want": {
+      "code": 1,
+      "output": "review-round open: session is at P, not A — a plan audit is opened during Audit"
+     }
+    }
+   ],
+   "after": {
+    "objective": "review binding",
+    "slug": "review-binding-probe",
+    "schemaVersion": 1,
+    "createdAt": "<TS>",
+    "updatedAt": "<TS>",
+    "activeWorkPhaseId": "wp1",
+    "workPhases": [
+     {
+      "id": "wp1",
+      "title": "wp1",
+      "status": "in_progress",
+      "tasks": [],
+      "criteriaIds": []
+     }
+    ],
+    "criteria": [],
+    "host": {
+     "armed": false,
+     "armedAt": null,
+     "source": "none"
+    }
+   }
+  },
+  {
+   "id": "open_idle",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/goalplans/review-binding-probe/goalplan.json": "{\n  \"objective\": \"review binding\",\n  \"slug\": \"review-binding-probe\",\n  \"schemaVersion\": 1,\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"activeWorkPhaseId\": \"wp1\",\n  \"workPhases\": [\n    {\n      \"id\": \"wp1\",\n      \"title\": \"wp1\",\n      \"status\": \"in_progress\",\n      \"tasks\": [],\n      \"criteriaIds\": []\n    }\n  ],\n  \"criteria\": [],\n  \"host\": {\n    \"armed\": false,\n    \"armedAt\": null,\n    \"source\": \"none\"\n  }\n}",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"IDLE\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"review-binding-probe\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": \"e-probe-1\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "open",
+      "--session",
+      "rb",
+      "--plan-path",
+      "devlog/_plan/260815_probe/000_plan.md"
+     ],
+     "want": {
+      "code": 1,
+      "output": "review-round open: session is at IDLE, not A — a plan audit is opened during Audit"
+     }
+    }
+   ],
+   "after": {
+    "objective": "review binding",
+    "slug": "review-binding-probe",
+    "schemaVersion": 1,
+    "createdAt": "<TS>",
+    "updatedAt": "<TS>",
+    "activeWorkPhaseId": "wp1",
+    "workPhases": [
+     {
+      "id": "wp1",
+      "title": "wp1",
+      "status": "in_progress",
+      "tasks": [],
+      "criteriaIds": []
+     }
+    ],
+    "criteria": [],
+    "host": {
+     "armed": false,
+     "armedAt": null,
+     "source": "none"
+    }
+   }
+  },
+  {
+   "id": "open_no_slug",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"A\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": \"e-probe-1\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "open",
+      "--session",
+      "rb",
+      "--plan-path",
+      "devlog/_plan/260815_probe/000_plan.md"
+     ],
+     "want": {
+      "code": 1,
+      "output": "review-round open: this session has no bound goalplan"
+     }
+    }
+   ],
+   "after": null
+  },
+  {
+   "id": "open_no_unit",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/goalplans/review-binding-probe/goalplan.json": "{\n  \"objective\": \"review binding\",\n  \"slug\": \"review-binding-probe\",\n  \"schemaVersion\": 1,\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"activeWorkPhaseId\": \"wp1\",\n  \"workPhases\": [\n    {\n      \"id\": \"wp1\",\n      \"title\": \"wp1\",\n      \"status\": \"in_progress\",\n      \"tasks\": [],\n      \"criteriaIds\": []\n    }\n  ],\n  \"criteria\": [],\n  \"host\": {\n    \"armed\": false,\n    \"armedAt\": null,\n    \"source\": \"none\"\n  }\n}",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"A\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"review-binding-probe\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": null,\n  \"planEpoch\": \"e-probe-1\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "open",
+      "--session",
+      "rb",
+      "--plan-path",
+      "devlog/_plan/260815_probe/000_plan.md"
+     ],
+     "want": {
+      "code": 1,
+      "output": "review-round open: no plan binding on this session — enter A through `cxc orchestrate A` so P>A records the unit it validated"
+     }
+    }
+   ],
+   "after": {
+    "objective": "review binding",
+    "slug": "review-binding-probe",
+    "schemaVersion": 1,
+    "createdAt": "<TS>",
+    "updatedAt": "<TS>",
+    "activeWorkPhaseId": "wp1",
+    "workPhases": [
+     {
+      "id": "wp1",
+      "title": "wp1",
+      "status": "in_progress",
+      "tasks": [],
+      "criteriaIds": []
+     }
+    ],
+    "criteria": [],
+    "host": {
+     "armed": false,
+     "armedAt": null,
+     "source": "none"
+    }
+   }
+  },
+  {
+   "id": "open_no_epoch",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/goalplans/review-binding-probe/goalplan.json": "{\n  \"objective\": \"review binding\",\n  \"slug\": \"review-binding-probe\",\n  \"schemaVersion\": 1,\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"activeWorkPhaseId\": \"wp1\",\n  \"workPhases\": [\n    {\n      \"id\": \"wp1\",\n      \"title\": \"wp1\",\n      \"status\": \"in_progress\",\n      \"tasks\": [],\n      \"criteriaIds\": []\n    }\n  ],\n  \"criteria\": [],\n  \"host\": {\n    \"armed\": false,\n    \"armedAt\": null,\n    \"source\": \"none\"\n  }\n}",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"A\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"review-binding-probe\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": null,\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "open",
+      "--session",
+      "rb",
+      "--plan-path",
+      "devlog/_plan/260815_probe/000_plan.md"
+     ],
+     "want": {
+      "code": 1,
+      "output": "review-round open: no plan binding on this session — enter A through `cxc orchestrate A` so P>A records the unit it validated"
+     }
+    }
+   ],
+   "after": {
+    "objective": "review binding",
+    "slug": "review-binding-probe",
+    "schemaVersion": 1,
+    "createdAt": "<TS>",
+    "updatedAt": "<TS>",
+    "activeWorkPhaseId": "wp1",
+    "workPhases": [
+     {
+      "id": "wp1",
+      "title": "wp1",
+      "status": "in_progress",
+      "tasks": [],
+      "criteriaIds": []
+     }
+    ],
+    "criteria": [],
+    "host": {
+     "armed": false,
+     "armedAt": null,
+     "source": "none"
+    }
+   }
+  },
+  {
+   "id": "open_empty_epoch",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/goalplans/review-binding-probe/goalplan.json": "{\n  \"objective\": \"review binding\",\n  \"slug\": \"review-binding-probe\",\n  \"schemaVersion\": 1,\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"activeWorkPhaseId\": \"wp1\",\n  \"workPhases\": [\n    {\n      \"id\": \"wp1\",\n      \"title\": \"wp1\",\n      \"status\": \"in_progress\",\n      \"tasks\": [],\n      \"criteriaIds\": []\n    }\n  ],\n  \"criteria\": [],\n  \"host\": {\n    \"armed\": false,\n    \"armedAt\": null,\n    \"source\": \"none\"\n  }\n}",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"A\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"review-binding-probe\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": \"\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "open",
+      "--session",
+      "rb",
+      "--plan-path",
+      "devlog/_plan/260815_probe/000_plan.md"
+     ],
+     "want": {
+      "code": 1,
+      "output": "review-round open: no plan binding on this session — enter A through `cxc orchestrate A` so P>A records the unit it validated"
+     }
+    }
+   ],
+   "after": {
+    "objective": "review binding",
+    "slug": "review-binding-probe",
+    "schemaVersion": 1,
+    "createdAt": "<TS>",
+    "updatedAt": "<TS>",
+    "activeWorkPhaseId": "wp1",
+    "workPhases": [
+     {
+      "id": "wp1",
+      "title": "wp1",
+      "status": "in_progress",
+      "tasks": [],
+      "criteriaIds": []
+     }
+    ],
+    "criteria": [],
+    "host": {
+     "armed": false,
+     "armedAt": null,
+     "source": "none"
+    }
+   }
+  },
+  {
+   "id": "open_no_plan_path",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/goalplans/review-binding-probe/goalplan.json": "{\n  \"objective\": \"review binding\",\n  \"slug\": \"review-binding-probe\",\n  \"schemaVersion\": 1,\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"activeWorkPhaseId\": \"wp1\",\n  \"workPhases\": [\n    {\n      \"id\": \"wp1\",\n      \"title\": \"wp1\",\n      \"status\": \"in_progress\",\n      \"tasks\": [],\n      \"criteriaIds\": []\n    }\n  ],\n  \"criteria\": [],\n  \"host\": {\n    \"armed\": false,\n    \"armedAt\": null,\n    \"source\": \"none\"\n  }\n}",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"A\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"review-binding-probe\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": \"e-probe-1\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "open",
+      "--session",
+      "rb"
+     ],
+     "want": {
+      "code": 1,
+      "output": "review-round open: --plan-path is required at least once: a round with no files audits nothing"
+     }
+    }
+   ],
+   "after": {
+    "objective": "review binding",
+    "slug": "review-binding-probe",
+    "schemaVersion": 1,
+    "createdAt": "<TS>",
+    "updatedAt": "<TS>",
+    "activeWorkPhaseId": "wp1",
+    "workPhases": [
+     {
+      "id": "wp1",
+      "title": "wp1",
+      "status": "in_progress",
+      "tasks": [],
+      "criteriaIds": []
+     }
+    ],
+    "criteria": [],
+    "host": {
+     "armed": false,
+     "armedAt": null,
+     "source": "none"
+    }
+   }
+  },
+  {
+   "id": "open_foreign_path",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/goalplans/review-binding-probe/goalplan.json": "{\n  \"objective\": \"review binding\",\n  \"slug\": \"review-binding-probe\",\n  \"schemaVersion\": 1,\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"activeWorkPhaseId\": \"wp1\",\n  \"workPhases\": [\n    {\n      \"id\": \"wp1\",\n      \"title\": \"wp1\",\n      \"status\": \"in_progress\",\n      \"tasks\": [],\n      \"criteriaIds\": []\n    }\n  ],\n  \"criteria\": [],\n  \"host\": {\n    \"armed\": false,\n    \"armedAt\": null,\n    \"source\": \"none\"\n  }\n}",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"A\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"review-binding-probe\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": \"e-probe-1\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n",
+    "package.json": "{}\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "open",
+      "--session",
+      "rb",
+      "--plan-path",
+      "package.json"
+     ],
+     "want": {
+      "code": 1,
+      "output": "review-round open: plan path package.json is outside the bound plan unit devlog/_plan/260815_probe"
+     }
+    }
+   ],
+   "after": {
+    "objective": "review binding",
+    "slug": "review-binding-probe",
+    "schemaVersion": 1,
+    "createdAt": "<TS>",
+    "updatedAt": "<TS>",
+    "activeWorkPhaseId": "wp1",
+    "workPhases": [
+     {
+      "id": "wp1",
+      "title": "wp1",
+      "status": "in_progress",
+      "tasks": [],
+      "criteriaIds": []
+     }
+    ],
+    "criteria": [],
+    "host": {
+     "armed": false,
+     "armedAt": null,
+     "source": "none"
+    }
+   }
+  },
+  {
+   "id": "open_not_a_numbered_document",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/goalplans/review-binding-probe/goalplan.json": "{\n  \"objective\": \"review binding\",\n  \"slug\": \"review-binding-probe\",\n  \"schemaVersion\": 1,\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"activeWorkPhaseId\": \"wp1\",\n  \"workPhases\": [\n    {\n      \"id\": \"wp1\",\n      \"title\": \"wp1\",\n      \"status\": \"in_progress\",\n      \"tasks\": [],\n      \"criteriaIds\": []\n    }\n  ],\n  \"criteria\": [],\n  \"host\": {\n    \"armed\": false,\n    \"armedAt\": null,\n    \"source\": \"none\"\n  }\n}",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"A\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"review-binding-probe\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": \"e-probe-1\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n",
+    "devlog/_plan/260815_probe/010_second.md": "# second\r\nwith crlf\r\n",
+    "devlog/_plan/260815_probe/notes.md": "notes\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "open",
+      "--session",
+      "rb",
+      "--plan-path",
+      "devlog/_plan/260815_probe/notes.md"
+     ],
+     "want": {
+      "code": 1,
+      "output": "review-round open: plan path devlog/_plan/260815_probe/notes.md is not a numbered plan document (000_*.md) directly inside devlog/_plan/260815_probe"
+     }
+    }
+   ],
+   "after": {
+    "objective": "review binding",
+    "slug": "review-binding-probe",
+    "schemaVersion": 1,
+    "createdAt": "<TS>",
+    "updatedAt": "<TS>",
+    "activeWorkPhaseId": "wp1",
+    "workPhases": [
+     {
+      "id": "wp1",
+      "title": "wp1",
+      "status": "in_progress",
+      "tasks": [],
+      "criteriaIds": []
+     }
+    ],
+    "criteria": [],
+    "host": {
+     "armed": false,
+     "armedAt": null,
+     "source": "none"
+    }
+   }
+  },
+  {
+   "id": "open_missing_document",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/goalplans/review-binding-probe/goalplan.json": "{\n  \"objective\": \"review binding\",\n  \"slug\": \"review-binding-probe\",\n  \"schemaVersion\": 1,\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"activeWorkPhaseId\": \"wp1\",\n  \"workPhases\": [\n    {\n      \"id\": \"wp1\",\n      \"title\": \"wp1\",\n      \"status\": \"in_progress\",\n      \"tasks\": [],\n      \"criteriaIds\": []\n    }\n  ],\n  \"criteria\": [],\n  \"host\": {\n    \"armed\": false,\n    \"armedAt\": null,\n    \"source\": \"none\"\n  }\n}",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"A\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"review-binding-probe\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": \"e-probe-1\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "open",
+      "--session",
+      "rb",
+      "--plan-path",
+      "devlog/_plan/260815_probe/050_missing.md"
+     ],
+     "want": {
+      "code": 1,
+      "output": "review-round open: plan path devlog/_plan/260815_probe/050_missing.md is not a readable regular file"
+     }
+    }
+   ],
+   "after": {
+    "objective": "review binding",
+    "slug": "review-binding-probe",
+    "schemaVersion": 1,
+    "createdAt": "<TS>",
+    "updatedAt": "<TS>",
+    "activeWorkPhaseId": "wp1",
+    "workPhases": [
+     {
+      "id": "wp1",
+      "title": "wp1",
+      "status": "in_progress",
+      "tasks": [],
+      "criteriaIds": []
+     }
+    ],
+    "criteria": [],
+    "host": {
+     "armed": false,
+     "armedAt": null,
+     "source": "none"
+    }
+   }
+  },
+  {
+   "id": "open_path_in_another_unit",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/goalplans/review-binding-probe/goalplan.json": "{\n  \"objective\": \"review binding\",\n  \"slug\": \"review-binding-probe\",\n  \"schemaVersion\": 1,\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"activeWorkPhaseId\": \"wp1\",\n  \"workPhases\": [\n    {\n      \"id\": \"wp1\",\n      \"title\": \"wp1\",\n      \"status\": \"in_progress\",\n      \"tasks\": [],\n      \"criteriaIds\": []\n    }\n  ],\n  \"criteria\": [],\n  \"host\": {\n    \"armed\": false,\n    \"armedAt\": null,\n    \"source\": \"none\"\n  }\n}",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"A\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"review-binding-probe\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": \"e-probe-1\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "open",
+      "--session",
+      "rb",
+      "--plan-path",
+      "devlog/_plan/other/000_plan.md"
+     ],
+     "want": {
+      "code": 1,
+      "output": "review-round open: plan path devlog/_plan/other/000_plan.md is outside the bound plan unit devlog/_plan/260815_probe"
+     }
+    }
+   ],
+   "after": {
+    "objective": "review binding",
+    "slug": "review-binding-probe",
+    "schemaVersion": 1,
+    "createdAt": "<TS>",
+    "updatedAt": "<TS>",
+    "activeWorkPhaseId": "wp1",
+    "workPhases": [
+     {
+      "id": "wp1",
+      "title": "wp1",
+      "status": "in_progress",
+      "tasks": [],
+      "criteriaIds": []
+     }
+    ],
+    "criteria": [],
+    "host": {
+     "armed": false,
+     "armedAt": null,
+     "source": "none"
+    }
+   }
+  },
+  {
+   "id": "open_no_active_work_phase",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/goalplans/review-binding-probe/goalplan.json": "{\n  \"objective\": \"review binding\",\n  \"slug\": \"review-binding-probe\",\n  \"schemaVersion\": 1,\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"activeWorkPhaseId\": \"wp1\",\n  \"workPhases\": [\n    {\n      \"id\": \"wp1\",\n      \"title\": \"wp1\",\n      \"status\": \"done\",\n      \"tasks\": [],\n      \"criteriaIds\": []\n    }\n  ],\n  \"criteria\": [],\n  \"host\": {\n    \"armed\": false,\n    \"armedAt\": null,\n    \"source\": \"none\"\n  }\n}",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"A\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"review-binding-probe\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": \"e-probe-1\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "open",
+      "--session",
+      "rb",
+      "--plan-path",
+      "devlog/_plan/260815_probe/000_plan.md"
+     ],
+     "want": {
+      "code": 1,
+      "output": "review-round open: the bound goalplan has no active work-phase"
+     }
+    }
+   ],
+   "after": {
+    "objective": "review binding",
+    "slug": "review-binding-probe",
+    "schemaVersion": 1,
+    "createdAt": "<TS>",
+    "updatedAt": "<TS>",
+    "activeWorkPhaseId": "wp1",
+    "workPhases": [
+     {
+      "id": "wp1",
+      "title": "wp1",
+      "status": "done",
+      "tasks": [],
+      "criteriaIds": []
+     }
+    ],
+    "criteria": [],
+    "host": {
+     "armed": false,
+     "armedAt": null,
+     "source": "none"
+    }
+   }
+  },
+  {
+   "id": "open_cursor_names_a_done_phase",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/goalplans/review-binding-probe/goalplan.json": "{\n  \"objective\": \"review binding\",\n  \"slug\": \"review-binding-probe\",\n  \"schemaVersion\": 1,\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"activeWorkPhaseId\": \"wp1\",\n  \"workPhases\": [\n    {\n      \"id\": \"wp1\",\n      \"title\": \"wp1\",\n      \"status\": \"done\",\n      \"tasks\": [],\n      \"criteriaIds\": []\n    },\n    {\n      \"id\": \"wp2\",\n      \"title\": \"wp2\",\n      \"status\": \"pending\",\n      \"tasks\": [],\n      \"criteriaIds\": []\n    }\n  ],\n  \"criteria\": [],\n  \"host\": {\n    \"armed\": false,\n    \"armedAt\": null,\n    \"source\": \"none\"\n  }\n}",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"A\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"review-binding-probe\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": \"e-probe-1\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "open",
+      "--session",
+      "rb",
+      "--plan-path",
+      "devlog/_plan/260815_probe/000_plan.md"
+     ],
+     "want": {
+      "code": 0,
+      "output": "r1-<STAMP>\n\nRound r1 is in flight over 1 file(s).\nDispatch an independent reviewer (agent_type \"reviewer\" if exposed; otherwise agent_type \"explorer\" with CXC-ROLE: reviewer before TASK:; if the host has no agent_type field, omit agent_type and prepend CXC-ROLE: reviewer before TASK:) and require it to end its\nfinal message with exactly these two lines:\n\n  LAUNCH: r1-<STAMP>\n  VERDICT: PASS | NEAR-PASS | FAIL\n\nThe verdict is recorded when that reviewer exits. There is no way to write it here."
+     }
+    },
+    {
+     "argv": [
+      "show",
+      "--session",
+      "rb",
+      "--json"
+     ],
+     "want": {
+      "code": 0,
+      "output": "{\"roundId\":\"r1\",\"status\":\"in_flight\",\"staleness\":\"open\",\"launchId\":\"r1-<STAMP>\",\"verdict\":null,\"workPhaseId\":\"wp2\",\"planEpoch\":\"e-probe-1\"}"
+     }
+    }
+   ],
+   "after": {
+    "objective": "review binding",
+    "slug": "review-binding-probe",
+    "createdAt": "<TS>",
+    "updatedAt": "<TS>",
+    "activeWorkPhaseId": "wp1",
+    "workPhases": [
+     {
+      "id": "wp1",
+      "title": "wp1",
+      "status": "done",
+      "tasks": [],
+      "criteriaIds": []
+     },
+     {
+      "id": "wp2",
+      "title": "wp2",
+      "status": "pending",
+      "tasks": [],
+      "criteriaIds": []
+     }
+    ],
+    "criteria": [],
+    "host": {
+     "armed": false,
+     "armedAt": null,
+     "source": "none"
+    },
+    "schemaVersion": 1,
+    "reviewRounds": [
+     {
+      "roundId": "r1",
+      "purpose": "plan_audit",
+      "planPath": "devlog/_plan/260815_probe",
+      "planSha256": "6999a514f0f9423c49c6fba5fbaf6b295caee072eff210b0e55bc584b7445355",
+      "status": "in_flight",
+      "lane": {
+       "launchId": "r1-<STAMP>"
+      },
+      "openedAt": "<TS>",
+      "ownerSessionId": "rb",
+      "workPhaseId": "wp2",
+      "planUnit": "devlog/_plan/260815_probe",
+      "planEpoch": "e-probe-1",
+      "planFiles": [
+       {
+        "path": "devlog/_plan/260815_probe/000_plan.md",
+        "sha256": "043e84e9c05567c907905179c3c16ed31f46b1b53f0d1bd9f47b3d78ba08a2b9"
+       }
+      ]
+     }
+    ],
+    "activePlanAuditRoundId": "r1"
+   }
+  },
+  {
+   "id": "open_unmet_dependency_moves_to_the_dependency",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/goalplans/review-binding-probe/goalplan.json": "{\n  \"objective\": \"review binding\",\n  \"slug\": \"review-binding-probe\",\n  \"schemaVersion\": 1,\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"activeWorkPhaseId\": \"wp2\",\n  \"workPhases\": [\n    {\n      \"id\": \"wp1\",\n      \"title\": \"wp1\",\n      \"status\": \"pending\",\n      \"tasks\": [],\n      \"criteriaIds\": []\n    },\n    {\n      \"id\": \"wp2\",\n      \"title\": \"wp2\",\n      \"status\": \"in_progress\",\n      \"tasks\": [],\n      \"criteriaIds\": [],\n      \"dependsOn\": [\n        \"wp1\"\n      ]\n    }\n  ],\n  \"criteria\": [],\n  \"host\": {\n    \"armed\": false,\n    \"armedAt\": null,\n    \"source\": \"none\"\n  }\n}",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"A\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"review-binding-probe\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": \"e-probe-1\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "open",
+      "--session",
+      "rb",
+      "--plan-path",
+      "devlog/_plan/260815_probe/000_plan.md"
+     ],
+     "want": {
+      "code": 0,
+      "output": "r1-<STAMP>\n\nRound r1 is in flight over 1 file(s).\nDispatch an independent reviewer (agent_type \"reviewer\" if exposed; otherwise agent_type \"explorer\" with CXC-ROLE: reviewer before TASK:; if the host has no agent_type field, omit agent_type and prepend CXC-ROLE: reviewer before TASK:) and require it to end its\nfinal message with exactly these two lines:\n\n  LAUNCH: r1-<STAMP>\n  VERDICT: PASS | NEAR-PASS | FAIL\n\nThe verdict is recorded when that reviewer exits. There is no way to write it here."
+     }
+    },
+    {
+     "argv": [
+      "show",
+      "--session",
+      "rb",
+      "--json"
+     ],
+     "want": {
+      "code": 0,
+      "output": "{\"roundId\":\"r1\",\"status\":\"in_flight\",\"staleness\":\"open\",\"launchId\":\"r1-<STAMP>\",\"verdict\":null,\"workPhaseId\":\"wp1\",\"planEpoch\":\"e-probe-1\"}"
+     }
+    }
+   ],
+   "after": {
+    "objective": "review binding",
+    "slug": "review-binding-probe",
+    "createdAt": "<TS>",
+    "updatedAt": "<TS>",
+    "activeWorkPhaseId": "wp2",
+    "workPhases": [
+     {
+      "id": "wp1",
+      "title": "wp1",
+      "status": "pending",
+      "tasks": [],
+      "criteriaIds": []
+     },
+     {
+      "id": "wp2",
+      "title": "wp2",
+      "status": "in_progress",
+      "tasks": [],
+      "criteriaIds": [],
+      "dependsOn": [
+       "wp1"
+      ]
+     }
+    ],
+    "criteria": [],
+    "host": {
+     "armed": false,
+     "armedAt": null,
+     "source": "none"
+    },
+    "schemaVersion": 1,
+    "reviewRounds": [
+     {
+      "roundId": "r1",
+      "purpose": "plan_audit",
+      "planPath": "devlog/_plan/260815_probe",
+      "planSha256": "6999a514f0f9423c49c6fba5fbaf6b295caee072eff210b0e55bc584b7445355",
+      "status": "in_flight",
+      "lane": {
+       "launchId": "r1-<STAMP>"
+      },
+      "openedAt": "<TS>",
+      "ownerSessionId": "rb",
+      "workPhaseId": "wp1",
+      "planUnit": "devlog/_plan/260815_probe",
+      "planEpoch": "e-probe-1",
+      "planFiles": [
+       {
+        "path": "devlog/_plan/260815_probe/000_plan.md",
+        "sha256": "043e84e9c05567c907905179c3c16ed31f46b1b53f0d1bd9f47b3d78ba08a2b9"
+       }
+      ]
+     }
+    ],
+    "activePlanAuditRoundId": "r1"
+   }
+  },
+  {
+   "id": "open_without_a_cursor_takes_in_progress",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/goalplans/review-binding-probe/goalplan.json": "{\n  \"objective\": \"review binding\",\n  \"slug\": \"review-binding-probe\",\n  \"schemaVersion\": 1,\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"activeWorkPhaseId\": null,\n  \"workPhases\": [\n    {\n      \"id\": \"wp1\",\n      \"title\": \"wp1\",\n      \"status\": \"pending\",\n      \"tasks\": [],\n      \"criteriaIds\": []\n    },\n    {\n      \"id\": \"wp2\",\n      \"title\": \"wp2\",\n      \"status\": \"in_progress\",\n      \"tasks\": [],\n      \"criteriaIds\": []\n    }\n  ],\n  \"criteria\": [],\n  \"host\": {\n    \"armed\": false,\n    \"armedAt\": null,\n    \"source\": \"none\"\n  }\n}",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"A\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"review-binding-probe\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": \"e-probe-1\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "open",
+      "--session",
+      "rb",
+      "--plan-path",
+      "devlog/_plan/260815_probe/000_plan.md"
+     ],
+     "want": {
+      "code": 0,
+      "output": "r1-<STAMP>\n\nRound r1 is in flight over 1 file(s).\nDispatch an independent reviewer (agent_type \"reviewer\" if exposed; otherwise agent_type \"explorer\" with CXC-ROLE: reviewer before TASK:; if the host has no agent_type field, omit agent_type and prepend CXC-ROLE: reviewer before TASK:) and require it to end its\nfinal message with exactly these two lines:\n\n  LAUNCH: r1-<STAMP>\n  VERDICT: PASS | NEAR-PASS | FAIL\n\nThe verdict is recorded when that reviewer exits. There is no way to write it here."
+     }
+    },
+    {
+     "argv": [
+      "show",
+      "--session",
+      "rb",
+      "--json"
+     ],
+     "want": {
+      "code": 0,
+      "output": "{\"roundId\":\"r1\",\"status\":\"in_flight\",\"staleness\":\"open\",\"launchId\":\"r1-<STAMP>\",\"verdict\":null,\"workPhaseId\":\"wp2\",\"planEpoch\":\"e-probe-1\"}"
+     }
+    }
+   ],
+   "after": {
+    "objective": "review binding",
+    "slug": "review-binding-probe",
+    "createdAt": "<TS>",
+    "updatedAt": "<TS>",
+    "activeWorkPhaseId": null,
+    "workPhases": [
+     {
+      "id": "wp1",
+      "title": "wp1",
+      "status": "pending",
+      "tasks": [],
+      "criteriaIds": []
+     },
+     {
+      "id": "wp2",
+      "title": "wp2",
+      "status": "in_progress",
+      "tasks": [],
+      "criteriaIds": []
+     }
+    ],
+    "criteria": [],
+    "host": {
+     "armed": false,
+     "armedAt": null,
+     "source": "none"
+    },
+    "schemaVersion": 1,
+    "reviewRounds": [
+     {
+      "roundId": "r1",
+      "purpose": "plan_audit",
+      "planPath": "devlog/_plan/260815_probe",
+      "planSha256": "6999a514f0f9423c49c6fba5fbaf6b295caee072eff210b0e55bc584b7445355",
+      "status": "in_flight",
+      "lane": {
+       "launchId": "r1-<STAMP>"
+      },
+      "openedAt": "<TS>",
+      "ownerSessionId": "rb",
+      "workPhaseId": "wp2",
+      "planUnit": "devlog/_plan/260815_probe",
+      "planEpoch": "e-probe-1",
+      "planFiles": [
+       {
+        "path": "devlog/_plan/260815_probe/000_plan.md",
+        "sha256": "043e84e9c05567c907905179c3c16ed31f46b1b53f0d1bd9f47b3d78ba08a2b9"
+       }
+      ]
+     }
+    ],
+    "activePlanAuditRoundId": "r1"
+   }
+  },
+  {
+   "id": "open_goalplan_missing",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"A\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"review-binding-probe\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": \"e-probe-1\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "open",
+      "--session",
+      "rb",
+      "--plan-path",
+      "devlog/_plan/260815_probe/000_plan.md"
+     ],
+     "want": {
+      "code": 1,
+      "output": "review-round open: goalplan 'review-binding-probe' does not exist; retry"
+     }
+    }
+   ],
+   "after": null
+  },
+  {
+   "id": "open_keeps_tasks_and_other_rounds",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/goalplans/review-binding-probe/goalplan.json": "{\n  \"objective\": \"review binding\",\n  \"slug\": \"review-binding-probe\",\n  \"schemaVersion\": 1,\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"activeWorkPhaseId\": \"wp1\",\n  \"workPhases\": [\n    {\n      \"id\": \"wp1\",\n      \"title\": \"wp1\",\n      \"status\": \"in_progress\",\n      \"tasks\": [\n        {\n          \"id\": \"t-1\",\n          \"title\": \"first\",\n          \"status\": \"done\",\n          \"outcome\": \"ok\"\n        },\n        {\n          \"id\": \"t-2\",\n          \"title\": \"second\",\n          \"status\": \"done\",\n          \"dependsOn\": [\n            \"t-1\"\n          ],\n          \"outcome\": \"ok too\"\n        }\n      ],\n      \"criteriaIds\": []\n    }\n  ],\n  \"criteria\": [],\n  \"host\": {\n    \"armed\": false,\n    \"armedAt\": null,\n    \"source\": \"none\"\n  },\n  \"reviewRounds\": [\n    {\n      \"roundId\": \"r1\",\n      \"purpose\": \"final_gate\",\n      \"planPath\": \"devlog/_plan/260815_probe\",\n      \"planSha256\": \"x\",\n      \"status\": \"approved\",\n      \"lane\": {\n        \"launchId\": \"r1-20260101000000\",\n        \"verdict\": \"pass\"\n      },\n      \"openedAt\": \"2026-01-01T00:00:00.000Z\",\n      \"closedAt\": \"2026-01-01T00:00:00.000Z\"\n    }\n  ]\n}",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"A\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"review-binding-probe\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": \"e-probe-1\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "open",
+      "--session",
+      "rb",
+      "--plan-path",
+      "devlog/_plan/260815_probe/000_plan.md"
+     ],
+     "want": {
+      "code": 0,
+      "output": "r2-<STAMP>\n\nRound r2 is in flight over 1 file(s).\nDispatch an independent reviewer (agent_type \"reviewer\" if exposed; otherwise agent_type \"explorer\" with CXC-ROLE: reviewer before TASK:; if the host has no agent_type field, omit agent_type and prepend CXC-ROLE: reviewer before TASK:) and require it to end its\nfinal message with exactly these two lines:\n\n  LAUNCH: r2-<STAMP>\n  VERDICT: PASS | NEAR-PASS | FAIL\n\nThe verdict is recorded when that reviewer exits. There is no way to write it here."
+     }
+    },
+    {
+     "argv": [
+      "abort",
+      "--session",
+      "rb"
+     ],
+     "want": {
+      "code": 0,
+      "output": "review-round abort: r2 closed as inconclusive"
+     }
+    }
+   ],
+   "after": {
+    "objective": "review binding",
+    "slug": "review-binding-probe",
+    "createdAt": "<TS>",
+    "updatedAt": "<TS>",
+    "activeWorkPhaseId": "wp1",
+    "workPhases": [
+     {
+      "id": "wp1",
+      "title": "wp1",
+      "status": "in_progress",
+      "tasks": [
+       {
+        "id": "t-1",
+        "title": "first",
+        "status": "done",
+        "outcome": "ok"
+       },
+       {
+        "id": "t-2",
+        "title": "second",
+        "status": "done",
+        "dependsOn": [
+         "t-1"
+        ],
+        "outcome": "ok too"
+       }
+      ],
+      "criteriaIds": []
+     }
+    ],
+    "criteria": [],
+    "host": {
+     "armed": false,
+     "armedAt": null,
+     "source": "none"
+    },
+    "reviewRounds": [
+     {
+      "roundId": "r1",
+      "purpose": "final_gate",
+      "planPath": "devlog/_plan/260815_probe",
+      "planSha256": "x",
+      "status": "approved",
+      "lane": {
+       "launchId": "r1-<STAMP>",
+       "verdict": "pass"
+      },
+      "openedAt": "<TS>",
+      "closedAt": "<TS>"
+     },
+     {
+      "roundId": "r2",
+      "purpose": "plan_audit",
+      "planPath": "devlog/_plan/260815_probe",
+      "planSha256": "6999a514f0f9423c49c6fba5fbaf6b295caee072eff210b0e55bc584b7445355",
+      "status": "inconclusive",
+      "lane": {
+       "launchId": "r2-<STAMP>",
+       "reviewerSession": "aborted: aborted by the agent"
+      },
+      "openedAt": "<TS>",
+      "ownerSessionId": "rb",
+      "workPhaseId": "wp1",
+      "planUnit": "devlog/_plan/260815_probe",
+      "planEpoch": "e-probe-1",
+      "planFiles": [
+       {
+        "path": "devlog/_plan/260815_probe/000_plan.md",
+        "sha256": "043e84e9c05567c907905179c3c16ed31f46b1b53f0d1bd9f47b3d78ba08a2b9"
+       }
+      ],
+      "closedAt": "<TS>"
+     }
+    ],
+    "schemaVersion": 1
+   }
+  },
+  {
+   "id": "open_drops_an_unreadable_round",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/goalplans/review-binding-probe/goalplan.json": "{\n  \"objective\": \"review binding\",\n  \"slug\": \"review-binding-probe\",\n  \"schemaVersion\": 1,\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"activeWorkPhaseId\": \"wp1\",\n  \"workPhases\": [\n    {\n      \"id\": \"wp1\",\n      \"title\": \"wp1\",\n      \"status\": \"in_progress\",\n      \"tasks\": [],\n      \"criteriaIds\": []\n    }\n  ],\n  \"criteria\": [],\n  \"host\": {\n    \"armed\": false,\n    \"armedAt\": null,\n    \"source\": \"none\"\n  },\n  \"reviewRounds\": [\n    {\n      \"roundId\": \"r1\",\n      \"purpose\": \"plan_audit\",\n      \"planPath\": \"devlog/_plan/260815_probe\",\n      \"planSha256\": \"x\",\n      \"status\": \"inconclusive\",\n      \"lane\": {\n        \"launchId\": \"r1-20260101000000\"\n      },\n      \"openedAt\": \"2026-01-01T00:00:00.000Z\",\n      \"closedAt\": \"2026-01-01T00:00:00.000Z\"\n    },\n    {\n      \"roundId\": \"r0\",\n      \"status\": \"bogus\"\n    }\n  ]\n}",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"A\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"review-binding-probe\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": \"e-probe-1\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "open",
+      "--session",
+      "rb",
+      "--plan-path",
+      "devlog/_plan/260815_probe/000_plan.md"
+     ],
+     "want": {
+      "code": 0,
+      "output": "r2-<STAMP>\n\nRound r2 is in flight over 1 file(s).\nDispatch an independent reviewer (agent_type \"reviewer\" if exposed; otherwise agent_type \"explorer\" with CXC-ROLE: reviewer before TASK:; if the host has no agent_type field, omit agent_type and prepend CXC-ROLE: reviewer before TASK:) and require it to end its\nfinal message with exactly these two lines:\n\n  LAUNCH: r2-<STAMP>\n  VERDICT: PASS | NEAR-PASS | FAIL\n\nThe verdict is recorded when that reviewer exits. There is no way to write it here."
+     }
+    },
+    {
+     "argv": [
+      "show",
+      "--session",
+      "rb",
+      "--json"
+     ],
+     "want": {
+      "code": 0,
+      "output": "{\"roundId\":\"r2\",\"status\":\"in_flight\",\"staleness\":\"open\",\"launchId\":\"r2-<STAMP>\",\"verdict\":null,\"workPhaseId\":\"wp1\",\"planEpoch\":\"e-probe-1\"}"
+     }
+    }
+   ],
+   "after": {
+    "objective": "review binding",
+    "slug": "review-binding-probe",
+    "createdAt": "<TS>",
+    "updatedAt": "<TS>",
+    "activeWorkPhaseId": "wp1",
+    "workPhases": [
+     {
+      "id": "wp1",
+      "title": "wp1",
+      "status": "in_progress",
+      "tasks": [],
+      "criteriaIds": []
+     }
+    ],
+    "criteria": [],
+    "host": {
+     "armed": false,
+     "armedAt": null,
+     "source": "none"
+    },
+    "reviewRounds": [
+     {
+      "roundId": "r1",
+      "purpose": "plan_audit",
+      "planPath": "devlog/_plan/260815_probe",
+      "planSha256": "x",
+      "status": "inconclusive",
+      "lane": {
+       "launchId": "r1-<STAMP>"
+      },
+      "openedAt": "<TS>",
+      "closedAt": "<TS>"
+     },
+     {
+      "roundId": "r2",
+      "purpose": "plan_audit",
+      "planPath": "devlog/_plan/260815_probe",
+      "planSha256": "6999a514f0f9423c49c6fba5fbaf6b295caee072eff210b0e55bc584b7445355",
+      "status": "in_flight",
+      "lane": {
+       "launchId": "r2-<STAMP>"
+      },
+      "openedAt": "<TS>",
+      "ownerSessionId": "rb",
+      "workPhaseId": "wp1",
+      "planUnit": "devlog/_plan/260815_probe",
+      "planEpoch": "e-probe-1",
+      "planFiles": [
+       {
+        "path": "devlog/_plan/260815_probe/000_plan.md",
+        "sha256": "043e84e9c05567c907905179c3c16ed31f46b1b53f0d1bd9f47b3d78ba08a2b9"
+       }
+      ]
+     }
+    ],
+    "schemaVersion": 1,
+    "activePlanAuditRoundId": "r2"
+   }
+  },
+  {
+   "id": "abort_drops_an_unreadable_round",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/goalplans/review-binding-probe/goalplan.json": "{\n  \"objective\": \"review binding\",\n  \"slug\": \"review-binding-probe\",\n  \"schemaVersion\": 1,\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"activeWorkPhaseId\": \"wp1\",\n  \"workPhases\": [\n    {\n      \"id\": \"wp1\",\n      \"title\": \"wp1\",\n      \"status\": \"in_progress\",\n      \"tasks\": [],\n      \"criteriaIds\": []\n    }\n  ],\n  \"criteria\": [],\n  \"host\": {\n    \"armed\": false,\n    \"armedAt\": null,\n    \"source\": \"none\"\n  },\n  \"reviewRounds\": [\n    {\n      \"roundId\": \"r1\",\n      \"purpose\": \"plan_audit\",\n      \"planPath\": \"devlog/_plan/260815_probe\",\n      \"planSha256\": \"x\",\n      \"status\": \"in_flight\",\n      \"lane\": {\n        \"launchId\": \"r1-20260101000000\"\n      },\n      \"openedAt\": \"2026-01-01T00:00:00.000Z\"\n    },\n    {\n      \"roundId\": \"r0\",\n      \"status\": \"bogus\"\n    }\n  ],\n  \"activePlanAuditRoundId\": \"r1\"\n}",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"A\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"review-binding-probe\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": \"e-probe-1\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "abort",
+      "--session",
+      "rb"
+     ],
+     "want": {
+      "code": 0,
+      "output": "review-round abort: r1 closed as inconclusive"
+     }
+    },
+    {
+     "argv": [
+      "show",
+      "--session",
+      "rb",
+      "--json"
+     ],
+     "want": {
+      "code": 0,
+      "output": "{\"roundId\":\"r1\",\"status\":\"inconclusive\",\"staleness\":\"open\",\"launchId\":\"r1-<STAMP>\",\"verdict\":null,\"workPhaseId\":null,\"planEpoch\":null}"
+     }
+    }
+   ],
+   "after": {
+    "objective": "review binding",
+    "slug": "review-binding-probe",
+    "createdAt": "<TS>",
+    "updatedAt": "<TS>",
+    "activeWorkPhaseId": "wp1",
+    "workPhases": [
+     {
+      "id": "wp1",
+      "title": "wp1",
+      "status": "in_progress",
+      "tasks": [],
+      "criteriaIds": []
+     }
+    ],
+    "criteria": [],
+    "host": {
+     "armed": false,
+     "armedAt": null,
+     "source": "none"
+    },
+    "reviewRounds": [
+     {
+      "roundId": "r1",
+      "purpose": "plan_audit",
+      "planPath": "devlog/_plan/260815_probe",
+      "planSha256": "x",
+      "status": "inconclusive",
+      "lane": {
+       "launchId": "r1-<STAMP>",
+       "reviewerSession": "aborted: aborted by the agent"
+      },
+      "openedAt": "<TS>",
+      "closedAt": "<TS>"
+     }
+    ],
+    "schemaVersion": 1
+   }
+  },
+  {
+   "id": "abort_after_open",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/goalplans/review-binding-probe/goalplan.json": "{\n  \"objective\": \"review binding\",\n  \"slug\": \"review-binding-probe\",\n  \"schemaVersion\": 1,\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"activeWorkPhaseId\": \"wp1\",\n  \"workPhases\": [\n    {\n      \"id\": \"wp1\",\n      \"title\": \"wp1\",\n      \"status\": \"in_progress\",\n      \"tasks\": [],\n      \"criteriaIds\": []\n    }\n  ],\n  \"criteria\": [],\n  \"host\": {\n    \"armed\": false,\n    \"armedAt\": null,\n    \"source\": \"none\"\n  }\n}",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"A\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"review-binding-probe\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": \"e-probe-1\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "open",
+      "--session",
+      "rb",
+      "--plan-path",
+      "devlog/_plan/260815_probe/000_plan.md"
+     ],
+     "want": {
+      "code": 0,
+      "output": "r1-<STAMP>\n\nRound r1 is in flight over 1 file(s).\nDispatch an independent reviewer (agent_type \"reviewer\" if exposed; otherwise agent_type \"explorer\" with CXC-ROLE: reviewer before TASK:; if the host has no agent_type field, omit agent_type and prepend CXC-ROLE: reviewer before TASK:) and require it to end its\nfinal message with exactly these two lines:\n\n  LAUNCH: r1-<STAMP>\n  VERDICT: PASS | NEAR-PASS | FAIL\n\nThe verdict is recorded when that reviewer exits. There is no way to write it here."
+     }
+    },
+    {
+     "argv": [
+      "abort",
+      "--session",
+      "rb",
+      "--reason",
+      "reviewer died"
+     ],
+     "want": {
+      "code": 0,
+      "output": "review-round abort: r1 closed as inconclusive"
+     }
+    },
+    {
+     "argv": [
+      "show",
+      "--session",
+      "rb"
+     ],
+     "want": {
+      "code": 0,
+      "output": "review-round r1: status=inconclusive staleness=fresh verdict=- launch=r1-<STAMP>"
+     }
+    }
+   ],
+   "after": {
+    "objective": "review binding",
+    "slug": "review-binding-probe",
+    "createdAt": "<TS>",
+    "updatedAt": "<TS>",
+    "activeWorkPhaseId": "wp1",
+    "workPhases": [
+     {
+      "id": "wp1",
+      "title": "wp1",
+      "status": "in_progress",
+      "tasks": [],
+      "criteriaIds": []
+     }
+    ],
+    "criteria": [],
+    "host": {
+     "armed": false,
+     "armedAt": null,
+     "source": "none"
+    },
+    "reviewRounds": [
+     {
+      "roundId": "r1",
+      "purpose": "plan_audit",
+      "planPath": "devlog/_plan/260815_probe",
+      "planSha256": "6999a514f0f9423c49c6fba5fbaf6b295caee072eff210b0e55bc584b7445355",
+      "status": "inconclusive",
+      "lane": {
+       "launchId": "r1-<STAMP>",
+       "reviewerSession": "aborted: reviewer died"
+      },
+      "openedAt": "<TS>",
+      "ownerSessionId": "rb",
+      "workPhaseId": "wp1",
+      "planUnit": "devlog/_plan/260815_probe",
+      "planEpoch": "e-probe-1",
+      "planFiles": [
+       {
+        "path": "devlog/_plan/260815_probe/000_plan.md",
+        "sha256": "043e84e9c05567c907905179c3c16ed31f46b1b53f0d1bd9f47b3d78ba08a2b9"
+       }
+      ],
+      "closedAt": "<TS>"
+     }
+    ],
+    "schemaVersion": 1
+   }
+  },
+  {
+   "id": "abort_default_reason",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/goalplans/review-binding-probe/goalplan.json": "{\n  \"objective\": \"review binding\",\n  \"slug\": \"review-binding-probe\",\n  \"schemaVersion\": 1,\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"activeWorkPhaseId\": \"wp1\",\n  \"workPhases\": [\n    {\n      \"id\": \"wp1\",\n      \"title\": \"wp1\",\n      \"status\": \"in_progress\",\n      \"tasks\": [],\n      \"criteriaIds\": []\n    }\n  ],\n  \"criteria\": [],\n  \"host\": {\n    \"armed\": false,\n    \"armedAt\": null,\n    \"source\": \"none\"\n  }\n}",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"A\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"review-binding-probe\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": \"e-probe-1\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "open",
+      "--session",
+      "rb",
+      "--plan-path",
+      "devlog/_plan/260815_probe/000_plan.md"
+     ],
+     "want": {
+      "code": 0,
+      "output": "r1-<STAMP>\n\nRound r1 is in flight over 1 file(s).\nDispatch an independent reviewer (agent_type \"reviewer\" if exposed; otherwise agent_type \"explorer\" with CXC-ROLE: reviewer before TASK:; if the host has no agent_type field, omit agent_type and prepend CXC-ROLE: reviewer before TASK:) and require it to end its\nfinal message with exactly these two lines:\n\n  LAUNCH: r1-<STAMP>\n  VERDICT: PASS | NEAR-PASS | FAIL\n\nThe verdict is recorded when that reviewer exits. There is no way to write it here."
+     }
+    },
+    {
+     "argv": [
+      "abort",
+      "--session",
+      "rb"
+     ],
+     "want": {
+      "code": 0,
+      "output": "review-round abort: r1 closed as inconclusive"
+     }
+    }
+   ],
+   "after": {
+    "objective": "review binding",
+    "slug": "review-binding-probe",
+    "createdAt": "<TS>",
+    "updatedAt": "<TS>",
+    "activeWorkPhaseId": "wp1",
+    "workPhases": [
+     {
+      "id": "wp1",
+      "title": "wp1",
+      "status": "in_progress",
+      "tasks": [],
+      "criteriaIds": []
+     }
+    ],
+    "criteria": [],
+    "host": {
+     "armed": false,
+     "armedAt": null,
+     "source": "none"
+    },
+    "reviewRounds": [
+     {
+      "roundId": "r1",
+      "purpose": "plan_audit",
+      "planPath": "devlog/_plan/260815_probe",
+      "planSha256": "6999a514f0f9423c49c6fba5fbaf6b295caee072eff210b0e55bc584b7445355",
+      "status": "inconclusive",
+      "lane": {
+       "launchId": "r1-<STAMP>",
+       "reviewerSession": "aborted: aborted by the agent"
+      },
+      "openedAt": "<TS>",
+      "ownerSessionId": "rb",
+      "workPhaseId": "wp1",
+      "planUnit": "devlog/_plan/260815_probe",
+      "planEpoch": "e-probe-1",
+      "planFiles": [
+       {
+        "path": "devlog/_plan/260815_probe/000_plan.md",
+        "sha256": "043e84e9c05567c907905179c3c16ed31f46b1b53f0d1bd9f47b3d78ba08a2b9"
+       }
+      ],
+      "closedAt": "<TS>"
+     }
+    ],
+    "schemaVersion": 1
+   }
+  },
+  {
+   "id": "abort_empty_reason",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/goalplans/review-binding-probe/goalplan.json": "{\n  \"objective\": \"review binding\",\n  \"slug\": \"review-binding-probe\",\n  \"schemaVersion\": 1,\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"activeWorkPhaseId\": \"wp1\",\n  \"workPhases\": [\n    {\n      \"id\": \"wp1\",\n      \"title\": \"wp1\",\n      \"status\": \"in_progress\",\n      \"tasks\": [],\n      \"criteriaIds\": []\n    }\n  ],\n  \"criteria\": [],\n  \"host\": {\n    \"armed\": false,\n    \"armedAt\": null,\n    \"source\": \"none\"\n  }\n}",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"A\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"review-binding-probe\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": \"e-probe-1\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "open",
+      "--session",
+      "rb",
+      "--plan-path",
+      "devlog/_plan/260815_probe/000_plan.md"
+     ],
+     "want": {
+      "code": 0,
+      "output": "r1-<STAMP>\n\nRound r1 is in flight over 1 file(s).\nDispatch an independent reviewer (agent_type \"reviewer\" if exposed; otherwise agent_type \"explorer\" with CXC-ROLE: reviewer before TASK:; if the host has no agent_type field, omit agent_type and prepend CXC-ROLE: reviewer before TASK:) and require it to end its\nfinal message with exactly these two lines:\n\n  LAUNCH: r1-<STAMP>\n  VERDICT: PASS | NEAR-PASS | FAIL\n\nThe verdict is recorded when that reviewer exits. There is no way to write it here."
+     }
+    },
+    {
+     "argv": [
+      "abort",
+      "--session",
+      "rb",
+      "--reason",
+      ""
+     ],
+     "want": {
+      "code": 0,
+      "output": "review-round abort: r1 closed as inconclusive"
+     }
+    }
+   ],
+   "after": {
+    "objective": "review binding",
+    "slug": "review-binding-probe",
+    "createdAt": "<TS>",
+    "updatedAt": "<TS>",
+    "activeWorkPhaseId": "wp1",
+    "workPhases": [
+     {
+      "id": "wp1",
+      "title": "wp1",
+      "status": "in_progress",
+      "tasks": [],
+      "criteriaIds": []
+     }
+    ],
+    "criteria": [],
+    "host": {
+     "armed": false,
+     "armedAt": null,
+     "source": "none"
+    },
+    "reviewRounds": [
+     {
+      "roundId": "r1",
+      "purpose": "plan_audit",
+      "planPath": "devlog/_plan/260815_probe",
+      "planSha256": "6999a514f0f9423c49c6fba5fbaf6b295caee072eff210b0e55bc584b7445355",
+      "status": "inconclusive",
+      "lane": {
+       "launchId": "r1-<STAMP>",
+       "reviewerSession": "aborted: "
+      },
+      "openedAt": "<TS>",
+      "ownerSessionId": "rb",
+      "workPhaseId": "wp1",
+      "planUnit": "devlog/_plan/260815_probe",
+      "planEpoch": "e-probe-1",
+      "planFiles": [
+       {
+        "path": "devlog/_plan/260815_probe/000_plan.md",
+        "sha256": "043e84e9c05567c907905179c3c16ed31f46b1b53f0d1bd9f47b3d78ba08a2b9"
+       }
+      ],
+      "closedAt": "<TS>"
+     }
+    ],
+    "schemaVersion": 1
+   }
+  },
+  {
+   "id": "abort_keeps_an_existing_reviewer_session",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/goalplans/review-binding-probe/goalplan.json": "{\n  \"objective\": \"review binding\",\n  \"slug\": \"review-binding-probe\",\n  \"schemaVersion\": 1,\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"activeWorkPhaseId\": \"wp1\",\n  \"workPhases\": [\n    {\n      \"id\": \"wp1\",\n      \"title\": \"wp1\",\n      \"status\": \"in_progress\",\n      \"tasks\": [],\n      \"criteriaIds\": []\n    }\n  ],\n  \"criteria\": [],\n  \"host\": {\n    \"armed\": false,\n    \"armedAt\": null,\n    \"source\": \"none\"\n  },\n  \"reviewRounds\": [\n    {\n      \"roundId\": \"r1\",\n      \"purpose\": \"plan_audit\",\n      \"planPath\": \"devlog/_plan/260815_probe\",\n      \"planSha256\": \"x\",\n      \"status\": \"in_flight\",\n      \"lane\": {\n        \"launchId\": \"r1-20260101000000\",\n        \"reviewerSession\": \"seeded\"\n      },\n      \"openedAt\": \"2026-01-01T00:00:00.000Z\"\n    }\n  ],\n  \"activePlanAuditRoundId\": \"r1\"\n}",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"A\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"review-binding-probe\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": \"e-probe-1\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "abort",
+      "--session",
+      "rb",
+      "--reason",
+      "late"
+     ],
+     "want": {
+      "code": 0,
+      "output": "review-round abort: r1 closed as inconclusive"
+     }
+    }
+   ],
+   "after": {
+    "objective": "review binding",
+    "slug": "review-binding-probe",
+    "createdAt": "<TS>",
+    "updatedAt": "<TS>",
+    "activeWorkPhaseId": "wp1",
+    "workPhases": [
+     {
+      "id": "wp1",
+      "title": "wp1",
+      "status": "in_progress",
+      "tasks": [],
+      "criteriaIds": []
+     }
+    ],
+    "criteria": [],
+    "host": {
+     "armed": false,
+     "armedAt": null,
+     "source": "none"
+    },
+    "reviewRounds": [
+     {
+      "roundId": "r1",
+      "purpose": "plan_audit",
+      "planPath": "devlog/_plan/260815_probe",
+      "planSha256": "x",
+      "status": "inconclusive",
+      "lane": {
+       "launchId": "r1-<STAMP>",
+       "reviewerSession": "seeded"
+      },
+      "openedAt": "<TS>",
+      "closedAt": "<TS>"
+     }
+    ],
+    "schemaVersion": 1
+   }
+  },
+  {
+   "id": "abort_no_round",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/goalplans/review-binding-probe/goalplan.json": "{\n  \"objective\": \"review binding\",\n  \"slug\": \"review-binding-probe\",\n  \"schemaVersion\": 1,\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"activeWorkPhaseId\": \"wp1\",\n  \"workPhases\": [\n    {\n      \"id\": \"wp1\",\n      \"title\": \"wp1\",\n      \"status\": \"in_progress\",\n      \"tasks\": [],\n      \"criteriaIds\": []\n    }\n  ],\n  \"criteria\": [],\n  \"host\": {\n    \"armed\": false,\n    \"armedAt\": null,\n    \"source\": \"none\"\n  }\n}",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"A\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"review-binding-probe\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": \"e-probe-1\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "abort",
+      "--session",
+      "rb"
+     ],
+     "want": {
+      "code": 1,
+      "output": "review-round abort: no open plan_audit round"
+     }
+    }
+   ],
+   "after": {
+    "objective": "review binding",
+    "slug": "review-binding-probe",
+    "schemaVersion": 1,
+    "createdAt": "<TS>",
+    "updatedAt": "<TS>",
+    "activeWorkPhaseId": "wp1",
+    "workPhases": [
+     {
+      "id": "wp1",
+      "title": "wp1",
+      "status": "in_progress",
+      "tasks": [],
+      "criteriaIds": []
+     }
+    ],
+    "criteria": [],
+    "host": {
+     "armed": false,
+     "armedAt": null,
+     "source": "none"
+    }
+   }
+  },
+  {
+   "id": "abort_twice",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/goalplans/review-binding-probe/goalplan.json": "{\n  \"objective\": \"review binding\",\n  \"slug\": \"review-binding-probe\",\n  \"schemaVersion\": 1,\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"activeWorkPhaseId\": \"wp1\",\n  \"workPhases\": [\n    {\n      \"id\": \"wp1\",\n      \"title\": \"wp1\",\n      \"status\": \"in_progress\",\n      \"tasks\": [],\n      \"criteriaIds\": []\n    }\n  ],\n  \"criteria\": [],\n  \"host\": {\n    \"armed\": false,\n    \"armedAt\": null,\n    \"source\": \"none\"\n  }\n}",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"A\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"review-binding-probe\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": \"e-probe-1\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "open",
+      "--session",
+      "rb",
+      "--plan-path",
+      "devlog/_plan/260815_probe/000_plan.md"
+     ],
+     "want": {
+      "code": 0,
+      "output": "r1-<STAMP>\n\nRound r1 is in flight over 1 file(s).\nDispatch an independent reviewer (agent_type \"reviewer\" if exposed; otherwise agent_type \"explorer\" with CXC-ROLE: reviewer before TASK:; if the host has no agent_type field, omit agent_type and prepend CXC-ROLE: reviewer before TASK:) and require it to end its\nfinal message with exactly these two lines:\n\n  LAUNCH: r1-<STAMP>\n  VERDICT: PASS | NEAR-PASS | FAIL\n\nThe verdict is recorded when that reviewer exits. There is no way to write it here."
+     }
+    },
+    {
+     "argv": [
+      "abort",
+      "--session",
+      "rb"
+     ],
+     "want": {
+      "code": 0,
+      "output": "review-round abort: r1 closed as inconclusive"
+     }
+    },
+    {
+     "argv": [
+      "abort",
+      "--session",
+      "rb"
+     ],
+     "want": {
+      "code": 1,
+      "output": "review-round abort: no open plan_audit round"
+     }
+    }
+   ],
+   "after": {
+    "objective": "review binding",
+    "slug": "review-binding-probe",
+    "createdAt": "<TS>",
+    "updatedAt": "<TS>",
+    "activeWorkPhaseId": "wp1",
+    "workPhases": [
+     {
+      "id": "wp1",
+      "title": "wp1",
+      "status": "in_progress",
+      "tasks": [],
+      "criteriaIds": []
+     }
+    ],
+    "criteria": [],
+    "host": {
+     "armed": false,
+     "armedAt": null,
+     "source": "none"
+    },
+    "reviewRounds": [
+     {
+      "roundId": "r1",
+      "purpose": "plan_audit",
+      "planPath": "devlog/_plan/260815_probe",
+      "planSha256": "6999a514f0f9423c49c6fba5fbaf6b295caee072eff210b0e55bc584b7445355",
+      "status": "inconclusive",
+      "lane": {
+       "launchId": "r1-<STAMP>",
+       "reviewerSession": "aborted: aborted by the agent"
+      },
+      "openedAt": "<TS>",
+      "ownerSessionId": "rb",
+      "workPhaseId": "wp1",
+      "planUnit": "devlog/_plan/260815_probe",
+      "planEpoch": "e-probe-1",
+      "planFiles": [
+       {
+        "path": "devlog/_plan/260815_probe/000_plan.md",
+        "sha256": "043e84e9c05567c907905179c3c16ed31f46b1b53f0d1bd9f47b3d78ba08a2b9"
+       }
+      ],
+      "closedAt": "<TS>"
+     }
+    ],
+    "schemaVersion": 1
+   }
+  },
+  {
+   "id": "abort_no_slug",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"A\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": \"e-probe-1\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "abort",
+      "--session",
+      "rb"
+     ],
+     "want": {
+      "code": 1,
+      "output": "review-round abort: this session has no bound goalplan"
+     }
+    }
+   ],
+   "after": null
+  },
+  {
+   "id": "abort_goalplan_missing",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"A\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"review-binding-probe\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": \"e-probe-1\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "abort",
+      "--session",
+      "rb"
+     ],
+     "want": {
+      "code": 1,
+      "output": "review-round abort: goalplan 'review-binding-probe' does not exist; retry"
+     }
+    }
+   ],
+   "after": null
+  },
+  {
+   "id": "show_no_round",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/goalplans/review-binding-probe/goalplan.json": "{\n  \"objective\": \"review binding\",\n  \"slug\": \"review-binding-probe\",\n  \"schemaVersion\": 1,\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"activeWorkPhaseId\": \"wp1\",\n  \"workPhases\": [\n    {\n      \"id\": \"wp1\",\n      \"title\": \"wp1\",\n      \"status\": \"in_progress\",\n      \"tasks\": [],\n      \"criteriaIds\": []\n    }\n  ],\n  \"criteria\": [],\n  \"host\": {\n    \"armed\": false,\n    \"armedAt\": null,\n    \"source\": \"none\"\n  }\n}",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"A\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"review-binding-probe\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": \"e-probe-1\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "show",
+      "--session",
+      "rb"
+     ],
+     "want": {
+      "code": 0,
+      "output": "review-round show: no plan_audit round yet"
+     }
+    },
+    {
+     "argv": [
+      "show",
+      "--session",
+      "rb",
+      "--json"
+     ],
+     "want": {
+      "code": 0,
+      "output": "review-round show: no plan_audit round yet"
+     }
+    }
+   ],
+   "after": {
+    "objective": "review binding",
+    "slug": "review-binding-probe",
+    "schemaVersion": 1,
+    "createdAt": "<TS>",
+    "updatedAt": "<TS>",
+    "activeWorkPhaseId": "wp1",
+    "workPhases": [
+     {
+      "id": "wp1",
+      "title": "wp1",
+      "status": "in_progress",
+      "tasks": [],
+      "criteriaIds": []
+     }
+    ],
+    "criteria": [],
+    "host": {
+     "armed": false,
+     "armedAt": null,
+     "source": "none"
+    }
+   }
+  },
+  {
+   "id": "show_no_slug",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"A\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": \"e-probe-1\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "show",
+      "--session",
+      "rb"
+     ],
+     "want": {
+      "code": 1,
+      "output": "review-round show: this session has no bound goalplan"
+     }
+    }
+   ],
+   "after": null
+  },
+  {
+   "id": "show_goalplan_missing",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"A\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"review-binding-probe\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": \"e-probe-1\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "show",
+      "--session",
+      "rb"
+     ],
+     "want": {
+      "code": 1,
+      "output": "review-round show: the bound goalplan could not be read"
+     }
+    }
+   ],
+   "after": null
+  },
+  {
+   "id": "show_stale_after_an_edit",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/goalplans/review-binding-probe/goalplan.json": "{\n  \"objective\": \"review binding\",\n  \"slug\": \"review-binding-probe\",\n  \"schemaVersion\": 1,\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"activeWorkPhaseId\": \"wp1\",\n  \"workPhases\": [\n    {\n      \"id\": \"wp1\",\n      \"title\": \"wp1\",\n      \"status\": \"in_progress\",\n      \"tasks\": [],\n      \"criteriaIds\": []\n    }\n  ],\n  \"criteria\": [],\n  \"host\": {\n    \"armed\": false,\n    \"armedAt\": null,\n    \"source\": \"none\"\n  }\n}",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"A\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"review-binding-probe\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": \"e-probe-1\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "open",
+      "--session",
+      "rb",
+      "--plan-path",
+      "devlog/_plan/260815_probe/000_plan.md"
+     ],
+     "want": {
+      "code": 0,
+      "output": "r1-<STAMP>\n\nRound r1 is in flight over 1 file(s).\nDispatch an independent reviewer (agent_type \"reviewer\" if exposed; otherwise agent_type \"explorer\" with CXC-ROLE: reviewer before TASK:; if the host has no agent_type field, omit agent_type and prepend CXC-ROLE: reviewer before TASK:) and require it to end its\nfinal message with exactly these two lines:\n\n  LAUNCH: r1-<STAMP>\n  VERDICT: PASS | NEAR-PASS | FAIL\n\nThe verdict is recorded when that reviewer exits. There is no way to write it here."
+     }
+    },
+    {
+     "argv": [
+      "abort",
+      "--session",
+      "rb"
+     ],
+     "want": {
+      "code": 0,
+      "output": "review-round abort: r1 closed as inconclusive"
+     }
+    },
+    {
+     "argv": [
+      "show",
+      "--session",
+      "rb",
+      "--json"
+     ],
+     "want": {
+      "code": 0,
+      "output": "{\"roundId\":\"r1\",\"status\":\"inconclusive\",\"staleness\":\"fresh\",\"launchId\":\"r1-<STAMP>\",\"verdict\":null,\"workPhaseId\":\"wp1\",\"planEpoch\":\"e-probe-1\"}"
+     }
+    },
+    {
+     "write": {
+      "devlog/_plan/260815_probe/000_plan.md": "# probe amended\n"
+     }
+    },
+    {
+     "argv": [
+      "show",
+      "--session",
+      "rb",
+      "--json"
+     ],
+     "want": {
+      "code": 0,
+      "output": "{\"roundId\":\"r1\",\"status\":\"inconclusive\",\"staleness\":\"stale\",\"launchId\":\"r1-<STAMP>\",\"verdict\":null,\"workPhaseId\":\"wp1\",\"planEpoch\":\"e-probe-1\"}"
+     }
+    }
+   ],
+   "after": {
+    "objective": "review binding",
+    "slug": "review-binding-probe",
+    "createdAt": "<TS>",
+    "updatedAt": "<TS>",
+    "activeWorkPhaseId": "wp1",
+    "workPhases": [
+     {
+      "id": "wp1",
+      "title": "wp1",
+      "status": "in_progress",
+      "tasks": [],
+      "criteriaIds": []
+     }
+    ],
+    "criteria": [],
+    "host": {
+     "armed": false,
+     "armedAt": null,
+     "source": "none"
+    },
+    "reviewRounds": [
+     {
+      "roundId": "r1",
+      "purpose": "plan_audit",
+      "planPath": "devlog/_plan/260815_probe",
+      "planSha256": "6999a514f0f9423c49c6fba5fbaf6b295caee072eff210b0e55bc584b7445355",
+      "status": "inconclusive",
+      "lane": {
+       "launchId": "r1-<STAMP>",
+       "reviewerSession": "aborted: aborted by the agent"
+      },
+      "openedAt": "<TS>",
+      "ownerSessionId": "rb",
+      "workPhaseId": "wp1",
+      "planUnit": "devlog/_plan/260815_probe",
+      "planEpoch": "e-probe-1",
+      "planFiles": [
+       {
+        "path": "devlog/_plan/260815_probe/000_plan.md",
+        "sha256": "043e84e9c05567c907905179c3c16ed31f46b1b53f0d1bd9f47b3d78ba08a2b9"
+       }
+      ],
+      "closedAt": "<TS>"
+     }
+    ],
+    "schemaVersion": 1
+   }
+  },
+  {
+   "id": "show_open_round_is_never_stale",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/goalplans/review-binding-probe/goalplan.json": "{\n  \"objective\": \"review binding\",\n  \"slug\": \"review-binding-probe\",\n  \"schemaVersion\": 1,\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"activeWorkPhaseId\": \"wp1\",\n  \"workPhases\": [\n    {\n      \"id\": \"wp1\",\n      \"title\": \"wp1\",\n      \"status\": \"in_progress\",\n      \"tasks\": [],\n      \"criteriaIds\": []\n    }\n  ],\n  \"criteria\": [],\n  \"host\": {\n    \"armed\": false,\n    \"armedAt\": null,\n    \"source\": \"none\"\n  }\n}",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"A\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"review-binding-probe\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": \"e-probe-1\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "open",
+      "--session",
+      "rb",
+      "--plan-path",
+      "devlog/_plan/260815_probe/000_plan.md"
+     ],
+     "want": {
+      "code": 0,
+      "output": "r1-<STAMP>\n\nRound r1 is in flight over 1 file(s).\nDispatch an independent reviewer (agent_type \"reviewer\" if exposed; otherwise agent_type \"explorer\" with CXC-ROLE: reviewer before TASK:; if the host has no agent_type field, omit agent_type and prepend CXC-ROLE: reviewer before TASK:) and require it to end its\nfinal message with exactly these two lines:\n\n  LAUNCH: r1-<STAMP>\n  VERDICT: PASS | NEAR-PASS | FAIL\n\nThe verdict is recorded when that reviewer exits. There is no way to write it here."
+     }
+    },
+    {
+     "write": {
+      "devlog/_plan/260815_probe/000_plan.md": "# probe amended\n"
+     }
+    },
+    {
+     "argv": [
+      "show",
+      "--session",
+      "rb",
+      "--json"
+     ],
+     "want": {
+      "code": 0,
+      "output": "{\"roundId\":\"r1\",\"status\":\"in_flight\",\"staleness\":\"open\",\"launchId\":\"r1-<STAMP>\",\"verdict\":null,\"workPhaseId\":\"wp1\",\"planEpoch\":\"e-probe-1\"}"
+     }
+    }
+   ],
+   "after": {
+    "objective": "review binding",
+    "slug": "review-binding-probe",
+    "createdAt": "<TS>",
+    "updatedAt": "<TS>",
+    "activeWorkPhaseId": "wp1",
+    "workPhases": [
+     {
+      "id": "wp1",
+      "title": "wp1",
+      "status": "in_progress",
+      "tasks": [],
+      "criteriaIds": []
+     }
+    ],
+    "criteria": [],
+    "host": {
+     "armed": false,
+     "armedAt": null,
+     "source": "none"
+    },
+    "schemaVersion": 1,
+    "reviewRounds": [
+     {
+      "roundId": "r1",
+      "purpose": "plan_audit",
+      "planPath": "devlog/_plan/260815_probe",
+      "planSha256": "6999a514f0f9423c49c6fba5fbaf6b295caee072eff210b0e55bc584b7445355",
+      "status": "in_flight",
+      "lane": {
+       "launchId": "r1-<STAMP>"
+      },
+      "openedAt": "<TS>",
+      "ownerSessionId": "rb",
+      "workPhaseId": "wp1",
+      "planUnit": "devlog/_plan/260815_probe",
+      "planEpoch": "e-probe-1",
+      "planFiles": [
+       {
+        "path": "devlog/_plan/260815_probe/000_plan.md",
+        "sha256": "043e84e9c05567c907905179c3c16ed31f46b1b53f0d1bd9f47b3d78ba08a2b9"
+       }
+      ]
+     }
+    ],
+    "activePlanAuditRoundId": "r1"
+   }
+  },
+  {
+   "id": "show_removed_file_is_stale",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/goalplans/review-binding-probe/goalplan.json": "{\n  \"objective\": \"review binding\",\n  \"slug\": \"review-binding-probe\",\n  \"schemaVersion\": 1,\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"activeWorkPhaseId\": \"wp1\",\n  \"workPhases\": [\n    {\n      \"id\": \"wp1\",\n      \"title\": \"wp1\",\n      \"status\": \"in_progress\",\n      \"tasks\": [],\n      \"criteriaIds\": []\n    }\n  ],\n  \"criteria\": [],\n  \"host\": {\n    \"armed\": false,\n    \"armedAt\": null,\n    \"source\": \"none\"\n  }\n}",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"A\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"review-binding-probe\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": \"e-probe-1\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "open",
+      "--session",
+      "rb",
+      "--plan-path",
+      "devlog/_plan/260815_probe/000_plan.md"
+     ],
+     "want": {
+      "code": 0,
+      "output": "r1-<STAMP>\n\nRound r1 is in flight over 1 file(s).\nDispatch an independent reviewer (agent_type \"reviewer\" if exposed; otherwise agent_type \"explorer\" with CXC-ROLE: reviewer before TASK:; if the host has no agent_type field, omit agent_type and prepend CXC-ROLE: reviewer before TASK:) and require it to end its\nfinal message with exactly these two lines:\n\n  LAUNCH: r1-<STAMP>\n  VERDICT: PASS | NEAR-PASS | FAIL\n\nThe verdict is recorded when that reviewer exits. There is no way to write it here."
+     }
+    },
+    {
+     "argv": [
+      "abort",
+      "--session",
+      "rb"
+     ],
+     "want": {
+      "code": 0,
+      "output": "review-round abort: r1 closed as inconclusive"
+     }
+    },
+    {
+     "remove": [
+      "devlog/_plan/260815_probe/000_plan.md"
+     ]
+    },
+    {
+     "argv": [
+      "show",
+      "--session",
+      "rb",
+      "--json"
+     ],
+     "want": {
+      "code": 0,
+      "output": "{\"roundId\":\"r1\",\"status\":\"inconclusive\",\"staleness\":\"stale\",\"launchId\":\"r1-<STAMP>\",\"verdict\":null,\"workPhaseId\":\"wp1\",\"planEpoch\":\"e-probe-1\"}"
+     }
+    }
+   ],
+   "after": {
+    "objective": "review binding",
+    "slug": "review-binding-probe",
+    "createdAt": "<TS>",
+    "updatedAt": "<TS>",
+    "activeWorkPhaseId": "wp1",
+    "workPhases": [
+     {
+      "id": "wp1",
+      "title": "wp1",
+      "status": "in_progress",
+      "tasks": [],
+      "criteriaIds": []
+     }
+    ],
+    "criteria": [],
+    "host": {
+     "armed": false,
+     "armedAt": null,
+     "source": "none"
+    },
+    "reviewRounds": [
+     {
+      "roundId": "r1",
+      "purpose": "plan_audit",
+      "planPath": "devlog/_plan/260815_probe",
+      "planSha256": "6999a514f0f9423c49c6fba5fbaf6b295caee072eff210b0e55bc584b7445355",
+      "status": "inconclusive",
+      "lane": {
+       "launchId": "r1-<STAMP>",
+       "reviewerSession": "aborted: aborted by the agent"
+      },
+      "openedAt": "<TS>",
+      "ownerSessionId": "rb",
+      "workPhaseId": "wp1",
+      "planUnit": "devlog/_plan/260815_probe",
+      "planEpoch": "e-probe-1",
+      "planFiles": [
+       {
+        "path": "devlog/_plan/260815_probe/000_plan.md",
+        "sha256": "043e84e9c05567c907905179c3c16ed31f46b1b53f0d1bd9f47b3d78ba08a2b9"
+       }
+      ],
+      "closedAt": "<TS>"
+     }
+    ],
+    "schemaVersion": 1
+   }
+  },
+  {
+   "id": "show_recorded_fail_verdict",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/goalplans/review-binding-probe/goalplan.json": "{\n  \"objective\": \"review binding\",\n  \"slug\": \"review-binding-probe\",\n  \"schemaVersion\": 1,\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"activeWorkPhaseId\": \"wp1\",\n  \"workPhases\": [\n    {\n      \"id\": \"wp1\",\n      \"title\": \"wp1\",\n      \"status\": \"in_progress\",\n      \"tasks\": [],\n      \"criteriaIds\": []\n    }\n  ],\n  \"criteria\": [],\n  \"host\": {\n    \"armed\": false,\n    \"armedAt\": null,\n    \"source\": \"none\"\n  }\n}",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"A\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"review-binding-probe\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": \"e-probe-1\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "open",
+      "--session",
+      "rb",
+      "--plan-path",
+      "devlog/_plan/260815_probe/000_plan.md"
+     ],
+     "want": {
+      "code": 0,
+      "output": "r1-<STAMP>\n\nRound r1 is in flight over 1 file(s).\nDispatch an independent reviewer (agent_type \"reviewer\" if exposed; otherwise agent_type \"explorer\" with CXC-ROLE: reviewer before TASK:; if the host has no agent_type field, omit agent_type and prepend CXC-ROLE: reviewer before TASK:) and require it to end its\nfinal message with exactly these two lines:\n\n  LAUNCH: r1-<STAMP>\n  VERDICT: PASS | NEAR-PASS | FAIL\n\nThe verdict is recorded when that reviewer exits. There is no way to write it here."
+     }
+    },
+    {
+     "write": {
+      ".codexclaw/goalplans/review-binding-probe/goalplan.json": "{\n  \"objective\": \"review binding\",\n  \"slug\": \"review-binding-probe\",\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"activeWorkPhaseId\": \"wp1\",\n  \"workPhases\": [\n    {\n      \"id\": \"wp1\",\n      \"title\": \"wp1\",\n      \"status\": \"in_progress\",\n      \"tasks\": [],\n      \"criteriaIds\": []\n    }\n  ],\n  \"criteria\": [],\n  \"host\": {\n    \"armed\": false,\n    \"armedAt\": null,\n    \"source\": \"none\"\n  },\n  \"reviewRounds\": [\n    {\n      \"roundId\": \"r1\",\n      \"purpose\": \"plan_audit\",\n      \"planPath\": \"devlog/_plan/260815_probe\",\n      \"planSha256\": \"6999a514f0f9423c49c6fba5fbaf6b295caee072eff210b0e55bc584b7445355\",\n      \"status\": \"changes_requested\",\n      \"lane\": {\n        \"launchId\": \"r1-20260101000000\",\n        \"verdict\": \"fail\",\n        \"reviewerSession\": \"rv\"\n      },\n      \"openedAt\": \"2026-01-01T00:00:00.000Z\",\n      \"ownerSessionId\": \"rb\",\n      \"workPhaseId\": \"wp1\",\n      \"planUnit\": \"devlog/_plan/260815_probe\",\n      \"planEpoch\": \"e-probe-1\",\n      \"planFiles\": [\n        {\n          \"path\": \"devlog/_plan/260815_probe/000_plan.md\",\n          \"sha256\": \"043e84e9c05567c907905179c3c16ed31f46b1b53f0d1bd9f47b3d78ba08a2b9\"\n        }\n      ],\n      \"closedAt\": \"2026-01-01T00:00:00.000Z\"\n    }\n  ],\n  \"schemaVersion\": 1\n}"
+     }
+    },
+    {
+     "argv": [
+      "show",
+      "--session",
+      "rb",
+      "--json"
+     ],
+     "want": {
+      "code": 0,
+      "output": "{\"roundId\":\"r1\",\"status\":\"changes_requested\",\"staleness\":\"fresh\",\"launchId\":\"r1-<STAMP>\",\"verdict\":\"fail\",\"workPhaseId\":\"wp1\",\"planEpoch\":\"e-probe-1\"}"
+     }
+    },
+    {
+     "argv": [
+      "show",
+      "--session",
+      "rb"
+     ],
+     "want": {
+      "code": 0,
+      "output": "review-round r1: status=changes_requested staleness=fresh verdict=fail launch=r1-<STAMP>"
+     }
+    }
+   ],
+   "after": {
+    "objective": "review binding",
+    "slug": "review-binding-probe",
+    "createdAt": "<TS>",
+    "updatedAt": "<TS>",
+    "activeWorkPhaseId": "wp1",
+    "workPhases": [
+     {
+      "id": "wp1",
+      "title": "wp1",
+      "status": "in_progress",
+      "tasks": [],
+      "criteriaIds": []
+     }
+    ],
+    "criteria": [],
+    "host": {
+     "armed": false,
+     "armedAt": null,
+     "source": "none"
+    },
+    "reviewRounds": [
+     {
+      "roundId": "r1",
+      "purpose": "plan_audit",
+      "planPath": "devlog/_plan/260815_probe",
+      "planSha256": "6999a514f0f9423c49c6fba5fbaf6b295caee072eff210b0e55bc584b7445355",
+      "status": "changes_requested",
+      "lane": {
+       "launchId": "r1-<STAMP>",
+       "verdict": "fail",
+       "reviewerSession": "rv"
+      },
+      "openedAt": "<TS>",
+      "ownerSessionId": "rb",
+      "workPhaseId": "wp1",
+      "planUnit": "devlog/_plan/260815_probe",
+      "planEpoch": "e-probe-1",
+      "planFiles": [
+       {
+        "path": "devlog/_plan/260815_probe/000_plan.md",
+        "sha256": "043e84e9c05567c907905179c3c16ed31f46b1b53f0d1bd9f47b3d78ba08a2b9"
+       }
+      ],
+      "closedAt": "<TS>"
+     }
+    ],
+    "schemaVersion": 1
+   }
+  },
+  {
+   "id": "show_recorded_pass_then_edit",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/goalplans/review-binding-probe/goalplan.json": "{\n  \"objective\": \"review binding\",\n  \"slug\": \"review-binding-probe\",\n  \"schemaVersion\": 1,\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"activeWorkPhaseId\": \"wp1\",\n  \"workPhases\": [\n    {\n      \"id\": \"wp1\",\n      \"title\": \"wp1\",\n      \"status\": \"in_progress\",\n      \"tasks\": [],\n      \"criteriaIds\": []\n    }\n  ],\n  \"criteria\": [],\n  \"host\": {\n    \"armed\": false,\n    \"armedAt\": null,\n    \"source\": \"none\"\n  }\n}",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"A\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"review-binding-probe\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": \"e-probe-1\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "open",
+      "--session",
+      "rb",
+      "--plan-path",
+      "devlog/_plan/260815_probe/000_plan.md"
+     ],
+     "want": {
+      "code": 0,
+      "output": "r1-<STAMP>\n\nRound r1 is in flight over 1 file(s).\nDispatch an independent reviewer (agent_type \"reviewer\" if exposed; otherwise agent_type \"explorer\" with CXC-ROLE: reviewer before TASK:; if the host has no agent_type field, omit agent_type and prepend CXC-ROLE: reviewer before TASK:) and require it to end its\nfinal message with exactly these two lines:\n\n  LAUNCH: r1-<STAMP>\n  VERDICT: PASS | NEAR-PASS | FAIL\n\nThe verdict is recorded when that reviewer exits. There is no way to write it here."
+     }
+    },
+    {
+     "write": {
+      ".codexclaw/goalplans/review-binding-probe/goalplan.json": "{\n  \"objective\": \"review binding\",\n  \"slug\": \"review-binding-probe\",\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"activeWorkPhaseId\": \"wp1\",\n  \"workPhases\": [\n    {\n      \"id\": \"wp1\",\n      \"title\": \"wp1\",\n      \"status\": \"in_progress\",\n      \"tasks\": [],\n      \"criteriaIds\": []\n    }\n  ],\n  \"criteria\": [],\n  \"host\": {\n    \"armed\": false,\n    \"armedAt\": null,\n    \"source\": \"none\"\n  },\n  \"reviewRounds\": [\n    {\n      \"roundId\": \"r1\",\n      \"purpose\": \"plan_audit\",\n      \"planPath\": \"devlog/_plan/260815_probe\",\n      \"planSha256\": \"6999a514f0f9423c49c6fba5fbaf6b295caee072eff210b0e55bc584b7445355\",\n      \"status\": \"approved\",\n      \"lane\": {\n        \"launchId\": \"r1-20260101000000\",\n        \"verdict\": \"pass\",\n        \"reviewerSession\": \"rv\"\n      },\n      \"openedAt\": \"2026-01-01T00:00:00.000Z\",\n      \"ownerSessionId\": \"rb\",\n      \"workPhaseId\": \"wp1\",\n      \"planUnit\": \"devlog/_plan/260815_probe\",\n      \"planEpoch\": \"e-probe-1\",\n      \"planFiles\": [\n        {\n          \"path\": \"devlog/_plan/260815_probe/000_plan.md\",\n          \"sha256\": \"043e84e9c05567c907905179c3c16ed31f46b1b53f0d1bd9f47b3d78ba08a2b9\"\n        }\n      ],\n      \"closedAt\": \"2026-01-01T00:00:00.000Z\"\n    }\n  ],\n  \"schemaVersion\": 1\n}"
+     }
+    },
+    {
+     "argv": [
+      "show",
+      "--session",
+      "rb"
+     ],
+     "want": {
+      "code": 0,
+      "output": "review-round r1: status=approved staleness=fresh verdict=pass launch=r1-<STAMP>"
+     }
+    },
+    {
+     "write": {
+      "devlog/_plan/260815_probe/000_plan.md": "# changed\n"
+     }
+    },
+    {
+     "argv": [
+      "show",
+      "--session",
+      "rb"
+     ],
+     "want": {
+      "code": 0,
+      "output": "review-round r1: status=approved staleness=stale verdict=pass launch=r1-<STAMP>"
+     }
+    }
+   ],
+   "after": {
+    "objective": "review binding",
+    "slug": "review-binding-probe",
+    "createdAt": "<TS>",
+    "updatedAt": "<TS>",
+    "activeWorkPhaseId": "wp1",
+    "workPhases": [
+     {
+      "id": "wp1",
+      "title": "wp1",
+      "status": "in_progress",
+      "tasks": [],
+      "criteriaIds": []
+     }
+    ],
+    "criteria": [],
+    "host": {
+     "armed": false,
+     "armedAt": null,
+     "source": "none"
+    },
+    "reviewRounds": [
+     {
+      "roundId": "r1",
+      "purpose": "plan_audit",
+      "planPath": "devlog/_plan/260815_probe",
+      "planSha256": "6999a514f0f9423c49c6fba5fbaf6b295caee072eff210b0e55bc584b7445355",
+      "status": "approved",
+      "lane": {
+       "launchId": "r1-<STAMP>",
+       "verdict": "pass",
+       "reviewerSession": "rv"
+      },
+      "openedAt": "<TS>",
+      "ownerSessionId": "rb",
+      "workPhaseId": "wp1",
+      "planUnit": "devlog/_plan/260815_probe",
+      "planEpoch": "e-probe-1",
+      "planFiles": [
+       {
+        "path": "devlog/_plan/260815_probe/000_plan.md",
+        "sha256": "043e84e9c05567c907905179c3c16ed31f46b1b53f0d1bd9f47b3d78ba08a2b9"
+       }
+      ],
+      "closedAt": "<TS>"
+     }
+    ],
+    "schemaVersion": 1
+   }
+  },
+  {
+   "id": "show_pre_binding_round",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/goalplans/review-binding-probe/goalplan.json": "{\n  \"objective\": \"review binding\",\n  \"slug\": \"review-binding-probe\",\n  \"schemaVersion\": 1,\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"activeWorkPhaseId\": \"wp1\",\n  \"workPhases\": [\n    {\n      \"id\": \"wp1\",\n      \"title\": \"wp1\",\n      \"status\": \"in_progress\",\n      \"tasks\": [],\n      \"criteriaIds\": []\n    }\n  ],\n  \"criteria\": [],\n  \"host\": {\n    \"armed\": false,\n    \"armedAt\": null,\n    \"source\": \"none\"\n  },\n  \"reviewRounds\": [\n    {\n      \"roundId\": \"r1\",\n      \"purpose\": \"plan_audit\",\n      \"planPath\": \"devlog/_plan/260815_probe\",\n      \"planSha256\": \"x\",\n      \"status\": \"approved\",\n      \"lane\": {\n        \"launchId\": \"r1-20260101000000\",\n        \"verdict\": \"near-pass\"\n      },\n      \"openedAt\": \"2026-01-01T00:00:00.000Z\",\n      \"closedAt\": \"2026-01-01T00:00:00.000Z\"\n    }\n  ]\n}",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"A\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"review-binding-probe\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": \"e-probe-1\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "show",
+      "--session",
+      "rb"
+     ],
+     "want": {
+      "code": 0,
+      "output": "review-round r1: status=approved staleness=open verdict=near-pass launch=r1-<STAMP>"
+     }
+    },
+    {
+     "argv": [
+      "show",
+      "--session",
+      "rb",
+      "--json"
+     ],
+     "want": {
+      "code": 0,
+      "output": "{\"roundId\":\"r1\",\"status\":\"approved\",\"staleness\":\"open\",\"launchId\":\"r1-<STAMP>\",\"verdict\":\"near-pass\",\"workPhaseId\":null,\"planEpoch\":null}"
+     }
+    }
+   ],
+   "after": {
+    "objective": "review binding",
+    "slug": "review-binding-probe",
+    "schemaVersion": 1,
+    "createdAt": "<TS>",
+    "updatedAt": "<TS>",
+    "activeWorkPhaseId": "wp1",
+    "workPhases": [
+     {
+      "id": "wp1",
+      "title": "wp1",
+      "status": "in_progress",
+      "tasks": [],
+      "criteriaIds": []
+     }
+    ],
+    "criteria": [],
+    "host": {
+     "armed": false,
+     "armedAt": null,
+     "source": "none"
+    },
+    "reviewRounds": [
+     {
+      "roundId": "r1",
+      "purpose": "plan_audit",
+      "planPath": "devlog/_plan/260815_probe",
+      "planSha256": "x",
+      "status": "approved",
+      "lane": {
+       "launchId": "r1-<STAMP>",
+       "verdict": "near-pass"
+      },
+      "openedAt": "<TS>",
+      "closedAt": "<TS>"
+     }
+    ]
+   }
+  },
+  {
+   "id": "show_awkward_ids_in_json",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/goalplans/review-binding-probe/goalplan.json": "{\n  \"objective\": \"review binding\",\n  \"slug\": \"review-binding-probe\",\n  \"schemaVersion\": 1,\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"activeWorkPhaseId\": \"wp<&>é \",\n  \"workPhases\": [\n    {\n      \"id\": \"wp<&>é \",\n      \"title\": \"wp<&>é \",\n      \"status\": \"in_progress\",\n      \"tasks\": [],\n      \"criteriaIds\": []\n    }\n  ],\n  \"criteria\": [],\n  \"host\": {\n    \"armed\": false,\n    \"armedAt\": null,\n    \"source\": \"none\"\n  }\n}",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"A\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"review-binding-probe\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": \"e<&> \",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "open",
+      "--session",
+      "rb",
+      "--plan-path",
+      "devlog/_plan/260815_probe/000_plan.md"
+     ],
+     "want": {
+      "code": 0,
+      "output": "r1-<STAMP>\n\nRound r1 is in flight over 1 file(s).\nDispatch an independent reviewer (agent_type \"reviewer\" if exposed; otherwise agent_type \"explorer\" with CXC-ROLE: reviewer before TASK:; if the host has no agent_type field, omit agent_type and prepend CXC-ROLE: reviewer before TASK:) and require it to end its\nfinal message with exactly these two lines:\n\n  LAUNCH: r1-<STAMP>\n  VERDICT: PASS | NEAR-PASS | FAIL\n\nThe verdict is recorded when that reviewer exits. There is no way to write it here."
+     }
+    },
+    {
+     "argv": [
+      "show",
+      "--session",
+      "rb",
+      "--json"
+     ],
+     "want": {
+      "code": 0,
+      "output": "{\"roundId\":\"r1\",\"status\":\"in_flight\",\"staleness\":\"open\",\"launchId\":\"r1-<STAMP>\",\"verdict\":null,\"workPhaseId\":\"wp<&>é \",\"planEpoch\":\"e<&> \"}"
+     }
+    }
+   ],
+   "after": {
+    "objective": "review binding",
+    "slug": "review-binding-probe",
+    "createdAt": "<TS>",
+    "updatedAt": "<TS>",
+    "activeWorkPhaseId": "wp<&>é ",
+    "workPhases": [
+     {
+      "id": "wp<&>é ",
+      "title": "wp<&>é ",
+      "status": "in_progress",
+      "tasks": [],
+      "criteriaIds": []
+     }
+    ],
+    "criteria": [],
+    "host": {
+     "armed": false,
+     "armedAt": null,
+     "source": "none"
+    },
+    "schemaVersion": 1,
+    "reviewRounds": [
+     {
+      "roundId": "r1",
+      "purpose": "plan_audit",
+      "planPath": "devlog/_plan/260815_probe",
+      "planSha256": "6999a514f0f9423c49c6fba5fbaf6b295caee072eff210b0e55bc584b7445355",
+      "status": "in_flight",
+      "lane": {
+       "launchId": "r1-<STAMP>"
+      },
+      "openedAt": "<TS>",
+      "ownerSessionId": "rb",
+      "workPhaseId": "wp<&>é ",
+      "planUnit": "devlog/_plan/260815_probe",
+      "planEpoch": "e<&> ",
+      "planFiles": [
+       {
+        "path": "devlog/_plan/260815_probe/000_plan.md",
+        "sha256": "043e84e9c05567c907905179c3c16ed31f46b1b53f0d1bd9f47b3d78ba08a2b9"
+       }
+      ]
+     }
+    ],
+    "activePlanAuditRoundId": "r1"
+   }
+  },
+  {
+   "id": "show_latest_of_many_rounds",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/goalplans/review-binding-probe/goalplan.json": "{\n  \"objective\": \"review binding\",\n  \"slug\": \"review-binding-probe\",\n  \"schemaVersion\": 1,\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"activeWorkPhaseId\": \"wp1\",\n  \"workPhases\": [\n    {\n      \"id\": \"wp1\",\n      \"title\": \"wp1\",\n      \"status\": \"in_progress\",\n      \"tasks\": [],\n      \"criteriaIds\": []\n    }\n  ],\n  \"criteria\": [],\n  \"host\": {\n    \"armed\": false,\n    \"armedAt\": null,\n    \"source\": \"none\"\n  },\n  \"reviewRounds\": [\n    {\n      \"roundId\": \"r2\",\n      \"purpose\": \"plan_audit\",\n      \"planPath\": \"devlog/_plan/260815_probe\",\n      \"planSha256\": \"x\",\n      \"status\": \"inconclusive\",\n      \"lane\": {\n        \"launchId\": \"r2-20260101000000\"\n      },\n      \"openedAt\": \"2026-01-01T00:00:00.000Z\",\n      \"closedAt\": \"2026-01-01T00:00:00.000Z\"\n    },\n    {\n      \"roundId\": \"r10\",\n      \"purpose\": \"plan_audit\",\n      \"planPath\": \"devlog/_plan/260815_probe\",\n      \"planSha256\": \"x\",\n      \"status\": \"approved\",\n      \"lane\": {\n        \"launchId\": \"r10-20260101000000\",\n        \"verdict\": \"pass\"\n      },\n      \"openedAt\": \"2026-01-01T00:00:00.000Z\",\n      \"closedAt\": \"2026-01-01T00:00:00.000Z\"\n    },\n    {\n      \"roundId\": \"r9\",\n      \"purpose\": \"plan_audit\",\n      \"planPath\": \"devlog/_plan/260815_probe\",\n      \"planSha256\": \"x\",\n      \"status\": \"inconclusive\",\n      \"lane\": {\n        \"launchId\": \"r9-20260101000000\"\n      },\n      \"openedAt\": \"2026-01-01T00:00:00.000Z\",\n      \"closedAt\": \"2026-01-01T00:00:00.000Z\"\n    }\n  ]\n}",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"A\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"review-binding-probe\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": \"e-probe-1\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "show",
+      "--session",
+      "rb"
+     ],
+     "want": {
+      "code": 0,
+      "output": "review-round r10: status=approved staleness=open verdict=pass launch=r10-<STAMP>"
+     }
+    }
+   ],
+   "after": {
+    "objective": "review binding",
+    "slug": "review-binding-probe",
+    "schemaVersion": 1,
+    "createdAt": "<TS>",
+    "updatedAt": "<TS>",
+    "activeWorkPhaseId": "wp1",
+    "workPhases": [
+     {
+      "id": "wp1",
+      "title": "wp1",
+      "status": "in_progress",
+      "tasks": [],
+      "criteriaIds": []
+     }
+    ],
+    "criteria": [],
+    "host": {
+     "armed": false,
+     "armedAt": null,
+     "source": "none"
+    },
+    "reviewRounds": [
+     {
+      "roundId": "r2",
+      "purpose": "plan_audit",
+      "planPath": "devlog/_plan/260815_probe",
+      "planSha256": "x",
+      "status": "inconclusive",
+      "lane": {
+       "launchId": "r2-<STAMP>"
+      },
+      "openedAt": "<TS>",
+      "closedAt": "<TS>"
+     },
+     {
+      "roundId": "r10",
+      "purpose": "plan_audit",
+      "planPath": "devlog/_plan/260815_probe",
+      "planSha256": "x",
+      "status": "approved",
+      "lane": {
+       "launchId": "r10-<STAMP>",
+       "verdict": "pass"
+      },
+      "openedAt": "<TS>",
+      "closedAt": "<TS>"
+     },
+     {
+      "roundId": "r9",
+      "purpose": "plan_audit",
+      "planPath": "devlog/_plan/260815_probe",
+      "planSha256": "x",
+      "status": "inconclusive",
+      "lane": {
+       "launchId": "r9-<STAMP>"
+      },
+      "openedAt": "<TS>",
+      "closedAt": "<TS>"
+     }
+    ]
+   }
+  },
+  {
+   "id": "help_words",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/goalplans/review-binding-probe/goalplan.json": "{\n  \"objective\": \"review binding\",\n  \"slug\": \"review-binding-probe\",\n  \"schemaVersion\": 1,\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"activeWorkPhaseId\": \"wp1\",\n  \"workPhases\": [\n    {\n      \"id\": \"wp1\",\n      \"title\": \"wp1\",\n      \"status\": \"in_progress\",\n      \"tasks\": [],\n      \"criteriaIds\": []\n    }\n  ],\n  \"criteria\": [],\n  \"host\": {\n    \"armed\": false,\n    \"armedAt\": null,\n    \"source\": \"none\"\n  }\n}",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"A\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"review-binding-probe\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": \"e-probe-1\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "help"
+     ],
+     "want": {
+      "code": 0,
+      "output": "cxc review-round — the opt-in A-gate plan-audit round (LEAN-REVIEW-01)\n\nUsage:\n  cxc review-round open --session <id> [--plan-path <path>]... [--cwd <path>] [--json]\n  cxc review-round show --session <id> [--cwd <path>] [--json]\n  cxc review-round abort --session <id> [--reason <text>] [--cwd <path>]\n  cxc review-round --help\n\nNotes:\n  A round is OPTIONAL. With no round open, A>B advances on the attest alone.\n  With a round whose verdict was RECORDED, that verdict is binding: you cannot\n  attest \"pass\" over a reviewer's \"fail\".\n  open requires the session to be at phase A with a bound goalplan and a plan\n  binding recorded by P>A.\n  abort closes a round that no reviewer will finish, so the cycle is not stuck."
+     }
+    },
+    {
+     "argv": [],
+     "want": {
+      "code": 0,
+      "output": "cxc review-round — the opt-in A-gate plan-audit round (LEAN-REVIEW-01)\n\nUsage:\n  cxc review-round open --session <id> [--plan-path <path>]... [--cwd <path>] [--json]\n  cxc review-round show --session <id> [--cwd <path>] [--json]\n  cxc review-round abort --session <id> [--reason <text>] [--cwd <path>]\n  cxc review-round --help\n\nNotes:\n  A round is OPTIONAL. With no round open, A>B advances on the attest alone.\n  With a round whose verdict was RECORDED, that verdict is binding: you cannot\n  attest \"pass\" over a reviewer's \"fail\".\n  open requires the session to be at phase A with a bound goalplan and a plan\n  binding recorded by P>A.\n  abort closes a round that no reviewer will finish, so the cycle is not stuck."
+     }
+    },
+    {
+     "argv": [
+      "open",
+      "--help"
+     ],
+     "want": {
+      "code": 1,
+      "output": "review-round: --session <id> is required"
+     }
+    }
+   ],
+   "after": {
+    "objective": "review binding",
+    "slug": "review-binding-probe",
+    "schemaVersion": 1,
+    "createdAt": "<TS>",
+    "updatedAt": "<TS>",
+    "activeWorkPhaseId": "wp1",
+    "workPhases": [
+     {
+      "id": "wp1",
+      "title": "wp1",
+      "status": "in_progress",
+      "tasks": [],
+      "criteriaIds": []
+     }
+    ],
+    "criteria": [],
+    "host": {
+     "armed": false,
+     "armedAt": null,
+     "source": "none"
+    }
+   }
+  },
+  {
+   "id": "blank_session",
+   "files": {
+    ".codexclaw/.gitignore": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n",
+    ".codexclaw/goalplans/review-binding-probe/goalplan.json": "{\n  \"objective\": \"review binding\",\n  \"slug\": \"review-binding-probe\",\n  \"schemaVersion\": 1,\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"activeWorkPhaseId\": \"wp1\",\n  \"workPhases\": [\n    {\n      \"id\": \"wp1\",\n      \"title\": \"wp1\",\n      \"status\": \"in_progress\",\n      \"tasks\": [],\n      \"criteriaIds\": []\n    }\n  ],\n  \"criteria\": [],\n  \"host\": {\n    \"armed\": false,\n    \"armedAt\": null,\n    \"source\": \"none\"\n  }\n}",
+    ".codexclaw/sessions/rb.json": "{\n  \"phase\": \"A\",\n  \"sessionId\": \"rb\",\n  \"slug\": \"review-binding-probe\",\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"flags\": {\n    \"interview\": false,\n    \"auditPassed\": false,\n    \"checkPassed\": false\n  },\n  \"supersededBy\": null,\n  \"injectedTurns\": [],\n  \"lastInjectedPhase\": null,\n  \"orchestrationActive\": false,\n  \"interview\": null,\n  \"stopBlockPhase\": null,\n  \"stopBlockCount\": 0,\n  \"stopBlockWorkPhaseId\": null,\n  \"stopMetricCursor\": 0,\n  \"stopBlockTotal\": 0,\n  \"stopBlockTurnId\": null,\n  \"stopBlockCapNotified\": false,\n  \"loopArmSeen\": false,\n  \"idleEditNudges\": 0,\n  \"memoryWriteRequested\": false,\n  \"memoryWriteTurn\": null,\n  \"memoryWriteGrant\": false,\n  \"unverifiedSubagents\": [],\n  \"unverifiedCorrupt\": false,\n  \"phaseEntrySource\": null,\n  \"planUnit\": \"devlog/_plan/260815_probe\",\n  \"planEpoch\": \"e-probe-1\",\n  \"checkEpoch\": null,\n  \"dcloseRecovery\": null\n}",
+    "devlog/_plan/260815_probe/000_plan.md": "# probe\n"
+   },
+   "steps": [
+    {
+     "argv": [
+      "show",
+      "--session",
+      "  ﻿ "
+     ],
+     "want": {
+      "code": 1,
+      "output": "review-round: --session <id> is required"
+     }
+    },
+    {
+     "argv": [
+      "show"
+     ],
+     "want": {
+      "code": 1,
+      "output": "review-round: --session <id> is required"
+     }
+    }
+   ],
+   "after": {
+    "objective": "review binding",
+    "slug": "review-binding-probe",
+    "schemaVersion": 1,
+    "createdAt": "<TS>",
+    "updatedAt": "<TS>",
+    "activeWorkPhaseId": "wp1",
+    "workPhases": [
+     {
+      "id": "wp1",
+      "title": "wp1",
+      "status": "in_progress",
+      "tasks": [],
+      "criteriaIds": []
+     }
+    ],
+    "criteria": [],
+    "host": {
+     "armed": false,
+     "armedAt": null,
+     "source": "none"
+    }
+   }
+  }
+ ]
+}
