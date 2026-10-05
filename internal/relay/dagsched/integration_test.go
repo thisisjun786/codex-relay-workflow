@@ -94,7 +94,7 @@ func newLegacyLocalIntegrationKit(t *testing.T) *integrationKit {
 func newLegacyLocalIntegrationKitOn(t *testing.T, rk *releaseKit) *integrationKit {
 	t.Helper()
 	k := &integrationKit{releaseKit: rk, repo: newGitRepo(t)}
-	k.sched.Tips = legacyLocalTipReader{}
+	k.sched.Tips = newLegacyLocalTipReader(t)
 	k.sched.Ancestry = GitAncestry{}.Ancestry
 	k.putIntegrationPlan(k.repo.path)
 	return k
