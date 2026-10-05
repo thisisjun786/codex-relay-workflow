@@ -738,9 +738,12 @@ directory under `TMPDIR` that it removes whatever happens, and in the Go package
 it runs `go build`, `go vet`, `go vet` for `darwin/arm64` and a test compile that runs no test, each
 package with and without the build tag `--tags` names (default `dev`) and for each target that has
 files of it, stopping at the first step that fails. It only reads the checkout: no branch, commit or
-worktree is written. It takes the build cache and the Go settings from the environment, keeps the go
-tool's temporary files in its scratch directory (and, except on macOS, where Go keeps them under
-`HOME`, the tool's telemetry counters) and passes `-p=4`, so it runs under the same
+worktree is written. It takes the build cache and the Go settings from the environment, names the
+empty tag set on the command line for the untagged pass so a `-tags` in the caller's `GOFLAGS` or
+Go settings file cannot decide it, keeps the go tool's temporary files and telemetry counters in its
+scratch directory (on macOS, where Go reads the counters from `HOME` rather than from
+`XDG_CONFIG_HOME`, it also moves the tool's `HOME` inside that directory and pins the caches to the
+caller's `go env` values) and passes `-p=4`, so it runs under the same
 [`Go build resources:`](task-packet.md#launch-packet) line as any other local run of the parent, in
 the packages the change touches and never as a full test run. The hosted CI of the head stays the
 test suite.
