@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"syscall"
@@ -26,7 +27,7 @@ func planVerb(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 	return result.Code
 }
 
-func receiptVerb(args []string, in io.Reader, stdout, stderr io.Writer) int {
+func receiptVerb(ctx context.Context, args []string, in io.Reader, stdout, stderr io.Writer) int {
 	cwd, err := syscall.Getwd()
 	if err != nil {
 		fmt.Fprintln(stderr, "crw cli failed: "+err.Error())
@@ -37,7 +38,7 @@ func receiptVerb(args []string, in io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "receipt: "+err.Error())
 		return 1
 	}
-	result, err := cli.RunReceiptCLI(parsed, cli.ReceiptRunOptions{Stdin: in, Stdout: stdout, Stderr: stderr})
+	result, err := cli.RunReceiptCLI(parsed, cli.ReceiptRunOptions{Context: ctx, Stdin: in, Stdout: stdout, Stderr: stderr})
 	if err != nil {
 		fmt.Fprintln(stderr, "crw cli failed: "+err.Error())
 		return 1

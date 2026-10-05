@@ -178,7 +178,9 @@ func modes() []mode {
 		}},
 		{"review", true, func(c invocation) int { return command.Run(c.ctx, c.args, c.stdout, c.stderr) }},
 		{"recall", false, func(c invocation) int { return recall.Run(c.args, c.stdout, c.stderr, time.Now()) }},
-		{"pabcd", false, func(c invocation) int { return harness.Pabcd(c.args, os.Stdin, c.stdout, c.stderr, harness.Verbs()) }},
+		{"pabcd", false, func(c invocation) int {
+			return harness.PabcdContext(c.ctx, c.args, os.Stdin, c.stdout, c.stderr, harness.Verbs())
+		}},
 		{"role", false, func(c invocation) int { return role.CLI(c.args, os.Stdin, c.stdout, c.stderr, os.LookupEnv) }},
 		{"provider", false, func(c invocation) int { return provider.Run(c.ctx, c.stdout) }},
 		{"map", false, runRepoMap},
