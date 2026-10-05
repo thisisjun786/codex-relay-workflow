@@ -1,0 +1,132 @@
+package command
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+)
+
+// A result that cannot be kept in the state directory still costs no second model call: the review is recorded and published, and the command says what was lost.
+func TestResultThatCannotBeKeptIsStillRecordedAndPublished(t *testing.T) {
+	f := newFixture(t)
+	h := f.repo.change(f.base, 2)
+	if err := errors.Join(os.MkdirAll(f.state, 0o700), os.WriteFile(filepath.Join(f.state, "results"), nil, 0o600)); err != nil { // a file where the directory of kept results belongs
+		t.Fatal(err)
+	}
+	code, _, errOut := f.run(h)
+	recs := f.ledger()
+	if code != 1 || !strings.Contains(errOut, "could not be kept") || f.s.count() != 2 || len(recs) == 0 || recs[len(recs)-1].Event != "finished" {
+		t.Fatalf("kept copy failure: %d %s (calls %d, ledger %+v)", code, errOut, f.s.count(), recs)
+	}
+	for _, name := range []string{h + ".json", h + ".json.sha256"} {
+		if _, err := os.Stat(filepath.Join(f.out, name)); err != nil {
+			t.Errorf("%s was not published: %v", name, err)
+		}
+	}
+	if code, again, _ := f.run(h); code != 0 || again.Outcome != OutcomeAlreadyReviewed || f.s.count() != 2 {
+		t.Fatalf("run again: %d %+v (calls %d)", code, again, f.s.count())
+	}
+}
+
+// A result recorded before results were kept (an older ledger) has no copy to restore from: nothing is written and the answer is what it always was.
+func TestResultWithoutAKeptCopyIsNotRestored(t *testing.T) {
+	f := newFixture(t)
+	h := f.repo.change(f.base, 2)
+	_, first, _ := f.run(h)
+	kept := filepath.Join(f.state, "results", first.SHA256+".json")
+	if _, err := os.Stat(kept); err != nil {
+		t.Fatalf("the result was not kept at %s: %v", kept, err)
+	}
+	if err := errors.Join(os.RemoveAll(filepath.Join(f.state, "results")), os.Remove(first.Artifact)); err != nil {
+		t.Fatal(err)
+	}
+	code, again, _ := f.run(h)
+	if _, err := os.Stat(first.Artifact); code != 0 || again.Outcome != OutcomeAlreadyReviewed || again.ArtifactPresent == nil || *again.ArtifactPresent || len(again.Restored) != 0 || !os.IsNotExist(err) {
+		t.Fatalf("an older ledger: %d %+v %v", code, again, err)
+	}
+}
+
+// Restoring writes into the directory a concurrent review of the same head may be about to publish into, so it takes the run lock; a busy lock leaves the repair to the next call and the answer at once.
+func TestRestoreIsLeftToTheNextCallWhileAnotherReviewHoldsTheRunLock(t *testing.T) {
+	f := newFixture(t)
+	h := f.repo.change(f.base, 2)
+	_, first, _ := f.run(h)
+	if err := os.Remove(first.Artifact); err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := (&ledger{dir: f.state}).lock(context.Background(), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, busy, errOut := f.run(h)
+	unlock()
+	if code != 0 || busy.Outcome != OutcomeAlreadyReviewed || busy.ArtifactPresent == nil || *busy.ArtifactPresent || len(busy.Restored) != 0 {
+		t.Fatalf("while the run lock is held: %d %+v %s", code, busy, errOut)
+	}
+	if _, again, _ := f.run(h); !slices.Equal(again.Restored, []string{first.Artifact}) { // the checksum file was never lost
+		t.Fatalf("after the release: %+v", again)
+	}
+}
+
+// A retry whose files were not written leaves the unavailable attempt's bytes at the path; they are the one thing a restore replaces, and no other file at the path ever is.
+func TestRestoreReplacesOnlyTheUnavailableBytesOfARetryWhoseFilesWereNotWritten(t *testing.T) {
+	f := newFixture(t)
+	h := f.repo.change(f.base, 2)
+	f.on("2026-10-04", quotaResult)
+	_, first, _ := f.run(h)
+	oldData, _ := os.ReadFile(first.Artifact)
+	oldSum, _ := os.ReadFile(first.Artifact + ".sha256")
+	f.on("2026-10-05", okResult)
+	if code, retry, errOut := f.run(h); code != 0 || retry.Outcome != OutcomeReviewed || retry.SHA256 == first.SHA256 {
+		t.Fatalf("retry: %d %+v %s", code, retry, errOut)
+	}
+	newData, _ := os.ReadFile(first.Artifact)
+	if err := errors.Join(os.WriteFile(first.Artifact, oldData, 0o644), os.WriteFile(first.Artifact+".sha256", oldSum, 0o644)); err != nil {
+		t.Fatal(err)
+	}
+	calls := f.s.count()
+	code, again, errOut := f.run(h)
+	if got, _ := os.ReadFile(first.Artifact); code != 0 || again.Outcome != OutcomeAlreadyReviewed || len(again.Restored) != 2 || !bytes.Equal(got, newData) || f.s.count() != calls {
+		t.Fatalf("restore after a retry whose files were not written: %d %+v %s", code, again, errOut)
+	}
+	if err := os.WriteFile(first.Artifact, []byte("someone else's file\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(first.Artifact + ".sha256"); err != nil { // not even its checksum file is written beside a file that is not the recorded artifact
+		t.Fatal(err)
+	}
+	if _, foreign, _ := f.run(h); len(foreign.Restored) != 0 {
+		t.Fatalf("a foreign file was restored over: %+v", foreign)
+	} else if got, _ := os.ReadFile(first.Artifact); string(got) != "someone else's file\n" {
+		t.Fatalf("a foreign file was replaced: %q", got)
+	} else if _, err := os.Stat(first.Artifact + ".sha256"); !os.IsNotExist(err) {
+		t.Fatalf("a checksum file was written beside a foreign file: %v", err)
+	}
+}
+
+// A restore of an older result that reaches the lock after a newer result replaced it at the same path must leave the newer result's files alone: its checksum is not the older one's.
+func TestRestoreOfAnOlderResultLeavesTheNewerResultsChecksumAlone(t *testing.T) {
+	f := newFixture(t)
+	h := f.repo.change(f.base, 2)
+	f.on("2026-10-04", quotaResult)
+	f.run(h)
+	f.on("2026-10-05", okResult)
+	_, retry, _ := f.run(h)
+	var older record
+	for _, r := range f.ledger() {
+		if r.Event == "unavailable" {
+			older = r
+		}
+	}
+	before, _ := os.ReadFile(retry.Artifact + ".sha256")
+	written, err := (&ledger{dir: f.state}).restore(context.Background(), older, nil, f.out, true)
+	if after, _ := os.ReadFile(retry.Artifact + ".sha256"); err != nil || len(written) != 0 || !bytes.Equal(before, after) || !strings.HasPrefix(string(after), retry.SHA256) {
+		t.Fatalf("restoring the older result: wrote %v (%v); checksum file %q, was %q", written, err, after, before)
+	}
+}

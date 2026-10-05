@@ -82,8 +82,8 @@ type mergeBuild struct {
 // XDG_CONFIG_HOME, so HOME moves into the owned directory there as well and the mode file is written
 // under that home too, before any go command can start in it. The caches the caller's go environment
 // names (GOCACHE, GOMODCACHE, GOPATH) are read with the caller's environment, in an owned directory
-// that holds no go.mod so a module in the caller's working directory cannot choose the go tool's
-// toolchain, and named again, so builds still share the caller's caches. Elsewhere HOME, the build cache, the module cache and every setting stay as
+// that is its own module root, so neither a module in the caller's working directory nor one above
+// the run scratch can choose the go tool's toolchain, and named again, so builds still share the caller's caches. Elsewhere HOME, the build cache, the module cache and every setting stay as
 // the caller has them, and GOENV is pinned to the caller's file first, so the settings of go env -w
 // keep their place between the environment and the defaults. The module workspace is off. targetOS
 // names the platform the go tool targets and defaults to runtime.GOOS; a test names darwin and linux
@@ -135,6 +135,9 @@ func mergeBuildEnv(ctx context.Context, base []string, owned string, targetOS ..
 		if err := os.MkdirAll(probe, 0o700); err != nil {
 			return nil, err
 		}
+		if err := os.WriteFile(filepath.Join(probe, "go.mod"), []byte(mergeBuildProbeModule), 0o600); err != nil {
+			return nil, err
+		}
 		readEnv := append(append([]string{}, env...), "HOME="+home)
 		caches, err := mergeBuildCallerCaches(ctx, readEnv, probe)
 		if err != nil {
@@ -164,9 +167,18 @@ func mergeBuildTelemetryModeFiles(owned, goos string) []string {
 	return files
 }
 
-// mergeBuildProbeDir is the directory the caller-cache read runs in: a directory this run owns that
-// holds no go.mod, so a module the caller's working directory holds cannot choose the go tool's
-// toolchain for it.
+// mergeBuildProbeModule is the go.mod the probe directory holds. The go tool looks for a go.mod in the
+// directory it runs in and then in every parent, so a probe directory that holds none is captured by a
+// module above the run scratch (the scratch root is made under TMPDIR, CRW-610). The module line makes
+// the probe directory the main module, which ends that search; with no go or toolchain line the go
+// command assumes the oldest language version and selects no toolchain, so the file cannot make the
+// cache read switch toolchains or reject one.
+const mergeBuildProbeModule = "module crw-merge-build-probe\n"
+
+// mergeBuildProbeDir is the directory the caller-cache read runs in: a directory this run owns that is
+// its own module root, so the go tool's search for a go.mod stops there and neither a module the
+// caller's working directory holds nor one above the run scratch can choose the go tool's toolchain
+// for it.
 func mergeBuildProbeDir(owned string) string {
 	return filepath.Join(owned, "probe")
 }
@@ -200,7 +212,7 @@ func mergeBuildCallerPath(value, ownedHome, callerHome string) string {
 
 // mergeBuildCallerCaches reads the build cache, the module cache and GOPATH the caller's go
 // environment names, so that moving HOME on darwin does not move the caches away from the caller.
-// It runs in the directory dir, which the caller owns and which holds no go.mod, and in a process
+// It runs in the directory dir, which the caller owns and which is its own module root, and in a process
 // group of its own that the check's context ends as a whole, so a go env that stalls is cut off with
 // the check instead of keeping it running past its timeout. The caller has already pointed the
 // environment it passes at the run's own home, whose go defaults are the caller's own with the home
