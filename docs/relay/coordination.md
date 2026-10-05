@@ -277,7 +277,9 @@ the head being a different commit. Both are deliberate: they were written with t
   number but not where it lives, or a claim that names only a relationship) is compared with the head the relationship's
   current work reports name: the latest head-bearing submission of every event in the newest generation that names a head.
   Another head is refused `merge_candidate_moved`, two different heads `revision_ambiguous`, and a relationship attached to
-  another project `foreign_scope`. The answer's `pullRequestHead` is
+  another project `foreign_scope`. A report that names the head for another pull request than the turn's, or for another
+  repository when the turn is on a forge repository, is another pull request's head and is refused `merge_candidate_moved` too
+  (a report that names no pull request has no number to contradict, and a local path cannot be matched to a repository). The answer's `pullRequestHead` is
   `{"pullRequest" (the number, or null), "decidedBy": "work_report", "head", "relationship"}`.
 - When there is nothing to compare the head with, the call is refused `merge_target_unreadable` and the text says how to get one
   compared: claim with `--pr` on a forge repository, or with `--relationship` and retry after a work report records the head

@@ -1491,7 +1491,7 @@
    ]
   },
   {
-   "sql": "INSERT INTO relationships (relationship_id, issue_key, status, parent_task_id, parent_host_id, child_task_id, child_host_id, execution_generation, artifact_roots, allowed_recipients, created_at, updated_at) VALUES ('rel-hc', 'ISS-1', 'active', 'task-alpha', 'host-a', 'task-child', 'host-child', 3, '[]', '[\"task-alpha\"]', '2023-11-14T22:13:20.000000+00:00', '2023-11-14T22:13:20.000000+00:00'); INSERT INTO work_reports (event_id, submission_no, relationship_id, execution_generation, revision_hash, repository, base_ref, head_sha, cxc_status, cxc_reason, contract_version, summary, next_action, recorded_at) VALUES ('77390000000000000000000000000000', 1, 'rel-hc', 3, 'rev', 'owner/repo', 'dev', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'done', 'r', '1', 's', 'n', '2023-11-14T22:13:20.000000+00:00');"
+   "sql": "INSERT INTO relationships (relationship_id, issue_key, status, parent_task_id, parent_host_id, child_task_id, child_host_id, execution_generation, artifact_roots, allowed_recipients, created_at, updated_at) VALUES ('rel-hc', 'ISS-1', 'active', 'task-alpha', 'host-a', 'task-child', 'host-child', 3, '[]', '[\"task-alpha\"]', '2023-11-14T22:13:20.000000+00:00', '2023-11-14T22:13:20.000000+00:00'); INSERT INTO work_reports (event_id, submission_no, relationship_id, execution_generation, revision_hash, repository, pr_number, base_ref, head_sha, cxc_status, cxc_reason, contract_version, summary, next_action, recorded_at) VALUES ('77390000000000000000000000000000', 1, 'rel-hc', 3, 'rev', 'owner/repo', 7, 'dev', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'done', 'r', '1', 's', 'n', '2023-11-14T22:13:20.000000+00:00');"
   },
   {
    "argv": [

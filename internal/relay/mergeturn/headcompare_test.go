@@ -299,6 +299,69 @@ func TestHeadCompareForgePullRequestWithARelationshipIsDecidedByTheForge(t *test
 	headCompareDecision(t, checked2, "forge", "head-500", 500, "")
 }
 
+// A work report is the relationship's, not the pull request's: the report that names the head names the pull request and the
+// repository it is for, and a head that the report names for another pull request is another candidate, whatever the
+// relationship. A turn on a local path cannot be matched to a repository, so only the pull request number is compared there.
+func TestHeadCompareWorkReportNamingAnotherPullRequestIsRefused(t *testing.T) {
+	cases := []struct {
+		name               string
+		repository         string
+		pr                 int64
+		reportRepository   string
+		reportPR           int64
+		refused            bool
+		detail             string
+		decidedPullRequest int64
+	}{
+		{"another pull request, local path", headCompareLocal, 7, fxRepo, 8, true, "pull request 8", 0},
+		{"another repository, forge claim naming the relationship only", fxRepo, 0, "owner/other", 0, true, "repository 'owner/other'", 0},
+		{"the same pull request, local path", headCompareLocal, 7, fxRepo, 7, false, "", 7},
+		{"a report that names no pull request, local path", headCompareLocal, 7, fxRepo, 0, false, "", 7},
+		{"the same repository written in another case, forge claim", fxRepo, 0, "Owner/Repo", 0, false, "", 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			// Ready: a head that moved is compared with the report
+			w, pulls := headCompareFixture(t)
+			headCompareRelate(w, headCompareRel)
+			headCompareReportOf(w, headCompareRel, "event-a", 1, 3, "head-a", c.reportRepository, c.reportPR)
+			turn := headCompareHeld(w, c.repository, "head-0", c.pr, headCompareRel, false)
+			answer, err := w.m.Ready(w.ctx, turn, alpha.TaskID, false, "head-a", "")
+			if c.refused {
+				if answer != nil {
+					t.Fatalf("Ready took a head the report names for another pull request: %v", answer["candidateHead"])
+				}
+				headCompareRefused(t, err, "merge_candidate_moved", c.detail, "another pull request's")
+			} else if err != nil {
+				t.Fatalf("Ready refused a head the report names for this pull request: %v", err)
+			} else {
+				headCompareDecision(t, answer, "work_report", "head-a", c.decidedPullRequest, headCompareRel)
+			}
+
+			// Check: the turn was claimed with that head, so only the comparison with the report can stop it
+			w2, pulls2 := headCompareFixture(t)
+			headCompareRelate(w2, headCompareRel)
+			headCompareReportOf(w2, headCompareRel, "event-a", 1, 3, "head-a", c.reportRepository, c.reportPR)
+			turn2 := headCompareHeld(w2, c.repository, "head-a", c.pr, headCompareRel, true)
+			checked, err := headCompareCheck(w2, turn2, "head-a", livePullReader{target: w2.target, pulls: pulls2})
+			if c.refused {
+				if checked != nil {
+					t.Fatalf("the check began the merge on a head the report names for another pull request: %v", checked["state"])
+				}
+				headCompareRefused(t, err, "merge_candidate_moved", c.detail, "another pull request's")
+				if live := w2.must(w2.m.Turn(w2.ctx, turn2)); live["state"] != Holding {
+					t.Fatalf("a refused check moved the turn to %v", live["state"])
+				}
+			} else if err != nil || checked["state"] != Merging {
+				t.Fatalf("the check refused a head the report names for this pull request: %v %v", checked, err)
+			}
+			if pulls.readCount() != 0 || pulls2.readCount() != 0 {
+				t.Errorf("the forge was read: %d %d", pulls.readCount(), pulls2.readCount())
+			}
+		})
+	}
+}
+
 // A relationship attached to another project is not a source of truth for this project's turn, at Ready as at Check.
 func TestHeadCompareWorkReportOfAnotherProjectIsRefused(t *testing.T) {
 	w, _ := headCompareFixture(t)

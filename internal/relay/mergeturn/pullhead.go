@@ -208,14 +208,18 @@ func (s *Service) headCompareWorkReportVerdict(ctx context.Context, row store.Me
 	if refusal, err := s.headCompareScope(ctx, row, actor); refusal != nil || err != nil {
 		return refusal, nil, err
 	}
-	heads, err := headCompareReportHeads(ctx, s.Store, rid)
+	reports, err := evidence.CurrentReports(ctx, s.Store, rid)
 	if err != nil {
 		return nil, nil, err
 	}
+	heads := headCompareDistinctHeads(reports)
 	if len(heads) == 0 {
 		return headCompareNothing(row, actor, verb, "relationship "+pyvalue.StrRepr(rid)+" has no work report that names a head"), nil, nil
 	}
 	if refusal := headCompareReportRefusal(row, actor, verb, head, heads); refusal != nil {
+		return refusal, nil, nil
+	}
+	if refusal := headCompareReportIdentityRefusal(row, actor, verb, head, reports); refusal != nil {
 		return refusal, nil, nil
 	}
 	var number any
@@ -241,20 +245,16 @@ func (s *Service) headCompareScope(ctx context.Context, row store.MergeTurnsRow,
 	return nil, nil
 }
 
-// headCompareReportHeads is the distinct heads the current work reports of a relationship name, each lower-cased and
+// headCompareDistinctHeads is the distinct heads the current work reports of a relationship name, each lower-cased and
 // trimmed as SameCommit reads them, in order. Reports that name no head name nothing.
-func headCompareReportHeads(ctx context.Context, st *store.Store, relationship string) ([]string, error) {
-	current, err := evidence.CurrentReportHeads(ctx, st, relationship)
-	if err != nil {
-		return nil, err
-	}
-	heads := make([]string, 0, len(current))
-	for _, head := range current {
-		if head = strings.ToLower(strings.TrimSpace(head)); head != "" {
+func headCompareDistinctHeads(reports []evidence.CurrentReport) []string {
+	heads := make([]string, 0, len(reports))
+	for _, report := range reports {
+		if head := strings.ToLower(strings.TrimSpace(report.Head)); head != "" {
 			heads = append(heads, head)
 		}
 	}
-	return slices.Compact(slices.Sorted(slices.Values(heads))), nil
+	return slices.Compact(slices.Sorted(slices.Values(heads)))
 }
 
 // headCompareReportRefusal is the refusal of a head against the heads a relationship's current work reports name: two
@@ -266,6 +266,29 @@ func headCompareReportRefusal(row store.MergeTurnsRow, actor, verb, head string,
 	}
 	if !SameCommit(heads[0], head) {
 		return &registry.CoordinationRefusal{Reason: contract.RefusalMergeCandidateMoved, Detail: "the work report for " + pyvalue.StrRepr(rid) + " names head " + pyvalue.StrRepr(heads[0]) + " and this " + verb + " " + pyvalue.StrRepr(head), Domain: registry.DomainMergeTarget, Subject: row.TargetKey, Incumbent: heads[0], Challenger: head}
+	}
+	return nil
+}
+
+// headCompareReportIdentityRefusal refuses a head that the work report naming it names for another pull request, or for
+// another repository when the turn is on a forge repository: the report is the relationship's, not the turn's pull request's,
+// so a matching head alone does not say the report is about the pull request the turn is bound to. A turn on a local path
+// cannot be matched to a repository, and a report that names no pull request has no number to contradict.
+func headCompareReportIdentityRefusal(row store.MergeTurnsRow, actor, verb, head string, reports []evidence.CurrentReport) *registry.CoordinationRefusal {
+	for _, report := range reports {
+		if !SameCommit(report.Head, head) {
+			continue
+		}
+		var other string
+		switch {
+		case row.PRNumber.Valid && report.PRNumber.Valid && report.PRNumber.Int64 != row.PRNumber.Int64:
+			other = fmt.Sprintf("pull request %d, and turn %s is bound to pull request %d", report.PRNumber.Int64, pyvalue.StrRepr(row.TurnID), row.PRNumber.Int64)
+		case forgeRepository(row.Repository) && report.Repository != "" && !strings.EqualFold(report.Repository, row.Repository):
+			other = "repository " + pyvalue.StrRepr(report.Repository) + ", and turn " + pyvalue.StrRepr(row.TurnID) + " is bound to " + pyvalue.StrRepr(row.Repository)
+		default:
+			continue
+		}
+		return &registry.CoordinationRefusal{Reason: contract.RefusalMergeCandidateMoved, Detail: "the work report for " + pyvalue.StrRepr(headCompareRelationship(row)) + " names head " + pyvalue.StrRepr(strings.ToLower(strings.TrimSpace(report.Head))) + " for " + other + ", so the head this call " + verb + " is another pull request's; ask for the turn of the pull request the report names, or " + verbOf(verb) + " the head of the pull request this turn is bound to", Domain: registry.DomainMergeTarget, Subject: row.TargetKey, Incumbent: report.Head, Challenger: head}
 	}
 	return nil
 }

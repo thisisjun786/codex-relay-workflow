@@ -37,11 +37,22 @@ func headCompareRelate(w *fx, relationship string) {
 		relationship, "ISS-HC", "active", alpha.TaskID, alpha.HostID, "task-child", "host-child", 3, "[]", `["task-alpha"]`, fxISO, fxISO)
 }
 
-// headCompareReport records one submission of a work report; a nil head is a report that names none.
+// headCompareReport records one submission of a work report, of repository owner/repo and no pull request; a nil head is a
+// report that names none.
 func headCompareReport(w *fx, relationship, event string, submission, generation int, head any) {
 	w.t.Helper()
-	w.exec(`INSERT INTO work_reports (event_id,submission_no,relationship_id,execution_generation,revision_hash,repository,base_ref,head_sha,cxc_status,cxc_reason,contract_version,summary,next_action,recorded_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		event, submission, relationship, generation, "rev", fxRepo, fxBase, head, "done", "r", "1", "s", "n", fxISO)
+	headCompareReportOf(w, relationship, event, submission, generation, head, fxRepo, 0)
+}
+
+// headCompareReportOf records a work report that names a repository and, when pr is not 0, a pull request.
+func headCompareReportOf(w *fx, relationship, event string, submission, generation int, head any, repository string, pr int64) {
+	w.t.Helper()
+	var number any
+	if pr != 0 {
+		number = pr
+	}
+	w.exec(`INSERT INTO work_reports (event_id,submission_no,relationship_id,execution_generation,revision_hash,repository,pr_number,base_ref,head_sha,cxc_status,cxc_reason,contract_version,summary,next_action,recorded_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		event, submission, relationship, generation, "rev", repository, number, fxBase, head, "done", "r", "1", "s", "n", fxISO)
 }
 
 func headCompareClaim(w *fx, repository, head string, pr int64, relationship string, ready bool) map[string]any {

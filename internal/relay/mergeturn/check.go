@@ -248,10 +248,11 @@ func (s *Service) relationshipRefusal(ctx context.Context, row store.MergeTurnsR
 	if refusal, err := s.headCompareScope(ctx, row, actor); refusal != nil || err != nil {
 		return nil, refusal, err
 	}
-	heads, err := headCompareReportHeads(ctx, s.Store, row.RelationshipID.String)
+	reports, err := evidence.CurrentReports(ctx, s.Store, row.RelationshipID.String)
 	if err != nil {
 		return nil, nil, err
 	}
+	heads := headCompareDistinctHeads(reports)
 	if len(heads) == 0 {
 		return nil, nil, nil
 	}
