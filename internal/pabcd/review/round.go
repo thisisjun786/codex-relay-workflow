@@ -4,6 +4,8 @@
 // session identities. It cannot distinguish a raw JS absent owner from an empty
 // owner, which revival drops. JSON comparisons use values: JS spread preserves
 // history-dependent key order, while Go uses goalplan's existing stored order.
+// One departure from the oracle, by decision (CRW-573, known-defects.md): a round id never repeats a stored one, and a
+// changed round replaces only itself (reviewNextRoundID, reviewReplaceRound).
 package review
 
 import (
@@ -104,17 +106,29 @@ func reviewRoundOrder(id string) float64 {
 	}
 	return n
 }
-func reviewNextRoundID(p *goalplan.Goalplan) string {
+
+// reviewRoundIDLimit is 2^53, where float64 stops telling an integer from its successor. The oracle mints "highest + 1"
+// in float64, so from here on a new id can repeat a stored one (a data-loss defect, port: fixed in known-defects.md).
+const reviewRoundIDLimit = 1 << 53
+
+// reviewNextRoundID refuses, in the shape OpenRound already refuses with, when the next id equals a stored id or is not an
+// exact integer below 2^53. Below that the answer is the oracle's.
+func reviewNextRoundID(p *goalplan.Goalplan) (string, ReviewRoundResult) {
 	highest := 0.0
 	for _, r := range p.ReviewRounds {
 		highest = math.Max(highest, reviewRoundOrder(r.RoundID))
 	}
 	n := highest + 1
-	format := byte('f')
-	if n >= 1e21 {
-		format = 'e'
+	id := "r" + strconv.FormatFloat(n, 'f', -1, 64)
+	for _, r := range p.ReviewRounds {
+		if r.RoundID == id {
+			return "", ReviewRoundResult{Kind: InvalidInput, Reason: fmt.Sprintf("round id %s is already stored: opening another round would overwrite it", id)}
+		}
 	}
-	return "r" + strconv.FormatFloat(n, format, -1, 64)
+	if n >= reviewRoundIDLimit {
+		return "", ReviewRoundResult{Kind: InvalidInput, Reason: fmt.Sprintf("the next round id %s is not an exact integer below 2^53: it could repeat a stored round id", id)}
+	}
+	return id, ReviewRoundResult{}
 }
 func reviewMintLaunchID(id, now string) string {
 	var digits strings.Builder
@@ -134,13 +148,17 @@ func reviewWithRounds(p *goalplan.Goalplan, list []goalplan.ReviewRoundState, pu
 	*reviewCursor(&out, purpose) = cursor
 	return &out
 }
-func reviewReplaceRound(list []goalplan.ReviewRoundState, updated goalplan.ReviewRoundState) []goalplan.ReviewRoundState {
+
+// reviewReplaceRound replaces the one entry that was selected (a pointer into list), so it matches the id, purpose and launch
+// id of the updated round by construction. A damaged plan can repeat any of them, even all three, and replacing by a key
+// overwrote the other entries that share it.
+func reviewReplaceRound(list []goalplan.ReviewRoundState, selected *goalplan.ReviewRoundState, updated goalplan.ReviewRoundState) []goalplan.ReviewRoundState {
 	out := make([]goalplan.ReviewRoundState, len(list))
-	for i, r := range list {
-		if r.RoundID == updated.RoundID {
+	for i := range list {
+		if &list[i] == selected {
 			out[i] = updated
 		} else {
-			out[i] = r
+			out[i] = list[i]
 		}
 	}
 	return out
@@ -209,7 +227,11 @@ func OpenRound(p *goalplan.Goalplan, in OpenRoundInput) ReviewRoundResult {
 	if live := EffectiveRound(p, in.Purpose); live != nil && live.Status == goalplan.ReviewPending && live.PlanPath == in.PlanPath {
 		r := *live
 		r.PlanSha256 = in.PlanSha256
-		return ReviewRoundResult{Kind: OK, Plan: reviewWithRounds(p, reviewReplaceRound(p.ReviewRounds, r), in.Purpose, &r.RoundID), Round: &r}
+		return ReviewRoundResult{Kind: OK, Plan: reviewWithRounds(p, reviewReplaceRound(p.ReviewRounds, live, r), in.Purpose, &r.RoundID), Round: &r}
+	}
+	id, refused := reviewNextRoundID(p)
+	if refused.Kind != "" {
+		return refused
 	}
 	list := make([]goalplan.ReviewRoundState, len(p.ReviewRounds), len(p.ReviewRounds)+1)
 	for i, r := range p.ReviewRounds {
@@ -219,7 +241,6 @@ func OpenRound(p *goalplan.Goalplan, in OpenRoundInput) ReviewRoundResult {
 		}
 		list[i] = r
 	}
-	id := reviewNextRoundID(p)
 	r := goalplan.ReviewRoundState{RoundID: id, Purpose: in.Purpose, PlanPath: in.PlanPath, PlanSha256: in.PlanSha256, Status: goalplan.ReviewPending, Lane: goalplan.ReviewLane{LaunchID: reviewMintLaunchID(id, now)}, OpenedAt: now}
 	list = append(list, r)
 	return ReviewRoundResult{Kind: OK, Plan: reviewWithRounds(p, list, in.Purpose, &r.RoundID), Round: &r}
@@ -253,7 +274,7 @@ func reviewAdvance(p *goalplan.Goalplan, purpose goalplan.ReviewPurpose, id, lau
 	if clear {
 		cursor = nil
 	}
-	return ReviewRoundResult{Kind: OK, Plan: reviewWithRounds(p, reviewReplaceRound(p.ReviewRounds, updated), purpose, cursor), Round: &updated}
+	return ReviewRoundResult{Kind: OK, Plan: reviewWithRounds(p, reviewReplaceRound(p.ReviewRounds, r, updated), purpose, cursor), Round: &updated}
 }
 
 // MarkLaunching requires pending. Nil workspace preserves the CLI's omitted argument.
@@ -335,7 +356,7 @@ func AbortRound(p *goalplan.Goalplan, purpose goalplan.ReviewPurpose, reason str
 		s := "aborted: " + reason
 		r.Lane.ReviewerSession = &s
 	}
-	return ReviewRoundResult{Kind: OK, Plan: reviewWithRounds(p, reviewReplaceRound(p.ReviewRounds, r), purpose, nil), Round: &r}
+	return ReviewRoundResult{Kind: OK, Plan: reviewWithRounds(p, reviewReplaceRound(p.ReviewRounds, live, r), purpose, nil), Round: &r}
 }
 
 // StalenessOf compares hashes only once the round is terminal, regardless of purpose.
