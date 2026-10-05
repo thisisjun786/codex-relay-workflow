@@ -342,7 +342,7 @@ func TestOlderTempsAreReportedNotTouched(t *testing.T) {
 	p := newPub(t)
 	stale := []string{tempName(rand.Text(), 1), tempName(rand.Text(), 7)}
 	slices.Sort(stale)
-	others := []string{".migrate-foo.tmp", tempPrefix + strings.Repeat("A", 26) + "-x" + tempSuffix, tempPrefix + strings.Repeat("A", 25) + "-1" + tempSuffix, "user.tmp"}
+	others := []string{".migrate-foo.tmp", tempPrefix + strings.Repeat("A", 26) + "-x" + tempSuffix, tempPrefix + strings.Repeat("A", 25) + "-1" + tempSuffix, "user.tmp", tempName(p.run, 99)}
 	for _, n := range append(slices.Clone(stale), others...) {
 		put(t, dir+"/"+n, "partial", 0o600)
 	}
