@@ -133,6 +133,7 @@ func (f *forkJoin) land(plan, node string, explicit ...Target) IntegrationResult
 		list = append(list, contract.OrderedObject{{Key: "runId", Value: c.RunID}, {Key: "name", Value: c.Name}, {Key: "headSha", Value: c.HeadSHA}, {Key: "conclusion", Value: c.Conclusion}, {Key: "attempt", Value: json.Number("1")}})
 	}
 	green := contract.OrderedObject{{Key: "hasNextPage", Value: false}, {Key: "pagesRead", Value: json.Number("1")}, {Key: "totalCount", Value: json.Number("0")}, {Key: "threadsSeen", Value: []any{}}, {Key: "unresolved", Value: json.Number("0")}}
+	headCompareReportForTurn(f.t, f.s, id, f.heads[node])
 	if _, err := f.service.Check(ctx, id, "parent", f.heads[node], f.repo.git("rev-parse", "dev"), list, green, []string{"A", "B"}, mergeturn.TargetReader{}); err != nil {
 		f.t.Fatalf("lane check of %s: %v", node, err)
 	}

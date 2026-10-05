@@ -1,8 +1,6 @@
 package hook
 
 import (
-	"bytes"
-	"encoding/json"
 	"os"
 	"path"
 	"slices"
@@ -135,23 +133,16 @@ func memoryGateConsume(cwd, sid, turn string, write func(string, state.State) er
 	return allowed, note
 }
 
-// memoryGateRewritable says whether writing back the state the reader rebuilt would keep every record: the stored list of
-// unverified subagents must hold as many entries as the reader kept (it drops malformed ones and caps the list), and a
-// legacy D-close marker would lose its distinction. This is the guard of the memory allow-write command.
+// memoryGateRewritable says whether writing back the state the reader rebuilt would keep every record: each stored unverified
+// subagent must come back as it was stored (the reader drops malformed entries, caps the list, cuts a long receiptClaimed and
+// replaces a field of the wrong type, see state.RewriteKeepsUnverified), and a legacy D-close marker would lose its
+// distinction. The memory allow-write command and the scan and evidence commands refuse on the same judgement.
 func memoryGateRewritable(file string, s state.State) bool {
 	if s.DcloseRecovery != nil && s.DcloseRecovery.Legacy {
 		return false
 	}
 	raw, err := os.ReadFile(file)
-	var fields map[string]json.RawMessage
-	if err != nil || json.Unmarshal(raw, &fields) != nil {
-		return false
-	}
-	var records []json.RawMessage
-	if v, ok := fields["unverifiedSubagents"]; ok && !bytes.Equal(bytes.TrimSpace(v), []byte("null")) && json.Unmarshal(v, &records) != nil {
-		return false
-	}
-	return len(records) == len(s.UnverifiedSubagents)
+	return err == nil && state.RewriteKeepsUnverified(raw, s.UnverifiedSubagents)
 }
 
 // memoryGateClassify is classifyMemoryWrite with the protected root worked out from env.
