@@ -67,7 +67,20 @@ func Legs() []Leg {
 		{"pre-tool-use-guarding-interview-in-goal", "pre-tool-use", "pre-tool-use", FailClosed, false, false, false, nil},
 		{"pre-tool-use-guarding-goal-complete", "pre-tool-use", "pre-tool-use", FailClosed, false, false, false, nil},
 		{"post-tool-use-capturing-interview-answers", "post-tool-use", "post-tool-use", Generic, false, false, true, nil},
-		{"subagent-stop-verifying-evidence", "subagent-stop", "subagent-stop", Generic, false, true, true, nil},
+		{"subagent-stop-verifying-evidence", "subagent-stop", "subagent-stop", Generic, false, true, true, func(c Call) string {
+			p, ok := ParseSubagentStop(c.Raw)
+			if !ok {
+				return ""
+			}
+			value := func(s *string) string {
+				if s != nil {
+					return *s
+				}
+				return ""
+			}
+			return pabcdhook.RunSubagentStopGate(pabcdhook.SubagentStopPayload{Cwd: p.Cwd, SessionID: p.SessionID,
+				AgentType: p.AgentType, AgentID: value(p.AgentID), TurnID: value(p.TurnID), LastAssistantMessage: value(p.LastAssistantMessage)}, os.Getenv)
+		}},
 		{"subagent-stop-observing-review", "subagent-stop", "subagent-stop-review", Generic, false, true, true, nil},
 		{"post-compact-resetting-reinject-cursor", "post-compact", "post-compact", Generic, false, false, true, nil},
 		{"pre-tool-use-linting-apply-patch", "pre-tool-use", "pre-tool-use-edit", Generic, false, false, false, func(c Call) string {
