@@ -406,7 +406,11 @@ func TestOlderTempsAreReportedNotTouched(t *testing.T) {
 	p := newPub(t)
 	stale := []string{tempName(rand.Text(), 1), tempName(rand.Text(), 7)}
 	slices.Sort(stale)
-	others := []string{".migrate-foo.tmp", tempPrefix + strings.Repeat("A", 26) + "-x" + tempSuffix, tempPrefix + strings.Repeat("A", 25) + "-1" + tempSuffix, "user.tmp", tempName(p.run, 99)}
+	// Names Publish never writes are a user's: a sequence that is not a plain positive integer (zero, padded, signed, too large)
+	// is not one of ours, and neither is the current run's own.
+	look := func(seq string) string { return tempPrefix + strings.Repeat("A", 26) + "-" + seq + tempSuffix }
+	others := []string{".migrate-foo.tmp", look("x"), tempPrefix + strings.Repeat("A", 25) + "-1" + tempSuffix, "user.tmp", tempName(p.run, 99),
+		look("0"), look("007"), look("+1"), look("-1"), look("99999999999999999999")}
 	for _, n := range append(slices.Clone(stale), others...) {
 		put(t, dir+"/"+n, "partial", 0o600)
 	}
