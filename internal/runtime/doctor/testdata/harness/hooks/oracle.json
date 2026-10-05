@@ -1,0 +1,2507 @@
+{
+ "oracle": "CXC v0.2.40 (3c1459acadeb1906d97c00a598e1457327ae372d)",
+ "node": "v24.20.0",
+ "t0": 1767225600000,
+ "entry": "components/cxc-ops/src/cli.ts",
+ "manifest": "{\"version\":\"1.2.3\"}",
+ "note": "reader holds one case per record or store state: the files the oracle writer and the case's patch left in the actor directories, as text with @@PLUGIN_ROOT@@, @@MANIFEST_DIGEST@@ and @@ENTRY_DIGEST@@ placeholders, then each query with the oracle readHookObservations answer (reader) and runHookExecutionCheck answer (check). Time is t0; nowOffsetMs moves it. trust holds runHookTrustCheck over a plugin and config.toml, @@CODEX_HOME@@ standing for the case's codex home; evidence null marks an engine error text (a V8 or Node message) the Go port cannot reproduce, of which only the severity is held.",
+ "reader": [
+  {
+   "name": "valid_root",
+   "mutation": null,
+   "files": [
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "session-start",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"sessionId\":\"s1\",\"agentId\":null,\"component\":\"cxc-ops\",\"event\":\"session-start\",\"observedAt\":\"2026-01-01T00:00:00.000Z\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}\n"
+    }
+   ],
+   "queries": [
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "reader": {
+      "observations": [
+       {
+        "sessionId": "s1",
+        "agentId": null,
+        "component": "cxc-ops",
+        "event": "session-start",
+        "observedAt": "2026-01-01T00:00:00.000Z",
+        "entrypoint": "components/cxc-ops/src/cli.ts",
+        "outcome": "invoked"
+       }
+      ],
+      "ignored": 0,
+      "reason": null
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "PASS",
+      "evidence": "session=s1 actor=root: 1 current invocation(s): cxc-ops/session-start (components/cxc-ops/src/cli.ts, 2026-01-01T00:00:00.000Z); 0 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    },
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "maxAgeMs": 0,
+     "reader": {
+      "observations": [
+       {
+        "sessionId": "s1",
+        "agentId": null,
+        "component": "cxc-ops",
+        "event": "session-start",
+        "observedAt": "2026-01-01T00:00:00.000Z",
+        "entrypoint": "components/cxc-ops/src/cli.ts",
+        "outcome": "invoked"
+       }
+      ],
+      "ignored": 0,
+      "reason": null
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "PASS",
+      "evidence": "session=s1 actor=root: 1 current invocation(s): cxc-ops/session-start (components/cxc-ops/src/cli.ts, 2026-01-01T00:00:00.000Z); 0 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    },
+    {
+     "sessionFromEnv": "s1",
+     "reader": null,
+     "check": {
+      "name": "hook-execution",
+      "severity": "PASS",
+      "evidence": "session=s1 actor=root: 1 current invocation(s): cxc-ops/session-start (components/cxc-ops/src/cli.ts, 2026-01-01T00:00:00.000Z); 0 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    },
+    {
+     "sessionId": "s1",
+     "agentId": "child-a",
+     "reader": {
+      "observations": [],
+      "ignored": 0,
+      "reason": "no invocation records"
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "WARN",
+      "evidence": "session=s1 actor=child-a: 0 current invocation(s); unverified (no invocation records); 0 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    },
+    {
+     "sessionId": "other",
+     "agentId": null,
+     "reader": {
+      "observations": [],
+      "ignored": 0,
+      "reason": "no invocation records"
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "WARN",
+      "evidence": "session=other actor=root: 0 current invocation(s); unverified (no invocation records); 0 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    }
+   ]
+  },
+  {
+   "name": "actors_and_events_are_isolated",
+   "mutation": null,
+   "files": [
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "post-compact",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"sessionId\":\"s1\",\"agentId\":null,\"component\":\"cxc-ops\",\"event\":\"post-compact\",\"observedAt\":\"2026-01-01T00:00:00.000Z\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}\n"
+    },
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "session-start",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"sessionId\":\"s1\",\"agentId\":null,\"component\":\"cxc-ops\",\"event\":\"session-start\",\"observedAt\":\"2026-01-01T00:00:00.000Z\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}\n"
+    },
+    {
+     "actor": {
+      "session": "s1",
+      "agent": "child-a"
+     },
+     "slot": [
+      "cxc-ops",
+      "session-start",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"sessionId\":\"s1\",\"agentId\":\"child-a\",\"component\":\"cxc-ops\",\"event\":\"session-start\",\"observedAt\":\"2026-01-01T00:00:00.000Z\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}\n"
+    },
+    {
+     "actor": {
+      "session": "s2",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "session-start",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"sessionId\":\"s2\",\"agentId\":null,\"component\":\"cxc-ops\",\"event\":\"session-start\",\"observedAt\":\"2026-01-01T00:00:00.000Z\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}\n"
+    }
+   ],
+   "queries": [
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "reader": {
+      "observations": [
+       {
+        "sessionId": "s1",
+        "agentId": null,
+        "component": "cxc-ops",
+        "event": "post-compact",
+        "observedAt": "2026-01-01T00:00:00.000Z",
+        "entrypoint": "components/cxc-ops/src/cli.ts",
+        "outcome": "invoked"
+       },
+       {
+        "sessionId": "s1",
+        "agentId": null,
+        "component": "cxc-ops",
+        "event": "session-start",
+        "observedAt": "2026-01-01T00:00:00.000Z",
+        "entrypoint": "components/cxc-ops/src/cli.ts",
+        "outcome": "invoked"
+       }
+      ],
+      "ignored": 0,
+      "reason": null
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "PASS",
+      "evidence": "session=s1 actor=root: 2 current invocation(s): cxc-ops/post-compact (components/cxc-ops/src/cli.ts, 2026-01-01T00:00:00.000Z); cxc-ops/session-start (components/cxc-ops/src/cli.ts, 2026-01-01T00:00:00.000Z); 0 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    },
+    {
+     "sessionId": "s1",
+     "agentId": "child-a",
+     "reader": {
+      "observations": [
+       {
+        "sessionId": "s1",
+        "agentId": "child-a",
+        "component": "cxc-ops",
+        "event": "session-start",
+        "observedAt": "2026-01-01T00:00:00.000Z",
+        "entrypoint": "components/cxc-ops/src/cli.ts",
+        "outcome": "invoked"
+       }
+      ],
+      "ignored": 0,
+      "reason": null
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "PASS",
+      "evidence": "session=s1 actor=child-a: 1 current invocation(s): cxc-ops/session-start (components/cxc-ops/src/cli.ts, 2026-01-01T00:00:00.000Z); 0 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    },
+    {
+     "sessionId": "s1",
+     "agentId": "child-b",
+     "reader": {
+      "observations": [],
+      "ignored": 0,
+      "reason": "no invocation records"
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "WARN",
+      "evidence": "session=s1 actor=child-b: 0 current invocation(s); unverified (no invocation records); 0 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    },
+    {
+     "sessionId": "s2",
+     "agentId": null,
+     "reader": {
+      "observations": [
+       {
+        "sessionId": "s2",
+        "agentId": null,
+        "component": "cxc-ops",
+        "event": "session-start",
+        "observedAt": "2026-01-01T00:00:00.000Z",
+        "entrypoint": "components/cxc-ops/src/cli.ts",
+        "outcome": "invoked"
+       }
+      ],
+      "ignored": 0,
+      "reason": null
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "PASS",
+      "evidence": "session=s2 actor=root: 1 current invocation(s): cxc-ops/session-start (components/cxc-ops/src/cli.ts, 2026-01-01T00:00:00.000Z); 0 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    }
+   ]
+  },
+  {
+   "name": "sorted_by_event_in_byte_order",
+   "mutation": null,
+   "files": [
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "a-b",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"sessionId\":\"s1\",\"agentId\":null,\"component\":\"cxc-ops\",\"event\":\"a-b\",\"observedAt\":\"2026-01-01T00:00:00.000Z\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}\n"
+    },
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "a",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"sessionId\":\"s1\",\"agentId\":null,\"component\":\"cxc-ops\",\"event\":\"a\",\"observedAt\":\"2026-01-01T00:00:00.000Z\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}\n"
+    },
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "post-compact",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"sessionId\":\"s1\",\"agentId\":null,\"component\":\"cxc-ops\",\"event\":\"post-compact\",\"observedAt\":\"2026-01-01T00:00:00.000Z\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}\n"
+    },
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "a-1",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"sessionId\":\"s1\",\"agentId\":null,\"component\":\"cxc-ops\",\"event\":\"a-1\",\"observedAt\":\"2026-01-01T00:00:00.000Z\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}\n"
+    },
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "ab",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"sessionId\":\"s1\",\"agentId\":null,\"component\":\"cxc-ops\",\"event\":\"ab\",\"observedAt\":\"2026-01-01T00:00:00.000Z\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}\n"
+    },
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "z-9",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"sessionId\":\"s1\",\"agentId\":null,\"component\":\"cxc-ops\",\"event\":\"z-9\",\"observedAt\":\"2026-01-01T00:00:00.000Z\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}\n"
+    },
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "session-start",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"sessionId\":\"s1\",\"agentId\":null,\"component\":\"cxc-ops\",\"event\":\"session-start\",\"observedAt\":\"2026-01-01T00:00:00.000Z\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}\n"
+    },
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "stop",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"sessionId\":\"s1\",\"agentId\":null,\"component\":\"cxc-ops\",\"event\":\"stop\",\"observedAt\":\"2026-01-01T00:00:00.000Z\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}\n"
+    },
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "a1",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"sessionId\":\"s1\",\"agentId\":null,\"component\":\"cxc-ops\",\"event\":\"a1\",\"observedAt\":\"2026-01-01T00:00:00.000Z\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}\n"
+    },
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "z9",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"sessionId\":\"s1\",\"agentId\":null,\"component\":\"cxc-ops\",\"event\":\"z9\",\"observedAt\":\"2026-01-01T00:00:00.000Z\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}\n"
+    }
+   ],
+   "queries": [
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "reader": {
+      "observations": [
+       {
+        "sessionId": "s1",
+        "agentId": null,
+        "component": "cxc-ops",
+        "event": "a",
+        "observedAt": "2026-01-01T00:00:00.000Z",
+        "entrypoint": "components/cxc-ops/src/cli.ts",
+        "outcome": "invoked"
+       },
+       {
+        "sessionId": "s1",
+        "agentId": null,
+        "component": "cxc-ops",
+        "event": "a-1",
+        "observedAt": "2026-01-01T00:00:00.000Z",
+        "entrypoint": "components/cxc-ops/src/cli.ts",
+        "outcome": "invoked"
+       },
+       {
+        "sessionId": "s1",
+        "agentId": null,
+        "component": "cxc-ops",
+        "event": "a-b",
+        "observedAt": "2026-01-01T00:00:00.000Z",
+        "entrypoint": "components/cxc-ops/src/cli.ts",
+        "outcome": "invoked"
+       },
+       {
+        "sessionId": "s1",
+        "agentId": null,
+        "component": "cxc-ops",
+        "event": "a1",
+        "observedAt": "2026-01-01T00:00:00.000Z",
+        "entrypoint": "components/cxc-ops/src/cli.ts",
+        "outcome": "invoked"
+       },
+       {
+        "sessionId": "s1",
+        "agentId": null,
+        "component": "cxc-ops",
+        "event": "ab",
+        "observedAt": "2026-01-01T00:00:00.000Z",
+        "entrypoint": "components/cxc-ops/src/cli.ts",
+        "outcome": "invoked"
+       },
+       {
+        "sessionId": "s1",
+        "agentId": null,
+        "component": "cxc-ops",
+        "event": "post-compact",
+        "observedAt": "2026-01-01T00:00:00.000Z",
+        "entrypoint": "components/cxc-ops/src/cli.ts",
+        "outcome": "invoked"
+       },
+       {
+        "sessionId": "s1",
+        "agentId": null,
+        "component": "cxc-ops",
+        "event": "session-start",
+        "observedAt": "2026-01-01T00:00:00.000Z",
+        "entrypoint": "components/cxc-ops/src/cli.ts",
+        "outcome": "invoked"
+       },
+       {
+        "sessionId": "s1",
+        "agentId": null,
+        "component": "cxc-ops",
+        "event": "stop",
+        "observedAt": "2026-01-01T00:00:00.000Z",
+        "entrypoint": "components/cxc-ops/src/cli.ts",
+        "outcome": "invoked"
+       },
+       {
+        "sessionId": "s1",
+        "agentId": null,
+        "component": "cxc-ops",
+        "event": "z-9",
+        "observedAt": "2026-01-01T00:00:00.000Z",
+        "entrypoint": "components/cxc-ops/src/cli.ts",
+        "outcome": "invoked"
+       },
+       {
+        "sessionId": "s1",
+        "agentId": null,
+        "component": "cxc-ops",
+        "event": "z9",
+        "observedAt": "2026-01-01T00:00:00.000Z",
+        "entrypoint": "components/cxc-ops/src/cli.ts",
+        "outcome": "invoked"
+       }
+      ],
+      "ignored": 0,
+      "reason": null
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "PASS",
+      "evidence": "session=s1 actor=root: 10 current invocation(s): cxc-ops/a (components/cxc-ops/src/cli.ts, 2026-01-01T00:00:00.000Z); cxc-ops/a-1 (components/cxc-ops/src/cli.ts, 2026-01-01T00:00:00.000Z); cxc-ops/a-b (components/cxc-ops/src/cli.ts, 2026-01-01T00:00:00.000Z); cxc-ops/a1 (components/cxc-ops/src/cli.ts, 2026-01-01T00:00:00.000Z); cxc-ops/ab (components/cxc-ops/src/cli.ts, 2026-01-01T00:00:00.000Z); cxc-ops/post-compact (components/cxc-ops/src/cli.ts, 2026-01-01T00:00:00.000Z); cxc-ops/session-start (components/cxc-ops/src/cli.ts, 2026-01-01T00:00:00.000Z); cxc-ops/stop (components/cxc-ops/src/cli.ts, 2026-01-01T00:00:00.000Z); cxc-ops/z-9 (components/cxc-ops/src/cli.ts, 2026-01-01T00:00:00.000Z); cxc-ops/z9 (components/cxc-ops/src/cli.ts, 2026-01-01T00:00:00.000Z); 0 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    }
+   ]
+  },
+  {
+   "name": "identity_unavailable",
+   "mutation": null,
+   "files": [
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "session-start",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"sessionId\":\"s1\",\"agentId\":null,\"component\":\"cxc-ops\",\"event\":\"session-start\",\"observedAt\":\"2026-01-01T00:00:00.000Z\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}\n"
+    }
+   ],
+   "queries": [
+    {
+     "sessionId": "",
+     "agentId": null,
+     "reader": {
+      "observations": [],
+      "ignored": 0,
+      "reason": "session/actor identity unavailable"
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "WARN",
+      "evidence": "native session unavailable: 0 current invocation(s); unverified (session/actor identity unavailable); 0 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    },
+    {
+     "sessionId": "s1",
+     "agentId": "",
+     "reader": {
+      "observations": [],
+      "ignored": 0,
+      "reason": "session/actor identity unavailable"
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "WARN",
+      "evidence": "session=s1 actor=: 0 current invocation(s); unverified (session/actor identity unavailable); 0 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    },
+    {
+     "sessionId": "s1\nx",
+     "agentId": null,
+     "reader": {
+      "observations": [],
+      "ignored": 0,
+      "reason": "session/actor identity unavailable"
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "WARN",
+      "evidence": "session=s1\nx actor=root: 0 current invocation(s); unverified (session/actor identity unavailable); 0 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    },
+    {
+     "sessionId": "s1",
+     "agentId": "a b",
+     "reader": {
+      "observations": [],
+      "ignored": 0,
+      "reason": "session/actor identity unavailable"
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "WARN",
+      "evidence": "session=s1 actor=a b: 0 current invocation(s); unverified (session/actor identity unavailable); 0 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    }
+   ]
+  },
+  {
+   "name": "freshness_window",
+   "mutation": null,
+   "files": [
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "session-start",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"sessionId\":\"s1\",\"agentId\":null,\"component\":\"cxc-ops\",\"event\":\"session-start\",\"observedAt\":\"2026-01-01T00:00:00.000Z\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}\n"
+    }
+   ],
+   "queries": [
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "nowOffsetMs": 86400000,
+     "reader": {
+      "observations": [
+       {
+        "sessionId": "s1",
+        "agentId": null,
+        "component": "cxc-ops",
+        "event": "session-start",
+        "observedAt": "2026-01-01T00:00:00.000Z",
+        "entrypoint": "components/cxc-ops/src/cli.ts",
+        "outcome": "invoked"
+       }
+      ],
+      "ignored": 0,
+      "reason": null
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "PASS",
+      "evidence": "session=s1 actor=root: 1 current invocation(s): cxc-ops/session-start (components/cxc-ops/src/cli.ts, 2026-01-01T00:00:00.000Z); 0 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    },
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "nowOffsetMs": 86400001,
+     "reader": {
+      "observations": [],
+      "ignored": 1,
+      "reason": null
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "WARN",
+      "evidence": "session=s1 actor=root: 0 current invocation(s); unverified (no matching fresh evidence); 1 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    },
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "nowOffsetMs": -1,
+     "reader": {
+      "observations": [],
+      "ignored": 1,
+      "reason": null
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "WARN",
+      "evidence": "session=s1 actor=root: 0 current invocation(s); unverified (no matching fresh evidence); 1 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    },
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "maxAgeMs": -1,
+     "reader": {
+      "observations": [],
+      "ignored": 0,
+      "reason": "invalid freshness filter"
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "WARN",
+      "evidence": "session=s1 actor=root: 0 current invocation(s); unverified (invalid freshness filter); 0 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    },
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "maxAgeMs": 0,
+     "reader": {
+      "observations": [
+       {
+        "sessionId": "s1",
+        "agentId": null,
+        "component": "cxc-ops",
+        "event": "session-start",
+        "observedAt": "2026-01-01T00:00:00.000Z",
+        "entrypoint": "components/cxc-ops/src/cli.ts",
+        "outcome": "invoked"
+       }
+      ],
+      "ignored": 0,
+      "reason": null
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "PASS",
+      "evidence": "session=s1 actor=root: 1 current invocation(s): cxc-ops/session-start (components/cxc-ops/src/cli.ts, 2026-01-01T00:00:00.000Z); 0 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    },
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "nowOffsetMs": 1,
+     "maxAgeMs": 0,
+     "reader": {
+      "observations": [],
+      "ignored": 1,
+      "reason": null
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "WARN",
+      "evidence": "session=s1 actor=root: 0 current invocation(s); unverified (no matching fresh evidence); 1 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    }
+   ]
+  },
+  {
+   "name": "record_schemaVersion_2",
+   "mutation": null,
+   "files": [
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "session-start",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":2,\"sessionId\":\"s1\",\"agentId\":null,\"component\":\"cxc-ops\",\"event\":\"session-start\",\"observedAt\":\"2026-01-01T00:00:00.000Z\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}"
+    }
+   ],
+   "queries": [
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "reader": {
+      "observations": [],
+      "ignored": 1,
+      "reason": null
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "WARN",
+      "evidence": "session=s1 actor=root: 0 current invocation(s); unverified (no matching fresh evidence); 1 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    }
+   ]
+  },
+  {
+   "name": "record_schemaVersion_text",
+   "mutation": null,
+   "files": [
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "session-start",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":\"1\",\"sessionId\":\"s1\",\"agentId\":null,\"component\":\"cxc-ops\",\"event\":\"session-start\",\"observedAt\":\"2026-01-01T00:00:00.000Z\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}"
+    }
+   ],
+   "queries": [
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "reader": {
+      "observations": [],
+      "ignored": 1,
+      "reason": null
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "WARN",
+      "evidence": "session=s1 actor=root: 0 current invocation(s); unverified (no matching fresh evidence); 1 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    }
+   ]
+  },
+  {
+   "name": "record_outcome_other",
+   "mutation": null,
+   "files": [
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "session-start",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"sessionId\":\"s1\",\"agentId\":null,\"component\":\"cxc-ops\",\"event\":\"session-start\",\"observedAt\":\"2026-01-01T00:00:00.000Z\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"success\"}"
+    }
+   ],
+   "queries": [
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "reader": {
+      "observations": [],
+      "ignored": 1,
+      "reason": null
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "WARN",
+      "evidence": "session=s1 actor=root: 0 current invocation(s); unverified (no matching fresh evidence); 1 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    }
+   ]
+  },
+  {
+   "name": "record_session_foreign",
+   "mutation": null,
+   "files": [
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "session-start",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"sessionId\":\"foreign\",\"agentId\":null,\"component\":\"cxc-ops\",\"event\":\"session-start\",\"observedAt\":\"2026-01-01T00:00:00.000Z\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}"
+    }
+   ],
+   "queries": [
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "reader": {
+      "observations": [],
+      "ignored": 1,
+      "reason": null
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "WARN",
+      "evidence": "session=s1 actor=root: 0 current invocation(s); unverified (no matching fresh evidence); 1 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    }
+   ]
+  },
+  {
+   "name": "record_agent_set",
+   "mutation": null,
+   "files": [
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "session-start",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"sessionId\":\"s1\",\"agentId\":\"child\",\"component\":\"cxc-ops\",\"event\":\"session-start\",\"observedAt\":\"2026-01-01T00:00:00.000Z\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}"
+    }
+   ],
+   "queries": [
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "reader": {
+      "observations": [],
+      "ignored": 1,
+      "reason": null
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "WARN",
+      "evidence": "session=s1 actor=root: 0 current invocation(s); unverified (no matching fresh evidence); 1 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    }
+   ]
+  },
+  {
+   "name": "record_plugin_root_foreign",
+   "mutation": null,
+   "files": [
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "session-start",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"sessionId\":\"s1\",\"agentId\":null,\"component\":\"cxc-ops\",\"event\":\"session-start\",\"observedAt\":\"2026-01-01T00:00:00.000Z\",\"pluginRoot\":\"/foreign\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}"
+    }
+   ],
+   "queries": [
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "reader": {
+      "observations": [],
+      "ignored": 1,
+      "reason": null
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "WARN",
+      "evidence": "session=s1 actor=root: 0 current invocation(s); unverified (no matching fresh evidence); 1 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    }
+   ]
+  },
+  {
+   "name": "record_plugin_version_old",
+   "mutation": null,
+   "files": [
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "session-start",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"sessionId\":\"s1\",\"agentId\":null,\"component\":\"cxc-ops\",\"event\":\"session-start\",\"observedAt\":\"2026-01-01T00:00:00.000Z\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"old\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}"
+    }
+   ],
+   "queries": [
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "reader": {
+      "observations": [],
+      "ignored": 1,
+      "reason": null
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "WARN",
+      "evidence": "session=s1 actor=root: 0 current invocation(s); unverified (no matching fresh evidence); 1 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    }
+   ]
+  },
+  {
+   "name": "record_manifest_digest_zeros",
+   "mutation": null,
+   "files": [
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "session-start",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"sessionId\":\"s1\",\"agentId\":null,\"component\":\"cxc-ops\",\"event\":\"session-start\",\"observedAt\":\"2026-01-01T00:00:00.000Z\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}"
+    }
+   ],
+   "queries": [
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "reader": {
+      "observations": [],
+      "ignored": 1,
+      "reason": null
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "WARN",
+      "evidence": "session=s1 actor=root: 0 current invocation(s); unverified (no matching fresh evidence); 1 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    }
+   ]
+  },
+  {
+   "name": "record_entrypoint_digest_zeros",
+   "mutation": null,
+   "files": [
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "session-start",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"sessionId\":\"s1\",\"agentId\":null,\"component\":\"cxc-ops\",\"event\":\"session-start\",\"observedAt\":\"2026-01-01T00:00:00.000Z\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"outcome\":\"invoked\"}"
+    }
+   ],
+   "queries": [
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "reader": {
+      "observations": [],
+      "ignored": 1,
+      "reason": null
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "WARN",
+      "evidence": "session=s1 actor=root: 0 current invocation(s); unverified (no matching fresh evidence); 1 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    }
+   ]
+  },
+  {
+   "name": "record_entrypoint_escapes",
+   "mutation": null,
+   "files": [
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "session-start",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"sessionId\":\"s1\",\"agentId\":null,\"component\":\"cxc-ops\",\"event\":\"session-start\",\"observedAt\":\"2026-01-01T00:00:00.000Z\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"../escape.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}"
+    }
+   ],
+   "queries": [
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "reader": {
+      "observations": [],
+      "ignored": 1,
+      "reason": null
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "WARN",
+      "evidence": "session=s1 actor=root: 0 current invocation(s); unverified (no matching fresh evidence); 1 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    }
+   ]
+  },
+  {
+   "name": "record_entrypoint_other_script",
+   "mutation": null,
+   "files": [
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "session-start",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"sessionId\":\"s1\",\"agentId\":null,\"component\":\"cxc-ops\",\"event\":\"session-start\",\"observedAt\":\"2026-01-01T00:00:00.000Z\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/other.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}"
+    }
+   ],
+   "queries": [
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "reader": {
+      "observations": [],
+      "ignored": 1,
+      "reason": null
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "WARN",
+      "evidence": "session=s1 actor=root: 0 current invocation(s); unverified (no matching fresh evidence); 1 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    }
+   ]
+  },
+  {
+   "name": "record_component_not_a_slug",
+   "mutation": null,
+   "files": [
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "session-start",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"sessionId\":\"s1\",\"agentId\":null,\"component\":\"../escape\",\"event\":\"session-start\",\"observedAt\":\"2026-01-01T00:00:00.000Z\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}"
+    }
+   ],
+   "queries": [
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "reader": {
+      "observations": [],
+      "ignored": 1,
+      "reason": null
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "WARN",
+      "evidence": "session=s1 actor=root: 0 current invocation(s); unverified (no matching fresh evidence); 1 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    }
+   ]
+  },
+  {
+   "name": "record_event_not_a_slug",
+   "mutation": null,
+   "files": [
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "session-start",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"sessionId\":\"s1\",\"agentId\":null,\"component\":\"cxc-ops\",\"event\":\"Bad Event\",\"observedAt\":\"2026-01-01T00:00:00.000Z\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}"
+    }
+   ],
+   "queries": [
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "reader": {
+      "observations": [],
+      "ignored": 1,
+      "reason": null
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "WARN",
+      "evidence": "session=s1 actor=root: 0 current invocation(s); unverified (no matching fresh evidence); 1 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    }
+   ]
+  },
+  {
+   "name": "record_observed_at_garbage",
+   "mutation": null,
+   "files": [
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "session-start",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"sessionId\":\"s1\",\"agentId\":null,\"component\":\"cxc-ops\",\"event\":\"session-start\",\"observedAt\":\"nonsense\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}"
+    }
+   ],
+   "queries": [
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "reader": {
+      "observations": [],
+      "ignored": 1,
+      "reason": null
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "WARN",
+      "evidence": "session=s1 actor=root: 0 current invocation(s); unverified (no matching fresh evidence); 1 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    }
+   ]
+  },
+  {
+   "name": "record_observed_at_number",
+   "mutation": null,
+   "files": [
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "session-start",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"sessionId\":\"s1\",\"agentId\":null,\"component\":\"cxc-ops\",\"event\":\"session-start\",\"observedAt\":5,\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}"
+    }
+   ],
+   "queries": [
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "reader": {
+      "observations": [],
+      "ignored": 1,
+      "reason": null
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "WARN",
+      "evidence": "session=s1 actor=root: 0 current invocation(s); unverified (no matching fresh evidence); 1 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    }
+   ]
+  },
+  {
+   "name": "record_observed_at_in_the_future",
+   "mutation": null,
+   "files": [
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "session-start",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"sessionId\":\"s1\",\"agentId\":null,\"component\":\"cxc-ops\",\"event\":\"session-start\",\"observedAt\":\"2026-01-01T00:00:00.001Z\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}"
+    }
+   ],
+   "queries": [
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "reader": {
+      "observations": [],
+      "ignored": 1,
+      "reason": null
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "WARN",
+      "evidence": "session=s1 actor=root: 0 current invocation(s); unverified (no matching fresh evidence); 1 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    }
+   ]
+  },
+  {
+   "name": "record_observed_at_too_old",
+   "mutation": null,
+   "files": [
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "session-start",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"sessionId\":\"s1\",\"agentId\":null,\"component\":\"cxc-ops\",\"event\":\"session-start\",\"observedAt\":\"2025-12-30T23:59:59.999Z\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}"
+    }
+   ],
+   "queries": [
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "reader": {
+      "observations": [],
+      "ignored": 1,
+      "reason": null
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "WARN",
+      "evidence": "session=s1 actor=root: 0 current invocation(s); unverified (no matching fresh evidence); 1 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    }
+   ]
+  },
+  {
+   "name": "record_extra_fields_are_not_projected",
+   "mutation": null,
+   "files": [
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "session-start",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"sessionId\":\"s1\",\"agentId\":null,\"component\":\"cxc-ops\",\"event\":\"session-start\",\"observedAt\":\"2026-01-01T00:00:00.000Z\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\",\"prompt\":\"PRIVATE\",\"tool_input\":{\"secret\":1}}"
+    }
+   ],
+   "queries": [
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "reader": {
+      "observations": [
+       {
+        "sessionId": "s1",
+        "agentId": null,
+        "component": "cxc-ops",
+        "event": "session-start",
+        "observedAt": "2026-01-01T00:00:00.000Z",
+        "entrypoint": "components/cxc-ops/src/cli.ts",
+        "outcome": "invoked"
+       }
+      ],
+      "ignored": 0,
+      "reason": null
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "PASS",
+      "evidence": "session=s1 actor=root: 1 current invocation(s): cxc-ops/session-start (components/cxc-ops/src/cli.ts, 2026-01-01T00:00:00.000Z); 0 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    }
+   ]
+  },
+  {
+   "name": "record_schemaVersion_1_point_0",
+   "mutation": null,
+   "files": [
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "session-start",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1.0,\"sessionId\":\"s1\",\"agentId\":null,\"component\":\"cxc-ops\",\"event\":\"session-start\",\"observedAt\":\"2026-01-01T00:00:00.000Z\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}\n"
+    }
+   ],
+   "queries": [
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "reader": {
+      "observations": [
+       {
+        "sessionId": "s1",
+        "agentId": null,
+        "component": "cxc-ops",
+        "event": "session-start",
+        "observedAt": "2026-01-01T00:00:00.000Z",
+        "entrypoint": "components/cxc-ops/src/cli.ts",
+        "outcome": "invoked"
+       }
+      ],
+      "ignored": 0,
+      "reason": null
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "PASS",
+      "evidence": "session=s1 actor=root: 1 current invocation(s): cxc-ops/session-start (components/cxc-ops/src/cli.ts, 2026-01-01T00:00:00.000Z); 0 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    }
+   ]
+  },
+  {
+   "name": "record_agentId_key_removed",
+   "mutation": null,
+   "files": [
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "session-start",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"sessionId\":\"s1\",\"component\":\"cxc-ops\",\"event\":\"session-start\",\"observedAt\":\"2026-01-01T00:00:00.000Z\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}"
+    }
+   ],
+   "queries": [
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "reader": {
+      "observations": [],
+      "ignored": 1,
+      "reason": null
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "WARN",
+      "evidence": "session=s1 actor=root: 0 current invocation(s); unverified (no matching fresh evidence); 1 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    }
+   ]
+  },
+  {
+   "name": "record_sessionId_key_removed",
+   "mutation": null,
+   "files": [
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "session-start",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"agentId\":null,\"component\":\"cxc-ops\",\"event\":\"session-start\",\"observedAt\":\"2026-01-01T00:00:00.000Z\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}"
+    }
+   ],
+   "queries": [
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "reader": {
+      "observations": [],
+      "ignored": 1,
+      "reason": null
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "WARN",
+      "evidence": "session=s1 actor=root: 0 current invocation(s); unverified (no matching fresh evidence); 1 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    }
+   ]
+  },
+  {
+   "name": "record_pluginRoot_key_removed",
+   "mutation": null,
+   "files": [
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "session-start",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"sessionId\":\"s1\",\"agentId\":null,\"component\":\"cxc-ops\",\"event\":\"session-start\",\"observedAt\":\"2026-01-01T00:00:00.000Z\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}"
+    }
+   ],
+   "queries": [
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "reader": {
+      "observations": [],
+      "ignored": 1,
+      "reason": null
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "WARN",
+      "evidence": "session=s1 actor=root: 0 current invocation(s); unverified (no matching fresh evidence); 1 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    }
+   ]
+  },
+  {
+   "name": "record_not_an_object",
+   "mutation": null,
+   "files": [
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "session-start",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "[]"
+    }
+   ],
+   "queries": [
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "reader": {
+      "observations": [],
+      "ignored": 1,
+      "reason": null
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "WARN",
+      "evidence": "session=s1 actor=root: 0 current invocation(s); unverified (no matching fresh evidence); 1 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    }
+   ]
+  },
+  {
+   "name": "record_json_null",
+   "mutation": null,
+   "files": [
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "session-start",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "null"
+    }
+   ],
+   "queries": [
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "reader": {
+      "observations": [],
+      "ignored": 1,
+      "reason": null
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "WARN",
+      "evidence": "session=s1 actor=root: 0 current invocation(s); unverified (no matching fresh evidence); 1 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    }
+   ]
+  },
+  {
+   "name": "record_corrupt",
+   "mutation": null,
+   "files": [
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "session-start",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{"
+    }
+   ],
+   "queries": [
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "reader": {
+      "observations": [],
+      "ignored": 1,
+      "reason": null
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "WARN",
+      "evidence": "session=s1 actor=root: 0 current invocation(s); unverified (no matching fresh evidence); 1 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    }
+   ]
+  },
+  {
+   "name": "record_over_8192_bytes",
+   "mutation": null,
+   "files": [
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "session-start",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    }
+   ],
+   "queries": [
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "reader": {
+      "observations": [],
+      "ignored": 1,
+      "reason": null
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "WARN",
+      "evidence": "session=s1 actor=root: 0 current invocation(s); unverified (no matching fresh evidence); 1 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    }
+   ]
+  },
+  {
+   "name": "record_at_8192_bytes_is_read",
+   "mutation": null,
+   "files": [
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "session-start",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"sessionId\":\"s1\",\"agentId\":null,\"component\":\"cxc-ops\",\"event\":\"session-start\",\"observedAt\":\"2026-01-01T00:00:00.000Z\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}",
+     "padTo": 8192
+    }
+   ],
+   "queries": [
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "reader": {
+      "observations": [
+       {
+        "sessionId": "s1",
+        "agentId": null,
+        "component": "cxc-ops",
+        "event": "session-start",
+        "observedAt": "2026-01-01T00:00:00.000Z",
+        "entrypoint": "components/cxc-ops/src/cli.ts",
+        "outcome": "invoked"
+       }
+      ],
+      "ignored": 0,
+      "reason": null
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "PASS",
+      "evidence": "session=s1 actor=root: 1 current invocation(s): cxc-ops/session-start (components/cxc-ops/src/cli.ts, 2026-01-01T00:00:00.000Z); 0 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    }
+   ]
+  },
+  {
+   "name": "record_wrong_slot",
+   "mutation": null,
+   "files": [
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "post-compact",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"sessionId\":\"s1\",\"agentId\":null,\"component\":\"cxc-ops\",\"event\":\"session-start\",\"observedAt\":\"2026-01-01T00:00:00.000Z\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}\n"
+    },
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "session-start",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"sessionId\":\"s1\",\"agentId\":null,\"component\":\"cxc-ops\",\"event\":\"session-start\",\"observedAt\":\"2026-01-01T00:00:00.000Z\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}\n"
+    }
+   ],
+   "queries": [
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "reader": {
+      "observations": [
+       {
+        "sessionId": "s1",
+        "agentId": null,
+        "component": "cxc-ops",
+        "event": "session-start",
+        "observedAt": "2026-01-01T00:00:00.000Z",
+        "entrypoint": "components/cxc-ops/src/cli.ts",
+        "outcome": "invoked"
+       }
+      ],
+      "ignored": 1,
+      "reason": null
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "PASS",
+      "evidence": "session=s1 actor=root: 1 current invocation(s): cxc-ops/session-start (components/cxc-ops/src/cli.ts, 2026-01-01T00:00:00.000Z); 1 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    }
+   ]
+  },
+  {
+   "name": "stray_names_are_skipped_and_not_counted",
+   "mutation": null,
+   "files": [
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "name": ".tmp",
+     "text": "x"
+    },
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "name": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA.json",
+     "text": "x"
+    },
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json",
+     "text": "x"
+    },
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.jsonl",
+     "text": "x"
+    },
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "session-start",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"sessionId\":\"s1\",\"agentId\":null,\"component\":\"cxc-ops\",\"event\":\"session-start\",\"observedAt\":\"2026-01-01T00:00:00.000Z\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}\n"
+    },
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "name": "notes.txt",
+     "text": "x"
+    }
+   ],
+   "queries": [
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "reader": {
+      "observations": [
+       {
+        "sessionId": "s1",
+        "agentId": null,
+        "component": "cxc-ops",
+        "event": "session-start",
+        "observedAt": "2026-01-01T00:00:00.000Z",
+        "entrypoint": "components/cxc-ops/src/cli.ts",
+        "outcome": "invoked"
+       }
+      ],
+      "ignored": 0,
+      "reason": null
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "PASS",
+      "evidence": "session=s1 actor=root: 1 current invocation(s): cxc-ops/session-start (components/cxc-ops/src/cli.ts, 2026-01-01T00:00:00.000Z); 0 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    }
+   ]
+  },
+  {
+   "name": "slot_named_directory",
+   "mutation": null,
+   "files": [
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "session-start",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"sessionId\":\"s1\",\"agentId\":null,\"component\":\"cxc-ops\",\"event\":\"session-start\",\"observedAt\":\"2026-01-01T00:00:00.000Z\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}\n"
+    },
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "stop",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "dir": true
+    }
+   ],
+   "queries": [
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "reader": {
+      "observations": [
+       {
+        "sessionId": "s1",
+        "agentId": null,
+        "component": "cxc-ops",
+        "event": "session-start",
+        "observedAt": "2026-01-01T00:00:00.000Z",
+        "entrypoint": "components/cxc-ops/src/cli.ts",
+        "outcome": "invoked"
+       }
+      ],
+      "ignored": 1,
+      "reason": null
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "PASS",
+      "evidence": "session=s1 actor=root: 1 current invocation(s): cxc-ops/session-start (components/cxc-ops/src/cli.ts, 2026-01-01T00:00:00.000Z); 1 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    }
+   ]
+  },
+  {
+   "name": "slot_named_symlink",
+   "mutation": null,
+   "files": [
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "session-start",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"sessionId\":\"s1\",\"agentId\":null,\"component\":\"cxc-ops\",\"event\":\"session-start\",\"observedAt\":\"2026-01-01T00:00:00.000Z\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}\n"
+    },
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "stop",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "symlinkTo": [
+      "cxc-ops",
+      "session-start",
+      "components/cxc-ops/src/cli.ts"
+     ]
+    }
+   ],
+   "queries": [
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "reader": {
+      "observations": [
+       {
+        "sessionId": "s1",
+        "agentId": null,
+        "component": "cxc-ops",
+        "event": "session-start",
+        "observedAt": "2026-01-01T00:00:00.000Z",
+        "entrypoint": "components/cxc-ops/src/cli.ts",
+        "outcome": "invoked"
+       }
+      ],
+      "ignored": 1,
+      "reason": null
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "PASS",
+      "evidence": "session=s1 actor=root: 1 current invocation(s): cxc-ops/session-start (components/cxc-ops/src/cli.ts, 2026-01-01T00:00:00.000Z); 1 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    }
+   ]
+  },
+  {
+   "name": "slot_named_fifo",
+   "mutation": null,
+   "files": [
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "session-start",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"sessionId\":\"s1\",\"agentId\":null,\"component\":\"cxc-ops\",\"event\":\"session-start\",\"observedAt\":\"2026-01-01T00:00:00.000Z\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}\n"
+    },
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "stop",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "fifo": true
+    }
+   ],
+   "queries": [
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "reader": {
+      "observations": [
+       {
+        "sessionId": "s1",
+        "agentId": null,
+        "component": "cxc-ops",
+        "event": "session-start",
+        "observedAt": "2026-01-01T00:00:00.000Z",
+        "entrypoint": "components/cxc-ops/src/cli.ts",
+        "outcome": "invoked"
+       }
+      ],
+      "ignored": 1,
+      "reason": null
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "PASS",
+      "evidence": "session=s1 actor=root: 1 current invocation(s): cxc-ops/session-start (components/cxc-ops/src/cli.ts, 2026-01-01T00:00:00.000Z); 1 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    }
+   ]
+  },
+  {
+   "name": "entrypoint_changed",
+   "mutation": "entrypoint",
+   "files": [
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "session-start",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"sessionId\":\"s1\",\"agentId\":null,\"component\":\"cxc-ops\",\"event\":\"session-start\",\"observedAt\":\"2026-01-01T00:00:00.000Z\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}\n"
+    }
+   ],
+   "queries": [
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "reader": {
+      "observations": [],
+      "ignored": 1,
+      "reason": null
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "WARN",
+      "evidence": "session=s1 actor=root: 0 current invocation(s); unverified (no matching fresh evidence); 1 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    }
+   ]
+  },
+  {
+   "name": "manifest_changed",
+   "mutation": "manifest_extra",
+   "files": [
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "session-start",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"sessionId\":\"s1\",\"agentId\":null,\"component\":\"cxc-ops\",\"event\":\"session-start\",\"observedAt\":\"2026-01-01T00:00:00.000Z\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}\n"
+    }
+   ],
+   "queries": [
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "reader": {
+      "observations": [],
+      "ignored": 1,
+      "reason": null
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "WARN",
+      "evidence": "session=s1 actor=root: 0 current invocation(s); unverified (no matching fresh evidence); 1 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    }
+   ]
+  },
+  {
+   "name": "manifest_missing",
+   "mutation": "manifest_missing",
+   "files": [
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "session-start",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"sessionId\":\"s1\",\"agentId\":null,\"component\":\"cxc-ops\",\"event\":\"session-start\",\"observedAt\":\"2026-01-01T00:00:00.000Z\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}\n"
+    }
+   ],
+   "queries": [
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "reader": {
+      "observations": [],
+      "ignored": 0,
+      "reason": "payload or invocation store unreadable"
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "WARN",
+      "evidence": "session=s1 actor=root: 0 current invocation(s); unverified (payload or invocation store unreadable); 0 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    }
+   ]
+  },
+  {
+   "name": "manifest_without_version",
+   "mutation": "manifest_noversion",
+   "files": [
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "session-start",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"sessionId\":\"s1\",\"agentId\":null,\"component\":\"cxc-ops\",\"event\":\"session-start\",\"observedAt\":\"2026-01-01T00:00:00.000Z\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}\n"
+    }
+   ],
+   "queries": [
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "reader": {
+      "observations": [],
+      "ignored": 0,
+      "reason": "payload or invocation store unreadable"
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "WARN",
+      "evidence": "session=s1 actor=root: 0 current invocation(s); unverified (payload or invocation store unreadable); 0 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    }
+   ]
+  },
+  {
+   "name": "manifest_is_a_symlink",
+   "mutation": "manifest_symlink",
+   "files": [
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "session-start",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"sessionId\":\"s1\",\"agentId\":null,\"component\":\"cxc-ops\",\"event\":\"session-start\",\"observedAt\":\"2026-01-01T00:00:00.000Z\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}\n"
+    }
+   ],
+   "queries": [
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "reader": {
+      "observations": [],
+      "ignored": 0,
+      "reason": "payload or invocation store unreadable"
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "WARN",
+      "evidence": "session=s1 actor=root: 0 current invocation(s); unverified (payload or invocation store unreadable); 0 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    }
+   ]
+  },
+  {
+   "name": "no_records_for_the_actor",
+   "mutation": null,
+   "files": [],
+   "queries": [
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "reader": {
+      "observations": [],
+      "ignored": 0,
+      "reason": "no invocation records"
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "WARN",
+      "evidence": "session=s1 actor=root: 0 current invocation(s); unverified (no invocation records); 0 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    },
+    {
+     "sessionId": "s1",
+     "agentId": "child-a",
+     "reader": {
+      "observations": [],
+      "ignored": 0,
+      "reason": "no invocation records"
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "WARN",
+      "evidence": "session=s1 actor=child-a: 0 current invocation(s); unverified (no invocation records); 0 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    }
+   ]
+  },
+  {
+   "name": "store_path_is_a_file",
+   "mutation": "ancestor_file",
+   "files": [
+    {
+     "actor": {
+      "session": "s1",
+      "agent": null
+     },
+     "slot": [
+      "cxc-ops",
+      "session-start",
+      "components/cxc-ops/src/cli.ts"
+     ],
+     "text": "{\"schemaVersion\":1,\"sessionId\":\"s1\",\"agentId\":null,\"component\":\"cxc-ops\",\"event\":\"session-start\",\"observedAt\":\"2026-01-01T00:00:00.000Z\",\"pluginRoot\":\"@@PLUGIN_ROOT@@\",\"pluginVersion\":\"1.2.3\",\"manifestDigest\":\"@@MANIFEST_DIGEST@@\",\"entrypoint\":\"components/cxc-ops/src/cli.ts\",\"entrypointDigest\":\"@@ENTRY_DIGEST@@\",\"outcome\":\"invoked\"}\n"
+    }
+   ],
+   "queries": [
+    {
+     "sessionId": "s1",
+     "agentId": null,
+     "reader": {
+      "observations": [],
+      "ignored": 0,
+      "reason": "invocation store unreadable"
+     },
+     "check": {
+      "name": "hook-execution",
+      "severity": "WARN",
+      "evidence": "session=s1 actor=root: 0 current invocation(s); unverified (invocation store unreadable); 0 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+     }
+    }
+   ]
+  }
+ ],
+ "trust": [
+  {
+   "name": "ambiguous_two_install_keys",
+   "manifest": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/sample.json\"]}",
+   "files": {
+    "hooks/sample.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo doctor\"}]}]}}"
+   },
+   "config": "[plugins.\"fixture@one\"]\nenabled = true\n[plugins.\"fixture@two\"]\nenabled = true\n",
+   "key": null,
+   "codexHomeFromEnv": false,
+   "expect": {
+    "severity": "WARN",
+    "evidence": "enabled install key is ambiguous (2): fixture@one, fixture@two"
+   }
+  },
+  {
+   "name": "no_config_and_no_key",
+   "manifest": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/sample.json\"]}",
+   "files": {
+    "hooks/sample.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo doctor\"}]}]}}"
+   },
+   "config": null,
+   "key": null,
+   "codexHomeFromEnv": false,
+   "expect": {
+    "severity": "WARN",
+    "evidence": "enabled install key is ambiguous (0): (none)"
+   }
+  },
+  {
+   "name": "no_install_key_but_option_names_one_with_no_config",
+   "manifest": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/sample.json\"]}",
+   "files": {
+    "hooks/sample.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo doctor\"}]}]}}"
+   },
+   "config": null,
+   "key": "fixture@market",
+   "codexHomeFromEnv": false,
+   "expect": {
+    "severity": "FAIL",
+    "evidence": "1 of 1 hook(s) not trusted for fixture@market: 1 with no trust record, 0 whose recorded hash no longer matches. The host excludes both from execution unless hook trust is bypassed, so these need approval. Execution itself was not verified here. untrusted fixture@market:hooks/sample.json:stop:0:0 expected=sha256:e06e306afea35d091ee5a4c467c9c68eb8b1280dc7c148dc7b9e490f1c06f038 actual=(none) file_sha256=e02d9935cb086ecd",
+    "repair": "1 hook(s) have no trust entry in @@CODEX_HOME@@/config.toml; only Codex itself writes those on hook approval. Approve this plugin's hooks in Codex, or record them explicitly with: cxc hooks retrust --key fixture@market --codex-home @@CODEX_HOME@@ --bootstrap-ok"
+   }
+  },
+  {
+   "name": "never_trusted_names_the_bootstrap_repair",
+   "manifest": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/sample.json\"]}",
+   "files": {
+    "hooks/sample.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo doctor\"}]}]}}"
+   },
+   "config": "[plugins.\"fixture@market\"]\nenabled = true\n",
+   "key": "fixture@market",
+   "codexHomeFromEnv": false,
+   "expect": {
+    "severity": "FAIL",
+    "evidence": "1 of 1 hook(s) not trusted for fixture@market: 1 with no trust record, 0 whose recorded hash no longer matches. The host excludes both from execution unless hook trust is bypassed, so these need approval. Execution itself was not verified here. untrusted fixture@market:hooks/sample.json:stop:0:0 expected=sha256:e06e306afea35d091ee5a4c467c9c68eb8b1280dc7c148dc7b9e490f1c06f038 actual=(none) file_sha256=e02d9935cb086ecd",
+    "repair": "1 hook(s) have no trust entry in @@CODEX_HOME@@/config.toml; only Codex itself writes those on hook approval. Approve this plugin's hooks in Codex, or record them explicitly with: cxc hooks retrust --key fixture@market --codex-home @@CODEX_HOME@@ --bootstrap-ok"
+   }
+  },
+  {
+   "name": "drift_with_explicit_key",
+   "manifest": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/sample.json\"]}",
+   "files": {
+    "hooks/sample.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo doctor\"}]}]}}"
+   },
+   "config": "[hooks.state.\"fixture@one:hooks/sample.json:stop:0:0\"]\ntrusted_hash = \"sha256:stale\"\n",
+   "key": "fixture@one",
+   "codexHomeFromEnv": false,
+   "expect": {
+    "severity": "FAIL",
+    "evidence": "1 of 1 hook(s) not trusted for fixture@one: 0 with no trust record, 1 whose recorded hash no longer matches. The host excludes both from execution unless hook trust is bypassed, so these need approval. Execution itself was not verified here. drifted fixture@one:hooks/sample.json:stop:0:0 expected=sha256:e06e306afea35d091ee5a4c467c9c68eb8b1280dc7c148dc7b9e490f1c06f038 actual=sha256:stale file_sha256=e02d9935cb086ecd",
+    "repair": "cxc hooks retrust --key fixture@one --codex-home @@CODEX_HOME@@"
+   }
+  },
+  {
+   "name": "drift_repair_omits_bootstrap",
+   "manifest": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/sample.json\"]}",
+   "files": {
+    "hooks/sample.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo doctor\"}]}]}}"
+   },
+   "config": "[hooks.state.\"fixture@market:hooks/sample.json:stop:0:0\"]\ntrusted_hash = \"sha256:stale\"\n",
+   "key": "fixture@market",
+   "codexHomeFromEnv": false,
+   "expect": {
+    "severity": "FAIL",
+    "evidence": "1 of 1 hook(s) not trusted for fixture@market: 0 with no trust record, 1 whose recorded hash no longer matches. The host excludes both from execution unless hook trust is bypassed, so these need approval. Execution itself was not verified here. drifted fixture@market:hooks/sample.json:stop:0:0 expected=sha256:e06e306afea35d091ee5a4c467c9c68eb8b1280dc7c148dc7b9e490f1c06f038 actual=sha256:stale file_sha256=e02d9935cb086ecd",
+    "repair": "cxc hooks retrust --key fixture@market --codex-home @@CODEX_HOME@@"
+   }
+  },
+  {
+   "name": "trusted_untrusted_drifted_listed",
+   "manifest": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/sample.json\"]}",
+   "files": {
+    "hooks/sample.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo trusted\"}]},{\"hooks\":[{\"type\":\"command\",\"command\":\"echo drifted\"}]},{\"hooks\":[{\"type\":\"command\",\"command\":\"echo untrusted\"}]}]}}"
+   },
+   "config": "[hooks.state.\"fixture@market:hooks/sample.json:stop:0:0\"]\ntrusted_hash = \"sha256:62d2517d6641f85378bb6c6b5e4ae5845d5032bed86c9d70318208d7f3cf6562\"\n\n[hooks.state.\"fixture@market:hooks/sample.json:stop:1:0\"]\ntrusted_hash = \"sha256:stale\"\n",
+   "key": "fixture@market",
+   "codexHomeFromEnv": false,
+   "expect": {
+    "severity": "FAIL",
+    "evidence": "2 of 3 hook(s) not trusted for fixture@market: 1 with no trust record, 1 whose recorded hash no longer matches. The host excludes both from execution unless hook trust is bypassed, so these need approval. Execution itself was not verified here. drifted fixture@market:hooks/sample.json:stop:1:0 expected=sha256:7e4e9c76cd76f7505951ce88ff375e84212a774f1c96d5ef1c266f52abaabafc actual=sha256:stale file_sha256=ee615055020486d5; untrusted fixture@market:hooks/sample.json:stop:2:0 expected=sha256:e1a6f067b465434824efa68771172ca90505c30a8b582260be78af6913d3d11d actual=(none) file_sha256=ee615055020486d5",
+    "repair": "cxc hooks retrust --key fixture@market --codex-home @@CODEX_HOME@@"
+   }
+  },
+  {
+   "name": "drift_mixed_with_missing",
+   "manifest": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/sample.json\"]}",
+   "files": {
+    "hooks/sample.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo drifted\"}]},{\"hooks\":[{\"type\":\"command\",\"command\":\"echo missing\"}]}]}}"
+   },
+   "config": "[hooks.state.\"fixture@market:hooks/sample.json:stop:0:0\"]\ntrusted_hash = \"sha256:stale\"\n",
+   "key": "fixture@market",
+   "codexHomeFromEnv": false,
+   "expect": {
+    "severity": "FAIL",
+    "evidence": "2 of 2 hook(s) not trusted for fixture@market: 1 with no trust record, 1 whose recorded hash no longer matches. The host excludes both from execution unless hook trust is bypassed, so these need approval. Execution itself was not verified here. drifted fixture@market:hooks/sample.json:stop:0:0 expected=sha256:7e4e9c76cd76f7505951ce88ff375e84212a774f1c96d5ef1c266f52abaabafc actual=sha256:stale file_sha256=ba47ca22271a0b2c; untrusted fixture@market:hooks/sample.json:stop:1:0 expected=sha256:a031faec8b3d754009407ad0f38fbdfd094a53e197468fce8969844f2b81020f actual=(none) file_sha256=ba47ca22271a0b2c",
+    "repair": "cxc hooks retrust --key fixture@market --codex-home @@CODEX_HOME@@"
+   }
+  },
+  {
+   "name": "fully_trusted_has_no_repair",
+   "manifest": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/sample.json\"]}",
+   "files": {
+    "hooks/sample.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo doctor\"}]}]}}"
+   },
+   "config": "[hooks.state.\"fixture@market:hooks/sample.json:stop:0:0\"]\ntrusted_hash = \"sha256:e06e306afea35d091ee5a4c467c9c68eb8b1280dc7c148dc7b9e490f1c06f038\"\n",
+   "key": "fixture@market",
+   "codexHomeFromEnv": false,
+   "expect": {
+    "severity": "PASS",
+    "evidence": "1 hook hash(es) trusted for fixture@market"
+   }
+  },
+  {
+   "name": "single_enabled_install_key_is_used",
+   "manifest": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/sample.json\"]}",
+   "files": {
+    "hooks/sample.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo doctor\"}]}]}}"
+   },
+   "config": "[plugins.\"fixture@market\"]\nenabled = true\n[hooks.state.\"fixture@market:hooks/sample.json:stop:0:0\"]\ntrusted_hash = \"sha256:e06e306afea35d091ee5a4c467c9c68eb8b1280dc7c148dc7b9e490f1c06f038\"\n",
+   "key": null,
+   "codexHomeFromEnv": false,
+   "expect": {
+    "severity": "PASS",
+    "evidence": "1 hook hash(es) trusted for fixture@market"
+   }
+  },
+  {
+   "name": "disabled_install_key_is_not_a_candidate",
+   "manifest": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/sample.json\"]}",
+   "files": {
+    "hooks/sample.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo doctor\"}]}]}}"
+   },
+   "config": "[plugins.\"fixture@old\"]\nenabled = false\n[plugins.\"fixture@market\"]\nenabled = true\n[hooks.state.\"fixture@market:hooks/sample.json:stop:0:0\"]\ntrusted_hash = \"sha256:e06e306afea35d091ee5a4c467c9c68eb8b1280dc7c148dc7b9e490f1c06f038\"\n",
+   "key": null,
+   "codexHomeFromEnv": false,
+   "expect": {
+    "severity": "PASS",
+    "evidence": "1 hook hash(es) trusted for fixture@market"
+   }
+  },
+  {
+   "name": "several_install_keys_option_picks_one",
+   "manifest": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/sample.json\"]}",
+   "files": {
+    "hooks/sample.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo doctor\"}]}]}}"
+   },
+   "config": "[plugins.\"fixture@market\"]\nenabled = true\n[plugins.\"fixture@other\"]\nenabled = true\n[hooks.state.\"fixture@market:hooks/sample.json:stop:0:0\"]\ntrusted_hash = \"sha256:e06e306afea35d091ee5a4c467c9c68eb8b1280dc7c148dc7b9e490f1c06f038\"\n",
+   "key": "fixture@market",
+   "codexHomeFromEnv": false,
+   "expect": {
+    "severity": "PASS",
+    "evidence": "1 hook hash(es) trusted for fixture@market"
+   }
+  },
+  {
+   "name": "codex_home_from_the_environment",
+   "manifest": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/sample.json\"]}",
+   "files": {
+    "hooks/sample.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo doctor\"}]}]}}"
+   },
+   "config": "[plugins.\"fixture@market\"]\nenabled = true\n[hooks.state.\"fixture@market:hooks/sample.json:stop:0:0\"]\ntrusted_hash = \"sha256:e06e306afea35d091ee5a4c467c9c68eb8b1280dc7c148dc7b9e490f1c06f038\"\n",
+   "key": null,
+   "codexHomeFromEnv": true,
+   "expect": {
+    "severity": "PASS",
+    "evidence": "1 hook hash(es) trusted for fixture@market"
+   }
+  },
+  {
+   "name": "no_handler_can_be_hashed",
+   "manifest": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/sample.json\"]}",
+   "files": {
+    "hooks/sample.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo x\",\"async\":true}]}]}}"
+   },
+   "config": "[plugins.\"fixture@market\"]\nenabled = true\n",
+   "key": "fixture@market",
+   "codexHomeFromEnv": false,
+   "expect": {
+    "severity": "WARN",
+    "evidence": "no hook handler could be hashed for fixture@market; nothing was verified"
+   }
+  },
+  {
+   "name": "manifest_without_hooks_lists_nothing",
+   "manifest": "{\"name\":\"fixture\"}",
+   "files": {},
+   "config": "[plugins.\"fixture@market\"]\nenabled = true\n",
+   "key": "fixture@market",
+   "codexHomeFromEnv": false,
+   "expect": {
+    "severity": "WARN",
+    "evidence": "no hook handler could be hashed for fixture@market; nothing was verified"
+   }
+  },
+  {
+   "name": "manifest_without_a_name",
+   "manifest": "{\"hooks\":[]}",
+   "files": {},
+   "config": null,
+   "key": null,
+   "codexHomeFromEnv": false,
+   "expect": {
+    "severity": "WARN",
+    "evidence": "manifest has no plugin name; cannot resolve install key"
+   }
+  },
+  {
+   "name": "manifest_with_an_empty_name",
+   "manifest": "{\"name\":\"\"}",
+   "files": {},
+   "config": null,
+   "key": null,
+   "codexHomeFromEnv": false,
+   "expect": {
+    "severity": "WARN",
+    "evidence": "manifest has no plugin name; cannot resolve install key"
+   }
+  },
+  {
+   "name": "manifest_name_not_a_string",
+   "manifest": "{\"name\":7}",
+   "files": {},
+   "config": null,
+   "key": null,
+   "codexHomeFromEnv": false,
+   "expect": {
+    "severity": "WARN",
+    "evidence": "manifest has no plugin name; cannot resolve install key"
+   }
+  },
+  {
+   "name": "manifest_is_json_null",
+   "manifest": "null",
+   "files": {},
+   "config": null,
+   "key": null,
+   "codexHomeFromEnv": false,
+   "expect": {
+    "severity": "FAIL",
+    "evidence": null
+   }
+  },
+  {
+   "name": "manifest_missing",
+   "manifest": null,
+   "files": {},
+   "config": null,
+   "key": null,
+   "codexHomeFromEnv": false,
+   "expect": {
+    "severity": "FAIL",
+    "evidence": null
+   }
+  },
+  {
+   "name": "manifest_is_not_json",
+   "manifest": "{",
+   "files": {},
+   "config": null,
+   "key": null,
+   "codexHomeFromEnv": false,
+   "expect": {
+    "severity": "FAIL",
+    "evidence": null
+   }
+  },
+  {
+   "name": "hook_file_missing",
+   "manifest": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/sample.json\"]}",
+   "files": {},
+   "config": "[plugins.\"fixture@market\"]\nenabled = true\n",
+   "key": "fixture@market",
+   "codexHomeFromEnv": false,
+   "expect": {
+    "severity": "FAIL",
+    "evidence": null
+   }
+  }
+ ]
+}
