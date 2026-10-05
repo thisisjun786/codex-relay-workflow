@@ -49,18 +49,25 @@ func ls(t *testing.T, dir string) (names []string) {
 	return names
 }
 
-// fingerprint renders every entry of dir with its mode, modification time and, for a regular file, its bytes.
+// fingerprint renders every entry below dir, subdirectories included, with its mode, modification time and, for a regular file, its
+// bytes.
 func fingerprint(t *testing.T, dir string) (out string) {
 	t.Helper()
-	for _, n := range ls(t, dir) {
-		fi, err := os.Lstat(dir + "/" + n)
-		must(t, err)
+	must(t, filepath.WalkDir(dir, func(p string, _ fs.DirEntry, err error) error {
+		if err != nil || p == dir {
+			return err
+		}
+		fi, err := os.Lstat(p)
+		if err != nil {
+			return err
+		}
 		data := ""
 		if fi.Mode().IsRegular() {
-			data = get(t, dir+"/"+n)
+			data = get(t, p)
 		}
-		out += fmt.Sprintf("%s %v %v %q\n", n, fi.Mode(), fi.ModTime(), data)
-	}
+		out += fmt.Sprintf("%s %v %v %q\n", strings.TrimPrefix(p, dir+"/"), fi.Mode(), fi.ModTime(), data)
+		return nil
+	}))
 	return out
 }
 
