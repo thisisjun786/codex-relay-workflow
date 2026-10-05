@@ -5,6 +5,7 @@ package cli
 // registers nothing and does no work at program start (no init, no package-level variable initializers).
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -199,6 +200,14 @@ func metricCliRowList(records []metric.Record) string {
 // returned as an error with a zero result, the shape the harness prints as the oracle's dispatcher prints
 // an uncaught throw (crw cli failed: <message>, exit 1).
 func RunMetricCLI(argv []string, cwd, stdin string) (CliResult, error) {
+	return RunMetricCLIContext(context.Background(), argv, cwd, stdin)
+}
+
+// RunMetricCLIContext is RunMetricCLI for a caller that can be interrupted. The ingest records under ctx, so its lock wait and its
+// loop over the METRIC lines end with it, and the error it returns then is ctx's own (errors.Is(err, context.Canceled) holds for a
+// cancelled context); the rows recorded before that stay. No other verb looks at ctx. The oracle has no handler: its process dies at
+// the first interrupt and keeps the lines it had appended.
+func RunMetricCLIContext(ctx context.Context, argv []string, cwd, stdin string) (CliResult, error) {
 	verb := ""
 	if len(argv) > 0 {
 		verb = argv[0]
@@ -250,7 +259,7 @@ func RunMetricCLI(argv []string, cwd, stdin string) (CliResult, error) {
 		if !sourceOK {
 			return CliResult{Code: 1, Output: "metric ingest: --source must be operator-entered or evaluate.sh"}, nil
 		}
-		records, err := metric.RecordMetricsFromText(cwd, metric.TextInput{
+		records, err := metric.RecordMetricsFromTextContext(ctx, cwd, metric.TextInput{
 			SessionID: sessionID, Text: stdin, Source: source, WorkPhaseID: metricCliWorkPhase(argv),
 		})
 		if err != nil {

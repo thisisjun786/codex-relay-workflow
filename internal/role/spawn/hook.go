@@ -18,9 +18,9 @@ import (
 // This file ports the first half of CXC v0.2.40's runSpawnAttachHook (subagent-config/src/spawn-attach-hook.ts:849-987: reading the
 // payload, the recursion deny and the message assembly) and runtimeSkillsDir (:54-73), with the CRW names of
 // contract/schema/cxc/name-substitution.json. It stops where the oracle starts to apply role routing (:987), and it leaves out the
-// managed dispatch loop (:889-907, a later issue), so "managed" is always absent. Nothing here registers, or is, a hook: the next
-// issue finishes the answer (promptOverride, trust prefix, ciphertext restore, item re-assembly, the output envelope) from the
-// assembly. Differences from the oracle, each recorded in docs/port-cxc/known-defects.md:
+// managed dispatch loop (:889-907, a later issue), so "managed" is always absent. Nothing here registers, or is, a hook:
+// RunSpawnAttachHook (hook_route.go) finishes the answer (promptOverride, trust prefix, ciphertext restore, item re-assembly, the
+// output envelope) from the assembly. Differences from the oracle, each recorded in docs/port-cxc/known-defects.md:
 //   - the skills directory: CRW_SKILLS_DIR, then <PLUGIN_ROOT>/skills where the oracle has the module-relative plugin directory;
 //   - an unusable store, a missing home and an unknown role stop with empty output, as the oracle's throw does;
 //   - a subagent spawn whose grant scope cannot be resolved is denied, where the oracle's throw allows it (a security fix);
@@ -39,7 +39,7 @@ type spawnHookAssembly struct {
 	firstText          int                  // firstText: index of the first text item in mappedItems, -1 without one (:920)
 	itemBlocks         []string             // itemBlocks: the skill bodies to append after the text items (:919)
 	message            string               // message: the caller's text, the text items joined for items (:885)
-	encryptedV2Message bool                 // encryptedV2Message: a v2 message of Fernet shape; the next issue keeps its bytes (:887)
+	encryptedV2Message bool                 // encryptedV2Message: a v2 message of Fernet shape; RunSpawnAttachHook keeps its bytes (:887)
 	cwd                string               // cwd: obj.cwd, else the process working directory, unresolved (:888)
 	role               role.RoleName        // role: InferRole over the item scan or the normalized message (:925)
 	resolution         role.SpawnResolution // resolution: ResolveSpawnConfig for role (:926)

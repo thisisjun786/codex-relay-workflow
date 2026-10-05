@@ -207,11 +207,24 @@ func (d *dispatchPinnedDir) fail(op, name string, err error) error {
 func dispatchPinnedLinked() error { return errors.New("dispatch directory must not be a symlink") }
 
 // lock creates the record's lock directory in the pinned directory (it fails when one exists) and returns the release
-// that removes it.
+// that removes it. The lock records its owner in owner.json (dispatchLockOwner), which is what lets dispatch-lock-clear
+// tell a lock a dead process left from one that is held.
 func (d *dispatchPinnedDir) lock(name string) (func() error, error) {
+	return d.lockWith(name, d.writeOwner)
+}
+
+// lockWith is lock with the writer of the owner record as a parameter. A failed writer takes the lock away again (lockAbandon).
+func (d *dispatchPinnedDir) lockWith(name string, write func(lock string, created fs.FileInfo) error) (func() error, error) {
 	lock := name + ".lock"
 	if err := d.root.Mkdir(lock, 0o700); err != nil {
 		return nil, d.fail("mkdir", lock, err)
+	}
+	created, err := d.root.Lstat(lock)
+	if err == nil {
+		err = write(lock, created)
+	}
+	if err != nil {
+		return nil, d.lockAbandon(lock, created, err)
 	}
 	return func() error { return d.root.RemoveAll(lock) }, nil
 }
