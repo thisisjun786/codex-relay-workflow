@@ -133,6 +133,7 @@ func TestMergeLaneStaysFIFOAndLandsOnlyJudgedTrees(t *testing.T) {
 		}
 		return list
 	}
+	headCompareReportForTurn(t, k.s, first["turnId"].(string), k.heads["I"])
 	if _, err := service.Check(ctx, first["turnId"].(string), "parent", k.heads["I"], repo.git("rev-parse", "dev"), checkList("I"), green, []string{"A", "B"}, mergeturn.TargetReader{}); err != nil {
 		t.Fatalf("the lane's check of I: %v", err)
 	}

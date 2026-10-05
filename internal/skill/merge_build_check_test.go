@@ -440,7 +440,7 @@ func TestMergeBuildCheckKeepsTheGoToolInsideItsOwnScratchAndEndsItOnTimeout(t *t
 	// scratch directory; elsewhere the first command it runs is the list.
 	firstArgs, firstHomeOK := "list -e -p=4 ", seen["home"] == realHome
 	if runtime.GOOS == "darwin" {
-		firstArgs, firstHomeOK = "env GOCACHE GOMODCACHE GOPATH", strings.HasPrefix(seen["home"], m.scratch)
+		firstArgs, firstHomeOK = "env -json GOCACHE GOMODCACHE GOPATH", strings.HasPrefix(seen["home"], m.scratch)
 	}
 	if !strings.HasPrefix(seen["args"], firstArgs) {
 		t.Errorf("the first go command is %q, want %q", seen["args"], firstArgs)
@@ -553,17 +553,28 @@ func TestMergeBuildEnvMovesOnlyTheDarwinHome(t *testing.T) {
 		t.Errorf("darwin: the cache read wrote to the caller's config directory: %v", left)
 	}
 	caches := mbcCallerGoEnv(t, caller)
+	// The helper above ran the real go tool with the caller's environment: a run without an off
+	// file below the caller's config directory leaves the asynchronous telemetry writer behind,
+	// and its writes then race this test's temporary-directory cleanup (CRW-598).
+	telemetryOffForbidLocal(t, caller)
 	for key, want := range map[string]string{"GOCACHE": caches[0], "GOMODCACHE": caches[1], "GOPATH": caches[2]} {
 		if got[key] != want {
 			t.Errorf("darwin: %s=%q, want the caller's %q", key, got[key], want)
 		}
 	}
-	linuxEnv, err := mergeBuildEnv(context.Background(), caller, t.TempDir(), "linux")
+	if raw, err := os.ReadFile(filepath.Join(home, "Library", "Application Support", "go", "telemetry", "mode")); err != nil || !strings.HasPrefix(string(raw), "off ") {
+		t.Errorf("darwin: the owned home holds no telemetry off file: %v %q", err, raw)
+	}
+	linuxOwned := t.TempDir()
+	linuxEnv, err := mergeBuildEnv(context.Background(), caller, linuxOwned, "linux")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got, want := mbcLastEnv(linuxEnv)["HOME"], mbcLastEnv(caller)["HOME"]; got != want {
 		t.Errorf("linux: HOME=%q, want the caller's %q", got, want)
+	}
+	if _, err := os.Stat(filepath.Join(linuxOwned, "home", "Library", "Application Support", "go", "telemetry", "mode")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("linux: a darwin mode file was written: %v", err)
 	}
 }
 
@@ -571,7 +582,7 @@ func TestMergeBuildEnvMovesOnlyTheDarwinHome(t *testing.T) {
 // one trimmed into shape (CRW-562).
 func TestMergeBuildEnvKeepsWhatGoEnvAnswers(t *testing.T) {
 	bin := t.TempDir()
-	shim := "#!/bin/sh\nprintf '%s\\n' '/cache with space/ ' '/mod' '/gopath'\n"
+	shim := "#!/bin/sh\nprintf '%s' '{\"GOCACHE\":\"/cache with space/ \",\"GOMODCACHE\":\"/mod\",\"GOPATH\":\"/gopath\"}'\n"
 	if err := os.WriteFile(filepath.Join(bin, "go"), []byte(shim), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -596,6 +607,9 @@ func mbcCallerGoEnv(t *testing.T, base []string) [3]string {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(goTool, "env", "GOCACHE", "GOMODCACHE", "GOPATH")
+	// The real go tool must not write its telemetry counters into the caller's directories: a run
+	// there with no off file leaves a writer behind that races the caller's TempDir cleanup (CRW-598).
+	telemetryOffWriteMode(t, base)
 	cmd.Env = base
 	out, err := cmd.Output()
 	if err != nil {
@@ -606,6 +620,54 @@ func mbcCallerGoEnv(t *testing.T, base []string) [3]string {
 		t.Fatalf("go env GOCACHE GOMODCACHE GOPATH answered %q", out)
 	}
 	return [3]string{strings.TrimSpace(lines[0]), strings.TrimSpace(lines[1]), strings.TrimSpace(lines[2])}
+}
+
+// telemetryOffDir is the directory the go tool of this environment keeps telemetry in: the user
+// config directory of that environment as os.UserConfigDir resolves it - XDG_CONFIG_HOME, or
+// HOME/.config when it names none, and HOME/Library/Application Support on darwin (CRW-598).
+func telemetryOffDir(env []string) string {
+	last := mbcLastEnv(env)
+	if runtime.GOOS == "darwin" {
+		return filepath.Join(last["HOME"], "Library", "Application Support", "go", "telemetry")
+	}
+	if config := last["XDG_CONFIG_HOME"]; config != "" {
+		return filepath.Join(config, "go", "telemetry")
+	}
+	return filepath.Join(last["HOME"], ".config", "go", "telemetry")
+}
+
+// telemetryOffWriteMode puts the off mode file - the same one the check itself writes - under the
+// environment's telemetry directory before a real go command runs with it: without it the go tool
+// writes counters there asynchronously, after the command returned, and those writes race the
+// test's temporary-directory cleanup (CRW-598).
+func telemetryOffWriteMode(t *testing.T, env []string) {
+	t.Helper()
+	dir := telemetryOffDir(env)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "mode"), []byte("off "+time.Now().UTC().Format("2006-01-02")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// telemetryOffForbidLocal waits out the go tool's asynchronous telemetry writer and then requires
+// that it never created go/telemetry/local under the environment's config directory (CRW-598).
+func telemetryOffForbidLocal(t *testing.T, env []string) {
+	t.Helper()
+	time.Sleep(2 * time.Second)
+	local := filepath.Join(telemetryOffDir(env), "local")
+	entries, err := os.ReadDir(local)
+	switch {
+	case err == nil:
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Errorf("the go tool wrote telemetry below the caller's config directory: %s holds %v", local, names)
+	case !errors.Is(err, fs.ErrNotExist):
+		t.Errorf("cannot tell whether %s exists: %v", local, err)
+	}
 }
 
 // The cache read darwin needs runs under the check's own context: a go env that stalls is cut off
@@ -636,4 +698,224 @@ func mbcLastEnv(env []string) map[string]string {
 		}
 	}
 	return last
+}
+
+// The cache read darwin needs runs in a directory this run owns that holds no go.mod, so a module in
+// the caller's working directory cannot choose the go tool's toolchain for it. The shim records
+// where it ran: a shell's $PWD is the directory the go tool was started in.
+func TestMergeBuildEnvRunsTheCacheReadInItsOwnDirectory(t *testing.T) {
+	owned := t.TempDir()
+	log := mbcCacheShim(t, mbcCacheShimStandard)
+	env, err := mergeBuildEnv(context.Background(), mbcEnvWithout(t, "HOME"), owned, "darwin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := mbcLastEnv(env)["GOCACHE"]; got != "/cache" {
+		t.Errorf("GOCACHE=%q, want the shim's /cache", got)
+	}
+	seen := mbcShimLog(t, log)
+	want := filepath.Join(owned, "probe")
+	if got := seen["pwd"]; got != want {
+		if resolved, err := filepath.EvalSymlinks(got); err != nil || resolved != want {
+			t.Errorf("the cache read ran in %q, want the owned directory %q", got, want)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(want, "go.mod")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the probe directory holds a go.mod: %v", err)
+	}
+}
+
+// On darwin the go tool reads the telemetry mode from HOME/Library/Application Support, so the off
+// file must be there before the first go command runs: the shim reads it while it runs.
+func TestMergeBuildEnvWritesTheDarwinTelemetryModeBeforeTheFirstGoCommand(t *testing.T) {
+	owned := t.TempDir()
+	log := mbcCacheShim(t, mbcCacheShimStandard)
+	if _, err := mergeBuildEnv(context.Background(), mbcEnvWithout(t, "HOME"), owned, "darwin"); err != nil {
+		t.Fatal(err)
+	}
+	if seen := mbcShimLog(t, log); !strings.HasPrefix(seen["mode"], "off ") {
+		t.Errorf("the first go command saw telemetry mode %q under its HOME, want an off file", seen["mode"])
+	}
+	linuxOwned := t.TempDir()
+	if _, err := mergeBuildEnv(context.Background(), []string{"HOME=/caller"}, linuxOwned, "linux"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(linuxOwned, "home", "Library", "Application Support", "go", "telemetry", "mode")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("linux: a darwin mode file was written: %v", err)
+	}
+}
+
+// The mode files that say telemetry is off: the XDG config path everywhere and, on darwin, the one
+// under the owned home.
+func TestMergeBuildTelemetryModeFilesPerOS(t *testing.T) {
+	owned := t.TempDir()
+	wantLinux := []string{filepath.Join(owned, "config", "go", "telemetry", "mode")}
+	if linux := mergeBuildTelemetryModeFiles(owned, "linux"); !reflect.DeepEqual(linux, wantLinux) {
+		t.Errorf("linux mode files %v, want %v", linux, wantLinux)
+	}
+	wantDarwin := append(append([]string{}, wantLinux...), filepath.Join(owned, "home", "Library", "Application Support", "go", "telemetry", "mode"))
+	if darwin := mergeBuildTelemetryModeFiles(owned, "darwin"); !reflect.DeepEqual(darwin, wantDarwin) {
+		t.Errorf("darwin mode files %v, want %v", darwin, wantDarwin)
+	}
+}
+
+// The probe runs in a fresh directory inside the owned scratch, not the temporary-file directory and
+// not the home the go tool reads its configuration from.
+func TestMergeBuildProbeDirOutsideTheOtherScratchDirs(t *testing.T) {
+	owned := t.TempDir()
+	dir := mergeBuildProbeDir(owned)
+	if want := filepath.Join(owned, "probe"); dir != want {
+		t.Fatalf("mergeBuildProbeDir(%q)=%q, want %q", owned, dir, want)
+	}
+	for _, scratch := range []string{filepath.Join(owned, "tmp"), filepath.Join(owned, "home")} {
+		if strings.HasPrefix(dir, scratch) {
+			t.Errorf("the probe directory %q is inside %q", dir, scratch)
+		}
+	}
+}
+
+// What go env -json answers is read by name: each value is kept exactly, including a newline a path
+// holds, and a key the answer leaves out is an error naming it.
+func TestMergeBuildDecodeCachesReadsTheNamesExactly(t *testing.T) {
+	for _, c := range []struct {
+		name, out, bad string
+		want           [3]string
+	}{
+		{"three keys", "{\"GOCACHE\":\"/cache\",\"GOMODCACHE\":\"/mod\",\"GOPATH\":\"/gopath\"}", "", [3]string{"/cache", "/mod", "/gopath"}},
+		{"a newline is the value", "{\"GOCACHE\":\"/cache\\nwith newline\",\"GOMODCACHE\":\"/mod\",\"GOPATH\":\"/gopath\"}", "", [3]string{"/cache\nwith newline", "/mod", "/gopath"}},
+		{"a trailing space is the value", "{\"GOCACHE\":\"/cache with space/ \",\"GOMODCACHE\":\"/mod\",\"GOPATH\":\"/gopath\"}", "", [3]string{"/cache with space/ ", "/mod", "/gopath"}},
+		{"a missing key is named", "{\"GOCACHE\":\"/cache\",\"GOMODCACHE\":\"/mod\"}", "GOPATH", [3]string{}},
+		{"not an object", "not json", "cannot read", [3]string{}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := mergeBuildDecodeCaches([]byte(c.out))
+			switch {
+			case c.bad != "" && (err == nil || !strings.Contains(err.Error(), c.bad)):
+				t.Fatalf("err=%v, want one naming %q", err, c.bad)
+			case c.bad == "" && err != nil:
+				t.Fatalf("err=%v, want nil", err)
+			case c.bad == "" && got != c.want:
+				t.Errorf("got %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+// A cache path that holds a newline is the path: the answer is read by name, not split into lines.
+func TestMergeBuildEnvKeepsACachePathWithANewline(t *testing.T) {
+	owned := t.TempDir()
+	mbcCacheShim(t, mbcCacheShimNewline)
+	env, err := mergeBuildEnv(context.Background(), mbcEnvWithout(t, "HOME"), owned, "darwin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := mbcLastEnv(env)
+	for key, want := range map[string]string{"GOCACHE": "/cache\nwith newline", "GOMODCACHE": "/mod", "GOPATH": "/gopath"} {
+		if got[key] != want {
+			t.Errorf("%s=%q, want %q", key, got[key], want)
+		}
+	}
+}
+
+// Linux keeps the caller's environment and appends the same four settings in the same order.
+func TestMergeBuildEnvAppendsTheSameKeysOnLinux(t *testing.T) {
+	t.Setenv("GOENV", "off")
+	owned := t.TempDir()
+	base := []string{"A=1", "HOME=/caller"}
+	env, err := mergeBuildEnv(context.Background(), base, owned, "linux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := append(append([]string{}, base...),
+		"GOWORK=off",
+		"XDG_CONFIG_HOME="+filepath.Join(owned, "config"),
+		"TMPDIR="+filepath.Join(owned, "tmp"),
+		"GOTMPDIR="+filepath.Join(owned, "tmp"))
+	if !reflect.DeepEqual(env, want) {
+		t.Errorf("linux environment\n got %v\nwant %v", env, want)
+	}
+}
+
+// mbcCacheShimStandard answers the caller-cache read with fixed values in whichever protocol the
+// command line names: -json is one JSON object, otherwise one value per line. While it runs it
+// records where it ran, its HOME and the darwin telemetry mode file it can see there.
+const mbcCacheShimStandard = `#!/bin/sh
+{
+	echo "pwd=$PWD"
+	echo "home=$HOME"
+	if [ -f "$HOME/Library/Application Support/go/telemetry/mode" ]; then
+		read -r mode < "$HOME/Library/Application Support/go/telemetry/mode"
+		echo "mode=$mode"
+	else
+		echo "mode=absent"
+	fi
+} > "$MBC_SHIM_LOG"
+json=0
+for a in "$@"; do
+	[ "$a" = "-json" ] && json=1
+done
+if [ "$json" = 1 ]; then
+	printf '%s' '{"GOCACHE":"/cache","GOMODCACHE":"/mod","GOPATH":"/gopath"}'
+else
+	printf '%s\n' /cache /mod /gopath
+fi
+`
+
+// mbcCacheShimNewline answers a GOCACHE that holds a newline: one JSON value after the change, four
+// lines under the old line protocol.
+const mbcCacheShimNewline = `#!/bin/sh
+json=0
+for a in "$@"; do
+	[ "$a" = "-json" ] && json=1
+done
+if [ "$json" = 1 ]; then
+	printf '%s' '{"GOCACHE":"/cache\nwith newline","GOMODCACHE":"/mod","GOPATH":"/gopath"}'
+else
+	printf '%s\n' /cache 'with newline' /mod /gopath
+fi
+`
+
+// mbcCacheShim puts a script on PATH as the go tool and returns the path it logs to.
+func mbcCacheShim(t *testing.T, script string) string {
+	t.Helper()
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "go"), []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	log := filepath.Join(t.TempDir(), "shim.log")
+	t.Setenv("PATH", bin)
+	t.Setenv("MBC_SHIM_LOG", log)
+	return log
+}
+
+// mbcShimLog folds a shim's key=value lines.
+func mbcShimLog(t *testing.T, path string) map[string]string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("the shim never ran: %v", err)
+	}
+	seen := map[string]string{}
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		key, value, _ := strings.Cut(line, "=")
+		seen[key] = value
+	}
+	return seen
+}
+
+// mbcEnvWithout is this process's environment without the named keys, so a value mergeBuildEnv
+// appends for the go tool's own run is the only one it can read under that name.
+func mbcEnvWithout(t *testing.T, keys ...string) []string {
+	t.Helper()
+	drop := map[string]bool{}
+	for _, key := range keys {
+		drop[key] = true
+	}
+	var env []string
+	for _, kv := range os.Environ() {
+		if key, _, ok := strings.Cut(kv, "="); !ok || !drop[key] {
+			env = append(env, kv)
+		}
+	}
+	return env
 }

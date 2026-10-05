@@ -1,8 +1,6 @@
 package hook
 
 import (
-	"bytes"
-	"encoding/json"
 	"os"
 	"path"
 	"slices"
@@ -135,23 +133,16 @@ func memoryGateConsume(cwd, sid, turn string, write func(string, state.State) er
 	return allowed, note
 }
 
-// memoryGateRewritable says whether writing back the state the reader rebuilt would keep every record: the stored list of
-// unverified subagents must hold as many entries as the reader kept (it drops malformed ones and caps the list), and a
-// legacy D-close marker would lose its distinction. This is the guard of the memory allow-write command.
+// memoryGateRewritable says whether writing back the state the reader rebuilt would keep every record: each stored unverified
+// subagent must come back as it was stored (the reader drops malformed entries, caps the list, cuts a long receiptClaimed and
+// replaces a field of the wrong type, see state.RewriteKeepsUnverified), and a legacy D-close marker would lose its
+// distinction. The memory allow-write command and the scan and evidence commands refuse on the same judgement.
 func memoryGateRewritable(file string, s state.State) bool {
 	if s.DcloseRecovery != nil && s.DcloseRecovery.Legacy {
 		return false
 	}
 	raw, err := os.ReadFile(file)
-	var fields map[string]json.RawMessage
-	if err != nil || json.Unmarshal(raw, &fields) != nil {
-		return false
-	}
-	var records []json.RawMessage
-	if v, ok := fields["unverifiedSubagents"]; ok && !bytes.Equal(bytes.TrimSpace(v), []byte("null")) && json.Unmarshal(v, &records) != nil {
-		return false
-	}
-	return len(records) == len(s.UnverifiedSubagents)
+	return err == nil && state.RewriteKeepsUnverified(raw, s.UnverifiedSubagents)
 }
 
 // memoryGateClassify is classifyMemoryWrite with the protected root worked out from env.
@@ -267,17 +258,29 @@ func newMemoryGateEnv(env host.LookupEnv) memoryGateEnv {
 	return g
 }
 
-// root is memoriesRoot: $CODEX_HOME/memories, else ~/.codex/memories. It is not ok when the oracle's homedir() would throw,
-// which ends its judgement in a pass.
+// root is memoriesRoot: $CODEX_HOME/memories, else ~/.codex/memories, made absolute and not cleaned. The oracle cleaned it
+// with path.join, which turns "<link>/../memories" into the sibling of the link's own directory, while an open follows the
+// link and goes up from where it leads; memoryGateIsPath therefore reads this one string two ways, its clean as the text root
+// and the place an open of it reaches as the physical root (known defect, fixed). It is not ok when the oracle's homedir()
+// would throw, which ends its judgement in a pass.
 func (g memoryGateEnv) root() (string, bool) {
 	base := g.codexHome
 	if base == "" {
 		if !g.homeOK {
 			return "", false
 		}
-		base = path.Join(g.home, ".codex")
+		base = ".codex" // an empty home joined to nothing: the root stays relative to the working directory
+		if g.home != "" {
+			base = g.home + "/.codex"
+		}
 	}
-	return resolveFrom(path.Join(base, "memories"), ""), true
+	root := base + "/memories"
+	if !path.IsAbs(root) {
+		if wd, err := os.Getwd(); err == nil {
+			root = wd + "/" + root
+		}
+	}
+	return root, true
 }
 
 type memoryGatePrefix struct{ prefix, base string }
@@ -400,13 +403,15 @@ func (g memoryGateEnv) hit(raw, cwd, root string) (string, bool) {
 // memoryGateIsPath is isMemoryPath: the path is the memories root or inside it, on a separator boundary so that a sibling
 // such as memories-backup is not. The oracle compared the text only; a symlink in the workspace that leads into the root
 // writes the same bytes, so the places the paths reach count too: the place the last component leads to, and the entry
-// itself, because a rename over a link inside the root replaces the link and not what it points at.
+// itself, because a rename over a link inside the root replaces the link and not what it points at. The root is read both
+// ways too (see root): a place inside its cleaned text or inside the place an open of it reaches is a memory path.
 func memoryGateIsPath(clean, joined, root string) bool {
 	if clean == "" {
 		return false
 	}
-	real := memoryGateReal(root, true)
-	return memoryGateWithin(clean, root) || memoryGateWithin(memoryGateReal(joined, true), real) || memoryGateWithin(memoryGateReal(joined, false), real)
+	roots := [2]string{path.Clean(root), memoryGateReal(root, true)}
+	within := func(p string) bool { return memoryGateWithin(p, roots[0]) || memoryGateWithin(p, roots[1]) }
+	return within(clean) || within(memoryGateReal(joined, true)) || within(memoryGateReal(joined, false))
 }
 
 func memoryGateWithin(p, root string) bool {
