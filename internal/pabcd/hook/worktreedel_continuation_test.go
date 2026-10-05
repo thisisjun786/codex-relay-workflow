@@ -136,6 +136,8 @@ func TestWorktreeDelContinuationVerdicts(t *testing.T) {
 		"echo <BQ>true<BQ>; echo <BS><BS><NL>rm -rf ../other",
 		"echo <BS><BS><NL>rm -rf ../other <<EOF<NL>x<NL>EOF",
 		"echo a # <BQ> <BS><NL>rm -rf ../other",
+		"echo <BQ>x<BQ>; rm -rf './build<BS><NL>'",                        // the plain reading's false block does not reach an unprotected target
+		"cat <<BS><NL><EOF<NL>$'x<BS>'<NL>EOF<NL>rm -rf ../other<BS><NL>", // a here-document operator completed by a continued line
 	} {
 		r.allowed(t, worktreeDelSpell(cmd))
 	}
