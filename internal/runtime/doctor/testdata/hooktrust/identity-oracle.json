@@ -1,0 +1,493 @@
+{
+  "oracle": "CXC v0.2.40 (3c1459acadeb1906d97c00a598e1457327ae372d)",
+  "dist": "plugins/codexclaw/components/cxc-ops/dist/hook-trust.js",
+  "node": "v24.20.0",
+  "note": "Each case's handler is the raw JSON document text the oracle's JSON.parse read, so no value is re-encoded; canonical is true when JSON.stringify(JSON.parse(handler)) is that same text.",
+  "cases": [
+    {
+      "name": "label_pre_tool_use",
+      "event": "PreToolUse",
+      "handler": "{\"type\":\"command\",\"command\":\"echo ok\"}",
+      "hash": "sha256:13811b91e8e70b1af68ab7b9e27d5e41d49364f1924603e0c2653049235c8f3d",
+      "canonical": true
+    },
+    {
+      "name": "label_post_tool_use",
+      "event": "PostToolUse",
+      "handler": "{\"type\":\"command\",\"command\":\"echo ok\"}",
+      "hash": "sha256:2f0d8ec558f164a49bad9de9fbb3d84c8fcf1909c3dfebe89482acc7a52149fa",
+      "canonical": true
+    },
+    {
+      "name": "label_session_start",
+      "event": "SessionStart",
+      "handler": "{\"type\":\"command\",\"command\":\"echo ok\"}",
+      "hash": "sha256:35a2cb35aa83c3424a0194ba9180d0618ef388abe1268d229b084938b87ff928",
+      "canonical": true
+    },
+    {
+      "name": "label_user_prompt_submit",
+      "event": "UserPromptSubmit",
+      "handler": "{\"type\":\"command\",\"command\":\"echo ok\"}",
+      "hash": "sha256:10e7160952b47ea84688f45488b890ed14c0706d8338ac7d9dc3ac27f30549f6",
+      "canonical": true
+    },
+    {
+      "name": "label_stop",
+      "event": "Stop",
+      "handler": "{\"type\":\"command\",\"command\":\"echo ok\"}",
+      "hash": "sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4",
+      "canonical": true
+    },
+    {
+      "name": "label_subagent_start",
+      "event": "SubagentStart",
+      "handler": "{\"type\":\"command\",\"command\":\"echo ok\"}",
+      "hash": "sha256:6d6cee224b6b5f8ae92005d7877811cdfd17cb60c7595b44f2f9809013380af5",
+      "canonical": true
+    },
+    {
+      "name": "label_subagent_stop",
+      "event": "SubagentStop",
+      "handler": "{\"type\":\"command\",\"command\":\"echo ok\"}",
+      "hash": "sha256:5d979e3728ef027d9747507a317e7400be51c1880ddf80735bde8dfb30db6762",
+      "canonical": true
+    },
+    {
+      "name": "label_pre_compact",
+      "event": "PreCompact",
+      "handler": "{\"type\":\"command\",\"command\":\"echo ok\"}",
+      "hash": "sha256:abbcfc70663335708c2167c7446a5b3f5cf603da4ee61f581e24e918a7d9d3bf",
+      "canonical": true
+    },
+    {
+      "name": "label_post_compact",
+      "event": "PostCompact",
+      "handler": "{\"type\":\"command\",\"command\":\"echo ok\"}",
+      "hash": "sha256:680785ee6e131f94c6785f3627a4ef481bf3a817406e923e1775599f7ddb1309",
+      "canonical": true
+    },
+    {
+      "name": "label_permission_request",
+      "event": "PermissionRequest",
+      "handler": "{\"type\":\"command\",\"command\":\"echo ok\"}",
+      "hash": "sha256:456665cdcf6e4d1004d91629a664a659ade33c2406e588c0eb07899709f6e26b",
+      "canonical": true
+    },
+    {
+      "name": "stop_matcher_dropped",
+      "event": "Stop",
+      "matcher": "^ignored$",
+      "handler": "{\"type\":\"command\",\"command\":\"echo ok\"}",
+      "hash": "sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4",
+      "canonical": true
+    },
+    {
+      "name": "user_prompt_submit_matcher_dropped",
+      "event": "UserPromptSubmit",
+      "matcher": "^ask$",
+      "handler": "{\"type\":\"command\",\"command\":\"echo ok\"}",
+      "hash": "sha256:10e7160952b47ea84688f45488b890ed14c0706d8338ac7d9dc3ac27f30549f6",
+      "canonical": true
+    },
+    {
+      "name": "pre_tool_use_matcher_kept",
+      "event": "PreToolUse",
+      "matcher": "^kept$",
+      "handler": "{\"type\":\"command\",\"command\":\"echo ok\"}",
+      "hash": "sha256:77ff12027a7cf34cfde5bddc5ac4e4241a5d81bc0ededff4152b550e91d20694",
+      "canonical": true
+    },
+    {
+      "name": "pre_tool_use_empty_matcher",
+      "event": "PreToolUse",
+      "matcher": "",
+      "handler": "{\"type\":\"command\",\"command\":\"echo ok\"}",
+      "hash": "sha256:1f381026b9d81abbae17e1e8ed04226b413c9faa4bed639baeb7acb6dc089eac",
+      "canonical": true
+    },
+    {
+      "name": "oracle_subagent_stop_group",
+      "event": "SubagentStop",
+      "matcher": "^(executor|worker)$",
+      "handler": "{\"type\":\"command\",\"command\":\"node \\\"${PLUGIN_ROOT}/components/pabcd-state/dist/cli.js\\\" hook subagent-stop\",\"timeout\":10,\"statusMessage\":\"(codexclaw) Verifying subagent evidence\"}",
+      "hash": "sha256:84e1bb4945bc1f0c31d20ff1cfd3dc555eb266362cc159182962fc6c71f2e6d8",
+      "canonical": true
+    },
+    {
+      "name": "oracle_permission_request_group",
+      "event": "PermissionRequest",
+      "matcher": "*",
+      "handler": "{\"type\":\"command\",\"command\":\"node \\\"${PLUGIN_ROOT}/components/pabcd-state/dist/cli.js\\\" hook permission-request\",\"timeout\":10,\"statusMessage\":\"(codexclaw) Checking agent-created thread permission\"}",
+      "hash": "sha256:d8d551e1070557c181280fdf41653a7c61b86b939c0bb3d939c39c9760f458e5",
+      "canonical": true
+    },
+    {
+      "name": "oracle_session_start_advisory_group",
+      "event": "SessionStart",
+      "handler": "{\"type\":\"command\",\"command\":\"node \\\"${PLUGIN_ROOT}/components/pabcd-state/dist/cli.js\\\" hook session-start-permission-advisory\",\"timeout\":10,\"statusMessage\":\"(codexclaw) Advising on agent-created thread permissions\"}",
+      "hash": "sha256:31155fb17d45bf95686a573dcceb0ced41d3de4909007fb77a8b1db3ff2df9e8",
+      "canonical": true
+    },
+    {
+      "name": "crw_stop_live",
+      "event": "Stop",
+      "document": "plugins/crw/wiring/hooks/stop-recording-completion.json",
+      "handler": "{\"type\":\"command\",\"command\":\"\\\"$HOME/.local/share/crw-runtime/current/bin/crw\\\" hook --plugin-launch; exit 0\",\"timeout\":10,\"statusMessage\":\"(crw) Checking the completion records\"}",
+      "hash": "sha256:d919278c5e6e864e90b8e2817dd8fc39961a9ab33218c59f2e3b29453aea5984",
+      "canonical": true
+    },
+    {
+      "name": "proto_constructor",
+      "event": "constructor",
+      "handler": "{\"type\":\"command\",\"command\":\"echo ok\"}",
+      "hash": "sha256:21b0e6b60758c2fe3677969ffb6d84c7a43b8b9115a8d53d90c5dc0854cf8c99",
+      "canonical": true
+    },
+    {
+      "name": "proto_toString",
+      "event": "toString",
+      "handler": "{\"type\":\"command\",\"command\":\"echo ok\"}",
+      "hash": "sha256:21b0e6b60758c2fe3677969ffb6d84c7a43b8b9115a8d53d90c5dc0854cf8c99",
+      "canonical": true
+    },
+    {
+      "name": "proto_valueOf",
+      "event": "valueOf",
+      "handler": "{\"type\":\"command\",\"command\":\"echo ok\"}",
+      "hash": "sha256:21b0e6b60758c2fe3677969ffb6d84c7a43b8b9115a8d53d90c5dc0854cf8c99",
+      "canonical": true
+    },
+    {
+      "name": "proto_proto",
+      "event": "__proto__",
+      "handler": "{\"type\":\"command\",\"command\":\"echo ok\"}",
+      "hash": "sha256:1f169188f9a3e6d8add9b245c2f4ff12975ca27eefd28bdf712b5e35c7216f9c",
+      "canonical": true
+    },
+    {
+      "name": "proto_constructor_matcher",
+      "event": "constructor",
+      "matcher": "^x$",
+      "handler": "{\"type\":\"command\",\"command\":\"echo ok\"}",
+      "hash": "sha256:7d5116de2251940411e5be5337b8a074da618a5d807cd7bf62deb23a6a3b5acb",
+      "canonical": true
+    },
+    {
+      "name": "proto_proto_matcher",
+      "event": "__proto__",
+      "matcher": "^x$",
+      "handler": "{\"type\":\"command\",\"command\":\"echo ok\"}",
+      "hash": "sha256:8b111abe9eedf180489130b92ffe4b2f8f14050a88a7c554ceb4e2505457f98a",
+      "canonical": true
+    },
+    {
+      "name": "event_foreign",
+      "event": "then",
+      "handler": "{\"type\":\"command\",\"command\":\"echo ok\"}",
+      "error": "unsupported hook event: then",
+      "canonical": true
+    },
+    {
+      "name": "event_foreign_precedes_type",
+      "event": "then",
+      "handler": "{\"type\":5,\"command\":\"echo ok\"}",
+      "error": "unsupported hook event: then",
+      "canonical": true
+    },
+    {
+      "name": "command_empty",
+      "event": "Stop",
+      "handler": "{\"type\":\"command\",\"command\":\"\"}",
+      "hash": "sha256:22c6fdaadcfd5069dc5f11647b1f97ad6c6ce4685e5961e098ffa97ec2dbcbc2",
+      "canonical": true
+    },
+    {
+      "name": "command_missing",
+      "event": "Stop",
+      "handler": "{\"type\":\"command\"}",
+      "error": "hook command must be a string",
+      "canonical": true
+    },
+    {
+      "name": "command_null",
+      "event": "Stop",
+      "handler": "{\"type\":\"command\",\"command\":null}",
+      "error": "hook command must be a string",
+      "canonical": true
+    },
+    {
+      "name": "command_number",
+      "event": "Stop",
+      "handler": "{\"type\":\"command\",\"command\":5}",
+      "error": "hook command must be a string",
+      "canonical": true
+    },
+    {
+      "name": "command_nonascii",
+      "event": "Stop",
+      "handler": "{\"type\":\"command\",\"command\":\"echo é日😀\"}",
+      "hash": "sha256:7a8969d0d30c4c05a075d55cf1baa46f86788bb4a3c038378bf1eaeb52da8fc3",
+      "canonical": true
+    },
+    {
+      "name": "command_u2028",
+      "event": "Stop",
+      "handler": "{\"type\":\"command\",\"command\":\"echo  x\"}",
+      "hash": "sha256:e127e76eee83f3fdfdc87422d2928706f08493c0d0411c33bb27ef635afb4d3d",
+      "canonical": true
+    },
+    {
+      "name": "command_lone_surrogate",
+      "event": "Stop",
+      "handler": "{\"type\":\"command\",\"command\":\"echo \\ud800\"}",
+      "hash": "sha256:15a24d6f471b84f88bbd006ba80e5d1b25dcee043fdba1ec9e538dd8ee5ada86",
+      "canonical": true
+    },
+    {
+      "name": "type_shell",
+      "event": "Stop",
+      "handler": "{\"type\":\"shell\",\"command\":\"echo ok\"}",
+      "error": "unsupported hook handler type: shell",
+      "canonical": true
+    },
+    {
+      "name": "type_null",
+      "event": "Stop",
+      "handler": "{\"type\":null,\"command\":\"echo ok\"}",
+      "error": "unsupported hook handler type: null",
+      "canonical": true
+    },
+    {
+      "name": "type_number",
+      "event": "Stop",
+      "handler": "{\"type\":5,\"command\":\"echo ok\"}",
+      "error": "unsupported hook handler type: 5",
+      "canonical": true
+    },
+    {
+      "name": "type_boolean",
+      "event": "Stop",
+      "handler": "{\"type\":true,\"command\":\"echo ok\"}",
+      "error": "unsupported hook handler type: true",
+      "canonical": true
+    },
+    {
+      "name": "type_exponent",
+      "event": "Stop",
+      "handler": "{\"type\":1e-7,\"command\":\"echo ok\"}",
+      "error": "unsupported hook handler type: 1e-7",
+      "canonical": true
+    },
+    {
+      "name": "type_object",
+      "event": "Stop",
+      "handler": "{\"type\":{},\"command\":\"echo ok\"}",
+      "error": "unsupported hook handler type: [object Object]",
+      "canonical": true
+    },
+    {
+      "name": "type_1e400",
+      "event": "Stop",
+      "handler": "{\"type\":1e400,\"command\":\"echo ok\"}",
+      "error": "unsupported hook handler type: Infinity",
+      "canonical": false
+    },
+    {
+      "name": "type_negative_1e400",
+      "event": "Stop",
+      "handler": "{\"type\":-1e400,\"command\":\"echo ok\"}",
+      "error": "unsupported hook handler type: -Infinity",
+      "canonical": false
+    },
+    {
+      "name": "type_object_valueOf",
+      "event": "Stop",
+      "handler": "{\"type\":{\"valueOf\":5},\"command\":\"echo ok\"}",
+      "error": "unsupported hook handler type: [object Object]",
+      "canonical": true
+    },
+    {
+      "name": "type_array",
+      "event": "Stop",
+      "handler": "{\"type\":[1,null,\"a\"],\"command\":\"echo ok\"}",
+      "error": "unsupported hook handler type: 1,,a",
+      "canonical": true
+    },
+    {
+      "name": "type_empty_string",
+      "event": "Stop",
+      "handler": "{\"type\":\"\",\"command\":\"echo ok\"}",
+      "error": "unsupported hook handler type: ",
+      "canonical": true
+    },
+    {
+      "name": "type_toString_null",
+      "event": "Stop",
+      "handler": "{\"type\":{\"toString\":null},\"command\":\"echo ok\"}",
+      "error": "Cannot convert object to primitive value",
+      "canonical": true
+    },
+    {
+      "name": "type_toString_number",
+      "event": "Stop",
+      "handler": "{\"type\":{\"toString\":5},\"command\":\"echo ok\"}",
+      "error": "Cannot convert object to primitive value",
+      "canonical": true
+    },
+    {
+      "name": "type_array_toString_object",
+      "event": "Stop",
+      "handler": "{\"type\":[1,{\"toString\":null}],\"command\":\"echo ok\"}",
+      "error": "Cannot convert object to primitive value",
+      "canonical": true
+    },
+    {
+      "name": "timeout_absent",
+      "event": "Stop",
+      "handler": "{\"type\":\"command\",\"command\":\"echo ok\"}",
+      "hash": "sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4",
+      "canonical": true
+    },
+    {
+      "name": "timeout_null",
+      "event": "Stop",
+      "handler": "{\"type\":\"command\",\"command\":\"echo ok\",\"timeout\":null}",
+      "hash": "sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4",
+      "canonical": true
+    },
+    {
+      "name": "timeout_600",
+      "event": "Stop",
+      "handler": "{\"type\":\"command\",\"command\":\"echo ok\",\"timeout\":600}",
+      "hash": "sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4",
+      "canonical": true
+    },
+    {
+      "name": "timeout_0",
+      "event": "Stop",
+      "handler": "{\"type\":\"command\",\"command\":\"echo ok\",\"timeout\":0}",
+      "hash": "sha256:95002713883067b245450850844909fe4b33bc4de172bd32b9455cc755ef43a7",
+      "canonical": true
+    },
+    {
+      "name": "timeout_0_5",
+      "event": "Stop",
+      "handler": "{\"type\":\"command\",\"command\":\"echo ok\",\"timeout\":0.5}",
+      "hash": "sha256:95002713883067b245450850844909fe4b33bc4de172bd32b9455cc755ef43a7",
+      "canonical": true
+    },
+    {
+      "name": "timeout_1_5",
+      "event": "Stop",
+      "handler": "{\"type\":\"command\",\"command\":\"echo ok\",\"timeout\":1.5}",
+      "hash": "sha256:74f948671fd86eb4d03d152875f789d9a739837ef52ebf5b9b55c09fca0d301c",
+      "canonical": true
+    },
+    {
+      "name": "timeout_negative_3",
+      "event": "Stop",
+      "handler": "{\"type\":\"command\",\"command\":\"echo ok\",\"timeout\":-3}",
+      "hash": "sha256:95002713883067b245450850844909fe4b33bc4de172bd32b9455cc755ef43a7",
+      "canonical": true
+    },
+    {
+      "name": "timeout_1e16",
+      "event": "Stop",
+      "handler": "{\"type\":\"command\",\"command\":\"echo ok\",\"timeout\":10000000000000000}",
+      "hash": "sha256:7b3fc3ab61331ec7a1ee8d72e41595442659d1bce63397c499c6867e7202f863",
+      "canonical": true
+    },
+    {
+      "name": "timeout_1e20",
+      "event": "Stop",
+      "handler": "{\"type\":\"command\",\"command\":\"echo ok\",\"timeout\":100000000000000000000}",
+      "hash": "sha256:a6b1fe2c95774d13a7330b6bd2ba773db40b3a35c88c4ea5b397a3d4228fa849",
+      "canonical": true
+    },
+    {
+      "name": "timeout_1e21",
+      "event": "Stop",
+      "handler": "{\"type\":\"command\",\"command\":\"echo ok\",\"timeout\":1e+21}",
+      "hash": "sha256:bd45e9b777c63b2e3da5e0c48d5978456df88e560525bac7863c417c3fcae780",
+      "canonical": true
+    },
+    {
+      "name": "timeout_2p53_plus_1",
+      "event": "Stop",
+      "handler": "{\"type\":\"command\",\"command\":\"echo ok\",\"timeout\":9007199254740992}",
+      "hash": "sha256:614b409c0b013a47a0a7896f88ccb68f7d61c5125da0657839a7d559cc12c1d8",
+      "canonical": true
+    },
+    {
+      "name": "timeout_1e400",
+      "event": "Stop",
+      "handler": "{\"type\":\"command\",\"command\":\"echo ok\",\"timeout\":1e400}",
+      "error": "hook timeout must be a finite number",
+      "canonical": false
+    },
+    {
+      "name": "timeout_string",
+      "event": "Stop",
+      "handler": "{\"type\":\"command\",\"command\":\"echo ok\",\"timeout\":\"600\"}",
+      "error": "hook timeout must be a finite number",
+      "canonical": true
+    },
+    {
+      "name": "async_null",
+      "event": "Stop",
+      "handler": "{\"type\":\"command\",\"command\":\"echo ok\",\"async\":null}",
+      "hash": "sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4",
+      "canonical": true
+    },
+    {
+      "name": "async_false",
+      "event": "Stop",
+      "handler": "{\"type\":\"command\",\"command\":\"echo ok\",\"async\":false}",
+      "hash": "sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4",
+      "canonical": true
+    },
+    {
+      "name": "async_true",
+      "event": "Stop",
+      "handler": "{\"type\":\"command\",\"command\":\"echo ok\",\"async\":true}",
+      "hash": "sha256:54f25ef5849460576cede2612b93e9d67710f315b518d74a37c0fa702db8dc52",
+      "canonical": true
+    },
+    {
+      "name": "async_number",
+      "event": "Stop",
+      "handler": "{\"type\":\"command\",\"command\":\"echo ok\",\"async\":1}",
+      "error": "hook async must be a boolean",
+      "canonical": true
+    },
+    {
+      "name": "status_present",
+      "event": "Stop",
+      "handler": "{\"type\":\"command\",\"command\":\"echo ok\",\"statusMessage\":\"Checking\"}",
+      "hash": "sha256:aa3499813167b39ae29ce580136c674973f0c97e0fea04919d7ec97ce397451a",
+      "canonical": true
+    },
+    {
+      "name": "status_null",
+      "event": "Stop",
+      "handler": "{\"type\":\"command\",\"command\":\"echo ok\",\"statusMessage\":null}",
+      "hash": "sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4",
+      "canonical": true
+    },
+    {
+      "name": "status_empty",
+      "event": "Stop",
+      "handler": "{\"type\":\"command\",\"command\":\"echo ok\",\"statusMessage\":\"\"}",
+      "hash": "sha256:cc6379c0476e10a1b356fff9e96dc7a3729c815ef420a71c6d66ef1db01a0f8f",
+      "canonical": true
+    },
+    {
+      "name": "status_number",
+      "event": "Stop",
+      "handler": "{\"type\":\"command\",\"command\":\"echo ok\",\"statusMessage\":5}",
+      "error": "hook statusMessage must be a string",
+      "canonical": true
+    }
+  ]
+}

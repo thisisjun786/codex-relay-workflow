@@ -42,6 +42,10 @@ func CheckedDispatch(ctx context.Context, cwd string, input any, env host.Lookup
 	return dispatchRun(cwd, input, env, func(temp, final string) error {
 		session, _ := b["sessionId"].(string)
 		agent, _ := b["agentId"].(string)
+		attempt, _ := b["attemptId"].(string)
+		if err := createdArchivedReplay(final, session, attempt, agent); err != nil {
+			return err
+		}
 		identity, err := createdCheckRead(ctx, env, h, agent)
 		if err != nil {
 			return errors.New("host could not verify created agent" + createdCheckCorrection)
@@ -51,6 +55,39 @@ func CheckedDispatch(ctx context.Context, cwd string, input any, env host.Lookup
 		}
 		return crwdir.Rename(temp, final)
 	})
+}
+
+// createdArchivedReplay refuses an agent id that another attempt of the session already holds. The
+// host archives a child when it finishes, but it stays a real child of the session, so only the
+// ledger can tell that it was spawned for an earlier attempt. The attempt that reports its own id
+// again is not another attempt. A record that cannot be read as a regular dispatch file fails the
+// check, because it may be the one that holds the id.
+func createdArchivedReplay(final, session, attempt, agent string) error {
+	dir := filepath.Dir(final)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if filepath.Ext(name) != ".json" {
+			continue
+		}
+		if !entry.Type().IsRegular() {
+			return errors.New("dispatch record " + name + " is unusable: not a regular file")
+		}
+		path := filepath.Join(dir, name)
+		d, err := dispatchRead(path, session, name[:len(name)-len(".json")])
+		if err != nil {
+			return errors.New("dispatch record " + name + " is unusable: " + err.Error())
+		}
+		for _, a := range d.Attempts {
+			if a.AgentID != nil && *a.AgentID == agent && (path != final || a.ID != attempt) {
+				return errors.New("agentId was already reported for dispatch " + d.ID + " attempt " + a.ID + createdCheckCorrection)
+			}
+		}
+	}
+	return nil
 }
 
 type createdCheckIdentity struct {
@@ -202,11 +239,12 @@ func createdCheckNative(ctx context.Context, env host.LookupEnv, agent string) (
 		return createdCheckIdentity{}, err
 	}
 	var id, source string
-	var archived int
-	if err := conn.QueryRowContext(ctx, "SELECT id, source, archived FROM threads WHERE id = ?", agent).Scan(&id, &source, &archived); err != nil {
+	if err := conn.QueryRowContext(ctx, "SELECT id, source FROM threads WHERE id = ?", agent).Scan(&id, &source); err != nil {
 		return createdCheckIdentity{}, err
 	}
-	if id != agent || archived != 0 {
+	// The archive flag is a lifecycle fact, not part of the identity: the host archives a child
+	// when it finishes, and the spawn marker below still proves who created it.
+	if id != agent {
 		return createdCheckIdentity{}, errors.New("host thread identity is unavailable")
 	}
 	var marker struct {
