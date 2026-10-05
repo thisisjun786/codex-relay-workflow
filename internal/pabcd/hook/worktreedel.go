@@ -643,25 +643,40 @@ const (
 	worktreeDelQuoteWrappers = " sudo env nohup xargs command builtin exec time timeout nice setsid stdbuf ionice "
 )
 
-// worktreeDelQuoteProgram is the program string that the words hand to a shell to be read again, if they hold one, and whether
-// it is eval's, which this shell itself runs. The shell name or eval must start a command: only wrappers (sudo, env, nohup,
-// xargs and the like), options, assignments, numbers and the argument of an option may stand before it, so that
-// echo sh -c '...' is text. What follows a shell name is read as that shell reads its arguments (worktreeDelQuoteShellArgs),
-// what follows eval is its operands joined by blanks (worktreeDelQuoteEvalArgs). The inner shell reads the program as a command
-// of its own, so the walk judges it as one: this shell's single quotes keep a backslash-newline pair that the inner shell
-// removes (sh -c 'r<backslash><newline>m -rf ...' runs rm).
-func worktreeDelQuoteProgram(words []string) (program string, eval, ok bool) {
+// worktreeDelQuoteProgram is the program strings that the words hand to a shell to be read again. The shell name or eval must
+// start a command: only wrappers (sudo, env, nohup, xargs and the like), options, assignments, numbers and the argument of an
+// option may stand before it, so that echo sh -c '...' is text. After a shell name every later word that holds a blank or a
+// separator is a candidate, whichever options and redirections stand before it (-c, -co posix, +c, --rcfile f, -n +o noexec,
+// &>f, >'a b'): the shell's own reading of its options picks one of them, and reading one that was an argument can only deny too
+// much. After eval the program is its operands joined by blanks, as given and after the options up to --. The inner shell reads
+// a program as a command of its own, so the walk judges it as one: this shell's single quotes keep a backslash-newline pair that
+// the inner shell removes (sh -c 'r<backslash><newline>m -rf ...' runs rm).
+func worktreeDelQuoteProgram(words []string) []string {
 	for i, word := range words {
 		name := basename(word)
+		var programs []string
 		if name == "eval" {
-			if args := worktreeDelQuoteEvalArgs(words[i+1:]); len(args) > 0 {
-				return strings.Join(args, " "), true, true
+			for _, program := range []string{strings.Join(worktreeDelQuoteEvalArgs(words[i+1:]), " "), strings.Join(words[i+1:], " ")} {
+				if strings.TrimSpace(program) != "" {
+					programs = append(programs, program)
+				}
 			}
 		}
 		if strings.Contains(worktreeDelQuoteShells, " "+name+" ") {
-			if program, ok := worktreeDelQuoteShellArgs(name == "su", worktreeDelQuoteDropRedirects(words[i+1:])); ok {
-				return program, false, true
+			for _, operand := range words[i+1:] {
+				candidates := []string{operand}
+				if _, value, attached := strings.Cut(operand, "="); attached && strings.HasPrefix(operand, "--") { // --command='...'
+					candidates = append(candidates, value)
+				}
+				for _, candidate := range candidates {
+					if strings.ContainsAny(candidate, " \t\r\n;&|()") {
+						programs = append(programs, candidate)
+					}
+				}
 			}
+		}
+		if len(programs) > 0 {
+			return programs
 		}
 		number := word != "" && word[0] >= '0' && word[0] <= '9' // 5, 0.5, 5s
 		if !(strings.Contains(worktreeDelQuoteWrappers, " "+name+" ") || strings.HasPrefix(word, "-") || isAssignment(word) || number ||
@@ -669,92 +684,14 @@ func worktreeDelQuoteProgram(words []string) (program string, eval, ok bool) {
 			break
 		}
 	}
-	return "", false, false
+	return nil
 }
 
-// worktreeDelQuoteShellArgs reads the words after a shell's name as that shell reads its arguments and returns the program
-// that -c hands it. A word that starts with - or + is a cluster of options: c (bash takes +c as well) makes the first operand
-// a program, where it would be a script; each o and O takes the next word as its argument, as do --rcfile and --init-file;
-// n only checks the syntax and runs nothing, until +n undoes it; -- or a lone - ends the options. su takes its options
-// anywhere, also after the user (su user -c '...'), and its -c, --command and --session-command take the next word.
-func worktreeDelQuoteShellArgs(su bool, words []string) (program string, ok bool) {
-	if su {
-		for i, word := range words {
-			value, attached, long := worktreeDelQuoteLongCommand(word)
-			switch {
-			case long && attached:
-				return value, true
-			case long || strings.HasPrefix(word, "-") && !strings.HasPrefix(word, "--") && strings.Contains(word, "c"):
-				if i+1 < len(words) {
-					return words[i+1], true
-				}
-				return "", false
-			}
-		}
-		return "", false
-	}
-	command, noexec, ended, skip := false, false, false, 0
-	for _, word := range words {
-		if skip > 0 {
-			skip--
-			continue
-		}
-		if !ended {
-			value, attached, long := worktreeDelQuoteLongCommand(word)
-			switch {
-			case long && attached:
-				return value, !noexec
-			case long:
-				command = true
-				continue
-			case word == "--" || word == "-":
-				ended = true
-				continue
-			case word == "--rcfile" || word == "--init-file":
-				skip = 1
-				continue
-			case strings.HasPrefix(word, "--"):
-				continue
-			case len(word) > 1 && (word[0] == '-' || word[0] == '+'):
-				for _, c := range word[1:] {
-					switch c {
-					case 'c':
-						command = true
-					case 'n':
-						noexec = word[0] == '-'
-					case 'o', 'O':
-						skip++
-					}
-				}
-				continue
-			}
-		}
-		return word, command && !noexec // the first operand: the program after -c, else a script
-	}
-	return "", false
-}
-
-// worktreeDelQuoteLongCommand reads a long option that hands its argument to a shell as a program: --command (su, fish) and
-// su's --session-command. getopt_long takes an unambiguous abbreviation (--com, --se) and the argument after an equals sign.
-func worktreeDelQuoteLongCommand(opt string) (value string, attached, long bool) {
-	if !strings.HasPrefix(opt, "--") {
-		return "", false, false
-	}
-	name, value, attached := strings.Cut(opt[2:], "=")
-	return value, attached, name != "" && strings.HasPrefix("command", name) || len(name) > 1 && strings.HasPrefix("session-command", name)
-}
-
-// worktreeDelQuoteEvalArgs is the operands eval joins into its program: what is left after the redirections and the options
-// that end at -- (eval takes -- and, in bash, no other option, so +echo is a command word).
+// worktreeDelQuoteEvalArgs is the operands eval joins into its program: what is left after the redirections and the leading
+// words that start with a dash (eval takes -- and, in bash, no other option).
 func worktreeDelQuoteEvalArgs(words []string) []string {
 	words = worktreeDelQuoteDropRedirects(words)
-	for len(words) > 0 {
-		if words[0] == "--" {
-			return words[1:]
-		}
-		if len(words[0]) < 2 || words[0][0] != '-' {
-			break
-		}
+	for len(words) > 0 && len(words[0]) > 1 && words[0][0] == '-' {
 		words = words[1:]
 	}
 	return words
@@ -762,13 +699,13 @@ func worktreeDelQuoteEvalArgs(words []string) []string {
 
 // worktreeDelQuoteDropRedirects is words without the redirections, which the outer shell takes out of the arguments: an
 // operator with its target in one word, an operator alone with the next word, and a descriptor in front of an operator. A word
-// that starts like a redirection but holds blanks or a separator was quoted, so it is an argument.
+// that was quoted and starts like a redirection is dropped too; the program joined from all the words still holds it.
 func worktreeDelQuoteDropRedirects(words []string) []string {
 	out := make([]string, 0, len(words))
 	for i := 0; i < len(words); i++ {
 		word := words[i]
 		switch {
-		case (strings.HasPrefix(word, "<") || strings.HasPrefix(word, ">")) && !strings.ContainsAny(word, " \t\r\n;|()"):
+		case strings.HasPrefix(word, "<") || strings.HasPrefix(word, ">"):
 			if strings.Trim(word, "<>&|") == "" && i+1 < len(words) {
 				i++
 			}
@@ -778,30 +715,6 @@ func worktreeDelQuoteDropRedirects(words []string) []string {
 		}
 	}
 	return out
-}
-
-// worktreeDelQuoteEvalCwd is the directory this shell is in after eval has run program: a cd in it moves this shell, also in
-// an eval of its own, except inside parentheses, which are a subshell. It does not tell a cd in a pipeline or in the
-// background, which runs in a subshell, so the walk judges the rest also as if the directory had not moved.
-func worktreeDelQuoteEvalCwd(program, cwd string) string {
-	var scopes []string
-	for _, segment := range worktreeDelQuoteSegments(worktreeDelJoinContinuations(program)) {
-		if segment == "(" || segment == ")" {
-			if segment == "(" {
-				scopes = append(scopes, cwd)
-			} else if n := len(scopes); n > 0 {
-				cwd, scopes = scopes[n-1], scopes[:n-1]
-			}
-			continue
-		}
-		tokens := worktreeDelQuoteTokenize(segment)
-		if len(tokens) > 1 && tokens[0] == "cd" && tokens[1] != "" {
-			cwd = resolveFrom(cwd, tokens[1])
-		} else if inner, eval, ok := worktreeDelQuoteProgram(tokens); ok && eval {
-			cwd = worktreeDelQuoteEvalCwd(inner, cwd)
-		}
-	}
-	return cwd
 }
 
 // walk judges a command: the oracle's walk reads it as it is, the extended walk reads each of its readings, where the
@@ -825,14 +738,8 @@ func worktreeDelQuoteJudge(command, cwd string, id WorktreeIdentity, depth int) 
 	readings := worktreeDelReadings(command)
 	for _, quoting := range []bool{false, true} {
 		for _, reading := range readings {
-			verdict, moved := worktreeDelQuoteScan(reading, cwd, id, true, quoting, true, depth)
-			if verdict.Deny {
+			if verdict := worktreeDelQuoteWalk(reading, cwd, id, true, quoting, depth); verdict.Deny {
 				return verdict
-			}
-			if moved { // a cd of an eval may have run in a subshell: judge the rest also with this shell where it was
-				if verdict, _ = worktreeDelQuoteScan(reading, cwd, id, true, quoting, false, depth); verdict.Deny {
-					return verdict
-				}
 			}
 		}
 	}
@@ -844,20 +751,13 @@ func worktreeDelWalk(command, cwd string, id WorktreeIdentity, extended bool) Gu
 	return worktreeDelQuoteWalk(command, cwd, id, extended, false, 0)
 }
 
-// worktreeDelQuoteWalk is worktreeDelQuoteScan with the directory moved by an eval, and its verdict alone.
-func worktreeDelQuoteWalk(command, cwd string, id WorktreeIdentity, extended, quoting bool, depth int) GuardVerdict {
-	verdict, _ := worktreeDelQuoteScan(command, cwd, id, extended, quoting, true, depth)
-	return verdict
-}
-
-// worktreeDelQuoteScan is the loop over one text: the segments in order, a cd moving the directory later segments run in, and
+// worktreeDelQuoteWalk is the loop over one text: the segments in order, a cd moving the directory later segments run in, and
 // the conservative fallback when a destructive verb was seen and the command mentions the worktree but no target resolved.
 // quoting reads the text over bash's own quotes, backslashes and comments instead, and judges the program string that a shell
-// word hands to -c (depth says how many programs deep this text is). An eval moves the directory of the later segments when
-// evalMoves, and the second result says whether one did.
-func worktreeDelQuoteScan(command, cwd string, id WorktreeIdentity, extended, quoting, evalMoves bool, depth int) (GuardVerdict, bool) {
+// word hands to -c (depth says how many programs deep this text is).
+func worktreeDelQuoteWalk(command, cwd string, id WorktreeIdentity, extended, quoting bool, depth int) GuardVerdict {
 	hint := destructiveHint(extended)
-	segCwd, destructiveSeen, evalMoved := cwd, false, false
+	segCwd, destructiveSeen := cwd, false
 	var scopes []string // the directories a subshell restores, extended walk only
 	segments := splitSegments(command, extended)
 	if quoting {
@@ -877,16 +777,10 @@ func worktreeDelQuoteScan(command, cwd string, id WorktreeIdentity, extended, qu
 			segCwd = resolveFrom(segCwd, tokens[1])
 			continue
 		}
-		if program, eval, ok := worktreeDelQuoteProgram(tokens); ok && quoting && depth < worktreeDelQuoteDepth {
-			if verdict := worktreeDelQuoteJudge(program, segCwd, id, depth+1); verdict.Deny {
-				return verdict, evalMoved
-			}
-			if eval {
-				if moved := worktreeDelQuoteEvalCwd(program, segCwd); moved != segCwd {
-					evalMoved = true
-					if evalMoves {
-						segCwd = moved
-					}
+		if quoting && depth < worktreeDelQuoteDepth {
+			for _, program := range worktreeDelQuoteProgram(tokens) {
+				if verdict := worktreeDelQuoteJudge(program, segCwd, id, depth+1); verdict.Deny {
+					return verdict
 				}
 			}
 		}
@@ -894,14 +788,14 @@ func worktreeDelQuoteScan(command, cwd string, id WorktreeIdentity, extended, qu
 			destructiveSeen = true
 		}
 		if verdict, ok := evaluateSegment(segment, segCwd, id, extended, quoting); ok {
-			return verdict, evalMoved
+			return verdict
 		}
 	}
 	mentions := func(s string) bool { return s != "" && strings.Contains(command, s) }
 	if destructiveSeen && (mentions(id.SlotRoot) || mentions(id.WorktreesDir) || mentions(id.Slot)) {
-		return GuardVerdict{Deny: true, Reason: denyReason("unresolvable target mentioning the managed worktree", id)}, evalMoved
+		return GuardVerdict{Deny: true, Reason: denyReason("unresolvable target mentioning the managed worktree", id)}
 	}
-	return GuardVerdict{}, evalMoved
+	return GuardVerdict{}
 }
 
 // evaluateCommand allows anything outside a managed worktree. Inside one it walks the command as the oracle does and,

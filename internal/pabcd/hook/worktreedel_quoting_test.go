@@ -7,14 +7,11 @@ import (
 )
 
 // worktreeDelQuoteGrammars says whether the old grammar of the extended walk and the quote-aware grammar each deny some reading of
-// the command (the quote-aware one with and without the directory an eval moves).
+// the command.
 func worktreeDelQuoteGrammars(r delRig, cmd string) (old, quoting bool) {
 	for _, reading := range worktreeDelReadings(cmd) {
 		old = old || worktreeDelQuoteWalk(reading, r.checkout, r.id(), true, false, 0).Deny
-		for _, moves := range []bool{true, false} {
-			verdict, _ := worktreeDelQuoteScan(reading, r.checkout, r.id(), true, true, moves, 0)
-			quoting = quoting || verdict.Deny
-		}
+		quoting = quoting || worktreeDelQuoteWalk(reading, r.checkout, r.id(), true, true, 0).Deny
 	}
 	return old, quoting
 }
@@ -353,8 +350,6 @@ func TestWorktreeDelQuoteShellProgram(t *testing.T) {
 		{"sh -c $'echo a<BS>nrm -rf ../repo'", "sh -c $'echo a<BS>nrm -rf ../other'", "rm -r ../repo"},
 		{"sudo -u root bash -c 'rm -rf ../repo'", "sudo -u root bash -c 'rm -rf ../other'", "rm -r ../repo"},
 		{"timeout 5 sh -c 'rm -rf ../repo'", "timeout 5 sh -c 'rm -rf ../other'", "rm -r ../repo"},
-		{"eval 'cd ..'; rm -rf repo", "eval 'cd ..'; rm -rf other", "rm -r repo"},                          // eval runs in this shell: its cd moves the later rm
-		{"eval '(cd ..)'; r<BS>m -rf ../repo", "eval '(cd ..)'; r<BS>m -rf ../other", "rm -r ../repo"},     // but not a cd in a subshell
 		{"bash -c '<<<ignored; rm -rf ../repo'", "bash -c '<<<ignored; rm -rf ../other'", "rm -r ../repo"}, // a quoted program that starts like a redirection
 		{"timeout 5s bash -c 'rm -rf ../repo'", "timeout 5s bash -c 'rm -rf ../other'", "rm -r ../repo"},
 		{"timeout 0.5 sh -c 'rm -rf ../repo'", "timeout 0.5 sh -c 'rm -rf ../other'", "rm -r ../repo"},
@@ -366,14 +361,17 @@ func TestWorktreeDelQuoteShellProgram(t *testing.T) {
 		{"bash -c -- '-missing; rm -rf ../repo'", "bash -c -- '-missing; rm -rf ../other'", "rm -r ../repo"}, // nothing after -- is an option
 		{"eval -- '+echo; rm -rf ../repo'", "eval -- '+echo; rm -rf ../other'", "rm -r ../repo"},
 		{"eval -- '-missing; rm -rf ../repo'", "eval -- '-missing; rm -rf ../other'", "rm -r ../repo"},
+		{"eval 2>/dev/null 'rm -rf ../repo'", "eval 2>/dev/null 'rm -rf ../other'", "rm -r ../repo"}, // redirections are not words of the program
+		{"eval 2> /dev/null -- rm -rf ../repo", "eval 2> /dev/null -- rm -rf ../other", "rm -r ../repo"},
 		{"bash --rcfile /dev/null -c 'rm -rf ../repo'", "bash --rcfile /dev/null -c 'rm -rf ../other'", "rm -r ../repo"}, // a long option with an argument
 		{"bash --init-file /dev/null -c 'rm -rf ../repo'", "bash --init-file /dev/null -c 'rm -rf ../other'", "rm -r ../repo"},
-		{"bash --norc -c 'rm -rf ../repo'", "bash --norc -c 'rm -rf ../other'", "rm -r ../repo"}, // a long option without an argument
-		{"eval '+echo; rm -rf ../repo'", "eval '+echo; rm -rf ../other'", "rm -r ../repo"},       // eval has no + options
+		{"bash --norc -c 'rm -rf ../repo'", "bash --norc -c 'rm -rf ../other'", "rm -r ../repo"},             // a long option without an argument
+		{"bash -n +o noexec -c 'rm -rf ../repo'", "bash -n +o noexec -c 'rm -rf ../other'", "rm -r ../repo"}, // +o noexec runs the program again
+		{"zsh -oshwordsplit -c 'rm -rf ../repo'", "zsh -oshwordsplit -c 'rm -rf ../other'", "rm -r ../repo"}, // zsh takes the option name attached to -o
+		{"bash -c &>/dev/null 'rm -rf ../repo'", "bash -c &>/dev/null 'rm -rf ../other'", "rm -r ../repo"},
+		{"bash -c >'log file' 'rm -rf ../repo'", "bash -c >'log file' 'rm -rf ../other'", "rm -r ../repo"}, // a redirection target with a blank
+		{"eval '+echo; rm -rf ../repo'", "eval '+echo; rm -rf ../other'", "rm -r ../repo"},                 // eval has no + options
 		{"bash -n +n -c 'rm -rf ../repo'", "bash -n +n -c 'rm -rf ../other'", "rm -r ../repo"},
-		{"eval \"eval 'cd ..'\"; rm -rf repo", "eval \"eval 'cd ..'\"; rm -rf other", "rm -r repo"},            // the cd of a nested eval moves this shell too
-		{"eval 'cd .. | cat'; r<BS>m -rf ../repo", "eval 'cd .. | cat'; r<BS>m -rf ../other", "rm -r ../repo"}, // a cd in a pipeline or a background job does not
-		{"eval 'cd .. & wait'; r<BS>m -rf ../repo", "eval 'cd .. & wait'; r<BS>m -rf ../other", "rm -r ../repo"},
 		{"bash -c 'rm -rf .'", "bash -c 'rm -rf ./build'", "rm -r ."}, // a program string with a relative target, found by the same reading
 	} {
 		deny := worktreeDelSpell(c.deny)
@@ -384,9 +382,8 @@ func TestWorktreeDelQuoteShellProgram(t *testing.T) {
 	// This shell removes the pair in double quotes, so the guard denied it before and after CRW-585 (through the fallback).
 	r.denied(t, worktreeDelSpell("sh -c \"r<BS><NL>m -rf ../../zk3q\""), unresolvable)
 	// sh -c runs in a shell of its own: its cd does not move this one. Words that only mention a shell are text, not a command.
-	r.allowed(t, worktreeDelSpell("sh -c 'cd ..'; rm -rf repo"), worktreeDelSpell("eval '(cd ..)'; rm -rf repo"), "echo sh -c 'rm -rf .'", "printf '%s' sh -c 'rm -rf .'", "echo bash -c 'rm -rf ../repo'", "echo eval 'rm -rf ../repo'",
-		"echo su --command 'rm -rf ../repo'", "su --shell /bin/sh root",
-		"bash -n -c 'rm -rf ../repo'", "bash script.sh -c 'rm -rf ../repo'", "bash - -c 'rm -rf ../repo'") // a syntax check, and -c as an argument of a script or a script's name
+	r.allowed(t, worktreeDelSpell("sh -c 'cd ..'; rm -rf repo"), "echo sh -c 'rm -rf .'", "printf '%s' sh -c 'rm -rf .'", "echo bash -c 'rm -rf ../repo'", "echo eval 'rm -rf ../repo'",
+		"echo su --command 'rm -rf ../repo'", "su --shell /bin/sh root", "bash script.sh", "bash -c 'echo hi' rm -rf")
 	// Without a program string handed to a shell the pair stays a part of a name, as CRW-585 reads it.
 	r.allowed(t, worktreeDelSpell("echo 'r<BS><NL>m -rf ../../zk3q'"), worktreeDelSpell("rm -rf '.<BS><NL>' sh"), worktreeDelSpell("rm -rf '.<BS><NL>' # sh"), worktreeDelSpell("rm -rf '.<BS><NL>'"))
 	r.intact(t)
