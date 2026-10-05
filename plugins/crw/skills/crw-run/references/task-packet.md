@@ -329,7 +329,9 @@ Execution:
   `retry_deferred`; a second unavailable run closes the patch), while a content filter, an invalid answer or the time
   limit counts as a result at once. `--post-summary` creates or updates the one general summary comment of the pull request,
   never a review thread, so the relay's `threadsSeen` and late-finding rules are not touched; a failed post is repaired by
-  running the same command again. The result is a reference opinion and not a merge gate
+  running the same command again while the patch is closed or its retry is deferred, and on or after the retry day (where
+  the same command is the retry) by `crw review ... --post-only --pr <number>`, which runs no review, counts toward neither
+  the retry nor the daily cap, and answers `recorded`. The result is a reference opinion and not a merge gate
   ([Devin and Codex reviews are references, not merge gates](merge-readiness.md#devin-and-codex-reviews-are-references-not-merge-gates)
   keeps the gates): fix a P0, P1 or security finding or answer it from the code, without blocking the merge, and
   record the rest. A `partial`, `invalid` or `unavailable` run is not "no findings": say what the command reported

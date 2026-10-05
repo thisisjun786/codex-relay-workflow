@@ -44,7 +44,7 @@ func (g *gitHead) lines(path string) ([]string, error) {
 	if path == "" || strings.ContainsRune(path, 0) {
 		return nil, notExist
 	}
-	entry, err := g.git("ls-tree", "-z", g.head, "--", path)
+	entry, err := g.git("ls-tree", "-z", "--full-tree", g.head, "--", path) // --full-tree: path is relative to the repository root, whichever directory of it --repo names
 	if err != nil {
 		return nil, err
 	}

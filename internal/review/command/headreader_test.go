@@ -42,3 +42,18 @@ func TestHeadReaderReadsCommittedObjectsOnly(t *testing.T) {
 		t.Errorf("a configured program ran: %v", err)
 	}
 }
+
+// The paths of a finding are relative to the repository root whichever directory --repo names, so a root file is found from a subdirectory and a file of the same name below it is never read in its place.
+func TestHeadReaderFromASubdirectoryReadsPathsFromTheRoot(t *testing.T) {
+	r := newRepo(t)
+	head := r.commit(map[string]string{"a.go": "1\n2\n3\n", "b.go": "1\n2\n", "sub/a.go": "x\n"})
+	g := &gitHead{ctx: context.Background(), repo: filepath.Join(r.dir, "sub"), head: head}
+	for path, want := range map[string]int{"a.go": 3, "b.go": 2, "sub/a.go": 1} {
+		if n, err := g.Lines(path); err != nil || n != want {
+			t.Errorf("Lines(%q) = %d, %v, want %d", path, n, err, want)
+		}
+	}
+	if _, err := g.Lines("sub/b.go"); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("Lines(sub/b.go): %v, want fs.ErrNotExist", err)
+	}
+}

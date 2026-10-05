@@ -102,6 +102,16 @@ func standingOf(recs []record, patchID string) (s standing) {
 	return s
 }
 
+// newestResult is the last record of the patch that carries a result, a finished or an unavailable one: what the summary comment of the patch should show. It is nil before any result.
+func newestResult(recs []record, patchID string) (newest *record) {
+	for i, r := range recs {
+		if r.PatchID == patchID && (r.Event == "finished" || r.Event == "unavailable") {
+			newest = &recs[i]
+		}
+	}
+	return newest
+}
+
 // closer is the record that answers a repeated request for the patch: its finished record or, when the one more attempt began and left no result, the unavailable record before it.
 func (s standing) closer() (record, bool) {
 	switch {
