@@ -149,15 +149,16 @@ func reviewWithRounds(p *goalplan.Goalplan, list []goalplan.ReviewRoundState, pu
 	return &out
 }
 
-// reviewReplaceRound replaces the entry that is the updated round: same id, purpose and launch id. An id alone can repeat
-// across purposes or launches in a damaged plan, and replacing by id overwrote the other rounds.
-func reviewReplaceRound(list []goalplan.ReviewRoundState, updated goalplan.ReviewRoundState) []goalplan.ReviewRoundState {
+// reviewReplaceRound replaces the one entry that was selected (a pointer into list), so it matches the id, purpose and launch
+// id of the updated round by construction. A damaged plan can repeat any of them, even all three, and replacing by a key
+// overwrote the other entries that share it.
+func reviewReplaceRound(list []goalplan.ReviewRoundState, selected *goalplan.ReviewRoundState, updated goalplan.ReviewRoundState) []goalplan.ReviewRoundState {
 	out := make([]goalplan.ReviewRoundState, len(list))
-	for i, r := range list {
-		if r.RoundID == updated.RoundID && r.Purpose == updated.Purpose && r.Lane.LaunchID == updated.Lane.LaunchID {
+	for i := range list {
+		if &list[i] == selected {
 			out[i] = updated
 		} else {
-			out[i] = r
+			out[i] = list[i]
 		}
 	}
 	return out
@@ -226,7 +227,7 @@ func OpenRound(p *goalplan.Goalplan, in OpenRoundInput) ReviewRoundResult {
 	if live := EffectiveRound(p, in.Purpose); live != nil && live.Status == goalplan.ReviewPending && live.PlanPath == in.PlanPath {
 		r := *live
 		r.PlanSha256 = in.PlanSha256
-		return ReviewRoundResult{Kind: OK, Plan: reviewWithRounds(p, reviewReplaceRound(p.ReviewRounds, r), in.Purpose, &r.RoundID), Round: &r}
+		return ReviewRoundResult{Kind: OK, Plan: reviewWithRounds(p, reviewReplaceRound(p.ReviewRounds, live, r), in.Purpose, &r.RoundID), Round: &r}
 	}
 	id, refused := reviewNextRoundID(p)
 	if refused.Kind != "" {
@@ -273,7 +274,7 @@ func reviewAdvance(p *goalplan.Goalplan, purpose goalplan.ReviewPurpose, id, lau
 	if clear {
 		cursor = nil
 	}
-	return ReviewRoundResult{Kind: OK, Plan: reviewWithRounds(p, reviewReplaceRound(p.ReviewRounds, updated), purpose, cursor), Round: &updated}
+	return ReviewRoundResult{Kind: OK, Plan: reviewWithRounds(p, reviewReplaceRound(p.ReviewRounds, r, updated), purpose, cursor), Round: &updated}
 }
 
 // MarkLaunching requires pending. Nil workspace preserves the CLI's omitted argument.
@@ -355,7 +356,7 @@ func AbortRound(p *goalplan.Goalplan, purpose goalplan.ReviewPurpose, reason str
 		s := "aborted: " + reason
 		r.Lane.ReviewerSession = &s
 	}
-	return ReviewRoundResult{Kind: OK, Plan: reviewWithRounds(p, reviewReplaceRound(p.ReviewRounds, r), purpose, nil), Round: &r}
+	return ReviewRoundResult{Kind: OK, Plan: reviewWithRounds(p, reviewReplaceRound(p.ReviewRounds, live, r), purpose, nil), Round: &r}
 }
 
 // StalenessOf compares hashes only once the round is terminal, regardless of purpose.

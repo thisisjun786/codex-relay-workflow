@@ -78,6 +78,14 @@ func TestReviewRoundIDReplacesOnlyTheExactRound(t *testing.T) {
 			func(p *goalplan.Goalplan) ReviewRoundResult { return MarkLaunching(p, pa, "r1", "r1-y", ws) }},
 		{"launching, other id same purpose and launch", []goalplan.ReviewRoundState{e("r2", pa, goalplan.ReviewPending, "r1-x", "hash-a"), e("r1", pa, goalplan.ReviewPending, "r1-x", "hash-a")}, 0,
 			func(p *goalplan.Goalplan) ReviewRoundResult { return MarkLaunching(p, pa, "r2", "r1-x", ws) }},
+		{"launching, two pending rounds with one identity", []goalplan.ReviewRoundState{e("r1", pa, goalplan.ReviewPending, "r1-x", "hash-a"), e("r1", pa, goalplan.ReviewPending, "r1-x", "hash-b")}, 0,
+			func(p *goalplan.Goalplan) ReviewRoundResult { return MarkLaunching(p, pa, "r1", "r1-x", ws) }},
+		{"hash refresh, pending round with the identity of an approved one", []goalplan.ReviewRoundState{e("r1", pa, goalplan.ReviewApproved, "r1-x", "hash-a"), e("r1", pa, goalplan.ReviewPending, "r1-x", "hash-b")}, 1,
+			func(p *goalplan.Goalplan) ReviewRoundResult {
+				return OpenRound(p, OpenRoundInput{Purpose: pa, PlanPath: reviewTestPath, PlanSha256: "hash-c", Now: reviewTestNow})
+			}},
+		{"abort, in-flight round with the identity of an approved one", []goalplan.ReviewRoundState{e("r1", pa, goalplan.ReviewApproved, "r1-x", "hash-a"), e("r1", pa, goalplan.ReviewInFlight, "r1-x", "hash-b")}, 1,
+			func(p *goalplan.Goalplan) ReviewRoundResult { return AbortRound(p, pa, "stop") }},
 		{"verdict", []goalplan.ReviewRoundState{e("r1", fg, goalplan.ReviewApproved, "r1-x", "hash-a"), e("r1", pa, goalplan.ReviewInFlight, "r1-x", "hash-b")}, 1,
 			func(p *goalplan.Goalplan) ReviewRoundResult {
 				return RecordVerdict(p, VerdictInput{Purpose: pa, RoundID: "r1", LaunchID: "r1-x", Verdict: goalplan.VerdictFail, Now: reviewTestNow})
@@ -113,9 +121,14 @@ func TestReviewRoundIDApprovedRoundSurvivesWrite(t *testing.T) {
 		}
 		return revived.ReviewRounds
 	}
-	approved := reviewRoundIDEntry("r1", goalplan.PurposeFinalGate, goalplan.ReviewApproved, "r1-x", "hash-a")
-	approved.Lane.Verdict = goalplan.VerdictPass
-	p := reviewRoundIDPlan(approved, reviewRoundIDEntry("r1", goalplan.PurposePlanAudit, goalplan.ReviewPending, "r1-x", "hash-b"))
-	got := reviewTestOK(t, MarkLaunching(p, goalplan.PurposePlanAudit, "r1", "r1-x", reviewTestPtr("workspace")))
-	reviewTestEqual(t, revive(got.Plan)[0], revive(p)[0])
+	// The approved round has the pending round's id and launch id, and in the second case its purpose too.
+	for _, purpose := range []goalplan.ReviewPurpose{goalplan.PurposeFinalGate, goalplan.PurposePlanAudit} {
+		t.Run(string(purpose), func(t *testing.T) {
+			approved := reviewRoundIDEntry("r1", purpose, goalplan.ReviewApproved, "r1-x", "hash-a")
+			approved.Lane.Verdict = goalplan.VerdictPass
+			p := reviewRoundIDPlan(approved, reviewRoundIDEntry("r1", goalplan.PurposePlanAudit, goalplan.ReviewPending, "r1-x", "hash-b"))
+			got := reviewTestOpen(t, p, "hash-c")
+			reviewTestEqual(t, revive(got.Plan)[0], revive(p)[0])
+		})
+	}
 }
