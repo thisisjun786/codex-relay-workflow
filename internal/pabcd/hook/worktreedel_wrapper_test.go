@@ -50,7 +50,10 @@ func TestWorktreeDelWrapperProgramsDenied(t *testing.T) {
 		"su -c 'eval \"$1\"' root 'rm -rf ../repo'",
 		"bash -c 'source /dev/stdin' <<< 'rm -rf ../repo'", // so is a word that a redirection feeds to it
 		"su -c 'source /dev/stdin' root <<< 'rm -rf ../repo'",
-		"bash -c 2>/dev/null 'rm -rf ../repo'", // redirections stand before the program: the tokenizer leaves a descriptor as a word of its own
+		"bash -c 'declare -p BASH_ARGV | cut -d\" -f2 | bash' x 'rm -rf ../repo'", // a program that reads its operands by name, without a dollar sign
+		"su -c 'echo ok' -w '>' -c 'rm -rf ../repo' root",                         // a quoted > reaches the walk like a redirection: su takes it as the argument of -w
+		"su -c 'echo ok' --whitelist-environment -w -c 'rm -rf ../repo' root",     // an option whose argument looks like one: the last -c runs rm
+		"bash -c 2>/dev/null 'rm -rf ../repo'",                                    // redirections stand before the program: the tokenizer leaves a descriptor as a word of its own
 		"bash -c 2> /dev/null 'rm -rf ../repo'",
 		"bash -c &>/dev/null 'rm -rf ../repo'",
 		"bash -c {fd}>/dev/null 'rm -rf ../repo'",
@@ -66,6 +69,16 @@ func TestWorktreeDelWrapperProgramsDenied(t *testing.T) {
 	r.intact(t)
 }
 
+// Only a getopt that gives the rest of a cluster to -c reads an attached program: su (and fish). bash, dash and zsh read -crm as flags,
+// fail on the blank and run nothing, and su gives the rest of a cluster to its first option that takes an argument, so -sc is a shell
+// named c. The reader does not take these for programs.
+func TestWorktreeDelWrapperAttachedNeedsGetopt(t *testing.T) {
+	r := newDelRig(t)
+	r.allowed(t, "bash -c'rm -rf ../repo'", "sh -c'rm -rf ../repo'", "zsh -c'rm -rf ../repo'", "su -sc'rm -rf ../repo' root", "su -gc'rm -rf ../repo' root")
+	r.denied(t, "su -lc'rm -rf ../repo' root", "rm -r ../repo")
+	r.intact(t)
+}
+
 // Only the first operand after -c is the program: the words after it are $0, $1 and so on, which the shell does not read.
 func TestWorktreeDelWrapperDataOperandsAllowed(t *testing.T) {
 	r := newDelRig(t)
@@ -73,21 +86,19 @@ func TestWorktreeDelWrapperDataOperandsAllowed(t *testing.T) {
 		"bash -c 'echo OK' 'rm -rf ../repo'",
 		"sh -c 'echo OK' x 'rm -rf ../repo'",
 		"zsh -c 'echo OK' 'rm -rf ../repo'",
-		"bash -c 'echo OK' -c 'rm -rf ../repo'", // a later -c is $0
-		"bash -c 'echo OK' > 'log file' 'rm -rf ../repo'",
 		"su -c 'echo ok'",
 		"su -c 'echo ok' root 'rm -rf ../repo'",
 		"su root -c 'echo ok' 'rm -rf ../repo'",
 		"su -lc'echo ok' root 'rm -rf ../repo'",
 		"su -s /bin/sh -c 'echo ok' root 'rm -rf ../repo'",
-		"su -c 'echo ok' -- root 'rm -rf ../repo'", // nothing after -- is an option, and the words after the program are data
 	)
 	r.intact(t)
 }
 
-// Where the options do not name the -c program for sure, every operand that holds a blank is still read, as CRW-611 left it: a
-// shell outside the modeled family, a program the walk cannot place (a lone -, +c, an option argument it over-reads, a script
-// instead of -c) and a redirection that feeds the program. Over-reading only denies too much.
+// Where the options do not name the -c program for sure, or a word after it could matter, every operand that holds a blank is
+// still read, as CRW-611 left it: a shell outside the modeled family, a program the walk cannot place (a lone -, +c, an option
+// argument it over-reads, a script instead of -c), a redirection word, an option-like word after the program (a later -c is
+// $0 for bash, but su would run it, and the walk does not tell them apart). Over-reading only denies too much.
 func TestWorktreeDelWrapperUncertainStaysRead(t *testing.T) {
 	r := newDelRig(t)
 	for _, cmd := range []string{
@@ -100,6 +111,9 @@ func TestWorktreeDelWrapperUncertainStaysRead(t *testing.T) {
 		"zsh -c -oshwordsplit 'echo OK' 'rm -rf ../repo'",
 		"bash -c 'echo OK' <<< 'rm -rf ../repo'",
 		"su --shell /bin/sh 'rm -rf ../repo'",
+		"bash -c 'echo OK' -c 'rm -rf ../repo'",
+		"bash -c 'echo OK' > 'log file' 'rm -rf ../repo'",
+		"su -c 'echo ok' -- root 'rm -rf ../repo'",
 	} {
 		r.denied(t, cmd, "rm -r ../repo")
 	}
