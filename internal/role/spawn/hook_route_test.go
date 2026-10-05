@@ -45,8 +45,9 @@ type spawnRouteFile struct {
 	ItemsCap struct {
 		MaxUnits int `json:"maxUnits"`
 		Cases    []struct {
-			Delta    int  `json:"delta"`
-			Appended bool `json:"appended"`
+			Unit     string `json:"unit"`
+			Delta    int    `json:"delta"`
+			Appended bool   `json:"appended"`
 		} `json:"cases"`
 	} `json:"itemsCap"`
 }
@@ -103,6 +104,9 @@ func TestSpawnHookRouteOracleReplay(t *testing.T) {
 	total := 0
 	for ci, c := range steps.Route {
 		t.Run(envs[ci].Name, func(t *testing.T) {
+			if len(c.Steps) == 0 {
+				t.Fatal("a recorded case has no steps")
+			}
 			rig := spawnHookNewRig(t, fixture.Skills, envs[ci])
 			for i, step := range c.Steps {
 				total++
@@ -210,14 +214,20 @@ func TestSpawnHookRouteTotal(t *testing.T) {
 	}
 }
 
-// The skill blocks follow the last text item only while the text items total at most 256 KiB of UTF-16 units. The edge moves with the
-// length of the renamed text, so the port finds its own edge and checks the outcomes the oracle gave at it (the recorded itemsCap).
+// The skill blocks follow the last text item only while the text items total at most 256 KiB of UTF-16 units, whatever the characters:
+// ASCII, an astral character (two units) and a lone surrogate (one). The edge moves with the length of the renamed text, so the port
+// finds its own edge and checks the outcomes the oracle gave at it (the recorded itemsCap).
 func TestSpawnHookRouteItemsCap(t *testing.T) {
 	steps, _ := spawnRouteRead(t)
 	fixture := spawnHookReadFixture(t)
 	rig := spawnHookNewRig(t, fixture.Skills, spawnHookCase{})
-	look := func(n int) (appended bool, total int) {
-		items := `[{"type":"text","text":"$crw-dev ` + strings.Repeat("a", n) + `"},{"type":"attachment","ref":"a"},{"type":"text","text":"tail"}]`
+	fill := map[string]func(int) string{ // JSON text, n UTF-16 units
+		"ascii":  func(n int) string { return strings.Repeat("a", n) },
+		"astral": func(n int) string { return strings.Repeat("\U0001F600", n/2) + strings.Repeat("a", n%2) },
+		"lone":   func(n int) string { return strings.Repeat(`\ud800`, n) },
+	}
+	look := func(unit string, n int) (appended bool, total int) {
+		items := `[{"type":"text","text":"$crw-dev ` + fill[unit](n) + `"},{"type":"attachment","ref":"a"},{"type":"text","text":"tail"}]`
 		out := RunSpawnAttachHook(`{"hook_event_name":"PreToolUse","tool_name":"spawn_agent","session_id":"s","cwd":`+strconv.Quote(rig.ws)+`,"tool_input":{"agent_type":"explorer","items":`+items+`}}`, rig.env)
 		var texts []string
 		for _, item := range spawnHookLoad(t, []byte(out)).(pyjson.Object).Get("hookSpecificOutput").(pyjson.Object).Get("updatedInput").(pyjson.Object).Get("items").([]any) {
@@ -230,16 +240,43 @@ func TestSpawnHookRouteItemsCap(t *testing.T) {
 		}
 		return strings.Contains(texts[len(texts)-1], "<skill name=\"crw-dev\">"), total + (len(texts)-1)*2
 	}
-	appended, total := look(0)
-	if !appended {
-		t.Fatal("a small items spawn gets the skill block")
-	}
-	edge := steps.ItemsCap.MaxUnits - total
-	for _, c := range steps.ItemsCap.Cases {
-		got, units := look(edge + c.Delta)
-		if got != c.Appended || (got && units != steps.ItemsCap.MaxUnits) {
-			t.Errorf("edge %+d: appended %v with %d units, want appended %v within %d", c.Delta, got, units, c.Appended, steps.ItemsCap.MaxUnits)
+	edges := map[string]int{}
+	for unit := range fill {
+		appended, total := look(unit, 0)
+		if !appended {
+			t.Fatalf("%s: a small items spawn gets the skill block", unit)
 		}
+		edges[unit] = steps.ItemsCap.MaxUnits - total
+	}
+	if len(steps.ItemsCap.Cases) != 2*len(fill) {
+		t.Fatalf("%d recorded edge cases", len(steps.ItemsCap.Cases))
+	}
+	for _, c := range steps.ItemsCap.Cases {
+		got, units := look(c.Unit, edges[c.Unit]+c.Delta)
+		if got != c.Appended || (got && units != steps.ItemsCap.MaxUnits) {
+			t.Errorf("%s edge %+d: appended %v with %d units, want appended %v within %d", c.Unit, c.Delta, got, units, c.Appended, steps.ItemsCap.MaxUnits)
+		}
+	}
+}
+
+// The scan that reads a document too deep for pyjson accepts what the JSON grammar accepts, as encoding/json's validator does, and
+// returns a shallow document unchanged; a deeper one comes back with its deepest containers cut to null, still valid.
+func TestSpawnHookRouteShallowReadsTheJSONGrammar(t *testing.T) {
+	for _, doc := range []string{
+		`{}`, `[]`, ` {"a" : [1, -2.5e+3, true, false, null, "x\u00e9\n", {"b":{}}] } `, "\"s\"", "0", "-0.5E-2", `[[],[[]],{"a":[]}]`,
+		`{"a"}`, `{"a":1,}`, `[1,]`, `[,1]`, `{"a":1 "b":2}`, `{1:2}`, `[1 2]`, `]`, `[}`, `[[]`, `{} {}`, `{}x`, "",
+		"01", "1.", ".5", "-", "1e", "1e+", "+1", "0x1", "nul", "truee", "NaN", "Infinity", `"\q"`, `"\u00zz"`, `"\u00"`, "\"a\nb\"", "\"unterminated",
+	} {
+		out, ok := spawnHookRouteShallow(doc)
+		if want := json.Valid([]byte(doc)); ok != want || (ok && out != doc) {
+			t.Errorf("%q: ok %v and %q, want ok %v and the same text", doc, ok, out, want)
+		}
+	}
+	const n = 5000
+	deep := strings.Repeat("[", n) + strings.Repeat("]", n)
+	out, ok := spawnHookRouteShallow(`{"a":` + deep + `,"b":[` + deep + `]}`)
+	if !ok || spawnHookRouteNesting(out) != spawnHookRouteMaxDepth+2 || strings.Count(out, "null") != 2 || !strings.HasSuffix(out, "]}") {
+		t.Errorf("a deep document: ok %v, nesting %d, %d cuts", ok, spawnHookRouteNesting(out), strings.Count(out, "null"))
 	}
 }
 
@@ -255,7 +292,8 @@ func TestSpawnHookRouteDeepValuesAreNotWalked(t *testing.T) {
 	}
 }
 
-// The deepest payload 4 MiB holds still parses, so a subagent's recursion is denied and a root spawn prints nothing.
+// The deepest payload 4 MiB holds (2.09 million levels, which pyjson's recursive parser could not hold) is read as JSON.parse reads it:
+// a subagent's recursion is denied and a root spawn prints nothing.
 func TestSpawnHookRouteMaximumNesting(t *testing.T) {
 	rig := spawnHookNewRig(t, nil, spawnHookCase{})
 	payload := func(stamp string) string {

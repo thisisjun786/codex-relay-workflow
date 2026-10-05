@@ -4125,6 +4125,49 @@
    ]
   },
   {
+   "name": "route: deep documents",
+   "test": "spawn-attach-hook.ts:854: JSON.parse refuses a malformed document at any depth",
+   "env": {
+    "skills": "plain",
+    "tmp": "present",
+    "store": "{\"roles\":{\"explorer\":{\"mode\":\"model\",\"model\":\"rec/explorer\",\"effort\":\"high\",\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}}}",
+    "unreadableCwd": false
+   },
+   "steps": [
+    {
+     "note": "trailing text after a deep document: the parse fails, nothing is printed",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"s\",\"cwd\":\"{WS}\",\"tool_input\":{\"message\":\"x\",\"junk\":{{FILL:[:100000}}{{FILL:]:100000}}}} x",
+     "expect": "",
+     "classification": "identical"
+    },
+    {
+     "note": "a second value after a deep document",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"s\",\"cwd\":\"{WS}\",\"tool_input\":{\"message\":\"x\",\"junk\":{{FILL:[:100000}}{{FILL:]:100000}}}}{}",
+     "expect": "",
+     "classification": "identical"
+    },
+    {
+     "note": "a deep field that is never closed",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"s\",\"cwd\":\"{WS}\",\"tool_input\":{\"message\":\"x\",\"junk\":{{FILL:[:100000}}}}",
+     "expect": "",
+     "classification": "identical"
+    },
+    {
+     "note": "a subagent spawn whose deep document does not parse prints nothing, not the deny",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"s\",\"cwd\":\"{WS}\",\"agent_id\":\"c\",\"agent_type\":\"explorer\",\"tool_input\":{\"message\":\"x\",\"junk\":{{FILL:[:100000}}{{FILL:]:100000}}}} x",
+     "expect": "",
+     "classification": "identical"
+    },
+    {
+     "note": "the last tool_input wins: the deep first one is dropped",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"s\",\"cwd\":\"{WS}\",\"tool_input\":{\"message\":\"x\",\"junk\":{{FILL:[:100000}}{{FILL:]:100000}}},\"tool_input\":{\"message\":\"y\",\"agent_type\":\"explorer\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"message\":\"{{V1}}\\n\\ny\",\"agent_type\":\"explorer\",\"model\":\"rec/explorer\",\"reasoning_effort\":\"high\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    }
+   ]
+  },
+  {
    "name": "route: grants through the hook",
    "test": "spawn-attach-hook.test.ts:408-438,664-673",
    "env": {
@@ -4250,6 +4293,34 @@
      "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"message\":\"{{V1}}\\n\\nuse [$crw-dev](skill://{SKILLS}/crw-dev/SKILL.md)\\ud800 and [$crw-dev](skill://{SKILLS}/crw-dev/SKILL.md) \\udc00\\n\\n<skill name=\\\"crw-dev\\\">\\n---\\nname: crw-dev\\ndescription: \\\"Synthetic dev skill for hook oracle tests.\\\"\\n---\\n# dev\\nUse $crw-search only if the task calls for it.\\n</skill>\",\"agent_type\":\"explorer\",\"model\":\"rec/explorer\",\"reasoning_effort\":\"high\"}}}\n",
      "classification": "intentionally-changed",
      "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "removing the recursion token brings two halves together: one character",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"s\",\"cwd\":\"{WS}\",\"tool_input\":{\"message\":\"a\\ud83dCRW-SUBSPAWN-ALLOWED\\ude00b\",\"agent_type\":\"explorer\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"message\":\"{{V1_COORD}}\\nOne child spawn is authorized. Include this exact one-time capability in that spawn message: [CRW-SUBSPAWN-GRANT:{N1}]\\n\\na😀b\",\"agent_type\":\"explorer\",\"model\":\"rec/explorer\",\"reasoning_effort\":\"high\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "removing a grant marker does the same",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"s\",\"cwd\":\"{WS}\",\"tool_input\":{\"message\":\"x\\ud83d[CRW-SUBSPAWN-GRANT:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa]\\ude00y\",\"agent_type\":\"explorer\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"message\":\"{{V1}}\\n\\nx😀y\",\"agent_type\":\"explorer\",\"model\":\"rec/explorer\",\"reasoning_effort\":\"high\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "in an items text",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"s\",\"cwd\":\"{WS}\",\"tool_input\":{\"agent_type\":\"explorer\",\"items\":[{\"type\":\"text\",\"text\":\"i\\ud83dCRW-SUBSPAWN-ALLOWED\\ude00j\"}]}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"agent_type\":\"explorer\",\"items\":[{\"type\":\"text\",\"text\":\"{{V1_COORD}}\\nOne child spawn is authorized. Include this exact one-time capability in that spawn message: [CRW-SUBSPAWN-GRANT:{N2}]\\n\\ni😀j\"}],\"model\":\"rec/explorer\",\"reasoning_effort\":\"high\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "in a v2 message",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"s\",\"cwd\":\"{WS}\",\"tool_input\":{\"task_name\":\"t\",\"fork_turns\":\"none\",\"message\":\"v\\ud83dCRW-SUBSPAWN-ALLOWED\\ude00w\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"task_name\":\"t\",\"fork_turns\":\"none\",\"message\":\"{{LEAF_COORD}}\\nOne child spawn is authorized. Include this exact one-time capability in that spawn message: [CRW-SUBSPAWN-GRANT:{N3}]\\n\\nv😀w\\n\\n{{AFFORDANCE}}\",\"model\":\"rec/explorer\",\"reasoning_effort\":\"high\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
     }
    ]
   },
@@ -4360,10 +4431,32 @@
   "maxUnits": 262144,
   "cases": [
    {
+    "unit": "ascii",
     "delta": 0,
     "appended": true
    },
    {
+    "unit": "ascii",
+    "delta": 1,
+    "appended": false
+   },
+   {
+    "unit": "astral",
+    "delta": 0,
+    "appended": true
+   },
+   {
+    "unit": "astral",
+    "delta": 1,
+    "appended": false
+   },
+   {
+    "unit": "lone",
+    "delta": 0,
+    "appended": true
+   },
+   {
+    "unit": "lone",
     "delta": 1,
     "appended": false
    }

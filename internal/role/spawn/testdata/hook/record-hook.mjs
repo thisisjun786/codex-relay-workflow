@@ -515,6 +515,13 @@ const payloadText = (ti, extra = '') => '{"hook_event_name":"PreToolUse","tool_n
     raw(payloadText('{"message":"x"}', '"agent_id":"c","agent_type":"explorer","junk":' + deepArr(100000) + ','), { note: 'a subagent spawn with a deep field outside tool_input is still denied' }),
     raw(payloadText('{"message":"x","junk":' + deepArr(100000) + '}', '"agent_id":"c","agent_type":"explorer",'), { note: 'a subagent spawn with a deep field inside tool_input is denied before anything is written' }),
   ]);
+  recordRoute('deep documents', 'spawn-attach-hook.ts:854: JSON.parse refuses a malformed document at any depth', { store: roleStore({ explorer: M('rec/explorer', 'high') }) }, [
+    raw(P('{"message":"x","junk":' + deepArr(100000) + '}') + ' x', { note: 'trailing text after a deep document: the parse fails, nothing is printed' }),
+    raw(P('{"message":"x","junk":' + deepArr(100000) + '}') + '{}', { note: 'a second value after a deep document' }),
+    raw(P('{"message":"x","junk":' + '{{FILL:[:100000}}' + '}'), { note: 'a deep field that is never closed' }),
+    raw(payloadText('{"message":"x","junk":' + deepArr(100000) + '}', '"agent_id":"c","agent_type":"explorer",') + ' x', { note: 'a subagent spawn whose deep document does not parse prints nothing, not the deny' }),
+    raw('{"hook_event_name":"PreToolUse","tool_name":"spawn_agent","session_id":"s","cwd":"{WS}","tool_input":{"message":"x","junk":' + deepArr(100000) + '},"tool_input":{"message":"y","agent_type":"explorer"}}', { note: 'the last tool_input wins: the deep first one is dropped' }),
+  ]);
   recordRoute('grants through the hook', 'spawn-attach-hook.test.ts:408-438,664-673', {}, [
     rs(TI({ agent_type: 'worker', items: [txt('do A'), { type: 'local_image', path: '/p.png' }, txt(TOKEN + ' coordinate B')] })),
     rs(TI({ items: [txt('[CXC-SUBSPAWN-GRANT:{N1}] go'), { type: 'local_image', path: '/q.png' }] }, CHILD)),
@@ -538,6 +545,10 @@ const payloadText = (ti, extra = '') => '{"hook_event_name":"PreToolUse","tool_n
     raw(P('{"task_name":"t","fork_turns":"none","message":"v2 \\ud800 text"}'), { note: 'v2 message with the affordance' }),
     raw(P('{"agent_type":"explorer","items":[{"type":"text","text":"a\\ud83d"},{"type":"text","text":"\\ude00b"}]}'), { note: 'a pair split across items stays two lone surrogates' }),
     raw(P('{"message":"use $cxc-dev\\ud800 and $cxc-dev \\udc00","agent_type":"explorer"}'), { note: 'next to a skill mention' }),
+    raw(P('{"message":"a\\ud83dCXC-SUBSPAWN-ALLOWED\\ude00b","agent_type":"explorer"}'), { note: 'removing the recursion token brings two halves together: one character' }),
+    raw(P('{"message":"x\\ud83d[CXC-SUBSPAWN-GRANT:' + 'a'.repeat(64) + ']\\ude00y","agent_type":"explorer"}'), { note: 'removing a grant marker does the same' }),
+    raw(P('{"agent_type":"explorer","items":[{"type":"text","text":"i\\ud83dCXC-SUBSPAWN-ALLOWED\\ude00j"}]}'), { note: 'in an items text' }),
+    raw(P('{"task_name":"t","fork_turns":"none","message":"v\\ud83dCXC-SUBSPAWN-ALLOWED\\ude00w"}'), { note: 'in a v2 message' }),
   ]);
 }
 {
@@ -549,28 +560,35 @@ const payloadText = (ti, extra = '') => '{"hook_event_name":"PreToolUse","tool_n
     rs(TI(V2(FERNET_VECTOR, { agent_type: 'architect' })), { project: cfg, changed }),
   ]);
 }
-// 256 KiB items cap: the skill blocks are appended only while the total stays within the cap.
+// 256 KiB items cap: the skill blocks are appended only while the total stays within the cap, counted in UTF-16 units.
 let itemsCap;
 {
   const probe = setup('route cap probe', {});
-  const itemsFor = n => T({ agent_type: 'explorer', items: [txt('$cxc-dev {{FILL:a:' + n + '}}'), { type: 'attachment', ref: 'a' }, txt('tail')] });
-  const look = n => {
-    const out = JSON.parse(hook.runSpawnAttachHook(JSON.stringify(routeReal(probe, itemsFor(n))))).hookSpecificOutput.updatedInput.items;
+  const fills = { ascii: n => 'a'.repeat(n), astral: n => '\u{1F600}'.repeat(n >> 1) + 'a'.repeat(n & 1), lone: n => '\ud800'.repeat(n) };
+  const itemsOf = text => T({ agent_type: 'explorer', items: [txt('$cxc-dev ' + text), { type: 'attachment', ref: 'a' }, txt('tail')] });
+  const look = (unit, n) => {
+    const out = JSON.parse(hook.runSpawnAttachHook(JSON.stringify(routeReal(probe, itemsOf(fills[unit](n)))))).hookSpecificOutput.updatedInput.items;
     const texts = out.filter(i => i.type === 'text');
     return { appended: texts.at(-1).text.includes('<skill name="cxc-dev">'), total: texts.reduce((n2, i) => n2 + i.text.length, 0) + (texts.length - 1) * 2 };
   };
-  const zero = look(0);
-  assert.ok(zero.appended);
-  const n = MAX - zero.total;
-  assert.deepEqual(look(n), { appended: true, total: MAX });
-  assert.equal(look(n + 1).appended, false);
   // The edge itself moves with the renamed text's length (CRW names are shorter), so the port finds its own edge and checks these
   // outcomes (as affordanceCap does); far from the edge the decision, and so the whole answer, is the same under both names.
-  itemsCap = { maxUnits: MAX, cases: [{ delta: 0, appended: true }, { delta: 1, appended: false }] };
-  recordRoute('items cap', 'spawn-attach-hook.ts:1057-1064', {}, [
-    rs(itemsFor(n - 1000), { hash: true, note: 'well within the cap: the blocks are appended' }),
-    rs(itemsFor(n + 1000), { hash: true, note: 'well past the cap: the blocks are not appended' }),
-  ]);
+  itemsCap = { maxUnits: MAX, cases: [] };
+  for (const unit of Object.keys(fills)) {
+    const zero = look(unit, 0);
+    assert.ok(zero.appended);
+    const n = MAX - zero.total;
+    assert.deepEqual(look(unit, n), { appended: true, total: MAX });
+    assert.equal(look(unit, n + 1).appended, false);
+    itemsCap.cases.push({ unit, delta: 0, appended: true }, { unit, delta: 1, appended: false });
+    if (unit === 'ascii') {
+      const itemsFor = k => T({ agent_type: 'explorer', items: [txt('$cxc-dev {{FILL:a:' + k + '}}'), { type: 'attachment', ref: 'a' }, txt('tail')] });
+      recordRoute('items cap', 'spawn-attach-hook.ts:1057-1064', {}, [
+        rs(itemsFor(n - 1000), { hash: true, note: 'well within the cap: the blocks are appended' }),
+        rs(itemsFor(n + 1000), { hash: true, note: 'well past the cap: the blocks are not appended' }),
+      ]);
+    }
+  }
 }
 // The oracle's denyEnvelope (:450-458) is not exported: this replica is checked against the oracle's own deny answers.
 const denyEnvelope = reason => JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } }) + '\n';

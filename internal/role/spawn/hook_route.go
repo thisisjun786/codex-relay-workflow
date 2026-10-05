@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
@@ -21,9 +22,9 @@ import (
 // check (:1066-1073). Nothing here registers, or is, a hook. Differences from the oracle, each recorded in docs/port-cxc/known-defects.md:
 //   - the project layer is dropped (decision 7), so the trust warning is empty: trustPrefix is applied, but nothing sets it;
 //   - the oracle's :1030-1046 branches for an empty guard are ported in spawnHookRoutePrompt, but the guard is never empty;
-//   - a value nested past 4,400 levels prints nothing, where the oracle's JSON.stringify fails near 4,458 at Node 24's default stack
-//     (the threshold depends on the stack size); the payload is still parsed at any depth, as JSON.parse does, so a subagent's
-//     recursion is still denied.
+//   - a tool_input nested past 4,400 levels prints nothing, where the oracle's JSON.stringify fails near 4,458 at Node 24's default
+//     stack (the threshold depends on the stack size); the payload is still read at any depth, as JSON.parse reads it, so a subagent's
+//     recursion is still denied (spawnHookRouteLoad keeps the parser from recursing over a depth it cannot hold).
 
 const (
 	spawnHookRouteMaxInput = 4 * 1024 * 1024
@@ -54,15 +55,201 @@ func RunSpawnAttachHook(raw string, env host.LookupEnv) (out string) {
 }
 
 // spawnHookRouteLoad is JSON.parse((raw ?? "").trim() || "{}") and isRecord: an ordered object, or false. A lone surrogate escape is
-// kept, as is a number's spelling (the respelling happens when the answer is written).
+// kept, as is a number's spelling (the respelling happens when the answer is written). JSON.parse is iterative and reads any depth,
+// but pyjson's parser recurses once per level and a 4 MiB payload can nest 2 million levels, which would end the process in a stack
+// overflow that recover cannot catch: a document nested past pyjson.MaxDepth is first cut down by spawnHookRouteShallow.
 func spawnHookRouteLoad(raw string) (pyjson.Object, bool) {
 	doc := text.Trim(raw)
 	if doc == "" {
 		doc = "{}"
 	}
-	v, err := pyjson.Loads(doc, pyjson.LoadOptions{Surrogates: true, Numbers: pyjson.SpelledNumbers, Deep: true})
+	if spawnHookRouteNesting(doc) > pyjson.MaxDepth {
+		var ok bool
+		if doc, ok = spawnHookRouteShallow(doc); !ok {
+			return nil, false
+		}
+	}
+	v, err := pyjson.Loads(doc, pyjson.LoadOptions{Surrogates: true, Numbers: pyjson.SpelledNumbers})
 	payload, ok := v.(pyjson.Object)
 	return payload, err == nil && ok
+}
+
+// spawnHookRouteNesting is how deep the brackets of doc nest outside its strings. It counts the text, so it cannot fail or recurse.
+func spawnHookRouteNesting(doc string) int {
+	depth, deepest, inString := 0, 0, false
+	for i := 0; i < len(doc); i++ {
+		switch c := doc[i]; {
+		case inString:
+			if c == '\\' {
+				i++
+			} else if c == '"' {
+				inString = false
+			}
+		case c == '"':
+			inString = true
+		case c == '[' || c == '{':
+			depth++
+			deepest = max(deepest, depth)
+		case c == ']' || c == '}':
+			depth--
+		}
+	}
+	return deepest
+}
+
+// spawnHookRouteShallow checks doc against the JSON grammar as JSON.parse does at any depth, with an explicit stack (encoding/json's
+// token reader refuses past 10,000 levels as well), and writes it back with every container deeper than spawnHookRouteMaxDepth+2
+// levels replaced by null. Only the part of tool_input beyond that depth is lost, and spawnHookRouteDeep still sees the levels that
+// stay, so the answer is the one JSON.stringify's RangeError gives; a deep field elsewhere is never read.
+func spawnHookRouteShallow(doc string) (string, bool) {
+	const (
+		value       = iota // a value
+		arrayFirst         // after [: a value or ]
+		objectFirst        // after {: a key or }
+		key                // after a comma in an object: a key
+		colon              // after a key
+		next               // after a value: a comma or the close
+	)
+	var stack []byte
+	var out strings.Builder
+	state, copied, cutAt, cutDepth := value, 0, 0, 0
+	for i := 0; i < len(doc); {
+		c, ok := doc[i], true
+		top := byte(0)
+		if len(stack) > 0 {
+			top = stack[len(stack)-1]
+		}
+		switch {
+		case c == ' ' || c == '\t' || c == '\n' || c == '\r':
+			i++
+			continue
+		case (c == ']' && top == '[' && (state == arrayFirst || state == next)) || (c == '}' && top == '{' && (state == objectFirst || state == next)):
+			if cutDepth != 0 && len(stack) == cutDepth {
+				out.WriteString(doc[copied:cutAt])
+				out.WriteString("null")
+				copied, cutDepth = i+1, 0
+			}
+			stack, state = stack[:len(stack)-1], next
+			i++
+		case c == ',' && state == next && top != 0:
+			state = value
+			if top == '{' {
+				state = key
+			}
+			i++
+		case c == ':' && state == colon:
+			state = value
+			i++
+		case c == '"' && (state == key || state == objectFirst):
+			i, ok = spawnHookRouteString(doc, i)
+			state = colon
+		case state == value || state == arrayFirst:
+			if c == '[' || c == '{' {
+				if stack = append(stack, c); len(stack) == spawnHookRouteMaxDepth+3 && cutDepth == 0 {
+					cutDepth, cutAt = len(stack), i
+				}
+				state = arrayFirst
+				if c == '{' {
+					state = objectFirst
+				}
+				i++
+			} else {
+				if c == '"' {
+					i, ok = spawnHookRouteString(doc, i)
+				} else {
+					i, ok = spawnHookRouteScalar(doc, i)
+				}
+				state = next
+			}
+		default:
+			ok = false
+		}
+		if !ok {
+			return "", false
+		}
+		if state == next && len(stack) == 0 { // the value is complete: only white space may follow
+			if strings.Trim(doc[i:], " \t\n\r") != "" {
+				return "", false
+			}
+			out.WriteString(doc[copied:])
+			return out.String(), true
+		}
+	}
+	return "", false
+}
+
+// spawnHookRouteString returns the index after the JSON string that opens at doc[i]: no raw control character, only the escapes of
+// the grammar.
+func spawnHookRouteString(doc string, i int) (int, bool) {
+	for i++; i < len(doc); i++ {
+		switch c := doc[i]; {
+		case c == '"':
+			return i + 1, true
+		case c < 0x20:
+			return 0, false
+		case c == '\\':
+			if i++; i >= len(doc) {
+				return 0, false
+			}
+			switch doc[i] {
+			case '"', '\\', '/', 'b', 'f', 'n', 'r', 't':
+			case 'u':
+				if i+4 >= len(doc) || strings.ContainsFunc(doc[i+1:i+5], func(r rune) bool { return !strings.ContainsRune("0123456789abcdefABCDEF", r) }) {
+					return 0, false
+				}
+				i += 4
+			default:
+				return 0, false
+			}
+		}
+	}
+	return 0, false
+}
+
+// spawnHookRouteScalar returns the index after the JSON literal or number that starts at doc[i].
+func spawnHookRouteScalar(doc string, i int) (int, bool) {
+	for _, literal := range []string{"true", "false", "null"} {
+		if strings.HasPrefix(doc[i:], literal) {
+			return i + len(literal), true
+		}
+	}
+	digits := func(j int) int {
+		for j < len(doc) && doc[j] >= '0' && doc[j] <= '9' {
+			j++
+		}
+		return j
+	}
+	j := i
+	if j < len(doc) && doc[j] == '-' {
+		j++
+	}
+	switch end := digits(j); {
+	case j < len(doc) && doc[j] == '0':
+		j++
+	case end > j && doc[j] != '0':
+		j = end
+	default:
+		return 0, false
+	}
+	if j < len(doc) && doc[j] == '.' {
+		if end := digits(j + 1); end > j+1 {
+			j = end
+		} else {
+			return 0, false
+		}
+	}
+	if j < len(doc) && (doc[j] == 'e' || doc[j] == 'E') {
+		k := j + 1
+		if k < len(doc) && (doc[k] == '+' || doc[k] == '-') {
+			k++
+		}
+		if end := digits(k); end > k {
+			j = end
+		} else {
+			return 0, false
+		}
+	}
+	return j, true
 }
 
 // spawnHookRoute is :991-1115 without the managed and final-gate legs: routing, the message, the items, the notices and the envelope.
@@ -238,10 +425,12 @@ func spawnHookRouteStringify(v any) string {
 // and the keys that are canonical array indices come first in ascending order, the others in their order of appearance.
 func spawnHookRouteJS(v any) any {
 	switch v := v.(type) {
+	case string:
+		return spawnHookRouteJoin(v)
 	case pyjson.Object:
 		var indexed, named pyjson.Object
 		for _, f := range v {
-			f.Value = spawnHookRouteJS(f.Value)
+			f.Key, f.Value = spawnHookRouteJoin(f.Key), spawnHookRouteJS(f.Value)
 			if _, ok := spawnHookRouteIndex(f.Key); ok {
 				indexed = append(indexed, f)
 			} else {
@@ -272,6 +461,34 @@ func spawnHookRouteJS(v any) any {
 		return json.Number(spelled)
 	}
 	return v
+}
+
+// spawnHookRouteJoin writes a high surrogate that a low surrogate follows as the one character a JavaScript string holds there. The hook
+// strips control markers, which can bring the halves of a pair together, and a Go string keeps the two WTF-8 sequences apart: a pair of
+// them would be written as two escapes, where JSON.stringify writes the character.
+func spawnHookRouteJoin(s string) string {
+	var joined []byte
+	for i := 0; i < len(s); {
+		if i+5 < len(s) && s[i] == 0xed && s[i+1] >= 0xa0 && s[i+1] <= 0xaf && s[i+2] >= 0x80 && s[i+2] <= 0xbf &&
+			s[i+3] == 0xed && s[i+4] >= 0xb0 && s[i+4] <= 0xbf && s[i+5] >= 0x80 && s[i+5] <= 0xbf {
+			high, _ := pyjson.CodePoint(s, i)
+			low, _ := pyjson.CodePoint(s, i+3)
+			if joined == nil {
+				joined = []byte(s[:i])
+			}
+			joined = utf8.AppendRune(joined, 0x10000+(high-0xd800)<<10+(low-0xdc00))
+			i += 6
+			continue
+		}
+		if joined != nil {
+			joined = append(joined, s[i])
+		}
+		i++
+	}
+	if joined == nil {
+		return s
+	}
+	return string(joined)
 }
 
 // spawnHookRouteIndex reports whether key is an array index (a canonical uint32 below 2^32-1), the keys a JavaScript object lists first.
