@@ -279,3 +279,20 @@ func TestCreatedSessionLockBusyAndReleased(t *testing.T) {
 	}
 	gone("a refused stopped close")
 }
+
+// A dispatch the provider failure stopped keeps its attempt running and unreconciled: only the stopped close releases an id.
+func TestCreatedSessionLockProviderStopKeepsItsAgent(t *testing.T) {
+	ws := t.TempDir()
+	env, _ := home(t)
+	h := &createdLockHost{status: "idle"}
+	one, two := createdArchivedSession(t, ws, env, "task-one"), createdArchivedSession(t, ws, env, "task-two")
+	_, err := CheckedDispatch(context.Background(), ws, createdArchivedReport("task-one", one, "child-a"), env, h)
+	check(t, err)
+	stopped := dispatchTestCall(t, ws, env, map[string]any{"action": "report", "dispatchId": "task-one", "attemptId": one, "outcome": "failed", "error": "invalid_api_key", "executionState": "stopped", "agentId": "child-a", "reconciliation": "child stopped"})
+	if stopped.Action != "stop" {
+		t.Fatalf("provider failure = %q", stopped.Action)
+	}
+	if _, err = CheckedDispatch(context.Background(), ws, createdArchivedReport("task-two", two, "child-a"), env, h); err == nil || !strings.Contains(err.Error(), "already reported for dispatch task-one attempt "+one) {
+		t.Fatalf("report of the child of a provider-stopped dispatch: %v", err)
+	}
+}
